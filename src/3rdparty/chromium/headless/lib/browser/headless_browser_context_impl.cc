@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,22 +14,49 @@
 #include "base/path_service.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/keyed_service/core/simple_key_map.h"
+#include "components/origin_trials/browser/leveldb_persistence_provider.h"
+#include "components/origin_trials/browser/origin_trials.h"
+#include "components/origin_trials/common/features.h"
 #include "components/profile_metrics/browser_profile_type.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/public/browser/storage_partition.h"
 #include "headless/lib/browser/headless_browser_context_options.h"
 #include "headless/lib/browser/headless_browser_impl.h"
 #include "headless/lib/browser/headless_browser_main_parts.h"
 #include "headless/lib/browser/headless_permission_manager.h"
 #include "headless/lib/browser/headless_web_contents_impl.h"
+#include "third_party/blink/public/common/origin_trials/trial_token_validator.h"
 #include "ui/base/resource/resource_bundle.h"
 
 #if defined(HEADLESS_USE_POLICY)
 #include "components/user_prefs/user_prefs.h"  // nogncheck
-#endif
+#endif                                         // defined(HEADLESS_USE_POLICY)
 
 namespace headless {
+
+namespace {
+
+base::FilePath MakeAbsolutePath(const base::FilePath& path) {
+#if BUILDFLAG(IS_WIN)
+  // On Windows it's common to omit drive specification assuming the current
+  // drive, which makes the path specification not absolute, but relative to
+  // the current drive. Handle this case by prepending the current drive to
+  // the "\path" specification.
+  std::vector<base::FilePath::StringType> components = path.GetComponents();
+  if (components.size() > 0 && components[0].length() == 1 &&
+      base::FilePath::IsSeparator(components[0].front())) {
+    components =
+        base::PathService::CheckedGet(base::DIR_CURRENT).GetComponents();
+    return base::FilePath(components[0]).Append(path);
+  }
+#endif  // BUILDFLAG(IS_WIN)
+
+  return base::PathService::CheckedGet(base::DIR_CURRENT).Append(path);
+}
+
+}  // namespace
 
 HeadlessBrowserContextImpl::HeadlessBrowserContextImpl(
     HeadlessBrowserImpl* browser,
@@ -55,7 +82,11 @@ HeadlessBrowserContextImpl::HeadlessBrowserContextImpl(
 #if defined(HEADLESS_USE_POLICY)
   if (PrefService* pref_service = browser->GetPrefs())
     user_prefs::UserPrefs::Set(this, pref_service);
-#endif
+#endif  // defined(HEADLESS_USE_POLICY)
+
+  // Ensure the delegate is initialized early to give it time to load its
+  // persistence.
+  GetOriginTrialsControllerDelegate();
 }
 
 HeadlessBrowserContextImpl::~HeadlessBrowserContextImpl() {
@@ -63,8 +94,14 @@ HeadlessBrowserContextImpl::~HeadlessBrowserContextImpl() {
   SimpleKeyMap::GetInstance()->Dissociate(this);
   NotifyWillBeDestroyed();
 
-  // Destroy all web contents before shutting down storage partitions.
+  // Destroy all web contents before shutting down in process renderer and
+  // storage partitions.
   web_contents_map_.clear();
+
+  // In single process mode we can only have one browser context, so it's
+  // safe to shutdown the in-process renderer here.
+  if (content::RenderProcessHost::run_renderer_in_process())
+    content::RenderProcessHost::ShutDownInProcessRenderer();
 
   if (request_context_manager_) {
     content::GetIOThreadTaskRunner({})->DeleteSoon(
@@ -170,7 +207,8 @@ void HeadlessBrowserContextImpl::InitWhileIOAllowed() {
     base::FilePath path =
         context_options_->user_data_dir().Append(kDefaultProfileName);
     if (!path.IsAbsolute())
-      path = base::PathService::CheckedGet(base::DIR_CURRENT).Append(path);
+      path = MakeAbsolutePath(path);
+
     path_ = std::move(path);
   } else {
     base::PathService::Get(base::DIR_EXE, &path_);
@@ -256,6 +294,27 @@ HeadlessBrowserContextImpl::GetBrowsingDataRemoverDelegate() {
   return nullptr;
 }
 
+content::ReduceAcceptLanguageControllerDelegate*
+HeadlessBrowserContextImpl::GetReduceAcceptLanguageControllerDelegate() {
+  return nullptr;
+}
+
+content::OriginTrialsControllerDelegate*
+HeadlessBrowserContextImpl::GetOriginTrialsControllerDelegate() {
+  if (!origin_trials::features::IsPersistentOriginTrialsEnabled())
+    return nullptr;
+
+  if (!origin_trials_controller_delegate_) {
+    origin_trials_controller_delegate_ =
+        std::make_unique<origin_trials::OriginTrials>(
+            std::make_unique<origin_trials::LevelDbPersistenceProvider>(
+                GetPath(),
+                GetDefaultStoragePartition()->GetProtoDatabaseProvider()),
+            std::make_unique<blink::TrialTokenValidator>());
+  }
+  return origin_trials_controller_delegate_.get();
+}
+
 HeadlessWebContents* HeadlessBrowserContextImpl::CreateWebContents(
     HeadlessWebContents::Builder* builder) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
@@ -329,13 +388,6 @@ HeadlessBrowserContext::Builder::~Builder() = default;
 
 HeadlessBrowserContext::Builder::Builder(Builder&&) = default;
 
-HeadlessBrowserContext::Builder&
-HeadlessBrowserContext::Builder::SetProductNameAndVersion(
-    const std::string& product_name_and_version) {
-  options_->product_name_and_version_ = product_name_and_version;
-  return *this;
-}
-
 HeadlessBrowserContext::Builder& HeadlessBrowserContext::Builder::SetUserAgent(
     const std::string& user_agent) {
   options_->user_agent_ = user_agent;
@@ -382,24 +434,8 @@ HeadlessBrowserContext::Builder::SetBlockNewWebContents(
   return *this;
 }
 
-HeadlessBrowserContext::Builder&
-HeadlessBrowserContext::Builder::SetOverrideWebPreferencesCallback(
-    base::RepeatingCallback<void(blink::web_pref::WebPreferences*)> callback) {
-  options_->override_web_preferences_callback_ = std::move(callback);
-  return *this;
-}
-
 HeadlessBrowserContext* HeadlessBrowserContext::Builder::Build() {
   return browser_->CreateBrowserContext(this);
 }
-
-HeadlessBrowserContext::Builder::MojoBindings::MojoBindings() = default;
-
-HeadlessBrowserContext::Builder::MojoBindings::MojoBindings(
-    const std::string& mojom_name,
-    const std::string& js_bindings)
-    : mojom_name(mojom_name), js_bindings(js_bindings) {}
-
-HeadlessBrowserContext::Builder::MojoBindings::~MojoBindings() = default;
 
 }  // namespace headless

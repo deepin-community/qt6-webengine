@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,6 +27,7 @@ class WebContentsTopSitesObserver
 
  private:
   friend class content::WebContentsUserData<WebContentsTopSitesObserver>;
+  friend class WebContentsTopSitesObserverTest;
 
   WebContentsTopSitesObserver(content::WebContents* web_contents,
                               TopSites* top_sites);

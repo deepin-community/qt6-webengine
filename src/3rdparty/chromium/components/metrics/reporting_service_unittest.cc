@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,11 +10,11 @@
 #include <memory>
 #include <string>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/hash/sha1.h"
 #include "base/strings/string_util.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "components/metrics/log_store.h"
 #include "components/metrics/test/test_metrics_service_client.h"
 #include "components/prefs/testing_pref_service.h"
@@ -72,7 +72,7 @@ class TestLogStore : public LogStore {
     staged_log_hash_.clear();
   }
   void MarkStagedLogAsSent() override {}
-  void TrimAndPersistUnsentLogs() override {}
+  void TrimAndPersistUnsentLogs(bool overwrite_in_memory_store) override {}
   void LoadPersistedUnsentLogs() override {}
 
  private:
@@ -83,7 +83,10 @@ class TestLogStore : public LogStore {
 class TestReportingService : public ReportingService {
  public:
   TestReportingService(MetricsServiceClient* client, PrefService* local_state)
-      : ReportingService(client, local_state, 100) {
+      : ReportingService(client,
+                         local_state,
+                         100,
+                         /*logs_event_manager=*/nullptr) {
     Initialize();
   }
 
@@ -111,7 +114,7 @@ class ReportingServiceTest : public testing::Test {
  public:
   ReportingServiceTest()
       : task_runner_(new base::TestSimpleTaskRunner),
-        task_runner_handle_(task_runner_) {
+        task_runner_current_default_handle_(task_runner_) {
     ReportingService::RegisterPrefs(testing_local_state_.registry());
   }
 
@@ -124,7 +127,8 @@ class ReportingServiceTest : public testing::Test {
 
  protected:
   scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
-  base::ThreadTaskRunnerHandle task_runner_handle_;
+  base::SingleThreadTaskRunner::CurrentDefaultHandle
+      task_runner_current_default_handle_;
   TestMetricsServiceClient client_;
 
  private:

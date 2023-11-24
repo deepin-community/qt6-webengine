@@ -16,9 +16,11 @@
 
 #include <shlobj.h>
 
+#include <algorithm>
 #include <sstream>
 
-#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
+#include "absl/strings/str_replace.h"
 
 namespace test_utils {
 std::wstring StringToWideString(const std::string& s) {
@@ -32,7 +34,7 @@ std::wstring StringToWideString(const std::string& s) {
   return r;
 }
 
-std::string GetPayloadPath(location::nearby::PayloadId payload_id) {
+std::string GetPayloadPath(nearby::PayloadId payload_id) {
   PWSTR basePath;
 
   // Retrieves the full path of a known folder identified by the folder's
@@ -62,10 +64,12 @@ std::string GetPayloadPath(location::nearby::PayloadId payload_id) {
 
   CoTaskMemFree(basePath);
 
-  std::stringstream path("");
+  std::string path =
+      absl::StrFormat("%s\\%s", fullPath, std::to_string(payload_id));
 
-  path << fullPath << "\\" << std::to_string(payload_id);
-  auto retval = path.str();
-  return retval;
+  path = absl::StrReplaceAll(path, {{"\\", "/"}});
+
+  return path;
 }
+
 }  // namespace test_utils

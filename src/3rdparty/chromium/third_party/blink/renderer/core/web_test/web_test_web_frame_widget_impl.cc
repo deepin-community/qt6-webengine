@@ -1,9 +1,10 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/web_test/web_test_web_frame_widget_impl.h"
 
+#include "base/task/single_thread_task_runner.h"
 #include "content/web_test/renderer/event_sender.h"
 #include "content/web_test/renderer/test_runner.h"
 #include "third_party/blink/public/common/features.h"
@@ -13,9 +14,10 @@
 #include "third_party/blink/public/web/web_page_popup.h"
 #include "third_party/blink/public/web/web_view.h"
 #include "third_party/blink/public/web/web_widget.h"
-#include "third_party/blink/renderer/core/document_transition/document_transition_supplement.h"
 #include "third_party/blink/renderer/core/exported/web_view_impl.h"
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
+#include "third_party/blink/renderer/core/view_transition/view_transition_supplement.h"
+#include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 
 namespace blink {
 
@@ -35,12 +37,13 @@ WebFrameWidget* FrameWidgetTestHelper::CreateTestWebFrameWidget(
     bool never_composited,
     bool is_for_child_local_root,
     bool is_for_nested_main_frame,
+    bool is_for_scalable_page,
     content::TestRunner* test_runner) {
   return MakeGarbageCollected<WebTestWebFrameWidgetImpl>(
       pass_key, std::move(frame_widget_host), std::move(frame_widget),
       std::move(widget_host), std::move(widget), std::move(task_runner),
       frame_sink_id, hidden, never_composited, is_for_child_local_root,
-      is_for_nested_main_frame, test_runner);
+      is_for_nested_main_frame, is_for_scalable_page, test_runner);
 }
 
 WebTestWebFrameWidgetImpl::WebTestWebFrameWidgetImpl(
@@ -59,6 +62,7 @@ WebTestWebFrameWidgetImpl::WebTestWebFrameWidgetImpl(
     bool never_composited,
     bool is_for_child_local_root,
     bool is_for_nested_main_frame,
+    bool is_for_scalable_page,
     content::TestRunner* test_runner)
     : WebFrameWidgetImpl(pass_key,
                          std::move(frame_widget_host),
@@ -70,7 +74,8 @@ WebTestWebFrameWidgetImpl::WebTestWebFrameWidgetImpl(
                          hidden,
                          never_composited,
                          is_for_child_local_root,
-                         is_for_nested_main_frame),
+                         is_for_nested_main_frame,
+                         is_for_scalable_page),
       test_runner_(test_runner) {}
 
 WebTestWebFrameWidgetImpl::~WebTestWebFrameWidgetImpl() = default;
@@ -110,8 +115,8 @@ void WebTestWebFrameWidgetImpl::ScheduleAnimationForWebTests() {
 
 void WebTestWebFrameWidgetImpl::UpdateAllLifecyclePhasesAndComposite(
     base::OnceClosure callback) {
-  LayerTreeHost()->RequestPresentationTimeForNextFrame(WTF::Bind(
-      [](base::OnceClosure callback, const gfx::PresentationFeedback&) {
+  LayerTreeHost()->RequestSuccessfulPresentationTimeForNextFrame(WTF::BindOnce(
+      [](base::OnceClosure callback, base::TimeTicks presentation_timestamp) {
         std::move(callback).Run();
       },
       std::move(callback)));
@@ -119,16 +124,10 @@ void WebTestWebFrameWidgetImpl::UpdateAllLifecyclePhasesAndComposite(
   ScheduleAnimationForWebTests();
 }
 
-void WebTestWebFrameWidgetImpl::DisableEndDocumentTransition() {
-  DocumentTransitionSupplement::EnsureDocumentTransition(
-      *LocalRootImpl()->GetFrame()->GetDocument())
-      ->DisableEndTransition();
-}
-
 void WebTestWebFrameWidgetImpl::ScheduleAnimationInternal(bool do_raster) {
   // When using threaded compositing, have the WeFrameWidgetImpl normally
   // schedule a request for a frame, as we use the compositor's scheduler.
-  if (scheduler::WebThreadScheduler::CompositorThreadScheduler()) {
+  if (Thread::CompositorThread()) {
     WebFrameWidgetImpl::ScheduleAnimation();
     return;
   }
@@ -144,16 +143,18 @@ void WebTestWebFrameWidgetImpl::ScheduleAnimationInternal(bool do_raster) {
 
     frame->GetTaskRunner(TaskType::kInternalTest)
         ->PostDelayedTask(FROM_HERE,
-                          WTF::Bind(&WebTestWebFrameWidgetImpl::AnimateNow,
-                                    WrapWeakPersistent(this)),
+                          WTF::BindOnce(&WebTestWebFrameWidgetImpl::AnimateNow,
+                                        WrapWeakPersistent(this)),
                           base::Milliseconds(1));
   }
 }
 
-void WebTestWebFrameWidgetImpl::StartDragging(const WebDragData& data,
-                                              DragOperationsMask mask,
-                                              const SkBitmap& drag_image,
-                                              const gfx::Point& image_offset) {
+void WebTestWebFrameWidgetImpl::StartDragging(
+    const WebDragData& data,
+    DragOperationsMask mask,
+    const SkBitmap& drag_image,
+    const gfx::Vector2d& cursor_offset,
+    const gfx::Rect& drag_obj_rect) {
   doing_drag_and_drop_ = true;
   GetTestRunner()->SetDragImage(drag_image);
 
@@ -191,14 +192,15 @@ content::EventSender* WebTestWebFrameWidgetImpl::GetEventSender() {
   return event_sender_.get();
 }
 
-void WebTestWebFrameWidgetImpl::SynchronouslyCompositeAfterTest() {
+void WebTestWebFrameWidgetImpl::SynchronouslyCompositeAfterTest(
+    base::OnceClosure callback) {
   // We could DCHECK(!GetTestRunner()->TestIsRunning()) except that frames in
   // other processes than the main frame do not hear when the test ends.
 
   // This would be very weird and prevent us from producing pixels.
   DCHECK(!in_synchronous_composite_);
 
-  SynchronouslyComposite(/*do_raster=*/true);
+  SynchronouslyComposite(std::move(callback), /*do_raster=*/true);
 }
 
 content::TestRunner* WebTestWebFrameWidgetImpl::GetTestRunner() {
@@ -207,27 +209,42 @@ content::TestRunner* WebTestWebFrameWidgetImpl::GetTestRunner() {
 
 // static
 void WebTestWebFrameWidgetImpl::DoComposite(cc::LayerTreeHost* layer_tree_host,
-                                            bool do_raster) {
+                                            bool do_raster,
+                                            base::OnceClosure callback) {
   // Ensure that there is damage so that the compositor submits, and the display
   // compositor draws this frame.
   if (do_raster) {
     layer_tree_host->SetNeedsCommitWithForcedRedraw();
   }
 
-  layer_tree_host->CompositeForTest(base::TimeTicks::Now(), do_raster);
+  layer_tree_host->CompositeForTest(base::TimeTicks::Now(), do_raster,
+                                    std::move(callback));
 }
 
-void WebTestWebFrameWidgetImpl::SynchronouslyComposite(bool do_raster) {
-  if (!LocalRootImpl()->ViewImpl()->does_composite())
+void WebTestWebFrameWidgetImpl::SynchronouslyComposite(
+    base::OnceClosure callback,
+    bool do_raster) {
+  if (!LocalRootImpl()->ViewImpl()->does_composite()) {
+    if (callback) {
+      std::move(callback).Run();
+    }
     return;
+  }
   DCHECK(!LayerTreeHost()->GetSettings().single_thread_proxy_scheduler);
 
-  if (!LayerTreeHost()->IsVisible())
+  if (!LayerTreeHost()->IsVisible()) {
+    if (callback) {
+      std::move(callback).Run();
+    }
     return;
+  }
 
   if (base::FeatureList::IsEnabled(
           blink::features::kNoForcedFrameUpdatesForWebTests) &&
       LayerTreeHost()->MainFrameUpdatesAreDeferred()) {
+    if (callback) {
+      std::move(callback).Run();
+    }
     return;
   }
 
@@ -236,30 +253,46 @@ void WebTestWebFrameWidgetImpl::SynchronouslyComposite(bool do_raster) {
     // frame, but the compositor does not support this. In this case, we only
     // run blink's lifecycle updates.
     UpdateAllLifecyclePhases(DocumentUpdateReason::kTest);
+    if (callback) {
+      std::move(callback).Run();
+    }
     return;
   }
 
   in_synchronous_composite_ = true;
 
-  // DoComposite() can detach the frame.
-  DoComposite(LayerTreeHost(), do_raster);
-  if (!LocalRoot())
+  auto wrapped_callback = WTF::BindOnce(
+      [](base::OnceClosure cb, bool* in_synchronous_composite) {
+        *in_synchronous_composite = false;
+        if (cb) {
+          std::move(cb).Run();
+        }
+      },
+      // base::Unretained is safe by construction, because WebFrameWidgetImpl
+      // must always outlive the compositing machinery.
+      std::move(callback), base::Unretained(&in_synchronous_composite_));
+
+  // If there's a visible popup, then we will update its compositing after
+  // updating the host frame.
+  WebPagePopupImpl* popup = LocalRootImpl()->ViewImpl()->GetPagePopup();
+
+  if (!popup) {
+    DoComposite(LayerTreeHost(), do_raster, std::move(wrapped_callback));
     return;
-
-  in_synchronous_composite_ = false;
-
-  // If this widget is for the main frame, we also composite the current
-  // PagePopup afterward.
-  //
-  // TODO(danakj): This means that an OOPIF's popup, which is attached to a
-  // WebView without a main frame, would have no opportunity to execute this
-  // method call.
-  if (ForMainFrame()) {
-    WebViewImpl* view = LocalRootImpl()->ViewImpl();
-    if (WebPagePopupImpl* popup = view->GetPagePopup()) {
-      DoComposite(popup->LayerTreeHostForTesting(), do_raster);
-    }
   }
+
+  DoComposite(LayerTreeHost(), do_raster, base::OnceClosure());
+
+  // DoComposite() can detach the frame, in which case we don't update the
+  // popup. Because DoComposite was called with a no-op callback, we need to run
+  // the actual callback here.
+  if (!LocalRoot()) {
+    std::move(wrapped_callback).Run();
+    return;
+  }
+
+  DoComposite(popup->LayerTreeHostForTesting(), do_raster,
+              std::move(wrapped_callback));
 }
 
 void WebTestWebFrameWidgetImpl::AnimateNow() {
@@ -271,7 +304,7 @@ void WebTestWebFrameWidgetImpl::AnimateNow() {
   animation_scheduled_ = false;
   composite_requested_ = false;
   // Composite may destroy |this|, so don't use it afterward.
-  SynchronouslyComposite(do_raster);
+  SynchronouslyComposite(base::OnceClosure(), do_raster);
 }
 
 void WebTestWebFrameWidgetImpl::RequestDecode(
@@ -283,6 +316,20 @@ void WebTestWebFrameWidgetImpl::RequestDecode(
   // compositor is scheduled by the test runner to avoid flakiness. So for this
   // case we must request a main frame.
   ScheduleAnimationForWebTests();
+}
+
+void WebTestWebFrameWidgetImpl::DidAutoResize(const gfx::Size& size) {
+  WebFrameWidgetImpl::DidAutoResize(size);
+
+  // Window rect resize for threaded compositing is delivered via requesting a
+  // new surface. The browser then reacts to the bounds of the surface changing
+  // and adjusts the WindowRect. For single threaded compositing the
+  // surface size is never processed so we force the WindowRect to be the
+  // same size as the WidgetSize when AutoResize is applied.
+  if (LayerTreeHost()->IsSingleThreaded()) {
+    gfx::Rect new_pos(Size());
+    SetWindowRect(new_pos, new_pos);
+  }
 }
 
 }  // namespace blink

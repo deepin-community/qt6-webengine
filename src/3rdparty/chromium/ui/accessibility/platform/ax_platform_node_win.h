@@ -1,5 +1,4 @@
-//
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,13 +16,13 @@
 #include <string>
 #include <vector>
 
+#include "base/component_export.h"
 #include "base/gtest_prod_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/observer_list.h"
 #include "base/win/atl.h"
 #include "third_party/iaccessible2/ia2_api_all.h"
 #include "ui/accessibility/ax_enums.mojom-forward.h"
-#include "ui/accessibility/ax_export.h"
 #include "ui/accessibility/ax_text_utils.h"
 #include "ui/accessibility/platform/ax_platform_node_base.h"
 #include "ui/accessibility/platform/ax_platform_text_boundary.h"
@@ -341,10 +340,11 @@ class AXPlatformRelationWin;
 // A simple interface for a class that wants to be notified when Windows
 // accessibility APIs are used by a client, a strong indication that full
 // accessibility support should be enabled.
-class AX_EXPORT WinAccessibilityAPIUsageObserver {
+class COMPONENT_EXPORT(AX_PLATFORM) WinAccessibilityAPIUsageObserver {
  public:
   WinAccessibilityAPIUsageObserver();
   virtual ~WinAccessibilityAPIUsageObserver();
+  virtual void OnMSAAUsed() = 0;
   virtual void OnIAccessible2Used() = 0;
   virtual void OnScreenReaderHoneyPotQueried() = 0;
   virtual void OnAccNameCalled() = 0;
@@ -359,50 +359,52 @@ class AX_EXPORT WinAccessibilityAPIUsageObserver {
 
 // Get an observer list that allows modules across the codebase to
 // listen to when usage of Windows accessibility APIs is detected.
-extern AX_EXPORT
-    base::ObserverList<WinAccessibilityAPIUsageObserver>::Unchecked&
-    GetWinAccessibilityAPIUsageObserverList();
+extern COMPONENT_EXPORT(
+    AX_PLATFORM) base::ObserverList<WinAccessibilityAPIUsageObserver>::
+    Unchecked& GetWinAccessibilityAPIUsageObserverList();
 
 // Used to simplify calling StartFiringUIAEvents and EndFiringEvents
-class AX_EXPORT WinAccessibilityAPIUsageScopedUIAEventsNotifier {
+class COMPONENT_EXPORT(AX_PLATFORM)
+    WinAccessibilityAPIUsageScopedUIAEventsNotifier {
  public:
   WinAccessibilityAPIUsageScopedUIAEventsNotifier();
   ~WinAccessibilityAPIUsageScopedUIAEventsNotifier();
 };
 
 // TODO(nektar): Remove multithread superclass since we don't support it.
-class AX_EXPORT __declspec(uuid("26f5641a-246d-457b-a96d-07f3fae6acf2"))
-    AXPlatformNodeWin : public CComObjectRootEx<CComMultiThreadModel>,
-                        public IDispatchImpl<IAccessible2_4,
-                                             &IID_IAccessible2_4,
-                                             &LIBID_IAccessible2Lib>,
-                        public IAccessibleEx,
-                        public IAccessibleHypertext,
-                        public IAccessibleTable,
-                        public IAccessibleTable2,
-                        public IAccessibleTableCell,
-                        public IAccessibleTextSelectionContainer,
-                        public IAccessibleValue,
-                        public IAnnotationProvider,
-                        public IExpandCollapseProvider,
-                        public IGridItemProvider,
-                        public IGridProvider,
-                        public IInvokeProvider,
-                        public IRangeValueProvider,
-                        public IRawElementProviderFragment,
-                        public IRawElementProviderSimple2,
-                        public IScrollItemProvider,
-                        public IScrollProvider,
-                        public ISelectionItemProvider,
-                        public ISelectionProvider,
-                        public IServiceProvider,
-                        public ITableItemProvider,
-                        public ITableProvider,
-                        public IToggleProvider,
-                        public IValueProvider,
-                        public IWindowProvider,
-                        public IChromeAccessible,
-                        public AXPlatformNodeBase {
+class COMPONENT_EXPORT(AX_PLATFORM) __declspec(
+    uuid("26f5641a-246d-457b-a96d-07f3fae6acf2")) AXPlatformNodeWin
+    : public CComObjectRootEx<CComMultiThreadModel>,
+      public IDispatchImpl<IAccessible2_4,
+                           &IID_IAccessible2_4,
+                           &LIBID_IAccessible2Lib>,
+      public IAccessibleEx,
+      public IAccessibleHypertext,
+      public IAccessibleTable,
+      public IAccessibleTable2,
+      public IAccessibleTableCell,
+      public IAccessibleTextSelectionContainer,
+      public IAccessibleValue,
+      public IAnnotationProvider,
+      public IExpandCollapseProvider,
+      public IGridItemProvider,
+      public IGridProvider,
+      public IInvokeProvider,
+      public IRangeValueProvider,
+      public IRawElementProviderFragment,
+      public IRawElementProviderSimple2,
+      public IScrollItemProvider,
+      public IScrollProvider,
+      public ISelectionItemProvider,
+      public ISelectionProvider,
+      public IServiceProvider,
+      public ITableItemProvider,
+      public ITableProvider,
+      public IToggleProvider,
+      public IValueProvider,
+      public IWindowProvider,
+      public IChromeAccessible,
+      public AXPlatformNodeBase {
   using IDispatchImpl::Invoke;
 
  public:
@@ -1278,11 +1280,7 @@ class AX_EXPORT __declspec(uuid("26f5641a-246d-457b-a96d-07f3fae6acf2"))
 
   AXPlatformNodeWin* GetParentPlatformNodeWin() const;
 
-  bool ShouldNodeHaveFocusableState() const;
   int GetAnnotationTypeImpl() const;
-  void AugmentNameWithImageAnnotationIfApplicable(std::wstring* name) const;
-
-  bool IsPlatformDocumentWithContent() const;
 
   // Get the value attribute as a Bstr, this means something different depending
   // on the type of element being queried. (e.g. kColorWell uses kColorValue).
@@ -1518,6 +1516,12 @@ class AX_EXPORT __declspec(uuid("26f5641a-246d-457b-a96d-07f3fae6acf2"))
       const gfx::Range& range,
       const std::wstring& active_composition_text,
       bool is_composition_committed);
+
+  // Notifies observers that basic MSAA usage was detected. Only some of the
+  // APIs were chosen to avoid accessibility being enabled unnecessarily or
+  // unexpectedly in a test environment, while still ensuring that clients that
+  // only use MSAA/IAccessible have a way to turn on accessibility.
+  void NotifyObserverForMSAAUsage() const;
 
   void NotifyAPIObserverForPatternRequest(PATTERNID pattern_id) const;
   void NotifyAPIObserverForPropertyRequest(PROPERTYID property_id) const;

@@ -1,13 +1,13 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_SEGMENTATION_PLATFORM_PUBLIC_MODEL_PROVIDER_H_
 #define COMPONENTS_SEGMENTATION_PLATFORM_PUBLIC_MODEL_PROVIDER_H_
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/task/sequenced_task_runner.h"
-#include "components/optimization_guide/proto/models.pb.h"
+#include "components/segmentation_platform/public/proto/segmentation_platform.pb.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace segmentation_platform {
@@ -19,19 +19,19 @@ class SegmentationModelMetadata;
 // single optimization target.
 class ModelProvider {
  public:
-  using ModelUpdatedCallback = base::RepeatingCallback<void(
-      optimization_guide::proto::OptimizationTarget,
-      proto::SegmentationModelMetadata,
-      int64_t)>;
-  using ExecutionCallback =
-      base::OnceCallback<void(const absl::optional<float>&)>;
+  using Request = std::vector<float>;
+  using Response = std::vector<float>;
 
-  explicit ModelProvider(
-      optimization_guide::proto::OptimizationTarget optimization_target);
+  using ModelUpdatedCallback = base::RepeatingCallback<
+      void(proto::SegmentId, proto::SegmentationModelMetadata, int64_t)>;
+  using ExecutionCallback =
+      base::OnceCallback<void(const absl::optional<Response>&)>;
+
+  explicit ModelProvider(proto::SegmentId segment_id);
   virtual ~ModelProvider();
 
-  ModelProvider(ModelProvider&) = delete;
-  ModelProvider& operator=(ModelProvider&) = delete;
+  ModelProvider(const ModelProvider&) = delete;
+  ModelProvider& operator=(const ModelProvider&) = delete;
 
   // Implementation should return metadata that will be used to execute model.
   // The metadata provided should define the number of features needed by the
@@ -50,14 +50,14 @@ class ModelProvider {
   // of positive result. Also see `discrete_mapping` field in the
   // `SegmentationModelMetadata` for how the score will be used to determine the
   // segment.
-  virtual void ExecuteModelWithInput(const std::vector<float>& inputs,
+  virtual void ExecuteModelWithInput(const Request& inputs,
                                      ExecutionCallback callback) = 0;
 
   // Returns true if a model is available.
   virtual bool ModelAvailable() = 0;
 
  protected:
-  const optimization_guide::proto::OptimizationTarget optimization_target_;
+  const proto::SegmentId segment_id_;
 };
 
 // Interface used by segmentation platform to create ModelProvider(s).
@@ -65,15 +65,16 @@ class ModelProviderFactory {
  public:
   virtual ~ModelProviderFactory();
 
-  // Creates a model provider for the given `optimization_target`.
-  virtual std::unique_ptr<ModelProvider> CreateProvider(
-      optimization_guide::proto::OptimizationTarget) = 0;
+  // Creates a model provider for the given `segment_id`.
+  virtual std::unique_ptr<ModelProvider> CreateProvider(proto::SegmentId) = 0;
 
   // Creates a default model provider to be used when the original provider did
   // not provide a model. Returns `nullptr` when a default provider is not
   // available.
+  // TODO(crbug.com/1346389): This method should be moved to Config after
+  // migrating all the tests that use this.
   virtual std::unique_ptr<ModelProvider> CreateDefaultProvider(
-      optimization_guide::proto::OptimizationTarget) = 0;
+      proto::SegmentId) = 0;
 };
 
 }  // namespace segmentation_platform

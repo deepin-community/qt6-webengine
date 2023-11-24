@@ -6,8 +6,11 @@ import * as Common from '../../core/common/common.js';
 import * as SDK from '../../core/sdk/sdk.js';
 import type * as Bindings from '../../models/bindings/bindings.js';
 import * as TimelineModel from '../../models/timeline_model/timeline_model.js';
+import * as SourceMapScopes from '../../models/source_map_scopes/source_map_scopes.js';
 
 import {TimelineUIUtils} from './TimelineUIUtils.js';
+
+const resolveNamesTimeout = 500;
 
 export class PerformanceModel extends Common.ObjectWrapper.ObjectWrapper<EventTypes> {
   private mainTargetInternal: SDK.Target.Target|null;
@@ -16,8 +19,8 @@ export class PerformanceModel extends Common.ObjectWrapper.ObjectWrapper<EventTy
   private readonly timelineModelInternal: TimelineModel.TimelineModel.TimelineModelImpl;
   private readonly frameModelInternal: TimelineModel.TimelineFrameModel.TimelineFrameModel;
   private filmStripModelInternal: SDK.FilmStripModel.FilmStripModel|null;
-  private readonly irModel: TimelineModel.TimelineIRModel.TimelineIRModel;
   private windowInternal: Window;
+  private willResolveNames = false;
   private readonly extensionTracingModels: {
     title: string,
     model: SDK.TracingModel.TracingModel,
@@ -35,7 +38,6 @@ export class PerformanceModel extends Common.ObjectWrapper.ObjectWrapper<EventTy
     this.frameModelInternal = new TimelineModel.TimelineFrameModel.TimelineFrameModel(
         event => TimelineUIUtils.eventStyle(event).category.name);
     this.filmStripModelInternal = null;
-    this.irModel = new TimelineModel.TimelineIRModel.TimelineIRModel();
 
     this.windowInternal = {left: 0, right: Infinity};
 
@@ -71,27 +73,15 @@ export class PerformanceModel extends Common.ObjectWrapper.ObjectWrapper<EventTy
     return this.filtersInternal.every(f => f.accept(event));
   }
 
-  setTracingModel(model: SDK.TracingModel.TracingModel): void {
+  async setTracingModel(model: SDK.TracingModel.TracingModel): Promise<void> {
     this.tracingModelInternal = model;
     this.timelineModelInternal.setEvents(model);
-
-    let inputEvents: SDK.TracingModel.AsyncEvent[]|null = null;
-    let animationEvents: SDK.TracingModel.AsyncEvent[]|null = null;
-    for (const track of this.timelineModelInternal.tracks()) {
-      if (track.type === TimelineModel.TimelineModel.TrackType.Input) {
-        inputEvents = track.asyncEvents;
-      }
-      if (track.type === TimelineModel.TimelineModel.TrackType.Animation) {
-        animationEvents = track.asyncEvents;
-      }
-    }
-    if (inputEvents || animationEvents) {
-      this.irModel.populate(inputEvents || [], animationEvents || []);
-    }
+    await this.addSourceMapListeners();
 
     const mainTracks = this.timelineModelInternal.tracks().filter(
         track => track.type === TimelineModel.TimelineModel.TrackType.MainThread && track.forMainFrame &&
             track.events.length);
+
     const threadData = mainTracks.map(track => {
       const event = track.events[0];
       return {thread: event.thread, time: event.startTime};
@@ -105,6 +95,73 @@ export class PerformanceModel extends Common.ObjectWrapper.ObjectWrapper<EventTy
           (this.recordStartTimeInternal as number));
     }
     this.autoWindowTimes();
+  }
+
+  #cpuProfileNodes(): SDK.CPUProfileDataModel.CPUProfileNode[] {
+    return this.timelineModel().cpuProfiles().flatMap(p => p.nodes() || []);
+  }
+
+  async addSourceMapListeners(): Promise<void> {
+    const debuggerModelsToListen = new Set<SDK.DebuggerModel.DebuggerModel>();
+    for (const node of this.#cpuProfileNodes()) {
+      if (!node) {
+        continue;
+      }
+      const debuggerModelToListen = this.#maybeGetDebuggerModelForNode(node);
+      if (!debuggerModelToListen) {
+        continue;
+      }
+
+      debuggerModelsToListen.add(debuggerModelToListen);
+    }
+    for (const debuggerModel of debuggerModelsToListen) {
+      debuggerModel.sourceMapManager().addEventListener(
+          SDK.SourceMapManager.Events.SourceMapAttached, this.#onAttachedSourceMap, this);
+    }
+    await this.#resolveNamesFromCPUProfile();
+  }
+
+  // If a node corresponds to a script that has not been parsed or a script
+  // that has a source map, we should listen to SourceMapAttached events to
+  // attempt a function name resolving.
+  #maybeGetDebuggerModelForNode(node: SDK.CPUProfileDataModel.CPUProfileNode): SDK.DebuggerModel.DebuggerModel|null {
+    const target = node.target();
+    const debuggerModel = target?.model(SDK.DebuggerModel.DebuggerModel);
+    if (!debuggerModel) {
+      return null;
+    }
+    const script = debuggerModel.scriptForId(String(node.callFrame.scriptId));
+    const shouldListenToSourceMap = !script || script.sourceMapURL;
+    if (shouldListenToSourceMap) {
+      return debuggerModel;
+    }
+    return null;
+  }
+
+  async #resolveNamesFromCPUProfile(): Promise<void> {
+    for (const node of this.#cpuProfileNodes()) {
+      const resolvedFunctionName =
+          await SourceMapScopes.NamesResolver.resolveProfileFrameFunctionName(node.callFrame, node.target());
+      node.setFunctionName(resolvedFunctionName);
+    }
+  }
+
+  async #onAttachedSourceMap(): Promise<void> {
+    if (!this.willResolveNames) {
+      this.willResolveNames = true;
+      // Resolving names triggers a repaint of the flame chart. Instead of attempting to resolve
+      // names every time a source map is attached, wait for some time once the first source map is
+      // attached. This way we allow for other source maps to be parsed before attempting a name
+      // resolving using the available source maps. Otherwise the UI is blocked when the number
+      // of source maps is particularly large.
+      setTimeout(this.resolveNamesAndUpdate.bind(this), resolveNamesTimeout);
+    }
+  }
+
+  async resolveNamesAndUpdate(): Promise<void> {
+    this.willResolveNames = false;
+    await this.#resolveNamesFromCPUProfile();
+    this.dispatchEventToListeners(Events.NamesResolved);
   }
 
   addExtensionEvents(title: string, model: SDK.TracingModel.TracingModel, timeOffset: number): void {
@@ -145,10 +202,6 @@ export class PerformanceModel extends Common.ObjectWrapper.ObjectWrapper<EventTy
 
   frameModel(): TimelineModel.TimelineFrameModel.TimelineFrameModel {
     return this.frameModelInternal;
-  }
-
-  interactionRecords(): Common.SegmentedRange.Segment<TimelineModel.TimelineIRModel.Phases>[] {
-    return this.irModel.interactionRecords();
   }
 
   extensionInfo(): {
@@ -247,8 +300,8 @@ export class PerformanceModel extends Common.ObjectWrapper.ObjectWrapper<EventTy
 export enum Events {
   ExtensionDataAdded = 'ExtensionDataAdded',
   WindowChanged = 'WindowChanged',
+  NamesResolved = 'NamesResolved',
 }
-
 export interface WindowChangedEvent {
   window: Window;
   animate: boolean|undefined;
@@ -257,6 +310,7 @@ export interface WindowChangedEvent {
 export type EventTypes = {
   [Events.ExtensionDataAdded]: void,
   [Events.WindowChanged]: WindowChangedEvent,
+  [Events.NamesResolved]: void,
 };
 
 export interface Window {

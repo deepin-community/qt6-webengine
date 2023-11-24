@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,6 +14,7 @@
 
 #include "base/memory/weak_ptr.h"
 #include "base/task/single_thread_task_runner.h"
+#include "build/build_config.h"
 #include "headless/lib/browser/headless_devtools_manager_delegate.h"
 #include "headless/public/headless_devtools_target.h"
 #include "headless/public/headless_export.h"
@@ -26,6 +27,10 @@ class PrefService;
 namespace policy {
 class PolicyService;
 }  // namespace policy
+#endif
+
+#if BUILDFLAG(IS_MAC)
+#include "ui/display/screen.h"
 #endif
 
 namespace ui {
@@ -49,9 +54,8 @@ extern const base::FilePath::CharType kDefaultProfileName[];
 class HEADLESS_EXPORT HeadlessBrowserImpl : public HeadlessBrowser,
                                             public HeadlessDevToolsTarget {
  public:
-  HeadlessBrowserImpl(
-      base::OnceCallback<void(HeadlessBrowser*)> on_start_callback,
-      HeadlessBrowser::Options options);
+  explicit HeadlessBrowserImpl(
+      base::OnceCallback<void(HeadlessBrowser*)> on_start_callback);
 
   HeadlessBrowserImpl(const HeadlessBrowserImpl&) = delete;
   HeadlessBrowserImpl& operator=(const HeadlessBrowserImpl&) = delete;
@@ -86,7 +90,8 @@ class HEADLESS_EXPORT HeadlessBrowserImpl : public HeadlessBrowser,
 
   void RunOnStartCallback();
 
-  HeadlessBrowser::Options* options() { return &options_; }
+  void SetOptions(HeadlessBrowser::Options options);
+  HeadlessBrowser::Options* options() { return &options_.value(); }
 
   HeadlessBrowserContext* CreateBrowserContext(
       HeadlessBrowserContext::Builder* builder);
@@ -116,15 +121,20 @@ class HEADLESS_EXPORT HeadlessBrowserImpl : public HeadlessBrowser,
   policy::PolicyService* GetPolicyService();
 #endif
 
- protected:
+ private:
+#if BUILDFLAG(IS_MAC)
+  std::unique_ptr<display::ScopedNativeScreen> screen_;
+#endif
+
   base::OnceCallback<void(HeadlessBrowser*)> on_start_callback_;
-  HeadlessBrowser::Options options_;
-  raw_ptr<HeadlessBrowserMainParts> browser_main_parts_;  // Not owned.
+  absl::optional<HeadlessBrowser::Options> options_;
+  raw_ptr<HeadlessBrowserMainParts, DanglingUntriaged> browser_main_parts_ =
+      nullptr;
 
   base::flat_map<std::string, std::unique_ptr<HeadlessBrowserContextImpl>>
       browser_contexts_;
-  raw_ptr<HeadlessBrowserContext> default_browser_context_;  // Not owned.
-
+  raw_ptr<HeadlessBrowserContext, DanglingUntriaged> default_browser_context_ =
+      nullptr;
   scoped_refptr<content::DevToolsAgentHost> agent_host_;
   std::unique_ptr<HeadlessRequestContextManager>
       system_request_context_manager_;

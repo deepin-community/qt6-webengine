@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -104,11 +104,6 @@ WindowAndroid::CreateForTesting() {
       reinterpret_cast<WindowAndroid*>(native_pointer));
 }
 
-void WindowAndroid::OnCompositingDidCommit() {
-  for (WindowAndroidObserver& observer : observer_list_)
-    observer.OnCompositingDidCommit();
-}
-
 void WindowAndroid::AddObserver(WindowAndroidObserver* observer) {
   if (!observer_list_.HasObserver(observer))
     observer_list_.AddObserver(observer);
@@ -139,6 +134,12 @@ void WindowAndroid::DetachCompositor() {
 float WindowAndroid::GetRefreshRate() {
   JNIEnv* env = AttachCurrentThread();
   return Java_WindowAndroid_getRefreshRate(env, GetJavaObject());
+}
+
+gfx::OverlayTransform WindowAndroid::GetOverlayTransform() {
+  JNIEnv* env = AttachCurrentThread();
+  return static_cast<gfx::OverlayTransform>(
+      Java_WindowAndroid_getOverlayTransform(env, GetJavaObject()));
 }
 
 std::vector<float> WindowAndroid::GetSupportedRefreshRates() {
@@ -226,6 +227,13 @@ void WindowAndroid::OnSupportedRefreshRatesUpdated(
     compositor_->OnUpdateSupportedRefreshRates(supported_refresh_rates);
 }
 
+void WindowAndroid::OnOverlayTransformUpdated(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& obj) {
+  if (compositor_)
+    compositor_->OnUpdateOverlayTransform();
+}
+
 void WindowAndroid::SetWideColorEnabled(bool enabled) {
   JNIEnv* env = AttachCurrentThread();
   Java_WindowAndroid_setWideColorEnabled(env, GetJavaObject(), enabled);
@@ -248,11 +256,6 @@ bool WindowAndroid::CanRequestPermission(const std::string& permission) {
 WindowAndroid* WindowAndroid::GetWindowAndroid() const {
   DCHECK(parent_ == nullptr);
   return const_cast<WindowAndroid*>(this);
-}
-
-ScopedJavaLocalRef<jobject> WindowAndroid::GetWindowToken() {
-  JNIEnv* env = AttachCurrentThread();
-  return Java_WindowAndroid_getWindowToken(env, GetJavaObject());
 }
 
 display::Display WindowAndroid::GetDisplayWithWindowColorSpace() {

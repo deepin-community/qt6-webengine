@@ -1,4 +1,4 @@
-// Copyright (c) 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,18 +19,9 @@
 #include "net/cert/known_roots.h"
 #include "net/cert/test_root_certs.h"
 #include "net/cert/x509_certificate.h"
-#include "net/cert/x509_util_ios.h"
-#include "net/cert/x509_util_ios_and_mac.h"
+#include "net/cert/x509_util_apple.h"
 
 using base::ScopedCFTypeRef;
-
-extern "C" {
-// Declared in <Security/SecTrust.h>, available in iOS 12.1.1+
-// TODO(mattm): Remove this weak_import once chromium requires a new enough
-// iOS SDK.
-OSStatus SecTrustSetSignedCertificateTimestamps(SecTrustRef, CFArrayRef)
-    __attribute__((weak_import));
-}  // extern "C"
 
 namespace net {
 
@@ -229,17 +220,9 @@ int BuildAndEvaluateSecTrustRef(CFArrayRef cert_array,
 #endif
   }
 
-  ScopedCFTypeRef<CFMutableArrayRef> tmp_verified_chain(
-      CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks));
-  const CFIndex chain_length = SecTrustGetCertificateCount(tmp_trust);
-  for (CFIndex i = 0; i < chain_length; ++i) {
-    SecCertificateRef chain_cert = SecTrustGetCertificateAtIndex(tmp_trust, i);
-    CFArrayAppendValue(tmp_verified_chain, chain_cert);
-  }
-
   trust_ref->swap(scoped_tmp_trust);
   trust_error->swap(tmp_error);
-  verified_chain->reset(tmp_verified_chain.release());
+  *verified_chain = x509_util::CertificateChainFromSecTrust(tmp_trust);
   *is_trusted = tmp_is_trusted;
   return OK;
 }

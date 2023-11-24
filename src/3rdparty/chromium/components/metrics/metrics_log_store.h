@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,8 +9,10 @@
 #include <string>
 
 #include "base/metrics/histogram_base.h"
+#include "base/sequence_checker.h"
 #include "components/metrics/log_store.h"
 #include "components/metrics/metrics_log.h"
+#include "components/metrics/metrics_logs_event_manager.h"
 #include "components/metrics/unsent_log_store.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
@@ -61,9 +63,12 @@ class MetricsLogStore : public LogStore {
   // |storage_limits| provides log count and size limits to enforce when
   // persisting logs to local storage. |signing_key| is used to generate a
   // signature of a log, which will be uploaded to validate data integrity.
+  // |logs_event_manager| is used to notify observers of log events. Can be set
+  // to null if observing the events is not necessary.
   MetricsLogStore(PrefService* local_state,
                   StorageLimits storage_limits,
-                  const std::string& signing_key);
+                  const std::string& signing_key,
+                  MetricsLogsEventManager* logs_event_manager);
 
   MetricsLogStore(const MetricsLogStore&) = delete;
   MetricsLogStore& operator=(const MetricsLogStore&) = delete;
@@ -73,10 +78,37 @@ class MetricsLogStore : public LogStore {
   // Registers local state prefs used by this class.
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
-  // Saves |log_data| as the given type.
+  // Saves |log_data| as the given |log_type|. Before being stored, the data
+  // will be compressed, and a hash and signature will be computed.
+  // TODO(crbug/1052796): Remove this function, and use StoreLogInfo()
+  // everywhere instead.
   void StoreLog(const std::string& log_data,
                 MetricsLog::LogType log_type,
-                const LogMetadata& log_metadata);
+                const LogMetadata& log_metadata,
+                MetricsLogsEventManager::CreateReason reason);
+
+  // Saves a log, represented by a LogInfo object, as the given |log_type|. This
+  // is useful if the LogInfo instance needs to be created outside the main
+  // thread (since creating a LogInfo from log data requires heavy work). Note
+  // that we also pass the size of the log data before being compressed. This
+  // is simply for calculating and emitting some metrics, and is otherwise
+  // unused.
+  void StoreLogInfo(std::unique_ptr<UnsentLogStore::LogInfo> log_info,
+                    size_t uncompressed_log_size,
+                    MetricsLog::LogType log_type,
+                    MetricsLogsEventManager::CreateReason reason);
+
+  // Deletes all logs, in memory and on disk.
+  void Purge();
+
+  // Returns the signing key that should be used to create a signature for a
+  // log of the given |log_type|. We don't "simply" return the signing key that
+  // was passed during the construction of this object, because although
+  // |initial_log_queue_| and |ongoing_log_queue_| are also created with the
+  // that same signing key, |alternate_ongoing_log_queue_| is provided
+  // externally (see |SetAlternateOngoingLogStore()|), which means it could
+  // theoretically be created with a different signing key (although unlikely).
+  const std::string& GetSigningKeyForLogType(MetricsLog::LogType log_type);
 
   // Binds an alternate log store to be managed by |this|. All ongoing logs
   // after this call will be written to |log_store| until it is unset. Only one
@@ -106,7 +138,7 @@ class MetricsLogStore : public LogStore {
   void StageNextLog() override;
   void DiscardStagedLog() override;
   void MarkStagedLogAsSent() override;
-  void TrimAndPersistUnsentLogs() override;
+  void TrimAndPersistUnsentLogs(bool overwrite_in_memory_store) override;
   void LoadPersistedUnsentLogs() override;
 
   // Inspection methods for tests.
@@ -126,8 +158,14 @@ class MetricsLogStore : public LogStore {
   // Returns true if alternate log store is set and it has a staged log.
   bool alternate_ongoing_log_store_has_staged_log() const;
 
+  // Returns the log store for given a |log_type|.
+  UnsentLogStore* GetLogStoreForLogType(MetricsLog::LogType log_type);
+
   // Tracks whether unsent logs (if any) have been loaded from the serializer.
   bool unsent_logs_loaded_;
+
+  // Event manager to notify observers of log events.
+  const raw_ptr<MetricsLogsEventManager> logs_event_manager_;
 
   // Logs stored with the INITIAL_STABILITY_LOG type that haven't been sent yet.
   // These logs will be staged first when staging new logs.
@@ -138,6 +176,8 @@ class MetricsLogStore : public LogStore {
   // been sent yet. If initialized, all logs of type ONGOING_LOG will be stored
   // here instead of |ongoing_log_queue_|.
   std::unique_ptr<UnsentLogStore> alternate_ongoing_log_queue_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 };
 
 }  // namespace metrics

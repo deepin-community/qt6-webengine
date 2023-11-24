@@ -1,7 +1,11 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/memory/raw_ptr.h"
+
+#import "base/task/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #import "content/browser/renderer_host/render_widget_host_view_mac_editcommand_helper.h"
 
 #import <Cocoa/Cocoa.h>
@@ -10,12 +14,12 @@
 
 #include "base/mac/scoped_nsautorelease_pool.h"
 #include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/compositor/test/test_image_transport_factory.h"
 #include "content/browser/gpu/compositor_util.h"
 #include "content/browser/renderer_host/frame_token_message_queue.h"
 #include "content/browser/renderer_host/render_widget_host_delegate.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
+#include "content/browser/renderer_host/visible_time_request_trigger.h"
 #include "content/browser/site_instance_group.h"
 #include "content/browser/site_instance_impl.h"
 #include "content/public/test/browser_task_environment.h"
@@ -27,6 +31,7 @@
 #include "testing/platform_test.h"
 #include "ui/accelerated_widget_mac/window_resize_helper_mac.h"
 #include "ui/base/layout.h"
+#include "ui/display/screen.h"
 
 using content::RenderWidgetHostViewMac;
 
@@ -40,7 +45,7 @@ using content::RenderWidgetHostViewMac;
 // Class that owns a RenderWidgetHostViewMac.
 @interface RenderWidgetHostNSViewHostOwner
     : NSObject <RenderWidgetHostNSViewHostOwner> {
-  RenderWidgetHostViewMac* _rwhvm;
+  raw_ptr<RenderWidgetHostViewMac> _rwhvm;
 }
 
 - (id)initWithRenderWidgetHostViewMac:(RenderWidgetHostViewMac*)rwhvm;
@@ -98,6 +103,11 @@ class RenderWidgetHostDelegateEditCommandCounter
   void Paste() override {}
   void PasteAndMatchStyle() override {}
   void SelectAll() override {}
+  VisibleTimeRequestTrigger& GetVisibleTimeRequestTrigger() override {
+    return visible_time_request_trigger_;
+  }
+
+  VisibleTimeRequestTrigger visible_time_request_trigger_;
 };
 
 class RenderWidgetHostViewMacEditCommandHelperTest : public PlatformTest {
@@ -122,6 +132,7 @@ class RenderWidgetHostViewMacEditCommandHelperWithTaskEnvTest
   void TearDown() override { ImageTransportFactory::Terminate(); }
 
  private:
+  display::ScopedNativeScreen screen_;
   // This has a MessageLoop for ImageTransportFactory and enables
   // BrowserThread::UI for RecyclableCompositorMac used by
   // RenderWidgetHostViewMac.
@@ -157,7 +168,8 @@ TEST_F(RenderWidgetHostViewMacEditCommandHelperWithTaskEnvTest,
             /*hidden=*/false, /*renderer_initiated_creation=*/false,
             std::make_unique<FrameTokenMessageQueue>());
 
-    ui::WindowResizeHelperMac::Get()->Init(base::ThreadTaskRunnerHandle::Get());
+    ui::WindowResizeHelperMac::Get()->Init(
+        base::SingleThreadTaskRunner::GetCurrentDefault());
 
     // Owned by its |GetInProcessNSView()|, i.e. |rwhv_cocoa|.
     RenderWidgetHostViewMac* rwhv_mac =

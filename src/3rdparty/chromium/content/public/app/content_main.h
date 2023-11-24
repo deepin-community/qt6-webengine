@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 
 #include <stddef.h>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
 
@@ -105,14 +105,6 @@ CONTENT_EXPORT int RunContentProcess(ContentMainParams params,
 // This should only be called once before ContentMainRunner actually running.
 // The ownership of |delegate| is transferred.
 CONTENT_EXPORT void SetContentMainDelegate(ContentMainDelegate* delegate);
-
-#if defined(CONTENT_IMPLEMENTATION)
-// In browser tests, ContentMain.java is not run either, and the browser test
-// harness does not run ContentMain() at all. It does need to make use of the
-// delegate though while replacing ContentMain().
-ContentMainDelegate* GetContentMainDelegate();
-#endif
-
 #else
 // ContentMain should be called from the embedder's main() function to do the
 // initial setup for every process. The embedder has a chance to customize

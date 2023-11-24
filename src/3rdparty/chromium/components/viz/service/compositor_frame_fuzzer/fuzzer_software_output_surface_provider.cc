@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,6 @@
 
 #include "base/files/file_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "components/viz/service/display/software_output_device.h"
 #include "components/viz/service/display_embedder/software_output_surface.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
@@ -89,8 +88,7 @@ FuzzerSoftwareOutputSurfaceProvider::~FuzzerSoftwareOutputSurfaceProvider() =
 std::unique_ptr<DisplayCompositorMemoryAndTaskController>
 FuzzerSoftwareOutputSurfaceProvider::CreateGpuDependency(
     bool gpu_compositing,
-    gpu::SurfaceHandle surface_handle,
-    const RendererSettings& renderer_settings) {
+    gpu::SurfaceHandle surface_handle) {
   return nullptr;
 }
 

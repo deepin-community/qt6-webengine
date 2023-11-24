@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -47,7 +47,7 @@ namespace {
 // or why we aren't.
 enum class AttemptingMultipleOverlays {
   kYes = 0,
-  kNoTooFewMaxOverlaysConsidered = 1,
+  kNoFeatureDisabled = 1,
   kNoRequiredOverlay = 2,
   kNoUnsupportedStrategy = 3,
   kMaxValue = kNoUnsupportedStrategy,
@@ -56,10 +56,10 @@ enum class AttemptingMultipleOverlays {
 constexpr char kShouldAttemptMultipleOverlaysHistogramName[] =
     "Compositing.Display.OverlayProcessorUsingStrategy."
     "ShouldAttemptMultipleOverlays";
-constexpr char kNumOverlaysAttemptedHistogramName[] =
-    "Compositing.Display.OverlayProcessorUsingStrategy.NumOverlaysAttempted";
 constexpr char kNumOverlaysPromotedHistogramName[] =
     "Compositing.Display.OverlayProcessorUsingStrategy.NumOverlaysPromoted";
+constexpr char kNumOverlaysAttemptedHistogramName[] =
+    "Compositing.Display.OverlayProcessorUsingStrategy.NumOverlaysAttempted";
 constexpr char kNumOverlaysFailedHistogramName[] =
     "Compositing.Display.OverlayProcessorUsingStrategy.NumOverlaysFailed";
 
@@ -161,6 +161,10 @@ void OverlayProcessorUsingStrategy::ProcessForOverlays(
   auto* render_pass = render_passes->back().get();
   bool success = false;
 
+  UMA_HISTOGRAM_COUNTS_1000(
+      "Compositing.Display.OverlayProcessorUsingStrategy.NumQuadsConsidered",
+      render_pass->quad_list.size());
+
   DBG_DRAW_RECT("overlay.incoming.damage", (*damage_rect));
   for (auto&& each : surface_damage_rect_list) {
     DBG_DRAW_RECT("overlay.surface.damage", each);
@@ -170,21 +174,16 @@ void OverlayProcessorUsingStrategy::ProcessForOverlays(
   // CALayers because the framebuffer would be missing the removed quads'
   // contents.
   if (render_pass->copy_requests.empty()) {
-    if (features::IsOverlayPrioritizationEnabled()) {
-      success = AttemptWithStrategiesPrioritized(
-          output_color_matrix, render_pass_backdrop_filters, resource_provider,
-          render_passes, &surface_damage_rect_list, output_surface_plane,
-          candidates, content_bounds, damage_rect);
-    } else {
-      success = AttemptWithStrategies(
-          output_color_matrix, render_pass_backdrop_filters, resource_provider,
-          render_passes, &surface_damage_rect_list, output_surface_plane,
-          candidates, content_bounds);
-    }
+    success = AttemptWithStrategies(
+        output_color_matrix, render_pass_backdrop_filters, resource_provider,
+        render_passes, &surface_damage_rect_list, output_surface_plane,
+        candidates, content_bounds, damage_rect);
   }
   LogCheckOverlaySupportMetrics();
 
   DCHECK(candidates->empty() || success);
+  UMA_HISTOGRAM_COUNTS_100(kNumOverlaysPromotedHistogramName,
+                           candidates->size());
 
   UpdateOverlayStatusMap(*candidates);
   UpdateDamageRect(surface_damage_rect_list, *damage_rect);
@@ -192,9 +191,10 @@ void OverlayProcessorUsingStrategy::ProcessForOverlays(
   NotifyOverlayPromotion(resource_provider, *candidates,
                          render_pass->quad_list);
 
-  if (!candidates->empty()) {
-    DBG_DRAW_RECT("overlay.selected.rect", (*candidates)[0].display_rect);
+  for (auto& selected_candidate : *candidates) {
+    DBG_DRAW_RECT("overlay.selected.rect", selected_candidate.display_rect);
   }
+
   DBG_DRAW_RECT("overlay.outgoing.damage", (*damage_rect));
 
   TRACE_COUNTER1(TRACE_DISABLED_BY_DEFAULT("viz.debug.overlay_planes"),
@@ -413,7 +413,7 @@ void OverlayProcessorUsingStrategy::UpdateDamageRect(
     const auto& status = it.second;
     if (status.plane_z_order != 0) {
       RecordOverlayDamageRectHistograms(status.plane_z_order > 0,
-                                        status.damage_area_estimate != 0,
+                                        status.damage_area_estimate != 0.f,
                                         damage_rect.IsEmpty());
     }
   }
@@ -431,36 +431,7 @@ void OverlayProcessorUsingStrategy::AdjustOutputSurfaceOverlay(
     output_surface_plane->reset();
 }
 
-bool OverlayProcessorUsingStrategy::AttemptWithStrategies(
-    const SkM44& output_color_matrix,
-    const OverlayProcessorInterface::FilterOperationsMap&
-        render_pass_backdrop_filters,
-    DisplayResourceProvider* resource_provider,
-    AggregatedRenderPassList* render_pass_list,
-    SurfaceDamageRectList* surface_damage_rect_list,
-    OverlayProcessorInterface::OutputSurfaceOverlayPlane* primary_plane,
-    OverlayCandidateList* candidates,
-    std::vector<gfx::Rect>* content_bounds) {
-  last_successful_strategy_ = nullptr;
-  for (const auto& strategy : strategies_) {
-    if (strategy->Attempt(output_color_matrix, render_pass_backdrop_filters,
-                          resource_provider, render_pass_list,
-                          surface_damage_rect_list, primary_plane, candidates,
-                          content_bounds)) {
-      // This function is used by underlay strategy to mark the primary plane as
-      // enable_blending.
-      strategy->AdjustOutputSurfaceOverlay(primary_plane);
-      LogStrategyEnumUMA(strategy->GetUMAEnum());
-      last_successful_strategy_ = strategy.get();
-      return true;
-    }
-  }
-
-  LogStrategyEnumUMA(OverlayStrategy::kNoStrategyUsed);
-  return false;
-}
-
-void OverlayProcessorUsingStrategy::SortProposedOverlayCandidatesPrioritized(
+void OverlayProcessorUsingStrategy::SortProposedOverlayCandidates(
     std::vector<OverlayProposedCandidate>* proposed_candidates) {
   // Removes trackers for candidates that are no longer being rendered.
   for (auto it = tracked_candidates_.begin();
@@ -496,11 +467,11 @@ void OverlayProcessorUsingStrategy::SortProposedOverlayCandidatesPrioritized(
     // for low latency surfaces (inking like in the google keeps application).
     const bool force_update = it->candidate.overlay_damage_index !=
                                   OverlayCandidate::kInvalidDamageIndex &&
-                              it->candidate.damage_area_estimate != 0;
-    track_data.AddRecord(
-        frame_sequence_number_,
-        static_cast<float>(it->candidate.damage_area_estimate) / display_area,
-        it->candidate.resource_id, tracker_config_, force_update);
+                              it->candidate.damage_area_estimate != 0.f;
+    track_data.AddRecord(frame_sequence_number_,
+                         it->candidate.damage_area_estimate / display_area,
+                         it->candidate.resource_id, tracker_config_,
+                         force_update);
     // Here a series of criteria are considered for wholesale rejection of a
     // candidate. The rational for rejection is usually power improvements but
     // this can indirectly reallocate limited overlay resources to another
@@ -559,7 +530,7 @@ void OverlayProcessorUsingStrategy::SortProposedOverlayCandidatesPrioritized(
       });
 }
 
-bool OverlayProcessorUsingStrategy::AttemptWithStrategiesPrioritized(
+bool OverlayProcessorUsingStrategy::AttemptWithStrategies(
     const SkM44& output_color_matrix,
     const OverlayProcessorInterface::FilterOperationsMap&
         render_pass_backdrop_filters,
@@ -573,10 +544,10 @@ bool OverlayProcessorUsingStrategy::AttemptWithStrategiesPrioritized(
   last_successful_strategy_ = nullptr;
   std::vector<OverlayProposedCandidate> proposed_candidates;
   for (const auto& strategy : strategies_) {
-    strategy->ProposePrioritized(
-        output_color_matrix, render_pass_backdrop_filters, resource_provider,
-        render_pass_list, surface_damage_rect_list, primary_plane,
-        &proposed_candidates, content_bounds);
+    strategy->Propose(output_color_matrix, render_pass_backdrop_filters,
+                      resource_provider, render_pass_list,
+                      surface_damage_rect_list, primary_plane,
+                      &proposed_candidates, content_bounds);
   }
 
   size_t num_proposed_pre_sort = proposed_candidates.size();
@@ -584,7 +555,12 @@ bool OverlayProcessorUsingStrategy::AttemptWithStrategiesPrioritized(
       "Viz.DisplayCompositor.OverlayNumProposedCandidates",
       num_proposed_pre_sort);
 
-  SortProposedOverlayCandidatesPrioritized(&proposed_candidates);
+  SortProposedOverlayCandidates(&proposed_candidates);
+  if (proposed_candidates.size() == 0) {
+    LogStrategyEnumUMA(num_proposed_pre_sort != 0
+                           ? OverlayStrategy::kNoStrategyFailMin
+                           : OverlayStrategy::kNoStrategyUsed);
+  }
 
   if (ShouldAttemptMultipleOverlays(proposed_candidates)) {
     auto* render_pass = render_pass_list->back().get();
@@ -602,7 +578,7 @@ bool OverlayProcessorUsingStrategy::AttemptWithStrategiesPrioritized(
     if (candidate.candidate.requires_overlay)
       has_required_overlay = true;
 
-    bool used_overlay = candidate.strategy->AttemptPrioritized(
+    bool used_overlay = candidate.strategy->Attempt(
         output_color_matrix, render_pass_backdrop_filters, resource_provider,
         render_pass_list, surface_damage_rect_list, primary_plane, candidates,
         content_bounds, candidate);
@@ -631,7 +607,7 @@ bool OverlayProcessorUsingStrategy::AttemptWithStrategiesPrioritized(
              new_scale_factor < 1.0f; new_scale_factor += kScaleAdjust) {
           float zoom_scale = new_scale_factor / scale_factor;
           ScaleCandidateSrcRect(org_src_rect, zoom_scale, &candidate.candidate);
-          if (candidate.strategy->AttemptPrioritized(
+          if (candidate.strategy->Attempt(
                   output_color_matrix, render_pass_backdrop_filters,
                   resource_provider, render_pass_list, surface_damage_rect_list,
                   primary_plane, candidates, content_bounds, candidate)) {
@@ -665,11 +641,7 @@ bool OverlayProcessorUsingStrategy::AttemptWithStrategiesPrioritized(
   }
   RegisterOverlayRequirement(has_required_overlay);
 
-  if (proposed_candidates.size() == 0) {
-    LogStrategyEnumUMA(num_proposed_pre_sort != 0
-                           ? OverlayStrategy::kNoStrategyFailMin
-                           : OverlayStrategy::kNoStrategyUsed);
-  } else {
+  if (proposed_candidates.size() != 0) {
     LogStrategyEnumUMA(OverlayStrategy::kNoStrategyAllFail);
   }
   OnOverlaySwitchUMA(ProposedCandidateKey());
@@ -678,10 +650,9 @@ bool OverlayProcessorUsingStrategy::AttemptWithStrategiesPrioritized(
 
 bool OverlayProcessorUsingStrategy::ShouldAttemptMultipleOverlays(
     const std::vector<OverlayProposedCandidate>& sorted_candidates) {
-  if (max_overlays_considered_ <= 1) {
-    UMA_HISTOGRAM_ENUMERATION(
-        kShouldAttemptMultipleOverlaysHistogramName,
-        AttemptingMultipleOverlays::kNoTooFewMaxOverlaysConsidered);
+  if (max_overlays_config_ <= 1) {
+    UMA_HISTOGRAM_ENUMERATION(kShouldAttemptMultipleOverlaysHistogramName,
+                              AttemptingMultipleOverlays::kNoFeatureDisabled);
     return false;
   }
 
@@ -718,6 +689,7 @@ bool OverlayProcessorUsingStrategy::AttemptMultipleOverlays(
     OverlayCandidateList& candidates) {
   if (sorted_candidates.empty()) {
     UMA_HISTOGRAM_COUNTS_100(kNumOverlaysAttemptedHistogramName, 0);
+    UMA_HISTOGRAM_COUNTS_100(kNumOverlaysFailedHistogramName, 0);
     return false;
   }
 
@@ -796,12 +768,11 @@ bool OverlayProcessorUsingStrategy::AttemptMultipleOverlays(
 
   UMA_HISTOGRAM_COUNTS_100(kNumOverlaysAttemptedHistogramName,
                            num_overlays_attempted);
-  UMA_HISTOGRAM_COUNTS_100(kNumOverlaysPromotedHistogramName,
-                           num_overlays_promoted);
   UMA_HISTOGRAM_COUNTS_100(kNumOverlaysFailedHistogramName,
                            num_overlays_attempted - num_overlays_promoted);
 
   if (candidates.empty()) {
+    LogStrategyEnumUMA(OverlayStrategy::kNoStrategyAllFail);
     return false;
   }
 
@@ -825,6 +796,7 @@ bool OverlayProcessorUsingStrategy::AttemptMultipleOverlays(
   // Commit successful candidates.
   for (auto& test_candidate : test_candidates) {
     test_candidate.strategy->CommitCandidate(test_candidate, render_pass);
+    LogStrategyEnumUMA(test_candidate.strategy->GetUMAEnum());
   }
 
   return true;

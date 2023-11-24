@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -49,6 +49,7 @@ class NET_EXPORT_PRIVATE QuicEventLogger
                     quic::EncryptionLevel encryption_level,
                     quic::TransmissionType transmission_type,
                     quic::QuicTime detection_time) override;
+  void OnConfigProcessed(const SendParameters& parameters) override;
   void OnPacketReceived(const quic::QuicSocketAddress& self_address,
                         const quic::QuicSocketAddress& peer_address,
                         const quic::QuicEncryptedPacket& packet) override;

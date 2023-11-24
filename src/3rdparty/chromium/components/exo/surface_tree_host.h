@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,9 @@
 #define COMPONENTS_EXO_SURFACE_TREE_HOST_H_
 
 #include <memory>
+#include <set>
 
+#include "base/containers/queue.h"
 #include "base/memory/weak_ptr.h"
 #include "components/exo/layer_tree_frame_sink_holder.h"
 #include "components/exo/surface.h"
@@ -43,7 +45,7 @@ class SurfaceTreeHost : public SurfaceDelegate,
 
   // Sets a root surface of a surface tree. This surface tree will be hosted in
   // the |host_window_|.
-  void SetRootSurface(Surface* root_surface);
+  virtual void SetRootSurface(Surface* root_surface);
 
   // Returns false if the hit test region is empty.
   bool HasHitTestRegion() const;
@@ -61,6 +63,10 @@ class SurfaceTreeHost : public SurfaceDelegate,
   void DidPresentCompositorFrame(uint32_t presentation_token,
                                  const gfx::PresentationFeedback& feedback);
 
+  // Sets the scale factor for all buffers associated with this surface. This
+  // affects all future commits.
+  void SetScaleFactor(float scale_factor);
+
   aura::Window* host_window() { return host_window_.get(); }
   const aura::Window* host_window() const { return host_window_.get(); }
 
@@ -75,14 +81,12 @@ class SurfaceTreeHost : public SurfaceDelegate,
 
   using PresentationCallbacks = std::list<Surface::PresentationCallback>;
 
-  const PresentationCallbacks& presentation_callbacks() const {
-    return presentation_callbacks_;
-  }
-
   base::flat_map<uint32_t, PresentationCallbacks>&
   GetActivePresentationCallbacksForTesting() {
     return active_presentation_callbacks_;
   }
+
+  uint32_t GenerateNextFrameToken() { return ++next_token_; }
 
   // SurfaceDelegate:
   void OnSurfaceCommit() override;
@@ -101,19 +105,22 @@ class SurfaceTreeHost : public SurfaceDelegate,
   void ShowSnapPreviewToPrimary() override {}
   void ShowSnapPreviewToSecondary() override {}
   void HideSnapPreview() override {}
-  void SetSnappedToPrimary() override {}
-  void SetSnappedToSecondary() override {}
+  void SetSnapPrimary(float snap_ratio) override {}
+  void SetSnapSecondary(float snap_ratio) override {}
   void UnsetSnap() override {}
   void SetCanGoBack() override {}
   void UnsetCanGoBack() override {}
   void SetPip() override {}
   void UnsetPip() override {}
+  void SetFloat() override {}
   void SetAspectRatio(const gfx::SizeF& aspect_ratio) override {}
   void MoveToDesk(int desk_index) override {}
   void SetVisibleOnAllWorkspaces() override {}
   void SetInitialWorkspace(const char* initial_workspace) override {}
   void Pin(bool trusted) override {}
   void Unpin() override {}
+  void SetSystemModal(bool system_modal) override {}
+  SecurityDelegate* GetSecurityDelegate() override;
 
   // display::DisplayObserver:
   void OnDisplayMetricsChanged(const display::Display& display,
@@ -126,8 +133,16 @@ class SurfaceTreeHost : public SurfaceDelegate,
     client_submits_surfaces_in_pixel_coordinates_ = enabled;
   }
 
+  void SetSecurityDelegate(SecurityDelegate* security_delegate);
+
+  void SubmitCompositorFrameForTesting(viz::CompositorFrame frame);
+
  protected:
   void UpdateDisplayOnTree();
+
+  // Call this after a buffer has been committed but before a compositor frame
+  // has been submitted.
+  void WillCommit();
 
   // Call this to submit a compositor frame.
   void SubmitCompositorFrame();
@@ -150,6 +165,12 @@ class SurfaceTreeHost : public SurfaceDelegate,
 
   void HandleContextLost();
 
+  // If the client has submitted a scale factor, we use that. Otherwise we use
+  // the host window's layer's scale factor.
+  float GetScaleFactor();
+
+  void CleanUpCallbacks();
+
   Surface* root_surface_ = nullptr;
 
   // Position of root surface relative to topmost, leftmost sub-surface. The
@@ -159,17 +180,27 @@ class SurfaceTreeHost : public SurfaceDelegate,
   std::unique_ptr<aura::Window> host_window_;
   std::unique_ptr<LayerTreeFrameSinkHolder> layer_tree_frame_sink_holder_;
 
-  // This list contains the callbacks to notify the client when it is a good
-  // time to start producing a new frame. These callbacks move to
-  // |frame_callbacks_| when Commit() is called. They fire when the effect
-  // of the Commit() is scheduled to be drawn.
-  std::list<Surface::FrameCallback> frame_callbacks_;
+  // This queue contains lists the callbacks to notify the client when it is a
+  // good time to start producing a new frame. Each list corresponds to a
+  // compositor frame, in the order of submission to
+  // `layer_tree_frame_sink_holder_`.
+  //
+  // These callbacks move to |frame_callbacks_| when Commit() is called. They
+  // fire when the effect of the Commit() is scheduled to be drawn.
+  base::queue<std::list<Surface::FrameCallback>> frame_callbacks_;
 
-  // These lists contains the callbacks to notify the client when surface
+  // These lists contain the callbacks to notify the client when surface
   // contents have been presented.
-  PresentationCallbacks presentation_callbacks_;
   base::flat_map<uint32_t, PresentationCallbacks>
       active_presentation_callbacks_;
+
+  // When a client calls set_scale_factor they're actually setting the scale
+  // factor for all future commits.
+  absl::optional<float> pending_scale_factor_;
+
+  // This is the client-set scale factor that is being used for the current
+  // buffer.
+  absl::optional<float> scale_factor_;
 
   viz::FrameTokenGenerator next_token_;
 
@@ -180,6 +211,10 @@ class SurfaceTreeHost : public SurfaceDelegate,
   int64_t display_id_ = display::kInvalidDisplayId;
 
   bool client_submits_surfaces_in_pixel_coordinates_ = false;
+
+  SecurityDelegate* security_delegate_ = nullptr;
+
+  std::set<gpu::SyncToken> prev_frame_verified_tokens_;
 
   base::WeakPtrFactory<SurfaceTreeHost> weak_ptr_factory_{this};
 };

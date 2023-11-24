@@ -9,7 +9,9 @@ import {
   kTextureFormatInfo,
   kTextureFormats,
   kTextureViewDimensions,
+  kFeaturesForFormats,
   viewCompatible,
+  filterFormatsByFeature,
 } from '../../capability_info.js';
 import { kResourceStates } from '../../gpu_test.js';
 import {
@@ -31,14 +33,23 @@ g.test('format')
   )
   .params(u =>
     u
-      .combine('textureFormat', kTextureFormats)
+      .combine('textureFormatFeature', kFeaturesForFormats)
+      .combine('viewFormatFeature', kFeaturesForFormats)
       .beginSubcases()
-      .combine('viewFormat', [undefined, ...kTextureFormats])
+      .expand('textureFormat', ({ textureFormatFeature }) =>
+        filterFormatsByFeature(textureFormatFeature, kTextureFormats)
+      )
+      .expand('viewFormat', ({ viewFormatFeature }) =>
+        filterFormatsByFeature(viewFormatFeature, [undefined, ...kTextureFormats])
+      )
       .combine('useViewFormatList', [false, true])
   )
-  .fn(async t => {
+  .beforeAllSubcases(t => {
+    const { textureFormatFeature, viewFormatFeature } = t.params;
+    t.selectDeviceOrSkipTestCase([textureFormatFeature, viewFormatFeature]);
+  })
+  .fn(t => {
     const { textureFormat, viewFormat, useViewFormatList } = t.params;
-    await t.selectDeviceForTextureFormatOrSkipTestCase([textureFormat, viewFormat]);
     const { blockWidth, blockHeight } = kTextureFormatInfo[textureFormat];
 
     const compatible = viewFormat === undefined || viewCompatible(textureFormat, viewFormat);
@@ -108,9 +119,12 @@ g.test('aspect')
       .combine('format', kTextureFormats)
       .combine('aspect', kTextureAspects)
   )
-  .fn(async t => {
+  .beforeAllSubcases(t => {
+    const { format } = t.params;
+    t.selectDeviceForTextureFormatOrSkipTestCase(format);
+  })
+  .fn(t => {
     const { format, aspect } = t.params;
-    await t.selectDeviceForTextureFormatOrSkipTestCase(format);
     const info = kTextureFormatInfo[format];
 
     const texture = t.device.createTexture({
@@ -268,7 +282,7 @@ g.test('mip_levels')
     const success = validateCreateViewLayersLevels(textureDescriptor, viewDescriptor);
 
     const texture = t.device.createTexture(textureDescriptor);
-    t.debug(mipLevelCount + ' ' + success);
+    t.debug(`${mipLevelCount} ${success}`);
     t.expectValidationError(() => {
       texture.createView(viewDescriptor);
     }, !success);
@@ -290,7 +304,7 @@ g.test('cube_faces_square')
         [8, 4, 6],
       ])
   )
-  .fn(async t => {
+  .fn(t => {
     const { dimension, size } = t.params;
 
     const texture = t.device.createTexture({
@@ -308,7 +322,7 @@ g.test('cube_faces_square')
 g.test('texture_state')
   .desc(`createView should fail if the texture is invalid (but succeed if it is destroyed)`)
   .paramsSubcasesOnly(u => u.combine('state', kResourceStates))
-  .fn(async t => {
+  .fn(t => {
     const { state } = t.params;
     const texture = t.createTextureWithState(state);
 

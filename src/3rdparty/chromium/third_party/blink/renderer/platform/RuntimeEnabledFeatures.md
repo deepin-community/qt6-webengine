@@ -3,7 +3,7 @@
 Runtime flags enable Blink developers the ability to control access Chromium users have to new features they implement. Features that are hidden behind a runtime flag are known as Runtime Enabled Features. It is a requirement of the Blink Launch Process to implement new web exposed features behind a runtime flag until an Intent To Ship has been approved.
 
 ## Adding A Runtime Enabled Feature
-Runtime Enabled Features are defined in runtime_enabled_features.json5 in alphabetical order. Add your feature's flag to this file and the rest will be generated for you automatically.
+Runtime Enabled Features are defined in runtime_enabled_features.json5 in alphabetical order. Add your feature's flag to [runtime_enabled_features.json5] and the rest will be generated for you automatically.
 
 Example:
 ```js
@@ -76,10 +76,36 @@ If a feature is not stable and no longer under active development, remove `statu
 
 ### Relationship between a Chromium Feature and a Blink Feature
 
-In some cases, e.g. for finch experiment, you may need to define a Chromium feature for a blink feature. Their relationship is
-defined in [content/child/runtime_features.cc]. See the [initialize blink features] doc for more details.
+In some cases, e.g. for finch experiment, you may need to define a Chromium
+feature for a blink feature. If you need a Chromium feature just for finch
+experiment for a blink feature, see the next section. Otherwise, you should
+specify `base_feature: "none"`, and their relationship is defined in
+[content/child/runtime_features.cc]. See the [initialize blink features] doc
+for more details.
 
 **Note:** If a feature is implemented at both Chromium side and blink side, as the blink feature doesn't fully work by itself, we normally don't set the blink feature's status so that the Chromium feature can fully control the blink feature ([example][controlled by chromium feature]).
+
+If you need to update or check a blink feature status from outside of blink,
+you can generate methods of `WebRuntimeFeatures` by adding `public: true,` to
+the feature entry in `runtime_enabled_features.json5`.
+
+### Generate a `base::Feature` instance from a Blink Feature
+
+A Blink feature entry generates a corresponding `base::Feature` instance with
+the same name in `blink::features` namespace by default.  It's helpful for a
+Finch experiment for the feature, including a kill switch.
+
+Specify `base_feature: "AnotherFlagName"` if you'd like to generate a
+`base::Feature` with a different name.
+
+Specify `base_feature: "none"` to disable `base::Feature` generation.
+
+The name specified by `base_feature` or `name` is used for the feature
+name which is referred in `--enable-features=` flag and Finch configurations.
+
+The generated `base::Feature` is enabled by default if the status of the blink
+feature is `stable`, and disabled by default otherwise. This behavior can be
+overridden by `base_feature_status` field.
 
 ### Introducing dependencies among Runtime Enabled Features
 
@@ -212,6 +238,6 @@ https://groups.google.com/a/chromium.org/d/msg/blink-dev/JBakhu5J6Qs/re2LkfEslTA
 [make_internal_runtime_flags.py]: <https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/renderer/build/scripts/make_internal_runtime_flags.py>
 [code_generator_v8.py]: <https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/renderer/bindings/scripts/code_generator_v8.py>
 [virtual/stable]: <https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/web_tests/VirtualTestSuites;drc=9878f26d52d32871ed1c085444196e5453909eec;l=112>
-[content/child/runtime_features.cc]: <https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/common/features.cc>
+[content/child/runtime_features.cc]: <https://source.chromium.org/chromium/chromium/src/+/main:content/child/runtime_features.cc>
 [initialize blink features]: <https://chromium.googlesource.com/chromium/src/+/main/docs/initialize_blink_features.md>
 [controlled by chromium feature]: <https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/platform/runtime_enabled_features.json5;drc=70bddadf50a14254072cf7ca0bcf83e4331a7d4f;l=833>

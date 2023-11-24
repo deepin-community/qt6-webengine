@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,6 +18,7 @@
 #include "cc/paint/image_provider.h"
 #include "cc/paint/paint_filter.h"
 #include "cc/paint/paint_op_buffer.h"
+#include "cc/paint/paint_op_buffer_iterator.h"
 #include "cc/paint/skottie_wrapper.h"
 #include "third_party/skia/include/utils/SkNoDrawCanvas.h"
 #include "ui/gfx/display_color_spaces.h"
@@ -32,7 +33,7 @@ class DiscardableImageGenerator {
  public:
   DiscardableImageGenerator(int width,
                             int height,
-                            const PaintOpBuffer* buffer) {
+                            const PaintOpBuffer& buffer) {
     SkNoDrawCanvas canvas(width, height);
     GatherDiscardableImages(buffer, nullptr, &canvas);
   }
@@ -90,10 +91,10 @@ class DiscardableImageGenerator {
   // |top_level_op_rect| is set to the rect for that op. If provided, the
   // |top_level_op_rect| will be used as the rect for tracking the position of
   // this image in the top-level buffer.
-  void GatherDiscardableImages(const PaintOpBuffer* buffer,
+  void GatherDiscardableImages(const PaintOpBuffer& buffer,
                                const gfx::Rect* top_level_op_rect,
                                SkNoDrawCanvas* canvas) {
-    if (!buffer->HasDiscardableImages())
+    if (!buffer.HasDiscardableImages())
       return;
 
     // Prevent PaintOpBuffers from having side effects back into the canvas.
@@ -102,11 +103,11 @@ class DiscardableImageGenerator {
     PlaybackParams params(nullptr, canvas->getLocalToDevice());
     // TODO(khushalsagar): Optimize out save/restore blocks if there are no
     // images in the draw ops between them.
-    for (auto* op : PaintOpBuffer::Iterator(buffer)) {
+    for (const PaintOp& op : buffer) {
       // We need to play non-draw ops on the SkCanvas since they can affect the
       // transform/clip state.
-      if (!op->IsDrawOp())
-        op->Raster(canvas, params);
+      if (!op.IsDrawOp())
+        op.Raster(canvas, params);
 
       if (!PaintOp::OpHasDiscardableImages(op))
         continue;
@@ -128,30 +129,30 @@ class DiscardableImageGenerator {
       }
 
       const SkM44& ctm = canvas->getLocalToDevice();
-      if (op->IsPaintOpWithFlags()) {
+      if (op.IsPaintOpWithFlags()) {
         AddImageFromFlags(op_rect,
-                          static_cast<const PaintOpWithFlags*>(op)->flags, ctm);
+                          static_cast<const PaintOpWithFlags&>(op).flags, ctm);
       }
 
-      PaintOpType op_type = static_cast<PaintOpType>(op->type);
+      PaintOpType op_type = static_cast<PaintOpType>(op.type);
       if (op_type == PaintOpType::DrawImage) {
-        auto* image_op = static_cast<DrawImageOp*>(op);
+        const auto& image_op = static_cast<const DrawImageOp&>(op);
         AddImage(
-            image_op->image, image_op->flags.useDarkModeForImage(),
-            SkRect::MakeIWH(image_op->image.width(), image_op->image.height()),
-            op_rect, ctm, image_op->flags.getFilterQuality());
+            image_op.image, image_op.flags.useDarkModeForImage(),
+            SkRect::MakeIWH(image_op.image.width(), image_op.image.height()),
+            op_rect, ctm, image_op.flags.getFilterQuality());
       } else if (op_type == PaintOpType::DrawImageRect) {
-        auto* image_rect_op = static_cast<DrawImageRectOp*>(op);
+        const auto& image_rect_op = static_cast<const DrawImageRectOp&>(op);
         // TODO(crbug.com/1155544): Make a RectToRect method that uses SkM44s
         // in MathUtil.
-        SkM44 matrix = ctm * SkM44(SkMatrix::RectToRect(image_rect_op->src,
-                                                        image_rect_op->dst));
-        AddImage(image_rect_op->image,
-                 image_rect_op->flags.useDarkModeForImage(), image_rect_op->src,
-                 op_rect, matrix, image_rect_op->flags.getFilterQuality());
+        SkM44 matrix = ctm * SkM44(SkMatrix::RectToRect(image_rect_op.src,
+                                                        image_rect_op.dst));
+        AddImage(image_rect_op.image, image_rect_op.flags.useDarkModeForImage(),
+                 image_rect_op.src, op_rect, matrix,
+                 image_rect_op.flags.getFilterQuality());
       } else if (op_type == PaintOpType::DrawSkottie) {
-        auto* skottie_op = static_cast<DrawSkottieOp*>(op);
-        for (const auto& image_pair : skottie_op->images) {
+        const auto& skottie_op = static_cast<const DrawSkottieOp&>(op);
+        for (const auto& image_pair : skottie_op.images) {
           const SkottieFrameData& frame_data = image_pair.second;
           // Add the whole image (no cropping).
           SkRect image_src_rect = SkRect::MakeIWH(frame_data.image.width(),
@@ -177,7 +178,7 @@ class DiscardableImageGenerator {
           static constexpr SkMatrix::ScaleToFit kScalingMode =
               SkMatrix::kCenter_ScaleToFit;
           SkRect skottie_frame_native_size =
-              SkRect::MakeSize(skottie_op->skottie->size());
+              SkRect::MakeSize(skottie_op.skottie->size());
           SkM44 matrix = ctm * SkM44(SkMatrix::RectToRect(
                                    skottie_frame_native_size,
                                    gfx::RectToSkRect(dst_rect), kScalingMode));
@@ -187,7 +188,7 @@ class DiscardableImageGenerator {
         }
       } else if (op_type == PaintOpType::DrawRecord) {
         GatherDiscardableImages(
-            static_cast<const DrawRecordOp*>(op)->record.get(),
+            static_cast<const DrawRecordOp&>(op).record.buffer(),
             top_level_op_rect, canvas);
       }
     }
@@ -237,7 +238,8 @@ class DiscardableImageGenerator {
       canvas.setMatrix(SkMatrix::RectToRect(shader->tile(), scaled_tile_rect));
       base::AutoReset<bool> auto_reset(&only_gather_animated_images_, true);
       size_t prev_image_set_size = image_set_.size();
-      GatherDiscardableImages(shader->paint_record().get(), &op_rect, &canvas);
+      GatherDiscardableImages(shader->paint_record()->buffer(), &op_rect,
+                              &canvas);
 
       // We only track animated images for PaintShaders. If we added any entry
       // to the |image_set_|, this shader any has animated images.
@@ -359,12 +361,13 @@ class DiscardableImageGenerator {
 DiscardableImageMap::DiscardableImageMap() = default;
 DiscardableImageMap::~DiscardableImageMap() = default;
 
-void DiscardableImageMap::Generate(const PaintOpBuffer* paint_op_buffer,
+void DiscardableImageMap::Generate(const PaintOpBuffer& paint_op_buffer,
                                    const gfx::Rect& bounds) {
   TRACE_EVENT0("cc", "DiscardableImageMap::Generate");
 
-  if (!paint_op_buffer->HasDiscardableImages())
+  if (!paint_op_buffer.HasDiscardableImages()) {
     return;
+  }
 
   DiscardableImageGenerator generator(bounds.right(), bounds.bottom(),
                                       paint_op_buffer);

@@ -1,11 +1,11 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/signin/chrome_signin_proxying_url_loader_factory.h"
 
 #include "base/barrier_closure.h"
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/supports_user_data.h"
@@ -21,10 +21,11 @@
 #include "content/public/browser/render_process_host.h"
 #include "extensions/browser/guest_view/web_view/web_view_renderer_state.h"
 #include "extensions/buildflags/buildflags.h"
-#include "google_apis/gaia/gaia_auth_util.h"
+#include "google_apis/gaia/gaia_urls.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "net/base/net_errors.h"
+#include "services/network/public/cpp/record_ontransfersizeupdate_utils.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/mojom/early_hints.mojom.h"
 #include "services/network/public/mojom/fetch_api.mojom-shared.h"
@@ -151,8 +152,10 @@ class ProxyingURLLoaderFactory::InProgressRequest
   void OnReceiveEarlyHints(network::mojom::EarlyHintsPtr early_hints) override {
     target_client_->OnReceiveEarlyHints(std::move(early_hints));
   }
-  void OnReceiveResponse(network::mojom::URLResponseHeadPtr head,
-                         mojo::ScopedDataPipeConsumerHandle body) override;
+  void OnReceiveResponse(
+      network::mojom::URLResponseHeadPtr head,
+      mojo::ScopedDataPipeConsumerHandle body,
+      absl::optional<mojo_base::BigBuffer> cached_metadata) override;
   void OnReceiveRedirect(const net::RedirectInfo& redirect_info,
                          network::mojom::URLResponseHeadPtr head) override;
 
@@ -163,17 +166,11 @@ class ProxyingURLLoaderFactory::InProgressRequest
                                      std::move(callback));
   }
 
-  void OnReceiveCachedMetadata(mojo_base::BigBuffer data) override {
-    target_client_->OnReceiveCachedMetadata(std::move(data));
-  }
-
   void OnTransferSizeUpdated(int32_t transfer_size_diff) override {
-    target_client_->OnTransferSizeUpdated(transfer_size_diff);
-  }
+    network::RecordOnTransferSizeUpdatedUMA(
+        network::OnTransferSizeUpdatedFrom::kProxyingURLLoaderFactory);
 
-  void OnStartLoadingResponseBody(
-      mojo::ScopedDataPipeConsumerHandle body) override {
-    target_client_->OnStartLoadingResponseBody(std::move(body));
+    target_client_->OnTransferSizeUpdated(transfer_size_diff);
   }
 
   void OnComplete(const network::URLLoaderCompletionStatus& status) override {
@@ -195,7 +192,7 @@ class ProxyingURLLoaderFactory::InProgressRequest
   // Information about the current request.
   GURL request_url_;
   GURL response_url_;
-  GURL referrer_origin_;
+  GURL referrer_;
   net::HttpRequestHeaders headers_;
   net::HttpRequestHeaders cors_exempt_headers_;
   net::RedirectInfo redirect_info_;
@@ -252,9 +249,7 @@ class ProxyingURLLoaderFactory::InProgressRequest::ProxyRequestAdapter
     return in_progress_request_->is_fetch_like_api_;
   }
 
-  GURL GetReferrerOrigin() const override {
-    return in_progress_request_->referrer_origin_;
-  }
+  GURL GetReferrer() const override { return in_progress_request_->referrer_; }
 
   void SetDestructionCallback(base::OnceClosure closure) override {
     if (!in_progress_request_->destruction_callback_)
@@ -289,9 +284,7 @@ class ProxyingURLLoaderFactory::InProgressRequest::ProxyResponseAdapter
     return in_progress_request_->is_outermost_main_frame_;
   }
 
-  GURL GetOrigin() const override {
-    return in_progress_request_->response_url_.DeprecatedGetOriginAsURL();
-  }
+  GURL GetURL() const override { return in_progress_request_->response_url_; }
 
   const net::HttpResponseHeaders* GetHeaders() const override {
     return headers_;
@@ -312,8 +305,8 @@ class ProxyingURLLoaderFactory::InProgressRequest::ProxyResponseAdapter
   }
 
  private:
-  const raw_ptr<InProgressRequest> in_progress_request_;
-  const raw_ptr<net::HttpResponseHeaders> headers_;
+  const raw_ptr<InProgressRequest, DanglingUntriaged> in_progress_request_;
+  const raw_ptr<net::HttpResponseHeaders, DanglingUntriaged> headers_;
 };
 
 ProxyingURLLoaderFactory::InProgressRequest::InProgressRequest(
@@ -327,7 +320,7 @@ ProxyingURLLoaderFactory::InProgressRequest::InProgressRequest(
     : factory_(factory),
       request_url_(request.url),
       response_url_(request.url),
-      referrer_origin_(request.referrer.DeprecatedGetOriginAsURL()),
+      referrer_(request.referrer),
       request_destination_(request.destination),
       is_outermost_main_frame_(request.is_outermost_main_frame),
       is_fetch_like_api_(request.is_fetch_like_api),
@@ -398,18 +391,19 @@ void ProxyingURLLoaderFactory::InProgressRequest::FollowRedirect(
                                  modified_cors_exempt_headers, opt_new_url);
 
   request_url_ = redirect_info_.new_url;
-  referrer_origin_ =
-      GURL(redirect_info_.new_referrer).DeprecatedGetOriginAsURL();
+  referrer_ = GURL(redirect_info_.new_referrer);
 }
 
 void ProxyingURLLoaderFactory::InProgressRequest::OnReceiveResponse(
     network::mojom::URLResponseHeadPtr head,
-    mojo::ScopedDataPipeConsumerHandle body) {
+    mojo::ScopedDataPipeConsumerHandle body,
+    absl::optional<mojo_base::BigBuffer> cached_metadata) {
   // Even though |head| is const we can get a non-const pointer to the headers
   // and modifications we made are passed to the target client.
   ProxyResponseAdapter adapter(this, head->headers.get());
   factory_->delegate_->ProcessResponse(&adapter, GURL() /* redirect_url */);
-  target_client_->OnReceiveResponse(std::move(head), std::move(body));
+  target_client_->OnReceiveResponse(std::move(head), std::move(body),
+                                    std::move(cached_metadata));
 }
 
 void ProxyingURLLoaderFactory::InProgressRequest::OnReceiveRedirect(
@@ -421,7 +415,7 @@ void ProxyingURLLoaderFactory::InProgressRequest::OnReceiveRedirect(
   factory_->delegate_->ProcessResponse(&adapter, redirect_info.new_url);
   target_client_->OnReceiveRedirect(redirect_info, std::move(head));
 
-  // The request URL returned by ProxyResponseAdapter::GetOrigin() is updated
+  // The request URL returned by ProxyResponseAdapter::GetURL() is updated
   // immediately but the URL and referrer
   redirect_info_ = redirect_info;
   response_url_ = redirect_info.new_url;
@@ -471,7 +465,7 @@ bool ProxyingURLLoaderFactory::MaybeProxyRequest(
 
   // This proxy should only be installed for subresource requests from a frame
   // that is rendering the GAIA signon realm.
-  if (!gaia::IsGaiaSignonRealm(request_initiator.GetURL()))
+  if (request_initiator != GaiaUrls::GetInstance()->gaia_origin())
     return false;
 
   auto* web_contents =

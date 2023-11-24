@@ -1,11 +1,11 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/webui/signin/turn_sync_on_helper_delegate_impl.h"
 
-#include "base/bind.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
 #include "base/notreached.h"
@@ -16,6 +16,7 @@
 #include "chrome/browser/new_tab_page/chrome_colors/selected_colors_info.h"
 #include "chrome/browser/policy/chrome_browser_policy_connector.h"
 #include "chrome/browser/profiles/profile_attributes_storage.h"
+#include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_window.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/signin/signin_util.h"
@@ -56,7 +57,6 @@ Browser* EnsureBrowser(Browser* browser, Profile* profile) {
   return browser;
 }
 
-#if !BUILDFLAG(IS_CHROMEOS_LACROS)
 // Converts SigninEmailConfirmationDialog::Action to
 // TurnSyncOnHelper::SigninChoice and invokes |callback| on it.
 void OnEmailConfirmation(signin::SigninChoiceCallback callback,
@@ -75,7 +75,6 @@ void OnEmailConfirmation(signin::SigninChoiceCallback callback,
   }
   NOTREACHED();
 }
-#endif
 
 }  // namespace
 
@@ -150,15 +149,10 @@ void TurnSyncOnHelperDelegateImpl::ShowMergeSyncDataConfirmation(
     const std::string& new_email,
     signin::SigninChoiceCallback callback) {
   DCHECK(callback);
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  // TODO(https://crbug.com/1260291): add support for signed out profiles.
-  NOTREACHED() << "Lacros doesn't support signed-out profiles yet.";
-#else
   browser_ = EnsureBrowser(browser_, profile_);
   browser_->signin_view_controller()->ShowModalSigninEmailConfirmationDialog(
       previous_email, new_email,
       base::BindOnce(&OnEmailConfirmation, std::move(callback)));
-#endif
 }
 
 void TurnSyncOnHelperDelegateImpl::ShowSyncSettings() {

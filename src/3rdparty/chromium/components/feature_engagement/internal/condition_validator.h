@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,13 +11,10 @@
 #include <string>
 #include <vector>
 
+#include "base/feature_list.h"
 #include "components/feature_engagement/public/configuration.h"
 #include "components/feature_engagement/public/feature_list.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
-
-namespace base {
-struct Feature;
-}  // namespace base
 
 namespace feature_engagement {
 struct FeatureConfig;
@@ -78,6 +75,9 @@ class ConditionValidator {
     // other priority notifications.
     bool priority_notification_ok;
 
+    // Whether the additional group-based preconditions were met.
+    bool groups_ok;
+
     // Whether the snooze option should be shown.
     // This value is excluded from the NoErrors() check.
     bool should_show_snooze;
@@ -96,6 +96,7 @@ class ConditionValidator {
   virtual Result MeetsConditions(
       const base::Feature& feature,
       const FeatureConfig& config,
+      const std::vector<GroupConfig>& group_configs,
       const EventModel& event_model,
       const AvailabilityModel& availability_model,
       const DisplayLockController& display_lock_controller,

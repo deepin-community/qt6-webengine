@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <cstring>  // memcpy, memset
 #include <type_traits>
 
+#include "base/check_op.h"
 #include "third_party/blink/renderer/platform/graphics/paint/display_item.h"
 #include "third_party/blink/renderer/platform/graphics/paint/scrollbar_display_item.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
@@ -20,6 +21,8 @@ class JSONArray;
 
 // A container for a list of display items of various types.
 class PLATFORM_EXPORT DisplayItemList {
+  DISALLOW_NEW();
+
  public:
   DisplayItemList() = default;
   ~DisplayItemList();
@@ -30,7 +33,7 @@ class PLATFORM_EXPORT DisplayItemList {
   DisplayItemList& operator=(DisplayItemList&&) = delete;
 
   void ReserveCapacity(wtf_size_t initial_capacity) {
-    items_.ReserveCapacity(initial_capacity);
+    items_.reserve(initial_capacity);
   }
 
   // This private section is before the public APIs because some inline public
@@ -39,11 +42,16 @@ class PLATFORM_EXPORT DisplayItemList {
   // Declares itself as a forward iterator, but also supports a few more
   // things. The whole random access iterator interface is a bit much.
   template <typename BaseIterator, typename ItemType>
-  class IteratorWrapper
-      : public std::iterator<std::forward_iterator_tag, ItemType> {
+  class IteratorWrapper {
     DISALLOW_NEW();
 
    public:
+    using iterator_category = std::forward_iterator_tag;
+    using value_type = ItemType;
+    using difference_type = std::ptrdiff_t;
+    using pointer = ItemType*;
+    using reference = ItemType&;
+
     IteratorWrapper() = default;
     explicit IteratorWrapper(const BaseIterator& it) : it_(it) {}
 
@@ -87,6 +95,7 @@ class PLATFORM_EXPORT DisplayItemList {
 
   struct ItemSlot {
     alignas(kAlignment) uint8_t data[kMaxItemSize];
+    DISALLOW_NEW();
   };
   using ItemVector = Vector<ItemSlot>;
 

@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,6 +15,7 @@
 #include "core/fpdfapi/page/cpdf_page.h"
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
 #include "core/fpdfapi/parser/cpdf_document.h"
+#include "core/fpdfapi/parser/cpdf_stream.h"
 #include "core/fpdfapi/render/cpdf_renderoptions.h"
 #include "core/fpdfdoc/cpdf_formcontrol.h"
 #include "core/fpdfdoc/cpdf_formfield.h"
@@ -193,11 +194,12 @@ void FFLCommon(FPDF_FORMHANDLE hHandle,
 
   auto pDevice = std::make_unique<CFX_DefaultRenderDevice>();
 #if defined(_SKIA_SUPPORT_)
-  pDevice->AttachRecorder(static_cast<SkPictureRecorder*>(recorder));
+  if (CFX_DefaultRenderDevice::SkiaIsDefaultRenderer())
+    pDevice->AttachRecorder(static_cast<SkPictureRecorder*>(recorder));
 #endif
 
   RetainPtr<CFX_DIBitmap> holder(CFXDIBitmapFromFPDFBitmap(bitmap));
-  pDevice->Attach(holder, !!(flags & FPDF_REVERSE_BYTE_ORDER), nullptr, false);
+  pDevice->AttachWithRgbByteOrder(holder, !!(flags & FPDF_REVERSE_BYTE_ORDER));
   {
     CFX_RenderDevice::StateRestorer restorer(pDevice.get());
     pDevice->SetClip_Rect(rect);
@@ -216,11 +218,6 @@ void FFLCommon(FPDF_FORMHANDLE hHandle,
     if (pPageView)
       pPageView->PageView_OnDraw(pDevice.get(), matrix, &options, rect);
   }
-
-#if defined(_SKIA_SUPPORT_PATHS_)
-  pDevice->Flush(true);
-  holder->UnPreMultiply();
-#endif
 }
 
 // Returns true if formfill version is correctly set. See |version| in
@@ -534,6 +531,17 @@ FORM_GetSelectedText(FPDF_FORMHANDLE hHandle,
                                              buffer, buflen);
 }
 
+FPDF_EXPORT void FPDF_CALLCONV
+FORM_ReplaceAndKeepSelection(FPDF_FORMHANDLE hHandle,
+                             FPDF_PAGE page,
+                             FPDF_WIDESTRING wsText) {
+  CPDFSDK_PageView* pPageView = FormHandleToPageView(hHandle, page);
+  if (!pPageView)
+    return;
+
+  pPageView->ReplaceAndKeepSelection(WideStringFromFPDFWideString(wsText));
+}
+
 FPDF_EXPORT void FPDF_CALLCONV FORM_ReplaceSelection(FPDF_FORMHANDLE hHandle,
                                                      FPDF_PAGE page,
                                                      FPDF_WIDESTRING wsText) {
@@ -624,8 +632,10 @@ FORM_GetFocusedAnnot(FPDF_FORMHANDLE handle,
   if (!page)
     return true;
 
-  CPDF_Dictionary* annot_dict = cpdfsdk_annot->GetPDFAnnot()->GetAnnotDict();
-  auto annot_context = std::make_unique<CPDF_AnnotContext>(annot_dict, page);
+  RetainPtr<CPDF_Dictionary> annot_dict =
+      cpdfsdk_annot->GetPDFAnnot()->GetMutableAnnotDict();
+  auto annot_context =
+      std::make_unique<CPDF_AnnotContext>(std::move(annot_dict), page);
 
   *page_index = page_view->GetPageIndex();
   // Caller takes ownership.
@@ -649,9 +659,9 @@ FORM_SetFocusedAnnot(FPDF_FORMHANDLE handle, FPDF_ANNOTATION annot) {
   if (!page_view->IsValid())
     return false;
 
-  CPDF_Dictionary* annot_dict = annot_context->GetAnnotDict();
+  RetainPtr<CPDF_Dictionary> annot_dict = annot_context->GetMutableAnnotDict();
   ObservedPtr<CPDFSDK_Annot> cpdfsdk_annot(
-      page_view->GetAnnotByDict(annot_dict));
+      page_view->GetAnnotByDict(annot_dict.Get()));
   if (!cpdfsdk_annot)
     return false;
 
@@ -756,7 +766,7 @@ FPDF_EXPORT void FPDF_CALLCONV
 FORM_DoDocumentOpenAction(FPDF_FORMHANDLE hHandle) {
   CPDFSDK_FormFillEnvironment* pFormFillEnv =
       CPDFSDKFormFillEnvironmentFromFPDFFormHandle(hHandle);
-  if (pFormFillEnv && pFormFillEnv->IsJSPlatformPresent())
+  if (pFormFillEnv)
     pFormFillEnv->ProcOpenAction();
 }
 
@@ -768,7 +778,7 @@ FPDF_EXPORT void FPDF_CALLCONV FORM_DoDocumentAAction(FPDF_FORMHANDLE hHandle,
     return;
 
   CPDF_Document* pDoc = pFormFillEnv->GetPDFDocument();
-  CPDF_Dictionary* pDict = pDoc->GetRoot();
+  const CPDF_Dictionary* pDict = pDoc->GetRoot();
   if (!pDict)
     return;
 
@@ -794,8 +804,7 @@ FPDF_EXPORT void FPDF_CALLCONV FORM_DoPageAAction(FPDF_PAGE page,
   if (!pFormFillEnv->GetPageView(pPage))
     return;
 
-  CPDF_Dictionary* pPageDict = pPDFPage->GetDict();
-  CPDF_AAction aa(pPageDict->GetDictFor(pdfium::form_fields::kAA));
+  CPDF_AAction aa(pPDFPage->GetDict()->GetDictFor(pdfium::form_fields::kAA));
   CPDF_AAction::AActionType type = aaType == FPDFPAGE_AACTION_OPEN
                                        ? CPDF_AAction::kOpenPage
                                        : CPDF_AAction::kClosePage;

@@ -24,34 +24,34 @@ namespace tint::text {
 
 /// CodePoint is a unicode code point.
 struct CodePoint {
-  /// Constructor
-  inline CodePoint() = default;
+    /// Constructor
+    inline CodePoint() = default;
 
-  /// Constructor
-  /// @param v the code point value
-  inline explicit CodePoint(uint32_t v) : value(v) {}
+    /// Constructor
+    /// @param v the code point value
+    inline explicit CodePoint(uint32_t v) : value(v) {}
 
-  /// @returns the code point value
-  inline operator uint32_t() const { return value; }
+    /// @returns the code point value
+    inline operator uint32_t() const { return value; }
 
-  /// Assignment operator
-  /// @param v the new value for the code point
-  /// @returns this CodePoint
-  inline CodePoint& operator=(uint32_t v) {
-    value = v;
-    return *this;
-  }
+    /// Assignment operator
+    /// @param v the new value for the code point
+    /// @returns this CodePoint
+    inline CodePoint& operator=(uint32_t v) {
+        value = v;
+        return *this;
+    }
 
-  /// @returns true if this CodePoint is in the XID_Start set.
-  /// @see https://unicode.org/reports/tr31/
-  bool IsXIDStart() const;
+    /// @returns true if this CodePoint is in the XID_Start set.
+    /// @see https://unicode.org/reports/tr31/
+    bool IsXIDStart() const;
 
-  /// @returns true if this CodePoint is in the XID_Continue set.
-  /// @see https://unicode.org/reports/tr31/
-  bool IsXIDContinue() const;
+    /// @returns true if this CodePoint is in the XID_Continue set.
+    /// @see https://unicode.org/reports/tr31/
+    bool IsXIDContinue() const;
 
-  /// The code point value
-  uint32_t value = 0;
+    /// The code point value
+    uint32_t value = 0;
 };
 
 /// Writes the CodePoint to the std::ostream.
@@ -68,6 +68,12 @@ namespace utf8 {
 /// @returns a pair of CodePoint and width in code units (bytes).
 ///          If the next code point cannot be decoded then returns [0,0].
 std::pair<CodePoint, size_t> Decode(const uint8_t* ptr, size_t len);
+
+/// Decodes the first code point in the utf8 string.
+/// @param utf8_string the string view that contains the utf8 sequence
+/// @returns a pair of CodePoint and width in code units (bytes).
+///          If the next code point cannot be decoded then returns [0,0].
+std::pair<CodePoint, size_t> Decode(std::string_view utf8_string);
 
 /// @returns true if all the utf-8 code points in the string are ASCII
 /// (code-points 0x00..0x7f).

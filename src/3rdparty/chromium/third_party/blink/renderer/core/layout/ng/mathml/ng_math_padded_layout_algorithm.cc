@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -84,15 +84,17 @@ const NGLayoutResult* NGMathPaddedLayoutAlgorithm::Layout() {
     NGBoxFragment fragment(ConstraintSpace().GetWritingDirection(),
                            content_fragment);
     content_ascent = content_margins.block_start +
-                     fragment.Baseline().value_or(fragment.BlockSize());
+                     fragment.FirstBaseline().value_or(fragment.BlockSize());
     content_descent =
         fragment.BlockSize() + content_margins.BlockSum() - content_ascent;
   }
   // width/height/depth attributes can override width/ascent/descent.
   LayoutUnit ascent = BorderScrollbarPadding().block_start +
                       RequestedAscent(content_ascent).value_or(content_ascent);
+  container_builder_.SetBaselines(ascent);
   LayoutUnit descent =
-      RequestedDescent(content_descent).value_or(content_descent);
+      RequestedDescent(content_descent).value_or(content_descent) +
+      BorderScrollbarPadding().block_end;
   if (content_layout_result) {
     // Need to take into account border/padding, lspace and voffset.
     LogicalOffset content_offset = {
@@ -102,11 +104,13 @@ const NGLayoutResult* NGMathPaddedLayoutAlgorithm::Layout() {
     content.StoreMargins(ConstraintSpace(), content_margins);
   }
 
-  auto total_block_size = ascent + descent + BorderScrollbarPadding().block_end;
-  container_builder_.SetIntrinsicBlockSize(total_block_size);
-  container_builder_.SetFragmentsTotalBlockSize(total_block_size);
+  LayoutUnit intrinsic_block_size = ascent + descent;
+  LayoutUnit block_size = ComputeBlockSizeForFragment(
+      ConstraintSpace(), Style(), BorderPadding(), intrinsic_block_size,
+      container_builder_.InitialBorderBoxSize().inline_size);
 
-  container_builder_.SetBaseline(ascent);
+  container_builder_.SetIntrinsicBlockSize(intrinsic_block_size);
+  container_builder_.SetFragmentsTotalBlockSize(block_size);
 
   NGOutOfFlowLayoutPart(Node(), ConstraintSpace(), &container_builder_).Run();
 

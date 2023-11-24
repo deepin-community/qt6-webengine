@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,14 +6,13 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/compiler_specific.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "net/base/net_errors.h"
@@ -22,9 +21,7 @@
 #include "services/network/public/cpp/server/http_server_response_info.h"
 #include "services/network/public/cpp/server/web_socket.h"
 
-namespace network {
-
-namespace server {
+namespace network::server {
 
 namespace {
 
@@ -163,8 +160,8 @@ void HttpServer::Close(int connection_id) {
   // connection. Instead of referencing connection with ID all the time,
   // destroys the connection in next run loop to make sure any pending
   // callbacks in the call stack return.
-  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE,
-                                                  connection.release());
+  base::SingleThreadTaskRunner::GetCurrentDefault()->DeleteSoon(
+      FROM_HERE, connection.release());
 }
 
 bool HttpServer::SetReceiveBufferSize(int connection_id, int32_t size) {
@@ -532,6 +529,4 @@ bool HttpServer::HasClosedConnection(HttpConnection* connection) {
   return FindConnection(connection->id()) != connection;
 }
 
-}  // namespace server
-
-}  // namespace network
+}  // namespace network::server

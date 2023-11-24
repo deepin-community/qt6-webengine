@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -88,10 +88,18 @@ public class MediaRouterClientImpl extends MediaRouterClient {
 
     @Override
     public FragmentManager getSupportFragmentManager(WebContents initiator) {
-        return TabImpl.fromWebContents(initiator)
-                .getBrowser()
-                .createMediaRouteDialogFragment()
-                .getSupportFragmentManager();
+        return null;
+    }
+
+    @Override
+    // TODO(crbug.com/1377518): Implement addDeferredTask().
+    public void addDeferredTask(Runnable deferredTask) {
+        deferredTask.run();
+    }
+
+    @Override
+    public boolean isCafMrpDeferredDiscoveryEnabled() {
+        return true;
     }
 
     @CalledByNative

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,21 +20,28 @@
  * string with a link and sometimes returns a normal string.
  */
 
-import '../../cr_elements/shared_vars_css.m.js';
-import '../../cr_elements/shared_style_css.m.js';
+import '//resources/cr_elements/cr_shared_vars.css.js';
+import '//resources/cr_elements/cr_shared_style.css.js';
 
-import {assert, assertNotReached} from '//resources/js/assert.m.js';
-import {html, PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {assert, assertNotReached} from '//resources/js/assert_ts.js';
+import {sanitizeInnerHtml} from '//resources/js/parse_html_subset.js';
+import {PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-interface LocalizedLinkElement {
+import {getTemplate} from './localized_link.html.js';
+
+export interface LocalizedLinkElement {
   $: {
     container: HTMLElement,
   };
 }
 
-class LocalizedLinkElement extends PolymerElement {
+export class LocalizedLinkElement extends PolymerElement {
   static get is() {
     return 'localized-link';
+  }
+
+  static get template() {
+    return getTemplate();
   }
 
   static get properties() {
@@ -72,7 +79,7 @@ class LocalizedLinkElement extends PolymerElement {
         type: String,
         value: '',
         computed: 'getAriaLabelledContent_(localizedString, linkUrl)',
-        observer: 'setContainerInnerHTML_',
+        observer: 'setContainerInnerHtml_',
       },
     };
   }
@@ -91,7 +98,7 @@ class LocalizedLinkElement extends PolymerElement {
   private getAriaLabelledContent_(localizedString: string, linkUrl: string):
       string {
     const tempEl = document.createElement('div');
-    tempEl.innerHTML = localizedString;
+    tempEl.innerHTML = sanitizeInnerHtml(localizedString, {attrs: ['id']});
 
     const ariaLabelledByIds: string[] = [];
     tempEl.childNodes.forEach((node, index) => {
@@ -141,8 +148,15 @@ class LocalizedLinkElement extends PolymerElement {
     return tempEl.innerHTML;
   }
 
-  private setContainerInnerHTML_() {
-    this.$.container.innerHTML = this.containerInnerHTML_;
+  private setContainerInnerHtml_() {
+    this.$.container.innerHTML = sanitizeInnerHtml(this.containerInnerHTML_, {
+      attrs: [
+        'aria-hidden',
+        'aria-labelledby',
+        'id',
+        'tabindex',
+      ],
+    });
     const anchorTag = this.shadowRoot!.querySelector('a');
     if (anchorTag) {
       anchorTag.addEventListener(
@@ -172,10 +186,6 @@ class LocalizedLinkElement extends PolymerElement {
       return;
     }
     anchorTag.tabIndex = this.linkDisabled ? -1 : 0;
-  }
-
-  static get template() {
-    return html`{__html_template__}`;
   }
 }
 

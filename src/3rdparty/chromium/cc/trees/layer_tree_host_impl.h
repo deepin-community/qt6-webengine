@@ -1,4 +1,4 @@
-// Copyright 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,13 +14,15 @@
 #include <utility>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
 #include "base/containers/lru_cache.h"
+#include "base/functional/callback.h"
 #include "base/memory/memory_pressure_listener.h"
 #include "base/memory/shared_memory_mapping.h"
+#include "base/rand_util.h"
 #include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "cc/benchmarks/micro_benchmark_controller_impl.h"
 #include "cc/cc_export.h"
@@ -28,10 +30,10 @@
 #include "cc/input/browser_controls_offset_manager_client.h"
 #include "cc/input/input_handler.h"
 #include "cc/input/scrollbar_animation_controller.h"
-#include "cc/input/threaded_input_handler.h"
 #include "cc/layers/layer_collections.h"
 #include "cc/metrics/average_lag_tracking_manager.h"
 #include "cc/metrics/dropped_frame_counter.h"
+#include "cc/metrics/event_latency_tracker.h"
 #include "cc/metrics/event_metrics.h"
 #include "cc/metrics/events_metrics_manager.h"
 #include "cc/metrics/frame_sequence_tracker_collection.h"
@@ -44,7 +46,6 @@
 #include "cc/scheduler/video_frame_controller.h"
 #include "cc/tiles/tile_manager.h"
 #include "cc/trees/animated_paint_worklet_tracker.h"
-#include "cc/trees/de_jelly_state.h"
 #include "cc/trees/frame_rate_estimator.h"
 #include "cc/trees/layer_tree_frame_sink_client.h"
 #include "cc/trees/layer_tree_host.h"
@@ -92,7 +93,6 @@ class MemoryHistory;
 class MutatorEvents;
 class MutatorHost;
 class PageScaleAnimation;
-class PendingTreeRasterDurationHistogramTimer;
 class RasterTilePriorityQueue;
 class RasterBufferProvider;
 class RasterQueryQueue;
@@ -119,6 +119,7 @@ class LayerTreeHostImplClient {
   virtual void DidReceiveCompositorFrameAckOnImplThread() = 0;
   virtual void OnCanDrawStateChanged(bool can_draw) = 0;
   virtual void NotifyReadyToActivate() = 0;
+  virtual bool IsReadyToActivate() = 0;
   virtual void NotifyReadyToDraw() = 0;
   // Please call these 2 functions through
   // LayerTreeHostImpl's SetNeedsRedraw() and SetNeedsOneBeginImplFrame().
@@ -127,6 +128,7 @@ class LayerTreeHostImplClient {
   virtual void SetNeedsCommitOnImplThread() = 0;
   virtual void SetNeedsPrepareTilesOnImplThread() = 0;
   virtual void SetVideoNeedsBeginFrames(bool needs_begin_frames) = 0;
+  virtual void SetDeferBeginMainFrameFromImpl(bool defer_begin_main_frame) = 0;
   virtual bool IsInsideDraw() = 0;
   virtual void RenewTreePriority() = 0;
   virtual void PostDelayedAnimationTaskOnImplThread(base::OnceClosure task,
@@ -146,6 +148,8 @@ class LayerTreeHostImplClient {
       bool needs_first_draw_on_activation) = 0;
   // Called when a requested image decode completes.
   virtual void NotifyImageDecodeRequestFinished() = 0;
+
+  virtual void NotifyTransitionRequestFinished(uint32_t sequence_id) = 0;
 
   // Called when a presentation time is requested. |frame_token| identifies
   // the frame that was presented. |callbacks| holds both impl side and main
@@ -193,7 +197,8 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
                                     public VideoFrameControllerClient,
                                     public MutatorHostClient,
                                     public ImageAnimationController::Client,
-                                    public CompositorDelegateForInput {
+                                    public CompositorDelegateForInput,
+                                    public EventLatencyTracker {
  public:
   // This structure is used to build all the state required for producing a
   // single CompositorFrame. The |render_passes| list becomes the set of
@@ -272,8 +277,8 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
   // TODO(bokan): This getter is an escape-hatch for code that hasn't yet been
   // cleaned up to decouple input from graphics. Callers should be cleaned up
   // to avoid calling it and it should be removed.
-  ThreadedInputHandler& GetInputHandler();
-  const ThreadedInputHandler& GetInputHandler() const;
+  InputHandler& GetInputHandler();
+  const InputHandler& GetInputHandler() const;
 
   void StartPageScaleAnimation(const gfx::Point& target_offset,
                                bool anchor_point,
@@ -318,18 +323,20 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
     return viewport_damage_rect_;
   }
 
-  virtual void WillSendBeginMainFrame();
+  virtual void WillSendBeginMainFrame() {}
   virtual void DidSendBeginMainFrame(const viz::BeginFrameArgs& args);
   virtual void BeginMainFrameAborted(
       CommitEarlyOutReason reason,
       std::vector<std::unique_ptr<SwapPromise>> swap_promises,
       const viz::BeginFrameArgs& args,
+      bool next_bmf,
       bool scroll_and_viewport_changes_synced);
   virtual void ReadyToCommit(
       const viz::BeginFrameArgs& commit_args,
+      bool scroll_and_viewport_changes_synced,
       const BeginMainFrameMetrics* begin_main_frame_metrics,
       bool commit_timeout = false);
-  virtual void BeginCommit(int source_frame_number);
+  virtual void BeginCommit(int source_frame_number, uint64_t trace_id);
   virtual void FinishCommit(CommitState& commit_state,
                             const ThreadUnsafeCommitState& unsafe_state);
   virtual void CommitComplete();
@@ -343,9 +350,8 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
   void DidAnimateScrollOffset();
   void SetFullViewportDamage();
   void SetViewportDamage(const gfx::Rect& damage_rect);
-  void SetEnableFrameRateThrottling(bool enable_frame_rate_throttling);
 
-  // Interface for ThreadedInputHandler
+  // Interface for InputHandler
   void BindToInputHandler(
       std::unique_ptr<InputDelegateForCompositor> delegate) override;
   ScrollTree& GetScrollTree() const override;
@@ -371,6 +377,10 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
   const LayerTreeSettings& GetSettings() const override;
   LayerTreeHostImpl& GetImplDeprecated() override;
   const LayerTreeHostImpl& GetImplDeprecated() const override;
+  void SetDeferBeginMainFrame(bool defer_begin_main_frame) const override;
+  void UpdateBrowserControlsState(BrowserControlsState constraints,
+                                  BrowserControlsState current,
+                                  bool animate) override;
 
   bool CanInjectJankOnMain() const;
   FrameSequenceTrackerCollection& frame_trackers() { return frame_trackers_; }
@@ -481,8 +491,11 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
 
   // When blocking, this prevents client_->NotifyReadyToActivate() from being
   // called. When disabled, it calls client_->NotifyReadyToActivate()
-  // immediately if any notifications had been blocked while blocking.
-  virtual void BlockNotifyReadyToActivateForTesting(bool block);
+  // immediately if any notifications had been blocked while blocking and
+  // notify_if_blocked is true.
+  virtual void BlockNotifyReadyToActivateForTesting(
+      bool block,
+      bool notify_if_blocked = true);
 
   // Prevents notifying the |client_| when an impl side invalidation request is
   // made. When unblocked, the disabled request will immediately be called.
@@ -495,6 +508,8 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
 
   void RegisterScrollbarAnimationController(ElementId scroll_element_id,
                                             float initial_opacity);
+  void DidRegisterScrollbarLayer(ElementId scroll_element_id,
+                                 ScrollbarOrientation orientation);
   void DidUnregisterScrollbarLayer(ElementId scroll_element_id,
                                    ScrollbarOrientation orientation);
   ScrollbarAnimationController* ScrollbarAnimationControllerForElementId(
@@ -535,6 +550,7 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
   void SetNeedsRedrawForScrollbarAnimation() override;
   ScrollbarSet ScrollbarsFor(ElementId scroll_element_id) const override;
   void DidChangeScrollbarVisibility() override;
+  bool IsFluentScrollbar() const override;
 
   // VideoBeginFrameSource implementation.
   void AddVideoFrameController(VideoFrameController* controller) override;
@@ -560,6 +576,10 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
               bool skip_draw) override;
   void OnCompositorFrameTransitionDirectiveProcessed(
       uint32_t sequence_id) override;
+
+  // EventLatencyTracker implementation.
+  void ReportEventLatency(
+      std::vector<EventLatencyTracker::LatencyData> latencies) override;
 
   // Called from LayerTreeImpl.
   void OnCanDrawStateChangedForTree();
@@ -592,10 +612,11 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
     return settings_.create_low_res_tiling && !use_gpu_rasterization_;
   }
   ResourcePool* resource_pool() { return resource_pool_.get(); }
-  ImageDecodeCache* image_decode_cache() { return image_decode_cache_.get(); }
   ImageAnimationController* image_animation_controller() {
     return &image_animation_controller_;
   }
+
+  ImageDecodeCache* GetImageDecodeCache() const;
 
   uint32_t next_frame_token() const { return *next_frame_token_; }
 
@@ -605,15 +626,23 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
   // equal to `frame_token`.
   void RegisterMainThreadPresentationTimeCallbackForTesting(
       uint32_t frame_token,
-      PresentationTimeCallbackBuffer::MainCallback callback);
+      PresentationTimeCallbackBuffer::Callback callback);
+
+  // Buffers `callback` until a relevant successful presentation occurs, at
+  // which point the callback will be posted to run on the main thread. A
+  // successful presentation is considered relevant if the presented frame's
+  // token is greater than or equal to `frame_token`.
+  void RegisterMainThreadSuccessfulPresentationTimeCallbackForTesting(
+      uint32_t frame_token,
+      PresentationTimeCallbackBuffer::SuccessfulCallback callback);
 
   // Buffers `callback` until a relevant successful presentation occurs, at
   // which point the callback will be run on the compositor thread. A successful
   // presentation is considered relevant if the presented frame's token is
   // greater than or equal to `frame_token`.
-  void RegisterCompositorPresentationTimeCallback(
+  void RegisterCompositorThreadSuccessfulPresentationTimeCallbackForTesting(
       uint32_t frame_token,
-      PresentationTimeCallbackBuffer::CompositorCallback callback);
+      PresentationTimeCallbackBuffer::SuccessfulCallback callback);
 
   virtual bool WillBeginImplFrame(const viz::BeginFrameArgs& args);
   virtual void DidFinishImplFrame(const viz::BeginFrameArgs& args);
@@ -656,8 +685,9 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
   // TODO(bokan): These input-related methods shouldn't be part of
   // LayerTreeHostImpl's interface.
   bool IsPinchGestureActive() const;
-  // See comment in equivalent ThreadedInputHandler method for what this means.
+  // See comment in equivalent InputHandler method for what this means.
   ActivelyScrollingType GetActivelyScrollingType() const;
+  bool IsCurrentScrollMainRepainted() const;
   bool ScrollAffectsScrollHandler() const;
   bool CurrentScrollCheckerboardsDueToNoRecording() const {
     return current_scroll_did_checkerboard_large_area_;
@@ -682,7 +712,8 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
 
   // During commit, processes and returns changes in the compositor since the
   // last commit.
-  std::unique_ptr<CompositorCommitData> ProcessCompositorDeltas();
+  std::unique_ptr<CompositorCommitData> ProcessCompositorDeltas(
+      const MutatorHost* main_thread_mutator_host);
 
   DroppedFrameCounter* dropped_frame_counter() {
     return &dropped_frame_counter_;
@@ -808,9 +839,6 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
   // Returns mutator events to be handled by BeginMainFrame.
   std::unique_ptr<MutatorEvents> TakeMutatorEvents();
 
-  // Returns all of the transition request sequence ids that were finished.
-  std::vector<uint32_t> TakeFinishedTransitionRequestSequenceIds();
-
   void ClearHistory();
   size_t CommitDurationSampleCountForTesting() const;
   void ClearCaches();
@@ -840,7 +868,7 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
   // was presented.
   void NotifyDidPresentCompositorFrameOnImplThread(
       uint32_t frame_token,
-      std::vector<PresentationTimeCallbackBuffer::CompositorCallback> callbacks,
+      std::vector<PresentationTimeCallbackBuffer::SuccessfulCallback> callbacks,
       const viz::FrameTimingDetails& details);
 
   CompositorFrameReportingController* compositor_frame_reporting_controller()
@@ -879,6 +907,14 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
     return throttle_decider_.ids();
   }
 
+  bool IsReadyToActivate() const;
+
+  void RequestImplSideInvalidationForRerasterTiling();
+
+  void SetDownsampleMetricsForTesting(bool value) {
+    downsample_metrics_ = value;
+  }
+
  protected:
   LayerTreeHostImpl(
       const LayerTreeSettings& settings,
@@ -909,9 +945,6 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
   const raw_ptr<TaskRunnerProvider> task_runner_provider_;
 
   BeginFrameTracker current_begin_frame_tracker_;
-
-  std::unique_ptr<CompositorFrameReportingController>
-      compositor_frame_reporting_controller_;
 
  private:
   viz::CompositorFrame GenerateCompositorFrame(FrameData* frame);
@@ -986,6 +1019,10 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
   void NotifyLatencyInfoSwapPromiseMonitors();
 
  private:
+  // Holds image decode cache instance. It can either be a shared cache or
+  // a cache create by this instance. Which is used depends on the settings.
+  class ImageDecodeCacheHolder;
+
   void SetMemoryPolicyImpl(const ManagedMemoryPolicy& policy);
   void SetContextVisibility(bool is_visible);
 
@@ -1016,6 +1053,10 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
 
   // Wrapper for checking and updating |contains_srgb_cache_|.
   bool CheckColorSpaceContainsSrgb(const gfx::ColorSpace& color_space) const;
+
+  // Registers callbacks, as needed, to track First Scroll Latency.
+  void ApplyFirstScrollTracking(const ui::LatencyInfo& latency,
+                                uint32_t frame_token);
 
   // Once bound, this instance owns the InputHandler. However, an InputHandler
   // need not be bound so this should be null-checked before dereferencing.
@@ -1071,7 +1112,7 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
   std::unique_ptr<RasterBufferProvider> raster_buffer_provider_;
   std::unique_ptr<ResourcePool> resource_pool_;
   std::unique_ptr<RasterQueryQueue> pending_raster_queries_;
-  std::unique_ptr<ImageDecodeCache> image_decode_cache_;
+  std::unique_ptr<ImageDecodeCacheHolder> image_decode_cache_holder_;
 
   GlobalStateThatImpactsTilePriority global_tile_state_;
 
@@ -1107,8 +1148,12 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
 
   std::unique_ptr<PageScaleAnimation> page_scale_animation_;
 
-  DroppedFrameCounter dropped_frame_counter_;
+  base::WritableSharedMemoryMapping ukm_smoothness_mapping_;
+
   TotalFrameCounter total_frame_counter_;
+  // `dropped_frame_counter_` holds a pointer `to ukm_smoothness_mapping_` so
+  // it must be declared last and deleted first;
+  DroppedFrameCounter dropped_frame_counter_;
 
   std::unique_ptr<MemoryHistory> memory_history_;
   std::unique_ptr<DebugRectHistory> debug_rect_history_;
@@ -1181,9 +1226,6 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
 
   bool may_throttle_if_undrawn_frames_ = true;
 
-  std::unique_ptr<PendingTreeRasterDurationHistogramTimer>
-      pending_tree_raster_duration_timer_;
-
   // These completion states to be transfered to the main thread when we
   // begin main frame. The pair represents a request id and the completion (ie
   // success) state.
@@ -1222,8 +1264,10 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
 
   PresentationTimeCallbackBuffer presentation_time_callbacks_;
 
-  const PaintImage::GeneratorClientId paint_image_generator_client_id_;
-
+  // `compositor_frame_reporting_controller_` has a dependency on
+  // `dropped_frame_counter_` so it must be declared last and deleted first;
+  std::unique_ptr<CompositorFrameReportingController>
+      compositor_frame_reporting_controller_;
   FrameSequenceTrackerCollection frame_trackers_;
 
   // PaintWorklet painting is controlled from the LayerTreeHostImpl, dispatched
@@ -1260,9 +1304,6 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
 
   AverageLagTrackingManager lag_tracking_manager_;
 
-  // Helper for de-jelly logic.
-  DeJellyState de_jelly_state_;
-
   EventsMetricsManager events_metrics_manager_;
 
   std::unique_ptr<LCDTextMetricsReporter> lcd_text_metrics_reporter_;
@@ -1270,13 +1311,9 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
   FrameRateEstimator frame_rate_estimator_;
   bool has_observed_first_scroll_delay_ = false;
 
-  bool enable_frame_rate_throttling_ = false;
-
   // True if we are measuring smoothness in TotalFrameCounter and
   // DroppedFrameCounter. Currently true when first contentful paint is done.
   bool is_measuring_smoothness_ = false;
-
-  base::WritableSharedMemoryMapping ukm_smoothness_mapping_;
 
   // Cache for the results of calls to gfx::ColorSpace::Contains() on sRGB. This
   // computation is deterministic for a given color space, can be called
@@ -1288,7 +1325,10 @@ class CC_EXPORT LayerTreeHostImpl : public TileManagerClient,
   // some pre-defined criteria.
   ThrottleDecider throttle_decider_;
 
-  std::vector<uint32_t> finished_transition_request_sequence_ids_;
+  bool downsample_metrics_ = true;
+  base::MetricsSubSampler metrics_subsampler_;
+
+  const bool use_dmsaa_for_tiles_;
 
   // Must be the last member to ensure this is destroyed first in the
   // destruction order and invalidates all weak pointers.

@@ -1,10 +1,10 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/password_manager/core/browser/insecure_credentials_helper.h"
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/test/task_environment.h"
 
 #include "components/password_manager/core/browser/mock_password_store_interface.h"
@@ -64,7 +64,8 @@ class InsecureCredentialsHelperTest : public testing::Test {
     std::vector<std::unique_ptr<PasswordForm>> results;
     for (auto& form : password_forms)
       results.push_back(std::make_unique<PasswordForm>(std::move(form)));
-    consumer_->OnGetPasswordStoreResults(std::move(results));
+    consumer_->OnGetPasswordStoreResultsOrErrorFrom(store_.get(),
+                                                    std::move(results));
   }
 
   void TearDown() override { store()->ShutdownOnUIThread(); }
@@ -87,7 +88,7 @@ TEST_F(InsecureCredentialsHelperTest, UpdateLoginCalledForTheRightFormAdd) {
   ExpectGetLogins("http://example.com");
   AddPhishedCredentials(store(),
                         MakeCredential("http://example.com", u"username1"));
-  EXPECT_CALL(*store(), UpdateLogin(expected_form));
+  EXPECT_CALL(*store(), UpdateLogin(expected_form, _));
   SimulateStoreRepliedWithResults(forms);
 }
 
@@ -103,7 +104,7 @@ TEST_F(InsecureCredentialsHelperTest, UpdateLoginCalledForTheRightFormRemove) {
   RemovePhishedCredentials(store(),
                            MakeCredential("http://example.com", u"username1"));
   EXPECT_CALL(*store(),
-              UpdateLogin(CreateForm("http://example.com", u"username1")));
+              UpdateLogin(CreateForm("http://example.com", u"username1"), _));
   SimulateStoreRepliedWithResults(forms);
 }
 
@@ -119,8 +120,8 @@ TEST_F(InsecureCredentialsHelperTest, UpdateLoginCalledForAllMatchingFormsAdd) {
       InsecurityMetadata(base::Time::Now(), IsMuted(false));
   forms.at(1).password_issues[InsecureType::kPhished] =
       InsecurityMetadata(base::Time::Now(), IsMuted(false));
-  EXPECT_CALL(*store(), UpdateLogin(forms[1]));
-  EXPECT_CALL(*store(), UpdateLogin(forms[0]));
+  EXPECT_CALL(*store(), UpdateLogin(forms[1], _));
+  EXPECT_CALL(*store(), UpdateLogin(forms[0], _));
   SimulateStoreRepliedWithResults(
       {CreateForm("http://example.com", u"username", u"password1"),
        CreateForm("http://example.com", u"username", u"password2")});
@@ -139,9 +140,11 @@ TEST_F(InsecureCredentialsHelperTest,
   forms.at(0).password_issues[InsecureType::kPhished] = InsecurityMetadata();
   forms.at(1).password_issues[InsecureType::kPhished] = InsecurityMetadata();
   EXPECT_CALL(*store(), UpdateLogin(CreateForm("http://example.com",
-                                               u"username", u"password2")));
+                                               u"username", u"password2"),
+                                    _));
   EXPECT_CALL(*store(), UpdateLogin(CreateForm("http://example.com",
-                                               u"username", u"password1")));
+                                               u"username", u"password1"),
+                                    _));
   SimulateStoreRepliedWithResults(forms);
 }
 

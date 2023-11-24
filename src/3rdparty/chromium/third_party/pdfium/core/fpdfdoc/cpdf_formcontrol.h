@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -35,12 +35,16 @@ class CPDF_FormControl {
  public:
   enum HighlightingMode { kNone = 0, kInvert, kOutline, kPush, kToggle };
 
-  CPDF_FormControl(CPDF_FormField* pField, CPDF_Dictionary* pWidgetDict);
+  CPDF_FormControl(CPDF_FormField* pField,
+                   RetainPtr<CPDF_Dictionary> pWidgetDict,
+                   CPDF_InteractiveForm* pForm);
   ~CPDF_FormControl();
 
   CPDF_FormField::Type GetType() const { return m_pField->GetType(); }
-  CPDF_FormField* GetField() const { return m_pField.Get(); }
-  CPDF_Dictionary* GetWidget() const { return m_pWidgetDict.Get(); }
+  CPDF_FormField* GetField() const { return m_pField; }
+  RetainPtr<const CPDF_Dictionary> GetWidgetDict() const {
+    return m_pWidgetDict;
+  }
   CFX_FloatRect GetRect() const;
 
   ByteString GetCheckedAPState() const;
@@ -74,9 +78,15 @@ class CPDF_FormControl {
     return GetCaption(pdfium::appearance::kAC);
   }
 
-  CPDF_Stream* GetNormalIcon() { return GetIcon(pdfium::appearance::kI); }
-  CPDF_Stream* GetRolloverIcon() { return GetIcon(pdfium::appearance::kRI); }
-  CPDF_Stream* GetDownIcon() { return GetIcon(pdfium::appearance::kIX); }
+  RetainPtr<CPDF_Stream> GetNormalIcon() {
+    return GetIcon(pdfium::appearance::kI);
+  }
+  RetainPtr<CPDF_Stream> GetRolloverIcon() {
+    return GetIcon(pdfium::appearance::kRI);
+  }
+  RetainPtr<CPDF_Stream> GetDownIcon() {
+    return GetIcon(pdfium::appearance::kIX);
+  }
   CPDF_IconFit GetIconFit() const;
 
   int GetTextPosition() const;
@@ -93,7 +103,7 @@ class CPDF_FormControl {
   CFX_Color GetOriginalColor(const ByteString& csEntry);
 
   WideString GetCaption(const ByteString& csEntry) const;
-  CPDF_Stream* GetIcon(const ByteString& csEntry);
+  RetainPtr<CPDF_Stream> GetIcon(const ByteString& csEntry);
   CPDF_ApSettings GetMK() const;
 
   UnownedPtr<CPDF_FormField> const m_pField;

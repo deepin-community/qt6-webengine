@@ -7,13 +7,17 @@ import type * as SDK from '../../core/sdk/sdk.js';
 import * as Protocol from '../../generated/protocol.js';
 
 import {Issue, IssueCategory, IssueKind} from './Issue.js';
-import type {LazyMarkdownIssueDescription, MarkdownIssueDescription} from './MarkdownIssueDescription.js';
-import {resolveLazyDescription} from './MarkdownIssueDescription.js';
+
+import {
+  resolveLazyDescription,
+  type LazyMarkdownIssueDescription,
+  type MarkdownIssueDescription,
+} from './MarkdownIssueDescription.js';
 
 const UIStrings = {
   /**
-  *@description Label for the link for Trusted Web Activity issue
-  */
+   *@description Label for the link for Trusted Web Activity issue
+   */
   changesToQualityCriteriaForPwas: 'Changes to quality criteria for PWAs using Trusted Web Activity',
 };
 const str_ = i18n.i18n.registerUIStrings('models/issues_manager/TrustedWebActivityIssue.ts', UIStrings);

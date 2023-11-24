@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,8 +13,8 @@
 #include <utility>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/containers/contains.h"
+#include "base/functional/callback.h"
 #include "components/services/storage/public/cpp/buckets/bucket_locator.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/mojom/quota/quota_types.mojom-forward.h"
@@ -75,44 +75,6 @@ class CallbackQueue {
 
  private:
   std::vector<CallbackType> callbacks_;
-};
-
-template <typename CallbackType, typename Key, typename... Args>
-class CallbackQueueMap {
- public:
-  using CallbackQueueType = CallbackQueue<CallbackType, Args...>;
-  using CallbackMap = std::map<Key, CallbackQueueType>;
-  using iterator = typename CallbackMap::iterator;
-
-  bool Add(const Key& key, CallbackType callback) {
-    return callback_map_[key].Add(std::move(callback));
-  }
-
-  bool HasCallbacks(const Key& key) const {
-    return base::Contains(callback_map_, key);
-  }
-
-  bool HasAnyCallbacks() const { return !callback_map_.empty(); }
-
-  iterator Begin() { return callback_map_.begin(); }
-  iterator End() { return callback_map_.end(); }
-
-  void Clear() { callback_map_.clear(); }
-
-  // Runs the callbacks added for the given |key| and clears the key
-  // from the map.
-  template <typename... RunArgs>
-  void Run(const Key& key, RunArgs&&... args) {
-    if (!this->HasCallbacks(key))
-      return;
-    CallbackQueueType queue;
-    queue.Swap(&callback_map_[key]);
-    callback_map_.erase(key);
-    queue.Run(std::forward<RunArgs>(args)...);
-  }
-
- private:
-  CallbackMap callback_map_;
 };
 
 }  // namespace storage

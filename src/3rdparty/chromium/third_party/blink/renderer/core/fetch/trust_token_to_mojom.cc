@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,57 +7,57 @@
 
 namespace blink {
 
+using VersionType = V8PrivateTokenVersion::Enum;
+using OperationType = V8OperationType::Enum;
+using RefreshPolicy = V8RefreshPolicy::Enum;
+
 bool ConvertTrustTokenToMojom(const TrustToken& in,
                               ExceptionState* exception_state,
                               network::mojom::blink::TrustTokenParams* out) {
-  DCHECK(in.hasType());  // field is required in IDL
-  if (in.type() == "token-request") {
-    out->type = network::mojom::blink::TrustTokenOperationType::kIssuance;
+  DCHECK(in.hasOperation());  // field is required in IDL
+
+  // get token version
+  if (in.hasVersion()) {
+    // only version 1 is supported
+    if (in.version().AsEnum() == VersionType::k1) {
+      out->version =
+          network::mojom::blink::TrustTokenMajorVersion::kPrivateStateTokenV1;
+    } else {
+      exception_state->ThrowTypeError("trustToken: unknown token version.");
+      return false;
+    }
+  } else {
+    exception_state->ThrowTypeError(
+        "trustToken: token version is not specified.");
+    return false;
+  }
+
+  if (in.operation().AsEnum() == OperationType::kTokenRequest) {
+    out->operation = network::mojom::blink::TrustTokenOperationType::kIssuance;
     return true;
   }
 
-  if (in.type() == "token-redemption") {
-    out->type = network::mojom::blink::TrustTokenOperationType::kRedemption;
+  if (in.operation().AsEnum() == OperationType::kTokenRedemption) {
+    out->operation =
+        network::mojom::blink::TrustTokenOperationType::kRedemption;
 
     DCHECK(in.hasRefreshPolicy());  // default is defined
-    out->include_timestamp_header = in.includeTimestampHeader();
 
-    if (in.refreshPolicy() == "none") {
+    if (in.refreshPolicy().AsEnum() == RefreshPolicy::kNone) {
       out->refresh_policy =
           network::mojom::blink::TrustTokenRefreshPolicy::kUseCached;
-    } else if (in.refreshPolicy() == "refresh") {
+    } else if (in.refreshPolicy().AsEnum() == RefreshPolicy::kRefresh) {
       out->refresh_policy =
           network::mojom::blink::TrustTokenRefreshPolicy::kRefresh;
     }
     return true;
   }
 
-  DCHECK_EQ(
-      in.type(),
-      "send-redemption-record");  // final possible value of the input enum
-  out->type = network::mojom::blink::TrustTokenOperationType::kSigning;
+  // The final possible value of the type enum.
+  DCHECK_EQ(in.operation().AsEnum(), OperationType::kSendRedemptionRecord);
+  out->operation = network::mojom::blink::TrustTokenOperationType::kSigning;
 
-  if (in.hasSignRequestData()) {
-    if (in.signRequestData() == "omit") {
-      out->sign_request_data =
-          network::mojom::blink::TrustTokenSignRequestData::kOmit;
-    } else if (in.signRequestData() == "include") {
-      out->sign_request_data =
-          network::mojom::blink::TrustTokenSignRequestData::kInclude;
-    } else if (in.signRequestData() == "headers-only") {
-      out->sign_request_data =
-          network::mojom::blink::TrustTokenSignRequestData::kHeadersOnly;
-    }
-  }
-
-  if (in.hasAdditionalSignedHeaders()) {
-    out->additional_signed_headers = in.additionalSignedHeaders();
-  }
-
-  DCHECK(in.hasIncludeTimestampHeader());  // default is defined
-  out->include_timestamp_header = in.includeTimestampHeader();
-
-  if (in.hasIssuers() && !in.issuers().IsEmpty()) {
+  if (in.hasIssuers() && !in.issuers().empty()) {
     for (const String& issuer : in.issuers()) {
       // Two conditions on the issuers:
       // 1. HTTP or HTTPS (because much Trust Tokens protocol state is
@@ -93,9 +93,6 @@ bool ConvertTrustTokenToMojom(const TrustToken& in,
         "was missing or empty.");
     return false;
   }
-
-  if (in.hasAdditionalSigningData())
-    out->possibly_unsafe_additional_signing_data = in.additionalSigningData();
 
   return true;
 }

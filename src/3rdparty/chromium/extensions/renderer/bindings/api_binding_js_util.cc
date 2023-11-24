@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -33,7 +33,7 @@ APIBindingJSUtil::APIBindingJSUtil(APITypeReferenceMap* type_refs,
       event_handler_(event_handler),
       exception_handler_(exception_handler) {}
 
-APIBindingJSUtil::~APIBindingJSUtil() {}
+APIBindingJSUtil::~APIBindingJSUtil() = default;
 
 gin::ObjectTemplateBuilder APIBindingJSUtil::GetObjectTemplateBuilder(
     v8::Isolate* isolate) {
@@ -87,7 +87,6 @@ void APIBindingJSUtil::SendRequest(
     options_dict.Get("customCallback", &custom_callback);
   }
 
-  std::unique_ptr<base::ListValue> converted_arguments;
   v8::Local<v8::Function> callback;
 
   // Some APIs (like fileSystem and contextMenus) don't provide arguments that
@@ -109,8 +108,9 @@ void APIBindingJSUtil::SendRequest(
   DCHECK_NE(binding::AsyncResponseType::kPromise, parse_result.async_type);
 
   request_handler_->StartRequest(
-      context, name, std::move(parse_result.arguments_list),
-      parse_result.async_type, parse_result.callback, custom_callback);
+      context, name, std::move(*parse_result.arguments_list),
+      parse_result.async_type, parse_result.callback, custom_callback,
+      binding::ResultModifierFunction());
 }
 
 void APIBindingJSUtil::RegisterEventArgumentMassager(
@@ -305,7 +305,8 @@ void APIBindingJSUtil::AddCustomSignature(
       custom_signature_name,
       APISignature::CreateFromValues(*base_signature, nullptr /*returns_async*/,
                                      nullptr /*access_checker*/,
-                                     custom_signature_name));
+                                     custom_signature_name,
+                                     false /*is_event_signature*/));
 }
 
 void APIBindingJSUtil::ValidateCustomSignature(

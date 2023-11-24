@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -83,9 +83,5 @@ void CPDF_Type3Char::SetForm(std::unique_ptr<CPDF_Font::FormIface> pForm) {
 }
 
 RetainPtr<CFX_DIBitmap> CPDF_Type3Char::GetBitmap() {
-  return m_pBitmap;
-}
-
-const RetainPtr<CFX_DIBitmap>& CPDF_Type3Char::GetBitmap() const {
   return m_pBitmap;
 }

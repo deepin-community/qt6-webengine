@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -29,6 +29,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
+#include "crypto/sha2.h"
 
 using content::WebContents;
 
@@ -76,8 +77,15 @@ ReferrerChainEntry::URLType GetURLTypeAndAdjustAttributionResult(
   }
 }
 
-std::string GetOrigin(const std::string& url) {
-  return GURL(url).DeprecatedGetOriginAsURL().spec();
+std::string ShortOriginForReporting(const std::string& url) {
+  GURL gurl(url);
+  if (gurl.SchemeIsLocal()) {
+    std::string sha_url = crypto::SHA256HashString(url);
+    return gurl.scheme() + "://" +
+           base::HexEncode(sha_url.data(), sha_url.size());
+  } else {
+    return gurl.DeprecatedGetOriginAsURL().spec();
+  }
 }
 
 }  // namespace
@@ -350,17 +358,19 @@ void SafeBrowsingNavigationObserverManager::SanitizeReferrerChain(
     ReferrerChainEntry entry_copy(*entry);
     entry->Clear();
     if (entry_copy.has_url())
-      entry->set_url(GetOrigin(entry_copy.url()));
+      entry->set_url(ShortOriginForReporting(entry_copy.url()));
     if (entry_copy.has_main_frame_url())
-      entry->set_main_frame_url(GetOrigin(entry_copy.main_frame_url()));
+      entry->set_main_frame_url(
+          ShortOriginForReporting(entry_copy.main_frame_url()));
     entry->set_type(entry_copy.type());
     for (int j = 0; j < entry_copy.ip_addresses_size(); j++)
       entry->add_ip_addresses(entry_copy.ip_addresses(j));
     if (entry_copy.has_referrer_url())
-      entry->set_referrer_url(GetOrigin(entry_copy.referrer_url()));
+      entry->set_referrer_url(
+          ShortOriginForReporting(entry_copy.referrer_url()));
     if (entry_copy.has_referrer_main_frame_url())
       entry->set_referrer_main_frame_url(
-          GetOrigin(entry_copy.referrer_main_frame_url()));
+          ShortOriginForReporting(entry_copy.referrer_main_frame_url()));
     entry->set_is_retargeting(entry_copy.is_retargeting());
     entry->set_navigation_time_msec(entry_copy.navigation_time_msec());
     entry->set_navigation_initiation(entry_copy.navigation_initiation());
@@ -369,7 +379,7 @@ void SafeBrowsingNavigationObserverManager::SanitizeReferrerChain(
           entry->add_server_redirect_chain();
       if (entry_copy.server_redirect_chain(j).has_url()) {
         server_redirect_entry->set_url(
-            GetOrigin(entry_copy.server_redirect_chain(j).url()));
+            ShortOriginForReporting(entry_copy.server_redirect_chain(j).url()));
       }
     }
   }
@@ -480,8 +490,6 @@ SafeBrowsingNavigationObserverManager::IdentifyReferrerChainByEventURL(
     const content::GlobalRenderFrameHostId& outermost_main_frame_id,
     int user_gesture_count_limit,
     ReferrerChain* out_referrer_chain) {
-  SCOPED_UMA_HISTOGRAM_TIMER(
-      "SafeBrowsing.NavigationObserver.IdentifyReferrerChainByEventURLTime");
   if (!event_url.is_valid())
     return INVALID_URL;
 
@@ -564,9 +572,6 @@ SafeBrowsingNavigationObserverManager::IdentifyReferrerChainByRenderFrameHost(
     content::RenderFrameHost* render_frame_host,
     int user_gesture_count_limit,
     ReferrerChain* out_referrer_chain) {
-  SCOPED_UMA_HISTOGRAM_TIMER(
-      "SafeBrowsing.NavigationObserver."
-      "IdentifyReferrerChainByRenderFrameHostTime");
   if (!render_frame_host)
     return INVALID_URL;
   GURL last_committed_url = render_frame_host->GetLastCommittedURL();
@@ -687,9 +692,10 @@ void SafeBrowsingNavigationObserverManager::RecordNewWebContents(
       nav_event->initiator_outermost_main_frame_id =
           source_render_frame_host->GetOutermostMainFrame()->GetGlobalId();
     }
-    nav_event->outermost_main_frame_id = target_web_contents->GetMainFrame()
-                                             ->GetOutermostMainFrame()
-                                             ->GetGlobalId();
+    nav_event->outermost_main_frame_id =
+        target_web_contents->GetPrimaryMainFrame()
+            ->GetOutermostMainFrame()
+            ->GetGlobalId();
   }
 
   nav_event->source_tab_id =
@@ -730,8 +736,6 @@ size_t SafeBrowsingNavigationObserverManager::CountOfRecentNavigationsToAppend(
 void SafeBrowsingNavigationObserverManager::AppendRecentNavigations(
     size_t recent_navigation_count,
     ReferrerChain* out_referrer_chain) {
-  SCOPED_UMA_HISTOGRAM_TIMER(
-      "SafeBrowsing.NavigationObserver.AppendRecentNavigationsTime");
   if (recent_navigation_count <= 0u)
     return;
   size_t allowed_entries = recent_navigation_count;

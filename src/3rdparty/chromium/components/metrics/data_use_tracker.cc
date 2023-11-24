@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,7 +13,6 @@
 #include "build/build_config.h"
 #include "components/metrics/metrics_pref_names.h"
 #include "components/prefs/scoped_user_pref_update.h"
-#include "components/variations/variations_associated_data.h"
 
 namespace metrics {
 
@@ -21,8 +20,8 @@ namespace {
 
 // Default weekly quota and allowed UMA ratio for UMA log uploads for Android.
 // These defaults will not be used for non-Android as |DataUseTracker| will not
-// be initialized. Default values can be overridden by variation params.
-const int kDefaultUMAWeeklyQuotaBytes = 204800;
+// be initialized.
+const int kDefaultUMAWeeklyQuotaBytes = 200 * 1024;  // 200KB.
 const double kDefaultUMARatio = 0.05;
 
 }  // namespace
@@ -83,39 +82,32 @@ bool DataUseTracker::ShouldUploadLogOnCellular(int log_bytes) {
 
   RemoveExpiredEntries();
 
-  int uma_weekly_quota_bytes;
-  if (!GetUmaWeeklyQuota(&uma_weekly_quota_bytes))
-    return true;
-
   int uma_total_data_use = ComputeTotalDataUse(prefs::kUmaCellDataUse);
   int new_uma_total_data_use = log_bytes + uma_total_data_use;
   // If the new log doesn't increase the total UMA traffic to be above the
   // allowed quota then the log should be uploaded.
-  if (new_uma_total_data_use <= uma_weekly_quota_bytes)
+  if (new_uma_total_data_use <= kDefaultUMAWeeklyQuotaBytes) {
     return true;
-
-  double uma_ratio;
-  if (!GetUmaRatio(&uma_ratio))
-    return true;
+  }
 
   int user_total_data_use = ComputeTotalDataUse(prefs::kUserCellDataUse);
   // If after adding the new log the uma ratio is still under the allowed ratio
   // then the log should be uploaded and vice versa.
   return new_uma_total_data_use /
              static_cast<double>(log_bytes + user_total_data_use) <=
-         uma_ratio;
+         kDefaultUMARatio;
 }
 
 void DataUseTracker::UpdateUsagePref(const std::string& pref_name,
                                      int message_size) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  DictionaryPrefUpdate pref_updater(local_state_, pref_name);
+  ScopedDictPrefUpdate pref_updater(local_state_, pref_name);
   std::string todays_key = GetCurrentMeasurementDateAsString();
 
-  const base::Value* user_pref_dict = local_state_->GetDictionary(pref_name);
-  int todays_traffic = user_pref_dict->FindIntKey(todays_key).value_or(0);
-  pref_updater->SetIntKey(todays_key, todays_traffic + message_size);
+  const base::Value::Dict& user_pref_dict = local_state_->GetDict(pref_name);
+  int todays_traffic = user_pref_dict.FindInt(todays_key).value_or(0);
+  pref_updater->Set(todays_key, todays_traffic + message_size);
 }
 
 void DataUseTracker::RemoveExpiredEntries() {
@@ -127,12 +119,12 @@ void DataUseTracker::RemoveExpiredEntries() {
 void DataUseTracker::RemoveExpiredEntriesForPref(const std::string& pref_name) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  const base::Value* user_pref_dict = local_state_->GetDictionary(pref_name);
+  const base::Value::Dict& user_pref_dict = local_state_->GetDict(pref_name);
   const base::Time current_date = GetCurrentMeasurementDate();
   const base::Time week_ago = current_date - base::Days(7);
 
-  base::Value user_pref_new_dict{base::Value::Type::DICTIONARY};
-  for (const auto it : user_pref_dict->DictItems()) {
+  base::Value user_pref_new_dict{base::Value::Type::DICT};
+  for (const auto it : user_pref_dict) {
     base::Time key_date;
     if (base::Time::FromUTCString(it.first.c_str(), &key_date) &&
         key_date > week_ago)
@@ -149,35 +141,11 @@ int DataUseTracker::ComputeTotalDataUse(const std::string& pref_name) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   int total_data_use = 0;
-  const base::Value* pref_dict = local_state_->GetDictionary(pref_name);
-  for (const auto it : pref_dict->DictItems()) {
+  const base::Value::Dict& pref_dict = local_state_->GetDict(pref_name);
+  for (const auto it : pref_dict) {
     total_data_use += it.second.GetIfInt().value_or(0);
   }
   return total_data_use;
-}
-
-bool DataUseTracker::GetUmaWeeklyQuota(int* uma_weekly_quota_bytes) const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
-  std::string param_value_str = variations::GetVariationParamValue(
-      "UMA_EnableCellularLogUpload", "Uma_Quota");
-  if (param_value_str.empty())
-    *uma_weekly_quota_bytes = kDefaultUMAWeeklyQuotaBytes;
-  else
-    base::StringToInt(param_value_str, uma_weekly_quota_bytes);
-  return true;
-}
-
-bool DataUseTracker::GetUmaRatio(double* ratio) const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
-  std::string param_value_str = variations::GetVariationParamValue(
-      "UMA_EnableCellularLogUpload", "Uma_Ratio");
-  if (param_value_str.empty())
-    *ratio = kDefaultUMARatio;
-  else
-    base::StringToDouble(param_value_str, ratio);
-  return true;
 }
 
 base::Time DataUseTracker::GetCurrentMeasurementDate() const {

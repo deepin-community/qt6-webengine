@@ -2,10 +2,11 @@
   "android-official": {
     "gn_args": {
       "dcheck_always_on": true,
+      "debuggable_apks": false,
       "is_official_build": true,
       "symbol_level": 1,
       "target_os": "android",
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "fuchsia-official": {
@@ -14,7 +15,7 @@
       "is_official_build": true,
       "symbol_level": 1,
       "target_os": "fuchsia",
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "linux-official": {
@@ -22,7 +23,7 @@
       "dcheck_always_on": true,
       "is_official_build": true,
       "symbol_level": 1,
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "mac-official": {
@@ -30,7 +31,7 @@
       "dcheck_always_on": true,
       "is_official_build": true,
       "symbol_level": 1,
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "win-official": {
@@ -38,7 +39,7 @@
       "dcheck_always_on": true,
       "is_official_build": true,
       "symbol_level": 1,
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "win32-official": {
@@ -47,7 +48,7 @@
       "is_official_build": true,
       "symbol_level": 1,
       "target_cpu": "x86",
-      "use_goma": true
+      "use_remoteexec": true
     }
   }
 }

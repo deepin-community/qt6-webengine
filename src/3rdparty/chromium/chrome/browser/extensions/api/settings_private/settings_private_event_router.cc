@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,9 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
+#include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
@@ -140,7 +140,7 @@ void SettingsPrivateEventRouter::OnPreferenceChanged(
   // This posts an asynchronous task to ensure that all pref stores are updated,
   // as |prefs_util_->GetPref()| relies on this information to determine if a
   // preference is controlled by e.g. extensions.
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&SettingsPrivateEventRouter::SendPrefChange,
                                 weak_ptr_factory_.GetWeakPtr(), pref_name));
 }
@@ -152,7 +152,7 @@ void SettingsPrivateEventRouter::SendPrefChange(const std::string& pref_name) {
     return;
   }
 
-  std::unique_ptr<api::settings_private::PrefObject> pref_object =
+  absl::optional<api::settings_private::PrefObject> pref_object =
       prefs_util_->GetPref(pref_name);
 
   std::vector<api::settings_private::PrefObject> prefs;

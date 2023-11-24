@@ -1,14 +1,16 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "services/device/geolocation/wifi_data_provider_common.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
+#include "components/device_event_log/device_event_log.h"
 
 namespace device {
 
@@ -67,6 +69,9 @@ void WifiDataProviderCommon::DoWifiScanTask() {
   if (!wlan_api_)
     return;
 
+  SCOPED_UMA_HISTOGRAM_TIMER(
+      "Geolocation.WifiDataProviderCommon.WifiScanTaskTime");
+
   bool update_available = false;
   WifiData new_data;
   if (!wlan_api_->GetAccessPointData(&new_data.access_point_data)) {
@@ -77,6 +82,9 @@ void WifiDataProviderCommon::DoWifiScanTask() {
     WifiPollingPolicy::Get()->UpdatePollingInterval(update_available);
     ScheduleNextScan(WifiPollingPolicy::Get()->PollingInterval());
   }
+  GEOLOCATION_LOG(DEBUG) << "Scanned: update_available=" << update_available
+                         << " is_first_scan_complete_="
+                         << is_first_scan_complete_;
   if (update_available || !is_first_scan_complete_) {
     is_first_scan_complete_ = true;
     RunCallbacks();
@@ -84,6 +92,7 @@ void WifiDataProviderCommon::DoWifiScanTask() {
 }
 
 void WifiDataProviderCommon::ScheduleNextScan(int interval) {
+  GEOLOCATION_LOG(DEBUG) << "Schedule next scan: interval=" << interval << "ms";
   client_task_runner()->PostDelayedTask(
       FROM_HERE,
       base::BindOnce(&WifiDataProviderCommon::DoWifiScanTask,

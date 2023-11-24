@@ -14,7 +14,8 @@
 
 #include "src/tint/sem/loop_statement.h"
 
-#include "src/tint/program_builder.h"
+#include "src/tint/ast/block_statement.h"
+#include "src/tint/ast/loop_statement.h"
 
 TINT_INSTANTIATE_TYPEINFO(tint::sem::LoopStatement);
 TINT_INSTANTIATE_TYPEINFO(tint::sem::LoopContinuingBlockStatement);
@@ -25,20 +26,23 @@ LoopStatement::LoopStatement(const ast::LoopStatement* declaration,
                              const CompoundStatement* parent,
                              const sem::Function* function)
     : Base(declaration, parent, function) {
-  TINT_ASSERT(Semantic, parent);
-  TINT_ASSERT(Semantic, function);
+    TINT_ASSERT(Semantic, parent);
+    TINT_ASSERT(Semantic, function);
 }
 
 LoopStatement::~LoopStatement() = default;
 
-LoopContinuingBlockStatement::LoopContinuingBlockStatement(
-    const ast::BlockStatement* declaration,
-    const CompoundStatement* parent,
-    const sem::Function* function)
+LoopContinuingBlockStatement::LoopContinuingBlockStatement(const ast::BlockStatement* declaration,
+                                                           const CompoundStatement* parent,
+                                                           const sem::Function* function)
     : Base(declaration, parent, function) {
-  TINT_ASSERT(Semantic, parent);
-  TINT_ASSERT(Semantic, function);
+    TINT_ASSERT(Semantic, parent);
+    TINT_ASSERT(Semantic, function);
 }
 LoopContinuingBlockStatement::~LoopContinuingBlockStatement() = default;
+
+const ast::BlockStatement* LoopContinuingBlockStatement::Declaration() const {
+    return static_cast<const ast::BlockStatement*>(Base::Declaration());
+}
 
 }  // namespace tint::sem

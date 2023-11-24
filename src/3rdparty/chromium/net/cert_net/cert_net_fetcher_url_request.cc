@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -62,15 +62,15 @@
 #include <tuple>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/check_op.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/numerics/safe_math.h"
+#include "base/ranges/algorithm.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "net/base/io_buffer.h"
@@ -295,8 +295,8 @@ struct CertNetFetcherURLRequest::RequestParams {
   bool operator<(const RequestParams& other) const;
 
   GURL url;
-  HttpMethod http_method;
-  size_t max_response_bytes;
+  HttpMethod http_method = HTTP_METHOD_GET;
+  size_t max_response_bytes = 0;
 
   // If set to a value <= 0 then means "no timeout".
   base::TimeDelta timeout;
@@ -304,8 +304,7 @@ struct CertNetFetcherURLRequest::RequestParams {
   // IMPORTANT: When adding fields to this structure, update operator<().
 };
 
-CertNetFetcherURLRequest::RequestParams::RequestParams()
-    : http_method(HTTP_METHOD_GET), max_response_bytes(0) {}
+CertNetFetcherURLRequest::RequestParams::RequestParams() = default;
 
 bool CertNetFetcherURLRequest::RequestParams::operator<(
     const RequestParams& other) const {
@@ -462,7 +461,7 @@ void Job::AttachRequest(
 void Job::DetachRequest(CertNetFetcherURLRequest::RequestCore* request) {
   std::unique_ptr<Job> delete_this;
 
-  auto it = std::find(requests_.begin(), requests_.end(), request);
+  auto it = base::ranges::find(requests_, request);
   DCHECK(it != requests_.end());
   requests_.erase(it);
 
@@ -692,8 +691,9 @@ void CertNetFetcherURLRequest::AsyncCertNetFetcherURLRequest::Fetch(
     return;
   }
 
-  job = new Job(std::move(request_params), this);
-  jobs_[job] = base::WrapUnique(job);
+  auto new_job = std::make_unique<Job>(std::move(request_params), this);
+  job = new_job.get();
+  jobs_[job] = std::move(new_job);
   // Attach the request before calling StartURLRequest; this ensures that the
   // request will get signalled if StartURLRequest completes the job
   // synchronously.
@@ -772,7 +772,7 @@ class CertNetFetcherRequestImpl : public CertNetFetcher::Request {
 }  // namespace
 
 CertNetFetcherURLRequest::CertNetFetcherURLRequest()
-    : task_runner_(base::ThreadTaskRunnerHandle::Get()) {}
+    : task_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()) {}
 
 CertNetFetcherURLRequest::~CertNetFetcherURLRequest() {
   // The fetcher must be shutdown (at which point |context_| will be set to
@@ -804,7 +804,7 @@ std::unique_ptr<CertNetFetcher::Request>
 CertNetFetcherURLRequest::FetchCaIssuers(const GURL& url,
                                          int timeout_milliseconds,
                                          int max_response_bytes) {
-  std::unique_ptr<RequestParams> request_params(new RequestParams);
+  auto request_params = std::make_unique<RequestParams>();
 
   request_params->url = url;
   request_params->http_method = HTTP_METHOD_GET;
@@ -819,7 +819,7 @@ std::unique_ptr<CertNetFetcher::Request> CertNetFetcherURLRequest::FetchCrl(
     const GURL& url,
     int timeout_milliseconds,
     int max_response_bytes) {
-  std::unique_ptr<RequestParams> request_params(new RequestParams);
+  auto request_params = std::make_unique<RequestParams>();
 
   request_params->url = url;
   request_params->http_method = HTTP_METHOD_GET;
@@ -834,7 +834,7 @@ std::unique_ptr<CertNetFetcher::Request> CertNetFetcherURLRequest::FetchOcsp(
     const GURL& url,
     int timeout_milliseconds,
     int max_response_bytes) {
-  std::unique_ptr<RequestParams> request_params(new RequestParams);
+  auto request_params = std::make_unique<RequestParams>();
 
   request_params->url = url;
   request_params->http_method = HTTP_METHOD_GET;
@@ -868,7 +868,7 @@ void CertNetFetcherURLRequest::DoFetchOnNetworkSequence(
 std::unique_ptr<CertNetFetcherURLRequest::Request>
 CertNetFetcherURLRequest::DoFetch(
     std::unique_ptr<RequestParams> request_params) {
-  scoped_refptr<RequestCore> request_core = new RequestCore(task_runner_);
+  auto request_core = base::MakeRefCounted<RequestCore>(task_runner_);
 
   // If the fetcher has already been shutdown, DoFetchOnNetworkSequence will
   // signal the request with an error. However, if the fetcher shuts down

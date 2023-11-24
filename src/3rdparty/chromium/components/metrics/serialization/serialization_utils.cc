@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -109,15 +109,15 @@ std::unique_ptr<MetricSample> SerializationUtils::ParseSample(
   const std::string& name = parts[0];
   const std::string& value = parts[1];
 
-  if (base::LowerCaseEqualsASCII(name, "crash"))
+  if (base::EqualsCaseInsensitiveASCII(name, "crash"))
     return MetricSample::CrashSample(value);
-  if (base::LowerCaseEqualsASCII(name, "histogram"))
+  if (base::EqualsCaseInsensitiveASCII(name, "histogram"))
     return MetricSample::ParseHistogram(value);
-  if (base::LowerCaseEqualsASCII(name, "linearhistogram"))
+  if (base::EqualsCaseInsensitiveASCII(name, "linearhistogram"))
     return MetricSample::ParseLinearHistogram(value);
-  if (base::LowerCaseEqualsASCII(name, "sparsehistogram"))
+  if (base::EqualsCaseInsensitiveASCII(name, "sparsehistogram"))
     return MetricSample::ParseSparseHistogram(value);
-  if (base::LowerCaseEqualsASCII(name, "useraction"))
+  if (base::EqualsCaseInsensitiveASCII(name, "useraction"))
     return MetricSample::UserActionSample(value);
   DLOG(ERROR) << "invalid event type: " << name << ", value: " << value;
   return nullptr;
@@ -186,7 +186,7 @@ bool SerializationUtils::WriteMetricToFile(const MetricSample& sample,
     return false;
 
   base::ScopedFD file_descriptor(open(filename.c_str(),
-                                      O_WRONLY | O_APPEND | O_CREAT,
+                                      O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC,
                                       READ_WRITE_ALL_FILE_FLAGS));
 
   if (file_descriptor.get() < 0) {
@@ -195,9 +195,12 @@ bool SerializationUtils::WriteMetricToFile(const MetricSample& sample,
   }
 
   fchmod(file_descriptor.get(), READ_WRITE_ALL_FILE_FLAGS);
-  // Grab a lock to avoid chrome truncating the file
-  // underneath us. Keep the file locked as briefly as possible.
-  // Freeing file_descriptor will close the file and and remove the lock.
+  // Grab a lock to avoid chrome truncating the file underneath us. Keep the
+  // file locked as briefly as possible. Freeing file_descriptor will close the
+  // file and remove the lock IFF the process was not forked in the meantime,
+  // which will leave the flock hanging and deadlock the reporting until the
+  // forked process is killed otherwise. Thus we have to explicitly unlock the
+  // file below.
   if (HANDLE_EINTR(flock(file_descriptor.get(), LOCK_EX)) < 0) {
     DPLOG(ERROR) << "error locking: " << filename;
     return false;
@@ -208,6 +211,7 @@ bool SerializationUtils::WriteMetricToFile(const MetricSample& sample,
   if (!base::CheckAdd(msg.length(), sizeof(uint32_t)).AssignIfValid(&size) ||
       size > kMessageMaxLength) {
     DPLOG(ERROR) << "cannot write message: too long: " << filename;
+    std::ignore = flock(file_descriptor.get(), LOCK_UN);
     return false;
   }
 
@@ -216,13 +220,15 @@ bool SerializationUtils::WriteMetricToFile(const MetricSample& sample,
   uint32_t encoded_size = base::checked_cast<uint32_t>(size);
   if (!base::WriteFileDescriptor(
           file_descriptor.get(),
-          base::as_bytes(base::make_span(&encoded_size, 1)))) {
+          base::as_bytes(base::make_span(&encoded_size, 1u)))) {
     DPLOG(ERROR) << "error writing message length: " << filename;
+    std::ignore = flock(file_descriptor.get(), LOCK_UN);
     return false;
   }
 
   if (!base::WriteFileDescriptor(file_descriptor.get(), msg)) {
     DPLOG(ERROR) << "error writing message: " << filename;
+    std::ignore = flock(file_descriptor.get(), LOCK_UN);
     return false;
   }
 

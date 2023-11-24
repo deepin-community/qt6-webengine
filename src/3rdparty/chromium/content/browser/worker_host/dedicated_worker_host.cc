@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,8 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "build/build_config.h"
 #include "content/browser/blob_storage/chrome_blob_storage_context.h"
 #include "content/browser/broadcast_channel/broadcast_channel_provider.h"
@@ -34,7 +34,9 @@
 #include "content/browser/worker_host/dedicated_worker_hosts_for_document.h"
 #include "content/browser/worker_host/dedicated_worker_service_impl.h"
 #include "content/browser/worker_host/worker_script_fetcher.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/permission_controller.h"
 #include "content/public/browser/service_worker_context.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/network_service_util.h"
@@ -47,6 +49,7 @@
 #include "services/network/public/cpp/is_potentially_trustworthy.h"
 #include "services/network/public/mojom/blocked_by_response_reason.mojom.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
+#include "storage/browser/blob/blob_url_store_impl.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/service_worker/service_worker_scope_match.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
@@ -215,7 +218,7 @@ void DedicatedWorkerHost::StartScriptLoad(
   auto* storage_partition_impl = static_cast<StoragePartitionImpl*>(
       worker_process_host_->GetStoragePartition());
 
-  // Get nearest ancestor render frame host in order to determine the
+  // Get nearest ancestor RenderFrameHost in order to determine the
   // top-frame origin to use for the network isolation key.
   RenderFrameHostImpl* nearest_ancestor_render_frame_host =
       RenderFrameHostImpl::FromID(ancestor_render_frame_host_id_);
@@ -301,7 +304,7 @@ void DedicatedWorkerHost::StartScriptLoad(
   network::mojom::ClientSecurityStatePtr client_security_state;
   if (creator_render_frame_host) {
     client_security_state =
-        creator_render_frame_host->BuildClientSecurityState();
+        creator_render_frame_host->BuildClientSecurityStateForWorkers();
   } else {
     client_security_state = creator_worker->client_security_state()->Clone();
   }
@@ -400,7 +403,8 @@ void DedicatedWorkerHost::DidStartScriptLoad(
       worker_client_security_state_->private_network_request_policy =
           DerivePrivateNetworkRequestPolicy(
               worker_client_security_state_->ip_address_space,
-              worker_client_security_state_->is_web_secure_context);
+              worker_client_security_state_->is_web_secure_context,
+              PrivateNetworkRequestContext::kWorker);
     } else {
       // Preserve incorrect functionality if PNA is not enabled.
       worker_client_security_state_ =
@@ -423,7 +427,7 @@ void DedicatedWorkerHost::DidStartScriptLoad(
   coep_reporter_ = std::make_unique<CrossOriginEmbedderPolicyReporter>(
       storage_partition->GetWeakPtr(), final_response_url,
       coep.reporting_endpoint, coep.report_only_reporting_endpoint,
-      reporting_source_, isolation_info_.network_isolation_key());
+      reporting_source_, isolation_info_.network_anonymization_key());
   // TODO(crbug.com/1197041): Bind the receiver of ReportingObserver to the
   // worker in the renderer process.
 
@@ -532,6 +536,7 @@ DedicatedWorkerHost::CreateNetworkFactoryForSubresources(
               blink::mojom::PermissionsPolicyFeature::kTrustTokenRedemption)
               ? network::mojom::TrustTokenRedemptionPolicy::kPotentiallyPermit
               : network::mojom::TrustTokenRedemptionPolicy::kForbid,
+          ancestor_render_frame_host->GetCookieSettingOverrides(),
           "DedicatedWorkerHost::CreateNetworkFactoryForSubresources");
   GetContentClient()->browser()->WillCreateURLLoaderFactory(
       worker_process_host_->GetBrowserContext(),
@@ -652,7 +657,7 @@ void DedicatedWorkerHost::CreateWebTransportConnector(
       std::make_unique<WebTransportConnectorImpl>(
           worker_process_host_->GetID(),
           ancestor_render_frame_host->GetWeakPtr(), GetStorageKey().origin(),
-          isolation_info_.network_isolation_key()),
+          isolation_info_.network_anonymization_key()),
       std::move(receiver));
 }
 
@@ -669,15 +674,9 @@ void DedicatedWorkerHost::CreateWakeLockService(
 void DedicatedWorkerHost::BindCacheStorage(
     mojo::PendingReceiver<blink::mojom::CacheStorage> receiver) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  mojo::PendingRemote<network::mojom::CrossOriginEmbedderPolicyReporter>
-      coep_reporter;
-  if (GetWorkerCoepReporter()) {
-    GetWorkerCoepReporter()->Clone(
-        coep_reporter.InitWithNewPipeAndPassReceiver());
-  }
-  worker_process_host_->BindCacheStorage(cross_origin_embedder_policy(),
-                                         std::move(coep_reporter),
-                                         GetStorageKey(), std::move(receiver));
+  BindCacheStorageInternal(
+      std::move(receiver),
+      storage::BucketLocator::ForDefaultBucket(GetStorageKey()));
 }
 
 void DedicatedWorkerHost::CreateNestedDedicatedWorker(
@@ -729,6 +728,18 @@ void DedicatedWorkerHost::CreateBroadcastChannelProvider(
       std::move(receiver));
 }
 
+void DedicatedWorkerHost::CreateBlobUrlStoreProvider(
+    mojo::PendingReceiver<blink::mojom::BlobURLStore> receiver) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  auto* storage_partition_impl = static_cast<StoragePartitionImpl*>(
+      GetProcessHost()->GetStoragePartition());
+
+  storage_partition_impl->GetBlobUrlRegistry()->AddReceiver(
+      GetStorageKey(), std::move(receiver),
+      storage::BlobURLValidityCheckBehavior::
+          ALLOW_OPAQUE_ORIGIN_STORAGE_KEY_MISMATCH);
+}
+
 void DedicatedWorkerHost::CreateCodeCacheHost(
     mojo::PendingReceiver<blink::mojom::CodeCacheHost> receiver) {
   // Create a new CodeCacheHostImpl and bind it to the given receiver.
@@ -753,6 +764,11 @@ void DedicatedWorkerHost::BindSerialService(
   ancestor_render_frame_host->BindSerialService(std::move(receiver));
 }
 #endif
+
+void DedicatedWorkerHost::CreateBucketManagerHost(
+    mojo::PendingReceiver<blink::mojom::BucketManagerHost> receiver) {
+  GetProcessHost()->BindBucketManagerHost(GetWeakPtr(), std::move(receiver));
+}
 
 void DedicatedWorkerHost::ObserveNetworkServiceCrash(
     StoragePartitionImpl* storage_partition_impl) {
@@ -866,7 +882,7 @@ void DedicatedWorkerHost::MaybeCountWebFeature(const GURL& script_url) {
         return;
 
       service_worker_context->GetRegistrationsForStorageKey(
-          blink::StorageKey(
+          blink::StorageKey::CreateFirstParty(
               ancestor_render_frame_host->GetLastCommittedOrigin()),
           base::BindOnce(&DedicatedWorkerHost::ContinueOnMaybeCountWebFeature,
                          weak_factory_.GetWeakPtr(), script_url,
@@ -947,6 +963,52 @@ void DedicatedWorkerHost::DidChangeBackForwardCacheDisablingFeatures(
       blink::scheduler::WebSchedulerTrackedFeatures::FromEnumBitmask(
           features_mask);
   ancestor_render_frame_host->MaybeEvictFromBackForwardCache();
+}
+
+blink::StorageKey DedicatedWorkerHost::GetBucketStorageKey() {
+  return GetStorageKey();
+}
+
+blink::mojom::PermissionStatus DedicatedWorkerHost::GetPermissionStatus(
+    blink::PermissionType permission_type) {
+  return GetProcessHost()
+      ->GetBrowserContext()
+      ->GetPermissionController()
+      ->GetPermissionStatusForWorker(permission_type, GetProcessHost(),
+                                     GetStorageKey().origin());
+}
+
+void DedicatedWorkerHost::BindCacheStorageForBucket(
+    const storage::BucketInfo& bucket,
+    mojo::PendingReceiver<blink::mojom::CacheStorage> receiver) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  BindCacheStorageInternal(std::move(receiver), bucket.ToBucketLocator());
+}
+
+void DedicatedWorkerHost::BindCacheStorageInternal(
+    mojo::PendingReceiver<blink::mojom::CacheStorage> receiver,
+    const storage::BucketLocator& bucket_locator) {
+  mojo::PendingRemote<network::mojom::CrossOriginEmbedderPolicyReporter>
+      coep_reporter;
+  if (GetWorkerCoepReporter()) {
+    GetWorkerCoepReporter()->Clone(
+        coep_reporter.InitWithNewPipeAndPassReceiver());
+  }
+  worker_process_host_->BindCacheStorage(cross_origin_embedder_policy(),
+                                         std::move(coep_reporter),
+                                         bucket_locator, std::move(receiver));
+}
+
+void DedicatedWorkerHost::GetSandboxedFileSystemForBucket(
+    const storage::BucketInfo& bucket,
+    blink::mojom::BucketHost::GetDirectoryCallback callback) {
+  GetProcessHost()->GetSandboxedFileSystemForBucket(bucket.ToBucketLocator(),
+                                                    std::move(callback));
+}
+
+GlobalRenderFrameHostId DedicatedWorkerHost::GetAssociatedRenderFrameHostId()
+    const {
+  return GetAncestorRenderFrameHostId();
 }
 
 blink::scheduler::WebSchedulerTrackedFeatures

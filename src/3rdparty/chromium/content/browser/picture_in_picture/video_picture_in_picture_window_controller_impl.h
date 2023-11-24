@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,6 @@
 #include <map>
 #include <set>
 
-#include "base/memory/weak_ptr.h"
 #include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/media_player_id.h"
@@ -71,6 +70,7 @@ class CONTENT_EXPORT VideoPictureInPictureWindowControllerImpl
   void UpdateLayerBounds() override;
   bool IsPlayerActive() override;
   WebContents* GetWebContents() override;
+  WebContents* GetChildWebContents() override;
   bool TogglePlayPause() override;
   void SkipAd() override;
   void NextTrack() override;
@@ -78,6 +78,10 @@ class CONTENT_EXPORT VideoPictureInPictureWindowControllerImpl
   void ToggleMicrophone() override;
   void ToggleCamera() override;
   void HangUp() override;
+  void PreviousSlide() override;
+  void NextSlide() override;
+
+  const gfx::Rect& GetSourceBounds() const override;
   absl::optional<gfx::Rect> GetWindowBounds() override;
 
   // Called by the MediaSessionImpl when the MediaSessionInfo changes.
@@ -119,6 +123,7 @@ class CONTENT_EXPORT VideoPictureInPictureWindowControllerImpl
       const gfx::Size& natural_size,
       bool show_play_pause_button,
       mojo::PendingRemote<blink::mojom::PictureInPictureSessionObserver>,
+      const gfx::Rect& source_bounds,
       mojo::PendingRemote<blink::mojom::PictureInPictureSession>*
           session_remote,
       gfx::Size* window_size);
@@ -149,10 +154,6 @@ class CONTENT_EXPORT VideoPictureInPictureWindowControllerImpl
   // the system or by the browser.
   void CloseInternal(bool should_pause_video);
 
-  // Creates a new window if the previous one was destroyed. It can happen
-  // because of the system control of the window.
-  void EnsureWindow();
-
   // Allow play/pause button to be visible if Media Session actions "play" and
   // "pause" are both handled by the website or if
   // always_hide_play_pause_button_ is false.
@@ -175,6 +176,8 @@ class CONTENT_EXPORT VideoPictureInPictureWindowControllerImpl
   bool media_session_action_toggle_microphone_handled_ = false;
   bool media_session_action_toggle_camera_handled_ = false;
   bool media_session_action_hang_up_handled_ = false;
+  bool media_session_action_previous_slide_handled_ = false;
+  bool media_session_action_next_slide_handled_ = false;
 
   // Tracks the current microphone state.
   bool microphone_muted_ = false;
@@ -195,6 +198,9 @@ class CONTENT_EXPORT VideoPictureInPictureWindowControllerImpl
 
   // The media position info as last reported to us by MediaSessionImpl.
   absl::optional<media_session::MediaPosition> media_position_;
+
+  // Coordinates of the video element in WebContents coordinates.
+  gfx::Rect source_bounds_;
 
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 };

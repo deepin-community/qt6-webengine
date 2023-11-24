@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,6 +16,7 @@
 #include "content/common/content_export.h"
 #include "content/public/browser/back_forward_cache.h"
 #include "content/public/browser/render_frame_host.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/scheduler/web_scheduler_tracked_feature.h"
 #include "ui/accessibility/ax_event.h"
@@ -31,10 +32,22 @@ using ChromeTrackEvent = perfetto::protos::pbzero::ChromeTrackEvent;
 // the naming of BackForwardCacheImpl::CanStorePageNow().
 class CONTENT_EXPORT BackForwardCacheCanStoreDocumentResult {
  public:
-  using NotStoredReasons =
+  using NotRestoredReasons =
       base::EnumSet<BackForwardCacheMetrics::NotRestoredReason,
                     BackForwardCacheMetrics::NotRestoredReason::kMinValue,
                     BackForwardCacheMetrics::NotRestoredReason::kMaxValue>;
+
+  // This data structure stores the set of `BackForwardCache::DisabledReason`s
+  // and their associated UKM source ID which indicate the source of the
+  // `DisabledReason`. The associated source ID is optional and is only set
+  // under certain scenarios like when the disabling call comes from an
+  // extension, in this case, the source ID will be the one bound to the
+  // extension URL. If the source ID value is not set, it means we should fall
+  // back to use the information that is obtained elsewhere. For example, if the
+  // source ID is set, then it will be reported to UKM metrics; if it's not set,
+  // then the source id from the navigation itself will be used.
+  using DisabledReasonsMap = std::map<BackForwardCache::DisabledReason,
+                                      std::set<absl::optional<ukm::SourceId>>>;
 
   BackForwardCacheCanStoreDocumentResult();
   BackForwardCacheCanStoreDocumentResult(
@@ -43,9 +56,11 @@ class CONTENT_EXPORT BackForwardCacheCanStoreDocumentResult {
       BackForwardCacheCanStoreDocumentResult&&);
   ~BackForwardCacheCanStoreDocumentResult();
 
+  bool operator==(const BackForwardCacheCanStoreDocumentResult& other) const;
+
   // Add reasons contained in the |other| to |this|.
   void AddReasonsFrom(const BackForwardCacheCanStoreDocumentResult& other);
-  bool HasNotStoredReason(
+  bool HasNotRestoredReason(
       BackForwardCacheMetrics::NotRestoredReason reason) const;
 
   void No(BackForwardCacheMetrics::NotRestoredReason reason);
@@ -57,23 +72,31 @@ class CONTENT_EXPORT BackForwardCacheCanStoreDocumentResult {
   // TODO(hajimehoshi): Replace the arbitrary strings with base::Location /
   // FROM_HERE for privacy reasons.
   void NoDueToDisableForRenderFrameHostCalled(
-      const std::set<BackForwardCache::DisabledReason>& reasons);
+      const DisabledReasonsMap& reasons);
   void NoDueToDisallowActivation(uint64_t reason);
+  // TODO(crbug.com/1341507): Remove this function.
   void NoDueToAXEvents(const std::vector<ui::AXEvent>& events);
-  void RecordAXEvent(ax::mojom::Event event_type);
 
+  // The conditions for storing and restoring the pages are different in that
+  // pages with cache-control:no-store can enter back/forward cache depending on
+  // the experiment flag, but can never be restored.
   bool CanStore() const;
-  operator bool() const { return CanStore(); }
+  bool CanRestore() const;
 
-  const NotStoredReasons& not_stored_reasons() const {
-    return not_stored_reasons_;
+  const NotRestoredReasons& not_restored_reasons() const {
+    return not_restored_reasons_;
   }
   BlockListedFeatures blocklisted_features() const {
     return blocklisted_features_;
   }
 
-  const std::set<BackForwardCache::DisabledReason>& disabled_reasons() const {
+  const DisabledReasonsMap& disabled_reasons() const {
     return disabled_reasons_;
+  }
+
+  const absl::optional<ShouldSwapBrowsingInstance>
+  browsing_instance_swap_result() const {
+    return browsing_instance_swap_result_;
   }
 
   const std::set<uint64_t>& disallow_activation_reasons() const {
@@ -83,6 +106,7 @@ class CONTENT_EXPORT BackForwardCacheCanStoreDocumentResult {
   const std::set<ax::mojom::Event>& ax_events() const { return ax_events_; }
 
   std::string ToString() const;
+  std::vector<std::string> GetStringReasons() const;
 
   void WriteIntoTrace(
       perfetto::TracedProto<
@@ -90,13 +114,17 @@ class CONTENT_EXPORT BackForwardCacheCanStoreDocumentResult {
           result) const;
 
  private:
-  void AddNotStoredReason(BackForwardCacheMetrics::NotRestoredReason reason);
+  void AddNotRestoredReason(BackForwardCacheMetrics::NotRestoredReason reason);
+  // Returns a one-sentence of explanation for a NotRestoredReason.
   std::string NotRestoredReasonToString(
       BackForwardCacheMetrics::NotRestoredReason reason) const;
+  // Returns a name in string for a NotRestoredReason.
+  std::string NotRestoredReasonToReportString(
+      BackForwardCacheMetrics::NotRestoredReason reason) const;
 
-  NotStoredReasons not_stored_reasons_;
+  NotRestoredReasons not_restored_reasons_;
   BlockListedFeatures blocklisted_features_;
-  std::set<BackForwardCache::DisabledReason> disabled_reasons_;
+  DisabledReasonsMap disabled_reasons_;
   absl::optional<ShouldSwapBrowsingInstance> browsing_instance_swap_result_;
   std::set<uint64_t> disallow_activation_reasons_;
   // The list of the accessibility events that made the page bfcache ineligible.

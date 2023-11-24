@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,7 +34,7 @@ class CFGAS_GEFont final : public Retainable {
   static RetainPtr<CFGAS_GEFont> LoadFont(const wchar_t* pszFontFamily,
                                           uint32_t dwFontStyles,
                                           FX_CodePage wCodePage);
-  static RetainPtr<CFGAS_GEFont> LoadFont(const RetainPtr<CPDF_Font>& pFont);
+  static RetainPtr<CFGAS_GEFont> LoadFont(RetainPtr<CPDF_Font> pFont);
   static RetainPtr<CFGAS_GEFont> LoadFont(std::unique_ptr<CFX_Font> pFont);
   static RetainPtr<CFGAS_GEFont> LoadStockFont(CPDF_Document* pDoc,
                                                const ByteString& font_family);
@@ -63,7 +63,7 @@ class CFGAS_GEFont final : public Retainable {
                         FX_CodePage wCodePage);
 #endif
   bool LoadFontInternal(std::unique_ptr<CFX_Font> pInternalFont);
-  bool LoadFontInternal(const RetainPtr<CPDF_Font>& pPDFFont);
+  bool LoadFontInternal(RetainPtr<CPDF_Font> pPDFFont);
   bool InitFont();
   std::pair<int32_t, RetainPtr<CFGAS_GEFont>> GetGlyphIndexAndFont(
       wchar_t wUnicode,

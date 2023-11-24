@@ -1,11 +1,11 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef GPU_COMMAND_BUFFER_SERVICE_SKIA_UTILS_H_
 #define GPU_COMMAND_BUFFER_SERVICE_SKIA_UTILS_H_
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "components/viz/common/resources/resource_format.h"
 #include "gpu/config/gpu_preferences.h"
 #include "gpu/gpu_gles2_export.h"
@@ -51,10 +51,10 @@ class SharedContextState;
 GPU_GLES2_EXPORT GrContextOptions
 GetDefaultGrContextOptions(GrContextType type);
 
-// Returns internal gl format of texture for Skia
+// Returns internal gl format of texture for Skia for given `gl_storage_format`.
 GPU_GLES2_EXPORT GLuint GetGrGLBackendTextureFormat(
     const gles2::FeatureInfo* feature_info,
-    viz::ResourceFormat resource_format,
+    GLenum gl_storage_format,
     sk_sp<GrContextThreadSafeProxy> gr_context_thread_safe);
 
 // Creates a GrBackendTexture from a service ID. Skia does not take ownership.
@@ -64,7 +64,7 @@ GPU_GLES2_EXPORT bool GetGrBackendTexture(
     GLenum target,
     const gfx::Size& size,
     GLuint service_id,
-    viz::ResourceFormat resource_format,
+    GLenum gl_storage_format,
     sk_sp<GrContextThreadSafeProxy> gr_context_thread_safe,
     GrBackendTexture* gr_texture);
 

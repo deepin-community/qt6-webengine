@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,12 +8,13 @@
 #include <stdint.h>
 
 #include "base/time/time.h"
-#include "content/browser/attribution_reporting/attribution_aggregatable_source.h"
-#include "content/browser/attribution_reporting/attribution_filter_data.h"
-#include "content/browser/attribution_reporting/attribution_source_type.h"
+#include "components/attribution_reporting/aggregation_keys.h"
+#include "components/attribution_reporting/destination_set.h"
+#include "components/attribution_reporting/filters.h"
+#include "components/attribution_reporting/source_type.mojom-forward.h"
+#include "components/attribution_reporting/suitable_origin.h"
 #include "content/common/content_export.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
-#include "url/origin.h"
 
 namespace net {
 class SchemefulSite;
@@ -21,25 +22,33 @@ class SchemefulSite;
 
 namespace content {
 
+constexpr base::TimeDelta kDefaultAttributionSourceExpiry = base::Days(30);
+
 // Contains common attributes of `StorableSource` and `StoredSource`.
 class CONTENT_EXPORT CommonSourceInfo {
  public:
   static base::Time GetExpiryTime(
       absl::optional<base::TimeDelta> declared_expiry,
-      base::Time impression_time,
-      AttributionSourceType source_type);
+      base::Time source_time,
+      attribution_reporting::mojom::SourceType);
+
+  static absl::optional<base::Time> GetReportWindowTime(
+      absl::optional<base::TimeDelta> declared_window,
+      base::Time source_time);
 
   CommonSourceInfo(uint64_t source_event_id,
-                   url::Origin impression_origin,
-                   url::Origin conversion_origin,
-                   url::Origin reporting_origin,
-                   base::Time impression_time,
+                   attribution_reporting::SuitableOrigin source_origin,
+                   attribution_reporting::DestinationSet destination_sites,
+                   attribution_reporting::SuitableOrigin reporting_origin,
+                   base::Time source_time,
                    base::Time expiry_time,
-                   AttributionSourceType source_type,
+                   absl::optional<base::Time> event_report_window_time,
+                   absl::optional<base::Time> aggregatable_report_window_time,
+                   attribution_reporting::mojom::SourceType,
                    int64_t priority,
-                   AttributionFilterData filter_data,
+                   attribution_reporting::FilterData filter_data,
                    absl::optional<uint64_t> debug_key,
-                   AttributionAggregatableSource aggregatable_source);
+                   attribution_reporting::AggregationKeys aggregation_keys);
 
   ~CommonSourceInfo();
 
@@ -51,54 +60,68 @@ class CONTENT_EXPORT CommonSourceInfo {
 
   uint64_t source_event_id() const { return source_event_id_; }
 
-  const url::Origin& impression_origin() const { return impression_origin_; }
+  const attribution_reporting::SuitableOrigin& source_origin() const {
+    return source_origin_;
+  }
 
-  const url::Origin& conversion_origin() const { return conversion_origin_; }
+  const attribution_reporting::DestinationSet& destination_sites() const {
+    return destination_sites_;
+  }
 
-  const url::Origin& reporting_origin() const { return reporting_origin_; }
+  const attribution_reporting::SuitableOrigin& reporting_origin() const {
+    return reporting_origin_;
+  }
 
-  base::Time impression_time() const { return impression_time_; }
+  base::Time source_time() const { return source_time_; }
 
   base::Time expiry_time() const { return expiry_time_; }
 
-  AttributionSourceType source_type() const { return source_type_; }
+  base::Time event_report_window_time() const {
+    return event_report_window_time_;
+  }
+
+  base::Time aggregatable_report_window_time() const {
+    return aggregatable_report_window_time_;
+  }
+
+  attribution_reporting::mojom::SourceType source_type() const {
+    return source_type_;
+  }
 
   int64_t priority() const { return priority_; }
 
-  const AttributionFilterData& filter_data() const { return filter_data_; }
+  const attribution_reporting::FilterData& filter_data() const {
+    return filter_data_;
+  }
 
   absl::optional<uint64_t> debug_key() const { return debug_key_; }
 
-  const AttributionAggregatableSource& aggregatable_source() const {
-    return aggregatable_source_;
+  const attribution_reporting::AggregationKeys& aggregation_keys() const {
+    return aggregation_keys_;
   }
 
   void ClearDebugKey() { debug_key_ = absl::nullopt; }
 
-  // Returns the schemeful site of |conversion_origin|.
+  // Returns the schemeful site of |source_origin|.
   //
   // TODO(johnidel): Consider storing the SchemefulSite as a separate member so
-  // that we avoid unnecessary copies of |conversion_origin_|.
-  net::SchemefulSite ConversionDestination() const;
-
-  // Returns the schemeful site of |impression_origin|.
-  //
-  // TODO(johnidel): Consider storing the SchemefulSite as a separate member so
-  // that we avoid unnecessary copies of |impression_origin_|.
-  net::SchemefulSite ImpressionSite() const;
+  // that we avoid unnecessary copies of |source_origin_|.
+  net::SchemefulSite SourceSite() const;
 
  private:
   uint64_t source_event_id_;
-  url::Origin impression_origin_;
-  url::Origin conversion_origin_;
-  url::Origin reporting_origin_;
-  base::Time impression_time_;
+  attribution_reporting::SuitableOrigin source_origin_;
+  attribution_reporting::DestinationSet destination_sites_;
+  attribution_reporting::SuitableOrigin reporting_origin_;
+  base::Time source_time_;
   base::Time expiry_time_;
-  AttributionSourceType source_type_;
+  base::Time event_report_window_time_;
+  base::Time aggregatable_report_window_time_;
+  attribution_reporting::mojom::SourceType source_type_;
   int64_t priority_;
-  AttributionFilterData filter_data_;
+  attribution_reporting::FilterData filter_data_;
   absl::optional<uint64_t> debug_key_;
-  AttributionAggregatableSource aggregatable_source_;
+  attribution_reporting::AggregationKeys aggregation_keys_;
 
   // When adding new members, the corresponding `operator==()` definition in
   // `attribution_test_utils.h` should also be updated.

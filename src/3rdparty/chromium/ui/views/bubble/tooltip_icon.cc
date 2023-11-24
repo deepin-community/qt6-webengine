@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,9 +27,8 @@ namespace views {
 TooltipIcon::TooltipIcon(const std::u16string& tooltip, int tooltip_icon_size)
     : tooltip_(tooltip),
       tooltip_icon_size_(tooltip_icon_size),
-      mouse_inside_(false),
-      bubble_(nullptr),
-      preferred_width_(0) {
+
+      bubble_(nullptr) {
   SetFocusBehavior(PlatformStyle::kDefaultFocusBehavior);
   set_suppress_default_focus_handling();
   FocusRing::Install(this);
@@ -86,7 +85,7 @@ void TooltipIcon::GetAccessibleNodeData(ui::AXNodeData* node_data) {
   // static text for screenreader users, since that's the role it serves here
   // anyway.
   node_data->role = ax::mojom::Role::kStaticText;
-  node_data->SetName(tooltip_);
+  node_data->SetNameChecked(tooltip_);
 }
 
 void TooltipIcon::OnThemeChanged() {
@@ -113,10 +112,11 @@ void TooltipIcon::RemoveObserver(Observer* observer) {
 }
 
 void TooltipIcon::SetDrawAsHovered(bool hovered) {
-  SetImage(gfx::CreateVectorIcon(
-      vector_icons::kInfoOutlineIcon, tooltip_icon_size_,
+  SetImage(ui::ImageModel::FromVectorIcon(
+      vector_icons::kInfoOutlineIcon,
       GetColorProvider()->GetColor(hovered ? ui::kColorHelpIconActive
-                                           : ui::kColorHelpIconInactive)));
+                                           : ui::kColorHelpIconInactive),
+      tooltip_icon_size_));
 }
 
 void TooltipIcon::ShowBubble() {

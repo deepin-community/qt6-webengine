@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,9 +34,9 @@ class CONTENT_EXPORT FencedFrame : public blink::mojom::FencedFrameOwnerHost,
                                    public FrameTree::Delegate,
                                    public NavigationControllerDelegate {
  public:
-  explicit FencedFrame(
-      base::SafeRef<RenderFrameHostImpl> owner_render_frame_host,
-      blink::mojom::FencedFrameMode mode);
+  FencedFrame(base::SafeRef<RenderFrameHostImpl> owner_render_frame_host,
+              blink::mojom::FencedFrameMode mode,
+              bool was_discarded);
   ~FencedFrame() override;
 
   void Bind(mojo::PendingAssociatedReceiver<blink::mojom::FencedFrameOwnerHost>
@@ -45,26 +45,30 @@ class CONTENT_EXPORT FencedFrame : public blink::mojom::FencedFrameOwnerHost,
   }
 
   // Called when a fenced frame is created from a synchronous IPC from the
-  // renderer. This creates a proxy to the main frame of the inner `FrameTree`,
-  // for use by the embedding RenderFrameHostImpl.
-  void CreateProxyAndAttachToOuterFrameTree();
+  // renderer. This creates a proxy representing the main frame of the inner
+  // `FrameTree`, for use by the embedding RenderFrameHostImpl.
+  // `remote_frame_interfaces` must not be null.
+  RenderFrameProxyHost* InitInnerFrameTreeAndReturnProxyToOuterFrameTree(
+      blink::mojom::RemoteFrameInterfacesFromRendererPtr
+          remote_frame_interfaces,
+      const blink::RemoteFrameToken& frame_token,
+      const base::UnguessableToken& devtools_frame_token);
 
   // blink::mojom::FencedFrameOwnerHost implementation.
   void Navigate(const GURL& url,
                 base::TimeTicks navigation_start_time) override;
+  void DidChangeFramePolicy(const blink::FramePolicy& frame_policy) override;
 
   // FrameTree::Delegate.
   void DidStartLoading(FrameTreeNode* frame_tree_node,
                        bool should_show_loading_ui) override {}
   void DidStopLoading() override {}
-  void DidChangeLoadProgress() override {}
   bool IsHidden() override;
-  void NotifyPageChanged(PageImpl& page) override {}
   int GetOuterDelegateFrameTreeNodeId() override;
+  RenderFrameHostImpl* GetProspectiveOuterDocument() override;
   bool IsPortal() override;
   FrameTree* LoadingTree() override;
-
-  RenderFrameProxyHost* GetProxyToInnerMainFrame();
+  void SetFocusedFrame(FrameTreeNode* node, SiteInstanceGroup* source) override;
 
   // Returns the devtools frame token of the fenced frame's inner FrameTree's
   // main frame.
@@ -76,7 +80,8 @@ class CONTENT_EXPORT FencedFrame : public blink::mojom::FencedFrameOwnerHost,
 
  private:
   // NavigationControllerDelegate
-  void NotifyNavigationStateChanged(InvalidateTypes changed_flags) override;
+  void NotifyNavigationStateChangedFromController(
+      InvalidateTypes changed_flags) override {}
   void NotifyBeforeFormRepostWarningShow() override;
   void NotifyNavigationEntryCommitted(
       const LoadCommittedDetails& load_details) override;
@@ -103,15 +108,10 @@ class CONTENT_EXPORT FencedFrame : public blink::mojom::FencedFrameOwnerHost,
   // frame FrameTree. It is a "dummy" child FrameTreeNode that `this` is
   // responsible for adding as a child of `owner_render_frame_host_`; it is
   // initially null, and only set in the constructor (indirectly via
-  // `CreateProxyAndAttachToOuterFrameTree()`).
+  // `InitInnerFrameTreeAndReturnProxyToOuterFrameTree()`).
   // Furthermore, the lifetime of `this` is directly tied to it (see
   // `OnFrameTreeNodeDestroyed()`).
   raw_ptr<FrameTreeNode> outer_delegate_frame_tree_node_ = nullptr;
-  // This is for use by the "outer" FrameTree (i.e., the one that
-  // `owner_render_frame_host_` is associated with). It is set in the
-  // constructor. Initially null, and only set in the constructor (indirectly
-  // via `CreateProxyAndAttachToOuterFrameTree()`).
-  raw_ptr<RenderFrameProxyHost> proxy_to_inner_main_frame_ = nullptr;
 
   // The FrameTree that we create to host the "inner" fenced frame contents.
   std::unique_ptr<FrameTree> frame_tree_;

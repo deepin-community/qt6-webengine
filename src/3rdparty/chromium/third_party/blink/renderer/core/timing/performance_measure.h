@@ -29,6 +29,7 @@
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/public/mojom/timing/performance_mark_or_measure.mojom-blink-forward.h"
 #include "third_party/blink/renderer/bindings/core/v8/serialization/serialized_script_value.h"
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/timing/performance_entry.h"
 #include "third_party/blink/renderer/platform/bindings/trace_wrapper_v8_reference.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
@@ -48,7 +49,8 @@ class CORE_EXPORT PerformanceMeasure final : public PerformanceEntry {
                      double start_time,
                      double end_time,
                      scoped_refptr<SerializedScriptValue>,
-                     ExceptionState&);
+                     ExceptionState&,
+                     DOMWindow* source);
   ~PerformanceMeasure() override = default;
 
   static PerformanceMeasure* Create(ScriptState*,
@@ -56,11 +58,12 @@ class CORE_EXPORT PerformanceMeasure final : public PerformanceEntry {
                                     double start_time,
                                     double end_time,
                                     const ScriptValue& detail,
-                                    ExceptionState&);
+                                    ExceptionState&,
+                                    DOMWindow* source);
 
   ScriptValue detail(ScriptState*);
 
-  AtomicString entryType() const override;
+  const AtomicString& entryType() const override;
   PerformanceEntryType EntryTypeEnum() const override;
   mojom::blink::PerformanceMarkOrMeasurePtr ToMojoPerformanceMarkOrMeasure()
       override;

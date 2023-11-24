@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,6 +12,10 @@
 #include "ui/base/x/x11_util.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/x/connection.h"
+
+#if BUILDFLAG(IS_LINUX)
+#include "ui/linux/linux_ui.h"
+#endif
 
 namespace ui {
 
@@ -56,9 +60,11 @@ scoped_refptr<PlatformCursor> X11CursorFactory::CreateAnimatedCursor(
 }
 
 void X11CursorFactory::ObserveThemeChanges() {
-  auto* cursor_theme_manager = CursorThemeManager::GetInstance();
-  DCHECK(cursor_theme_manager);
-  cursor_theme_observation_.Observe(cursor_theme_manager);
+#if BUILDFLAG(IS_LINUX)
+  auto* linux_ui = LinuxUi::instance();
+  DCHECK(linux_ui);
+  cursor_theme_observation_.Observe(linux_ui);
+#endif
 }
 
 void X11CursorFactory::OnCursorThemeNameChanged(

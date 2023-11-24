@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,18 +7,19 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/cxx17_backports.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "http_proxy_client_socket.h"
+#include "net/base/features.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/http_user_agent_settings.h"
 #include "net/base/net_errors.h"
@@ -130,13 +131,13 @@ HttpProxySocketParams::HttpProxySocketParams(
     const HostPortPair& endpoint,
     bool tunnel,
     const NetworkTrafficAnnotationTag traffic_annotation,
-    const NetworkIsolationKey& network_isolation_key)
+    const NetworkAnonymizationKey& network_anonymization_key)
     : transport_params_(std::move(transport_params)),
       ssl_params_(std::move(ssl_params)),
       is_quic_(is_quic),
       endpoint_(endpoint),
       tunnel_(tunnel),
-      network_isolation_key_(network_isolation_key),
+      network_anonymization_key_(network_anonymization_key),
       traffic_annotation_(traffic_annotation) {
   // This is either a connection to an HTTP proxy or an SSL/QUIC proxy.
   DCHECK(transport_params_ || ssl_params_);
@@ -188,22 +189,19 @@ HttpProxyConnectJob::HttpProxyConnectJob(
                  NetLogSourceType::HTTP_PROXY_CONNECT_JOB,
                  NetLogEventType::HTTP_PROXY_CONNECT_JOB_CONNECT),
       params_(std::move(params)),
-      next_state_(STATE_NONE),
-      has_restarted_(false),
-      has_established_connection_(false),
       http_auth_controller_(
           params_->tunnel()
               ? base::MakeRefCounted<HttpAuthController>(
                     HttpAuth::AUTH_PROXY,
                     GURL((params_->ssl_params() ? "https://" : "http://") +
                          GetDestination().ToString()),
-                    params_->network_isolation_key(),
+                    params_->network_anonymization_key(),
                     common_connect_job_params->http_auth_cache,
                     common_connect_job_params->http_auth_handler_factory,
                     host_resolver())
               : nullptr) {}
 
-HttpProxyConnectJob::~HttpProxyConnectJob() {}
+HttpProxyConnectJob::~HttpProxyConnectJob() = default;
 
 const RequestPriority HttpProxyConnectJob::kH2QuicTunnelPriority =
     DEFAULT_PRIORITY;
@@ -350,7 +348,7 @@ void HttpProxyConnectJob::RestartWithAuthCredentials() {
 
   // Always do this asynchronously, to avoid re-entrancy.
   next_state_ = STATE_RESTART_WITH_AUTH;
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&HttpProxyConnectJob::OnIOComplete,
                                 weak_ptr_factory_.GetWeakPtr(), net::OK));
 }
@@ -441,9 +439,9 @@ int HttpProxyConnectJob::DoBeginConnect() {
 int HttpProxyConnectJob::DoTransportConnect() {
   ProxyServer::Scheme scheme = GetProxyServerScheme();
   if (scheme == ProxyServer::SCHEME_HTTP) {
-    nested_connect_job_ = TransportConnectJob::CreateTransportConnectJob(
-        params_->transport_params(), priority(), socket_tag(),
-        common_connect_job_params(), this, &net_log());
+    nested_connect_job_ = std::make_unique<TransportConnectJob>(
+        priority(), socket_tag(), common_connect_job_params(),
+        params_->transport_params(), this, &net_log());
   } else {
     DCHECK_EQ(scheme, ProxyServer::SCHEME_HTTPS);
     DCHECK(params_->ssl_params());
@@ -535,7 +533,7 @@ int HttpProxyConnectJob::DoHttpProxyConnect() {
   transport_socket_ = std::make_unique<HttpProxyClientSocket>(
       nested_connect_job_->PassSocket(), GetUserAgent(), params_->endpoint(),
       ProxyServer(GetProxyServerScheme(), GetDestination()),
-      http_auth_controller_.get(), common_connect_job_params()->proxy_delegate,
+      http_auth_controller_, common_connect_job_params()->proxy_delegate,
       params_->traffic_annotation());
   nested_connect_job_.reset();
   return transport_socket_->Connect(base::BindOnce(
@@ -545,7 +543,7 @@ int HttpProxyConnectJob::DoHttpProxyConnect() {
 int HttpProxyConnectJob::DoHttpProxyConnectComplete(int result) {
   // Always inform caller of auth requests asynchronously.
   if (result == ERR_PROXY_AUTH_REQUESTED) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&HttpProxyConnectJob::OnAuthChallenge,
                                   weak_ptr_factory_.GetWeakPtr()));
     return ERR_IO_PENDING;
@@ -627,8 +625,8 @@ int HttpProxyConnectJob::DoSpdyProxyCreateStreamComplete(int result) {
   // |transport_socket_| will set itself as |stream|'s delegate.
   transport_socket_ = std::make_unique<SpdyProxyClientSocket>(
       stream, ProxyServer(GetProxyServerScheme(), GetDestination()),
-      GetUserAgent(), params_->endpoint(), net_log(),
-      http_auth_controller_.get(), common_connect_job_params()->proxy_delegate);
+      GetUserAgent(), params_->endpoint(), net_log(), http_auth_controller_,
+      common_connect_job_params()->proxy_delegate);
   return transport_socket_->Connect(base::BindOnce(
       &HttpProxyConnectJob::OnIOComplete, base::Unretained(this)));
 }
@@ -658,9 +656,10 @@ int HttpProxyConnectJob::DoQuicProxyCreateSession() {
       url::SchemeHostPort(url::kHttpsScheme, proxy_server.host(),
                           proxy_server.port()),
       quic_version, ssl_params->privacy_mode(), kH2QuicTunnelPriority,
-      socket_tag(), params_->network_isolation_key(),
+      socket_tag(), params_->network_anonymization_key(),
       ssl_params->GetDirectConnectionParams()->secure_dns_policy(),
-      /*use_dns_aliases=*/false, ssl_params->ssl_config().GetCertVerifyFlags(),
+      /*use_dns_aliases=*/false, /*require_dns_https_alpn=*/false,
+      ssl_params->ssl_config().GetCertVerifyFlags(),
       GURL("https://" + proxy_server.ToString()), net_log(),
       &quic_net_error_details_,
       /*failed_on_default_network_callback=*/CompletionOnceCallback(),
@@ -693,15 +692,17 @@ int HttpProxyConnectJob::DoQuicProxyCreateStreamComplete(int result) {
   std::unique_ptr<QuicChromiumClientStream::Handle> quic_stream =
       quic_session_->ReleaseStream();
 
-  spdy::SpdyPriority spdy_priority =
-      ConvertRequestPriorityToQuicPriority(kH2QuicTunnelPriority);
-  spdy::SpdyStreamPrecedence precedence(spdy_priority);
-  quic_stream->SetPriority(precedence);
+  uint8_t urgency = ConvertRequestPriorityToQuicPriority(kH2QuicTunnelPriority);
+  bool incremental = quic::QuicStreamPriority::kDefaultIncremental;
+  if (base::FeatureList::IsEnabled(features::kPriorityIncremental)) {
+    incremental = kDefaultPriorityIncremental;
+  }
+  quic_stream->SetPriority(quic::QuicStreamPriority{urgency, incremental});
 
   transport_socket_ = std::make_unique<QuicProxyClientSocket>(
       std::move(quic_stream), std::move(quic_session_),
       ProxyServer(GetProxyServerScheme(), GetDestination()), GetUserAgent(),
-      params_->endpoint(), net_log(), http_auth_controller_.get(),
+      params_->endpoint(), net_log(), http_auth_controller_,
       common_connect_job_params()->proxy_delegate);
   return transport_socket_->Connect(base::BindOnce(
       &HttpProxyConnectJob::OnIOComplete, base::Unretained(this)));
@@ -816,7 +817,7 @@ SpdySessionKey HttpProxyConnectJob::CreateSpdySessionKey() const {
   return SpdySessionKey(
       GetDestination(), ProxyServer::Direct(), PRIVACY_MODE_DISABLED,
       SpdySessionKey::IsProxySession::kTrue, socket_tag(),
-      params_->network_isolation_key(),
+      params_->network_anonymization_key(),
       params_->ssl_params()->GetDirectConnectionParams()->secure_dns_policy());
 }
 

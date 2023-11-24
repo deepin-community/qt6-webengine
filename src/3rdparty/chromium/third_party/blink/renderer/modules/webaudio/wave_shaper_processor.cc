@@ -23,11 +23,12 @@
  * DAMAGE.
  */
 
+#include "third_party/blink/renderer/modules/webaudio/wave_shaper_processor.h"
+
 #include <memory>
 
 #include "base/synchronization/lock.h"
 #include "third_party/blink/renderer/modules/webaudio/wave_shaper_dsp_kernel.h"
-#include "third_party/blink/renderer/modules/webaudio/wave_shaper_processor.h"
 
 namespace blink {
 
@@ -36,8 +37,7 @@ WaveShaperProcessor::WaveShaperProcessor(float sample_rate,
                                          unsigned render_quantum_frames)
     : AudioDSPKernelProcessor(sample_rate,
                               number_of_channels,
-                              render_quantum_frames),
-      oversample_(kOverSampleNone) {}
+                              render_quantum_frames) {}
 
 WaveShaperProcessor::~WaveShaperProcessor() {
   if (IsInitialized()) {

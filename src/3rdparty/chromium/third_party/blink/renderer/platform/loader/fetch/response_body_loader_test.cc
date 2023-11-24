@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <string>
 #include <utility>
 #include "base/strings/string_number_conversions.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/scoped_feature_list.h"
 #include "services/network/public/cpp/features.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -76,6 +77,9 @@ class ResponseBodyLoaderTest : public testing::Test {
           break;
       }
     }
+    void DidReceiveDecodedData(
+        const String& data,
+        std::unique_ptr<ParkableStringImpl::SecureDigest> digest) override {}
     void DidFinishLoadingBody() override {
       DCHECK(!finished_);
       DCHECK(!failed_);
@@ -183,7 +187,7 @@ TEST_F(ResponseBodyLoaderTest, Load) {
 
   EXPECT_FALSE(client->LoadingIsFinished());
   EXPECT_FALSE(client->LoadingIsFailed());
-  EXPECT_TRUE(client->GetData().IsEmpty());
+  EXPECT_TRUE(client->GetData().empty());
 
   body_loader->Start();
 
@@ -211,7 +215,7 @@ TEST_F(ResponseBodyLoaderTest, LoadFailure) {
 
   EXPECT_FALSE(client->LoadingIsFinished());
   EXPECT_FALSE(client->LoadingIsFailed());
-  EXPECT_TRUE(client->GetData().IsEmpty());
+  EXPECT_TRUE(client->GetData().empty());
 
   body_loader->Start();
 
@@ -238,7 +242,7 @@ TEST_F(ResponseBodyLoaderTest, LoadWithDataAndDone) {
 
   EXPECT_FALSE(client->LoadingIsFinished());
   EXPECT_FALSE(client->LoadingIsFailed());
-  EXPECT_TRUE(client->GetData().IsEmpty());
+  EXPECT_TRUE(client->GetData().empty());
 
   body_loader->Start();
 
@@ -268,7 +272,7 @@ TEST_F(ResponseBodyLoaderTest, Abort) {
 
   EXPECT_FALSE(client->LoadingIsFinished());
   EXPECT_FALSE(client->LoadingIsFailed());
-  EXPECT_TRUE(client->GetData().IsEmpty());
+  EXPECT_TRUE(client->GetData().empty());
   EXPECT_FALSE(body_loader->IsAborted());
 
   body_loader->Start();
@@ -299,7 +303,7 @@ TEST_F(ResponseBodyLoaderTest, Suspend) {
 
   EXPECT_FALSE(client->LoadingIsFinished());
   EXPECT_FALSE(client->LoadingIsFailed());
-  EXPECT_TRUE(client->GetData().IsEmpty());
+  EXPECT_TRUE(client->GetData().empty());
   EXPECT_FALSE(body_loader->IsSuspended());
 
   body_loader->Start();
@@ -362,7 +366,7 @@ TEST_F(ResponseBodyLoaderTest, ReadTooBigBuffer) {
 
   EXPECT_FALSE(client->LoadingIsFinished());
   EXPECT_FALSE(client->LoadingIsFailed());
-  EXPECT_TRUE(client->GetData().IsEmpty());
+  EXPECT_TRUE(client->GetData().empty());
 
   body_loader->Start();
 
@@ -402,7 +406,7 @@ TEST_F(ResponseBodyLoaderTest, NotDrainable) {
 
   EXPECT_FALSE(client->LoadingIsFinished());
   EXPECT_FALSE(client->LoadingIsFailed());
-  EXPECT_TRUE(client->GetData().IsEmpty());
+  EXPECT_TRUE(client->GetData().empty());
 
   body_loader->Start();
 
@@ -440,8 +444,8 @@ TEST_F(ResponseBodyLoaderTest, DrainAsDataPipe) {
   ASSERT_TRUE(client);
   EXPECT_TRUE(body_loader->IsDrained());
 
-  client_for_draining->DidReceiveData(base::make_span("xyz", 3));
-  client_for_draining->DidReceiveData(base::make_span("abc", 3));
+  client_for_draining->DidReceiveData(base::make_span("xyz", 3u));
+  client_for_draining->DidReceiveData(base::make_span("abc", 3u));
 
   EXPECT_FALSE(client->LoadingIsFinished());
   EXPECT_FALSE(client->LoadingIsFailed());
@@ -713,8 +717,8 @@ TEST_F(ResponseBodyLoaderTest, DrainAsDataPipeAndReportError) {
   ASSERT_TRUE(client);
   EXPECT_TRUE(body_loader->IsDrained());
 
-  client_for_draining->DidReceiveData(base::make_span("xyz", 3));
-  client_for_draining->DidReceiveData(base::make_span("abc", 3));
+  client_for_draining->DidReceiveData(base::make_span("xyz", 3u));
+  client_for_draining->DidReceiveData(base::make_span("abc", 3u));
 
   EXPECT_FALSE(client->LoadingIsFinished());
   EXPECT_FALSE(client->LoadingIsFailed());

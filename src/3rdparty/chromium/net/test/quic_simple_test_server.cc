@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,9 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
@@ -167,7 +167,7 @@ void StartQuicServerOnServerThread(const base::FilePath& test_files_root,
   // Set up server certs.
   base::FilePath directory;
   directory = test_files_root;
-  std::unique_ptr<ProofSourceChromium> proof_source(new ProofSourceChromium());
+  auto proof_source = std::make_unique<ProofSourceChromium>();
   CHECK(proof_source->Initialize(directory.AppendASCII("quic-chain.pem"),
                                  directory.AppendASCII("quic-leaf-cert.key"),
                                  base::FilePath()));

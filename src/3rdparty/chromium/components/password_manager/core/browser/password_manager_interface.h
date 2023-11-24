@@ -1,4 +1,4 @@
-// Copyright (c) 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,6 +19,8 @@
 
 namespace password_manager {
 
+class PasswordManagerClient;
+
 // Abstract interface for PasswordManagers.
 class PasswordManagerInterface : public FormSubmissionObserver {
  public:
@@ -36,8 +38,7 @@ class PasswordManagerInterface : public FormSubmissionObserver {
   // Handles password forms being rendered.
   virtual void OnPasswordFormsRendered(
       PasswordManagerDriver* driver,
-      const std::vector<autofill::FormData>& visible_forms_data,
-      bool did_stop_loading) = 0;
+      const std::vector<autofill::FormData>& visible_forms_data) = 0;
 
   // Handles a password form being submitted.
   virtual void OnPasswordFormSubmitted(PasswordManagerDriver* driver,
@@ -54,6 +55,16 @@ class PasswordManagerInterface : public FormSubmissionObserver {
       autofill::FieldRendererId generation_element,
       autofill::password_generation::PasswordGenerationType type) = 0;
 
+  // Presaves the form with generated password. |driver| is needed to find the
+  // matched form manager.
+  virtual void OnPresaveGeneratedPassword(
+      PasswordManagerDriver* driver,
+      const autofill::FormData& form,
+      const std::u16string& generated_password) = 0;
+
+  // Getter for the PasswordManagerClient.
+  virtual PasswordManagerClient* GetClient() = 0;
+
 #if BUILDFLAG(IS_IOS)
   // Handles a subframe form submission. In contrast to OnPasswordFormSubmitted
   // this method does not wait for OnPasswordFormsRendered before invoking
@@ -64,19 +75,13 @@ class PasswordManagerInterface : public FormSubmissionObserver {
       PasswordManagerDriver* driver,
       const autofill::FormData& form_data) = 0;
 
-  // Presaves the form with |generated_password|. This function is called once
-  // when the user accepts the generated password. The password was generated in
-  // the field with identifier |generation_element|. |driver| corresponds to the
-  // |form| parent frame.
-  virtual void PresaveGeneratedPassword(
-      PasswordManagerDriver* driver,
-      const autofill::FormData& form,
-      const std::u16string& generated_password,
-      autofill::FieldRendererId generation_element) = 0;
-
-  // Updates the state if the PasswordFormManager which corresponds to the form
-  // with |form_identifier|. In case if there is a presaved credential it
+  // Updates the state in the PasswordFormManager which corresponds to the form
+  // with |form_identifier|. In case there is a presaved credential, it
   // updates the presaved credential.
+  // Cross-platform method PasswordManager::OnInformAboutUserInput cannot
+  // replace this method, as it needs an observed FormData object on every
+  // keystroke and parsing the full FormData on iOS is more expensive operation,
+  // than in Blink.
   virtual void UpdateStateOnUserInput(PasswordManagerDriver* driver,
                                       autofill::FormRendererId form_id,
                                       autofill::FieldRendererId field_id,

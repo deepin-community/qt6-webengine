@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,12 +20,15 @@
 #include "content/browser/devtools/protocol/devtools_domain_handler.h"
 #include "content/browser/devtools/protocol/devtools_download_manager_delegate.h"
 #include "content/browser/devtools/protocol/page.h"
+#include "content/browser/preloading/prerender/prerender_final_status.h"
 #include "content/browser/renderer_host/back_forward_cache_impl.h"
+#include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/javascript_dialog_manager.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_observer.h"
 #include "content/public/common/javascript_dialog_type.h"
+#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom-forward.h"
 #include "url/gurl.h"
 
@@ -82,11 +85,8 @@ class PageHandler : public DevToolsDomainHandler,
   void SetRenderer(int process_host_id,
                    RenderFrameHostImpl* frame_host) override;
   // Instrumentation signals.
-  void OnSynchronousSwapCompositorFrame(
-      const cc::RenderFrameMetadata& frame_metadata);
   void DidAttachInterstitialPage();
   void DidDetachInterstitialPage();
-  bool screencast_enabled() const { return enabled_ && screencast_enabled_; }
   using JavaScriptDialogCallback =
       content::JavaScriptDialogManager::DialogClosedCallback;
   void DidRunJavaScriptDialog(const GURL& url,
@@ -102,7 +102,7 @@ class PageHandler : public DevToolsDomainHandler,
   void NavigationReset(NavigationRequest* navigation_request);
   void DownloadWillBegin(FrameTreeNode* ftn, download::DownloadItem* item);
 
-  WebContentsImpl* GetWebContents();
+  void OnFrameDetached(const base::UnguessableToken& frame_id);
 
   bool ShouldBypassCSP();
   void BackForwardCacheNotUsed(
@@ -111,6 +111,18 @@ class PageHandler : public DevToolsDomainHandler,
       const BackForwardCacheCanStoreTreeResult* tree_result);
 
   void DidActivatePrerender(const NavigationRequest& nav_request);
+  void DidCancelPrerender(const GURL& prerendering_url,
+                          const std::string& initiating_frame_id,
+                          PrerenderFinalStatus status,
+                          const std::string& disallowed_api_method);
+
+  void DidUpdatePrefetchStatus(const std::string& initiating_frame_id,
+                               const GURL& prefetch_url,
+                               PreloadingTriggeringOutcome status);
+
+  void DidUpdatePrerenderStatus(const std::string& initiating_frame_id,
+                                const GURL& prerender_url,
+                                PreloadingTriggeringOutcome status);
 
   Response Enable() override;
   Response Disable() override;
@@ -141,6 +153,7 @@ class PageHandler : public DevToolsDomainHandler,
       Maybe<Page::Viewport> clip,
       Maybe<bool> from_surface,
       Maybe<bool> capture_beyond_viewport,
+      Maybe<bool> optimize_for_speed,
       std::unique_ptr<CaptureScreenshotCallback> callback) override;
   void CaptureSnapshot(
       Maybe<std::string> format,
@@ -177,24 +190,32 @@ class PageHandler : public DevToolsDomainHandler,
   Response AddCompilationCache(const std::string& url,
                                const Binary& data) override;
 
- private:
-  enum EncodingFormat { PNG, JPEG };
+  Response AssureTopLevelActiveFrame();
 
+ private:
+  using BitmapEncoder =
+      base::RepeatingCallback<bool(const SkBitmap& bitmap,
+                                   std::vector<uint8_t>& output)>;
+
+  void CaptureFullPageScreenshot(
+      Maybe<std::string> format,
+      Maybe<int> quality,
+      Maybe<bool> optimize_for_speed,
+      std::unique_ptr<CaptureScreenshotCallback> callback,
+      const gfx::Size& full_page_size);
   bool ShouldCaptureNextScreencastFrame();
   void NotifyScreencastVisibility(bool visible);
-  void InnerSwapCompositorFrame();
   void OnFrameFromVideoConsumer(scoped_refptr<media::VideoFrame> frame);
   void ScreencastFrameCaptured(
       std::unique_ptr<Page::ScreencastFrameMetadata> metadata,
       const SkBitmap& bitmap);
   void ScreencastFrameEncoded(
       std::unique_ptr<Page::ScreencastFrameMetadata> metadata,
-      const protocol::Binary& data);
+      std::vector<uint8_t> data);
 
   void ScreenshotCaptured(
       std::unique_ptr<CaptureScreenshotCallback> callback,
-      const std::string& format,
-      int quality,
+      BitmapEncoder encoder,
       const gfx::Size& original_view_size,
       const gfx::Size& requested_image_size,
       const blink::DeviceEmulationParams& original_params,
@@ -215,6 +236,13 @@ class PageHandler : public DevToolsDomainHandler,
   void OnDownloadUpdated(download::DownloadItem* item) override;
   void OnDownloadDestroyed(download::DownloadItem* item) override;
 
+  // Returns WebContents only if `host_` is a top level frame. Otherwise, it
+  // returns Response with an error.
+  using ResponseOrWebContents = absl::variant<Response, WebContentsImpl*>;
+  ResponseOrWebContents GetWebContentsForTopLevelActiveFrame();
+
+  void RetrievePrerenderActivationFromWebContents();
+
   const bool allow_unsafe_operations_;
   const bool is_trusted_;
   const absl::optional<url::Origin> navigation_initiator_origin_;
@@ -223,17 +251,17 @@ class PageHandler : public DevToolsDomainHandler,
   bool enabled_;
   bool bypass_csp_ = false;
 
-  bool screencast_enabled_;
-  std::string screencast_format_;
-  int screencast_quality_;
+  BitmapEncoder screencast_encoder_;
   int screencast_max_width_;
   int screencast_max_height_;
   int capture_every_nth_frame_;
-  int capture_retry_count_;
-  absl::optional<cc::RenderFrameMetadata> frame_metadata_;
   int session_id_;
   int frame_counter_;
   int frames_in_flight_;
+
+  // Whether stored prerender activation has been dispatched to Devtools. Reset
+  // whenever a new prerender event received.
+  bool has_dispatched_stored_prerender_activation_ = false;
 
   // |video_consumer_| consumes video frames from FrameSinkVideoCapturerImpl,
   // and provides PageHandler with these frames via OnFrameFromVideoConsumer.

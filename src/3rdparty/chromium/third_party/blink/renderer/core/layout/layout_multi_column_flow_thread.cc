@@ -26,10 +26,13 @@
 #include "third_party/blink/renderer/core/layout/layout_multi_column_flow_thread.h"
 
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
+#include "third_party/blink/renderer/core/layout/geometry/writing_mode_converter.h"
 #include "third_party/blink/renderer/core/layout/layout_multi_column_set.h"
 #include "third_party/blink/renderer/core/layout/layout_multi_column_spanner_placeholder.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/layout/multi_column_fragmentainer_group.h"
+#include "third_party/blink/renderer/core/layout/ng/ng_fragmentation_utils.h"
+#include "third_party/blink/renderer/core/layout/ng/ng_physical_box_fragment.h"
 #include "third_party/blink/renderer/core/layout/view_fragmentation_context.h"
 
 namespace blink {
@@ -223,6 +226,7 @@ static LayoutObject* FirstLayoutObjectInSet(
     return multicol_set->FlowThread()->FirstChild();
   // Adjacent column content sets should not occur. We would have no way of
   // figuring out what each of them contains then.
+  CHECK(sibling->IsLayoutMultiColumnSpannerPlaceholder());
   LayoutBox* spanner = To<LayoutMultiColumnSpannerPlaceholder>(sibling)
                            ->LayoutObjectInFlowThread();
   return NextInPreOrderAfterChildrenSkippingOutOfFlow(
@@ -237,6 +241,7 @@ static LayoutObject* LastLayoutObjectInSet(LayoutMultiColumnSet* multicol_set) {
     return nullptr;
   // Adjacent column content sets should not occur. We would have no way of
   // figuring out what each of them contains then.
+  CHECK(sibling->IsLayoutMultiColumnSpannerPlaceholder());
   LayoutBox* spanner = To<LayoutMultiColumnSpannerPlaceholder>(sibling)
                            ->LayoutObjectInFlowThread();
   return PreviousInPreOrderSkippingOutOfFlow(
@@ -501,7 +506,7 @@ LayoutMultiColumnSet* LayoutMultiColumnFlowThread::ColumnSetAtBlockOffset(
     }
   } else {
     DCHECK(!column_sets_invalidated_);
-    if (multi_column_set_list_.IsEmpty())
+    if (multi_column_set_list_.empty())
       return nullptr;
     if (offset < LayoutUnit()) {
       column_set = multi_column_set_list_.front();
@@ -511,7 +516,7 @@ LayoutMultiColumnSet* LayoutMultiColumnFlowThread::ColumnSetAtBlockOffset(
           .AllOverlapsWithAdapter<MultiColumnSetSearchAdapter>(adapter);
 
       // If no set was found, the offset is in the flow thread overflow.
-      if (!adapter.Result() && !multi_column_set_list_.IsEmpty())
+      if (!adapter.Result() && !multi_column_set_list_.empty())
         column_set = multi_column_set_list_.back();
       else
         column_set = adapter.Result();
@@ -632,8 +637,7 @@ void LayoutMultiColumnFlowThread::ColumnRuleStyleDidChange() {
   NOT_DESTROYED();
   for (LayoutMultiColumnSet* column_set = FirstMultiColumnSet(); column_set;
        column_set = column_set->NextSiblingMultiColumnSet()) {
-    column_set->SetShouldDoFullPaintInvalidation(
-        PaintInvalidationReason::kStyle);
+    column_set->SetShouldDoFullPaintInvalidation();
   }
 }
 
@@ -733,9 +737,13 @@ void LayoutMultiColumnFlowThread::AppendNewFragmentainerGroupIfNeeded(
   }
 }
 
-void LayoutMultiColumnFlowThread::StartLayoutFromNG(unsigned column_count) {
+void LayoutMultiColumnFlowThread::SetColumnCountFromNG(unsigned column_count) {
   NOT_DESTROYED();
   column_count_ = column_count;
+}
+
+void LayoutMultiColumnFlowThread::StartLayoutFromNG() {
+  NOT_DESTROYED();
   last_set_worked_on_ = DynamicTo<LayoutMultiColumnSet>(FirstMultiColumnBox());
 }
 
@@ -793,7 +801,9 @@ void LayoutMultiColumnFlowThread::FinishLayoutFromNG(
   }
 
   ValidateColumnSets();
-  SetLogicalHeight(flow_thread_offset);
+  if (!RuntimeEnabledFeatures::LayoutNGNoCopyBackEnabled()) {
+    SetLogicalHeight(flow_thread_offset);
+  }
   ClearNeedsLayout();
   last_set_worked_on_ = nullptr;
 }
@@ -1275,15 +1285,19 @@ void LayoutMultiColumnFlowThread::FlowThreadDescendantWillBeRemoved(
   // set from the spanner placeholders that we've already found.
   LayoutMultiColumnSet* column_set_to_remove;
   if (adjacent_next_spanner_placeholder) {
-    column_set_to_remove = To<LayoutMultiColumnSet>(
-        adjacent_next_spanner_placeholder->PreviousSiblingMultiColumnBox());
+    LayoutBox* sibling =
+        adjacent_next_spanner_placeholder->PreviousSiblingMultiColumnBox();
+    CHECK(sibling->IsLayoutMultiColumnSet());
+    column_set_to_remove = To<LayoutMultiColumnSet>(sibling);
     DCHECK(
         !adjacent_previous_spanner_placeholder ||
         column_set_to_remove ==
             adjacent_previous_spanner_placeholder->NextSiblingMultiColumnBox());
   } else if (adjacent_previous_spanner_placeholder) {
-    column_set_to_remove = To<LayoutMultiColumnSet>(
-        adjacent_previous_spanner_placeholder->NextSiblingMultiColumnBox());
+    LayoutBox* sibling =
+        adjacent_previous_spanner_placeholder->NextSiblingMultiColumnBox();
+    CHECK(sibling->IsLayoutMultiColumnSet());
+    column_set_to_remove = To<LayoutMultiColumnSet>(sibling);
   } else {
     // If there were no adjacent spanners, it has to mean that there's only one
     // column set, since it's only spanners that may cause creation of
@@ -1534,6 +1548,7 @@ void LayoutMultiColumnFlowThread::ComputeLogicalHeight(
 
 void LayoutMultiColumnFlowThread::UpdateLogicalWidth() {
   NOT_DESTROYED();
+  DCHECK(!RuntimeEnabledFeatures::LayoutNGNoCopyBackEnabled());
   LayoutUnit column_width;
   CalculateColumnCountAndWidth(column_width, column_count_);
   SetLogicalWidth(column_width);
@@ -1622,6 +1637,50 @@ void LayoutMultiColumnFlowThread::RestoreMultiColumnLayoutState(
     const MultiColumnLayoutState& state) {
   NOT_DESTROYED();
   last_set_worked_on_ = state.ColumnSet();
+}
+
+LayoutSize LayoutMultiColumnFlowThread::Size() const {
+  NOT_DESTROYED();
+  if (RuntimeEnabledFeatures::LayoutNGNoCopyBackEnabled() &&
+      !HasValidCachedGeometry() && EverHadLayout()) {
+    // const_cast in order to update the cached value.
+    auto* mutable_this = const_cast<LayoutMultiColumnFlowThread*>(this);
+    mutable_this->SetHasValidCachedGeometry(true);
+    mutable_this->frame_size_ = ComputeSize();
+  }
+  return frame_size_;
+}
+
+LayoutSize LayoutMultiColumnFlowThread::ComputeSize() const {
+  DCHECK(RuntimeEnabledFeatures::LayoutNGNoCopyBackEnabled());
+  LogicalSize thread_size;
+  const LayoutBlockFlow* container = MultiColumnBlockFlow();
+  if (container->PhysicalFragmentCount() == 0u) {
+    return LayoutSize();
+  }
+  const auto* first_fragment = container->GetPhysicalFragment(0);
+  WritingModeConverter converter(first_fragment->Style().GetWritingDirection());
+  bool has_processed_first_column_in_flow_thread = false;
+  for (const auto& container_fragment : container->PhysicalFragments()) {
+    for (const auto& link : container_fragment.Children()) {
+      const auto& child_fragment = To<NGPhysicalBoxFragment>(*link);
+      if (!child_fragment.IsFragmentainerBox()) {
+        continue;
+      }
+      LogicalSize logical_size = FragmentainerLogicalCapacity(child_fragment);
+      thread_size.block_size += logical_size.block_size;
+      if (!has_processed_first_column_in_flow_thread) {
+        thread_size.inline_size = logical_size.inline_size;
+        has_processed_first_column_in_flow_thread = true;
+      }
+    }
+    const auto* break_token = container_fragment.BreakToken();
+    if (!break_token || break_token->IsRepeated() ||
+        break_token->IsAtBlockEnd()) {
+      break;
+    }
+  }
+  return converter.ToPhysical(thread_size).ToLayoutSize();
 }
 
 }  // namespace blink

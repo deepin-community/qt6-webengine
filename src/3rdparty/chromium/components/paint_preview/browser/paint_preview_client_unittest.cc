@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -137,7 +137,7 @@ class PaintPreviewClientRenderViewHostTest
 
   void OverrideInterface(MockPaintPreviewRecorder* service) {
     blink::AssociatedInterfaceProvider* remote_interfaces =
-        web_contents()->GetMainFrame()->GetRemoteAssociatedInterfaces();
+        web_contents()->GetPrimaryMainFrame()->GetRemoteAssociatedInterfaces();
     remote_interfaces->OverrideBinderForTesting(
         mojom::PaintPreviewRecorder::Name_,
         base::BindRepeating(&MockPaintPreviewRecorder::BindRequest,
@@ -192,8 +192,9 @@ TEST_P(PaintPreviewClientRenderViewHostTest, CaptureMainFrameMock) {
         EXPECT_EQ(status, mojom::PaintPreviewStatus::kOk);
 
         auto token = base::UnguessableToken::Deserialize(
-            result->proto.root_frame().embedding_token_high(),
-            result->proto.root_frame().embedding_token_low());
+                         result->proto.root_frame().embedding_token_high(),
+                         result->proto.root_frame().embedding_token_low())
+                         .value();
         EXPECT_NE(token, base::UnguessableToken::Null());
 
         // The token for the main frame is set internally since the render frame

@@ -23,17 +23,18 @@ namespace tint::sem {
 
 Call::Call(const ast::CallExpression* declaration,
            const CallTarget* target,
-           std::vector<const sem::Expression*> arguments,
+           EvaluationStage stage,
+           utils::VectorRef<const sem::ValueExpression*> arguments,
            const Statement* statement,
-           Constant constant,
+           const constant::Value* constant,
            bool has_side_effects)
-    : Base(declaration,
-           target->ReturnType(),
-           statement,
-           std::move(constant),
-           has_side_effects),
+    : Base(declaration, target->ReturnType(), stage, statement, constant, has_side_effects),
       target_(target),
-      arguments_(std::move(arguments)) {}
+      arguments_(std::move(arguments)) {
+    // Check that the stage is no earlier than the target supports
+    TINT_ASSERT(Semantic,
+                (target->Stage() <= stage) || (stage == sem::EvaluationStage::kNotEvaluated));
+}
 
 Call::~Call() = default;
 

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,15 +7,17 @@
 
 #include <memory>
 
-#include "base/bind.h"
 #include "base/containers/circular_deque.h"
+#include "base/functional/bind.h"
 #include "base/mac/scoped_cftyperef.h"
 #include "base/memory/weak_ptr.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_checker.h"
 #include "media/base/bitrate.h"
 #include "media/base/mac/videotoolbox_helpers.h"
+#include "media/base/video_codecs.h"
 #include "media/gpu/media_gpu_export.h"
 #include "media/video/video_encode_accelerator.h"
 #include "third_party/webrtc/common_video/include/bitrate_adjuster.h"
@@ -36,9 +38,7 @@ class MEDIA_GPU_EXPORT VTVideoEncodeAccelerator
   VTVideoEncodeAccelerator& operator=(const VTVideoEncodeAccelerator&) = delete;
 
   // VideoEncodeAccelerator implementation.
-  VideoEncodeAccelerator::SupportedProfiles GetSupportedProfiles() override;
-  VideoEncodeAccelerator::SupportedProfiles GetSupportedProfilesLight()
-      override;
+  SupportedProfiles GetSupportedProfiles() override;
 
   bool Initialize(const Config& config,
                   Client* client,
@@ -72,7 +72,7 @@ class MEDIA_GPU_EXPORT VTVideoEncodeAccelerator
   void DestroyTask();
 
   // Helper functions to set bitrate.
-  void SetAdjustedConstantBitrate(int32_t bitrate);
+  void SetAdjustedConstantBitrate(uint32_t bitrate);
   void SetVariableBitrate(const Bitrate& bitrate);
 
   // Helper function to notify the client of an error on |client_task_runner_|.
@@ -92,16 +92,23 @@ class MEDIA_GPU_EXPORT VTVideoEncodeAccelerator
       std::unique_ptr<EncodeOutput> encode_output,
       std::unique_ptr<VTVideoEncodeAccelerator::BitstreamBufferRef> buffer_ref);
 
+  // Get the supported H.264 profiles.
+  SupportedProfiles GetSupportedH264Profiles();
+#if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
+  // Get the supported HEVC profiles.
+  SupportedProfiles GetSupportedHEVCProfiles();
+#endif  // BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
+
   // Reset the encoder's compression session by destroying the existing one
   // using DestroyCompressionSession() and creating a new one. The new session
   // is configured using ConfigureCompressionSession().
-  bool ResetCompressionSession();
+  bool ResetCompressionSession(VideoCodec codec);
 
   // Create a compression session.
-  bool CreateCompressionSession(const gfx::Size& input_size);
+  bool CreateCompressionSession(VideoCodec codec, const gfx::Size& input_size);
 
   // Configure the current compression session using current encoder settings.
-  bool ConfigureCompressionSession();
+  bool ConfigureCompressionSession(VideoCodec codec);
 
   // Destroy the current compression session if any. Blocks until all pending
   // frames have been flushed out (similar to EmitFrames without doing any
@@ -119,7 +126,8 @@ class MEDIA_GPU_EXPORT VTVideoEncodeAccelerator
   size_t bitstream_buffer_size_ = 0;
   int32_t frame_rate_ = 0;
   int num_temporal_layers_ = 1;
-  VideoCodecProfile h264_profile_;
+  VideoCodecProfile profile_ = H264PROFILE_BASELINE;
+  VideoCodec codec_ = VideoCodec::kH264;
 
   media::Bitrate bitrate_;
 
@@ -127,8 +135,8 @@ class MEDIA_GPU_EXPORT VTVideoEncodeAccelerator
   // bitrate mode no adjustments are needed.
   // Bitrate adjuster used to fix VideoToolbox's inconsistent bitrate issues.
   webrtc::BitrateAdjuster bitrate_adjuster_;
-  int32_t target_bitrate_ = 0;       // User for CBR only
-  int32_t encoder_set_bitrate_ = 0;  // User for CBR only
+  uint32_t target_bitrate_ = 0;       // User for CBR only
+  uint32_t encoder_set_bitrate_ = 0;  // User for CBR only
 
   // If True, the encoder fails initialization if setting of session's property
   // kVTCompressionPropertyKey_MaxFrameDelayCount returns an error.
@@ -136,6 +144,9 @@ class MEDIA_GPU_EXPORT VTVideoEncodeAccelerator
   // have larger latency on low resolutions, and it's bad for RTC.
   // Context: https://crbug.com/1195177 https://crbug.com/webrtc/7304
   bool require_low_delay_ = true;
+
+  // Used to control selection of OS software encoders.
+  Config::EncoderType required_encoder_type_ = Config::EncoderType::kHardware;
 
   // Bitstream buffers ready to be used to return encoded output as a FIFO.
   base::circular_deque<std::unique_ptr<BitstreamBufferRef>>

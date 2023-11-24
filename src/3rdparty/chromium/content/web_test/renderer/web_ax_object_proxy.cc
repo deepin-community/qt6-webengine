@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,6 +17,7 @@
 #include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "ui/accessibility/ax_action_data.h"
+#include "ui/accessibility/ax_enum_util.h"
 #include "ui/accessibility/ax_enums.mojom-shared.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/gfx/geometry/rect_f.h"
@@ -90,7 +91,7 @@ gfx::RectF BoundsForObject(const blink::WebAXObject& object) {
     computed_bounds.Offset(bounds.x(), bounds.y());
     computed_bounds.Offset(-container.GetScrollOffset().x(),
                            -container.GetScrollOffset().y());
-    transform.TransformRect(&computed_bounds);
+    computed_bounds = transform.MapRect(computed_bounds);
     container.GetRelativeBounds(container, bounds, transform);
   }
   return computed_bounds;
@@ -255,14 +256,12 @@ WebAXObjectProxy::WebAXObjectProxy(const blink::WebAXObject& object,
                                    WebAXObjectProxy::Factory* factory)
     : accessibility_object_(object), factory_(factory) {}
 
-WebAXObjectProxy::~WebAXObjectProxy() {
-  // v8::Persistent will leak on destroy, due to the default
-  // NonCopyablePersistentTraits (it claims this may change in the future).
-  notification_callback_.Reset();
-}
+WebAXObjectProxy::~WebAXObjectProxy() = default;
 
 void WebAXObjectProxy::UpdateLayout() {
-  blink::WebAXObject::UpdateLayout(accessibility_object_.GetDocument());
+  DCHECK(factory());
+  DCHECK(factory()->GetAXContext());
+  factory()->GetAXContext()->UpdateAXForAllDocuments();
 }
 
 ui::AXNodeData WebAXObjectProxy::GetAXNodeData() const {
@@ -399,6 +398,7 @@ gin::ObjectTemplateBuilder WebAXObjectProxy::GetObjectTemplateBuilder(
       .SetMethod("isAttributeSettable", &WebAXObjectProxy::IsAttributeSettable)
       .SetMethod("isPressActionSupported",
                  &WebAXObjectProxy::IsPressActionSupported)
+      .SetMethod("hasDefaultAction", &WebAXObjectProxy::HasDefaultAction)
       .SetMethod("parentElement", &WebAXObjectProxy::ParentElement)
       .SetMethod("increment", &WebAXObjectProxy::Increment)
       .SetMethod("decrement", &WebAXObjectProxy::Decrement)
@@ -415,6 +415,8 @@ gin::ObjectTemplateBuilder WebAXObjectProxy::GetObjectTemplateBuilder(
       .SetMethod("scrollToMakeVisibleWithSubFocus",
                  &WebAXObjectProxy::ScrollToMakeVisibleWithSubFocus)
       .SetMethod("scrollToGlobalPoint", &WebAXObjectProxy::ScrollToGlobalPoint)
+      .SetMethod("scrollUp", &WebAXObjectProxy::ScrollUp)
+      .SetMethod("scrollDown", &WebAXObjectProxy::ScrollDown)
       .SetMethod("scrollX", &WebAXObjectProxy::ScrollX)
       .SetMethod("scrollY", &WebAXObjectProxy::ScrollY)
       .SetMethod("toString", &WebAXObjectProxy::ToString)
@@ -1236,9 +1238,6 @@ std::string WebAXObjectProxy::BoundsForRange(int start, int end) {
   if (accessibility_object_.Role() != ax::mojom::Role::kStaticText)
     return std::string();
 
-  if (!accessibility_object_.MaybeUpdateLayoutAndCheckValidity())
-    return std::string();
-
   int len = end - start;
 
   // Get the bounds for each character and union them into one large rectangle.
@@ -1377,6 +1376,11 @@ bool WebAXObjectProxy::IsPressActionSupported() {
   return accessibility_object_.Action() == ax::mojom::DefaultActionVerb::kPress;
 }
 
+bool WebAXObjectProxy::HasDefaultAction() {
+  UpdateLayout();
+  return accessibility_object_.Action() != ax::mojom::DefaultActionVerb::kNone;
+}
+
 v8::Local<v8::Object> WebAXObjectProxy::ParentElement() {
   UpdateLayout();
   blink::WebAXObject parent_object = accessibility_object_.ParentObject();
@@ -1465,6 +1469,20 @@ void WebAXObjectProxy::ScrollToGlobalPoint(int x, int y) {
   ui::AXActionData action_data;
   action_data.action = ax::mojom::Action::kScrollToPoint;
   action_data.target_point = gfx::Point(x, y);
+  accessibility_object_.PerformAction(action_data);
+}
+
+void WebAXObjectProxy::ScrollUp() {
+  UpdateLayout();
+  ui::AXActionData action_data;
+  action_data.action = ax::mojom::Action::kScrollUp;
+  accessibility_object_.PerformAction(action_data);
+}
+
+void WebAXObjectProxy::ScrollDown() {
+  UpdateLayout();
+  ui::AXActionData action_data;
+  action_data.action = ax::mojom::Action::kScrollDown;
   accessibility_object_.PerformAction(action_data);
 }
 
@@ -1591,33 +1609,15 @@ std::string WebAXObjectProxy::Name() {
 
 std::string WebAXObjectProxy::NameFrom() {
   UpdateLayout();
-  ax::mojom::NameFrom name_from = ax::mojom::NameFrom::kUninitialized;
+  ax::mojom::NameFrom name_from = ax::mojom::NameFrom::kNone;
   blink::WebVector<blink::WebAXObject> name_objects;
   accessibility_object_.GetName(name_from, name_objects);
   switch (name_from) {
-    case ax::mojom::NameFrom::kUninitialized:
     case ax::mojom::NameFrom::kNone:
       return "";
-    case ax::mojom::NameFrom::kAttribute:
-      return "attribute";
-    case ax::mojom::NameFrom::kAttributeExplicitlyEmpty:
-      return "attributeExplicitlyEmpty";
-    case ax::mojom::NameFrom::kCaption:
-      return "caption";
-    case ax::mojom::NameFrom::kContents:
-      return "contents";
-    case ax::mojom::NameFrom::kPlaceholder:
-      return "placeholder";
-    case ax::mojom::NameFrom::kRelatedElement:
-      return "relatedElement";
-    case ax::mojom::NameFrom::kValue:
-      return "value";
-    case ax::mojom::NameFrom::kTitle:
-      return "title";
+    default:
+      return ui::ToString(name_from);
   }
-
-  NOTREACHED();
-  return std::string();
 }
 
 int WebAXObjectProxy::NameElementCount() {
@@ -1663,26 +1663,9 @@ std::string WebAXObjectProxy::DescriptionFrom() {
   switch (description_from) {
     case ax::mojom::DescriptionFrom::kNone:
       return "";
-    case ax::mojom::DescriptionFrom::kAriaDescription:
-      return "ariaDescription";
-    case ax::mojom::DescriptionFrom::kButtonLabel:
-      return "buttonLabel";
-    case ax::mojom::DescriptionFrom::kRelatedElement:
-      return "relatedElement";
-    case ax::mojom::DescriptionFrom::kRubyAnnotation:
-      return "rubyAnnotation";
-    case ax::mojom::DescriptionFrom::kSummary:
-      return "summary";
-    case ax::mojom::DescriptionFrom::kSvgDescElement:
-      return "svgDescElement";
-    case ax::mojom::DescriptionFrom::kTableCaption:
-      return "tableCaption";
-    case ax::mojom::DescriptionFrom::kTitle:
-      return "title";
+    default:
+      return ui::ToString(description_from);
   }
-
-  NOTREACHED();
-  return std::string();
 }
 
 std::string WebAXObjectProxy::Placeholder() {
@@ -1794,7 +1777,8 @@ bool RootWebAXObjectProxy::IsRoot() const {
   return true;
 }
 
-WebAXObjectProxyList::WebAXObjectProxyList() = default;
+WebAXObjectProxyList::WebAXObjectProxyList(blink::WebAXContext& ax_context)
+    : ax_context_(&ax_context) {}
 
 WebAXObjectProxyList::~WebAXObjectProxyList() {
   Clear();
@@ -1829,6 +1813,7 @@ v8::Local<v8::Object> WebAXObjectProxyList::GetOrCreate(
 
   v8::Isolate* isolate = blink::MainThreadIsolate();
 
+  // Return existing object if there is a match.
   for (const auto& persistent : elements_) {
     auto local = v8::Local<v8::Object>::New(isolate, persistent);
 
@@ -1840,6 +1825,7 @@ v8::Local<v8::Object> WebAXObjectProxyList::GetOrCreate(
       return local;
   }
 
+  // Create a new object.
   v8::Local<v8::Value> value_handle =
       gin::CreateHandle(isolate, new WebAXObjectProxy(object, this)).ToV8();
   v8::Local<v8::Object> handle;
@@ -1850,6 +1836,10 @@ v8::Local<v8::Object> WebAXObjectProxyList::GetOrCreate(
 
   elements_.emplace_back(isolate, handle);
   return handle;
+}
+
+blink::WebAXContext* WebAXObjectProxyList::GetAXContext() {
+  return ax_context_;
 }
 
 }  // namespace content

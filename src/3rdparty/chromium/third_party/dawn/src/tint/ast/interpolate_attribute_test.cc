@@ -14,7 +14,10 @@
 
 #include "src/tint/ast/interpolate_attribute.h"
 
+#include <string>
+
 #include "src/tint/ast/test_helper.h"
+#include "src/tint/utils/string.h"
 
 namespace tint::ast {
 namespace {
@@ -22,10 +25,10 @@ namespace {
 using InterpolateAttributeTest = TestHelper;
 
 TEST_F(InterpolateAttributeTest, Creation) {
-  auto* d = create<InterpolateAttribute>(InterpolationType::kLinear,
-                                         InterpolationSampling::kCenter);
-  EXPECT_EQ(InterpolationType::kLinear, d->type);
-  EXPECT_EQ(InterpolationSampling::kCenter, d->sampling);
+    auto* d =
+        Interpolate(builtin::InterpolationType::kLinear, builtin::InterpolationSampling::kCenter);
+    CheckIdentifier(Symbols(), d->type, "linear");
+    CheckIdentifier(Symbols(), d->sampling, "center");
 }
 
 }  // namespace

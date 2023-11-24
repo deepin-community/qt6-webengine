@@ -1,13 +1,13 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <limits>
 #include <string>
 
-#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
 #include "base/strings/string_piece_forward.h"
 #include "base/test/bind.h"
 #include "sql/database.h"
@@ -305,6 +305,25 @@ TEST_F(StatementTest, BindString_NullData) {
   EXPECT_EQ(std::string(), select.ColumnString(0));
 
   EXPECT_FALSE(select.Step());
+}
+
+TEST_F(StatementTest, GetSQLStatementExcludesBoundValues) {
+  ASSERT_TRUE(db_.Execute(
+      "CREATE TABLE texts(id INTEGER PRIMARY KEY NOT NULL, t TEXT NOT NULL)"));
+
+  Statement insert(db_.GetUniqueStatement("INSERT INTO texts(t) VALUES(?)"));
+  insert.BindString(0, "John Doe");
+  ASSERT_TRUE(insert.Run());
+
+  // Verify that GetSQLStatement doesn't leak any bound values that may be PII.
+  EXPECT_EQ(insert.GetSQLStatement(), "INSERT INTO texts(t) VALUES(?)");
+  EXPECT_EQ(insert.GetSQLStatement().find("VALUES"), 21U);
+  EXPECT_EQ(insert.GetSQLStatement().find("Doe"), std::string::npos);
+
+  // Sanity check that the name was actually committed.
+  Statement select(db_.GetUniqueStatement("SELECT t FROM texts ORDER BY id"));
+  ASSERT_TRUE(select.Step());
+  EXPECT_EQ(select.ColumnString(0), "John Doe");
 }
 
 }  // namespace

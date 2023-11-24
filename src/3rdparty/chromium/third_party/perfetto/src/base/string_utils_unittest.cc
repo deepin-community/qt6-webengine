@@ -251,6 +251,16 @@ TEST(StringUtilsTest, Strip) {
   EXPECT_EQ(StripChars("foobar", "froab", '_'), "______");
 }
 
+TEST(StringUtilsTest, TrimWhitespace) {
+  EXPECT_EQ(TrimWhitespace(""), "");
+  EXPECT_EQ(TrimWhitespace(" "), "");
+  EXPECT_EQ(TrimWhitespace("\t\n"), "");
+
+  EXPECT_EQ(TrimWhitespace("\tx\n\n"), "x");
+  EXPECT_EQ(TrimWhitespace("\tx\n"), "x");
+  EXPECT_EQ(TrimWhitespace("\tx\nx\n"), "x\nx");
+}
+
 TEST(StringUtilsTest, Contains) {
   EXPECT_TRUE(Contains("", ""));
   EXPECT_TRUE(Contains("abc", ""));
@@ -414,6 +424,72 @@ TEST(StringUtilsTest, StackString) {
     EXPECT_EQ(s.ToStdString(), std::string(s.c_str()));
     EXPECT_EQ(s.string_view().ToStdString(), s.ToStdString());
   }
+}
+
+TEST(FindLineTest, InvalidOffset1) {
+  std::string str = "abc\ndef\n\nghi";
+  uint32_t offset = 3;
+
+  auto error = FindLineWithOffset(base::StringView(str), offset);
+
+  EXPECT_FALSE(error.has_value());
+}
+
+TEST(FindLineTest, InvalidOffset2) {
+  std::string str = "abc\ndef\n\nghi";
+  uint32_t offset = 8;
+
+  auto error = FindLineWithOffset(base::StringView(str), offset);
+
+  EXPECT_FALSE(error.has_value());
+}
+
+TEST(FindLineTest, FirstCharacter) {
+  std::string str = "abc\ndef\n\nghi";
+  uint32_t offset = 0;
+
+  auto error = FindLineWithOffset(base::StringView(str), offset);
+
+  EXPECT_TRUE(error.has_value());
+  ASSERT_EQ(error.value().line_num, 1ul);
+  ASSERT_EQ(error.value().line_offset, 0ul);
+  ASSERT_EQ(error.value().line, "abc");
+}
+
+TEST(FindLineTest, StandardCheck) {
+  std::string str = "abc\ndef\n\nghi";
+  uint32_t offset = 5;
+
+  auto error = FindLineWithOffset(base::StringView(str), offset);
+
+  EXPECT_TRUE(error.has_value());
+  ASSERT_EQ(error.value().line_num, 2ul);
+  ASSERT_EQ(error.value().line_offset, 1ul);
+  ASSERT_EQ(error.value().line, "def");
+}
+
+TEST(FindLineTest, TwoBreakLines) {
+  std::string str = "abc\ndef\n\nghi";
+  uint32_t offset = 10;
+
+  auto error = FindLineWithOffset(base::StringView(str), offset);
+
+  EXPECT_TRUE(error.has_value());
+  ASSERT_EQ(error.value().line_num, 4ul);
+  ASSERT_EQ(error.value().line_offset, 1ul);
+  ASSERT_EQ(error.value().line, "ghi");
+}
+
+TEST(FindLineTest, EndsWithBreakLine) {
+  std::string str = "abc\ndef\n\nghi\n";
+  uint32_t offset = 10;
+
+  auto error = FindLineWithOffset(base::StringView(str), offset);
+
+  EXPECT_TRUE(error.has_value());
+  ASSERT_EQ(error.value().line_num, 4ul);
+  ASSERT_EQ(error.value().line_offset, 1ul);
+  ASSERT_EQ(error.value().line, "ghi");
 }
 
 }  // namespace

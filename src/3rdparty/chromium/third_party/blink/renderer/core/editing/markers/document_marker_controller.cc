@@ -29,6 +29,7 @@
 #include "third_party/blink/renderer/core/editing/markers/document_marker_controller.h"
 
 #include <algorithm>
+#include "base/debug/dump_without_crashing.h"
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/dom/node.h"
 #include "third_party/blink/renderer/core/dom/node_traversal.h"
@@ -160,7 +161,7 @@ bool DocumentMarkerController::PossiblyHasMarkers(
 
 inline bool DocumentMarkerController::PossiblyHasMarkers(
     DocumentMarker::MarkerTypes types) const {
-  DCHECK(!markers_.IsEmpty() ||
+  DCHECK(!markers_.empty() ||
          possibly_existing_marker_types_ == DocumentMarker::MarkerTypes(0));
   return possibly_existing_marker_types_.Intersects(types);
 }
@@ -282,7 +283,7 @@ void DocumentMarkerController::RemoveMarkers(
   for (; !marked_text.AtEnd(); marked_text.Advance()) {
     if (!PossiblyHasMarkers(marker_types))
       return;
-    DCHECK(!markers_.IsEmpty());
+    DCHECK(!markers_.empty());
     const Node& node = marked_text.CurrentContainer();
     auto* text_node = DynamicTo<Text>(node);
     if (!text_node)
@@ -305,7 +306,7 @@ void DocumentMarkerController::RemoveMarkersInRange(
 
 void DocumentMarkerController::AddMarkerInternal(
     const EphemeralRange& range,
-    std::function<DocumentMarker*(int, int)> create_marker_from_offsets,
+    base::FunctionRef<DocumentMarker*(int, int)> create_marker_from_offsets,
     const TextIteratorBehavior& iterator_behavior) {
   DocumentMarkerGroup* new_marker_group =
       MakeGarbageCollected<DocumentMarkerGroup>();
@@ -374,7 +375,7 @@ void DocumentMarkerController::MoveMarkers(const Text& src_node,
 
   if (!PossiblyHasMarkers(DocumentMarker::MarkerTypes::All()))
     return;
-  DCHECK(!markers_.IsEmpty());
+  DCHECK(!markers_.empty());
 
   MarkerLists* const src_markers = FindMarkers(&src_node);
   if (!src_markers)
@@ -424,7 +425,7 @@ void DocumentMarkerController::RemoveMarkersInternal(
 
   if (!PossiblyHasMarkers(marker_types))
     return;
-  DCHECK(!(markers_.IsEmpty()));
+  DCHECK(!(markers_.empty()));
 
   MarkerLists* const markers = FindMarkers(&text);
   if (!markers)
@@ -465,7 +466,7 @@ void DocumentMarkerController::RemoveMarkersInternal(
 
   if (empty_lists_count == DocumentMarker::kMarkerTypeIndexesCount) {
     markers_.erase(&text);
-    if (markers_.IsEmpty()) {
+    if (markers_.empty()) {
       possibly_existing_marker_types_ = DocumentMarker::MarkerTypes();
       SetDocument(nullptr);
     }
@@ -640,7 +641,7 @@ DocumentMarkerController::MarkersAroundPosition(
 
   if (start > end) {
     // TODO(crbug/1114021): Investigate why this might happen.
-    NOTREACHED() << "|start| should be before |end|.";
+    base::debug::DumpWithoutCrashing();
     return node_marker_pairs;
   }
 
@@ -796,7 +797,7 @@ DocumentMarkerController::CustomHighlightMarkersNotOverlapping(
       text, DocumentMarker::MarkerTypes(DocumentMarker::kCustomHighlight));
   DocumentMarkerVector result{};
   using NameToCustomHighlightMarkerMap =
-      HashMap<String, Member<CustomHighlightMarker>, StringHash>;
+      HashMap<String, Member<CustomHighlightMarker>>;
   NameToCustomHighlightMarkerMap name_to_last_custom_highlight_marker_seen;
 
   for (const auto& current_marker : custom_highlight_markers) {
@@ -869,7 +870,7 @@ DocumentMarkerVector DocumentMarkerController::ComputeMarkersToPaint(
   // start offset.
   const DocumentMarkerVector& suggestion_markers =
       MarkersFor(text, DocumentMarker::MarkerTypes::Suggestion());
-  if (suggestion_markers.IsEmpty()) {
+  if (suggestion_markers.empty()) {
     // If there are no suggestion markers, we can return early as a minor
     // performance optimization.
     markers_to_paint.AppendVector(MarkersFor(
@@ -954,7 +955,7 @@ Vector<gfx::Rect> DocumentMarkerController::LayoutRectsForTextMatchMarkers() {
 
   if (!PossiblyHasMarkers(DocumentMarker::kTextMatch))
     return result;
-  DCHECK(!(markers_.IsEmpty()));
+  DCHECK(!(markers_.empty()));
 
   // outer loop: process each node
   MarkerMap::iterator end = markers_.end();
@@ -1005,7 +1006,7 @@ void DocumentMarkerController::InvalidateRectsForAllTextMatchMarkers() {
 }
 
 void DocumentMarkerController::DidProcessMarkerMap(const LivenessBroker&) {
-  if (markers_.IsEmpty())
+  if (markers_.empty())
     Clear();
 }
 
@@ -1026,7 +1027,7 @@ void DocumentMarkerController::RemoveMarkersForNode(
     DocumentMarker::MarkerTypes marker_types) {
   if (!PossiblyHasMarkers(marker_types))
     return;
-  DCHECK(!markers_.IsEmpty());
+  DCHECK(!markers_.empty());
 
   MarkerMap::iterator iterator = markers_.find(&text);
   if (iterator != markers_.end())
@@ -1097,7 +1098,7 @@ void DocumentMarkerController::RemoveSuggestionMarkerByType(
     const SuggestionMarker::SuggestionType& type) {
   if (!PossiblyHasMarkers(DocumentMarker::kSuggestion))
     return;
-  DCHECK(!markers_.IsEmpty());
+  DCHECK(!markers_.empty());
 
   for (const auto& node_markers : markers_) {
     MarkerLists* markers = node_markers.value;
@@ -1126,7 +1127,7 @@ void DocumentMarkerController::RemoveMarkersOfTypes(
     DocumentMarker::MarkerTypes marker_types) {
   if (!PossiblyHasMarkers(marker_types))
     return;
-  DCHECK(!markers_.IsEmpty());
+  DCHECK(!markers_.empty());
 
   HeapVector<Member<const Text>> nodes_with_markers;
   CopyKeysToVector(markers_, nodes_with_markers);
@@ -1183,7 +1184,7 @@ void DocumentMarkerController::RemoveMarkersFromList(
 
   if (node_can_be_removed) {
     markers_.erase(iterator);
-    if (markers_.IsEmpty()) {
+    if (markers_.empty()) {
       possibly_existing_marker_types_ = DocumentMarker::MarkerTypes();
       SetDocument(nullptr);
     }
@@ -1194,7 +1195,7 @@ void DocumentMarkerController::RepaintMarkers(
     DocumentMarker::MarkerTypes marker_types) {
   if (!PossiblyHasMarkers(marker_types))
     return;
-  DCHECK(!markers_.IsEmpty());
+  DCHECK(!markers_.empty());
 
   // outer loop: process each markered Text in the document
   for (auto& iterator : markers_) {
@@ -1216,7 +1217,7 @@ bool DocumentMarkerController::SetTextMatchMarkersActive(
   if (!PossiblyHasMarkers(DocumentMarker::kTextMatch))
     return false;
 
-  DCHECK(!markers_.IsEmpty());
+  DCHECK(!markers_.empty());
 
   const Node* const start_container =
       range.StartPosition().ComputeContainerNode();
@@ -1302,7 +1303,7 @@ void DocumentMarkerController::DidUpdateCharacterData(CharacterData* node,
                                                       unsigned new_length) {
   if (!PossiblyHasMarkers(DocumentMarker::MarkerTypes::All()))
     return;
-  DCHECK(!markers_.IsEmpty());
+  DCHECK(!markers_.empty());
   auto* text_node = DynamicTo<Text>(node);
   if (!text_node)
     return;

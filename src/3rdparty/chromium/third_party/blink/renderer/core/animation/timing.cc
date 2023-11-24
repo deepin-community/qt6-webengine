@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,12 +6,19 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/v8_computed_effect_timing.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_effect_timing.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_timeline_range_offset.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_cssnumericvalue_double.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_cssnumericvalue_string_unrestricteddouble.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_double_string.h"
 #include "third_party/blink/renderer/core/animation/timing_calculations.h"
 #include "third_party/blink/renderer/core/css/cssom/css_unit_values.h"
 
 namespace blink {
+
+Timing::V8Delay* Timing::Delay::ToV8Delay() const {
+  // TODO(crbug.com/1216527) support delay as percentage.
+  return MakeGarbageCollected<V8Delay>(AsTimeValue().InMillisecondsF());
+}
 
 String Timing::FillModeString(FillMode fill_mode) {
   switch (fill_mode) {
@@ -72,8 +79,8 @@ EffectTiming* Timing::ConvertToEffectTiming() const {
   EffectTiming* effect_timing = EffectTiming::Create();
 
   // Specified values used here so that inputs match outputs for JS API calls
-  effect_timing->setDelay(start_delay.InMillisecondsF());
-  effect_timing->setEndDelay(end_delay.InMillisecondsF());
+  effect_timing->setDelay(start_delay.ToV8Delay());
+  effect_timing->setEndDelay(end_delay.ToV8Delay());
   effect_timing->setFill(FillModeString(fill_mode));
   effect_timing->setIterationStart(iteration_start);
   effect_timing->setIterations(iteration_count);
@@ -144,8 +151,8 @@ ComputedEffectTiming* Timing::getComputedTiming(
 
   // TODO(crbug.com/1216527): Animation effect timing members start_delay and
   // end_delay should be CSSNumberish
-  computed_timing->setDelay(start_delay.InMillisecondsF());
-  computed_timing->setEndDelay(end_delay.InMillisecondsF());
+  computed_timing->setDelay(start_delay.ToV8Delay());
+  computed_timing->setEndDelay(end_delay.ToV8Delay());
   computed_timing->setFill(
       Timing::FillModeString(ResolvedFillMode(is_keyframe_effect)));
   computed_timing->setIterationStart(iteration_start);
@@ -176,8 +183,8 @@ ComputedEffectTiming* Timing::getComputedTiming(
 
 Timing::CalculatedTiming Timing::CalculateTimings(
     absl::optional<AnimationTimeDelta> local_time,
-    absl::optional<Phase> timeline_phase,
     bool at_progress_timeline_boundary,
+    bool is_idle,
     const NormalizedTiming& normalized_timing,
     AnimationDirection animation_direction,
     bool is_keyframe_effect,
@@ -186,7 +193,7 @@ Timing::CalculatedTiming Timing::CalculateTimings(
   const AnimationTimeDelta duration = normalized_timing.iteration_duration;
 
   Timing::Phase current_phase =
-      CalculatePhase(normalized_timing, local_time, timeline_phase,
+      CalculatePhase(normalized_timing, local_time,
                      at_progress_timeline_boundary, animation_direction);
 
   const absl::optional<AnimationTimeDelta> active_time = CalculateActiveTime(
@@ -244,12 +251,15 @@ Timing::CalculatedTiming Timing::CalculateTimings(
   DCHECK(!calculated.is_in_effect ||
          (current_iteration.has_value() && progress.has_value()));
   calculated.is_in_play = calculated.phase == Timing::kPhaseActive;
+
   // https://w3.org/TR/web-animations-1/#current
   calculated.is_current = calculated.is_in_play ||
                           (playback_rate.has_value() && playback_rate > 0 &&
                            calculated.phase == Timing::kPhaseBefore) ||
                           (playback_rate.has_value() && playback_rate < 0 &&
-                           calculated.phase == Timing::kPhaseAfter);
+                           calculated.phase == Timing::kPhaseAfter) ||
+                          (!is_idle && normalized_timing.timeline_duration);
+
   calculated.local_time = local_time;
   calculated.time_to_next_iteration = time_to_next_iteration;
 

@@ -35,38 +35,35 @@ import * as TimelineModel from '../../models/timeline_model/timeline_model.js';
 import * as PerfUI from '../../ui/legacy/components/perf_ui/perf_ui.js';
 import * as UI from '../../ui/legacy/legacy.js';
 import * as Coverage from '../coverage/coverage.js';
+import * as Root from '../../core/root/root.js';
 import * as Protocol from '../../generated/protocol.js';
 
-import type {PerformanceModel} from './PerformanceModel.js';
-import type {EventDispatchTypeDescriptor, TimelineCategory} from './TimelineUIUtils.js';
-import {TimelineUIUtils} from './TimelineUIUtils.js';
+import {type PerformanceModel} from './PerformanceModel.js';
+
+import {TimelineUIUtils, type EventDispatchTypeDescriptor, type TimelineCategory} from './TimelineUIUtils.js';
 
 const UIStrings = {
   /**
-  *@description Short for Network. Label for the network requests section of the Performance panel.
-  */
+   *@description Short for Network. Label for the network requests section of the Performance panel.
+   */
   net: 'NET',
   /**
-  *@description Text in Timeline Event Overview of the Performance panel
-  */
+   *@description Text in Timeline Event Overview of the Performance panel
+   */
   cpu: 'CPU',
   /**
-  *@description Text in Timeline Event Overview of the Performance panel
-  */
-  fps: 'FPS',
-  /**
-  *@description Text in Timeline Event Overview of the Performance panel
-  */
+   *@description Text in Timeline Event Overview of the Performance panel
+   */
   heap: 'HEAP',
   /**
-  *@description Heap size label text content in Timeline Event Overview of the Performance panel
-  *@example {10 MB} PH1
-  *@example {30 MB} PH2
-  */
+   *@description Heap size label text content in Timeline Event Overview of the Performance panel
+   *@example {10 MB} PH1
+   *@example {30 MB} PH2
+   */
   sSDash: '{PH1} – {PH2}',
   /**
-  *@description Text in Timeline Event Overview of the Performance panel
-  */
+   *@description Text in Timeline Event Overview of the Performance panel
+   */
   coverage: 'COVERAGE',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/timeline/TimelineEventOverview.ts', UIStrings);
@@ -212,6 +209,7 @@ export class TimelineEventOverviewCPUActivity extends TimelineEventOverview {
     if (!this.model) {
       return;
     }
+    const showSystemNode = Root.Runtime.experiments.isEnabled('timelineDoNotSkipSystemNodesOfCpuProfile');
     const timelineModel = this.model.timelineModel();
     const quantSizePx = 4 * window.devicePixelRatio;
     const width = this.width();
@@ -226,7 +224,7 @@ export class TimelineEventOverviewCPUActivity extends TimelineEventOverview {
     const otherIndex = categoryOrder.indexOf('other');
     const idleIndex = 0;
     console.assert(idleIndex === categoryOrder.indexOf('idle'));
-    for (let i = idleIndex + 1; i < categoryOrder.length; ++i) {
+    for (let i = 0; i < categoryOrder.length; ++i) {
       categoryToIndex.set(categories[categoryOrder[i]], i);
     }
 
@@ -269,7 +267,12 @@ export class TimelineEventOverviewCPUActivity extends TimelineEventOverview {
       function onEventStart(e: SDK.TracingModel.Event): void {
         const index = categoryIndexStack.length ? categoryIndexStack[categoryIndexStack.length - 1] : idleIndex;
         quantizer.appendInterval(e.startTime, (index as number));
-        categoryIndexStack.push(categoryToIndex.get(TimelineUIUtils.eventStyle(e).category) || otherIndex);
+        const categoryIndex = categoryToIndex.get(TimelineUIUtils.eventStyle(e).category);
+        if (showSystemNode) {
+          categoryIndexStack.push(categoryIndex !== undefined ? categoryIndex : otherIndex);
+        } else {
+          categoryIndexStack.push(categoryIndex || otherIndex);
+        }
       }
 
       function onEventEnd(e: SDK.TracingModel.Event): void {
@@ -483,62 +486,6 @@ export class TimelineFilmStripOverview extends TimelineEventOverview {
   // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
   // eslint-disable-next-line @typescript-eslint/naming-convention
   static readonly Padding = 2;
-}
-
-export class TimelineEventOverviewFrames extends TimelineEventOverview {
-  constructor() {
-    super('framerate', i18nString(UIStrings.fps));
-  }
-
-  update(): void {
-    super.update();
-    if (!this.model) {
-      return;
-    }
-    const frames = this.model.frames();
-    if (!frames.length) {
-      return;
-    }
-    const height = this.height();
-    const padding = Number(window.devicePixelRatio);
-    const baseFrameDurationMs = 1e3 / 60;
-    const visualHeight = height - 2 * padding;
-    const timeOffset = this.model.timelineModel().minimumRecordTime();
-    const timeSpan = this.model.timelineModel().maximumRecordTime() - timeOffset;
-    const scale = this.width() / timeSpan;
-    const baseY = height - padding;
-    const ctx = this.context();
-    const bottomY = baseY + 10 * window.devicePixelRatio;
-    let x = 0;
-    let y: number = bottomY;
-
-    const lineWidth = window.devicePixelRatio;
-    const offset = lineWidth & 1 ? 0.5 : 0;
-    const tickDepth = 1.5 * window.devicePixelRatio;
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    for (let i = 0; i < frames.length; ++i) {
-      const frame = frames[i];
-      x = Math.round((frame.startTime - timeOffset) * scale) + offset;
-      ctx.lineTo(x, y);
-      ctx.lineTo(x, y + tickDepth);
-      y = frame.idle ? bottomY :
-                       Math.round(baseY - visualHeight * Math.min(baseFrameDurationMs / frame.duration, 1)) - offset;
-      ctx.lineTo(x, y + tickDepth);
-      ctx.lineTo(x, y);
-    }
-    const lastFrame = frames[frames.length - 1];
-    if (lastFrame) {
-      x = Math.round((lastFrame.startTime + lastFrame.duration - timeOffset) * scale) + offset;
-    }
-    ctx.lineTo(x, y);
-    ctx.lineTo(x, bottomY);
-    ctx.fillStyle = 'hsl(110, 50%, 88%)';
-    ctx.strokeStyle = 'hsl(110, 50%, 60%)';
-    ctx.lineWidth = lineWidth;
-    ctx.fill();
-    ctx.stroke();
-  }
 }
 
 export class TimelineEventOverviewMemory extends TimelineEventOverview {

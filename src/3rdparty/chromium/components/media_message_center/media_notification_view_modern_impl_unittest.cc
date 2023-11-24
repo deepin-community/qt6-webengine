@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,10 +6,11 @@
 
 #include <memory>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/flat_set.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_callback.h"
@@ -146,7 +147,7 @@ class MediaNotificationViewModernImplTest : public views::ViewsTestBase {
   MediaNotificationViewModernImpl* view() const { return view_; }
 
   const std::u16string& accessible_name() const {
-    return view()->accessible_name_;
+    return view()->GetAccessibleName();
   }
 
   test::MockMediaNotificationItem& item() { return item_; }
@@ -179,10 +180,8 @@ class MediaNotificationViewModernImplTest : public views::ViewsTestBase {
 
   views::Button* GetButtonForAction(MediaSessionAction action) const {
     auto buttons = media_control_buttons();
-    const auto i = std::find_if(
-        buttons.begin(), buttons.end(), [action](const views::Button* button) {
-          return button->tag() == static_cast<int>(action);
-        });
+    const auto i = base::ranges::find(buttons, static_cast<int>(action),
+                                      &views::Button::tag);
     return (i == buttons.end()) ? nullptr : *i;
   }
 

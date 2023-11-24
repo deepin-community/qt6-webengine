@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -127,16 +127,17 @@ void CSSPaintInterpolationType::ApplyStandardPropertyValue(
     const InterpolableValue& interpolable_color,
     const NonInterpolableValue*,
     StyleResolverState& state) const {
+  ComputedStyleBuilder& builder = state.StyleBuilder();
   Color color = CSSColorInterpolationType::ResolveInterpolableColor(
       interpolable_color, state);
   switch (CssProperty().PropertyID()) {
     case CSSPropertyID::kFill:
-      state.Style()->SetFillPaint(SVGPaint(color));
-      state.Style()->SetInternalVisitedFillPaint(SVGPaint(color));
+      builder.SetFillPaint(SVGPaint(color));
+      builder.SetInternalVisitedFillPaint(SVGPaint(color));
       break;
     case CSSPropertyID::kStroke:
-      state.Style()->SetStrokePaint(SVGPaint(color));
-      state.Style()->SetInternalVisitedStrokePaint(SVGPaint(color));
+      builder.SetStrokePaint(SVGPaint(color));
+      builder.SetInternalVisitedStrokePaint(SVGPaint(color));
       break;
     default:
       NOTREACHED();

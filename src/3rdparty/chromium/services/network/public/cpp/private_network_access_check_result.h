@@ -1,9 +1,11 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef SERVICES_NETWORK_PUBLIC_CPP_PRIVATE_NETWORK_ACCESS_CHECK_RESULT_H_
 #define SERVICES_NETWORK_PUBLIC_CPP_PRIVATE_NETWORK_ACCESS_CHECK_RESULT_H_
+
+#include <iosfwd>
 
 #include "base/component_export.h"
 #include "base/strings/string_piece_forward.h"
@@ -59,14 +61,24 @@ enum class PrivateNetworkAccessCheckResult {
   // Request connected to two different IP address spaces for the same response.
   kBlockedByInconsistentIpAddressSpace = 11,
 
+  // Private network request: allowed because same origin.
+  kAllowedSecureSameOrigin = 12,
+
   // Required for UMA histogram logging.
-  kMaxValue = kBlockedByInconsistentIpAddressSpace,
+  kMaxValue = kAllowedSecureSameOrigin,
 };
 
 // Returns a human-readable string representing `result`, suitable for logging.
 base::StringPiece COMPONENT_EXPORT(NETWORK_CPP)
     PrivateNetworkAccessCheckResultToStringPiece(
         PrivateNetworkAccessCheckResult result);
+
+// Results are streamable for easier logging and debugging.
+//
+// `COMPONENT_EXPORT()` must come first to compile correctly on Windows.
+COMPONENT_EXPORT(NETWORK_CPP)
+std::ostream& operator<<(std::ostream& out,
+                         PrivateNetworkAccessCheckResult result);
 
 // If `result` indicates that the request should be blocked, returns the
 // corresponding `CorsError` enum value. Otherwise returns `nullopt`.

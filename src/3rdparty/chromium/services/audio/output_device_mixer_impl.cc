@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -101,7 +101,7 @@ class OutputDeviceMixerImpl::MixTrack final
   ~MixTrack() final {
     DCHECK(!audio_source_callback_);
     base::UmaHistogramEnumeration(
-        "Media.Audio.OutputDeviceMixer.StreamPlaybackStatus", error_);
+        "Media.Audio.OutputDeviceMixer.StreamStatus", error_);
   }
 
   void SetSource(
@@ -236,11 +236,11 @@ class OutputDeviceMixerImpl::MixTrack final
   // error reporting during independent playback.
   int OnMoreData(base::TimeDelta delay,
                  base::TimeTicks delay_timestamp,
-                 int prior_frames_skipped,
+                 const media::AudioGlitchInfo& glitch_info,
                  media::AudioBus* dest) final {
     DCHECK(audio_source_callback_);
     return audio_source_callback_->OnMoreData(delay, delay_timestamp,
-                                              prior_frames_skipped, dest);
+                                              glitch_info, dest);
   }
 
   void OnError(ErrorType type) final {
@@ -345,7 +345,10 @@ class OutputDeviceMixerImpl::MixableOutputStream final
   void Close() final {
     DCHECK_CALLED_ON_VALID_SEQUENCE(owning_sequence_);
     if (mixer_) {
-      mixer_->CloseStream(mix_track_);
+      // `CloseStream` destroys `mix_track_`. Use `ExtractAsDangling` to clear
+      // the underlying pointer and return another raw_ptr instance that is
+      // allowed to dangle.
+      mixer_->CloseStream(mix_track_.ExtractAsDangling());
     }
 
     // To match the typical usage pattern of AudioOutputStream.
@@ -361,7 +364,7 @@ class OutputDeviceMixerImpl::MixableOutputStream final
   // MixableOutputStream becomes a no-op.
   base::WeakPtr<OutputDeviceMixerImpl> const mixer_
       GUARDED_BY_CONTEXT(owning_sequence_);
-  const raw_ptr<MixTrack> mix_track_;  // Valid only when |mixer_| is valid.
+  raw_ptr<MixTrack> mix_track_;  // Valid only when |mixer_| is valid.
 };
 
 // Logs mixing statistics upon the destruction. Should be created when mixing

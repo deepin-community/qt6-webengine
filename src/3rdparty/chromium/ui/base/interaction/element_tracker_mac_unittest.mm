@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,8 @@
 #include <map>
 #include <set>
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/logging.h"
 #include "base/test/mock_callback.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -86,7 +86,7 @@ class ExpectedCall {
     ASSERT_TRUE(element->IsA<TrackedElementMac>());
     if (expected_bounds_.has_value()) {
       EXPECT_EQ(expected_bounds_.value(),
-                element->AsA<TrackedElementMac>()->screen_bounds());
+                element->AsA<TrackedElementMac>()->GetScreenBounds());
       expected_bounds_.reset();
     }
     EXPECT_EQ(identifier_, element->identifier());

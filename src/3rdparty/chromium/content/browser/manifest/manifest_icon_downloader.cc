@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,8 +9,8 @@
 #include <limits>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/numerics/safe_conversions.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -63,7 +63,7 @@ void ManifestIconDownloader::OnIconFetched(
 
   if (bitmaps.empty()) {
     if (web_contents) {
-      web_contents->GetMainFrame()->AddMessageToConsole(
+      web_contents->GetPrimaryMainFrame()->AddMessageToConsole(
           blink::mojom::ConsoleMessageLevel::kError,
           "Error while trying to use the following icon from the Manifest: " +
               url.spec() + " (Download error or resource isn't a valid image)");
@@ -78,7 +78,7 @@ void ManifestIconDownloader::OnIconFetched(
 
   if (closest_index == -1) {
     if (web_contents) {
-      web_contents->GetMainFrame()->AddMessageToConsole(
+      web_contents->GetPrimaryMainFrame()->AddMessageToConsole(
           blink::mojom::ConsoleMessageLevel::kError,
           "Error while trying to use the following icon from the Manifest: " +
               url.spec() +

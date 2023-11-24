@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,8 @@
 #include <memory>
 #include <utility>
 
-#include "base/callback.h"
 #include "base/check.h"
+#include "base/functional/callback.h"
 #include "base/time/time.h"
 #include "base/types/pass_key.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
@@ -171,6 +171,21 @@ AnimationSequenceBlock& AnimationSequenceBlock::SetRoundedCorners(
   return SetRoundedCorners(target->layer(), rounded_corners, tween_type);
 }
 
+AnimationSequenceBlock& AnimationSequenceBlock::SetGradientMask(
+    ui::Layer* target,
+    const gfx::LinearGradient& gradient_mask,
+    gfx::Tween::Type tween_type) {
+  return AddAnimation({target, ui::LayerAnimationElement::GRADIENT_MASK},
+                      Element(gradient_mask, tween_type));
+}
+
+AnimationSequenceBlock& AnimationSequenceBlock::SetGradientMask(
+    ui::LayerOwner* target,
+    const gfx::LinearGradient& gradient_mask,
+    gfx::Tween::Type tween_type) {
+  return SetGradientMask(target->layer(), gradient_mask, tween_type);
+}
+
 AnimationSequenceBlock& AnimationSequenceBlock::SetVisibility(
     ui::Layer* target,
     bool visible,
@@ -273,8 +288,13 @@ void AnimationSequenceBlock::TerminateBlock() {
             absl::get<gfx::RoundedCornersF>(pair.second.animation_value_),
             duration);
         break;
+      case ui::LayerAnimationElement::GRADIENT_MASK:
+        element = ui::LayerAnimationElement::CreateGradientMaskElement(
+            absl::get<gfx::LinearGradient>(pair.second.animation_value_),
+            duration);
+        break;
       default:
-        NOTREACHED();
+        NOTREACHED_NORETURN();
     }
     element->set_tween_type(pair.second.tween_type_);
     owner_->AddLayerAnimationElement(PassKey(), pair.first, start_, duration,

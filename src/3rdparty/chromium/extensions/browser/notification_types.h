@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -32,28 +32,10 @@ enum NotificationType {
   // WARNING: This need to match chrome/browser/chrome_notification_types.h.
   NOTIFICATION_EXTENSIONS_START = content::NOTIFICATION_CONTENT_END,
 
-  // Sent when a CrxInstaller finishes. Source is the CrxInstaller that
-  // finished. The details are the extension which was installed.
-  // DEPRECATED: Use extensions::InstallObserver::OnFinishCrxInstall()
-  // TODO(https://crbug.com/1174728): Remove.
-  NOTIFICATION_CRX_INSTALLER_DONE = NOTIFICATION_EXTENSIONS_START,
-
-  // Sent when an extension's permissions change. The details are an
-  // UpdatedExtensionPermissionsInfo, and the source is a BrowserContext*.
-  // TODO(https://crbug.com/1174733): Remove.
-  NOTIFICATION_EXTENSION_PERMISSIONS_UPDATED,
-
   // An error occurred during extension install. The details are a string with
   // details about why the install failed.
   // TODO(https://crbug.com/1174734): Remove.
   NOTIFICATION_EXTENSION_INSTALL_ERROR,
-
-  // The extension updater found an update and will attempt to download and
-  // install it. The source is a BrowserContext*, and the details are an
-  // extensions::UpdateDetails object with the extension id and version of the
-  // found update.
-  // TODO(https://crbug.com/1174754): Remove.
-  NOTIFICATION_EXTENSION_UPDATE_FOUND,
 
   NOTIFICATION_EXTENSIONS_END
 };

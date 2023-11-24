@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -52,8 +52,9 @@ class NavigationEntryTest : public testing::Test {
     entry2_ = std::make_unique<NavigationEntryImpl>(
         instance_, GURL("test:url"),
         Referrer(GURL("from"), network::mojom::ReferrerPolicy::kDefault),
-        kInitiatorOrigin, u"title", ui::PAGE_TRANSITION_TYPED, false,
-        nullptr /* blob_url_loader_factory */, false /* is_initial_entry */);
+        kInitiatorOrigin, /* initiator_base_url= */ absl::nullopt, u"title",
+        ui::PAGE_TRANSITION_TYPED, false, nullptr /* blob_url_loader_factory */,
+        false /* is_initial_entry */);
   }
 
   void TearDown() override {}

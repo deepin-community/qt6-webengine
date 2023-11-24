@@ -14,44 +14,44 @@ import performanceMonitorStyles from './performanceMonitor.css.js';
 
 const UIStrings = {
   /**
-  *@description Aria accessible name in Performance Monitor of the Performance monitor tab
-  */
+   *@description Aria accessible name in Performance Monitor of the Performance monitor tab
+   */
   graphsDisplayingARealtimeViewOf: 'Graphs displaying a real-time view of performance metrics',
   /**
-  *@description Text in Performance Monitor of the Performance monitor tab
-  */
+   *@description Text in Performance Monitor of the Performance monitor tab
+   */
   paused: 'Paused',
   /**
-  *@description Text in Performance Monitor of the Performance monitor tab
-  */
+   *@description Text in Performance Monitor of the Performance monitor tab
+   */
   cpuUsage: 'CPU usage',
   /**
-  *@description Text in Performance Monitor of the Performance monitor tab
-  */
+   *@description Text in Performance Monitor of the Performance monitor tab
+   */
   jsHeapSize: 'JS heap size',
   /**
-  *@description Text in Performance Monitor of the Performance monitor tab
-  */
+   *@description Text in Performance Monitor of the Performance monitor tab
+   */
   domNodes: 'DOM Nodes',
   /**
-  *@description Text in Performance Monitor of the Performance monitor tab
-  */
+   *@description Text in Performance Monitor of the Performance monitor tab
+   */
   jsEventListeners: 'JS event listeners',
   /**
-  *@description Text for documents, a type of resources
-  */
+   *@description Text for documents, a type of resources
+   */
   documents: 'Documents',
   /**
-  *@description Text in Performance Monitor of the Performance monitor tab
-  */
+   *@description Text in Performance Monitor of the Performance monitor tab
+   */
   documentFrames: 'Document Frames',
   /**
-  *@description Text in Performance Monitor of the Performance monitor tab
-  */
+   *@description Text in Performance Monitor of the Performance monitor tab
+   */
   layoutsSec: 'Layouts / sec',
   /**
-  *@description Text in Performance Monitor of the Performance monitor tab
-  */
+   *@description Text in Performance Monitor of the Performance monitor tab
+   */
   styleRecalcsSec: 'Style recalcs / sec',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/performance_monitor/PerformanceMonitor.ts', UIStrings);
@@ -76,7 +76,7 @@ export class PerformanceMonitorImpl extends UI.Widget.HBox implements
   private startTimestamp?: number;
   private pollTimer?: number;
 
-  constructor() {
+  constructor(pollIntervalMs: number) {
     super(true);
 
     this.contentElement.classList.add('perfmon-pane');
@@ -84,7 +84,7 @@ export class PerformanceMonitorImpl extends UI.Widget.HBox implements
     /** @const */
     this.pixelsPerMs = 10 / 1000;
     /** @const */
-    this.pollIntervalMs = 500;
+    this.pollIntervalMs = pollIntervalMs;
     /** @const */
     this.scaleHeight = 16;
     /** @const */
@@ -104,7 +104,7 @@ export class PerformanceMonitorImpl extends UI.Widget.HBox implements
   static instance(opts = {forceNew: null}): PerformanceMonitorImpl {
     const {forceNew} = opts;
     if (!performanceMonitorImplInstance || forceNew) {
-      performanceMonitorImplInstance = new PerformanceMonitorImpl();
+      performanceMonitorImplInstance = new PerformanceMonitorImpl(500);
     }
 
     return performanceMonitorImplInstance;
@@ -116,6 +116,13 @@ export class PerformanceMonitorImpl extends UI.Widget.HBox implements
     }
     this.registerCSSFiles([performanceMonitorStyles]);
     this.controlPane.instantiateMetricData();
+    const themeSupport = ThemeSupport.ThemeSupport.instance();
+    themeSupport.addEventListener(ThemeSupport.ThemeChangeEvent.eventName, () => {
+      // instantiateMetricData sets the colors for the metrics, which we need
+      // to re-evaluate when the theme changes before re-drawing the canvas.
+      this.controlPane.instantiateMetricData();
+      this.draw();
+    });
     SDK.TargetManager.TargetManager.instance().addEventListener(
         SDK.TargetManager.Events.SuspendStateChanged, this.suspendStateChanged, this);
     void this.model.enable();
@@ -133,7 +140,7 @@ export class PerformanceMonitorImpl extends UI.Widget.HBox implements
   }
 
   modelAdded(model: SDK.PerformanceMetricsModel.PerformanceMetricsModel): void {
-    if (this.model) {
+    if (model.target() !== SDK.TargetManager.TargetManager.instance().mainFrameTarget()) {
       return;
     }
     this.model = model;
@@ -258,17 +265,18 @@ export class PerformanceMonitorImpl extends UI.Widget.HBox implements
       });
     }
     const backgroundColor =
-        Common.Color.Color.parse(ThemeSupport.ThemeSupport.instance().getComputedValue('--color-background'));
+        Common.Color.parse(ThemeSupport.ThemeSupport.instance().getComputedValue('--color-background'))
+            ?.asLegacyColor();
 
     if (backgroundColor) {
       for (const path of paths.reverse()) {
         const color = path.color;
         ctx.save();
-        const parsedColor = Common.Color.Color.parse(color);
+        const parsedColor = Common.Color.parse(color);
         if (!parsedColor) {
           continue;
         }
-        ctx.fillStyle = backgroundColor.blendWith(parsedColor.setAlpha(0.2)).asString(null) || '';
+        ctx.fillStyle = backgroundColor.blendWith(parsedColor.setAlpha(0.2).asLegacyColor()).asString() || '';
         ctx.fill(path.path);
         ctx.strokeStyle = color;
         ctx.lineWidth = 0.5;

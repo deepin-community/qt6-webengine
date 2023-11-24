@@ -1,9 +1,10 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <tuple>
 
+#include "base/containers/contains.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -17,10 +18,6 @@
 #include "ui/gfx/font_fallback_win.h"
 #include "ui/gfx/platform_font.h"
 #include "ui/gfx/test/font_fallback_test_data.h"
-
-#if BUILDFLAG(IS_WIN)
-#include "base/win/windows_version.h"
-#endif
 
 namespace gfx {
 
@@ -169,15 +166,6 @@ TEST_P(GetFallbackFontTest, GetFallbackFont) {
                          base_font_option_.weight);
   }
 
-#if BUILDFLAG(IS_WIN)
-  // Skip testing this call to GetFallbackFont on older windows versions. Some
-  // fonts only got introduced on windows 10 and the test will fail on previous
-  // versions.
-  const bool is_win10 = base::win::GetVersion() >= base::win::Version::WIN10;
-  if (test_case_.is_win10 && !is_win10)
-    return;
-#endif
-
   // Retrieve the name of the current script.
   script_name_ = uscript_getName(test_case_.script);
 
@@ -204,11 +192,8 @@ TEST_P(GetFallbackFontTest, GetFallbackFont) {
 
   // Ensure the fallback font is a part of the validation fallback fonts list.
   if (!test_option_.skip_fallback_fonts_validation) {
-    bool valid = std::find(test_case_.fallback_fonts.begin(),
-                           test_case_.fallback_fonts.end(),
-                           fallback_font.GetFontName()) !=
-                 test_case_.fallback_fonts.end();
-    if (!valid) {
+    if (!base::Contains(test_case_.fallback_fonts,
+                        fallback_font.GetFontName())) {
       ADD_FAILURE() << "GetFallbackFont failed for '" << script_name_
                     << "' invalid fallback font: "
                     << fallback_font.GetFontName()

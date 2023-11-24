@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,8 +9,10 @@
 
 #include <cstdint>
 
+#include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 #include "ui/ozone/platform/wayland/test/test_selection_device_manager.h"
+#include "ui/ozone/platform/wayland/test/test_wayland_server_thread.h"
 
 // GtkPrimarySelection* classes contain protocol-specific implementation of
 // TestSelection*::Delegate interfaces, such that primary selection test
@@ -32,7 +34,7 @@ struct GtkPrimarySelectionOffer final : public TestSelectionOffer::Delegate {
 
   void OnDestroying() override { delete this; }
 
-  TestSelectionOffer* offer = nullptr;
+  raw_ptr<TestSelectionOffer> offer = nullptr;
 };
 
 struct GtkPrimarySelectionDevice final : public TestSelectionDevice::Delegate {
@@ -67,7 +69,7 @@ struct GtkPrimarySelectionDevice final : public TestSelectionDevice::Delegate {
 
   void OnDestroying() override { delete this; }
 
-  TestSelectionDevice* device = nullptr;
+  raw_ptr<TestSelectionDevice> device = nullptr;
 };
 
 struct GtkPrimarySelectionSource : public TestSelectionSource::Delegate {
@@ -86,9 +88,13 @@ struct GtkPrimarySelectionSource : public TestSelectionSource::Delegate {
     gtk_primary_selection_source_send_cancelled(source->resource());
   }
 
+  void SendDndAction(uint32_t action) override {
+    NOTREACHED() << "The interface does not support this method.";
+  }
+
   void OnDestroying() override { delete this; }
 
-  TestSelectionSource* source = nullptr;
+  raw_ptr<TestSelectionSource> source = nullptr;
 };
 
 struct GtkPrimarySelectionDeviceManager

@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -81,6 +81,9 @@ class SignatureProvider {
 
   bool rotate_keys() const { return rotate_keys_; }
   void set_rotate_keys(bool rotate_keys) { rotate_keys_ = rotate_keys; }
+
+  // Sets universal signing keys that can sign any domain.
+  void SetUniversalSigningKeys();
 
  private:
   std::vector<SigningKey> signing_keys_;

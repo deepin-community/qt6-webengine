@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,6 @@
 #include "third_party/blink/renderer/platform/graphics/paint/paint_record.h"
 #include "third_party/blink/renderer/platform/graphics/paint/property_tree_state.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
-#include "third_party/skia/include/core/SkRefCnt.h"
 
 namespace cc {
 class PaintCanvas;
@@ -46,7 +45,7 @@ class PLATFORM_EXPORT PaintRecordBuilder final
   // Returns a PaintRecord capturing all drawing performed on the builder's
   // context since construction, into the ancestor state given by
   // |replay_state|.
-  sk_sp<PaintRecord> EndRecording(
+  PaintRecord EndRecording(
       const PropertyTreeState& replay_state = PropertyTreeState::Root());
 
   // Replays the recording directly into the given canvas, in the ancestor

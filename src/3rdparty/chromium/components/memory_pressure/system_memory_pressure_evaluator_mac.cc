@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,18 +12,22 @@
 
 #include <cmath>
 
-#include "base/bind.h"
 #include "base/check_op.h"
+#include "base/feature_list.h"
+#include "base/functional/bind.h"
 #include "base/mac/mac_util.h"
 #include "base/memory/memory_pressure_monitor.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 
-// Redeclare for partial 10.9 availability.
-DISPATCH_EXPORT const struct dispatch_source_type_s
-    _dispatch_source_type_memorypressure;
+namespace memory_pressure::mac {
 
-namespace memory_pressure {
-namespace mac {
+namespace {
+
+BASE_FEATURE(kMacRenotifyMemoryPressureSignal,
+             "MacRenotifyMemoryPressureSignal",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+}  // namespace
 
 base::MemoryPressureListener::MemoryPressureLevel
 SystemMemoryPressureEvaluator::MemoryPressureLevelForMacMemoryPressureLevel(
@@ -48,13 +52,19 @@ SystemMemoryPressureEvaluator::SystemMemoryPressureEvaluator(
           DISPATCH_MEMORYPRESSURE_WARN | DISPATCH_MEMORYPRESSURE_CRITICAL |
               DISPATCH_MEMORYPRESSURE_NORMAL,
           dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0))),
+      renotify_current_vote_timer_(
+          FROM_HERE,
+          kRenotifyVotePeriod,
+          base::BindRepeating(&SystemMemoryPressureEvaluator::SendCurrentVote,
+                              base::Unretained(this),
+                              /*notify=*/true)),
       weak_ptr_factory_(this) {
   // WeakPtr needed because there is no guarantee that |this| is still be alive
   // when the task posted to the TaskRunner or event handler runs.
   base::WeakPtr<SystemMemoryPressureEvaluator> weak_this =
       weak_ptr_factory_.GetWeakPtr();
   scoped_refptr<base::TaskRunner> task_runner =
-      base::SequencedTaskRunnerHandle::Get();
+      base::SequencedTaskRunner::GetCurrentDefault();
 
   // Attach an event handler to the memory pressure event source.
   if (memory_level_event_source_.get()) {
@@ -110,7 +120,14 @@ void SystemMemoryPressureEvaluator::OnMemoryPressureChanged() {
   bool notify = current_vote() !=
                 base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE;
   SendCurrentVote(notify);
+
+  if (base::FeatureList::IsEnabled(kMacRenotifyMemoryPressureSignal)) {
+    if (notify) {
+      renotify_current_vote_timer_.Reset();
+    } else {
+      renotify_current_vote_timer_.Stop();
+    }
+  }
 }
 
-}  // namespace mac
-}  // namespace memory_pressure
+}  // namespace memory_pressure::mac

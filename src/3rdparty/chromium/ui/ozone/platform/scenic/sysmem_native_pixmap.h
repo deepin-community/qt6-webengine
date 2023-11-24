@@ -1,9 +1,11 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef UI_OZONE_PLATFORM_SCENIC_SYSMEM_NATIVE_PIXMAP_H_
 #define UI_OZONE_PLATFORM_SCENIC_SYSMEM_NATIVE_PIXMAP_H_
+
+#include <lib/zx/eventpair.h>
 
 #include "ui/gfx/native_pixmap.h"
 #include "ui/ozone/platform/scenic/sysmem_buffer_collection.h"
@@ -15,7 +17,8 @@ class ScenicOverlayView;
 class SysmemNativePixmap : public gfx::NativePixmap {
  public:
   SysmemNativePixmap(scoped_refptr<SysmemBufferCollection> collection,
-                     gfx::NativePixmapHandle handle);
+                     gfx::NativePixmapHandle handle,
+                     gfx::Size size);
 
   SysmemNativePixmap(const SysmemNativePixmap&) = delete;
   SysmemNativePixmap& operator=(const SysmemNativePixmap&) = delete;
@@ -50,9 +53,13 @@ class SysmemNativePixmap : public gfx::NativePixmap {
  private:
   ~SysmemNativePixmap() override;
 
-  // Keep reference to the collection to make sure it outlives the pixmap.
   scoped_refptr<SysmemBufferCollection> collection_;
   gfx::NativePixmapHandle handle_;
+  gfx::Size size_;
+
+  // ID of the image registered with the `ImagePipe` owned by the
+  // `ScenicOverlayView` that corresponds to the `collection_`.
+  uint32_t overlay_image_id_ = 0;
 };
 
 }  // namespace ui

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -100,7 +100,7 @@ LayoutUnit NGLayoutOpportunity::ComputeLineLeftOffset(
     const NGConstraintSpace& space,
     LayoutUnit line_block_size,
     LayoutUnit block_delta) const {
-  if (!shape_exclusions || shape_exclusions->line_left_shapes.IsEmpty())
+  if (!shape_exclusions || shape_exclusions->line_left_shapes.empty())
     return rect.LineStartOffset();
 
   LayoutUnit bfc_block_offset = rect.BlockStartOffset() + block_delta;
@@ -132,7 +132,7 @@ LayoutUnit NGLayoutOpportunity::ComputeLineRightOffset(
     const NGConstraintSpace& space,
     LayoutUnit line_block_size,
     LayoutUnit block_delta) const {
-  if (!shape_exclusions || shape_exclusions->line_right_shapes.IsEmpty())
+  if (!shape_exclusions || shape_exclusions->line_right_shapes.empty())
     return rect.LineEndOffset();
 
   LayoutUnit bfc_block_offset = rect.BlockStartOffset() + block_delta;
@@ -160,6 +160,17 @@ LayoutUnit NGLayoutOpportunity::ComputeLineRightOffset(
   }
 
   return std::max(line_right, rect.LineStartOffset());
+}
+
+bool NGLayoutOpportunity::operator==(const NGLayoutOpportunity& other) const {
+  return rect == other.rect && shape_exclusions == other.shape_exclusions;
+}
+
+std::ostream& operator<<(std::ostream& ostream,
+                         const NGLayoutOpportunity& opportunity) {
+  if (opportunity.HasShapeExclusions())
+    return ostream << "ShapeExclusion@";
+  return ostream << opportunity.rect;
 }
 
 }  // namespace blink

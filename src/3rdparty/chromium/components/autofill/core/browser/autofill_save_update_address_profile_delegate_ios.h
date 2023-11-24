@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 
 #include <memory>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "components/autofill/core/browser/autofill_client.h"
 #include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/data_model/autofill_profile_comparator.h"
@@ -65,12 +65,19 @@ class AutofillSaveUpdateAddressProfileDelegateIOS
   void EditDeclined();
   void MessageTimeout();
   void MessageDeclined();
+  void AutoDecline();
 
   // Updates |profile_| |type| value to |value|.
   void SetProfileInfo(const ServerFieldType& type, const std::u16string& value);
 
-  const autofill::AutofillProfile* GetProfile() const;
-  const autofill::AutofillProfile* GetOriginalProfile() const;
+  const AutofillProfile* GetProfile() const;
+  const AutofillProfile* GetOriginalProfile() const;
+
+  // Getter and Setter for `is_infobar_visible_`.
+  bool is_infobar_visible() const { return is_infobar_visible_; }
+  void set_is_infobar_visible(bool is_infobar_visible) {
+    is_infobar_visible_ = is_infobar_visible;
+  }
 
   // ConfirmInfoBarDelegate
   int GetIconId() const override;
@@ -110,6 +117,9 @@ class AutofillSaveUpdateAddressProfileDelegateIOS
   // The callback to run once the user makes a decision.
   AutofillClient::AddressProfileSavePromptCallback
       address_profile_save_prompt_callback_;
+
+  // True if the either of banner or modal is visible currently.
+  bool is_infobar_visible_ = false;
 
   // Records the last user decision based on the interactions with the
   // banner/modal to be sent with |address_profile_save_prompt_callback_|.

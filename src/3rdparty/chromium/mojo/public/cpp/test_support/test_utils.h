@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,12 +8,15 @@
 #include <string>
 #include <utility>
 
+#include "base/memory/raw_ref.h"
 #include "base/run_loop.h"
 #include "mojo/public/cpp/bindings/message.h"
 #include "mojo/public/cpp/bindings/struct_ptr.h"
-#include "mojo/public/cpp/system/core.h"
 
 namespace mojo {
+
+class MessagePipeHandle;
+
 namespace test {
 
 // This overload is used for mojom structures with struct traits. The C++
@@ -132,18 +135,20 @@ class ScopedSwapImplForTesting {
 
   ScopedSwapImplForTesting(T& receiver, ImplPointerType new_impl)
       : receiver_(receiver) {
-    old_impl_ = receiver_.SwapImplForTesting(new_impl);
+    old_impl_ = receiver_->SwapImplForTesting(new_impl);
   }
 
   ~ScopedSwapImplForTesting() {
-    std::ignore = receiver_.SwapImplForTesting(old_impl_);
+    std::ignore = receiver_->SwapImplForTesting(old_impl_);
   }
+
+  ImplPointerType old_impl() const { return old_impl_; }
 
   ScopedSwapImplForTesting(const ScopedSwapImplForTesting&) = delete;
   ScopedSwapImplForTesting& operator=(const ScopedSwapImplForTesting&) = delete;
 
  private:
-  T& receiver_;
+  const raw_ref<T> receiver_;
   ImplPointerType old_impl_;
 };
 

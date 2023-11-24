@@ -17,11 +17,12 @@ class GrMtlGpu;
 class GrMtlTexture : public GrTexture {
 public:
     static sk_sp<GrMtlTexture> MakeNewTexture(GrMtlGpu*,
-                                              SkBudgeted budgeted,
+                                              skgpu::Budgeted budgeted,
                                               SkISize dimensions,
                                               MTLPixelFormat format,
                                               uint32_t mipLevels,
-                                              GrMipmapStatus);
+                                              GrMipmapStatus,
+                                              std::string_view label);
 
     static sk_sp<GrMtlTexture> MakeWrappedTexture(GrMtlGpu*,
                                                   SkISize,
@@ -64,11 +65,13 @@ protected:
          return false;
      }
 
+    void onSetLabel() override;
+
 private:
     enum Wrapped { kWrapped };
 
     GrMtlTexture(GrMtlGpu*,
-                 SkBudgeted,
+                 skgpu::Budgeted,
                  SkISize,
                  sk_sp<GrMtlAttachment>,
                  GrMipmapStatus,

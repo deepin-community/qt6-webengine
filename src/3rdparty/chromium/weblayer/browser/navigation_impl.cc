@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -76,6 +76,13 @@ ScopedJavaLocalRef<jobjectArray> NavigationImpl::GetResponseHeaders(
   }
 
   return base::android::ToJavaArrayOfStrings(env, jni_headers);
+}
+
+jboolean NavigationImpl::GetIsConsentingContent(JNIEnv* env) {
+  if (GetState() != NavigationState::kComplete) {
+    return false;
+  }
+  return is_consenting_content_;
 }
 
 jboolean NavigationImpl::SetRequestHeader(
@@ -216,6 +223,14 @@ int NavigationImpl::GetHttpStatusCode() {
 
 const net::HttpResponseHeaders* NavigationImpl::GetResponseHeaders() {
   return navigation_handle_->GetResponseHeaders();
+}
+
+std::string NavigationImpl::GetNormalizedHeader(const std::string& name) {
+  std::string header_value;
+  if (GetResponseHeaders()) {
+    GetResponseHeaders()->GetNormalizedHeader(name, &header_value);
+  }
+  return header_value;
 }
 
 bool NavigationImpl::IsSameDocument() {

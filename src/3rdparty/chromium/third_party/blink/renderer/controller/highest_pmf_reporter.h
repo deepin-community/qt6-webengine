@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,10 +26,12 @@ class CONTROLLER_EXPORT HighestPmfReporter
 
  public:
   // Returns the shared instance.
-  static HighestPmfReporter& Instance();
+  static void Initialize(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
 
  private:
-  HighestPmfReporter();
+  explicit HighestPmfReporter(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
 
   // The constructor for testing.
   HighestPmfReporter(

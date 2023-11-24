@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,11 +6,11 @@
 
 #include <memory>
 
-#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/chromeos_buildflags.h"
 #include "content/public/browser/browser_context.h"
 #include "net/base/filename_util.h"
@@ -56,7 +56,7 @@ void EntryIsDirectory(content::BrowserContext* context,
 IsDirectoryCollector::IsDirectoryCollector(content::BrowserContext* context)
     : context_(context), left_(0) {}
 
-IsDirectoryCollector::~IsDirectoryCollector() {}
+IsDirectoryCollector::~IsDirectoryCollector() = default;
 
 void IsDirectoryCollector::CollectForEntriesPaths(
     const std::vector<base::FilePath>& paths,
@@ -71,7 +71,7 @@ void IsDirectoryCollector::CollectForEntriesPaths(
 
   if (!left_) {
     // Nothing to process.
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback_), std::move(result_)));
     callback_.Reset();
     return;
@@ -90,7 +90,7 @@ void IsDirectoryCollector::OnIsDirectoryCollected(size_t index,
   if (is_directory)
     result_->insert(paths_[index]);
   if (!--left_) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback_), std::move(result_)));
     // Release the callback to avoid a circullar reference in case an instance
     // of this class is a member of a ref counted class, which instance is bound

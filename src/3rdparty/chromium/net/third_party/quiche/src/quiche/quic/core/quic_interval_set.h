@@ -55,13 +55,15 @@
 #include <algorithm>
 #include <initializer_list>
 #include <set>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "quiche/quic/core/quic_interval.h"
-#include "quiche/quic/platform/api/quic_containers.h"
-#include "quiche/quic/platform/api/quic_logging.h"
+#include "quiche/quic/platform/api/quic_flags.h"
+#include "quiche/common/platform/api/quiche_containers.h"
+#include "quiche/common/platform/api/quiche_logging.h"
 
 namespace quic {
 
@@ -85,7 +87,7 @@ class QUIC_NO_EXPORT QuicIntervalSet {
     bool operator()(T&& point, const value_type& a) const;
   };
 
-  using Set = QuicSmallOrderedSet<value_type, IntervalLess>;
+  using Set = quiche::QuicheSmallOrderedSet<value_type, IntervalLess>;
 
  public:
   using const_iterator = typename Set::const_iterator;
@@ -126,7 +128,7 @@ class QUIC_NO_EXPORT QuicIntervalSet {
   // Same semantics as Add(const value_type&), but optimized for the case where
   // rbegin()->min() <= |interval|.min() <= rbegin()->max().
   void AddOptimizedForAppend(const value_type& interval) {
-    if (Empty()) {
+    if (Empty() || !GetQuicFlag(quic_interval_set_enable_add_optimization)) {
       Add(interval);
       return;
     }

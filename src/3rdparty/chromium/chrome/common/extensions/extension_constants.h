@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,9 +34,6 @@ extern const char kDataSaverExtensionId[];
 
 // The extension id of the Google Docs Offline extension.
 extern const char kDocsOfflineExtensionId[];
-
-// The extension id of the Enterprise Web Store component application.
-extern const char kEnterpriseWebStoreAppId[];
 
 // The extension id of the Google Maps application.
 extern const char kGoogleMapsAppId[];
@@ -160,12 +157,20 @@ enum AppLaunchBucket {
 #if BUILDFLAG(IS_CHROMEOS)
 // The extension id of the Assessment Assistant extension.
 extern const char kAssessmentAssistantExtensionId[];
+// The extension id of the extension responsible for providing chromeos perks.
+extern const char kEchoExtensionId[];
 // The extension id of the Gnubby chrome app.
 extern const char kGnubbyAppId[];
 // The extension id of the new v3 Gnubby extension.
 extern const char kGnubbyV3ExtensionId[];
 // The extension id of the GCSE.
 extern const char kGCSEExtensionId[];
+// The extension id of the Contact Center Insights chrome component extension.
+extern const char kContactCenterInsightsExtensionId[];
+// The extension id of the Desk API chrome component extension.
+extern const char kDeskApiExtensionId[];
+// The extension id of the Bruschetta Security Key Forwarder extension.
+extern const char kBruSecurityKeyForwarderExtensionId[];
 #endif
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 // The extension id of the Accessibility Common extension.
@@ -184,6 +189,8 @@ extern const char kChromeVoxExtensionPath[];
 extern const char kChromeVoxManifestFilename[];
 // The guest manifest filename of the ChromeVox extension.
 extern const char kChromeVoxGuestManifestFilename[];
+// The path to the ChromeVox extension's options page.
+extern const char kChromeVoxOptionsPath[];
 // The extension id of the Enhanced network TTS engine extension.
 extern const char kEnhancedNetworkTtsExtensionId[];
 // Path to preinstalled Enhanced network TTS engine extension (relative to
@@ -220,19 +227,16 @@ extern const char kFirstRunDialogId[];
 extern const char kGoogleSpeechSynthesisExtensionPath[];
 // The extension id of the Google speech synthesis extension.
 extern const char kGoogleSpeechSynthesisExtensionId[];
+// The path to the Google speech synthesis extension's options page.
+extern const char kGoogleSpeechSynthesisOptionsPath[];
 // Path to preinstalled eSpeak-NG speech synthesis extension.
 extern const char kEspeakSpeechSynthesisExtensionPath[];
 // The extension id of the eSpeak-NG speech synthesis extension.
 extern const char kEspeakSpeechSynthesisExtensionId[];
-// The extension id of the wallpaper manager application.
-extern const char kWallpaperManagerId[];
+// The path to the eSpeak-NG speech synthesis extension's options page.
+extern const char kEspeakSpeechSynthesisOptionsPath[];
 // The extension id of official HelpApp extension.
 extern const char kHelpAppExtensionId[];
-extern const char kEchoExtensionId[];
-#endif
-#if BUILDFLAG(ENABLE_HANGOUT_SERVICES_EXTENSION)
-// The extension id of the Hangout Service extnsion.
-extern const char kHangoutServiceExtensionId[];
 #endif
 
 // What causes an extension to be installed? Used in histograms, so don't

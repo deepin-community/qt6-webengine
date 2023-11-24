@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,23 +13,6 @@
 namespace blink {
 
 class VisiblePositionTest : public EditingTestBase {};
-
-// Helper class to run the same test code with and without LayoutNG
-class ParameterizedVisiblePositionTest
-    : public testing::WithParamInterface<bool>,
-      private ScopedLayoutNGForTest,
-      public VisiblePositionTest {
- protected:
-  ParameterizedVisiblePositionTest() : ScopedLayoutNGForTest(GetParam()) {}
-
-  bool LayoutNGEnabled() const {
-    return RuntimeEnabledFeatures::LayoutNGEnabled();
-  }
-};
-
-INSTANTIATE_TEST_SUITE_P(All,
-                         ParameterizedVisiblePositionTest,
-                         testing::Bool());
 
 TEST_F(VisiblePositionTest, EmptyEditable) {
   SetBodyContent("<div id=target contenteditable></div>");
@@ -254,7 +237,7 @@ TEST_F(VisiblePositionTest, NormalizationAroundLineBreak) {
   }
 }
 
-TEST_P(ParameterizedVisiblePositionTest, SpacesAroundLineBreak) {
+TEST_F(VisiblePositionTest, SpacesAroundLineBreak) {
   // Narrow <body> forces "a" and "b" to be in different lines.
   InsertStyleElement("body { width: 1px }");
   {
@@ -277,7 +260,7 @@ TEST_P(ParameterizedVisiblePositionTest, SpacesAroundLineBreak) {
               CreateVisiblePosition(Position(a, 1)).DeepEquivalent());
     EXPECT_EQ(Position(a, 1),
               CreateVisiblePosition(Position(b, 0)).DeepEquivalent());
-    EXPECT_EQ(Position(LayoutNGEnabled() ? b : a, 1),
+    EXPECT_EQ(Position(b, 1),
               CreateVisiblePosition(Position(b, 1)).DeepEquivalent());
     EXPECT_EQ(Position(b, 2),
               CreateVisiblePosition(Position(b, 2)).DeepEquivalent());
@@ -292,7 +275,7 @@ TEST_P(ParameterizedVisiblePositionTest, SpacesAroundLineBreak) {
               CreateVisiblePosition(Position(a, 1)).DeepEquivalent());
     EXPECT_EQ(Position(a, 1),
               CreateVisiblePosition(Position(b, 0)).DeepEquivalent());
-    EXPECT_EQ(Position(LayoutNGEnabled() ? b : a, 1),
+    EXPECT_EQ(Position(b, 1),
               CreateVisiblePosition(Position(b, 1)).DeepEquivalent());
     EXPECT_EQ(Position(b, 2),
               CreateVisiblePosition(Position(b, 2)).DeepEquivalent());
@@ -305,9 +288,9 @@ TEST_P(ParameterizedVisiblePositionTest, SpacesAroundLineBreak) {
               CreateVisiblePosition(Position(a, 0)).DeepEquivalent());
     EXPECT_EQ(Position(a, 1),
               CreateVisiblePosition(Position(a, 1)).DeepEquivalent());
-    EXPECT_EQ(Position(a, LayoutNGEnabled() ? 2 : 1),
+    EXPECT_EQ(Position(a, 2),
               CreateVisiblePosition(Position(a, 2)).DeepEquivalent());
-    EXPECT_EQ(Position(a, LayoutNGEnabled() ? 2 : 1),
+    EXPECT_EQ(Position(a, 2),
               CreateVisiblePosition(Position(b, 0)).DeepEquivalent());
     EXPECT_EQ(Position(b, 1),
               CreateVisiblePosition(Position(b, 1)).DeepEquivalent());
@@ -320,17 +303,16 @@ TEST_P(ParameterizedVisiblePositionTest, SpacesAroundLineBreak) {
               CreateVisiblePosition(Position(a, 0)).DeepEquivalent());
     EXPECT_EQ(Position(a, 1),
               CreateVisiblePosition(Position(a, 1)).DeepEquivalent());
-    EXPECT_EQ(Position(a, LayoutNGEnabled() ? 2 : 1),
+    EXPECT_EQ(Position(a, 2),
               CreateVisiblePosition(Position(a, 2)).DeepEquivalent());
-    EXPECT_EQ(Position(a, LayoutNGEnabled() ? 2 : 1),
+    EXPECT_EQ(Position(a, 2),
               CreateVisiblePosition(Position(b, 0)).DeepEquivalent());
     EXPECT_EQ(Position(b, 1),
               CreateVisiblePosition(Position(b, 1)).DeepEquivalent());
   }
 }
 
-TEST_P(ParameterizedVisiblePositionTest, TextCombine) {
-  ScopedLayoutNGForTest enable_layout_ng(GetParam());
+TEST_F(VisiblePositionTest, TextCombine) {
   InsertStyleElement(
       "div {"
       "  font: 100px/110px Ahem;"

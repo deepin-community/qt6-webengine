@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,13 +22,14 @@
 
 #include "fxbarcode/oned/BC_OnedCodaBarWriter.h"
 
+#include <iterator>
+
+#include "core/fxcrt/fx_2d_size.h"
 #include "core/fxcrt/fx_extension.h"
-#include "core/fxcrt/fx_memory.h"
 #include "fxbarcode/BC_Writer.h"
 #include "fxbarcode/common/BC_CommonBitMatrix.h"
 #include "fxbarcode/oned/BC_OneDimWriter.h"
 #include "third_party/base/containers/contains.h"
-#include "third_party/base/cxx17_backports.h"
 
 namespace {
 
@@ -39,9 +40,9 @@ const char kOnedCodaAlphabet[] = {'0', '1', '2', '3', '4', '5', '6', '7',
 const int8_t kOnedCodaCharacterEncoding[] = {
     0x03, 0x06, 0x09, 0x60, 0x12, 0x42, 0x21, 0x24, 0x30, 0x48, 0x0c,
     0x18, 0x45, 0x51, 0x54, 0x15, 0x1A, 0x29, 0x0B, 0x0E, 0x1A, 0x29};
-static_assert(pdfium::size(kOnedCodaCharacterEncoding) == 22, "Wrong size");
-static_assert(pdfium::size(kOnedCodaCharacterEncoding) ==
-                  pdfium::size(kOnedCodaAlphabet),
+static_assert(std::size(kOnedCodaCharacterEncoding) == 22, "Wrong size");
+static_assert(std::size(kOnedCodaCharacterEncoding) ==
+                  std::size(kOnedCodaAlphabet),
               "Wrong size");
 
 const char kStartEndChars[] = {'A', 'B', 'C', 'D', 'T', 'N', '*', 'E',
@@ -119,23 +120,11 @@ WideString CBC_OnedCodaBarWriter::FilterContents(WideStringView contents) {
   return filtercontents;
 }
 
-uint8_t* CBC_OnedCodaBarWriter::EncodeWithHint(const ByteString& contents,
-                                               BC_TYPE format,
-                                               int32_t& outWidth,
-                                               int32_t& outHeight,
-                                               int32_t hints) {
-  if (format != BC_TYPE::kCodabar)
-    return nullptr;
-
-  return CBC_OneDimWriter::EncodeWithHint(contents, format, outWidth, outHeight,
-                                          hints);
-}
-
-uint8_t* CBC_OnedCodaBarWriter::EncodeImpl(const ByteString& contents,
-                                           int32_t& outLength) {
+DataVector<uint8_t> CBC_OnedCodaBarWriter::Encode(const ByteString& contents) {
   ByteString data = m_chStart + contents + m_chEnd;
   m_iContentLen = data.GetLength();
-  uint8_t* result = FX_Alloc2D(uint8_t, m_iWideNarrRatio * 7, data.GetLength());
+  DataVector<uint8_t> result(
+      Fx2DSizeOrDie(m_iWideNarrRatio * 7, data.GetLength()));
   char ch;
   int32_t position = 0;
   for (size_t index = 0; index < data.GetLength(); index++) {
@@ -157,7 +146,7 @@ uint8_t* CBC_OnedCodaBarWriter::EncodeImpl(const ByteString& contents,
         break;
     }
     int8_t code = 0;
-    for (size_t i = 0; i < pdfium::size(kOnedCodaAlphabet); i++) {
+    for (size_t i = 0; i < std::size(kOnedCodaAlphabet); i++) {
       if (ch == kOnedCodaAlphabet[i]) {
         code = kOnedCodaCharacterEncoding[i];
         break;
@@ -182,7 +171,7 @@ uint8_t* CBC_OnedCodaBarWriter::EncodeImpl(const ByteString& contents,
       position++;
     }
   }
-  outLength = position;
+  result.resize(position);
   return result;
 }
 
@@ -193,8 +182,7 @@ WideString CBC_OnedCodaBarWriter::encodedContents(WideStringView contents) {
 }
 
 bool CBC_OnedCodaBarWriter::RenderResult(WideStringView contents,
-                                         uint8_t* code,
-                                         int32_t codeLength) {
+                                         pdfium::span<const uint8_t> code) {
   return CBC_OneDimWriter::RenderResult(
-      encodedContents(contents).AsStringView(), code, codeLength);
+      encodedContents(contents).AsStringView(), code);
 }

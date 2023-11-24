@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -48,6 +48,16 @@ class UI_ANDROID_EXPORT WindowAndroidCompositor {
       const std::vector<float>& supported_refresh_rates) = 0;
   virtual std::unique_ptr<ui::CompositorLock> GetCompositorLock(
       base::TimeDelta timeout) = 0;
+  virtual void OnUpdateOverlayTransform() = 0;
+  // This parallels
+  // ui::Compositor::RequestSuccessfulPresentationTimeForNextFrame, which while
+  // defined in ui is only implemented within content/browser/renderer_host
+  // which is not visible to other ui code. The majority of ui abstracts away
+  // ui::Compositor under ui::WindowAndroidCompositor.
+  using SuccessfulPresentationTimeCallback =
+      base::OnceCallback<void(base::TimeTicks)>;
+  virtual void PostRequestSuccessfulPresentationTimeForNextFrame(
+      SuccessfulPresentationTimeCallback callback) = 0;
 };
 
 }  // namespace ui

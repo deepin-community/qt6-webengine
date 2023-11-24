@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -75,9 +75,9 @@ class CC_EXPORT EffectTreeLayerListIterator {
 
   struct Position {
     State state = State::END;
-    LayerImpl* current_layer = nullptr;
-    RenderSurfaceImpl* current_render_surface = nullptr;
-    RenderSurfaceImpl* target_render_surface = nullptr;
+    raw_ptr<LayerImpl> current_layer = nullptr;
+    raw_ptr<RenderSurfaceImpl> current_render_surface = nullptr;
+    raw_ptr<RenderSurfaceImpl> target_render_surface = nullptr;
   };
 
   operator const Position() const {

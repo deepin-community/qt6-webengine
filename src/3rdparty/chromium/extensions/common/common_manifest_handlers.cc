@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,11 +9,13 @@
 #include "build/chromeos_buildflags.h"
 #include "components/nacl/common/buildflags.h"
 #include "extensions/common/api/bluetooth/bluetooth_manifest_handler.h"
+#include "extensions/common/api/commands/commands_handler.h"
 #include "extensions/common/api/declarative/declarative_manifest_handler.h"
 #include "extensions/common/api/declarative_net_request/dnr_manifest_handler.h"
 #include "extensions/common/api/printer_provider/usb_printer_manifest_handler.h"
 #include "extensions/common/api/sockets/sockets_manifest_handler.h"
 #include "extensions/common/manifest_handler.h"
+#include "extensions/common/manifest_handlers/app_display_info.h"
 #include "extensions/common/manifest_handlers/automation.h"
 #include "extensions/common/manifest_handlers/background_info.h"
 #include "extensions/common/manifest_handlers/content_capabilities_handler.h"
@@ -54,9 +56,11 @@ void RegisterCommonManifestHandlers() {
   registry->RegisterHandler(std::make_unique<ActionHandlersHandler>());
 #endif
   registry->RegisterHandler(std::make_unique<AutomationHandler>());
+  registry->RegisterHandler(std::make_unique<AppDisplayManifestHandler>());
   registry->RegisterHandler(std::make_unique<BackgroundManifestHandler>());
 #if !defined(TOOLKIT_QT)
   registry->RegisterHandler(std::make_unique<BluetoothManifestHandler>());
+  registry->RegisterHandler(std::make_unique<CommandsHandler>());
   registry->RegisterHandler(std::make_unique<ContentCapabilitiesHandler>());
 #endif
   registry->RegisterHandler(std::make_unique<ContentScriptsHandler>());

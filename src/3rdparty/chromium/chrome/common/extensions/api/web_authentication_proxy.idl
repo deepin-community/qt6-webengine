@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -49,7 +49,7 @@ namespace webAuthenticationProxy {
     // extension's ID in a directory named
     // `WebAuthenticationProxyRemoteSessionStateChange` inside the [default
     // user data
-    // directory](https://chromium.googlesource.com/chromium/src/+/master/docs/user_data_dir.md#default-location).
+    // directory](https://chromium.googlesource.com/chromium/src/+/main/docs/user_data_dir.md#default-location).
     //
     // The contents of the file should be empty. I.e., it is not necessary to
     // change the contents of the file in order to trigger this event.
@@ -165,8 +165,7 @@ namespace webAuthenticationProxy {
     // events from this extension API are raised.
     //
     // This method fails with an error if a different extension is already
-    // attached or if the extension has not subscribed to all of the events
-    // defined in this API.
+    // attached.
     //
     // The attached extension must call `detach()` once the remote desktop
     // session has ended in order to resume regular WebAuthn request
@@ -182,8 +181,8 @@ namespace webAuthenticationProxy {
     // request proxy.
     //
     // This method is typically called when the extension detects that a remote
-    // desktop session was terminated. Once this method returns without error,
-    // regular processing of WebAuthn requests continues.
+    // desktop session was terminated. Once this method returns, the extension
+    // ceases to be the active Web Authentication API request proxy.
     //
     // Refer to the `onRemoteSessionStateChange` event for signaling a change
     // of remote session attachment from a native application to to the

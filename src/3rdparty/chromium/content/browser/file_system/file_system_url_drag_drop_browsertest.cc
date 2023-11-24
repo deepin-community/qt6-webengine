@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -54,7 +54,7 @@ class FileSystemURLDragDropBrowserTest : public ContentBrowserTest {
   RenderWidgetHostImpl* GetRenderWidgetHostImplForMainFrame() {
     WebContentsImpl* web_contents_impl =
         static_cast<WebContentsImpl*>(shell()->web_contents());
-    return web_contents_impl->GetMainFrame()->GetRenderWidgetHost();
+    return web_contents_impl->GetPrimaryMainFrame()->GetRenderWidgetHost();
   }
 
  protected:
@@ -146,8 +146,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemURLDragDropBrowserTest, FileSystemFileDrop) {
 
   storage::FileSystemURL original_file =
       external_mount_points->CreateExternalFileSystemURL(
-          blink::StorageKey(url::Origin::Create(url)), testMountName,
-          file_inside_dir.BaseName());
+          blink::StorageKey::CreateFirstParty(url::Origin::Create(url)),
+          testMountName, file_inside_dir.BaseName());
   EXPECT_TRUE(original_file.is_valid());
 
   // Get the points corresponding to the center of the browser window in
@@ -269,8 +269,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemURLDragDropBrowserTest, FileSystemFileLeave) {
 
   storage::FileSystemURL original_file =
       external_mount_points->CreateExternalFileSystemURL(
-          blink::StorageKey(url::Origin::Create(url)), testMountName,
-          file_inside_dir.BaseName());
+          blink::StorageKey::CreateFirstParty(url::Origin::Create(url)),
+          testMountName, file_inside_dir.BaseName());
   EXPECT_TRUE(original_file.is_valid());
 
   // Get the points corresponding to the center of the browser window in

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,13 +7,17 @@
 
 #include <memory>
 
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/task/common/lazy_now.h"
 #include "base/task/sequence_manager/task_queue.h"
 #include "base/task/sequence_manager/task_queue_impl.h"
 #include "base/task/sequence_manager/time_domain.h"
 #include "base/task/single_thread_task_runner.h"
 #include "net/base/request_priority.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/blink/renderer/platform/scheduler/common/blink_scheduler_single_thread_task_runner.h"
+#include "third_party/blink/renderer/platform/scheduler/common/task_priority.h"
 #include "third_party/blink/renderer/platform/scheduler/common/throttling/budget_pool.h"
 #include "third_party/blink/renderer/platform/scheduler/common/throttling/task_queue_throttler.h"
 #include "third_party/blink/renderer/platform/scheduler/main_thread/agent_group_scheduler_impl.h"
@@ -21,14 +25,11 @@
 #include "third_party/blink/renderer/platform/scheduler/public/web_scheduling_priority.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_value_forward.h"
 
-namespace base {
-namespace sequence_manager {
+namespace base::sequence_manager {
 class SequenceManager;
-}
-}  // namespace base
+}  // namespace base::sequence_manager
 
-namespace blink {
-namespace scheduler {
+namespace blink::scheduler {
 
 using TaskQueue = base::sequence_manager::TaskQueue;
 
@@ -121,7 +122,8 @@ class PLATFORM_EXPORT MainThreadTaskQueue
 
   // Returns name of the given queue type. Returned string has application
   // lifetime.
-  static const char* NameForQueueType(QueueType queue_type);
+  static base::sequence_manager::QueueName NameForQueueType(
+      QueueType queue_type);
 
   // Returns true if task queues of the given queue type can be created on a
   // per-frame basis, and false if they are only created on a shared basis for
@@ -160,8 +162,9 @@ class PLATFORM_EXPORT MainThreadTaskQueue
       kCompositor = 9,  // Main-thread only.
       kInput = 10,
       kPostMessageForwarding = 11,
+      kInternalNavigationCancellation = 12,
 
-      kCount = 12
+      kCount = 13
     };
 
     // kPrioritisationTypeWidthBits is the number of bits required
@@ -272,10 +275,7 @@ class PLATFORM_EXPORT MainThreadTaskQueue
 
   struct QueueCreationParams {
     explicit QueueCreationParams(QueueType queue_type)
-        : queue_type(queue_type),
-          spec(NameForQueueType(queue_type)),
-          agent_group_scheduler(nullptr),
-          frame_scheduler(nullptr) {}
+        : queue_type(queue_type), spec(NameForQueueType(queue_type)) {}
 
     QueueCreationParams SetWebSchedulingPriority(
         absl::optional<WebSchedulingPriority> priority) {
@@ -364,8 +364,8 @@ class PLATFORM_EXPORT MainThreadTaskQueue
 
     QueueType queue_type;
     TaskQueue::Spec spec;
-    AgentGroupSchedulerImpl* agent_group_scheduler;
-    FrameSchedulerImpl* frame_scheduler;
+    WeakPersistent<AgentGroupSchedulerImpl> agent_group_scheduler;
+    FrameSchedulerImpl* frame_scheduler = nullptr;
     QueueTraits queue_traits;
     absl::optional<WebSchedulingPriority> web_scheduling_priority;
 
@@ -418,7 +418,7 @@ class PLATFORM_EXPORT MainThreadTaskQueue
 
   void OnTaskCompleted(const base::sequence_manager::Task& task,
                        TaskQueue::TaskTiming* task_timing,
-                       base::sequence_manager::LazyNow* lazy_now);
+                       base::LazyNow* lazy_now);
 
   void LogTaskExecution(perfetto::EventContext& ctx,
                         const base::sequence_manager::Task& task);
@@ -432,17 +432,12 @@ class PLATFORM_EXPORT MainThreadTaskQueue
 
   void ShutdownTaskQueue();
 
-  WebAgentGroupScheduler* GetAgentGroupScheduler();
+  AgentGroupScheduler* GetAgentGroupScheduler();
 
   FrameSchedulerImpl* GetFrameScheduler() const;
 
   scoped_refptr<base::SingleThreadTaskRunner> CreateTaskRunner(
-      TaskType task_type) {
-    return task_queue_->CreateTaskRunner(static_cast<int>(task_type));
-  }
-
-  void SetNetRequestPriority(net::RequestPriority net_request_priority);
-  absl::optional<net::RequestPriority> net_request_priority() const;
+      TaskType task_type);
 
   void SetWebSchedulingPriority(WebSchedulingPriority priority);
   absl::optional<WebSchedulingPriority> web_scheduling_priority() const;
@@ -459,7 +454,7 @@ class PLATFORM_EXPORT MainThreadTaskQueue
   // the desired task type.
   const scoped_refptr<base::SingleThreadTaskRunner>&
   GetTaskRunnerWithDefaultTaskType() {
-    return task_queue_->task_runner();
+    return task_runner_with_default_task_type_;
   }
 
   bool IsThrottled() const;
@@ -479,11 +474,12 @@ class PLATFORM_EXPORT MainThreadTaskQueue
   void SetWakeUpBudgetPool(WakeUpBudgetPool* wake_up_budget_pool);
   WakeUpBudgetPool* GetWakeUpBudgetPool() const { return wake_up_budget_pool_; }
 
-  void SetQueuePriority(TaskQueue::QueuePriority priority) {
+  void SetQueuePriority(TaskPriority priority) {
     task_queue_->SetQueuePriority(priority);
   }
-  TaskQueue::QueuePriority GetQueuePriority() const {
-    return task_queue_->GetQueuePriority();
+
+  TaskPriority GetQueuePriority() const {
+    return static_cast<TaskPriority>(task_queue_->GetQueuePriority());
   }
 
   bool IsQueueEnabled() const { return task_queue_->IsQueueEnabled(); }
@@ -491,10 +487,6 @@ class PLATFORM_EXPORT MainThreadTaskQueue
 
   bool HasTaskToRunImmediatelyOrReadyDelayedTask() const {
     return task_queue_->HasTaskToRunImmediatelyOrReadyDelayedTask();
-  }
-
-  void SetBlameContext(base::trace_event::BlameContext* blame_context) {
-    task_queue_->SetBlameContext(blame_context);
   }
 
   void SetShouldReportPostedTasksWhenDisabled(bool should_report) {
@@ -545,18 +537,16 @@ class PLATFORM_EXPORT MainThreadTaskQueue
   // DetachFromMainThreadScheduler.
   void ClearReferencesToSchedulers();
 
+  scoped_refptr<BlinkSchedulerSingleThreadTaskRunner> WrapTaskRunner(
+      scoped_refptr<base::SingleThreadTaskRunner>);
+
   scoped_refptr<TaskQueue> task_queue_;
+  scoped_refptr<base::SingleThreadTaskRunner>
+      task_runner_with_default_task_type_;
   absl::optional<TaskQueueThrottler> throttler_;
 
   const QueueType queue_type_;
   const QueueTraits queue_traits_;
-
-  // Warning: net_request_priority is not the same as the priority of the queue.
-  // It is the priority (at the loading stack level) of the resource associated
-  // to the queue, if one exists.
-  //
-  // Used to track UMA metrics for resource loading tasks split by net priority.
-  absl::optional<net::RequestPriority> net_request_priority_;
 
   // |web_scheduling_priority_| is the priority of the task queue within the web
   // scheduling API. This priority is used in conjunction with the frame
@@ -566,7 +556,7 @@ class PLATFORM_EXPORT MainThreadTaskQueue
   // Needed to notify renderer scheduler about completed tasks.
   MainThreadSchedulerImpl* main_thread_scheduler_;  // NOT OWNED
 
-  AgentGroupSchedulerImpl* agent_group_scheduler_{nullptr};  // NOT OWNED
+  WeakPersistent<AgentGroupSchedulerImpl> agent_group_scheduler_;
 
   // Set in the constructor. Cleared in ClearReferencesToSchedulers(). Can never
   // be set to a different value afterwards (except in tests).
@@ -581,7 +571,6 @@ class PLATFORM_EXPORT MainThreadTaskQueue
   base::WeakPtrFactory<MainThreadTaskQueue> weak_ptr_factory_{this};
 };
 
-}  // namespace scheduler
-}  // namespace blink
+}  // namespace blink::scheduler
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_SCHEDULER_MAIN_THREAD_MAIN_THREAD_TASK_QUEUE_H_

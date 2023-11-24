@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -111,7 +111,7 @@ class SystemNetworkContextManager {
   void DisableQuic();
 
   // Returns an mojo::PendingReceiver<SSLConfigClient> that can be passed as a
-  // NetorkContextParam.
+  // NetworkContextParam.
   mojo::PendingReceiver<network::mojom::SSLConfigClient>
   GetSSLConfigClientReceiver();
 
@@ -124,9 +124,7 @@ class SystemNetworkContextManager {
 
   // Configures default set of parameters for configuring the network context.
   void ConfigureDefaultNetworkContextParams(
-      network::mojom::NetworkContextParams* network_context_params,
-      cert_verifier::mojom::CertVerifierCreationParams*
-          cert_verifier_creation_params);
+      network::mojom::NetworkContextParams* network_context_params);
 
   // Performs the same function as ConfigureDefaultNetworkContextParams(), and
   // then returns a newly allocated network::mojom::NetworkContextParams with
@@ -194,6 +192,13 @@ class SystemNetworkContextManager {
   // Send the current value of the net.explicitly_allowed_network_ports pref to
   // the network process.
   void UpdateExplicitlyAllowedNetworkPorts();
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
+    BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
+  // Applies the current value of the kEnforceLocalAnchorConstraintsEnabled
+  // pref to the enforcement state.
+  void UpdateEnforceLocalAnchorConstraintsEnabled();
+#endif
 
   // The PrefService to retrieve all the pref values.
   raw_ptr<PrefService> local_state_;

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,12 +13,14 @@
 #include "base/containers/queue.h"
 #include "base/mac/scoped_nsautorelease_pool.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#import "base/task/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_tick_clock.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "components/viz/common/surfaces/child_local_surface_id_allocator.h"
 #import "content/app_shim_remote_cocoa/render_widget_host_view_cocoa.h"
@@ -426,8 +428,9 @@ gfx::Rect GetExpectedRect(const gfx::Point& origin,
       size.height());
 }
 
-// Returns NSScrollWheel event that mocks -phase. |mockPhaseSelector| should
-// correspond to a method in |MockPhaseMethods| that returns the desired phase.
+// Returns NSEventTypeScrollWheel event that mocks -phase. |mockPhaseSelector|
+// should correspond to a method in |MockPhaseMethods| that returns the desired
+// phase.
 NSEvent* MockScrollWheelEventWithPhase(SEL mockPhaseSelector, int32_t delta) {
   CGEventRef cg_event = CGEventCreateScrollWheelEvent(
       nullptr, kCGScrollEventUnitLine, 1, delta, 0);
@@ -528,11 +531,6 @@ class RenderWidgetHostViewMacTest : public RenderViewHostImplTestHarness {
     pool_.Recycle();
   }
 
-  void DestroyHostViewRetainCocoaView() {
-    test_rvh()->GetWidget()->SetView(nullptr);
-    rwhv_mac_->Destroy();
-  }
-
   void ActivateViewWithTextInputManager(RenderWidgetHostViewBase* view,
                                         ui::TextInputType type) {
     ui::mojom::TextInputState state;
@@ -552,7 +550,7 @@ class RenderWidgetHostViewMacTest : public RenderViewHostImplTestHarness {
   scoped_refptr<SiteInstanceGroup> site_instance_group_;
   testing::NiceMock<MockRenderWidgetHostOwnerDelegate> mock_owner_delegate_;
   std::unique_ptr<MockRenderWidgetHostImpl> host_;
-  RenderWidgetHostViewMac* rwhv_mac_ = nullptr;
+  raw_ptr<RenderWidgetHostViewMac> rwhv_mac_ = nullptr;
   base::scoped_nsobject<RenderWidgetHostViewCocoa> rwhv_cocoa_;
   base::scoped_nsobject<CocoaTestHelperWindow> window_;
 
@@ -606,7 +604,8 @@ TEST_F(RenderWidgetHostViewMacTest, FilterNonPrintableCharacter) {
   EXPECT_EQ(0U, events.size());
   [rwhv_mac_->GetInProcessNSView()
       keyEvent:cocoa_test_event_utils::KeyEventWithKeyCode(
-                   0x7B, 0xF70F, NSKeyDown, NSControlKeyMask)];
+                   0x7B, 0xF70F, NSEventTypeKeyDown,
+                   NSEventModifierFlagControl)];
   base::RunLoop().RunUntilIdle();
   events = host_->GetAndResetDispatchedMessages();
 
@@ -618,15 +617,16 @@ TEST_F(RenderWidgetHostViewMacTest, FilterNonPrintableCharacter) {
   EXPECT_EQ(0U, process_host_->sink().message_count());
   [rwhv_mac_->GetInProcessNSView()
       keyEvent:cocoa_test_event_utils::KeyEventWithKeyCode(
-                   0x2E, 0xF728, NSKeyDown, NSControlKeyMask)];
+                   0x2E, 0xF728, NSEventTypeKeyDown,
+                   NSEventModifierFlagControl)];
   base::RunLoop().RunUntilIdle();
   events = host_->GetAndResetDispatchedMessages();
   EXPECT_EQ("RawKeyDown", GetMessageNames(events));
 
   // Simulate a printable char, should generate keypress event
   [rwhv_mac_->GetInProcessNSView()
-      keyEvent:cocoa_test_event_utils::KeyEventWithKeyCode(0x58, 'x', NSKeyDown,
-                                                           NSControlKeyMask)];
+      keyEvent:cocoa_test_event_utils::KeyEventWithKeyCode(
+                   0x58, 'x', NSEventTypeKeyDown, NSEventModifierFlagControl)];
   base::RunLoop().RunUntilIdle();
   events = host_->GetAndResetDispatchedMessages();
   EXPECT_EQ("RawKeyDown Char", GetMessageNames(events));
@@ -635,11 +635,11 @@ TEST_F(RenderWidgetHostViewMacTest, FilterNonPrintableCharacter) {
 // Test that invalid |keyCode| shouldn't generate key events.
 // https://crbug.com/601964
 TEST_F(RenderWidgetHostViewMacTest, InvalidKeyCode) {
-  // Simulate "Convert" key on JIS PC keyboard, will generate a |NSFlagsChanged|
-  // NSEvent with |keyCode| == 0xFF.
+  // Simulate "Convert" key on JIS PC keyboard, will generate a
+  // |NSEventTypeFlagsChanged| NSEvent with |keyCode| == 0xFF.
   [rwhv_mac_->GetInProcessNSView()
-      keyEvent:cocoa_test_event_utils::KeyEventWithKeyCode(0xFF, 0,
-                                                           NSFlagsChanged, 0)];
+      keyEvent:cocoa_test_event_utils::KeyEventWithKeyCode(
+                   0xFF, 0, NSEventTypeFlagsChanged, 0)];
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(0U, host_->GetAndResetDispatchedMessages().size());
 }
@@ -900,7 +900,7 @@ TEST_F(RenderWidgetHostViewMacTest, CompositionEventAfterDestroy) {
   EXPECT_EQ(40, rect.size.height);
   EXPECT_EQ(range, gfx::Range(actual_range));
 
-  DestroyHostViewRetainCocoaView();
+  rwhv_mac_->Destroy();
   actual_range = NSMakeRange(0, 0);
   rect = [rwhv_cocoa_ firstRectForCharacterRange:range.ToNSRange()
                                      actualRange:&actual_range];
@@ -1010,9 +1010,10 @@ TEST_F(RenderWidgetHostViewMacTest, ScrollWheelEndEventDelivery) {
 }
 
 TEST_F(RenderWidgetHostViewMacTest, PointerEventWithEraserType) {
-  // Send a NSEvent of NSTabletProximity type which has a device type of eraser.
+  // Send a NSEvent of NSEventTypeTabletProximity type which has a device type
+  // of eraser.
   NSEvent* event = MockTabletEventWithParams(kCGEventTabletProximity, true,
-                                             NSEraserPointingDevice);
+                                             NSPointingDeviceTypeEraser);
   [rwhv_mac_->GetInProcessNSView() tabletEvent:event];
   // Flush and clear other messages (e.g. begin frames) the RWHVMac also sends.
   base::RunLoop().RunUntilIdle();
@@ -1030,9 +1031,10 @@ TEST_F(RenderWidgetHostViewMacTest, PointerEventWithEraserType) {
 }
 
 TEST_F(RenderWidgetHostViewMacTest, PointerEventWithPenType) {
-  // Send a NSEvent of NSTabletProximity type which has a device type of pen.
+  // Send a NSEvent of NSEventTypeTabletProximity type which has a device type
+  // of pen.
   NSEvent* event = MockTabletEventWithParams(kCGEventTabletProximity, true,
-                                             NSPenPointingDevice);
+                                             NSPointingDeviceTypePen);
   [rwhv_mac_->GetInProcessNSView() tabletEvent:event];
   // Flush and clear other messages (e.g. begin frames) the RWHVMac also sends.
   base::RunLoop().RunUntilIdle();
@@ -1051,7 +1053,7 @@ TEST_F(RenderWidgetHostViewMacTest, PointerEventWithPenType) {
 
 TEST_F(RenderWidgetHostViewMacTest, PointerEventWithPenTypeNoTabletEvent) {
   // Send a NSEvent of a mouse type with a subtype of
-  // NSTabletProximityEventSubtype, which indicates the input device is a pen.
+  // NSEventSubtypeTabletProximity, which indicates the input device is a pen.
   NSEvent* event =
       MockMouseEventWithParams(kCGEventMouseMoved, {6, 9}, kCGMouseButtonLeft,
                                kCGEventMouseSubtypeTabletProximity, true);
@@ -1218,7 +1220,7 @@ TEST_F(RenderWidgetHostViewMacTest, TimerBasedPhaseInfo) {
   // Wait for the mouse_wheel_end_dispatch_timer_ to expire, the pending wheel
   // event gets dispatched.
   base::RunLoop run_loop;
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE, run_loop.QuitWhenIdleClosure(), base::Milliseconds(100));
   run_loop.Run();
 
@@ -1289,7 +1291,7 @@ TEST_F(RenderWidgetHostViewMacTest,
   // because of an attempt to send the pending wheel end event.
   // https://crbug.com/770057
   base::RunLoop run_loop;
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE, run_loop.QuitClosure(),
       max_time_between_phase_ended_and_momentum_phase_began);
   run_loop.Run();
@@ -1723,7 +1725,6 @@ class InputMethodMacTest : public RenderWidgetHostViewMacTest {
     return rwhv_cocoa_.get();
   }
 
-  API_AVAILABLE(macos(10.12.2))
   NSCandidateListTouchBarItem* candidate_list_item() {
     return [tab_GetInProcessNSView().touchBar
         itemForIdentifier:NSTouchBarItemIdentifierCandidateList];
@@ -1733,7 +1734,7 @@ class InputMethodMacTest : public RenderWidgetHostViewMacTest {
   std::unique_ptr<MockRenderProcessHost> child_process_host_;
   scoped_refptr<SiteInstanceGroup> child_site_instance_group_;
   std::unique_ptr<MockRenderWidgetHostImpl> child_widget_;
-  TestRenderWidgetHostView* child_view_;
+  raw_ptr<TestRenderWidgetHostView> child_view_;
 
  private:
   std::unique_ptr<TestBrowserContext> child_browser_context_;
@@ -2003,94 +2004,87 @@ TEST_F(InputMethodMacTest, MonitorCompositionRangeForActiveWidget) {
 
 TEST_F(InputMethodMacTest, TouchBarTextSuggestionsPresence) {
   base::test::ScopedFeatureList feature_list;
-  if (@available(macOS 10.12.2, *)) {
-    EXPECT_NSEQ(nil, candidate_list_item());
-    SetTextInputType(tab_view(), ui::TEXT_INPUT_TYPE_PASSWORD);
-    EXPECT_NSNE(nil, candidate_list_item());
-    SetTextInputType(tab_view(), ui::TEXT_INPUT_TYPE_TEXT);
-    EXPECT_NSNE(nil, candidate_list_item());
-  }
+  EXPECT_NSEQ(nil, candidate_list_item());
+  SetTextInputType(tab_view(), ui::TEXT_INPUT_TYPE_PASSWORD);
+  EXPECT_NSNE(nil, candidate_list_item());
+  SetTextInputType(tab_view(), ui::TEXT_INPUT_TYPE_TEXT);
+  EXPECT_NSNE(nil, candidate_list_item());
 }
 
 TEST_F(InputMethodMacTest, TouchBarTextSuggestionsReplacement) {
   base::test::ScopedFeatureList feature_list;
-  if (@available(macOS 10.12.2, *)) {
-    base::scoped_nsobject<FakeSpellChecker> spellChecker(
-        [[FakeSpellChecker alloc] init]);
-    tab_GetInProcessNSView().spellCheckerForTesting =
-        static_cast<NSSpellChecker*>(spellChecker.get());
+  base::scoped_nsobject<FakeSpellChecker> spellChecker(
+      [[FakeSpellChecker alloc] init]);
+  tab_GetInProcessNSView().spellCheckerForTesting =
+      static_cast<NSSpellChecker*>(spellChecker.get());
 
-    SetTextInputType(tab_view(), ui::TEXT_INPUT_TYPE_TEXT);
-    EXPECT_NSNE(nil, candidate_list_item());
-    candidate_list_item().allowsCollapsing = NO;
+  SetTextInputType(tab_view(), ui::TEXT_INPUT_TYPE_TEXT);
+  EXPECT_NSNE(nil, candidate_list_item());
+  candidate_list_item().allowsCollapsing = NO;
 
-    FakeTextCheckingResult* fakeResult =
-        [FakeTextCheckingResult resultWithRange:NSMakeRange(0, 3)
-                              replacementString:@"foo"];
+  FakeTextCheckingResult* fakeResult =
+      [FakeTextCheckingResult resultWithRange:NSMakeRange(0, 3)
+                            replacementString:@"foo"];
 
-    const std::u16string kOriginalString = u"abcxxxghi";
+  const std::u16string kOriginalString = u"abcxxxghi";
 
-    // Change the selection once; requests completions from the spell checker.
-    tab_view()->SelectionChanged(kOriginalString, 3, gfx::Range(3, 3));
+  // Change the selection once; requests completions from the spell checker.
+  tab_view()->SelectionChanged(kOriginalString, 3, gfx::Range(3, 3));
 
-    NSInteger firstSequenceNumber = [spellChecker sequenceNumber];
-    auto firstCompletionHandler = [spellChecker takeCompletionHandler];
+  NSInteger firstSequenceNumber = [spellChecker sequenceNumber];
+  auto firstCompletionHandler = [spellChecker takeCompletionHandler];
 
-    EXPECT_NE(nil, (id)firstCompletionHandler.get());
-    EXPECT_EQ(0U, candidate_list_item().candidates.count);
+  EXPECT_NE(nil, (id)firstCompletionHandler.get());
+  EXPECT_EQ(0U, candidate_list_item().candidates.count);
 
-    // Instead of replying right away, change the selection again!
-    tab_view()->SelectionChanged(kOriginalString, 3, gfx::Range(5, 5));
+  // Instead of replying right away, change the selection again!
+  tab_view()->SelectionChanged(kOriginalString, 3, gfx::Range(5, 5));
 
-    EXPECT_NE(firstSequenceNumber, [spellChecker sequenceNumber]);
+  EXPECT_NE(firstSequenceNumber, [spellChecker sequenceNumber]);
 
-    // Make sure that calling the stale completion handler is a no-op.
-    firstCompletionHandler.get()(
-        firstSequenceNumber,
-        @[ static_cast<NSTextCheckingResult*>(fakeResult) ]);
-    base::RunLoop().RunUntilIdle();
-    EXPECT_EQ(0U, candidate_list_item().candidates.count);
+  // Make sure that calling the stale completion handler is a no-op.
+  firstCompletionHandler.get()(
+      firstSequenceNumber, @[ static_cast<NSTextCheckingResult*>(fakeResult) ]);
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(0U, candidate_list_item().candidates.count);
 
-    // But calling the current handler should work.
-    [spellChecker takeCompletionHandler].get()(
-        [spellChecker sequenceNumber],
-        @[ static_cast<NSTextCheckingResult*>(fakeResult) ]);
-    base::RunLoop().RunUntilIdle();
-    EXPECT_EQ(1U, candidate_list_item().candidates.count);
+  // But calling the current handler should work.
+  [spellChecker takeCompletionHandler].get()(
+      [spellChecker sequenceNumber],
+      @[ static_cast<NSTextCheckingResult*>(fakeResult) ]);
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(1U, candidate_list_item().candidates.count);
 
-    base::RunLoop().RunUntilIdle();
-    MockWidgetInputHandler::MessageVector events =
-        host_->GetAndResetDispatchedMessages();
-    ASSERT_EQ("", GetMessageNames(events));
+  base::RunLoop().RunUntilIdle();
+  MockWidgetInputHandler::MessageVector events =
+      host_->GetAndResetDispatchedMessages();
+  ASSERT_EQ("", GetMessageNames(events));
 
-    // Now, select that result.
-    [tab_GetInProcessNSView() candidateListTouchBarItem:candidate_list_item()
-                           endSelectingCandidateAtIndex:0];
-    base::RunLoop().RunUntilIdle();
-    events = host_->GetAndResetDispatchedMessages();
-    ASSERT_EQ("CommitText", GetMessageNames(events));
-  }
+  // Now, select that result.
+  [tab_GetInProcessNSView() candidateListTouchBarItem:candidate_list_item()
+                         endSelectingCandidateAtIndex:0];
+  base::RunLoop().RunUntilIdle();
+  events = host_->GetAndResetDispatchedMessages();
+  ASSERT_EQ("CommitText", GetMessageNames(events));
 }
 
 TEST_F(InputMethodMacTest, TouchBarTextSuggestionsNotRequestedForPasswords) {
   base::test::ScopedFeatureList feature_list;
-  if (@available(macOS 10.12.2, *)) {
-    base::scoped_nsobject<FakeSpellChecker> spellChecker(
-        [[FakeSpellChecker alloc] init]);
-    tab_GetInProcessNSView().spellCheckerForTesting =
-        static_cast<NSSpellChecker*>(spellChecker.get());
+  base::scoped_nsobject<FakeSpellChecker> spellChecker(
+      [[FakeSpellChecker alloc] init]);
+  tab_GetInProcessNSView().spellCheckerForTesting =
+      static_cast<NSSpellChecker*>(spellChecker.get());
 
-    SetTextInputType(tab_view(), ui::TEXT_INPUT_TYPE_PASSWORD);
-    EXPECT_NSNE(nil, candidate_list_item());
-    candidate_list_item().allowsCollapsing = NO;
+  SetTextInputType(tab_view(), ui::TEXT_INPUT_TYPE_PASSWORD);
+  EXPECT_NSNE(nil, candidate_list_item());
+  candidate_list_item().allowsCollapsing = NO;
 
-    const std::u16string kOriginalString = u"abcxxxghi";
+  const std::u16string kOriginalString = u"abcxxxghi";
 
-    // Change the selection once; completions should *not* be requested.
-    tab_view()->SelectionChanged(kOriginalString, 3, gfx::Range(3, 3));
+  // Change the selection once; completions should *not* be requested.
+  tab_view()->SelectionChanged(kOriginalString, 3, gfx::Range(3, 3));
 
-    EXPECT_EQ(0U, [spellChecker sequenceNumber]);
-  }
+  EXPECT_EQ(0U, [spellChecker sequenceNumber]);
 }
 
 // https://crbug.com/893038: There exist code paths which set the selection
@@ -2098,19 +2092,18 @@ TEST_F(InputMethodMacTest, TouchBarTextSuggestionsNotRequestedForPasswords) {
 // practice, but this has caused crashes in the field.
 TEST_F(InputMethodMacTest, TouchBarTextSuggestionsInvalidSelection) {
   base::test::ScopedFeatureList feature_list;
-  if (@available(macOS 10.12.2, *)) {
-    base::scoped_nsobject<FakeSpellChecker> spellChecker(
-        [[FakeSpellChecker alloc] init]);
-    tab_GetInProcessNSView().spellCheckerForTesting =
-        static_cast<NSSpellChecker*>(spellChecker.get());
+  base::scoped_nsobject<FakeSpellChecker> spellChecker(
+      [[FakeSpellChecker alloc] init]);
+  tab_GetInProcessNSView().spellCheckerForTesting =
+      static_cast<NSSpellChecker*>(spellChecker.get());
 
-    SetTextInputType(tab_view(), ui::TEXT_INPUT_TYPE_TEXT);
-    candidate_list_item().allowsCollapsing = NO;
+  SetTextInputType(tab_view(), ui::TEXT_INPUT_TYPE_TEXT);
+  candidate_list_item().allowsCollapsing = NO;
 
-    if (auto completionHandler = [spellChecker takeCompletionHandler]) {
-      completionHandler.get()([spellChecker sequenceNumber], @[]);
-      base::RunLoop().RunUntilIdle();
-    }
+  if (auto completionHandler = [spellChecker takeCompletionHandler]) {
+    completionHandler.get()([spellChecker sequenceNumber], @[]);
+    base::RunLoop().RunUntilIdle();
+  }
 
     FakeTextCheckingResult* fakeResult =
         [FakeTextCheckingResult resultWithRange:NSMakeRange(0, 3)
@@ -2130,7 +2123,6 @@ TEST_F(InputMethodMacTest, TouchBarTextSuggestionsInvalidSelection) {
 
     EXPECT_NE(nil, candidate_list_item().candidates);
     EXPECT_EQ(0U, candidate_list_item().candidates.count);
-  }
 }
 
 // This test verifies that in AutoResize mode a child-allocated
@@ -2184,8 +2176,8 @@ TEST_F(RenderWidgetHostViewMacTest, ConflictingAllocationsResolve) {
   // RenderWidgetHostImpl has delayed auto-resize processing. Yield here to
   // let it complete.
   base::RunLoop run_loop;
-  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                run_loop.QuitClosure());
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, run_loop.QuitClosure());
   run_loop.Run();
 
   viz::LocalSurfaceId local_surface_id4(rwhv_mac_->GetLocalSurfaceId());
@@ -2206,7 +2198,7 @@ TEST_F(RenderWidgetHostViewMacTest, TransformToRootNoParentLayer) {
 
 TEST_F(RenderWidgetHostViewMacTest, TransformToRootWithParentLayer) {
   std::unique_ptr<ui::RecyclableCompositorMac> compositor =
-      ui::RecyclableCompositorMacFactory::Get()->CreateCompositor(
+      std::make_unique<ui::RecyclableCompositorMac>(
           ImageTransportFactory::GetInstance()->GetContextFactory());
   std::unique_ptr<ui::Layer> root_surface_layer =
       std::make_unique<ui::Layer>(ui::LAYER_SOLID_COLOR);

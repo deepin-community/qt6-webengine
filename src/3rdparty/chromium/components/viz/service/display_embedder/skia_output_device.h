@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,8 @@
 #include <memory>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/containers/queue.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/time/time.h"
@@ -18,6 +18,7 @@
 #include "components/viz/service/display/output_surface_frame.h"
 #include "components/viz/service/display/overlay_processor_interface.h"
 #include "components/viz/service/display/skia_output_surface.h"
+#include "components/viz/service/viz_service_export.h"
 #include "gpu/command_buffer/common/swap_buffers_complete_params.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
@@ -50,10 +51,10 @@ namespace viz {
 
 class VulkanContextProvider;
 
-class SkiaOutputDevice {
+class VIZ_SERVICE_EXPORT SkiaOutputDevice {
  public:
   // A helper class for defining a BeginPaint() and EndPaint() scope.
-  class ScopedPaint {
+  class VIZ_SERVICE_EXPORT ScopedPaint {
    public:
     ScopedPaint(std::vector<GrBackendSemaphore> end_semaphores,
                 SkiaOutputDevice* device,
@@ -83,9 +84,9 @@ class SkiaOutputDevice {
 
    private:
     std::vector<GrBackendSemaphore> end_semaphores_;
-    const raw_ptr<SkiaOutputDevice> device_;
+    const raw_ptr<SkiaOutputDevice, DanglingUntriaged> device_;
     // Null when using vulkan secondary command buffer.
-    const raw_ptr<SkSurface> sk_surface_;
+    const raw_ptr<SkSurface, DanglingUntriaged> sk_surface_;
   };
 
   using BufferPresentedCallback =
@@ -142,6 +143,8 @@ class SkiaOutputDevice {
   virtual void SetEnableDCLayers(bool enabled);
 
   virtual void SetGpuVSyncEnabled(bool enabled);
+
+  virtual void SetVSyncDisplayID(int64_t display_id) {}
 
   // Whether the output device's primary plane is an overlay. This returns true
   // is the SchedulePrimaryPlane function is implemented.
@@ -244,7 +247,7 @@ class SkiaOutputDevice {
       std::vector<gpu::Mailbox> released_overlays = {},
       const gpu::Mailbox& primary_plane_mailbox = gpu::Mailbox());
 
-  const raw_ptr<GrDirectContext> gr_context_;
+  const raw_ptr<GrDirectContext, DanglingUntriaged> gr_context_;
 
   OutputSurface::Capabilities capabilities_;
 

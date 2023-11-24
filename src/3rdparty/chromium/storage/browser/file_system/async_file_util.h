@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,9 +10,9 @@
 #include <memory>
 #include <vector>
 
-#include "base/callback_forward.h"
 #include "base/component_export.h"
 #include "base/files/file.h"
+#include "base/functional/callback_forward.h"
 #include "components/services/filesystem/public/mojom/types.mojom.h"
 #include "storage/browser/file_system/file_system_operation.h"
 
@@ -101,7 +101,7 @@ class AsyncFileUtil {
   //
   virtual void CreateOrOpen(std::unique_ptr<FileSystemOperationContext> context,
                             const FileSystemURL& url,
-                            int file_flags,
+                            uint32_t file_flags,
                             CreateOrOpenCallback callback) = 0;
 
   // Ensures that the given |url| exist.  This creates a empty new file

@@ -1,25 +1,27 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_SEGMENTATION_PLATFORM_INTERNAL_SELECTION_SEGMENT_SCORE_PROVIDER_H_
 #define COMPONENTS_SEGMENTATION_PLATFORM_INTERNAL_SELECTION_SEGMENT_SCORE_PROVIDER_H_
 
-#include "base/callback.h"
-#include "components/optimization_guide/proto/models.pb.h"
+#include "base/containers/flat_set.h"
+#include "base/functional/callback.h"
+#include "components/segmentation_platform/public/model_provider.h"
+#include "components/segmentation_platform/public/proto/segmentation_platform.pb.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
-using optimization_guide::proto::OptimizationTarget;
-
 namespace segmentation_platform {
+
+using proto::SegmentId;
 
 class SegmentInfoDatabase;
 
 // Result of a single segment.
 // TODO(shaktisahu, ssid): Modify the result fields as the API evolves.
 struct SegmentScore {
-  // Raw score from the model.
-  absl::optional<float> score;
+  // Raw scores from the model.
+  absl::optional<ModelProvider::Response> scores;
 
   // Constructors.
   SegmentScore();
@@ -40,7 +42,8 @@ class SegmentScoreProvider {
 
   // Creates the instance.
   static std::unique_ptr<SegmentScoreProvider> Create(
-      SegmentInfoDatabase* segment_database);
+      SegmentInfoDatabase* segment_database,
+      base::flat_set<proto::SegmentId> segment_ids);
 
   // Called to initialize the manager. Reads results from the database into
   // memory on startup. Must be invoked before calling any other method.
@@ -50,7 +53,7 @@ class SegmentScoreProvider {
   // from the last session.
   // Note that there is no strong reason to keep this async, feel free to change
   // this to sync if needed.
-  virtual void GetSegmentScore(OptimizationTarget segment_id,
+  virtual void GetSegmentScore(SegmentId segment_id,
                                SegmentScoreCallback callback) = 0;
 };
 

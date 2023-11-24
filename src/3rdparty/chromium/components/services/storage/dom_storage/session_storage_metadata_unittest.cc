@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,17 +6,18 @@
 
 #include <string>
 
-#include "base/bind.h"
 #include "base/containers/contains.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
 #include "base/guid.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "components/services/storage/dom_storage/async_dom_storage_database.h"
 #include "components/services/storage/dom_storage/dom_storage_database.h"
 #include "components/services/storage/dom_storage/testing_legacy_session_storage_database.h"
@@ -405,6 +406,16 @@ TEST_F(SessionStorageMetadataTest, DeleteArea) {
   EXPECT_FALSE(base::Contains(contents, StdStringToUint8Vector("map-4-key1")));
 }
 
+TEST_F(SessionStorageMetadataTest, DatabaseVersionTooNew) {
+  SessionStorageMetadata metadata;
+  std::vector<AsyncDomStorageDatabase::BatchDatabaseTask> migration_tasks;
+  auto version_str = base::NumberToString(
+      SessionStorageMetadata::kLatestSessionStorageSchemaVersion + 1);
+  EXPECT_FALSE(metadata.ParseDatabaseVersion(
+      std::vector<uint8_t>(version_str.begin(), version_str.end()),
+      &migration_tasks));
+}
+
 class SessionStorageMetadataMigrationTest : public testing::Test {
  public:
   SessionStorageMetadataMigrationTest()
@@ -436,7 +447,8 @@ class SessionStorageMetadataMigrationTest : public testing::Test {
     ASSERT_TRUE(s.ok()) << s.ToString();
     old_ss_database_ =
         base::MakeRefCounted<TestingLegacySessionStorageDatabase>(
-            temp_path_.GetPath(), base::ThreadTaskRunnerHandle::Get().get());
+            temp_path_.GetPath(),
+            base::SingleThreadTaskRunner::GetCurrentDefault().get());
     old_ss_database_->SetDatabaseForTesting(std::move(db));
   }
 

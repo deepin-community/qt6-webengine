@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -149,6 +149,21 @@ void MediaSessionController::OnSetMute(int player_id, bool mute) {
       ->RequestMute(mute);
 }
 
+void MediaSessionController::OnRequestMediaRemoting(int player_id) {
+  DCHECK_EQ(player_id_, player_id);
+
+  // Media Remoting can't start if the media is paused. So we should start
+  // playing before requesting Media Remoting.
+  if (is_paused_) {
+    web_contents_->media_web_contents_observer()
+        ->GetMediaPlayerRemote(id_)
+        ->RequestPlay();
+  }
+  web_contents_->media_web_contents_observer()
+      ->GetMediaPlayerRemote(id_)
+      ->RequestMediaRemoting();
+}
+
 RenderFrameHost* MediaSessionController::render_frame_host() const {
   return RenderFrameHost::FromID(id_.frame_routing_id);
 }
@@ -212,6 +227,11 @@ void MediaSessionController::OnAudioOutputSinkChanged(
 void MediaSessionController::OnAudioOutputSinkChangingDisabled() {
   supports_audio_output_device_switching_ = false;
   media_session_->OnAudioOutputSinkChangingDisabled();
+}
+
+void MediaSessionController::OnRemotePlaybackMetadataChanged(
+    media_session::mojom::RemotePlaybackMetadataPtr metadata) {
+  media_session_->SetRemotePlaybackMetadata(std::move(metadata));
 }
 
 bool MediaSessionController::IsMediaSessionNeeded() const {

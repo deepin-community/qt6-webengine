@@ -30,11 +30,13 @@
 
 #include "third_party/blink/renderer/core/dom/element_rare_data.h"
 
+#include <memory>
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/css/container_query_data.h"
 #include "third_party/blink/renderer/core/css/cssom/inline_style_property_map.h"
 #include "third_party/blink/renderer/core/editing/ime/edit_context.h"
 #include "third_party/blink/renderer/core/html/custom/element_internals.h"
+#include "third_party/blink/renderer/core/layout/anchor_scroll_data.h"
 #include "third_party/blink/renderer/core/resize_observer/resize_observation.h"
 #include "third_party/blink/renderer/core/resize_observer/resize_observer.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
@@ -42,26 +44,15 @@
 
 namespace blink {
 
-struct SameSizeAsElementRareData : NodeRareData {
-  Member<void*> members[10];
-  float scroll_offset[2];
-  bool flags[1];
+struct SameSizeAsElementRareData : ElementRareDataBase {
+  void* pointers_or_strings[4];
+  Member<void*> members[22];
+  gfx::Vector2dF scroll_offset;
+  wtf_size_t anchored_popover_count;
 };
 
-ElementRareData::ElementRareData(NodeRenderingData* node_layout_data)
-    : NodeRareData(ClassType::kElementRareData, node_layout_data),
-      class_list_(nullptr),
-      did_attach_internals_(false),
-      should_force_legacy_layout_for_child_(false),
-      style_should_force_legacy_layout_(false),
-      has_undo_stack_(false),
-      scrollbar_pseudo_element_styles_depend_on_font_metrics_(false) {
-  // When The ElementSuperRareData flag is disabled, then always initialize
-  // ElementSuperRareData immediately in order to measure the memory usage
-  // improvements.
-  if (!RuntimeEnabledFeatures::ElementSuperRareDataEnabled())
-    super_rare_data_ = MakeGarbageCollected<ElementSuperRareData>();
-}
+ElementRareData::ElementRareData(NodeData* node_layout_data)
+    : ElementRareDataBase(node_layout_data), class_list_(nullptr) {}
 
 ElementRareData::~ElementRareData() {
   DCHECK(!pseudo_element_data_);
@@ -76,17 +67,13 @@ CSSStyleDeclaration& ElementRareData::EnsureInlineCSSStyleDeclaration(
   return *cssom_wrapper_;
 }
 
-InlineStylePropertyMap& ElementSuperRareData::EnsureInlineStylePropertyMap(
+InlineStylePropertyMap& ElementRareData::EnsureInlineStylePropertyMap(
     Element* owner_element) {
   if (!cssom_map_wrapper_) {
     cssom_map_wrapper_ =
         MakeGarbageCollected<InlineStylePropertyMap>(owner_element);
   }
   return *cssom_map_wrapper_;
-}
-InlineStylePropertyMap& ElementRareData::EnsureInlineStylePropertyMap(
-    Element* owner_element) {
-  return EnsureSuperRareData().EnsureInlineStylePropertyMap(owner_element);
 }
 
 AttrNodeList& ElementRareData::EnsureAttrNodeList() {
@@ -95,8 +82,8 @@ AttrNodeList& ElementRareData::EnsureAttrNodeList() {
   return *attr_node_list_;
 }
 
-ElementSuperRareData::ResizeObserverDataMap&
-ElementSuperRareData::EnsureResizeObserverData() {
+ElementRareData::ResizeObserverDataMap&
+ElementRareData::EnsureResizeObserverData() {
   if (!resize_observer_data_) {
     resize_observer_data_ = MakeGarbageCollected<
         HeapHashMap<Member<ResizeObserver>, Member<ResizeObservation>>>();
@@ -104,40 +91,39 @@ ElementSuperRareData::EnsureResizeObserverData() {
   return *resize_observer_data_;
 }
 
-ElementRareData::ResizeObserverDataMap&
-ElementRareData::EnsureResizeObserverData() {
-  return EnsureSuperRareData().EnsureResizeObserverData();
+PopoverData& ElementRareData::EnsurePopoverData() {
+  if (!popover_data_)
+    popover_data_ = MakeGarbageCollected<PopoverData>();
+  return *popover_data_;
+}
+void ElementRareData::RemovePopoverData() {
+  popover_data_.Clear();
 }
 
-PopupData& ElementSuperRareData::EnsurePopupData() {
-  if (!popup_data_)
-    popup_data_ = MakeGarbageCollected<PopupData>();
-  return *popup_data_;
+CSSToggleMap& ElementRareData::EnsureToggleMap(Element* owner_element) {
+  DCHECK(!toggle_map_ || toggle_map_->OwnerElement() == owner_element);
+  if (!toggle_map_)
+    toggle_map_ = MakeGarbageCollected<CSSToggleMap>(owner_element);
+  return *toggle_map_;
 }
 
-PopupData& ElementRareData::EnsurePopupData() {
-  return EnsureSuperRareData().EnsurePopupData();
-}
-
-void ElementSuperRareData::RemovePopupData() {
-  popup_data_.Clear();
-}
-
-void ElementRareData::RemovePopupData() {
-  if (super_rare_data_)
-    super_rare_data_->RemovePopupData();
-}
-
-ElementInternals& ElementSuperRareData::EnsureElementInternals(
-    HTMLElement& target) {
+ElementInternals& ElementRareData::EnsureElementInternals(HTMLElement& target) {
   if (element_internals_)
     return *element_internals_;
   element_internals_ = MakeGarbageCollected<ElementInternals>(target);
   return *element_internals_;
 }
 
-void ElementRareData::TraceAfterDispatch(blink::Visitor* visitor) const {
-  visitor->Trace(super_rare_data_);
+AnchorScrollData& ElementRareData::EnsureAnchorScrollData(
+    Element* owner_element) {
+  DCHECK(!anchor_scroll_data_ ||
+         anchor_scroll_data_->OwnerElement() == owner_element);
+  if (!anchor_scroll_data_)
+    anchor_scroll_data_ = MakeGarbageCollected<AnchorScrollData>(owner_element);
+  return *anchor_scroll_data_;
+}
+
+void ElementRareData::Trace(blink::Visitor* visitor) const {
   visitor->Trace(dataset_);
   visitor->Trace(shadow_root_);
   visitor->Trace(class_list_);
@@ -147,10 +133,6 @@ void ElementRareData::TraceAfterDispatch(blink::Visitor* visitor) const {
   visitor->Trace(element_animations_);
   visitor->Trace(intersection_observer_data_);
   visitor->Trace(pseudo_element_data_);
-  NodeRareData::TraceAfterDispatch(visitor);
-}
-
-void ElementSuperRareData::Trace(blink::Visitor* visitor) const {
   visitor->Trace(edit_context_);
   visitor->Trace(part_);
   visitor->Trace(cssom_map_wrapper_);
@@ -161,7 +143,10 @@ void ElementSuperRareData::Trace(blink::Visitor* visitor) const {
   visitor->Trace(resize_observer_data_);
   visitor->Trace(custom_element_definition_);
   visitor->Trace(last_intrinsic_size_);
-  visitor->Trace(popup_data_);
+  visitor->Trace(popover_data_);
+  visitor->Trace(toggle_map_);
+  visitor->Trace(anchor_scroll_data_);
+  NodeRareData::Trace(visitor);
 }
 
 ASSERT_SIZE(ElementRareData, SameSizeAsElementRareData);

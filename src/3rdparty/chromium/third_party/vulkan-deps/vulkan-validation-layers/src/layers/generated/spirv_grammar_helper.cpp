@@ -4,7 +4,7 @@
 
 /***************************************************************************
  *
- * Copyright (c) 2021-2022 The Khronos Group Inc.
+ * Copyright (c) 2021-2023 The Khronos Group Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Author: Spencer Fricke <s.fricke@samsung.com>
- *
  * This file is related to anything that is found in the SPIR-V grammar
  * file found in the SPIRV-Headers. Mainly used for SPIR-V util functions.
  *
@@ -27,6 +25,7 @@
 
 #include "vk_layer_data.h"
 #include "spirv_grammar_helper.h"
+#include "state_tracker/shader_instruction.h"
 
 // All information related to each SPIR-V opcode instruction
 struct InstructionInfo {
@@ -42,7 +41,7 @@ struct InstructionInfo {
 // of a given SPIR-V opcode instruction
 //
 // clang-format off
-static const layer_data::unordered_map<uint32_t, InstructionInfo> kInstructionTable {
+static const vvl::unordered_map<uint32_t, InstructionInfo> kInstructionTable {
     {spv::OpNop, {"OpNop", false, false, 0, 0, 0}},
     {spv::OpUndef, {"OpUndef", true, true, 0, 0, 0}},
     {spv::OpSourceContinued, {"OpSourceContinued", false, false, 0, 0, 0}},
@@ -333,6 +332,7 @@ static const layer_data::unordered_map<uint32_t, InstructionInfo> kInstructionTa
     {spv::OpSubgroupAllKHR, {"OpSubgroupAllKHR", true, true, 0, 0, 0}},
     {spv::OpSubgroupAnyKHR, {"OpSubgroupAnyKHR", true, true, 0, 0, 0}},
     {spv::OpSubgroupAllEqualKHR, {"OpSubgroupAllEqualKHR", true, true, 0, 0, 0}},
+    {spv::OpGroupNonUniformRotateKHR, {"OpGroupNonUniformRotateKHR", true, true, 0, 3, 0}},
     {spv::OpSubgroupReadInvocationKHR, {"OpSubgroupReadInvocationKHR", true, true, 0, 0, 0}},
     {spv::OpTraceRayKHR, {"OpTraceRayKHR", false, false, 0, 0, 0}},
     {spv::OpExecuteCallableKHR, {"OpExecuteCallableKHR", false, false, 0, 0, 0}},
@@ -363,7 +363,42 @@ static const layer_data::unordered_map<uint32_t, InstructionInfo> kInstructionTa
     {spv::OpFragmentMaskFetchAMD, {"OpFragmentMaskFetchAMD", true, true, 0, 0, 0}},
     {spv::OpFragmentFetchAMD, {"OpFragmentFetchAMD", true, true, 0, 0, 0}},
     {spv::OpReadClockKHR, {"OpReadClockKHR", true, true, 0, 3, 0}},
+    {spv::OpHitObjectRecordHitMotionNV, {"OpHitObjectRecordHitMotionNV", false, false, 0, 0, 0}},
+    {spv::OpHitObjectRecordHitWithIndexMotionNV, {"OpHitObjectRecordHitWithIndexMotionNV", false, false, 0, 0, 0}},
+    {spv::OpHitObjectRecordMissMotionNV, {"OpHitObjectRecordMissMotionNV", false, false, 0, 0, 0}},
+    {spv::OpHitObjectGetWorldToObjectNV, {"OpHitObjectGetWorldToObjectNV", true, true, 0, 0, 0}},
+    {spv::OpHitObjectGetObjectToWorldNV, {"OpHitObjectGetObjectToWorldNV", true, true, 0, 0, 0}},
+    {spv::OpHitObjectGetObjectRayDirectionNV, {"OpHitObjectGetObjectRayDirectionNV", true, true, 0, 0, 0}},
+    {spv::OpHitObjectGetObjectRayOriginNV, {"OpHitObjectGetObjectRayOriginNV", true, true, 0, 0, 0}},
+    {spv::OpHitObjectTraceRayMotionNV, {"OpHitObjectTraceRayMotionNV", false, false, 0, 0, 0}},
+    {spv::OpHitObjectGetShaderRecordBufferHandleNV, {"OpHitObjectGetShaderRecordBufferHandleNV", true, true, 0, 0, 0}},
+    {spv::OpHitObjectGetShaderBindingTableRecordIndexNV, {"OpHitObjectGetShaderBindingTableRecordIndexNV", true, true, 0, 0, 0}},
+    {spv::OpHitObjectRecordEmptyNV, {"OpHitObjectRecordEmptyNV", false, false, 0, 0, 0}},
+    {spv::OpHitObjectTraceRayNV, {"OpHitObjectTraceRayNV", false, false, 0, 0, 0}},
+    {spv::OpHitObjectRecordHitNV, {"OpHitObjectRecordHitNV", false, false, 0, 0, 0}},
+    {spv::OpHitObjectRecordHitWithIndexNV, {"OpHitObjectRecordHitWithIndexNV", false, false, 0, 0, 0}},
+    {spv::OpHitObjectRecordMissNV, {"OpHitObjectRecordMissNV", false, false, 0, 0, 0}},
+    {spv::OpHitObjectExecuteShaderNV, {"OpHitObjectExecuteShaderNV", false, false, 0, 0, 0}},
+    {spv::OpHitObjectGetCurrentTimeNV, {"OpHitObjectGetCurrentTimeNV", true, true, 0, 0, 0}},
+    {spv::OpHitObjectGetAttributesNV, {"OpHitObjectGetAttributesNV", false, false, 0, 0, 0}},
+    {spv::OpHitObjectGetHitKindNV, {"OpHitObjectGetHitKindNV", true, true, 0, 0, 0}},
+    {spv::OpHitObjectGetPrimitiveIndexNV, {"OpHitObjectGetPrimitiveIndexNV", true, true, 0, 0, 0}},
+    {spv::OpHitObjectGetGeometryIndexNV, {"OpHitObjectGetGeometryIndexNV", true, true, 0, 0, 0}},
+    {spv::OpHitObjectGetInstanceIdNV, {"OpHitObjectGetInstanceIdNV", true, true, 0, 0, 0}},
+    {spv::OpHitObjectGetInstanceCustomIndexNV, {"OpHitObjectGetInstanceCustomIndexNV", true, true, 0, 0, 0}},
+    {spv::OpHitObjectGetWorldRayDirectionNV, {"OpHitObjectGetWorldRayDirectionNV", true, true, 0, 0, 0}},
+    {spv::OpHitObjectGetWorldRayOriginNV, {"OpHitObjectGetWorldRayOriginNV", true, true, 0, 0, 0}},
+    {spv::OpHitObjectGetRayTMaxNV, {"OpHitObjectGetRayTMaxNV", true, true, 0, 0, 0}},
+    {spv::OpHitObjectGetRayTMinNV, {"OpHitObjectGetRayTMinNV", true, true, 0, 0, 0}},
+    {spv::OpHitObjectIsEmptyNV, {"OpHitObjectIsEmptyNV", true, true, 0, 0, 0}},
+    {spv::OpHitObjectIsHitNV, {"OpHitObjectIsHitNV", true, true, 0, 0, 0}},
+    {spv::OpHitObjectIsMissNV, {"OpHitObjectIsMissNV", true, true, 0, 0, 0}},
+    {spv::OpReorderThreadWithHitObjectNV, {"OpReorderThreadWithHitObjectNV", false, false, 0, 0, 0}},
+    {spv::OpReorderThreadWithHintNV, {"OpReorderThreadWithHintNV", false, false, 0, 0, 0}},
+    {spv::OpTypeHitObjectNV, {"OpTypeHitObjectNV", false, true, 0, 0, 0}},
     {spv::OpImageSampleFootprintNV, {"OpImageSampleFootprintNV", true, true, 0, 0, 7}},
+    {spv::OpEmitMeshTasksEXT, {"OpEmitMeshTasksEXT", false, false, 0, 0, 0}},
+    {spv::OpSetMeshOutputsEXT, {"OpSetMeshOutputsEXT", false, false, 0, 0, 0}},
     {spv::OpGroupNonUniformPartitionNV, {"OpGroupNonUniformPartitionNV", true, true, 0, 0, 0}},
     {spv::OpWritePackedPrimitiveIndices4x8NV, {"OpWritePackedPrimitiveIndices4x8NV", false, false, 0, 0, 0}},
     {spv::OpReportIntersectionKHR, {"OpReportIntersectionKHR", true, true, 0, 0, 0}},
@@ -551,6 +586,25 @@ bool GroupOperation(uint32_t opcode) {
 }
 
 
+spv::StorageClass Instruction::StorageClass() const {
+    spv::StorageClass storage_class = spv::StorageClassMax;
+    switch (Opcode()) {
+        case spv::OpTypePointer:
+            storage_class = static_cast<spv::StorageClass>(Word(2));
+            break;
+        case spv::OpTypeForwardPointer:
+            storage_class = static_cast<spv::StorageClass>(Word(2));
+            break;
+        case spv::OpVariable:
+            storage_class = static_cast<spv::StorageClass>(Word(3));
+            break;
+        default:
+            break;
+    }
+    return storage_class;
+}
+
+
 bool ImageGatherOperation(uint32_t opcode) {
     bool found = false;
     switch (opcode) {
@@ -619,18 +673,6 @@ bool OpcodeHasResult(uint32_t opcode) {
     return has_result;
 }
 
-// Helper to get the word position of the result operand.
-// Will either be 1 or 2 if it has a result.
-// Will be 0 if there is no result.
-uint32_t OpcodeResultWord(uint32_t opcode) {
-    uint32_t position = 0;
-    if (OpcodeHasResult(opcode)) {
-        position = 1;
-        position += OpcodeHasType(opcode) ? 1 : 0;
-    }
-    return position;
-}
-
 // Return operand position of Memory Scope <ID> or zero if there is none
 uint32_t OpcodeMemoryScopePosition(uint32_t opcode) {
     uint32_t position = 0;
@@ -685,7 +727,6 @@ uint32_t ImageOperandsParamCount(uint32_t image_operand) {
             return 1;
         case spv::ImageOperandsGradMask:
             return 2;
-            break;
         default:
             break;
     }
@@ -701,3 +742,102 @@ const char* string_SpvOpcode(uint32_t opcode) {
         return "Unhandled Opcode";
     }
 };
+
+const char* string_SpvStorageClass(uint32_t storage_class) {
+    switch(storage_class) {
+        case spv::StorageClassUniformConstant:
+            return "UniformConstant";
+        case spv::StorageClassInput:
+            return "Input";
+        case spv::StorageClassUniform:
+            return "Uniform";
+        case spv::StorageClassOutput:
+            return "Output";
+        case spv::StorageClassWorkgroup:
+            return "Workgroup";
+        case spv::StorageClassCrossWorkgroup:
+            return "CrossWorkgroup";
+        case spv::StorageClassPrivate:
+            return "Private";
+        case spv::StorageClassFunction:
+            return "Function";
+        case spv::StorageClassGeneric:
+            return "Generic";
+        case spv::StorageClassPushConstant:
+            return "PushConstant";
+        case spv::StorageClassAtomicCounter:
+            return "AtomicCounter";
+        case spv::StorageClassImage:
+            return "Image";
+        case spv::StorageClassStorageBuffer:
+            return "StorageBuffer";
+        case spv::StorageClassCallableDataNV:
+            return "CallableDataNV";
+        case spv::StorageClassIncomingCallableDataNV:
+            return "IncomingCallableDataNV";
+        case spv::StorageClassRayPayloadNV:
+            return "RayPayloadNV";
+        case spv::StorageClassHitAttributeNV:
+            return "HitAttributeNV";
+        case spv::StorageClassIncomingRayPayloadNV:
+            return "IncomingRayPayloadNV";
+        case spv::StorageClassShaderRecordBufferNV:
+            return "ShaderRecordBufferNV";
+        case spv::StorageClassPhysicalStorageBuffer:
+            return "PhysicalStorageBuffer";
+        case spv::StorageClassHitObjectAttributeNV:
+            return "HitObjectAttributeNV";
+        case spv::StorageClassTaskPayloadWorkgroupEXT:
+            return "TaskPayloadWorkgroupEXT";
+        case spv::StorageClassCodeSectionINTEL:
+            return "CodeSectionINTEL";
+        case spv::StorageClassDeviceOnlyINTEL:
+            return "DeviceOnlyINTEL";
+        case spv::StorageClassHostOnlyINTEL:
+            return "HostOnlyINTEL";
+        default:
+            return "unknown";
+    }
+};
+
+const char* string_SpvExecutionModel(uint32_t execution_model) {
+    switch(execution_model) {
+        case spv::ExecutionModelVertex:
+            return "Vertex";
+        case spv::ExecutionModelTessellationControl:
+            return "TessellationControl";
+        case spv::ExecutionModelTessellationEvaluation:
+            return "TessellationEvaluation";
+        case spv::ExecutionModelGeometry:
+            return "Geometry";
+        case spv::ExecutionModelFragment:
+            return "Fragment";
+        case spv::ExecutionModelGLCompute:
+            return "GLCompute";
+        case spv::ExecutionModelKernel:
+            return "Kernel";
+        case spv::ExecutionModelTaskNV:
+            return "TaskNV";
+        case spv::ExecutionModelMeshNV:
+            return "MeshNV";
+        case spv::ExecutionModelRayGenerationNV:
+            return "RayGenerationNV";
+        case spv::ExecutionModelIntersectionNV:
+            return "IntersectionNV";
+        case spv::ExecutionModelAnyHitNV:
+            return "AnyHitNV";
+        case spv::ExecutionModelClosestHitNV:
+            return "ClosestHitNV";
+        case spv::ExecutionModelMissNV:
+            return "MissNV";
+        case spv::ExecutionModelCallableNV:
+            return "CallableNV";
+        case spv::ExecutionModelTaskEXT:
+            return "TaskEXT";
+        case spv::ExecutionModelMeshEXT:
+            return "MeshEXT";
+        default:
+            return "unknown";
+    }
+};
+

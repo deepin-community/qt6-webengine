@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -25,9 +25,13 @@ class LayoutObject;
 
 class CORE_EXPORT CSSProperty : public CSSUnresolvedProperty {
  public:
-  using Flags = uint32_t;
+  using Flags = uint64_t;
 
-  static const CSSProperty& Get(CSSPropertyID);
+  static const CSSProperty& Get(CSSPropertyID id) {
+    DCHECK(id != CSSPropertyID::kInvalid);
+    DCHECK(id <= kLastCSSProperty);  // last property id
+    return To<CSSProperty>(CSSUnresolvedProperty::GetNonAliasProperty(id));
+  }
 
   static bool IsShorthand(const CSSPropertyName&);
   static bool IsRepeated(const CSSPropertyName&);
@@ -61,23 +65,26 @@ class CORE_EXPORT CSSProperty : public CSSUnresolvedProperty {
     return flags_ & kSupportsIncrementalStyle;
   }
   bool IsIdempotent() const { return flags_ & kIdempotent; }
+  bool AcceptsNumericLiteral() const { return flags_ & kAcceptsNumericLiteral; }
   bool IsValidForFirstLetter() const { return flags_ & kValidForFirstLetter; }
   bool IsValidForFirstLine() const { return flags_ & kValidForFirstLine; }
   bool IsValidForCue() const { return flags_ & kValidForCue; }
   bool IsValidForMarker() const { return flags_ & kValidForMarker; }
-  bool IsValidForHighlight() const { return flags_ & kValidForHighlight; }
-  bool IsValidForCanvasFormattedText() const {
-    return flags_ & kValidForCanvasFormattedText;
+  bool IsValidForFormattedText() const {
+    return flags_ & kValidForFormattedText;
   }
-  bool IsValidForCanvasFormattedTextRun() const {
-    return flags_ & kValidForCanvasFormattedTextRun;
+  bool IsValidForFormattedTextRun() const {
+    return flags_ & kValidForFormattedTextRun;
+  }
+  bool IsValidForKeyframe() const { return flags_ & kValidForKeyframe; }
+  bool IsValidForPositionFallback() const {
+    return flags_ & kValidForPositionFallback;
   }
   bool IsSurrogate() const { return flags_ & kSurrogate; }
   bool AffectsFont() const { return flags_ & kAffectsFont; }
   bool IsBackground() const { return flags_ & kBackground; }
   bool IsBorder() const { return flags_ & kBorder; }
   bool IsBorderRadius() const { return flags_ & kBorderRadius; }
-  bool TakesTreeScopedValue() const { return flags_ & kTreeScopedValue; }
   bool IsInLogicalPropertyGroup() const {
     return flags_ & kInLogicalPropertyGroup;
   }
@@ -161,19 +168,20 @@ class CORE_EXPORT CSSProperty : public CSSUnresolvedProperty {
     kBackground = 1 << 15,
     kBorder = 1 << 16,
     kBorderRadius = 1 << 17,
-    // Set if the property values are tree-scoped references.
-    kTreeScopedValue = 1 << 18,
-    // https://drafts.csswg.org/css-pseudo-4/#highlight-styling
-    kValidForHighlight = 1 << 19,
+    // Similar to the list at
+    // https://drafts.csswg.org/css-pseudo-4/#highlight-styling, with some
+    // differences for compatibility reasons.
+    kValidForHighlightLegacy = 1 << 18,
     // https://drafts.csswg.org/css-logical/#logical-property-group
-    kInLogicalPropertyGroup = 1 << 20,
+    kInLogicalPropertyGroup = 1 << 19,
     // https://drafts.csswg.org/css-pseudo-4/#first-line-styling
-    kValidForFirstLine = 1 << 21,
+    kValidForFirstLine = 1 << 20,
     // The property participates in paired cascade, such that when encountered
     // in highlight styles, we make all other highlight color properties default
     // to initial, rather than the UA default.
     // https://drafts.csswg.org/css-pseudo-4/#highlight-cascade
-    kHighlightColors = 1 << 22,
+    kHighlightColors = 1 << 21,
+    kVisitedHighlightColors = 1 << 22,
     // See supports_incremental_style in css_properties.json5.
     kSupportsIncrementalStyle = 1 << 23,
     // See idempotent in css_properties.json5.
@@ -181,8 +189,20 @@ class CORE_EXPORT CSSProperty : public CSSUnresolvedProperty {
     // Set if the css property can apply to the experiemental canvas
     // formatted text API to render multiline text in canvas.
     // https://github.com/WICG/canvas-formatted-text
-    kValidForCanvasFormattedText = 1 << 25,
-    kValidForCanvasFormattedTextRun = 1 << 26,
+    kValidForFormattedText = 1 << 25,
+    kValidForFormattedTextRun = 1 << 26,
+    // See overlapping in css_properties.json5.
+    kOverlapping = 1 << 27,
+    // See legacy_overlapping in css_properties.json5.
+    kLegacyOverlapping = 1 << 28,
+    // See valid_for_keyframes in css_properties.json5
+    kValidForKeyframe = 1 << 29,
+    // See valid_for_position_fallback in css_properties.json5
+    kValidForPositionFallback = 1 << 30,
+    // https://drafts.csswg.org/css-pseudo-4/#highlight-styling
+    kValidForHighlight = 1ull << 31,
+    // See accepts_numeric_literal in css_properties.json5.
+    kAcceptsNumericLiteral = 1ull << 32,
   };
 
   constexpr CSSProperty(CSSPropertyID property_id,

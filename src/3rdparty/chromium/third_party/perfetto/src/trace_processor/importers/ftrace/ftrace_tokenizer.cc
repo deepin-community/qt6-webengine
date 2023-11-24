@@ -19,9 +19,10 @@
 #include "perfetto/base/logging.h"
 #include "perfetto/protozero/proto_decoder.h"
 #include "perfetto/protozero/proto_utils.h"
+#include "src/trace_processor/importers/proto/packet_sequence_state.h"
+#include "src/trace_processor/sorter/trace_sorter.h"
 #include "src/trace_processor/storage/stats.h"
 #include "src/trace_processor/storage/trace_storage.h"
-#include "src/trace_processor/trace_sorter.h"
 
 #include "protos/perfetto/common/builtin_clock.pbzero.h"
 #include "protos/perfetto/trace/ftrace/ftrace_event.pbzero.h"
@@ -69,6 +70,14 @@ base::Status FtraceTokenizer::TokenizeFtraceBundle(
   }
 
   uint32_t cpu = decoder.cpu();
+  static constexpr uint32_t kMaxCpuCount = 1024;
+  if (PERFETTO_UNLIKELY(cpu >= kMaxCpuCount)) {
+    return base::ErrStatus(
+        "CPU %u is greater than maximum allowed of %u. This is likely because "
+        "of trace corruption",
+        cpu, kMaxCpuCount);
+  }
+
   ClockTracker::ClockId clock_id;
   switch (decoder.ftrace_clock()) {
     case FtraceClock::FTRACE_CLOCK_UNSPECIFIED:
@@ -77,6 +86,9 @@ base::Status FtraceTokenizer::TokenizeFtraceBundle(
     case FtraceClock::FTRACE_CLOCK_GLOBAL:
       clock_id = ClockTracker::SeqScopedClockIdToGlobal(
           packet_sequence_id, kFtraceGlobalClockIdForOldKernels);
+      break;
+    case FtraceClock::FTRACE_CLOCK_MONO_RAW:
+      clock_id = BuiltinClock::BUILTIN_CLOCK_MONOTONIC_RAW;
       break;
     case FtraceClock::FTRACE_CLOCK_LOCAL:
       return base::ErrStatus("Unable to parse ftrace packets with local clock");
@@ -145,7 +157,8 @@ void FtraceTokenizer::TokenizeFtraceEvent(uint32_t cpu,
       ResolveTraceTime(context_, clock_id, int64_timestamp);
   if (!timestamp)
     return;
-  context_->sorter->PushFtraceEvent(cpu, *timestamp, std::move(event), state);
+  context_->sorter->PushFtraceEvent(cpu, *timestamp, std::move(event),
+                                    state->current_generation());
 }
 
 PERFETTO_ALWAYS_INLINE

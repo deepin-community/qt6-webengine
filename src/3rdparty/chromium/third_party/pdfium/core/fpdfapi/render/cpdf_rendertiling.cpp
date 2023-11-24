@@ -1,4 +1,4 @@
-// Copyright 2020 PDFium Authors. All rights reserved.
+// Copyright 2020 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,9 +10,9 @@
 #include <memory>
 
 #include "core/fpdfapi/page/cpdf_form.h"
+#include "core/fpdfapi/page/cpdf_pageimagecache.h"
 #include "core/fpdfapi/page/cpdf_tilingpattern.h"
 #include "core/fpdfapi/parser/cpdf_document.h"
-#include "core/fpdfapi/render/cpdf_pagerendercache.h"
 #include "core/fpdfapi/render/cpdf_rendercontext.h"
 #include "core/fpdfapi/render/cpdf_renderoptions.h"
 #include "core/fpdfapi/render/cpdf_renderstatus.h"
@@ -23,7 +23,7 @@ namespace {
 
 RetainPtr<CFX_DIBitmap> DrawPatternBitmap(
     CPDF_Document* pDoc,
-    CPDF_PageRenderCache* pCache,
+    CPDF_PageImageCache* pCache,
     CPDF_TilingPattern* pPattern,
     CPDF_Form* pPatternForm,
     const CFX_Matrix& mtObject2Device,
@@ -37,7 +37,8 @@ RetainPtr<CFX_DIBitmap> DrawPatternBitmap(
     return nullptr;
   }
   CFX_DefaultRenderDevice bitmap_device;
-  bitmap_device.Attach(pBitmap, false, nullptr, false);
+  bitmap_device.AttachWithBackdropAndGroupKnockout(
+      pBitmap, /*pBackdropBitmap=*/nullptr, /*bGroupKnockout=*/true);
   pBitmap->Clear(0);
   CFX_FloatRect cell_bbox =
       pPattern->pattern_to_form().TransformRect(pPattern->bbox());
@@ -57,10 +58,11 @@ RetainPtr<CFX_DIBitmap> DrawPatternBitmap(
   CPDF_RenderContext context(pDoc, nullptr, pCache);
   context.AppendLayer(pPatternForm, mtPattern2Bitmap);
   context.Render(&bitmap_device, nullptr, &options, nullptr);
-#if defined(_SKIA_SUPPORT_PATHS_)
-  bitmap_device.Flush(true);
-  pBitmap->UnPreMultiply();
-#endif
+
+#ifdef _SKIA_SUPPORT_
+  if (CFX_DefaultRenderDevice::SkiaIsDefaultRenderer())
+    pBitmap->UnPreMultiply();
+#endif  // _SKIA_SUPPORT_
   return pBitmap;
 }
 
@@ -120,8 +122,8 @@ RetainPtr<CFX_DIBitmap> CPDF_RenderTiling::Draw(
     if (!pPattern->colored())
       pStates = CPDF_RenderStatus::CloneObjStates(pPageObj, bStroke);
 
-    const CPDF_Dictionary* pFormDict = pPatternForm->GetDict();
-    const CPDF_Dictionary* pFormResource = pFormDict->GetDictFor("Resources");
+    RetainPtr<const CPDF_Dictionary> pFormResource =
+        pPatternForm->GetDict()->GetDictFor("Resources");
     for (int col = min_col; col <= max_col; col++) {
       for (int row = min_row; row <= max_row; row++) {
         CFX_PointF original = mtPattern2Device.Transform(
@@ -194,7 +196,7 @@ RetainPtr<CFX_DIBitmap> CPDF_RenderTiling::Draw(
     return nullptr;
 
   pScreen->Clear(0);
-  const uint8_t* const src_buf = pPatternBitmap->GetBuffer();
+  pdfium::span<const uint8_t> src_buf = pPatternBitmap->GetBuffer();
   for (int col = min_col; col <= max_col; col++) {
     for (int row = min_row; row <= max_row; row++) {
       int start_x;
@@ -227,10 +229,11 @@ RetainPtr<CFX_DIBitmap> CPDF_RenderTiling::Draw(
         uint32_t* dest_buf = reinterpret_cast<uint32_t*>(
             pScreen->GetWritableScanline(start_y).subspan(start_x * 4).data());
         if (pPattern->colored()) {
-          const auto* src_buf32 = reinterpret_cast<const uint32_t*>(src_buf);
+          const auto* src_buf32 =
+              reinterpret_cast<const uint32_t*>(src_buf.data());
           *dest_buf = *src_buf32;
         } else {
-          *dest_buf = (*src_buf << 24) | (fill_argb & 0xffffff);
+          *dest_buf = (*(src_buf.data()) << 24) | (fill_argb & 0xffffff);
         }
       } else {
         if (pPattern->colored()) {

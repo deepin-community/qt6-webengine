@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,11 +9,11 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/sequence_checker.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
@@ -22,8 +22,6 @@
 #include "chrome/browser/net/secure_dns_config.h"
 #include "chrome/browser/net/stub_resolver_config_reader.h"
 #include "chrome/browser/net/system_network_context_manager.h"
-#include "chrome/browser/profiles/incognito_helpers.h"
-#include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/network_service_instance.h"
 #include "content/public/browser/storage_partition.h"
@@ -352,7 +350,7 @@ void DnsProbeServiceImpl::CallCallbackAsynchronously() {
   std::vector<ProbeCallback> callbacks;
   callbacks.swap(pending_callbacks_);
 
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(std::move(callbacks.front()), cached_result_));
 }
 
@@ -407,21 +405,16 @@ DnsProbeServiceFactory* DnsProbeServiceFactory::GetInstance() {
 }
 
 DnsProbeServiceFactory::DnsProbeServiceFactory()
-    : BrowserContextKeyedServiceFactory(
+    : ProfileKeyedServiceFactory(
           "DnsProbeService",
-          BrowserContextDependencyManager::GetInstance()) {}
+          // Create separate service for incognito profiles.
+          ProfileSelections::BuildForRegularAndIncognito()) {}
 
 DnsProbeServiceFactory::~DnsProbeServiceFactory() {}
 
 KeyedService* DnsProbeServiceFactory::BuildServiceInstanceFor(
     content::BrowserContext* context) const {
   return new DnsProbeServiceImpl(context);
-}
-
-content::BrowserContext* DnsProbeServiceFactory::GetBrowserContextToUse(
-    content::BrowserContext* context) const {
-  // Create separate service for incognito profiles.
-  return chrome::GetBrowserContextOwnInstanceInIncognito(context);
 }
 
 // static

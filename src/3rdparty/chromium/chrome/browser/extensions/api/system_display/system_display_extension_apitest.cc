@@ -1,12 +1,12 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <memory>
 #include <string>
 
-#include "base/bind.h"
 #include "base/debug/leak_annotations.h"
+#include "base/functional/bind.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/extensions/extension_apitest.h"
@@ -15,16 +15,12 @@
 #include "extensions/browser/api/system_display/system_display_api.h"
 #include "extensions/browser/api_test_utils.h"
 #include "extensions/browser/mock_display_info_provider.h"
-#include "extensions/browser/mock_screen.h"
 #include "extensions/common/api/system_display.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/display/display.h"
-#include "ui/display/screen.h"
-#include "ui/display/test/scoped_screen_override.h"
 
 namespace extensions {
 
-using display::Screen;
-using display::test::ScopedScreenOverride;
 using ContextType = ExtensionBrowserTest::ContextType;
 
 class SystemDisplayExtensionApiTest
@@ -39,27 +35,19 @@ class SystemDisplayExtensionApiTest
 
   void SetUpOnMainThread() override {
     ExtensionApiTest::SetUpOnMainThread();
-    ANNOTATE_LEAKING_OBJECT_PTR(Screen::GetScreen());
-    scoped_screen_override_ =
-        std::make_unique<ScopedScreenOverride>(screen_.get());
     DisplayInfoProvider::InitializeForTesting(provider_.get());
   }
 
   void TearDownOnMainThread() override {
     ExtensionApiTest::TearDownOnMainThread();
-    scoped_screen_override_.reset();
   }
 
  protected:
   std::unique_ptr<MockDisplayInfoProvider> provider_ =
       std::make_unique<MockDisplayInfoProvider>();
-
- private:
-  std::unique_ptr<Screen> screen_ = std::make_unique<MockScreen>();
-  std::unique_ptr<ScopedScreenOverride> scoped_screen_override_;
 };
 
-// TODO(crbug.com/1231357): MockScreen causes random failures on Windows.
+// TODO(crbug.com/1231357): Revisit this after screen creation refactoring.
 #if !BUILDFLAG(IS_WIN)
 
 INSTANTIATE_TEST_SUITE_P(PersistentBackground,
@@ -75,7 +63,7 @@ IN_PROC_BROWSER_TEST_P(SystemDisplayExtensionApiTest, GetDisplayInfo) {
 
 #endif  // BUILDFLAG(IS_WIN)
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !(BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS))
 
 using SystemDisplayExtensionApiFunctionTest = SystemDisplayExtensionApiTest;
 
@@ -93,8 +81,7 @@ IN_PROC_BROWSER_TEST_P(SystemDisplayExtensionApiFunctionTest, SetDisplay) {
             api_test_utils::RunFunctionAndReturnError(
                 set_info_function.get(), "[\"display_id\", {}]", profile()));
 
-  std::unique_ptr<base::DictionaryValue> set_info =
-      provider_->GetSetInfoValue();
+  absl::optional<base::Value::Dict> set_info = provider_->GetSetInfoValue();
   EXPECT_FALSE(set_info);
 }
 

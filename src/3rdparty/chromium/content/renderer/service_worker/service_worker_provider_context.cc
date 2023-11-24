@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,13 +8,13 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/containers/cxx20_erase.h"
+#include "base/functional/bind.h"
 #include "base/memory/ref_counted.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/sequenced_task_runner_helpers.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
-#include "base/threading/sequenced_task_runner_handle.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "content/renderer/service_worker/controller_service_worker_connector.h"
 #include "content/renderer/service_worker/service_worker_subresource_loader.h"
 #include "content/renderer/service_worker/web_service_worker_provider_impl.h"
@@ -40,11 +40,7 @@ void CreateSubresourceLoaderFactoryForProviderContext(
     mojo::PendingReceiver<blink::mojom::ControllerServiceWorkerConnector>
         connector_receiver,
     mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver,
-    scoped_refptr<base::SequencedTaskRunner> task_runner,
-    scoped_refptr<base::SequencedTaskRunner> worker_timing_callback_task_runner,
-    base::RepeatingCallback<
-        void(int, mojo::PendingReceiver<blink::mojom::WorkerTimingContainer>)>
-        worker_timing_callback) {
+    scoped_refptr<base::SequencedTaskRunner> task_runner) {
   auto connector = base::MakeRefCounted<ControllerServiceWorkerConnector>(
       std::move(remote_container_host), std::move(remote_controller),
       client_id);
@@ -53,9 +49,7 @@ void CreateSubresourceLoaderFactoryForProviderContext(
       std::move(connector),
       network::SharedURLLoaderFactory::Create(
           std::move(pending_fallback_factory)),
-      std::move(receiver), std::move(task_runner),
-      std::move(worker_timing_callback_task_runner),
-      std::move(worker_timing_callback));
+      std::move(receiver), std::move(task_runner));
 }
 
 }  // namespace
@@ -69,7 +63,8 @@ ServiceWorkerProviderContext::ServiceWorkerProviderContext(
     blink::mojom::ControllerServiceWorkerInfoPtr controller_info,
     scoped_refptr<network::SharedURLLoaderFactory> fallback_loader_factory)
     : container_type_(container_type),
-      main_thread_task_runner_(base::ThreadTaskRunnerHandle::Get()),
+      main_thread_task_runner_(
+          base::SingleThreadTaskRunner::GetCurrentDefault()),
       receiver_(this, std::move(receiver)),
       fallback_loader_factory_(std::move(fallback_loader_factory)) {
   if (host_remote.is_valid())
@@ -112,6 +107,15 @@ ServiceWorkerProviderContext::GetSubresourceLoaderFactoryInternal() {
     return nullptr;
   }
 
+  if (effective_fetch_handler_type_ !=
+      blink::mojom::ServiceWorkerFetchHandlerType::kNotSkippable) {
+    // The fetch handler can be skipped.  The service worker process should
+    // not be ready for this case.
+    CountFeature(
+        blink::mojom::WebFeature::kServiceWorkerSkippedForSubresourceLoad);
+    return nullptr;
+  }
+
   if (!subresource_loader_factory_) {
     DCHECK(!controller_connector_);
     DCHECK(remote_controller_);
@@ -127,16 +131,13 @@ ServiceWorkerProviderContext::GetSubresourceLoaderFactoryInternal() {
         {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
     task_runner->PostTask(
         FROM_HERE,
-        base::BindOnce(
-            &CreateSubresourceLoaderFactoryForProviderContext,
-            std::move(remote_container_host), std::move(remote_controller_),
-            client_id_, fallback_loader_factory_->Clone(),
-            controller_connector_.BindNewPipeAndPassReceiver(),
-            subresource_loader_factory_.BindNewPipeAndPassReceiver(),
-            task_runner, base::SequencedTaskRunnerHandle::Get(),
-            base::BindRepeating(
-                &ServiceWorkerProviderContext::AddPendingWorkerTimingReceiver,
-                weak_factory_.GetWeakPtr())));
+        base::BindOnce(&CreateSubresourceLoaderFactoryForProviderContext,
+                       std::move(remote_container_host),
+                       std::move(remote_controller_), client_id_,
+                       fallback_loader_factory_->Clone(),
+                       controller_connector_.BindNewPipeAndPassReceiver(),
+                       subresource_loader_factory_.BindNewPipeAndPassReceiver(),
+                       task_runner));
 
     DCHECK(!weak_wrapped_subresource_loader_factory_);
     weak_wrapped_subresource_loader_factory_ =
@@ -239,26 +240,6 @@ void ServiceWorkerProviderContext::NotifyExecutionReady() {
   container_host_->OnExecutionReady();
 }
 
-void ServiceWorkerProviderContext::AddPendingWorkerTimingReceiver(
-    int request_id,
-    mojo::PendingReceiver<blink::mojom::WorkerTimingContainer> receiver) {
-  // TODO(https://crbug.com/900700): Handle redirects properly. Currently on
-  // redirect, the receiver is replaced with a new one, discarding the timings
-  // before the redirect.
-  worker_timing_container_receivers_[request_id] = std::move(receiver);
-}
-
-mojo::PendingReceiver<blink::mojom::WorkerTimingContainer>
-ServiceWorkerProviderContext::TakePendingWorkerTimingReceiver(int request_id) {
-  auto iter = worker_timing_container_receivers_.find(request_id);
-  if (iter == worker_timing_container_receivers_.end()) {
-    return mojo::NullReceiver();
-  }
-  auto worker_timing_receiver = std::move(iter->second);
-  worker_timing_container_receivers_.erase(iter);
-  return worker_timing_receiver;
-}
-
 void ServiceWorkerProviderContext::BindServiceWorkerWorkerClientRemote(
     blink::CrossVariantMojoRemote<
         blink::mojom::ServiceWorkerWorkerClientInterfaceBase> pending_client) {
@@ -292,6 +273,14 @@ blink::mojom::ControllerServiceWorkerMode
 ServiceWorkerProviderContext::GetControllerServiceWorkerMode() const {
   DCHECK(main_thread_task_runner_->RunsTasksInCurrentSequence());
   return controller_mode_;
+}
+
+blink::mojom::ServiceWorkerFetchHandlerType
+ServiceWorkerProviderContext::GetFetchHandlerType() const {
+  DCHECK(main_thread_task_runner_->RunsTasksInCurrentSequence());
+  DCHECK_NE(controller_version_id_,
+            blink::mojom::kInvalidServiceWorkerVersionId);
+  return fetch_handler_type_;
 }
 
 const blink::WebString ServiceWorkerProviderContext::client_id() const {
@@ -334,6 +323,8 @@ void ServiceWorkerProviderContext::SetController(
               blink::mojom::ControllerServiceWorkerMode::kNoController &&
           controller_));
   controller_mode_ = controller_info->mode;
+  fetch_handler_type_ = controller_info->fetch_handler_type;
+  effective_fetch_handler_type_ = controller_info->effective_fetch_handler_type;
   remote_controller_ = std::move(controller_info->remote_controller);
 
   // Propagate the controller to workers related to this provider.

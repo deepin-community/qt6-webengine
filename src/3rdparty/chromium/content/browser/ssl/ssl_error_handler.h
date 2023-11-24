@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,6 @@
 #define CONTENT_BROWSER_SSL_SSL_ERROR_HANDLER_H_
 
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/global_request_id.h"
@@ -44,7 +43,7 @@ class SSLErrorHandler {
 
   SSLErrorHandler(WebContents* web_contents,
                   const base::WeakPtr<Delegate>& delegate,
-                  bool is_main_frame_request,
+                  bool is_primary_main_frame_request,
                   const GURL& url,
                   int net_error,
                   const net::SSLInfo& ssl_info,
@@ -59,7 +58,9 @@ class SSLErrorHandler {
 
   const GURL& request_url() const { return request_url_; }
 
-  bool is_main_frame_request() const { return is_main_frame_request_; }
+  bool is_primary_main_frame_request() const {
+    return is_primary_main_frame_request_;
+  }
 
   WebContents* web_contents() const { return web_contents_; }
 
@@ -87,8 +88,8 @@ class SSLErrorHandler {
   // The URL for the request that generated the error.
   const GURL request_url_;
 
-  // Whether this request is for the main frame's html.
-  const bool is_main_frame_request_;
+  // Whether this request is for the primary main frame's html.
+  const bool is_primary_main_frame_request_;
 
   // The net::SSLInfo associated with the request that generated the error.
   const net::SSLInfo ssl_info_;

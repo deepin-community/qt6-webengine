@@ -1,25 +1,29 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/imagecapture/image_capture.h"
 
-#include <memory>
 #include <utility>
 
-#include "base/callback_helpers.h"
+#include "base/containers/contains.h"
+#include "base/functional/callback_helpers.h"
 #include "base/trace_event/trace_event.h"
+#include "base/types/strong_alias.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/mojom/permissions/permission_status.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/bindings/core/v8/callback_promise_adapter.h"
+#include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_fill_light_mode.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_media_settings_range.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_media_track_capabilities.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_media_track_constraints.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_media_track_settings.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_photo_capabilities.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_photo_settings.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_point_2d.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_union_boolean_constrainbooleanparameters.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_union_boolean_constraindoublerange_double.h"
@@ -30,19 +34,19 @@
 #include "third_party/blink/renderer/core/fileapi/blob.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/imagebitmap/image_bitmap.h"
-#include "third_party/blink/renderer/modules/event_target_modules.h"
 #include "third_party/blink/renderer/modules/imagecapture/image_capture_frame_grabber.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream_track.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream_video_track.h"
+#include "third_party/blink/renderer/modules/mediastream/overconstrained_error.h"
 #include "third_party/blink/renderer/modules/permissions/permission_utils.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_component.h"
-#include "third_party/blink/renderer/platform/mojo/mojo_helper.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
 
+using BackgroundBlurMode = media::mojom::blink::BackgroundBlurMode;
 using FillLightMode = media::mojom::blink::FillLightMode;
 using MeteringMode = media::mojom::blink::MeteringMode;
 using RedEyeReduction = media::mojom::blink::RedEyeReduction;
@@ -53,6 +57,97 @@ const char kNoServiceError[] = "ImageCapture service unavailable.";
 
 const char kInvalidStateTrackError[] =
     "The associated Track is in an invalid state";
+
+using CopyPanTiltZoom = base::StrongAlias<class CopyPanTiltZoomTag, bool>;
+
+template <typename T>
+void CopyCommonMembers(const T* source,
+                       T* destination,
+                       CopyPanTiltZoom copy_pan_tilt_zoom) {
+  DCHECK(source);
+  DCHECK(destination);
+  // Merge any present |source| common members into |destination|.
+  if (source->hasWhiteBalanceMode()) {
+    destination->setWhiteBalanceMode(source->whiteBalanceMode());
+  }
+  if (source->hasExposureMode()) {
+    destination->setExposureMode(source->exposureMode());
+  }
+  if (source->hasFocusMode()) {
+    destination->setFocusMode(source->focusMode());
+  }
+  if (source->hasExposureCompensation()) {
+    destination->setExposureCompensation(source->exposureCompensation());
+  }
+  if (source->hasExposureTime()) {
+    destination->setExposureTime(source->exposureTime());
+  }
+  if (source->hasColorTemperature()) {
+    destination->setColorTemperature(source->colorTemperature());
+  }
+  if (source->hasIso()) {
+    destination->setIso(source->iso());
+  }
+  if (source->hasBrightness()) {
+    destination->setBrightness(source->brightness());
+  }
+  if (source->hasContrast()) {
+    destination->setContrast(source->contrast());
+  }
+  if (source->hasSaturation()) {
+    destination->setSaturation(source->saturation());
+  }
+  if (source->hasSharpness()) {
+    destination->setSharpness(source->sharpness());
+  }
+  if (source->hasFocusDistance()) {
+    destination->setFocusDistance(source->focusDistance());
+  }
+  if (copy_pan_tilt_zoom) {
+    if (source->hasPan()) {
+      destination->setPan(source->pan());
+    }
+    if (source->hasTilt()) {
+      destination->setTilt(source->tilt());
+    }
+    if (source->hasZoom()) {
+      destination->setZoom(source->zoom());
+    }
+  }
+  if (source->hasTorch()) {
+    destination->setTorch(source->torch());
+  }
+  if (source->hasBackgroundBlur()) {
+    destination->setBackgroundBlur(source->backgroundBlur());
+  }
+}
+
+void CopyCapabilities(const MediaTrackCapabilities* source,
+                      MediaTrackCapabilities* destination,
+                      CopyPanTiltZoom copy_pan_tilt_zoom) {
+  // Merge any present |source| members into |destination|.
+  CopyCommonMembers(source, destination, copy_pan_tilt_zoom);
+}
+
+void CopyConstraintSet(const MediaTrackConstraintSet* source,
+                       MediaTrackConstraintSet* destination,
+                       CopyPanTiltZoom copy_pan_tilt_zoom) {
+  // Merge any present |source| members into |destination|.
+  CopyCommonMembers(source, destination, copy_pan_tilt_zoom);
+  if (source->hasPointsOfInterest()) {
+    destination->setPointsOfInterest(source->pointsOfInterest());
+  }
+}
+
+void CopySettings(const MediaTrackSettings* source,
+                  MediaTrackSettings* destination,
+                  CopyPanTiltZoom copy_pan_tilt_zoom) {
+  // Merge any present |source| members into |destination|.
+  CopyCommonMembers(source, destination, copy_pan_tilt_zoom);
+  if (source->hasPointsOfInterest() && !source->pointsOfInterest().empty()) {
+    destination->setPointsOfInterest(source->pointsOfInterest());
+  }
+}
 
 bool TrackIsInactive(const MediaStreamTrack& track) {
   // Spec instructs to return an exception if the Track's readyState() is not
@@ -69,8 +164,7 @@ MeteringMode ParseMeteringMode(const String& blink_mode) {
     return MeteringMode::CONTINUOUS;
   if (blink_mode == "none")
     return MeteringMode::NONE;
-  NOTREACHED();
-  return MeteringMode::NONE;
+  NOTREACHED_NORETURN();
 }
 
 FillLightMode ParseFillLightMode(const String& blink_mode) {
@@ -80,8 +174,17 @@ FillLightMode ParseFillLightMode(const String& blink_mode) {
     return FillLightMode::AUTO;
   if (blink_mode == "flash")
     return FillLightMode::FLASH;
-  NOTREACHED();
-  return FillLightMode::OFF;
+  NOTREACHED_NORETURN();
+}
+
+bool ToBooleanMode(BackgroundBlurMode mode) {
+  switch (mode) {
+    case BackgroundBlurMode::OFF:
+      return false;
+    case BackgroundBlurMode::BLUR:
+      return true;
+  }
+  NOTREACHED_NORETURN();
 }
 
 WebString ToString(MeteringMode value) {
@@ -95,6 +198,7 @@ WebString ToString(MeteringMode value) {
     case MeteringMode::CONTINUOUS:
       return WebString::FromUTF8("continuous");
   }
+  NOTREACHED_NORETURN();
 }
 
 V8FillLightMode ToV8FillLightMode(FillLightMode value) {
@@ -106,6 +210,7 @@ V8FillLightMode ToV8FillLightMode(FillLightMode value) {
     case FillLightMode::FLASH:
       return V8FillLightMode(V8FillLightMode::Enum::kFlash);
   }
+  NOTREACHED_NORETURN();
 }
 
 WebString ToString(RedEyeReduction value) {
@@ -117,6 +222,7 @@ WebString ToString(RedEyeReduction value) {
     case RedEyeReduction::CONTROLLABLE:
       return WebString::FromUTF8("controllable");
   }
+  NOTREACHED_NORETURN();
 }
 
 MediaSettingsRange* ToMediaSettingsRange(
@@ -151,99 +257,32 @@ ImageCapture* ImageCapture::Create(ExecutionContext* context,
 }
 
 ImageCapture::~ImageCapture() {
-  DCHECK(!HasEventListeners());
-  // There should be no more outstanding |m_serviceRequests| at this point
+  // There should be no more outstanding |service_requests_| at this point
   // since each of them holds a persistent handle to this object.
-  DCHECK(service_requests_.IsEmpty());
-}
-
-const AtomicString& ImageCapture::InterfaceName() const {
-  return event_target_names::kImageCapture;
-}
-
-ExecutionContext* ImageCapture::GetExecutionContext() const {
-  return ExecutionContextLifecycleObserver::GetExecutionContext();
-}
-
-bool ImageCapture::HasPendingActivity() const {
-  return GetExecutionContext() && HasEventListeners();
+  DCHECK(service_requests_.empty());
 }
 
 void ImageCapture::ContextDestroyed() {
-  RemoveAllEventListeners();
   service_requests_.clear();
-  DCHECK(!HasEventListeners());
 }
 
 ScriptPromise ImageCapture::getPhotoCapabilities(ScriptState* script_state) {
-  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
-  ScriptPromise promise = resolver->Promise();
-
-  if (TrackIsInactive(*stream_track_)) {
-    resolver->Reject(MakeGarbageCollected<DOMException>(
-        DOMExceptionCode::kInvalidStateError, kInvalidStateTrackError));
-    return promise;
-  }
-
-  if (!service_.is_bound()) {
-    resolver->Reject(MakeGarbageCollected<DOMException>(
-        DOMExceptionCode::kNotFoundError, kNoServiceError));
-    return promise;
-  }
-  service_requests_.insert(resolver);
-
-  auto resolver_cb = WTF::Bind(&ImageCapture::ResolveWithPhotoCapabilities,
-                               WrapPersistent(this));
-
-  // m_streamTrack->component()->source()->id() is the renderer "name" of the
-  // camera;
-  // TODO(mcasas) consider sending the security origin as well:
-  // scriptState->getExecutionContext()->getSecurityOrigin()->toString()
-  service_->GetPhotoState(
-      stream_track_->Component()->Source()->Id(),
-      WTF::Bind(&ImageCapture::OnMojoGetPhotoState, WrapPersistent(this),
-                WrapPersistent(resolver), std::move(resolver_cb),
-                false /* trigger_take_photo */));
-  return promise;
+  return GetMojoPhotoState(
+      script_state, WTF::BindOnce(&ImageCapture::ResolveWithPhotoCapabilities,
+                                  WrapPersistent(this)));
 }
 
 ScriptPromise ImageCapture::getPhotoSettings(ScriptState* script_state) {
-  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
-  ScriptPromise promise = resolver->Promise();
-
-  if (TrackIsInactive(*stream_track_)) {
-    resolver->Reject(MakeGarbageCollected<DOMException>(
-        DOMExceptionCode::kInvalidStateError, kInvalidStateTrackError));
-    return promise;
-  }
-
-  if (!service_.is_bound()) {
-    resolver->Reject(MakeGarbageCollected<DOMException>(
-        DOMExceptionCode::kNotFoundError, kNoServiceError));
-    return promise;
-  }
-  service_requests_.insert(resolver);
-
-  auto resolver_cb =
-      WTF::Bind(&ImageCapture::ResolveWithPhotoSettings, WrapPersistent(this));
-
-  // m_streamTrack->component()->source()->id() is the renderer "name" of the
-  // camera;
-  // TODO(mcasas) consider sending the security origin as well:
-  // scriptState->getExecutionContext()->getSecurityOrigin()->toString()
-  service_->GetPhotoState(
-      stream_track_->Component()->Source()->Id(),
-      WTF::Bind(&ImageCapture::OnMojoGetPhotoState, WrapPersistent(this),
-                WrapPersistent(resolver), std::move(resolver_cb),
-                false /* trigger_take_photo */));
-  return promise;
+  return GetMojoPhotoState(
+      script_state, WTF::BindOnce(&ImageCapture::ResolveWithPhotoSettings,
+                                  WrapPersistent(this)));
 }
 
-ScriptPromise ImageCapture::setOptions(ScriptState* script_state,
-                                       const PhotoSettings* photo_settings,
-                                       bool trigger_take_photo /* = false */) {
+ScriptPromise ImageCapture::takePhoto(ScriptState* script_state,
+                                      const PhotoSettings* photo_settings) {
   TRACE_EVENT_INSTANT0(TRACE_DISABLED_BY_DEFAULT("video_and_image_capture"),
-                       "ImageCapture::setOptions", TRACE_EVENT_SCOPE_PROCESS);
+                       "ImageCapture::takePhoto", TRACE_EVENT_SCOPE_PROCESS);
+
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = resolver->Promise();
 
@@ -316,21 +355,11 @@ ScriptPromise ImageCapture::setOptions(ScriptState* script_state,
     settings->fill_light_mode = ParseFillLightMode(fill_light_mode);
   }
 
-  service_->SetOptions(
-      stream_track_->Component()->Source()->Id(), std::move(settings),
-      WTF::Bind(&ImageCapture::OnMojoSetOptions, WrapPersistent(this),
-                WrapPersistent(resolver), trigger_take_photo));
+  service_->SetPhotoOptions(
+      SourceId(), std::move(settings),
+      WTF::BindOnce(&ImageCapture::OnMojoSetPhotoOptions, WrapPersistent(this),
+                    WrapPersistent(resolver), /*trigger_take_photo=*/true));
   return promise;
-}
-
-ScriptPromise ImageCapture::takePhoto(ScriptState* script_state,
-                                      const PhotoSettings* photo_settings) {
-  TRACE_EVENT_INSTANT0(TRACE_DISABLED_BY_DEFAULT("video_and_image_capture"),
-                       "ImageCapture::takePhoto (with settings)",
-                       TRACE_EVENT_SCOPE_PROCESS);
-
-  return setOptions(script_state, photo_settings,
-                    true /* trigger_take_photo */);
 }
 
 ScriptPromise ImageCapture::grabFrame(ScriptState* script_state) {
@@ -364,58 +393,65 @@ ScriptPromise ImageCapture::grabFrame(ScriptState* script_state) {
   return promise;
 }
 
+void ImageCapture::UpdateAndCheckMediaTrackSettingsAndCapabilities(
+    base::OnceCallback<void(bool)> callback) {
+  service_->GetPhotoState(
+      stream_track_->Component()->Source()->Id(),
+      WTF::BindOnce(&ImageCapture::GotPhotoState, WrapPersistent(this),
+                    std::move(callback)));
+}
+
+void ImageCapture::GotPhotoState(
+    base::OnceCallback<void(bool)> callback,
+    media::mojom::blink::PhotoStatePtr photo_state) {
+  MediaTrackSettings* settings = MediaTrackSettings::Create();
+  MediaTrackCapabilities* capabilities = MediaTrackCapabilities::Create();
+
+  // Take a snapshot of local track settings and capabilities.
+  CopySettings(settings_, settings, CopyPanTiltZoom(true));
+  CopyCapabilities(capabilities_, capabilities, CopyPanTiltZoom(true));
+
+  // Update local track settings and capabilities.
+  UpdateMediaTrackSettingsAndCapabilities(base::DoNothing(),
+                                          std::move(photo_state));
+
+  // Check whether background blur settings and capabilities have changed.
+  if (settings_->hasBackgroundBlur() != settings->hasBackgroundBlur() ||
+      (settings_->hasBackgroundBlur() &&
+       settings_->backgroundBlur() != settings->backgroundBlur()) ||
+      capabilities_->hasBackgroundBlur() != capabilities->hasBackgroundBlur() ||
+      (capabilities_->hasBackgroundBlur() &&
+       capabilities_->backgroundBlur() != capabilities->backgroundBlur())) {
+    std::move(callback).Run(true);
+    return;
+  }
+
+  std::move(callback).Run(false);
+}
+
 void ImageCapture::GetMediaTrackCapabilities(
     MediaTrackCapabilities* capabilities) const {
   // Merge any present |capabilities_| members into |capabilities|.
-
-  if (capabilities_->hasWhiteBalanceMode())
-    capabilities->setWhiteBalanceMode(capabilities_->whiteBalanceMode());
-  if (capabilities_->hasExposureMode())
-    capabilities->setExposureMode(capabilities_->exposureMode());
-  if (capabilities_->hasFocusMode())
-    capabilities->setFocusMode(capabilities_->focusMode());
-  if (capabilities_->hasExposureCompensation()) {
-    capabilities->setExposureCompensation(
-        capabilities_->exposureCompensation());
-  }
-  if (capabilities_->hasExposureTime())
-    capabilities->setExposureTime(capabilities_->exposureTime());
-
-  if (capabilities_->hasColorTemperature())
-    capabilities->setColorTemperature(capabilities_->colorTemperature());
-  if (capabilities_->hasIso())
-    capabilities->setIso(capabilities_->iso());
-
-  if (capabilities_->hasBrightness())
-    capabilities->setBrightness(capabilities_->brightness());
-  if (capabilities_->hasContrast())
-    capabilities->setContrast(capabilities_->contrast());
-  if (capabilities_->hasSaturation())
-    capabilities->setSaturation(capabilities_->saturation());
-  if (capabilities_->hasSharpness())
-    capabilities->setSharpness(capabilities_->sharpness());
-
-  if (capabilities_->hasFocusDistance())
-    capabilities->setFocusDistance(capabilities_->focusDistance());
-
-  if (HasPanTiltZoomPermissionGranted()) {
-    if (capabilities_->hasPan())
-      capabilities->setPan(capabilities_->pan());
-    if (capabilities_->hasTilt())
-      capabilities->setTilt(capabilities_->tilt());
-    if (capabilities_->hasZoom())
-      capabilities->setZoom(capabilities_->zoom());
-  }
-
-  if (capabilities_->hasTorch())
-    capabilities->setTorch(capabilities_->torch());
+  CopyCapabilities(capabilities_, capabilities,
+                   CopyPanTiltZoom(HasPanTiltZoomPermissionGranted()));
 }
 
 // TODO(mcasas): make the implementation fully Spec compliant, see the TODOs
 // inside the method, https://crbug.com/708723.
 void ImageCapture::SetMediaTrackConstraints(
     ScriptPromiseResolver* resolver,
-    const HeapVector<Member<MediaTrackConstraintSet>>& constraints_vector) {
+    const MediaTrackConstraints* all_constraints) {
+  DCHECK(all_constraints);
+  if (!all_constraints->hasAdvanced() || all_constraints->advanced().empty()) {
+    // TODO(crbug.com/1408091): This is not spec compliant.
+    // If there are no advanced constraints (but only required and optional
+    // constraints), the required and optional constraints should be applied.
+    ClearMediaTrackConstraints();
+    resolver->Resolve();
+    return;
+  }
+
+  const auto& constraints_vector = all_constraints->advanced();
   DCHECK_GT(constraints_vector.size(), 0u);
   // TODO(mcasas): add support more than one single advanced constraint.
   const MediaTrackConstraintSet* constraints = constraints_vector[0];
@@ -455,6 +491,8 @@ void ImageCapture::SetMediaTrackConstraints(
     UseCounter::Count(context, WebFeature::kImageCaptureZoom);
   if (constraints->hasTorch())
     UseCounter::Count(context, WebFeature::kImageCaptureTorch);
+  // TODO(eero.hakkinen@intel.com): count how many times backgroundBlur is
+  // used.
 
   if (!service_.is_bound()) {
     resolver->Reject(MakeGarbageCollected<DOMException>(
@@ -462,30 +500,10 @@ void ImageCapture::SetMediaTrackConstraints(
     return;
   }
 
-  if ((constraints->hasWhiteBalanceMode() &&
-       !capabilities_->hasWhiteBalanceMode()) ||
-      (constraints->hasExposureMode() && !capabilities_->hasExposureMode()) ||
-      (constraints->hasFocusMode() && !capabilities_->hasFocusMode()) ||
-      (constraints->hasExposureCompensation() &&
-       !capabilities_->hasExposureCompensation()) ||
-      (constraints->hasExposureTime() && !capabilities_->hasExposureTime()) ||
-      (constraints->hasColorTemperature() &&
-       !capabilities_->hasColorTemperature()) ||
-      (constraints->hasIso() && !capabilities_->hasIso()) ||
-      (constraints->hasBrightness() && !capabilities_->hasBrightness()) ||
-      (constraints->hasContrast() && !capabilities_->hasContrast()) ||
-      (constraints->hasSaturation() && !capabilities_->hasSaturation()) ||
-      (constraints->hasSharpness() && !capabilities_->hasSharpness()) ||
-      (constraints->hasFocusDistance() && !capabilities_->hasFocusDistance()) ||
-      (constraints->hasPan() &&
-       !(capabilities_->hasPan() && HasPanTiltZoomPermissionGranted())) ||
-      (constraints->hasTilt() &&
-       !(capabilities_->hasTilt() && HasPanTiltZoomPermissionGranted())) ||
-      (constraints->hasZoom() &&
-       !(capabilities_->hasZoom() && HasPanTiltZoomPermissionGranted())) ||
-      (constraints->hasTorch() && !capabilities_->hasTorch())) {
-    resolver->Reject(MakeGarbageCollected<DOMException>(
-        DOMExceptionCode::kNotSupportedError, "Unsupported constraint(s)"));
+  if (absl::optional<String> name =
+          GetConstraintWithNonExistingCapability(constraints)) {
+    resolver->Reject(MakeGarbageCollected<OverconstrainedError>(
+        name.value(), "Unsupported constraint"));
     return;
   }
 
@@ -504,9 +522,8 @@ void ImageCapture::SetMediaTrackConstraints(
         constraints->whiteBalanceMode()->GetAsString();
     if (capabilities_->whiteBalanceMode().Find(white_balance_mode) ==
         kNotFound) {
-      resolver->Reject(MakeGarbageCollected<DOMException>(
-          DOMExceptionCode::kNotSupportedError,
-          "Unsupported whiteBalanceMode."));
+      resolver->Reject(MakeGarbageCollected<OverconstrainedError>(
+          "whiteBalanceMode", "Unsupported whiteBalanceMode."));
       return;
     }
     temp_constraints->setWhiteBalanceMode(constraints->whiteBalanceMode());
@@ -517,8 +534,8 @@ void ImageCapture::SetMediaTrackConstraints(
   if (settings->has_exposure_mode) {
     const auto exposure_mode = constraints->exposureMode()->GetAsString();
     if (capabilities_->exposureMode().Find(exposure_mode) == kNotFound) {
-      resolver->Reject(MakeGarbageCollected<DOMException>(
-          DOMExceptionCode::kNotSupportedError, "Unsupported exposureMode."));
+      resolver->Reject(MakeGarbageCollected<OverconstrainedError>(
+          "exposureMode", "Unsupported exposureMode."));
       return;
     }
     temp_constraints->setExposureMode(constraints->exposureMode());
@@ -530,8 +547,8 @@ void ImageCapture::SetMediaTrackConstraints(
   if (settings->has_focus_mode) {
     const auto focus_mode = constraints->focusMode()->GetAsString();
     if (capabilities_->focusMode().Find(focus_mode) == kNotFound) {
-      resolver->Reject(MakeGarbageCollected<DOMException>(
-          DOMExceptionCode::kNotSupportedError, "Unsupported focusMode."));
+      resolver->Reject(MakeGarbageCollected<OverconstrainedError>(
+          "focusMode", "Unsupported focusMode."));
       return;
     }
     temp_constraints->setFocusMode(constraints->focusMode());
@@ -562,9 +579,8 @@ void ImageCapture::SetMediaTrackConstraints(
         constraints->exposureCompensation()->GetAsDouble();
     if (exposure_compensation < capabilities_->exposureCompensation()->min() ||
         exposure_compensation > capabilities_->exposureCompensation()->max()) {
-      resolver->Reject(MakeGarbageCollected<DOMException>(
-          DOMExceptionCode::kNotSupportedError,
-          "exposureCompensation setting out of range"));
+      resolver->Reject(MakeGarbageCollected<OverconstrainedError>(
+          "exposureCompensation", "exposureCompensation setting out of range"));
       return;
     }
     temp_constraints->setExposureCompensation(
@@ -578,9 +594,8 @@ void ImageCapture::SetMediaTrackConstraints(
     const auto exposure_time = constraints->exposureTime()->GetAsDouble();
     if (exposure_time < capabilities_->exposureTime()->min() ||
         exposure_time > capabilities_->exposureTime()->max()) {
-      resolver->Reject(MakeGarbageCollected<DOMException>(
-          DOMExceptionCode::kNotSupportedError,
-          "exposureTime setting out of range"));
+      resolver->Reject(MakeGarbageCollected<OverconstrainedError>(
+          "exposureTime", "exposureTime setting out of range"));
       return;
     }
     temp_constraints->setExposureTime(constraints->exposureTime());
@@ -593,9 +608,8 @@ void ImageCapture::SetMediaTrackConstraints(
         constraints->colorTemperature()->GetAsDouble();
     if (color_temperature < capabilities_->colorTemperature()->min() ||
         color_temperature > capabilities_->colorTemperature()->max()) {
-      resolver->Reject(MakeGarbageCollected<DOMException>(
-          DOMExceptionCode::kNotSupportedError,
-          "colorTemperature setting out of range"));
+      resolver->Reject(MakeGarbageCollected<OverconstrainedError>(
+          "colorTemperature", "colorTemperature setting out of range"));
       return;
     }
     temp_constraints->setColorTemperature(constraints->colorTemperature());
@@ -606,8 +620,8 @@ void ImageCapture::SetMediaTrackConstraints(
     const auto iso = constraints->iso()->GetAsDouble();
     if (iso < capabilities_->iso()->min() ||
         iso > capabilities_->iso()->max()) {
-      resolver->Reject(MakeGarbageCollected<DOMException>(
-          DOMExceptionCode::kNotSupportedError, "iso setting out of range"));
+      resolver->Reject(MakeGarbageCollected<OverconstrainedError>(
+          "iso", "iso setting out of range"));
       return;
     }
     temp_constraints->setIso(constraints->iso());
@@ -620,9 +634,8 @@ void ImageCapture::SetMediaTrackConstraints(
     const auto brightness = constraints->brightness()->GetAsDouble();
     if (brightness < capabilities_->brightness()->min() ||
         brightness > capabilities_->brightness()->max()) {
-      resolver->Reject(MakeGarbageCollected<DOMException>(
-          DOMExceptionCode::kNotSupportedError,
-          "brightness setting out of range"));
+      resolver->Reject(MakeGarbageCollected<OverconstrainedError>(
+          "brightness", "brightness setting out of range"));
       return;
     }
     temp_constraints->setBrightness(constraints->brightness());
@@ -634,9 +647,8 @@ void ImageCapture::SetMediaTrackConstraints(
     const auto contrast = constraints->contrast()->GetAsDouble();
     if (contrast < capabilities_->contrast()->min() ||
         contrast > capabilities_->contrast()->max()) {
-      resolver->Reject(MakeGarbageCollected<DOMException>(
-          DOMExceptionCode::kNotSupportedError,
-          "contrast setting out of range"));
+      resolver->Reject(MakeGarbageCollected<OverconstrainedError>(
+          "contrast", "contrast setting out of range"));
       return;
     }
     temp_constraints->setContrast(constraints->contrast());
@@ -648,9 +660,8 @@ void ImageCapture::SetMediaTrackConstraints(
     const auto saturation = constraints->saturation()->GetAsDouble();
     if (saturation < capabilities_->saturation()->min() ||
         saturation > capabilities_->saturation()->max()) {
-      resolver->Reject(MakeGarbageCollected<DOMException>(
-          DOMExceptionCode::kNotSupportedError,
-          "saturation setting out of range"));
+      resolver->Reject(MakeGarbageCollected<OverconstrainedError>(
+          "saturation", "saturation setting out of range"));
       return;
     }
     temp_constraints->setSaturation(constraints->saturation());
@@ -662,9 +673,8 @@ void ImageCapture::SetMediaTrackConstraints(
     const auto sharpness = constraints->sharpness()->GetAsDouble();
     if (sharpness < capabilities_->sharpness()->min() ||
         sharpness > capabilities_->sharpness()->max()) {
-      resolver->Reject(MakeGarbageCollected<DOMException>(
-          DOMExceptionCode::kNotSupportedError,
-          "sharpness setting out of range"));
+      resolver->Reject(MakeGarbageCollected<OverconstrainedError>(
+          "sharpness", "sharpness setting out of range"));
       return;
     }
     temp_constraints->setSharpness(constraints->sharpness());
@@ -677,9 +687,8 @@ void ImageCapture::SetMediaTrackConstraints(
     const auto focus_distance = constraints->focusDistance()->GetAsDouble();
     if (focus_distance < capabilities_->focusDistance()->min() ||
         focus_distance > capabilities_->focusDistance()->max()) {
-      resolver->Reject(MakeGarbageCollected<DOMException>(
-          DOMExceptionCode::kNotSupportedError,
-          "focusDistance setting out of range"));
+      resolver->Reject(MakeGarbageCollected<OverconstrainedError>(
+          "focusDistance", "focusDistance setting out of range"));
       return;
     }
     temp_constraints->setFocusDistance(constraints->focusDistance());
@@ -696,8 +705,8 @@ void ImageCapture::SetMediaTrackConstraints(
     const auto pan = constraints->pan()->GetAsDouble();
     if (pan < capabilities_->pan()->min() ||
         pan > capabilities_->pan()->max()) {
-      resolver->Reject(MakeGarbageCollected<DOMException>(
-          DOMExceptionCode::kNotSupportedError, "pan setting out of range"));
+      resolver->Reject(MakeGarbageCollected<OverconstrainedError>(
+          "pan", "pan setting out of range"));
       return;
     }
     temp_constraints->setPan(constraints->pan());
@@ -715,8 +724,8 @@ void ImageCapture::SetMediaTrackConstraints(
     const auto tilt = constraints->tilt()->GetAsDouble();
     if (tilt < capabilities_->tilt()->min() ||
         tilt > capabilities_->tilt()->max()) {
-      resolver->Reject(MakeGarbageCollected<DOMException>(
-          DOMExceptionCode::kNotSupportedError, "tilt setting out of range"));
+      resolver->Reject(MakeGarbageCollected<OverconstrainedError>(
+          "tilt", "tilt setting out of range"));
       return;
     }
     temp_constraints->setTilt(constraints->tilt());
@@ -734,8 +743,8 @@ void ImageCapture::SetMediaTrackConstraints(
     const auto zoom = constraints->zoom()->GetAsDouble();
     if (zoom < capabilities_->zoom()->min() ||
         zoom > capabilities_->zoom()->max()) {
-      resolver->Reject(MakeGarbageCollected<DOMException>(
-          DOMExceptionCode::kNotSupportedError, "zoom setting out of range"));
+      resolver->Reject(MakeGarbageCollected<OverconstrainedError>(
+          "zoom", "zoom setting out of range"));
       return;
     }
     temp_constraints->setZoom(constraints->zoom());
@@ -748,28 +757,44 @@ void ImageCapture::SetMediaTrackConstraints(
   if (settings->has_torch) {
     const auto torch = constraints->torch()->GetAsBoolean();
     if (torch && !capabilities_->torch()) {
-      resolver->Reject(MakeGarbageCollected<DOMException>(
-          DOMExceptionCode::kNotSupportedError, "torch not supported"));
+      resolver->Reject(MakeGarbageCollected<OverconstrainedError>(
+          "torch", "torch not supported"));
       return;
     }
     temp_constraints->setTorch(constraints->torch());
     settings->torch = torch;
   }
 
+  settings->has_background_blur_mode =
+      constraints->hasBackgroundBlur() &&
+      constraints->backgroundBlur()->IsBoolean();
+  if (settings->has_background_blur_mode) {
+    const auto background_blur = constraints->backgroundBlur()->GetAsBoolean();
+    if (!base::Contains(capabilities_->backgroundBlur(), background_blur)) {
+      resolver->Reject(MakeGarbageCollected<OverconstrainedError>(
+          "backgroundBlur", "backgroundBlur setting value not supported"));
+      return;
+    }
+    temp_constraints->setBackgroundBlur(constraints->backgroundBlur());
+    settings->background_blur_mode =
+        background_blur ? BackgroundBlurMode::BLUR : BackgroundBlurMode::OFF;
+  }
+
   current_constraints_ = temp_constraints;
 
   service_requests_.insert(resolver);
 
-  service_->SetOptions(
-      stream_track_->Component()->Source()->Id(), std::move(settings),
-      WTF::Bind(&ImageCapture::OnMojoSetOptions, WrapPersistent(this),
-                WrapPersistent(resolver), false /* trigger_take_photo */));
+  service_->SetPhotoOptions(
+      SourceId(), std::move(settings),
+      WTF::BindOnce(&ImageCapture::OnMojoSetPhotoOptions, WrapPersistent(this),
+                    WrapPersistent(resolver), /*trigger_take_photo=*/false));
 }
 
 void ImageCapture::SetPanTiltZoomSettingsFromTrack(
     base::OnceClosure initialized_callback,
     media::mojom::blink::PhotoStatePtr photo_state) {
-  UpdateMediaTrackCapabilities(base::DoNothing(), std::move(photo_state));
+  UpdateMediaTrackSettingsAndCapabilities(base::DoNothing(),
+                                          std::move(photo_state));
 
   auto* video_track = MediaStreamVideoTrack::From(stream_track_->Component());
   DCHECK(video_track);
@@ -818,19 +843,19 @@ void ImageCapture::SetPanTiltZoomSettingsFromTrack(
     settings->zoom = zoom.value();
   }
 
-  service_->SetOptions(
-      stream_track_->Component()->Source()->Id(), std::move(settings),
-      WTF::Bind(&ImageCapture::OnSetPanTiltZoomSettingsFromTrack,
-                WrapPersistent(this), std::move(initialized_callback)));
+  service_->SetPhotoOptions(
+      SourceId(), std::move(settings),
+      WTF::BindOnce(&ImageCapture::OnSetPanTiltZoomSettingsFromTrack,
+                    WrapPersistent(this), std::move(initialized_callback)));
 }
 
 void ImageCapture::OnSetPanTiltZoomSettingsFromTrack(
     base::OnceClosure done_callback,
     bool result) {
   service_->GetPhotoState(
-      stream_track_->Component()->Source()->Id(),
-      WTF::Bind(&ImageCapture::UpdateMediaTrackCapabilities,
-                WrapPersistent(this), std::move(done_callback)));
+      SourceId(),
+      WTF::BindOnce(&ImageCapture::UpdateMediaTrackSettingsAndCapabilities,
+                    WrapPersistent(this), std::move(done_callback)));
 }
 
 const MediaTrackConstraintSet* ImageCapture::GetMediaTrackConstraints() const {
@@ -847,51 +872,8 @@ void ImageCapture::ClearMediaTrackConstraints() {
 
 void ImageCapture::GetMediaTrackSettings(MediaTrackSettings* settings) const {
   // Merge any present |settings_| members into |settings|.
-
-  if (settings_->hasWhiteBalanceMode())
-    settings->setWhiteBalanceMode(settings_->whiteBalanceMode());
-  if (settings_->hasExposureMode())
-    settings->setExposureMode(settings_->exposureMode());
-  if (settings_->hasFocusMode())
-    settings->setFocusMode(settings_->focusMode());
-
-  if (settings_->hasPointsOfInterest() &&
-      !settings_->pointsOfInterest().IsEmpty()) {
-    settings->setPointsOfInterest(settings_->pointsOfInterest());
-  }
-
-  if (settings_->hasExposureCompensation())
-    settings->setExposureCompensation(settings_->exposureCompensation());
-  if (settings_->hasExposureTime())
-    settings->setExposureTime(settings_->exposureTime());
-  if (settings_->hasColorTemperature())
-    settings->setColorTemperature(settings_->colorTemperature());
-  if (settings_->hasIso())
-    settings->setIso(settings_->iso());
-
-  if (settings_->hasBrightness())
-    settings->setBrightness(settings_->brightness());
-  if (settings_->hasContrast())
-    settings->setContrast(settings_->contrast());
-  if (settings_->hasSaturation())
-    settings->setSaturation(settings_->saturation());
-  if (settings_->hasSharpness())
-    settings->setSharpness(settings_->sharpness());
-
-  if (settings_->hasFocusDistance())
-    settings->setFocusDistance(settings_->focusDistance());
-
-  if (HasPanTiltZoomPermissionGranted()) {
-    if (settings_->hasPan())
-      settings->setPan(settings_->pan());
-    if (settings_->hasTilt())
-      settings->setTilt(settings_->tilt());
-    if (settings_->hasZoom())
-      settings->setZoom(settings_->zoom());
-  }
-
-  if (settings_->hasTorch())
-    settings->setTorch(settings_->torch());
+  CopySettings(settings_, settings,
+               CopyPanTiltZoom(HasPanTiltZoomPermissionGranted()));
 }
 
 ImageCapture::ImageCapture(ExecutionContext* context,
@@ -922,15 +904,15 @@ ImageCapture::ImageCapture(ExecutionContext* context,
       service_.BindNewPipeAndPassReceiver(
           context->GetTaskRunner(TaskType::kDOMManipulation)));
 
-  service_.set_disconnect_handler(WTF::Bind(
+  service_.set_disconnect_handler(WTF::BindOnce(
       &ImageCapture::OnServiceConnectionError, WrapWeakPersistent(this)));
 
   // Launch a retrieval of the current photo state, which arrive asynchronously
   // to avoid blocking the main UI thread.
   service_->GetPhotoState(
-      stream_track_->Component()->Source()->Id(),
-      WTF::Bind(&ImageCapture::SetPanTiltZoomSettingsFromTrack,
-                WrapPersistent(this), std::move(initialized_callback)));
+      SourceId(),
+      WTF::BindOnce(&ImageCapture::SetPanTiltZoomSettingsFromTrack,
+                    WrapPersistent(this), std::move(initialized_callback)));
 
   ConnectToPermissionService(
       context, permission_service_.BindNewPipeAndPassReceiver(
@@ -952,6 +934,33 @@ void ImageCapture::OnPermissionStatusChange(
 
 bool ImageCapture::HasPanTiltZoomPermissionGranted() const {
   return pan_tilt_zoom_permission_ == mojom::blink::PermissionStatus::GRANTED;
+}
+
+ScriptPromise ImageCapture::GetMojoPhotoState(
+    ScriptState* script_state,
+    PromiseResolverFunction resolver_cb) {
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
+  ScriptPromise promise = resolver->Promise();
+
+  if (TrackIsInactive(*stream_track_)) {
+    resolver->Reject(MakeGarbageCollected<DOMException>(
+        DOMExceptionCode::kInvalidStateError, kInvalidStateTrackError));
+    return promise;
+  }
+
+  if (!service_.is_bound()) {
+    resolver->Reject(MakeGarbageCollected<DOMException>(
+        DOMExceptionCode::kNotFoundError, kNoServiceError));
+    return promise;
+  }
+  service_requests_.insert(resolver);
+
+  service_->GetPhotoState(
+      SourceId(),
+      WTF::BindOnce(&ImageCapture::OnMojoGetPhotoState, WrapPersistent(this),
+                    WrapPersistent(resolver), std::move(resolver_cb),
+                    /*trigger_take_photo=*/false));
+  return promise;
 }
 
 void ImageCapture::OnMojoGetPhotoState(
@@ -996,17 +1005,18 @@ void ImageCapture::OnMojoGetPhotoState(
   for (const auto& mode : photo_state->fill_light_mode) {
     fill_light_mode.push_back(ToV8FillLightMode(mode));
   }
-  if (!fill_light_mode.IsEmpty())
+  if (!fill_light_mode.empty())
     photo_capabilities_->setFillLightMode(fill_light_mode);
 
   // Update the local track photo_state cache.
-  UpdateMediaTrackCapabilities(base::DoNothing(), std::move(photo_state));
+  UpdateMediaTrackSettingsAndCapabilities(base::DoNothing(),
+                                          std::move(photo_state));
 
   if (trigger_take_photo) {
     service_->TakePhoto(
-        stream_track_->Component()->Source()->Id(),
-        WTF::Bind(&ImageCapture::OnMojoTakePhoto, WrapPersistent(this),
-                  WrapPersistent(resolver)));
+        SourceId(),
+        WTF::BindOnce(&ImageCapture::OnMojoTakePhoto, WrapPersistent(this),
+                      WrapPersistent(resolver)));
     return;
   }
 
@@ -1014,30 +1024,29 @@ void ImageCapture::OnMojoGetPhotoState(
   service_requests_.erase(resolver);
 }
 
-void ImageCapture::OnMojoSetOptions(ScriptPromiseResolver* resolver,
-                                    bool trigger_take_photo,
-                                    bool result) {
+void ImageCapture::OnMojoSetPhotoOptions(ScriptPromiseResolver* resolver,
+                                         bool trigger_take_photo,
+                                         bool result) {
   DCHECK(service_requests_.Contains(resolver));
   TRACE_EVENT_INSTANT0(TRACE_DISABLED_BY_DEFAULT("video_and_image_capture"),
-                       "ImageCapture::OnMojoSetOptions",
+                       "ImageCapture::OnMojoSetPhotoOptions",
                        TRACE_EVENT_SCOPE_PROCESS);
 
   if (!result) {
     resolver->Reject(MakeGarbageCollected<DOMException>(
-        DOMExceptionCode::kUnknownError, "setOptions failed"));
+        DOMExceptionCode::kUnknownError, "setPhotoOptions failed"));
     service_requests_.erase(resolver);
     return;
   }
 
   auto resolver_cb =
-      WTF::Bind(&ImageCapture::ResolveWithNothing, WrapPersistent(this));
+      WTF::BindOnce(&ImageCapture::ResolveWithNothing, WrapPersistent(this));
 
   // Retrieve the current device status after setting the options.
   service_->GetPhotoState(
-      stream_track_->Component()->Source()->Id(),
-      WTF::Bind(&ImageCapture::OnMojoGetPhotoState, WrapPersistent(this),
-                WrapPersistent(resolver), std::move(resolver_cb),
-                trigger_take_photo));
+      SourceId(), WTF::BindOnce(&ImageCapture::OnMojoGetPhotoState,
+                                WrapPersistent(this), WrapPersistent(resolver),
+                                std::move(resolver_cb), trigger_take_photo));
 }
 
 void ImageCapture::OnMojoTakePhoto(ScriptPromiseResolver* resolver,
@@ -1048,7 +1057,7 @@ void ImageCapture::OnMojoTakePhoto(ScriptPromiseResolver* resolver,
                        TRACE_EVENT_SCOPE_PROCESS);
 
   // TODO(mcasas): Should be using a mojo::StructTraits.
-  if (blob->data.IsEmpty()) {
+  if (blob->data.empty()) {
     resolver->Reject(MakeGarbageCollected<DOMException>(
         DOMExceptionCode::kUnknownError, "platform error"));
   } else {
@@ -1058,7 +1067,7 @@ void ImageCapture::OnMojoTakePhoto(ScriptPromiseResolver* resolver,
   service_requests_.erase(resolver);
 }
 
-void ImageCapture::UpdateMediaTrackCapabilities(
+void ImageCapture::UpdateMediaTrackSettingsAndCapabilities(
     base::OnceClosure initialized_callback,
     media::mojom::blink::PhotoStatePtr photo_state) {
   if (!photo_state) {
@@ -1071,7 +1080,7 @@ void ImageCapture::UpdateMediaTrackCapabilities(
       photo_state->supported_white_balance_modes.size());
   for (const auto& supported_mode : photo_state->supported_white_balance_modes)
     supported_white_balance_modes.push_back(ToString(supported_mode));
-  if (!supported_white_balance_modes.IsEmpty()) {
+  if (!supported_white_balance_modes.empty()) {
     capabilities_->setWhiteBalanceMode(
         std::move(supported_white_balance_modes));
     settings_->setWhiteBalanceMode(
@@ -1083,7 +1092,7 @@ void ImageCapture::UpdateMediaTrackCapabilities(
       photo_state->supported_exposure_modes.size());
   for (const auto& supported_mode : photo_state->supported_exposure_modes)
     supported_exposure_modes.push_back(ToString(supported_mode));
-  if (!supported_exposure_modes.IsEmpty()) {
+  if (!supported_exposure_modes.empty()) {
     capabilities_->setExposureMode(std::move(supported_exposure_modes));
     settings_->setExposureMode(ToString(photo_state->current_exposure_mode));
   }
@@ -1093,13 +1102,13 @@ void ImageCapture::UpdateMediaTrackCapabilities(
       photo_state->supported_focus_modes.size());
   for (const auto& supported_mode : photo_state->supported_focus_modes)
     supported_focus_modes.push_back(ToString(supported_mode));
-  if (!supported_focus_modes.IsEmpty()) {
+  if (!supported_focus_modes.empty()) {
     capabilities_->setFocusMode(std::move(supported_focus_modes));
     settings_->setFocusMode(ToString(photo_state->current_focus_mode));
   }
 
   HeapVector<Member<Point2D>> current_points_of_interest;
-  if (!photo_state->points_of_interest.IsEmpty()) {
+  if (!photo_state->points_of_interest.empty()) {
     for (const auto& point : photo_state->points_of_interest) {
       Point2D* web_point = Point2D::Create();
       web_point->setX(point->x);
@@ -1177,6 +1186,17 @@ void ImageCapture::UpdateMediaTrackCapabilities(
   if (photo_state->supports_torch)
     settings_->setTorch(photo_state->torch);
 
+  if (photo_state->supported_background_blur_modes &&
+      !photo_state->supported_background_blur_modes->empty()) {
+    Vector<bool> supported_background_blur_modes;
+    for (auto mode : *photo_state->supported_background_blur_modes)
+      supported_background_blur_modes.push_back(ToBooleanMode(mode));
+    capabilities_->setBackgroundBlur(
+        std::move(supported_background_blur_modes));
+    settings_->setBackgroundBlur(
+        ToBooleanMode(photo_state->background_blur_mode));
+  }
+
   std::move(initialized_callback).Run();
 }
 
@@ -1211,152 +1231,90 @@ bool ImageCapture::IsPageVisible() {
   return DomWindow() ? DomWindow()->document()->IsPageVisible() : false;
 }
 
+const String& ImageCapture::SourceId() const {
+  return stream_track_->Component()->Source()->Id();
+}
+
+const absl::optional<String>
+ImageCapture::GetConstraintWithNonExistingCapability(
+    const MediaTrackConstraintSet* constraints) {
+  if (constraints->hasWhiteBalanceMode() &&
+      !capabilities_->hasWhiteBalanceMode()) {
+    return "whiteBalanceMode";
+  }
+  if (constraints->hasExposureMode() && !capabilities_->hasExposureMode()) {
+    return "exposureMode";
+  }
+  if (constraints->hasFocusMode() && !capabilities_->hasFocusMode()) {
+    return "focusMode";
+  }
+  if (constraints->hasExposureCompensation() &&
+      !capabilities_->hasExposureCompensation()) {
+    return "exposureCompensation";
+  }
+  if (constraints->hasExposureTime() && !capabilities_->hasExposureTime()) {
+    return "exposureTime";
+  }
+  if (constraints->hasColorTemperature() &&
+      !capabilities_->hasColorTemperature()) {
+    return "colorTemperature";
+  }
+  if (constraints->hasIso() && !capabilities_->hasIso()) {
+    return "iso";
+  }
+  if (constraints->hasBrightness() && !capabilities_->hasBrightness()) {
+    return "brightness";
+  }
+  if (constraints->hasContrast() && !capabilities_->hasContrast()) {
+    return "contrast";
+  }
+  if (constraints->hasSaturation() && !capabilities_->hasSaturation()) {
+    return "saturation";
+  }
+  if (constraints->hasSharpness() && !capabilities_->hasSharpness()) {
+    return "sharpness";
+  }
+  if (constraints->hasFocusDistance() && !capabilities_->hasFocusDistance()) {
+    return "focusDistance";
+  }
+  if (constraints->hasPan() &&
+      !(capabilities_->hasPan() && HasPanTiltZoomPermissionGranted())) {
+    return "pan";
+  }
+  if (constraints->hasTilt() &&
+      !(capabilities_->hasTilt() && HasPanTiltZoomPermissionGranted())) {
+    return "tilt";
+  }
+  if (constraints->hasZoom() &&
+      !(capabilities_->hasZoom() && HasPanTiltZoomPermissionGranted())) {
+    return "zoom";
+  }
+  if (constraints->hasTorch() && !capabilities_->hasTorch()) {
+    return "torch";
+  }
+  if (constraints->hasBackgroundBlur() && !capabilities_->hasBackgroundBlur()) {
+    return "backgroundBlur";
+  }
+  return absl::nullopt;
+}
+
 ImageCapture* ImageCapture::Clone() const {
   ImageCapture* clone = MakeGarbageCollected<ImageCapture>(
       GetExecutionContext(), stream_track_, HasPanTiltZoomPermissionGranted(),
       /*callback=*/base::DoNothing());
 
   // Copy capabilities.
-  if (capabilities_->hasWhiteBalanceMode()) {
-    clone->capabilities_->setWhiteBalanceMode(
-        capabilities_->whiteBalanceMode());
-  }
-  if (capabilities_->hasExposureMode())
-    clone->capabilities_->setExposureMode(capabilities_->exposureMode());
-  if (capabilities_->hasFocusMode())
-    clone->capabilities_->setFocusMode(capabilities_->focusMode());
-  if (capabilities_->hasExposureCompensation()) {
-    clone->capabilities_->setExposureCompensation(
-        capabilities_->exposureCompensation());
-  }
-  if (capabilities_->hasExposureTime())
-    clone->capabilities_->setExposureTime(capabilities_->exposureTime());
-  if (capabilities_->hasColorTemperature()) {
-    clone->capabilities_->setColorTemperature(
-        capabilities_->colorTemperature());
-  }
-  if (capabilities_->hasIso())
-    clone->capabilities_->setIso(capabilities_->iso());
-  if (capabilities_->hasBrightness())
-    clone->capabilities_->setBrightness(capabilities_->brightness());
-  if (capabilities_->hasContrast())
-    clone->capabilities_->setContrast(capabilities_->contrast());
-  if (capabilities_->hasSaturation())
-    clone->capabilities_->setSaturation(capabilities_->saturation());
-  if (capabilities_->hasSharpness())
-    clone->capabilities_->setSharpness(capabilities_->sharpness());
-  if (capabilities_->hasFocusDistance())
-    clone->capabilities_->setFocusDistance(capabilities_->focusDistance());
-  if (capabilities_->hasPan())
-    clone->capabilities_->setPan(capabilities_->pan());
-  if (capabilities_->hasTilt())
-    clone->capabilities_->setTilt(capabilities_->tilt());
-  if (capabilities_->hasZoom())
-    clone->capabilities_->setZoom(capabilities_->zoom());
-  if (capabilities_->hasTorch())
-    clone->capabilities_->setTorch(capabilities_->torch());
+  CopyCapabilities(capabilities_, clone->capabilities_, CopyPanTiltZoom(true));
 
   // Copy settings.
-  if (settings_->hasWhiteBalanceMode())
-    clone->settings_->setWhiteBalanceMode(settings_->whiteBalanceMode());
-  if (settings_->hasExposureMode())
-    clone->settings_->setExposureMode(settings_->exposureMode());
-  if (settings_->hasFocusMode())
-    clone->settings_->setFocusMode(settings_->focusMode());
-  if (settings_->hasPointsOfInterest() &&
-      !settings_->pointsOfInterest().IsEmpty()) {
-    clone->settings_->setPointsOfInterest(settings_->pointsOfInterest());
-  }
-  if (settings_->hasExposureCompensation()) {
-    clone->settings_->setExposureCompensation(
-        settings_->exposureCompensation());
-  }
-  if (settings_->hasExposureTime())
-    clone->settings_->setExposureTime(settings_->exposureTime());
-  if (settings_->hasColorTemperature())
-    clone->settings_->setColorTemperature(settings_->colorTemperature());
-  if (settings_->hasIso())
-    clone->settings_->setIso(settings_->iso());
-  if (settings_->hasBrightness())
-    clone->settings_->setBrightness(settings_->brightness());
-  if (settings_->hasContrast())
-    clone->settings_->setContrast(settings_->contrast());
-  if (settings_->hasSaturation())
-    clone->settings_->setSaturation(settings_->saturation());
-  if (settings_->hasSharpness())
-    clone->settings_->setSharpness(settings_->sharpness());
-  if (settings_->hasFocusDistance())
-    clone->settings_->setFocusDistance(settings_->focusDistance());
-  if (settings_->hasPan())
-    clone->settings_->setPan(settings_->pan());
-  if (settings_->hasTilt())
-    clone->settings_->setTilt(settings_->tilt());
-  if (settings_->hasZoom())
-    clone->settings_->setZoom(settings_->zoom());
-  if (settings_->hasTorch())
-    clone->settings_->setTorch(settings_->torch());
-
-  if (!current_constraints_)
-    return clone;
+  CopySettings(settings_, clone->settings_, CopyPanTiltZoom(true));
 
   // Copy current constraints.
-  clone->current_constraints_ = MediaTrackConstraintSet::Create();
-  if (current_constraints_->hasWhiteBalanceMode()) {
-    clone->current_constraints_->setWhiteBalanceMode(
-        current_constraints_->whiteBalanceMode());
+  if (current_constraints_) {
+    clone->current_constraints_ = MediaTrackConstraintSet::Create();
+    CopyConstraintSet(current_constraints_, clone->current_constraints_,
+                      CopyPanTiltZoom(true));
   }
-  if (current_constraints_->hasExposureMode()) {
-    clone->current_constraints_->setExposureMode(
-        current_constraints_->exposureMode());
-  }
-  if (current_constraints_->hasFocusMode()) {
-    clone->current_constraints_->setFocusMode(
-        current_constraints_->focusMode());
-  }
-  if (current_constraints_->hasPointsOfInterest()) {
-    clone->current_constraints_->setPointsOfInterest(
-        current_constraints_->pointsOfInterest());
-  }
-  if (current_constraints_->hasExposureCompensation()) {
-    clone->current_constraints_->setExposureCompensation(
-        current_constraints_->exposureCompensation());
-  }
-  if (current_constraints_->hasExposureTime()) {
-    clone->current_constraints_->setExposureTime(
-        current_constraints_->exposureTime());
-  }
-  if (current_constraints_->hasColorTemperature()) {
-    clone->current_constraints_->setColorTemperature(
-        current_constraints_->colorTemperature());
-  }
-  if (current_constraints_->hasIso())
-    clone->current_constraints_->setIso(current_constraints_->iso());
-  if (current_constraints_->hasBrightness()) {
-    clone->current_constraints_->setBrightness(
-        current_constraints_->brightness());
-  }
-  if (current_constraints_->hasContrast())
-    clone->current_constraints_->setContrast(current_constraints_->contrast());
-  if (current_constraints_->hasSaturation()) {
-    clone->current_constraints_->setSaturation(
-        current_constraints_->saturation());
-  }
-  if (current_constraints_->hasSharpness()) {
-    clone->current_constraints_->setSharpness(
-        current_constraints_->sharpness());
-  }
-  if (current_constraints_->hasFocusDistance()) {
-    clone->current_constraints_->setFocusDistance(
-        current_constraints_->focusDistance());
-  }
-  if (current_constraints_->hasPan())
-    clone->current_constraints_->setPan(current_constraints_->pan());
-  if (current_constraints_->hasTilt())
-    clone->current_constraints_->setTilt(current_constraints_->tilt());
-  if (current_constraints_->hasZoom())
-    clone->current_constraints_->setZoom(current_constraints_->zoom());
-  if (current_constraints_->hasTorch())
-    clone->current_constraints_->setTorch(current_constraints_->torch());
 
   return clone;
 }
@@ -1372,7 +1330,7 @@ void ImageCapture::Trace(Visitor* visitor) const {
   visitor->Trace(current_constraints_);
   visitor->Trace(photo_capabilities_);
   visitor->Trace(service_requests_);
-  EventTargetWithInlineData::Trace(visitor);
+  ScriptWrappable::Trace(visitor);
   ExecutionContextLifecycleObserver::Trace(visitor);
 }
 

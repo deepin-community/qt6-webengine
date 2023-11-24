@@ -1,5 +1,5 @@
 <!--
-Copyright 2020 The Chromium Authors. All rights reserved.
+Copyright 2020 The Chromium Authors
 Use of this source code is governed by a BSD-style license that can be
 found in the LICENSE file.
 -->
@@ -23,62 +23,36 @@ chromium-metrics-reviews@google.com.
 <histograms>
 
 <histogram name="DevTools.ActionTaken" enum="DevToolsAction"
-    expires_after="2022-12-01">
+    expires_after="2023-08-20">
   <owner>alph@chromium.org</owner>
   <owner>yangguo@chromium.org</owner>
   <owner>bmeurer@chromium.org</owner>
   <summary>Specified DevTools action has been taken.</summary>
 </histogram>
 
-<histogram name="DevTools.BackgroundService.ClearEvents"
-    enum="ServiceWorkerStatusCode" expires_after="M99">
+<histogram name="DevTools.BreakpointEditDialogRevealedFrom"
+    enum="DevToolsBreakpointEditDialogRevealedFrom" expires_after="2023-12-01">
   <owner>yangguo@chromium.org</owner>
-  <owner>rayankans@chromium.org</owner>
-  <owner>bmeurer@chromium.org</owner>
+  <owner>jarin@chromium.org</owner>
+  <owner>kimanh@chromium.org</owner>
   <summary>
-    The result of clearing all stored events for a Background Service feature.
-    This is called if a developer clicks on a delete button in a Background
-    Service DevTools panel.
+    Records the ways in which the Breakpoint Edit Dialog was opened.
   </summary>
 </histogram>
 
-<histogram name="DevTools.BackgroundService.GetEvents"
-    enum="ServiceWorkerStatusCode" expires_after="M99">
-  <owner>rayankans@chromium.org</owner>
+<histogram name="DevTools.BreakpointWithConditionAdded"
+    enum="DevToolsBreakpointWithConditionAdded" expires_after="2023-12-01">
   <owner>yangguo@chromium.org</owner>
-  <owner>bmeurer@chromium.org</owner>
+  <owner>jarin@chromium.org</owner>
+  <owner>kimanh@chromium.org</owner>
   <summary>
-    The result of loading all stored events for a Background Service feature.
-    This is called when the a Bakground Service DevTools panel is opened.
-  </summary>
-</histogram>
-
-<histogram name="DevTools.BackgroundService.LogEvent"
-    enum="ServiceWorkerStatusCode" expires_after="M99">
-  <owner>rayankans@chromium.org</owner>
-  <owner>yangguo@chromium.org</owner>
-  <owner>bmeurer@chromium.org</owner>
-  <summary>
-    The result of logging a Background Service event. An event is logged if
-    `Recording` mode is on and a relevant Background Service event is taking
-    place.
-  </summary>
-</histogram>
-
-<histogram name="DevTools.BackgroundService.StartRecording"
-    enum="DevToolsBackgroundService" expires_after="2022-07-09">
-  <owner>yangguo@chromium.org</owner>
-  <owner>bmeurer@chromium.org</owner>
-  <owner>rayankans@chromium.org</owner>
-  <summary>
-    Records the Background Service for which `Recording` mode was enabled. This
-    is called if the developer toggles the record button in the relevant
-    Bakground Service DevTools panel.
+    Records when a breakpoint with a condition was added (logpoint or
+    conditional breakpoint).
   </summary>
 </histogram>
 
 <histogram name="DevTools.CDPCommandFrom{ClientType}" enum="CDPCommands"
-    expires_after="2022-12-16">
+    expires_after="2023-12-16">
   <owner>wolfi@chromium.org</owner>
   <owner>dsv@chromium.org</owner>
   <owner>yangguo@chromium.org</owner>
@@ -94,18 +68,49 @@ chromium-metrics-reviews@google.com.
   </token>
 </histogram>
 
-<histogram name="DevTools.ConsoleShowsCorsErrors"
-    enum="DevToolsConsoleShowsCorsErrors" expires_after="2022-12-01">
-  <owner>dsv@chromium.org</owner>
+<histogram name="DevTools.ColorConvertedFrom" enum="DevToolsColorConvertedFrom"
+    expires_after="2023-12-01">
+  <owner>ergunsh@chromium.org</owner>
+  <owner>changhaohan@chromium.org</owner>
+  <owner>bmeurer@chromium.org</owner>
+  <owner>yangguo@chromium.org</owner>
+  <summary>Records the color conversion menu usage.</summary>
+</histogram>
+
+<histogram name="DevTools.ColorPickerOpenedFrom"
+    enum="DevToolsColorPickerOpenedFrom" expires_after="2023-12-01">
+  <owner>ergunsh@chromium.org</owner>
+  <owner>changhaohan@chromium.org</owner>
+  <owner>bmeurer@chromium.org</owner>
+  <owner>yangguo@chromium.org</owner>
+  <summary>Records the color picker usage.</summary>
+</histogram>
+
+<histogram name="DevTools.CSSHintShown" enum="DevToolsCSSHintShown"
+    expires_after="2023-08-12">
+  <owner>changhaohan@chromium.org</owner>
+  <owner>mathias@chromium.org</owner>
+  <owner>yangguo@chromium.org</owner>
+  <summary>
+    Records how many times different CSS hint types were shown in the Styles
+    panel in DevTools. It's recorded when a hint icon is shown in the Styles
+    panel.
+  </summary>
+</histogram>
+
+<histogram name="DevTools.CSSPropertyDocumentation"
+    enum="DevToolsCSSPropertyDocumentation" expires_after="2023-12-01">
+  <owner>ergunsh@chromium.org</owner>
+  <owner>changhaohan@chromium.org</owner>
   <owner>bmeurer@chromium.org</owner>
   <owner>yangguo@chromium.org</owner>
   <summary>
-    Records if showing CORS erros in DevTools Console is enabled.
+    Records the CSS Property documentation usage and feature toggles.
   </summary>
 </histogram>
 
 <histogram name="DevTools.DeveloperResourceLoaded"
-    enum="DevToolsDeveloperResourceLoaded" expires_after="2022-12-01">
+    enum="DevToolsDeveloperResourceLoaded" expires_after="2023-08-20">
   <owner>yangguo@chromium.org</owner>
   <owner>bmeurer@chromium.org</owner>
   <summary>
@@ -140,7 +145,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.DeveloperResourceScheme"
-    enum="DevToolsDeveloperResourceScheme" expires_after="2022-12-01">
+    enum="DevToolsDeveloperResourceScheme" expires_after="2023-08-20">
   <owner>yangguo@chromium.org</owner>
   <owner>bmeurer@chromium.org</owner>
   <summary>
@@ -158,7 +163,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.ExperimentDisabled" enum="DevtoolsExperiments"
-    expires_after="2022-12-01">
+    expires_after="2023-08-20">
   <owner>yangguo@chromium.org</owner>
   <owner>changhao@chromium.org</owner>
   <summary>
@@ -167,7 +172,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.ExperimentEnabled" enum="DevtoolsExperiments"
-    expires_after="2022-12-01">
+    expires_after="2023-08-20">
   <owner>yangguo@chromium.org</owner>
   <owner>changhao@chromium.org</owner>
   <summary>
@@ -176,7 +181,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.ExperimentEnabledAtLaunch" enum="DevtoolsExperiments"
-    expires_after="2022-12-01">
+    expires_after="2023-08-20">
   <owner>yangguo@chromium.org</owner>
   <owner>changhao@chromium.org</owner>
   <summary>
@@ -184,7 +189,7 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
-<histogram name="DevTools.InspectElement" units="ms" expires_after="2022-12-01">
+<histogram name="DevTools.InspectElement" units="ms" expires_after="2023-12-01">
   <owner>yangguo@chromium.org</owner>
   <owner>bmeurer@chromium.org</owner>
   <summary>
@@ -194,7 +199,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.IssueCreated" enum="DevToolsIssueCreated"
-    expires_after="2022-12-01">
+    expires_after="2024-02-12">
   <owner>yangguo@chromium.org</owner>
   <owner>dsv@chromium.org</owner>
   <summary>
@@ -203,7 +208,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.IssuesPanelIssueExpanded"
-    enum="DevToolsIssuesPanelIssueExpanded" expires_after="2022-12-01">
+    enum="DevToolsIssuesPanelIssueExpanded" expires_after="2023-08-20">
   <owner>yangguo@chromium.org</owner>
   <owner>dsv@chromium.org</owner>
   <summary>
@@ -212,7 +217,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.IssuesPanelOpenedFrom"
-    enum="DevToolsIssuesPanelOpenedFrom" expires_after="2022-12-01">
+    enum="DevToolsIssuesPanelOpenedFrom" expires_after="2023-12-01">
   <owner>yangguo@chromium.org</owner>
   <owner>dsv@chromium.org</owner>
   <summary>
@@ -221,7 +226,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.IssuesPanelResourceOpened"
-    enum="DevToolsIssuesPanelResourceOpened" expires_after="2022-12-01">
+    enum="DevToolsIssuesPanelResourceOpened" expires_after="2024-03-05">
   <owner>yangguo@chromium.org</owner>
   <owner>dsv@chromium.org</owner>
   <summary>
@@ -231,7 +236,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.KeybindSetSettingChanged" enum="DevToolsKeybindSets"
-    expires_after="2022-12-01">
+    expires_after="2023-04-16">
   <owner>yangguo@chromium.org</owner>
   <owner>jalyn@microsoft.com</owner>
   <owner>leo.lee@microsoft.com</owner>
@@ -242,7 +247,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.KeyboardShortcutFired"
-    enum="DevToolsKeyboardShortcutAction" expires_after="2022-12-01">
+    enum="DevToolsKeyboardShortcutAction" expires_after="2023-08-20">
   <owner>yangguo@chromium.org</owner>
   <owner>jalyn@microsoft.com</owner>
   <owner>leo.lee@microsoft.com</owner>
@@ -253,7 +258,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.Language" enum="DevToolsLanguage"
-    expires_after="2022-12-01">
+    expires_after="2023-12-01">
   <owner>bmeurer@chromium.org</owner>
   <owner>szuend@chromium.org</owner>
   <owner>yangguo@chromium.org</owner>
@@ -264,7 +269,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram base="true" name="DevTools.Launch" units="ms"
-    expires_after="2022-12-01">
+    expires_after="2023-06-25">
 <!-- Name completed by histogram_suffixes name="DevToolsLaunchPanels" -->
 
   <owner>yangguo@chromium.org</owner>
@@ -275,8 +280,16 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
+<histogram name="DevTools.LighthouseModeRun" enum="DevToolsLighthouseModeRun"
+    expires_after="2023-12-01">
+  <owner>asraine@chromium.org</owner>
+  <owner>paulirish@chromium.org</owner>
+  <owner>cjamcl@chromium.org</owner>
+  <summary>Records which Lighthouse mode was used to audit the page.</summary>
+</histogram>
+
 <histogram name="DevTools.LinearMemoryInspector.RevealedFrom"
-    enum="DevToolsLinearMemoryInspectorRevealedFrom" expires_after="2022-09-11">
+    enum="DevToolsLinearMemoryInspectorRevealedFrom" expires_after="2023-06-11">
   <owner>yangguo@chromium.org</owner>
   <owner>kimanh@chromium.org</owner>
   <summary>
@@ -285,7 +298,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.LinearMemoryInspector.Target"
-    enum="DevToolsLinearMemoryInspectorTarget" expires_after="2022-09-11">
+    enum="DevToolsLinearMemoryInspectorTarget" expires_after="2023-06-11">
   <owner>yangguo@chromium.org</owner>
   <owner>kimanh@chromium.org</owner>
   <summary>
@@ -293,8 +306,38 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
+<histogram name="DevTools.ManifestSectionSelected"
+    enum="DevToolsManifestSection" expires_after="2022-12-01">
+  <owner>yangguo@chromium.org</owner>
+  <owner>edgedevtools@microsoft.com</owner>
+  <summary>
+    Records when certain items of the Manifest dropdown submenu in the
+    Application Tool are selected.
+  </summary>
+</histogram>
+
+<histogram name="DevTools.MutatingHttpAction"
+    enum="DevToolsMutatingHttpActionVerb" expires_after="2023-05-07">
+  <owner>dsv@chromium.org</owner>
+  <owner>caseq@chromium.org</owner>
+  <summary>
+    Records the invocation of actions like /json/new on the HTTP server exposed
+    with running with --remote-debugging-port.
+  </summary>
+</histogram>
+
+<histogram name="DevTools.NetworkPanelResponsePreviewOpened"
+    enum="DevToolsMediaType" expires_after="2023-12-31">
+  <owner>yangguo@chromium.org</owner>
+  <owner>bmeurer@chromium.org</owner>
+  <summary>
+    Records the media types of files opened in the DevTools Network panel
+    response preview.
+  </summary>
+</histogram>
+
 <histogram name="DevTools.OpenedByAction" enum="DevToolsOpenedByAction"
-    expires_after="2022-12-01">
+    expires_after="2023-12-01">
   <owner>changhaohan@chromium.org</owner>
   <owner>yangguo@chromium.org</owner>
   <owner>mathias@chromium.org</owner>
@@ -304,7 +347,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.PanelClosed" enum="DevToolsPanel"
-    expires_after="2022-12-01">
+    expires_after="2023-12-01">
   <owner>yangguo@chromium.org</owner>
   <owner>bmeurer@chromium.org</owner>
   <summary>
@@ -314,14 +357,35 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.PanelShown" enum="DevToolsPanel"
-    expires_after="2022-12-01">
+    expires_after="2023-12-01">
   <owner>yangguo@chromium.org</owner>
   <owner>bmeurer@chromium.org</owner>
   <summary>Specified DevTools panel was shown.</summary>
 </histogram>
 
+<histogram name="DevTools.RecordingCodeToggled"
+    enum="DevToolsRecordingCodeToggled" expires_after="2024-01-10">
+  <owner>alexrudenko@chromium.org</owner>
+  <owner>mathias@chromium.org</owner>
+  <owner>yangguo@chromium.org</owner>
+  <summary>
+    Recorded when the code view for a recording was toggled in Recorder panel.
+  </summary>
+</histogram>
+
+<histogram name="DevTools.RecordingCopiedToClipboard"
+    enum="DevToolsRecordingCopiedToClipboard" expires_after="2024-01-10">
+  <owner>alexrudenko@chromium.org</owner>
+  <owner>mathias@chromium.org</owner>
+  <owner>yangguo@chromium.org</owner>
+  <summary>
+    Recorded when user copies a recording or step to clipboard in Recorder
+    panel.
+  </summary>
+</histogram>
+
 <histogram name="DevTools.RecordingEdited" enum="DevToolsRecordingEdited"
-    expires_after="2022-12-01">
+    expires_after="2023-06-25">
   <owner>alexrudenko@chromium.org</owner>
   <owner>mathias@chromium.org</owner>
   <owner>yangguo@chromium.org</owner>
@@ -329,7 +393,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.RecordingExported" enum="DevToolsRecordingExported"
-    expires_after="2022-12-01">
+    expires_after="2023-07-02">
   <owner>alexrudenko@chromium.org</owner>
   <owner>mathias@chromium.org</owner>
   <owner>yangguo@chromium.org</owner>
@@ -337,15 +401,27 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.RecordingReplayFinished"
-    enum="DevToolsRecordingReplayFinished" expires_after="2022-12-01">
+    enum="DevToolsRecordingReplayFinished" expires_after="2023-08-20">
   <owner>alexrudenko@chromium.org</owner>
   <owner>mathias@chromium.org</owner>
   <owner>yangguo@chromium.org</owner>
   <summary>Recorded when a replay is over.</summary>
 </histogram>
 
+<histogram name="DevTools.RecordingReplaySpeed"
+    enum="DevToolsRecordingReplaySpeed" expires_after="2023-07-02">
+  <owner>ergunsh@chromium.org</owner>
+  <owner>alexrudenko@chromium.org</owner>
+  <owner>mathias@chromium.org</owner>
+  <owner>yangguo@chromium.org</owner>
+  <summary>
+    Recorded when a recording is being replayed. Used to count number of times
+    replay started with which speed.
+  </summary>
+</histogram>
+
 <histogram name="DevTools.RecordingReplayStarted"
-    enum="DevToolsRecordingReplayStarted" expires_after="2022-12-01">
+    enum="DevToolsRecordingReplayStarted" expires_after="2023-08-20">
   <owner>alexrudenko@chromium.org</owner>
   <owner>mathias@chromium.org</owner>
   <owner>yangguo@chromium.org</owner>
@@ -353,7 +429,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.RecordingToggled" enum="DevToolsRecordingToggled"
-    expires_after="2022-12-01">
+    expires_after="2023-08-20">
   <owner>alexrudenko@chromium.org</owner>
   <owner>mathias@chromium.org</owner>
   <owner>yangguo@chromium.org</owner>
@@ -363,15 +439,24 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.SidebarPaneShown" enum="DevToolsSidebarPane"
-    expires_after="2022-09-11">
+    expires_after="2023-08-08">
   <owner>changhaohan@chromium.org</owner>
   <owner>yangguo@chromium.org</owner>
   <owner>bmeurer@chromium.org</owner>
   <summary>Specified DevTools sidebar pane was shown.</summary>
 </histogram>
 
+<histogram name="DevTools.SourcesPanelFileOpened" enum="DevToolsMediaType"
+    expires_after="2023-12-31">
+  <owner>yangguo@chromium.org</owner>
+  <owner>bmeurer@chromium.org</owner>
+  <summary>
+    Records the media types of files opened in the DevTools Sources panel.
+  </summary>
+</histogram>
+
 <histogram name="DevTools.StyleTextCopied" enum="DevToolsStyleTextCopied"
-    expires_after="2022-12-01">
+    expires_after="2023-04-16">
   <owner>changhaohan@chromium.org</owner>
   <owner>mathias@chromium.org</owner>
   <owner>yangguo@chromium.org</owner>
@@ -379,7 +464,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.SyncSetting" enum="DevToolsSyncSetting"
-    expires_after="2022-12-01">
+    expires_after="2023-12-01">
   <owner>bmeurer@chromium.org</owner>
   <owner>szuend@chromium.org</owner>
   <owner>yangguo@chromium.org</owner>

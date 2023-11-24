@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,95 +8,119 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/views/side_panel/side_panel_coordinator.h"
-#include "chrome/browser/ui/webui/side_panel/read_anything/read_anything_coordinator.h"
-#include "content/public/browser/web_contents.h"
-#include "ui/accessibility/ax_node.h"
-#include "ui/accessibility/ax_tree.h"
+#include "chrome/browser/ui/views/side_panel/read_anything/read_anything_controller.h"
+#include "content/public/browser/web_ui.h"
+#include "ui/accessibility/ax_tree_update.h"
+
+using read_anything::mojom::Page;
+using read_anything::mojom::PageHandler;
+using read_anything::mojom::ReadAnythingTheme;
 
 ReadAnythingPageHandler::ReadAnythingPageHandler(
-    mojo::PendingRemote<read_anything::mojom::Page> page,
-    mojo::PendingReceiver<read_anything::mojom::PageHandler> receiver)
-    : receiver_(this, std::move(receiver)), page_(std::move(page)) {
+    mojo::PendingRemote<Page> page,
+    mojo::PendingReceiver<PageHandler> receiver,
+    content::WebUI* web_ui)
+    : browser_(chrome::FindLastActive()),
+      receiver_(this, std::move(receiver)),
+      page_(std::move(page)),
+      web_ui_(web_ui) {
   // Register |this| as a |ReadAnythingModel::Observer| with the coordinator
   // for the component. This will allow the IPC to update the front-end web ui.
 
-  Browser* browser = chrome::FindLastActive();
-  if (!browser)
+  if (!browser_)
     return;
-  browser_view_ = BrowserView::GetBrowserViewForBrowser(browser);
-  if (!browser_view_)
-    return;
-  browser_view_->side_panel_coordinator()
-      ->read_anything_coordinator()
-      ->AddObserver(this);
+
+  coordinator_ = ReadAnythingCoordinator::FromBrowser(browser_);
+  if (coordinator_) {
+    coordinator_->AddObserver(this);
+    coordinator_->AddModelObserver(this);
+  }
+
+  delegate_ = static_cast<ReadAnythingPageHandler::Delegate*>(
+      coordinator_->GetController());
+  if (delegate_)
+    delegate_->OnUIReady();
 }
 
 ReadAnythingPageHandler::~ReadAnythingPageHandler() {
-  // Remove |this| from the observer list of |ReadAnythingModel|.
-  if (browser_view_) {
-    DCHECK(
-        browser_view_->side_panel_coordinator()->read_anything_coordinator());
-    browser_view_->side_panel_coordinator()
-        ->read_anything_coordinator()
-        ->RemoveObserver(this);
+  if (!coordinator_)
+    return;
+
+  // If |this| is destroyed before the |ReadAnythingCoordinator|, then remove
+  // |this| from the observer lists. In the cases where the coordinator is
+  // destroyed first, these will have been destroyed before this call.
+  coordinator_->RemoveObserver(this);
+  coordinator_->RemoveModelObserver(this);
+
+  delegate_ = static_cast<ReadAnythingPageHandler::Delegate*>(
+      coordinator_->GetController());
+  if (delegate_)
+    delegate_->OnUIDestroyed();
+}
+
+void ReadAnythingPageHandler::OnCoordinatorDestroyed() {
+  coordinator_ = nullptr;
+  delegate_ = nullptr;
+}
+
+void ReadAnythingPageHandler::AccessibilityEventReceived(
+    const content::AXEventNotificationDetails& details) {
+  page_->AccessibilityEventReceived(details.ax_tree_id, details.updates,
+                                    details.events);
+}
+
+void ReadAnythingPageHandler::OnActiveAXTreeIDChanged(
+    const ui::AXTreeID& tree_id,
+    const ukm::SourceId& ukm_source_id) {
+  page_->OnActiveAXTreeIDChanged(tree_id, ukm_source_id);
+}
+
+void ReadAnythingPageHandler::OnAXTreeDestroyed(const ui::AXTreeID& tree_id) {
+  page_->OnAXTreeDestroyed(tree_id);
+}
+
+void ReadAnythingPageHandler::OnReadAnythingThemeChanged(
+    const std::string& font_name,
+    double font_scale,
+    ui::ColorId foreground_color_id,
+    ui::ColorId background_color_id,
+    ui::ColorId separator_color_id,
+    read_anything::mojom::LineSpacing line_spacing,
+    read_anything::mojom::LetterSpacing letter_spacing) {
+  content::WebContents* web_contents = web_ui_->GetWebContents();
+  SkColor foreground_skcolor =
+      web_contents->GetColorProvider().GetColor(foreground_color_id);
+  SkColor background_skcolor =
+      web_contents->GetColorProvider().GetColor(background_color_id);
+
+  page_->OnThemeChanged(
+      ReadAnythingTheme::New(font_name, font_scale, foreground_skcolor,
+                             background_skcolor, line_spacing, letter_spacing));
+}
+
+#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+void ReadAnythingPageHandler::ScreenAIServiceReady() {
+  page_->ScreenAIServiceReady();
+}
+#endif
+
+void ReadAnythingPageHandler::OnLinkClicked(const ui::AXTreeID& target_tree_id,
+                                            ui::AXNodeID target_node_id) {
+  if (delegate_) {
+    delegate_->OnLinkClicked(target_tree_id, target_node_id);
   }
 }
 
-void ReadAnythingPageHandler::ShowUI() {
-  Browser* browser = chrome::FindLastActive();
-  if (!browser)
-    return;
-
-  content::WebContents* web_contents =
-      browser->tab_strip_model()->GetActiveWebContents();
-  if (!web_contents)
-    return;
-
-  // Read Anything just runs on the main frame and does not run on embedded
-  // content.
-  content::RenderFrameHost* render_frame_host = web_contents->GetMainFrame();
-  if (!render_frame_host)
-    return;
-
-  // Request a distilled AXTree for the main frame.
-  render_frame_host->RequestDistilledAXTree(
-      base::BindOnce(&ReadAnythingPageHandler::OnAXTreeDistilled,
-                     weak_pointer_factory_.GetWeakPtr()));
-}
-
-void ReadAnythingPageHandler::OnAXTreeDistilled(
-    const ui::AXTreeUpdate& snapshot,
-    const std::vector<ui::AXNodeID>& content_node_ids) {
-  // Unserialize the snapshot.
-  ui::AXTree tree;
-  bool success = tree.Unserialize(snapshot);
-  if (!success)
-    return;
-
-  std::vector<std::string> content;
-  // Iterate through all content node ids.
-  for (auto node_id : content_node_ids) {
-    // Find the node in the tree which has this node id.
-    ui::AXNode* node = tree.GetFromId(node_id);
-    if (!node)
-      continue;
-
-    // Get the complete text content for the node and add it to a vector of
-    // contents.
-    // TODO: Handle links.
-    if (node->GetTextContentLengthUTF8())
-      content.push_back(node->GetTextContentUTF8());
+void ReadAnythingPageHandler::OnSelectionChange(
+    const ui::AXTreeID& target_tree_id,
+    ui::AXNodeID anchor_node_id,
+    int anchor_offset,
+    ui::AXNodeID focus_node_id,
+    int focus_offset) {
+  if (delegate_) {
+    delegate_->OnSelectionChange(target_tree_id, anchor_node_id, anchor_offset,
+                                 focus_node_id, focus_offset);
   }
-  // Send the contents to the WebUI.
-  page_->OnEssentialContent(std::move(content));
-}
-
-void ReadAnythingPageHandler::OnFontNameUpdated(
-    const std::string& new_font_name) {
-  page_->OnFontNameChange(new_font_name);
 }

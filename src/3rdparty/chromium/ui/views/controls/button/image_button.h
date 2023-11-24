@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -73,6 +73,7 @@ class VIEWS_EXPORT ImageButton : public Button {
   // Overridden from View:
   gfx::Size CalculatePreferredSize() const override;
   views::PaintInfo::ScaleType GetPaintScaleType() const override;
+  void OnThemeChanged() override;
 
  protected:
   // Overridden from Button:
@@ -126,6 +127,8 @@ VIEW_BUILDER_OVERLOAD_METHOD(SetImage,
 VIEW_BUILDER_OVERLOAD_METHOD(SetImage,
                              Button::ButtonState,
                              const gfx::ImageSkia&)
+VIEW_BUILDER_METHOD(SetImageModel, Button::ButtonState, const ui::ImageModel&)
+
 END_VIEW_BUILDER
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -205,6 +208,9 @@ VIEW_BUILDER_PROPERTY(bool, Toggled)
 VIEW_BUILDER_PROPERTY(std::unique_ptr<Background>, ToggledBackground)
 VIEW_BUILDER_PROPERTY(std::u16string, ToggledTooltipText)
 VIEW_BUILDER_PROPERTY(std::u16string, ToggledAccessibleName)
+VIEW_BUILDER_METHOD(SetToggledImageModel,
+                    Button::ButtonState,
+                    const ui::ImageModel&)
 END_VIEW_BUILDER
 
 }  // namespace views

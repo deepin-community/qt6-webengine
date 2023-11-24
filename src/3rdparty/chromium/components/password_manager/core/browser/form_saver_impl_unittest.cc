@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -101,17 +101,18 @@ void FormSaverImplSaveTest::SaveCredential(
   switch (GetParam()) {
     case SaveOperation::kSave:
       expected.date_password_modified = base::Time::Now();
-      EXPECT_CALL(*mock_store_, AddLogin(expected));
+      EXPECT_CALL(*mock_store_, AddLogin(expected, _));
       return form_saver_.Save(std::move(pending), matches, old_password);
     case SaveOperation::kUpdate:
       if (old_password != pending.password_value)
         expected.date_password_modified = base::Time::Now();
-      EXPECT_CALL(*mock_store_, UpdateLogin(expected));
+      EXPECT_CALL(*mock_store_, UpdateLogin(expected, _));
       return form_saver_.Update(std::move(pending), matches, old_password);
     case SaveOperation::kReplaceUpdate: {
       PasswordForm old_key = CreatePending(u"some_other_username", u"1234");
       expected.date_password_modified = base::Time::Now();
-      EXPECT_CALL(*mock_store_, UpdateLoginWithPrimaryKey(expected, old_key));
+      EXPECT_CALL(*mock_store_,
+                  UpdateLoginWithPrimaryKey(expected, old_key, _));
       return form_saver_.UpdateReplace(std::move(pending), matches,
                                        old_password, old_key);
     }
@@ -228,7 +229,7 @@ TEST_P(FormSaverImplSaveTest, Write_AndUpdatePasswordValuesOnExactMatch) {
   expected_update.password_value = kNewPassword;
   expected_update.date_password_modified = base::Time::Now();
 
-  EXPECT_CALL(*mock_store_, UpdateLogin(expected_update));
+  EXPECT_CALL(*mock_store_, UpdateLogin(expected_update, _));
   SaveCredential(CreatePending(u"nameofuser", kNewPassword), {&duplicate},
                  kOldPassword);
 }
@@ -246,7 +247,7 @@ TEST_P(FormSaverImplSaveTest, Write_AndUpdatePasswordValuesOnPSLMatch) {
   PasswordForm expected_update = duplicate;
   expected_update.password_value = kNewPassword;
   expected_update.date_password_modified = base::Time::Now();
-  EXPECT_CALL(*mock_store_, UpdateLogin(expected_update));
+  EXPECT_CALL(*mock_store_, UpdateLogin(expected_update, _));
   SaveCredential(CreatePending(u"nameofuser", kNewPassword), {&duplicate},
                  kOldPassword);
 }
@@ -269,8 +270,8 @@ TEST_P(FormSaverImplSaveTest, Write_AndUpdatePasswordValues_IgnoreNonMatches) {
       &different_username, &different_password, &empty_username};
 
   pending.password_value = kNewPassword;
-  EXPECT_CALL(*mock_store_, UpdateLogin(_)).Times(0);
-  EXPECT_CALL(*mock_store_, UpdateLoginWithPrimaryKey(_, _)).Times(0);
+  EXPECT_CALL(*mock_store_, UpdateLogin).Times(0);
+  EXPECT_CALL(*mock_store_, UpdateLoginWithPrimaryKey).Times(0);
   SaveCredential(pending, matches, kOldPassword);
 }
 
@@ -291,14 +292,14 @@ TEST_P(FormSaverImplSaveTest, FormDataSanitized) {
   PasswordForm saved;
   switch (GetParam()) {
     case SaveOperation::kSave:
-      EXPECT_CALL(*mock_store_, AddLogin(_)).WillOnce(SaveArg<0>(&saved));
+      EXPECT_CALL(*mock_store_, AddLogin).WillOnce(SaveArg<0>(&saved));
       return form_saver_.Save(std::move(pending), {}, u"");
     case SaveOperation::kUpdate:
-      EXPECT_CALL(*mock_store_, UpdateLogin(_)).WillOnce(SaveArg<0>(&saved));
+      EXPECT_CALL(*mock_store_, UpdateLogin).WillOnce(SaveArg<0>(&saved));
       return form_saver_.Update(std::move(pending), {}, u"");
     case SaveOperation::kReplaceUpdate: {
       PasswordForm old_key = CreatePending(u"some_other_username", u"1234");
-      EXPECT_CALL(*mock_store_, UpdateLoginWithPrimaryKey(_, old_key))
+      EXPECT_CALL(*mock_store_, UpdateLoginWithPrimaryKey(_, old_key, _))
           .WillOnce(SaveArg<0>(&saved));
       return form_saver_.UpdateReplace(std::move(pending), {}, u"", old_key);
     }
@@ -338,7 +339,7 @@ TEST_F(FormSaverImplTest, Blocklist) {
       password_manager_util::MakeNormalizedBlocklistedForm(
           PasswordFormDigest(observed));
 
-  EXPECT_CALL(*mock_store_, AddLogin(FormWithSomeDate(blocklisted)));
+  EXPECT_CALL(*mock_store_, AddLogin(FormWithSomeDate(blocklisted), _));
   PasswordForm result = form_saver_.Blocklist(PasswordFormDigest(observed));
   EXPECT_THAT(result, FormWithSomeDate(blocklisted));
 }

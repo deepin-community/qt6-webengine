@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -75,10 +75,11 @@ class SpellCheckHostMetrics {
   // Records spell check support for user-added Chrome languages that are not
   // eligible for spell checking (due to the hard-coded spell check locales
   // list).
-  void RecordAcceptLanguageStats(const LocalesSupportInfo& locales_info);
+  static void RecordAcceptLanguageStats(const LocalesSupportInfo& locales_info);
 
   // Records which spell checker can handle which enabled spell check locales.
-  void RecordSpellcheckLanguageStats(const LocalesSupportInfo& locales_info);
+  static void RecordSpellcheckLanguageStats(
+      const LocalesSupportInfo& locales_info);
 #endif  // BUILDFLAG(IS_WIN)
 
  private:

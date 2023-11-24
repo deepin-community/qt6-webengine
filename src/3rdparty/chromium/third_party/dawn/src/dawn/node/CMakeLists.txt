@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set(GEN_DIR         "${CMAKE_CURRENT_BINARY_DIR}/gen")
-set(IDLGEN_TOOL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tools/src/cmd/idlgen")
+set(DAWN_NODE_GEN_DIR "${DAWN_BUILD_GEN_DIR}/node")
+set(IDLGEN_TOOL_DIR   "${CMAKE_SOURCE_DIR}/tools/src/cmd/idlgen")
 
-# idlgen() is a function that uses the tools/cmd/idlgen/main.go tool to generate
-# code from an IDL file and template.
+# idlgen() is a function that uses the tools/src/cmd/idlgen/main.go tool to
+# generate code from an IDL file and template.
 # idlgen() accepts the following named arguments:
 #   TEMPLATE <path> - (required) the path to the root .tmpl file. If the
 #                     template imports other templates, then these should be
@@ -41,7 +41,7 @@ function(idlgen)
         message(FATAL_ERROR "idlgen() missing IDLS argument(s)")
     endif()
     add_custom_command(
-        COMMAND ${GO_EXECUTABLE} "run" "main.go"
+        COMMAND ${GO_EXECUTABLE} "run" "${IDLGEN_TOOL_DIR}/main.go"
                 "--template" "${IDLGEN_TEMPLATE}"
                 "--output"   "${IDLGEN_OUTPUT}"
                 ${IDLGEN_IDLS}
@@ -70,12 +70,13 @@ set_target_properties(dawn_node PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
     CXX_STANDARD 17
 )
-target_link_libraries(dawn_node dawn_node_binding dawn_node_interop dawn_native dawncpp dawn_proc)
+target_link_libraries(dawn_node dawn_node_binding dawn_node_interop dawn_native dawncpp dawn_proc
+                      libtint)
 target_include_directories(dawn_node PRIVATE
-    "${CMAKE_SOURCE_DIR}"
+    "${PROJECT_SOURCE_DIR}"
     "${DAWN_THIRD_PARTY_DIR}"
     "${NODE_API_HEADERS_DIR}/include"
-    "${GEN_DIR}"
+    "${DAWN_NODE_GEN_DIR}"
 )
 
 # To reduce the build dependencies for compiling the dawn.node targets, we do
@@ -92,17 +93,23 @@ string(REGEX MATCHALL "napi_[a-z0-9_]*" NAPI_SYMBOLS "${NAPI_SYMBOLS_JS_CONTENT}
 
 if (WIN32)
     # Generate the NapiSymbols.def file from the Napi symbol list
-    set(NAPI_SYMBOLS_DEF "${GEN_DIR}/NapiSymbols.def")
+    set(NAPI_SYMBOLS_DEF "${DAWN_NODE_GEN_DIR}/NapiSymbols.def")
     list(TRANSFORM NAPI_SYMBOLS PREPEND "  ")
     list(TRANSFORM NAPI_SYMBOLS APPEND "\n")
     string(REPLACE ";" "" NAPI_SYMBOLS "${NAPI_SYMBOLS}")
     string(PREPEND NAPI_SYMBOLS "LIBRARY node.exe\nEXPORTS\n")
     file(GENERATE OUTPUT "${NAPI_SYMBOLS_DEF}" CONTENT "${NAPI_SYMBOLS}")
     # Generate the NapiSymbols.lib from the NapiSymbols.def file
-    set(NAPI_SYMBOLS_LIB "${GEN_DIR}/NapiSymbols.lib")
+    set(NAPI_SYMBOLS_LIB "${DAWN_NODE_GEN_DIR}/NapiSymbols.lib")
     # Resolve path to lib.exe
-    get_filename_component(VS_BIN_DIR "${CMAKE_LINKER}" DIRECTORY)
-    set(LIB_EXE "${VS_BIN_DIR}/lib.exe")
+    get_filename_component(LINKER_BIN_DIR "${CMAKE_LINKER}" DIRECTORY)
+    if (EXISTS "${LINKER_BIN_DIR}/lib.exe")
+        set(LIB_EXE "${LINKER_BIN_DIR}/lib.exe")
+    elseif (EXISTS "${LINKER_BIN_DIR}/lld-link.exe")
+        set(LIB_EXE "${LINKER_BIN_DIR}/lld-link.exe")
+    else()
+        message(FATAL_ERROR "unable to find lib.exe or lld-link.exe")
+    endif()
     add_custom_command(
         COMMAND "${LIB_EXE}"
                 "/DEF:${NAPI_SYMBOLS_DEF}"
@@ -116,7 +123,7 @@ if (WIN32)
     target_link_libraries(dawn_node "${NAPI_SYMBOLS_LIB}")
 else()
     # Generate the NapiSymbols.h file from the Napi symbol list
-    set(NAPI_SYMBOLS_H "${GEN_DIR}/NapiSymbols.h")
+    set(NAPI_SYMBOLS_H "${DAWN_NODE_GEN_DIR}/NapiSymbols.h")
     list(TRANSFORM NAPI_SYMBOLS PREPEND "NAPI_SYMBOL(")
     list(TRANSFORM NAPI_SYMBOLS APPEND ")\n")
     string(REPLACE ";" "" NAPI_SYMBOLS "${NAPI_SYMBOLS}")

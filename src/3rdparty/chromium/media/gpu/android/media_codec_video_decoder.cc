@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,21 +7,21 @@
 #include <memory>
 
 #include "base/android/build_info.h"
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/bind_post_task.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "media/base/android/media_codec_bridge_impl.h"
 #include "media/base/android/media_codec_util.h"
 #include "media/base/async_destroy_video_decoder.h"
-#include "media/base/bind_to_current_loop.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/media_log.h"
 #include "media/base/media_switches.h"
@@ -34,6 +34,7 @@
 #include "media/base/video_frame.h"
 #include "media/gpu/android/android_video_surface_chooser.h"
 #include "media/gpu/android/codec_allocator.h"
+#include "media/gpu/android/video_accelerator_util.h"
 #include "media/media_buildflags.h"
 
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
@@ -59,134 +60,54 @@ bool IsSurfaceControlEnabled(const gpu::GpuFeatureInfo& info) {
 }
 
 std::vector<SupportedVideoDecoderConfig> GetSupportedConfigsInternal(
-    DeviceInfo* device_info) {
+    DeviceInfo* device_info,
+    bool allow_software_codecs = false) {
   std::vector<SupportedVideoDecoderConfig> supported_configs;
-
-  if (device_info->IsVp8DecoderAvailable()) {
-    // For unencrypted content, require that the size is at least 360p and that
-    // the MediaCodec implementation is hardware; otherwise fall back to libvpx.
-    if (!device_info->IsDecoderKnownUnaccelerated(VideoCodec::kVP8)) {
-      supported_configs.emplace_back(VP8PROFILE_ANY, VP8PROFILE_ANY,
-                                     gfx::Size(480, 360), gfx::Size(3840, 2160),
-                                     false,   // allow_encrypted
-                                     false);  // require_encrypted
-    }
-
-    // Encrypted content must be decoded by MediaCodec.
-    supported_configs.emplace_back(VP8PROFILE_ANY, VP8PROFILE_ANY,
-                                   gfx::Size(0, 0), gfx::Size(3840, 2160),
-                                   true,   // allow_encrypted
-                                   true);  // require_encrypted
-  }
-
-  // TODO(dalecurtis): This needs to actually check the profiles available. This
-  // can be done by calling MediaCodecUtil::AddSupportedCodecProfileLevels.
-  if (device_info->IsVp9DecoderAvailable()) {
-    const bool is_sw =
-        device_info->IsDecoderKnownUnaccelerated(VideoCodec::kVP9);
-
-    std::vector<CodecProfileLevel> profiles;
-
-    // Support for VP9.2, VP9.3 was not added until Nougat.
-    if (device_info->SdkVersion() >= base::android::SDK_VERSION_NOUGAT)
-      device_info->AddSupportedCodecProfileLevels(&profiles);
-
-    // If we think a VP9 decoder is available, but we didn't get any profiles
-    // returned, just assume support for vp9.0 only.
-    if (profiles.empty())
-      profiles.push_back({VideoCodec::kVP9, VP9PROFILE_PROFILE0, 0});
-
-    for (const auto& p : profiles) {
-      if (p.codec != VideoCodec::kVP9)
-        continue;
-
+  for (const auto& info : GetDecoderInfoCache()) {
+    const auto codec = VideoCodecProfileToVideoCodec(info.profile);
+    if ((codec == VideoCodec::kVP8 && device_info->IsVp8DecoderAvailable()) ||
+        (codec == VideoCodec::kVP9 && device_info->IsVp9DecoderAvailable()) ||
+        (codec == VideoCodec::kAV1 && device_info->IsAv1DecoderAvailable())) {
       // We don't compile support into libvpx for these profiles, so allow them
-      // for all resolutions. See notes on H264 profiles below for more detail.
-      if (p.profile > VP9PROFILE_PROFILE1) {
-        supported_configs.emplace_back(p.profile, p.profile, gfx::Size(0, 0),
-                                       gfx::Size(3840, 2160),
-                                       true,    // allow_encrypted
-                                       false);  // require_encrypted
-        supported_configs.emplace_back(p.profile, p.profile, gfx::Size(0, 0),
-                                       gfx::Size(2160, 3840),
-                                       true,    // allow_encrypted
-                                       false);  // require_encrypted
-        continue;
-      }
+      // for all resolutions. Tests require availability of software codecs.
+      const bool require_encrypted = !allow_software_codecs &&
+                                     info.profile != VP9PROFILE_PROFILE2 &&
+                                     info.profile != VP9PROFILE_PROFILE3;
+      supported_configs.emplace_back(
+          info.profile, info.profile, info.coded_size_min, info.coded_size_max,
+          /*allow_encrypted=*/true, require_encrypted);
 
-      // For unencrypted vp9.0 and vp9.1 content, require that the size is at
-      // least 360p and that the MediaCodec implementation is hardware;
-      // otherwise fall back to libvpx.
-      if (!is_sw) {
-        supported_configs.emplace_back(
-            p.profile, p.profile, gfx::Size(480, 360), gfx::Size(3840, 2160),
-            false,   // allow_encrypted
-            false);  // require_encrypted
-        supported_configs.emplace_back(
-            p.profile, p.profile, gfx::Size(360, 480), gfx::Size(2160, 3840),
-            false,   // allow_encrypted
-            false);  // require_encrypted
+      // Don't allow software decoding since we bundle VP8, VP9, AV1 decoders.
+      if (!info.is_software_codec && require_encrypted) {
+        // Require a minimum of 360p even for hardware decoding of VP8, VP9.
+        auto coded_size_min = info.coded_size_min;
+        if (codec == VideoCodec::kVP8 || codec == VideoCodec::kVP9) {
+          coded_size_min.SetToMax(gfx::Size(360, 360));
+        }
+        supported_configs.emplace_back(info.profile, info.profile,
+                                       coded_size_min, info.coded_size_max,
+                                       /*allow_encrypted=*/false,
+                                       /*require_encrypted=*/false);
       }
-
-      // Encrypted content must be decoded by MediaCodec.
-      supported_configs.emplace_back(p.profile, p.profile, gfx::Size(0, 0),
-                                     gfx::Size(3840, 2160),
-                                     true,   // allow_encrypted
-                                     true);  // require_encrypted
-      supported_configs.emplace_back(p.profile, p.profile, gfx::Size(0, 0),
-                                     gfx::Size(2160, 3840),
-                                     true,   // allow_encrypted
-                                     true);  // require_encrypted
+      continue;
     }
-  }
-
-  if (device_info->IsAv1DecoderAvailable()) {
-    // Technically we should check which profiles are supported, but since we
-    // don't have an AV1 SW decoder, just allow them all. See notes below for
-    // H264 profiles on the reasons why.
-    supported_configs.emplace_back(AV1PROFILE_MIN, AV1PROFILE_MAX,
-                                   gfx::Size(0, 0), gfx::Size(3840, 2160),
-                                   true,    // allow_encrypted
-                                   false);  // require_encrypted
-    supported_configs.emplace_back(AV1PROFILE_MIN, AV1PROFILE_MAX,
-                                   gfx::Size(0, 0), gfx::Size(2160, 3840),
-                                   true,    // allow_encrypted
-                                   false);  // require_encrypted
-  }
-
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
-  // MediaCodec is only guaranteed to support baseline, but some devices may
-  // support others. Advertise support for all H.264 profiles and let the
-  // MediaCodec fail when decoding if it's not actually supported. It's assumed
-  // that there is not software fallback for H.264 on Android.
-  supported_configs.emplace_back(H264PROFILE_MIN, H264PROFILE_MAX,
-                                 gfx::Size(0, 0), gfx::Size(3840, 2160),
-                                 true,    // allow_encrypted
-                                 false);  // require_encrypted
-  supported_configs.emplace_back(H264PROFILE_MIN, H264PROFILE_MAX,
-                                 gfx::Size(0, 0), gfx::Size(2160, 3840),
-                                 true,    // allow_encrypted
-                                 false);  // require_encrypted
-
+    if (codec == VideoCodec::kH264
 #if BUILDFLAG(ENABLE_PLATFORM_HEVC)
-  supported_configs.emplace_back(HEVCPROFILE_MIN, HEVCPROFILE_MAX,
-                                 gfx::Size(0, 0), gfx::Size(3840, 2160),
-                                 true,    // allow_encrypted
-                                 false);  // require_encrypted
-#endif
+        || (codec == VideoCodec::kHEVC &&
+            base::FeatureList::IsEnabled(kPlatformHEVCDecoderSupport))
+#endif  // BUILDFLAG(ENABLE_PLATFORM_HEVC)
 #if BUILDFLAG(ENABLE_PLATFORM_DOLBY_VISION)
-  // Technically we should check which profiles are supported, but we can
-  // allow them all like we do with H264 codec.
-  supported_configs.emplace_back(DOLBYVISION_PROFILE4, DOLBYVISION_PROFILE9,
-                                 gfx::Size(0, 0), gfx::Size(3840, 2160),
-                                 true,    // allow_encrypted
-                                 false);  // require_encrypted
-  supported_configs.emplace_back(DOLBYVISION_PROFILE4, DOLBYVISION_PROFILE9,
-                                 gfx::Size(0, 0), gfx::Size(2160, 3840),
-                                 true,    // allow_encrypted
-                                 false);  // require_encrypted
-#endif
-#endif  // #if BUILDFLAG(USE_PROPRIETARY_CODECS)
+        || codec == VideoCodec::kDolbyVision
+#endif  // BUILDFLAG(ENABLE_PLATFORM_DOLBY_VISION)
+    ) {
+      supported_configs.emplace_back(info.profile, info.profile,
+                                     info.coded_size_min, info.coded_size_max,
+                                     /*allow_encrypted=*/true,
+                                     /*require_encrypted=*/false);
+    }
+#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+  }
 
   return supported_configs;
 }
@@ -336,7 +257,7 @@ void MediaCodecVideoDecoder::Initialize(const VideoDecoderConfig& config,
     MEDIA_LOG(INFO, media_log_) << "Video configuration is not valid: "
                                 << config.AsHumanReadableString();
     DVLOG(1) << "Invalid configuration.";
-    BindToCurrentLoop(std::move(init_cb))
+    base::BindPostTaskToCurrentDefault(std::move(init_cb))
         .Run(DecoderStatus::Codes::kUnsupportedConfig);
     return;
   }
@@ -344,14 +265,17 @@ void MediaCodecVideoDecoder::Initialize(const VideoDecoderConfig& config,
   // Tests override the DeviceInfo, so if an override is provided query the
   // configs as they look under that DeviceInfo. If not, use the default method
   // which is statically cached for faster Initialize().
+  //
+  // The tests also require the presence of software codecs.
   const auto configs = device_info_ == DeviceInfo::GetInstance()
                            ? GetSupportedConfigs()
-                           : GetSupportedConfigsInternal(device_info_);
+                           : GetSupportedConfigsInternal(
+                                 device_info_, /*allow_software_codecs=*/true);
   if (!IsVideoDecoderConfigSupported(configs, config)) {
     DVLOG(1) << "Unsupported configuration.";
     MEDIA_LOG(INFO, media_log_) << "Video configuration is not valid: "
                                 << config.AsHumanReadableString();
-    BindToCurrentLoop(std::move(init_cb))
+    base::BindPostTaskToCurrentDefault(std::move(init_cb))
         .Run(DecoderStatus::Codes::kUnsupportedConfig);
     return;
   }
@@ -362,7 +286,7 @@ void MediaCodecVideoDecoder::Initialize(const VideoDecoderConfig& config,
     MEDIA_LOG(INFO, media_log_) << "Cannot change codec during re-init: "
                                 << decoder_config_.AsHumanReadableString()
                                 << " -> " << config.AsHumanReadableString();
-    BindToCurrentLoop(std::move(init_cb))
+    base::BindPostTaskToCurrentDefault(std::move(init_cb))
         .Run(DecoderStatus::Codes::kCantChangeCodec);
     return;
   }
@@ -382,8 +306,10 @@ void MediaCodecVideoDecoder::Initialize(const VideoDecoderConfig& config,
   // We only support setting CDM at first initialization. Even if the initial
   // config is clear, we'll still try to set CDM since we may switch to an
   // encrypted config later.
+  const int width = decoder_config_.coded_size().width();
   if (first_init && cdm_context && cdm_context->GetMediaCryptoContext()) {
     DCHECK(media_crypto_.is_null());
+    last_width_ = width;
     SetCdm(cdm_context, std::move(init_cb));
     return;
   }
@@ -391,15 +317,15 @@ void MediaCodecVideoDecoder::Initialize(const VideoDecoderConfig& config,
   if (config.is_encrypted() && media_crypto_.is_null()) {
     DVLOG(1) << "No MediaCrypto to handle encrypted config";
     MEDIA_LOG(INFO, media_log_) << "No MediaCrypto to handle encrypted config";
-    BindToCurrentLoop(std::move(init_cb))
+    base::BindPostTaskToCurrentDefault(std::move(init_cb))
         .Run(DecoderStatus::Codes::kUnsupportedEncryptionMode);
     return;
   }
 
   // Do the rest of the initialization lazily on the first decode.
-  BindToCurrentLoop(std::move(init_cb)).Run(DecoderStatus::Codes::kOk);
+  base::BindPostTaskToCurrentDefault(std::move(init_cb))
+      .Run(DecoderStatus::Codes::kOk);
 
-  const int width = decoder_config_.coded_size().width();
   // On re-init, reallocate the codec if the size has changed too much.
   // Restrict this behavior to Q, where the behavior changed.
   if (first_init) {
@@ -414,6 +340,9 @@ void MediaCodecVideoDecoder::Initialize(const VideoDecoderConfig& config,
     // sure, request a deferred flush.
     deferred_flush_pending_ = true;
     deferred_reallocation_pending_ = true;
+    // Since this will re-use the same surface, allow a retry to work around a
+    // race condition in the android framework.
+    should_retry_codec_allocation_ = true;
     last_width_ = width;
   }  // else leave |last_width_| unmodified, since we're re-using the codec.
 }
@@ -429,10 +358,12 @@ void MediaCodecVideoDecoder::SetCdm(CdmContext* cdm_context, InitCB init_cb) {
   event_cb_registration_ = cdm_context->RegisterEventCB(base::BindRepeating(
       &MediaCodecVideoDecoder::OnCdmContextEvent, weak_factory_.GetWeakPtr()));
 
-  // The callback will be posted back to this thread via BindToCurrentLoop.
-  media_crypto_context_->SetMediaCryptoReadyCB(media::BindToCurrentLoop(
-      base::BindOnce(&MediaCodecVideoDecoder::OnMediaCryptoReady,
-                     weak_factory_.GetWeakPtr(), std::move(init_cb))));
+  // The callback will be posted back to this thread via
+  // base::BindPostTaskToCurrentDefault.
+  media_crypto_context_->SetMediaCryptoReadyCB(
+      base::BindPostTaskToCurrentDefault(
+          base::BindOnce(&MediaCodecVideoDecoder::OnMediaCryptoReady,
+                         weak_factory_.GetWeakPtr(), std::move(init_cb))));
 }
 
 void MediaCodecVideoDecoder::OnMediaCryptoReady(
@@ -664,7 +595,7 @@ void MediaCodecVideoDecoder::CreateCodec() {
   // Use the asynchronous API if we can.
   if (device_info_->IsAsyncApiSupported()) {
     using_async_api_ = true;
-    config->on_buffers_available_cb = BindToCurrentLoop(
+    config->on_buffers_available_cb = base::BindPostTaskToCurrentDefault(
         base::BindRepeating(&MediaCodecVideoDecoder::StartTimerOrPumpCodec,
                             weak_factory_.GetWeakPtr()));
   }
@@ -691,7 +622,7 @@ void MediaCodecVideoDecoder::OnCodecConfiguredInternal(
           std::move(codec),
           base::BindOnce(
               &base::SequencedTaskRunner::ReleaseSoon<CodecSurfaceBundle>,
-              base::SequencedTaskRunnerHandle::Get(), FROM_HERE,
+              base::SequencedTaskRunner::GetCurrentDefault(), FROM_HERE,
               std::move(surface_bundle)));
     }
     return;
@@ -704,6 +635,21 @@ void MediaCodecVideoDecoder::OnCodecConfigured(
     std::unique_ptr<MediaCodecBridge> codec) {
   DCHECK(!codec_);
   DCHECK_EQ(state_, State::kRunning);
+  bool should_retry_codec_allocation = should_retry_codec_allocation_;
+  should_retry_codec_allocation_ = false;
+
+  // In rare cases, the framework can fail transiently when trying to re-use a
+  // surface.  If we're in one of those cases, then retry codec allocation.
+  // This only happens on R and S, so skip it otherwise.
+  if (!codec && should_retry_codec_allocation &&
+      device_info_->SdkVersion() >= base::android::SDK_VERSION_R &&
+      device_info_->SdkVersion() <= 32 /* SDK_VERSION_S_V2 */
+  ) {
+    // We might want to post this with a short delay, but there is already quite
+    // a lot of overhead in codec allocation.
+    CreateCodec();
+    return;
+  }
 
   if (!codec) {
     EnterTerminalState(State::kError, "Unable to allocate codec");
@@ -713,11 +659,13 @@ void MediaCodecVideoDecoder::OnCodecConfigured(
   max_input_size_ = codec->GetMaxInputSize();
   codec_ = std::make_unique<CodecWrapper>(
       CodecSurfacePair(std::move(codec), std::move(surface_bundle)),
-      base::BindRepeating(&OutputBufferReleased, using_async_api_,
-                          BindToCurrentLoop(base::BindRepeating(
-                              &MediaCodecVideoDecoder::StartTimerOrPumpCodec,
-                              weak_factory_.GetWeakPtr()))),
-      base::SequencedTaskRunnerHandle::Get());
+      base::BindRepeating(
+          &OutputBufferReleased, using_async_api_,
+          base::BindPostTaskToCurrentDefault(base::BindRepeating(
+              &MediaCodecVideoDecoder::StartTimerOrPumpCodec,
+              weak_factory_.GetWeakPtr()))),
+      base::SequencedTaskRunner::GetCurrentDefault(),
+      decoder_config_.coded_size());
 
   // If the target surface changed while codec creation was in progress,
   // transition to it immediately.
@@ -775,6 +723,8 @@ void MediaCodecVideoDecoder::FlushCodec() {
   if (deferred_reallocation_pending_) {
     deferred_reallocation_pending_ = false;
     ReleaseCodec();
+    // Re-initializing the codec with the same surface may need to retry.
+    should_retry_codec_allocation_ = !SurfaceTransitionPending();
     CreateCodec();
   }
 
@@ -996,13 +946,6 @@ bool MediaCodecVideoDecoder::DequeueOutput() {
   if (drain_type_ || deferred_flush_pending_)
     return true;
 
-  // Record the frame type that we're sending and some information about why.
-  UMA_HISTOGRAM_ENUMERATION(
-      "Media.AVDA.FrameInformation", cached_frame_information_,
-      static_cast<int>(
-          SurfaceChooserHelper::FrameInformation::FRAME_INFORMATION_MAX) +
-          1);  // PRESUBMIT_IGNORE_UMA_MAX
-
   // If we're getting outputs larger than our configured size, we run the risk
   // of exceeding MediaCodec's allowed input buffer size. Update the coded size
   // as we go to ensure we can correctly reconfigure if needed later.
@@ -1019,7 +962,7 @@ bool MediaCodecVideoDecoder::DequeueOutput() {
   // SurfaceControl overlays, then this isn't needed; there is never a surface
   // transition anyway.
   if (!is_surface_control_enabled_) {
-    output_buffer->set_render_cb(BindToCurrentLoop(
+    output_buffer->set_render_cb(base::BindPostTaskToCurrentDefault(
         base::BindOnce(&MediaCodecVideoDecoder::StartTimerOrPumpCodec,
                        weak_factory_.GetWeakPtr())));
   }
@@ -1051,17 +994,18 @@ void MediaCodecVideoDecoder::ForwardVideoFrame(
   DVLOG(3) << __func__ << " : "
            << (frame ? frame->AsHumanReadableString() : "null");
 
-  // Record how long this frame was pending.
-  const base::TimeDelta duration = base::TimeTicks::Now() - started_at;
-  UMA_HISTOGRAM_CUSTOM_TIMES("Media.MCVD.ForwardVideoFrameTiming", duration,
-                             base::Milliseconds(1), base::Milliseconds(100),
-                             25);
-
   // No |frame| indicates an error creating it.
   if (!frame) {
     DLOG(ERROR) << __func__ << " |frame| is null";
     EnterTerminalState(State::kError, "Could not create VideoFrame");
     return;
+  }
+
+  // Attach the HDR metadata if the color space got this far and is still an HDR
+  // color space.  Note that it might be converted to something else along the
+  // way, often sRGB.  In that case, don't confuse things with HDR metadata.
+  if (frame->ColorSpace().IsHDR() && decoder_config_.hdr_metadata()) {
+    frame->set_hdr_metadata(decoder_config_.hdr_metadata());
   }
 
   if (reset_generation == reset_generation_) {
@@ -1134,7 +1078,7 @@ void MediaCodecVideoDecoder::OnCodecDrained() {
 
   if (drain_type == DrainType::kForDestroy) {
     // Post the delete in case the caller uses |this| after we return.
-    base::SequencedTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
+    base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE, this);
     return;
   }
 
@@ -1164,7 +1108,7 @@ void MediaCodecVideoDecoder::EnterTerminalState(State state,
   target_surface_bundle_ = nullptr;
   texture_owner_bundle_ = nullptr;
   if (state == State::kError)
-    CancelPendingDecodes(DecoderStatus::Codes::kFailed);
+    CancelPendingDecodes({DecoderStatus::Codes::kFailed, reason});
   if (drain_type_)
     OnCodecDrained();
 }
@@ -1190,7 +1134,7 @@ void MediaCodecVideoDecoder::ReleaseCodec() {
       std::move(pair.first),
       base::BindOnce(
           &base::SequencedTaskRunner::ReleaseSoon<CodecSurfaceBundle>,
-          base::SequencedTaskRunnerHandle::Get(), FROM_HERE,
+          base::SequencedTaskRunner::GetCurrentDefault(), FROM_HERE,
           std::move(pair.second)));
 }
 
@@ -1237,7 +1181,7 @@ MediaCodecVideoDecoder::CreatePromotionHintCB() {
   // also continues to work even if |this| is destroyed; images might want to
   // move an overlay around even after MCVD has been torn down.  For example
   // inline L1 content will fall into this case.
-  return BindToCurrentLoop(base::BindRepeating(
+  return base::BindPostTaskToCurrentDefault(base::BindRepeating(
       [](base::WeakPtr<MediaCodecVideoDecoder> mcvd,
          CodecSurfaceBundle::ScheduleLayoutCB layout_cb,
          PromotionHintAggregator::Hint hint) {

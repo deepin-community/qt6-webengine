@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include "base/hash/sha1.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/rand_util.h"
+#include "base/strings/escape.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
@@ -16,7 +17,6 @@
 #include "components/version_info/version_info.h"
 #include "crypto/sha2.h"
 #include "google_apis/google_api_keys.h"
-#include "net/base/escape.h"
 #include "net/base/ip_address.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_request_headers.h"
@@ -47,7 +47,7 @@ std::string Unescape(const std::string& url) {
   int loop_var = 0;
   do {
     old_size = unescaped_str.size();
-    unescaped_str = net::UnescapeBinaryURLComponent(unescaped_str);
+    unescaped_str = base::UnescapeBinaryURLComponent(unescaped_str);
   } while (old_size != unescaped_str.size() &&
            ++loop_var <= kMaxLoopIterations);
 
@@ -97,7 +97,7 @@ std::string GetReportUrl(const V4ProtocolConfig& config,
   std::string api_key = google_apis::GetAPIKey();
   if (!api_key.empty()) {
     base::StringAppendF(&url, "&key=%s",
-                        net::EscapeQueryParamValue(api_key, true).c_str());
+                        base::EscapeQueryParamValue(api_key, true).c_str());
   }
   if (reporting_level)
     url.append(base::StringPrintf("&ext=%d", *reporting_level));
@@ -141,10 +141,6 @@ ListIdentifier GetChromeUrlClientIncidentId() {
 
 ListIdentifier GetIpMalwareId() {
   return ListIdentifier(GetCurrentPlatformType(), IP_RANGE, MALWARE_THREAT);
-}
-
-ListIdentifier GetUrlAccuracyTipsId() {
-  return ListIdentifier(GetCurrentPlatformType(), URL, ACCURACY_TIPS);
 }
 
 ListIdentifier GetUrlBillingId() {
@@ -195,7 +191,7 @@ std::string GetUmaSuffixForStore(const base::FilePath& file_path) {
 }
 
 StoreAndHashPrefix::StoreAndHashPrefix(ListIdentifier list_id,
-                                       const HashPrefix& hash_prefix)
+                                       const HashPrefixStr& hash_prefix)
     : list_id(list_id), hash_prefix(hash_prefix) {}
 
 StoreAndHashPrefix::~StoreAndHashPrefix() {}
@@ -323,7 +319,7 @@ std::string V4ProtocolManagerUtil::ComposeUrl(const std::string& prefix,
       method.c_str(), request_base64.c_str());
   if (!key_param.empty()) {
     base::StringAppendF(&url, "&key=%s",
-                        net::EscapeQueryParamValue(key_param, true).c_str());
+                        base::EscapeQueryParamValue(key_param, true).c_str());
   }
   return url;
 }
@@ -339,7 +335,7 @@ void V4ProtocolManagerUtil::UpdateHeaders(net::HttpRequestHeaders* headers) {
 // static
 void V4ProtocolManagerUtil::UrlToFullHashes(
     const GURL& url,
-    std::vector<FullHash>* full_hashes) {
+    std::vector<FullHashStr>* full_hashes) {
   std::string canon_host, canon_path, canon_query;
   CanonicalizeUrl(url, &canon_host, &canon_path, &canon_query);
 
@@ -362,9 +358,9 @@ void V4ProtocolManagerUtil::UrlToFullHashes(
 }
 
 // static
-bool V4ProtocolManagerUtil::FullHashToHashPrefix(const FullHash& full_hash,
+bool V4ProtocolManagerUtil::FullHashToHashPrefix(const FullHashStr& full_hash,
                                                  PrefixSize prefix_size,
-                                                 HashPrefix* hash_prefix) {
+                                                 HashPrefixStr* hash_prefix) {
   if (full_hash.size() < prefix_size) {
     return false;
   }
@@ -374,15 +370,15 @@ bool V4ProtocolManagerUtil::FullHashToHashPrefix(const FullHash& full_hash,
 
 // static
 bool V4ProtocolManagerUtil::FullHashToSmallestHashPrefix(
-    const FullHash& full_hash,
-    HashPrefix* hash_prefix) {
+    const FullHashStr& full_hash,
+    HashPrefixStr* hash_prefix) {
   return FullHashToHashPrefix(full_hash, kMinHashPrefixLength, hash_prefix);
 }
 
 // static
 bool V4ProtocolManagerUtil::FullHashMatchesHashPrefix(
-    const FullHash& full_hash,
-    const HashPrefix& hash_prefix) {
+    const FullHashStr& full_hash,
+    const HashPrefixStr& hash_prefix) {
   return full_hash.compare(0, hash_prefix.length(), hash_prefix) == 0;
 }
 
@@ -425,7 +421,7 @@ void V4ProtocolManagerUtil::GeneratePatternsToCheck(
 }
 
 // static
-FullHash V4ProtocolManagerUtil::GetFullHash(const GURL& url) {
+FullHashStr V4ProtocolManagerUtil::GetFullHash(const GURL& url) {
   std::string host;
   std::string path;
   CanonicalizeUrl(url, &host, &path, nullptr);
@@ -469,7 +465,7 @@ void V4ProtocolManagerUtil::CanonicalizeUrl(const GURL& url,
 
   // 3. In hostname, remove all leading and trailing dots.
   base::StringPiece host;
-  if (parsed.host.len > 0)
+  if (parsed.host.is_nonempty())
     host = base::StringPiece(url_unescaped_str.data() + parsed.host.begin,
                              parsed.host.len);
 
@@ -482,7 +478,7 @@ void V4ProtocolManagerUtil::CanonicalizeUrl(const GURL& url,
 
   // 5. In path, replace runs of consecutive slashes with a single slash.
   base::StringPiece path;
-  if (parsed.path.len > 0)
+  if (parsed.path.is_nonempty())
     path = base::StringPiece(url_unescaped_str.data() + parsed.path.begin,
                              parsed.path.len);
   std::string path_without_consecutive_slash(RemoveConsecutiveChars(path, '/'));
@@ -513,15 +509,15 @@ void V4ProtocolManagerUtil::CanonicalizeUrl(const GURL& url,
   url::ParseStandardURL(escaped_canon_url_str.data(),
                         escaped_canon_url_str.length(), &final_parsed);
 
-  if (canonicalized_hostname && final_parsed.host.len > 0) {
+  if (canonicalized_hostname && final_parsed.host.is_nonempty()) {
     *canonicalized_hostname = escaped_canon_url_str.substr(
         final_parsed.host.begin, final_parsed.host.len);
   }
-  if (canonicalized_path && final_parsed.path.len > 0) {
+  if (canonicalized_path && final_parsed.path.is_nonempty()) {
     *canonicalized_path = escaped_canon_url_str.substr(final_parsed.path.begin,
                                                        final_parsed.path.len);
   }
-  if (canonicalized_query && final_parsed.query.len > 0) {
+  if (canonicalized_query && final_parsed.query.is_nonempty()) {
     *canonicalized_query = escaped_canon_url_str.substr(
         final_parsed.query.begin, final_parsed.query.len);
   }
@@ -636,7 +632,7 @@ bool V4ProtocolManagerUtil::GetIPV6AddressFromString(
 // static
 bool V4ProtocolManagerUtil::IPAddressToEncodedIPV6Hash(
     const std::string& ip_address,
-    FullHash* hashed_encoded_ip) {
+    FullHashStr* hashed_encoded_ip) {
   net::IPAddress address;
   if (!GetIPV6AddressFromString(ip_address, &address)) {
     return false;

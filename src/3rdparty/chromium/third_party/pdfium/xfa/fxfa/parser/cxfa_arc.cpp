@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -28,6 +28,13 @@ const CXFA_Node::AttributeData kArcAttributeData[] = {
 };
 
 }  // namespace
+
+// static
+CXFA_Arc* CXFA_Arc::FromNode(CXFA_Node* pNode) {
+  return pNode && pNode->GetElementType() == XFA_Element::Arc
+             ? static_cast<CXFA_Arc*>(pNode)
+             : nullptr;
+}
 
 CXFA_Arc::CXFA_Arc(CXFA_Document* doc, XFA_PacketType packet)
     : CXFA_Box(doc,

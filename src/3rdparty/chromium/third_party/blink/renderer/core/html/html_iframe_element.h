@@ -59,6 +59,10 @@ class CORE_EXPORT HTMLIFrameElement : public HTMLFrameElementBase,
     return FrameOwnerElementType::kIframe;
   }
 
+  bool Credentialless() const override { return credentialless_; }
+
+  bool IsSupportedByRegionCapture() const override { return true; }
+
  private:
   void SetCollapsed(bool) override;
 
@@ -72,7 +76,7 @@ class CORE_EXPORT HTMLIFrameElement : public HTMLFrameElementBase,
   InsertionNotificationRequest InsertedInto(ContainerNode&) override;
   void RemovedFrom(ContainerNode&) override;
 
-  bool LayoutObjectIsNeeded(const ComputedStyle&) const override;
+  bool LayoutObjectIsNeeded(const DisplayStyle&) const override;
   LayoutObject* CreateLayoutObject(const ComputedStyle&, LegacyLayout) override;
 
   bool IsInteractiveContent() const override;
@@ -85,12 +89,17 @@ class CORE_EXPORT HTMLIFrameElement : public HTMLFrameElementBase,
   // FrameOwner overrides:
   bool AllowFullscreen() const override { return allow_fullscreen_; }
   bool AllowPaymentRequest() const override { return allow_payment_request_; }
+  // HTML attributes of the iframe element that need to be tracked by the
+  // browser changed, such as 'id' and 'src'. This will send an IPC to the
+  // browser about the updates.
   void DidChangeAttributes() override;
 
   AtomicString name_;
   AtomicString required_csp_;
   AtomicString allow_;
   AtomicString required_policy_;  // policy attribute
+  AtomicString id_;
+  AtomicString src_;
   // String attribute storing a JSON representation of the Trust Token
   // parameters (in order to align with the fetch interface to the Trust Token
   // API). If present, this is parsed in ConstructTrustTokenParams.
@@ -98,7 +107,7 @@ class CORE_EXPORT HTMLIFrameElement : public HTMLFrameElementBase,
   bool allow_fullscreen_;
   bool allow_payment_request_;
   bool collapsed_by_client_;
-  bool anonymous_ = false;
+  bool credentialless_ = false;
   Member<HTMLIFrameElementSandbox> sandbox_;
   Member<DOMFeaturePolicy> policy_;
 

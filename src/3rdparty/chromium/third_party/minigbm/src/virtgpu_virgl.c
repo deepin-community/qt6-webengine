@@ -12,31 +12,45 @@
 #include <sys/mman.h>
 #include <xf86drm.h>
 
+#include "drv_helpers.h"
 #include "drv_priv.h"
 #include "external/virgl_hw.h"
 #include "external/virgl_protocol.h"
 #include "external/virtgpu_drm.h"
-#include "helpers.h"
 #include "util.h"
 #include "virtgpu.h"
 
 #define PIPE_TEXTURE_2D 2
 
+#define MESA_LLVMPIPE_MAX_TEXTURE_2D_LEVELS 15
+#define MESA_LLVMPIPE_MAX_TEXTURE_2D_SIZE (1 << (MESA_LLVMPIPE_MAX_TEXTURE_2D_LEVELS - 1))
 #define MESA_LLVMPIPE_TILE_ORDER 6
 #define MESA_LLVMPIPE_TILE_SIZE (1 << MESA_LLVMPIPE_TILE_ORDER)
+
+// This comes from a combination of SwiftShader's VkPhysicalDeviceLimits::maxFramebufferWidth and
+// VkPhysicalDeviceLimits::maxImageDimension2D (see https://crrev.com/c/1917130).
+#define ANGLE_ON_SWIFTSHADER_MAX_TEXTURE_2D_SIZE 8192
+
+#ifndef MIN
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#endif
+#define VIRGL_2D_MAX_TEXTURE_2D_SIZE                                                               \
+	MIN(ANGLE_ON_SWIFTSHADER_MAX_TEXTURE_2D_SIZE, MESA_LLVMPIPE_MAX_TEXTURE_2D_SIZE)
 
 static const uint32_t render_target_formats[] = { DRM_FORMAT_ABGR8888, DRM_FORMAT_ARGB8888,
 						  DRM_FORMAT_RGB565, DRM_FORMAT_XBGR8888,
 						  DRM_FORMAT_XRGB8888 };
 
 static const uint32_t dumb_texture_source_formats[] = {
-	DRM_FORMAT_R8,	 DRM_FORMAT_R16,  DRM_FORMAT_YVU420,
-	DRM_FORMAT_NV12, DRM_FORMAT_NV21, DRM_FORMAT_YVU420_ANDROID
+	DRM_FORMAT_R8,		DRM_FORMAT_R16,		 DRM_FORMAT_YVU420,
+	DRM_FORMAT_NV12,	DRM_FORMAT_NV21,	 DRM_FORMAT_YVU420_ANDROID,
+	DRM_FORMAT_ABGR2101010, DRM_FORMAT_ABGR16161616F
 };
 
-static const uint32_t texture_source_formats[] = { DRM_FORMAT_NV12, DRM_FORMAT_NV21,
-						   DRM_FORMAT_R8,   DRM_FORMAT_R16,
-						   DRM_FORMAT_RG88, DRM_FORMAT_YVU420_ANDROID };
+static const uint32_t texture_source_formats[] = {
+	DRM_FORMAT_NV21,	   DRM_FORMAT_R8,	   DRM_FORMAT_R16,	    DRM_FORMAT_RG88,
+	DRM_FORMAT_YVU420_ANDROID, DRM_FORMAT_ABGR2101010, DRM_FORMAT_ABGR16161616F
+};
 
 extern struct virtgpu_param params[];
 
@@ -77,11 +91,13 @@ static uint32_t translate_format(uint32_t drm_fourcc)
 		return VIRGL_FORMAT_NV12;
 	case DRM_FORMAT_NV21:
 		return VIRGL_FORMAT_NV21;
+	case DRM_FORMAT_P010:
+		return VIRGL_FORMAT_P010;
 	case DRM_FORMAT_YVU420:
 	case DRM_FORMAT_YVU420_ANDROID:
 		return VIRGL_FORMAT_YV12;
 	default:
-		drv_log("Unhandled format:%d\n", drm_fourcc);
+		drv_loge("Unhandled format:%d\n", drm_fourcc);
 		return 0;
 	}
 }
@@ -332,18 +348,16 @@ static bool virgl_supports_combination_through_emulation(struct driver *drv, uin
 static void virgl_add_combination(struct driver *drv, uint32_t drm_format,
 				  struct format_metadata *metadata, uint64_t use_flags)
 {
-	struct virgl_priv *priv = (struct virgl_priv *)drv->priv;
-
-	if (params[param_3d].value && priv->caps.max_version >= 1) {
-		if ((use_flags & BO_USE_SCANOUT) && priv->caps_is_v2 &&
-		    !virgl_supports_combination_natively(drv, drm_format, use_flags)) {
-			drv_log("Scanout format: %d\n", drm_format);
+	if (params[param_3d].value) {
+		if ((use_flags & BO_USE_SCANOUT) &&
+		    !virgl_supports_combination_natively(drv, drm_format, BO_USE_SCANOUT)) {
+			drv_logi("Strip scanout on format: %d\n", drm_format);
 			use_flags &= ~BO_USE_SCANOUT;
 		}
 
 		if (!virgl_supports_combination_natively(drv, drm_format, use_flags) &&
 		    !virgl_supports_combination_through_emulation(drv, drm_format, use_flags)) {
-			drv_log("Skipping unsupported combination format:%d\n", drm_format);
+			drv_logi("Skipping unsupported combination format:%d\n", drm_format);
 			return;
 		}
 	}
@@ -363,8 +377,8 @@ static void virgl_add_combinations(struct driver *drv, const uint32_t *drm_forma
 		virgl_add_combination(drv, drm_formats[i], metadata, use_flags);
 }
 
-static int virtio_dumb_bo_create(struct bo *bo, uint32_t width, uint32_t height, uint32_t format,
-				 uint64_t use_flags)
+static int virgl_2d_dumb_bo_create(struct bo *bo, uint32_t width, uint32_t height, uint32_t format,
+				   uint64_t use_flags)
 {
 	if (bo->meta.format != DRM_FORMAT_R8) {
 		width = ALIGN(width, MESA_LLVMPIPE_TILE_SIZE);
@@ -383,7 +397,7 @@ static inline void handle_flag(uint64_t *flag, uint64_t check_flag, uint32_t *bi
 	}
 }
 
-static uint32_t compute_virgl_bind_flags(uint64_t use_flags, uint32_t format)
+static uint32_t compute_virgl_bind_flags(uint64_t use_flags)
 {
 	/* In crosvm, VIRGL_BIND_SHARED means minigbm will allocate, not virglrenderer. */
 	uint32_t bind = VIRGL_BIND_SHARED;
@@ -393,6 +407,7 @@ static uint32_t compute_virgl_bind_flags(uint64_t use_flags, uint32_t format)
 	handle_flag(&use_flags, BO_USE_SCANOUT, &bind, VIRGL_BIND_SCANOUT);
 	handle_flag(&use_flags, BO_USE_CURSOR, &bind, VIRGL_BIND_CURSOR);
 	handle_flag(&use_flags, BO_USE_LINEAR, &bind, VIRGL_BIND_LINEAR);
+	handle_flag(&use_flags, BO_USE_SENSOR_DIRECT_DATA, &bind, VIRGL_BIND_LINEAR);
 	handle_flag(&use_flags, BO_USE_GPU_DATA_BUFFER, &bind, VIRGL_BIND_LINEAR);
 	handle_flag(&use_flags, BO_USE_FRONT_RENDERING, &bind, VIRGL_BIND_LINEAR);
 
@@ -424,16 +439,8 @@ static uint32_t compute_virgl_bind_flags(uint64_t use_flags, uint32_t format)
 	handle_flag(&use_flags, BO_USE_HW_VIDEO_ENCODER, &bind,
 		    VIRGL_BIND_MINIGBM_HW_VIDEO_ENCODER);
 
-	/*
-	 * HACK: This is for HAL_PIXEL_FORMAT_YV12 buffers allocated by arcvm. None of
-	 * our platforms can display YV12, so we can treat as a SW buffer. Remove once
-	 * this can be intelligently resolved in the guest. Also see gbm_bo_create.
-	 */
-	if (format == DRM_FORMAT_YVU420_ANDROID)
-		bind |= VIRGL_BIND_LINEAR;
-
 	if (use_flags)
-		drv_log("Unhandled bo use flag: %llx\n", (unsigned long long)use_flags);
+		drv_loge("Unhandled bo use flag: %llx\n", (unsigned long long)use_flags);
 
 	return bind;
 }
@@ -476,7 +483,7 @@ static int virgl_3d_bo_create(struct bo *bo, uint32_t width, uint32_t height, ui
 
 	res_create.target = PIPE_TEXTURE_2D;
 	res_create.format = translate_format(format);
-	res_create.bind = compute_virgl_bind_flags(use_flags, format);
+	res_create.bind = compute_virgl_bind_flags(use_flags);
 	res_create.width = width;
 	res_create.height = height;
 
@@ -489,7 +496,7 @@ static int virgl_3d_bo_create(struct bo *bo, uint32_t width, uint32_t height, ui
 	res_create.size = ALIGN(bo->meta.total_size, PAGE_SIZE); // PAGE_SIZE = 0x1000
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_VIRTGPU_RESOURCE_CREATE, &res_create);
 	if (ret) {
-		drv_log("DRM_IOCTL_VIRTGPU_RESOURCE_CREATE failed with %s\n", strerror(errno));
+		drv_loge("DRM_IOCTL_VIRTGPU_RESOURCE_CREATE failed with %s\n", strerror(errno));
 		return ret;
 	}
 
@@ -507,13 +514,23 @@ static void *virgl_3d_bo_map(struct bo *bo, struct vma *vma, size_t plane, uint3
 	gem_map.handle = bo->handles[0].u32;
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_VIRTGPU_MAP, &gem_map);
 	if (ret) {
-		drv_log("DRM_IOCTL_VIRTGPU_MAP failed with %s\n", strerror(errno));
+		drv_loge("DRM_IOCTL_VIRTGPU_MAP failed with %s\n", strerror(errno));
 		return MAP_FAILED;
 	}
 
 	vma->length = bo->meta.total_size;
 	return mmap(0, bo->meta.total_size, drv_get_prot(map_flags), MAP_SHARED, bo->drv->fd,
 		    gem_map.offset);
+}
+
+static uint32_t virgl_3d_get_max_texture_2d_size(struct driver *drv)
+{
+	struct virgl_priv *priv = (struct virgl_priv *)drv->priv;
+
+	if (priv->caps.v2.max_texture_2d_size)
+		return priv->caps.v2.max_texture_2d_size;
+
+	return UINT32_MAX;
 }
 
 static int virgl_get_caps(struct driver *drv, union virgl_caps *caps, int *caps_is_v2)
@@ -534,7 +551,7 @@ static int virgl_get_caps(struct driver *drv, union virgl_caps *caps, int *caps_
 
 	ret = drmIoctl(drv->fd, DRM_IOCTL_VIRTGPU_GET_CAPS, &cap_args);
 	if (ret) {
-		drv_log("DRM_IOCTL_VIRTGPU_GET_CAPS failed with %s\n", strerror(errno));
+		drv_loge("DRM_IOCTL_VIRTGPU_GET_CAPS failed with %s\n", strerror(errno));
 		*caps_is_v2 = 0;
 
 		// Fallback to v1
@@ -543,7 +560,7 @@ static int virgl_get_caps(struct driver *drv, union virgl_caps *caps, int *caps_
 
 		ret = drmIoctl(drv->fd, DRM_IOCTL_VIRTGPU_GET_CAPS, &cap_args);
 		if (ret)
-			drv_log("DRM_IOCTL_VIRTGPU_GET_CAPS failed with %s\n", strerror(errno));
+			drv_loge("DRM_IOCTL_VIRTGPU_GET_CAPS failed with %s\n", strerror(errno));
 	}
 
 	return ret;
@@ -573,6 +590,9 @@ static int virgl_init(struct driver *drv)
 	struct virgl_priv *priv;
 
 	priv = calloc(1, sizeof(*priv));
+	if (!priv)
+		return -ENOMEM;
+
 	drv->priv = priv;
 
 	virgl_init_params_and_caps(drv);
@@ -586,6 +606,12 @@ static int virgl_init(struct driver *drv)
 		virgl_add_combinations(drv, texture_source_formats,
 				       ARRAY_SIZE(texture_source_formats), &LINEAR_METADATA,
 				       BO_USE_TEXTURE_MASK);
+		/* NV12 with scanout must flow through virgl_add_combination, so that the native
+		 * support is checked and scanout use_flag can be conditionally stripped. */
+		virgl_add_combination(drv, DRM_FORMAT_NV12, &LINEAR_METADATA,
+				      BO_USE_TEXTURE_MASK | BO_USE_CAMERA_READ |
+					  BO_USE_CAMERA_WRITE | BO_USE_HW_VIDEO_DECODER |
+					  BO_USE_HW_VIDEO_ENCODER | BO_USE_SCANOUT);
 	} else {
 		/* Virtio primary plane only allows this format. */
 		virgl_add_combination(drv, DRM_FORMAT_XRGB8888, &LINEAR_METADATA,
@@ -602,27 +628,25 @@ static int virgl_init(struct driver *drv)
 		virgl_add_combinations(drv, dumb_texture_source_formats,
 				       ARRAY_SIZE(dumb_texture_source_formats), &LINEAR_METADATA,
 				       BO_USE_TEXTURE_MASK);
-		virgl_add_combination(drv, DRM_FORMAT_NV12, &LINEAR_METADATA,
-				      BO_USE_SW_MASK | BO_USE_LINEAR);
-		virgl_add_combination(drv, DRM_FORMAT_NV21, &LINEAR_METADATA,
-				      BO_USE_SW_MASK | BO_USE_LINEAR);
+		drv_modify_combination(drv, DRM_FORMAT_NV12, &LINEAR_METADATA,
+				       BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE |
+					   BO_USE_HW_VIDEO_DECODER | BO_USE_HW_VIDEO_ENCODER);
 	}
 
 	/* Android CTS tests require this. */
 	virgl_add_combination(drv, DRM_FORMAT_RGB888, &LINEAR_METADATA, BO_USE_SW_MASK);
 	virgl_add_combination(drv, DRM_FORMAT_BGR888, &LINEAR_METADATA, BO_USE_SW_MASK);
-	virgl_add_combination(drv, DRM_FORMAT_ABGR16161616F, &LINEAR_METADATA,
-			      BO_USE_SW_MASK | BO_USE_TEXTURE_MASK);
-	virgl_add_combination(drv, DRM_FORMAT_ABGR2101010, &LINEAR_METADATA,
-			      BO_USE_SW_MASK | BO_USE_TEXTURE_MASK);
+	/* Android Camera CTS tests requires this. Additionally, the scanout usage is needed for
+	 * Camera preview and is expected to be conditionally stripped by virgl_add_combination
+	 * when not natively supported and instead handled by HWComposer. */
 	virgl_add_combination(drv, DRM_FORMAT_P010, &LINEAR_METADATA,
-			      BO_USE_SW_MASK | BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE);
-	drv_modify_combination(drv, DRM_FORMAT_NV12, &LINEAR_METADATA,
-			       BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE | BO_USE_HW_VIDEO_DECODER |
-				   BO_USE_HW_VIDEO_ENCODER);
+			      BO_USE_SCANOUT | BO_USE_TEXTURE | BO_USE_SW_MASK |
+				  BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE);
+	/* Android VTS sensors hal tests require BO_USE_SENSOR_DIRECT_DATA. */
 	drv_modify_combination(drv, DRM_FORMAT_R8, &LINEAR_METADATA,
 			       BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE | BO_USE_HW_VIDEO_DECODER |
-				   BO_USE_HW_VIDEO_ENCODER | BO_USE_GPU_DATA_BUFFER);
+				   BO_USE_HW_VIDEO_ENCODER | BO_USE_SENSOR_DIRECT_DATA |
+				   BO_USE_GPU_DATA_BUFFER);
 
 	if (!priv->host_gbm_enabled) {
 		drv_modify_combination(drv, DRM_FORMAT_ABGR8888, &LINEAR_METADATA,
@@ -664,10 +688,12 @@ static int virgl_bo_create_blob(struct driver *drv, struct bo *bo)
 	struct virgl_priv *priv = (struct virgl_priv *)drv->priv;
 
 	uint32_t blob_flags = VIRTGPU_BLOB_FLAG_USE_SHAREABLE;
-	if (bo->meta.use_flags & BO_USE_SW_MASK)
+	if (bo->meta.use_flags & (BO_USE_SW_MASK | BO_USE_GPU_DATA_BUFFER))
 		blob_flags |= VIRTGPU_BLOB_FLAG_USE_MAPPABLE;
-	if (bo->meta.use_flags & BO_USE_NON_GPU_HW)
-		blob_flags |= VIRTGPU_BLOB_FLAG_USE_CROSS_DEVICE;
+
+	// For now, all blob use cases are cross device. When we add wider
+	// support for blobs, we can revisit making this unconditional.
+	blob_flags |= VIRTGPU_BLOB_FLAG_USE_CROSS_DEVICE;
 
 	cur_blob_id = atomic_fetch_add(&priv->next_blob_id, 1);
 	stride = drv_stride_from_format(bo->meta.format, bo->meta.width, 0);
@@ -680,8 +706,7 @@ static int virgl_bo_create_blob(struct driver *drv, struct bo *bo)
 	cmd[VIRGL_PIPE_RES_CREATE_WIDTH] = bo->meta.width;
 	cmd[VIRGL_PIPE_RES_CREATE_HEIGHT] = bo->meta.height;
 	cmd[VIRGL_PIPE_RES_CREATE_FORMAT] = translate_format(bo->meta.format);
-	cmd[VIRGL_PIPE_RES_CREATE_BIND] =
-	    compute_virgl_bind_flags(bo->meta.use_flags, bo->meta.format);
+	cmd[VIRGL_PIPE_RES_CREATE_BIND] = compute_virgl_bind_flags(bo->meta.use_flags);
 	cmd[VIRGL_PIPE_RES_CREATE_DEPTH] = 1;
 	cmd[VIRGL_PIPE_RES_CREATE_BLOB_ID] = cur_blob_id;
 
@@ -694,7 +719,7 @@ static int virgl_bo_create_blob(struct driver *drv, struct bo *bo)
 
 	ret = drmIoctl(drv->fd, DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB, &drm_rc_blob);
 	if (ret < 0) {
-		drv_log("DRM_VIRTGPU_RESOURCE_CREATE_BLOB failed with %s\n", strerror(errno));
+		drv_loge("DRM_VIRTGPU_RESOURCE_CREATE_BLOB failed with %s\n", strerror(errno));
 		return -errno;
 	}
 
@@ -724,10 +749,10 @@ static bool should_use_blob(struct driver *drv, uint32_t format, uint64_t use_fl
 		return false;
 
 	switch (format) {
-	case DRM_FORMAT_YVU420_ANDROID:
 	case DRM_FORMAT_R8:
 		// Formats with strictly defined strides are supported
 		return true;
+	case DRM_FORMAT_YVU420_ANDROID:
 	case DRM_FORMAT_NV12:
 		// Knowing buffer metadata at buffer creation isn't yet supported, so buffers
 		// can't be properly mapped into the guest.
@@ -747,7 +772,22 @@ static int virgl_bo_create(struct bo *bo, uint32_t width, uint32_t height, uint3
 	if (params[param_3d].value)
 		return virgl_3d_bo_create(bo, width, height, format, use_flags);
 	else
-		return virtio_dumb_bo_create(bo, width, height, format, use_flags);
+		return virgl_2d_dumb_bo_create(bo, width, height, format, use_flags);
+}
+
+static int virgl_bo_create_with_modifiers(struct bo *bo, uint32_t width, uint32_t height,
+					  uint32_t format, const uint64_t *modifiers,
+					  uint32_t count)
+{
+	uint64_t use_flags = 0;
+
+	for (uint32_t i = 0; i < count; i++) {
+		if (modifiers[i] == DRM_FORMAT_MOD_LINEAR) {
+			return virgl_bo_create(bo, width, height, format, use_flags);
+		}
+	}
+
+	return -EINVAL;
 }
 
 static int virgl_bo_destroy(struct bo *bo)
@@ -782,7 +822,7 @@ static int virgl_bo_invalidate(struct bo *bo, struct mapping *mapping)
 	// Invalidate is only necessary if the host writes to the buffer. The encoder and
 	// decoder flags don't differentiate between input and output buffers, but we can
 	// use the format to determine whether this buffer could be encoder/decoder output.
-	host_write_flags = BO_USE_RENDERING | BO_USE_CAMERA_WRITE;
+	host_write_flags = BO_USE_RENDERING | BO_USE_CAMERA_WRITE | BO_USE_GPU_DATA_BUFFER;
 	if (bo->meta.format == DRM_FORMAT_R8)
 		host_write_flags |= BO_USE_HW_VIDEO_ENCODER;
 	else
@@ -839,8 +879,8 @@ static int virgl_bo_invalidate(struct bo *bo, struct mapping *mapping)
 
 		ret = drmIoctl(bo->drv->fd, DRM_IOCTL_VIRTGPU_TRANSFER_FROM_HOST, &xfer);
 		if (ret) {
-			drv_log("DRM_IOCTL_VIRTGPU_TRANSFER_FROM_HOST failed with %s\n",
-				strerror(errno));
+			drv_loge("DRM_IOCTL_VIRTGPU_TRANSFER_FROM_HOST failed with %s\n",
+				 strerror(errno));
 			return -errno;
 		}
 	}
@@ -851,7 +891,7 @@ static int virgl_bo_invalidate(struct bo *bo, struct mapping *mapping)
 	waitcmd.handle = mapping->vma->handle;
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_VIRTGPU_WAIT, &waitcmd);
 	if (ret) {
-		drv_log("DRM_IOCTL_VIRTGPU_WAIT failed with %s\n", strerror(errno));
+		drv_loge("DRM_IOCTL_VIRTGPU_WAIT failed with %s\n", strerror(errno));
 		return -errno;
 	}
 
@@ -915,8 +955,8 @@ static int virgl_bo_flush(struct bo *bo, struct mapping *mapping)
 
 		ret = drmIoctl(bo->drv->fd, DRM_IOCTL_VIRTGPU_TRANSFER_TO_HOST, &xfer);
 		if (ret) {
-			drv_log("DRM_IOCTL_VIRTGPU_TRANSFER_TO_HOST failed with %s\n",
-				strerror(errno));
+			drv_loge("DRM_IOCTL_VIRTGPU_TRANSFER_TO_HOST failed with %s\n",
+				 strerror(errno));
 			return -errno;
 		}
 	}
@@ -930,7 +970,7 @@ static int virgl_bo_flush(struct bo *bo, struct mapping *mapping)
 
 		ret = drmIoctl(bo->drv->fd, DRM_IOCTL_VIRTGPU_WAIT, &waitcmd);
 		if (ret) {
-			drv_log("DRM_IOCTL_VIRTGPU_WAIT failed with %s\n", strerror(errno));
+			drv_loge("DRM_IOCTL_VIRTGPU_WAIT failed with %s\n", strerror(errno));
 			return -errno;
 		}
 	}
@@ -938,28 +978,97 @@ static int virgl_bo_flush(struct bo *bo, struct mapping *mapping)
 	return 0;
 }
 
-static uint32_t virgl_resolve_format(struct driver *drv, uint32_t format, uint64_t use_flags)
+static void virgl_3d_resolve_format_and_use_flags(struct driver *drv, uint32_t format,
+						  uint64_t use_flags, uint32_t *out_format,
+						  uint64_t *out_use_flags)
 {
+	*out_format = format;
+	*out_use_flags = use_flags;
 	switch (format) {
 	case DRM_FORMAT_FLEX_IMPLEMENTATION_DEFINED:
 		/* Camera subsystem requires NV12. */
-		if (use_flags & (BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE))
-			return DRM_FORMAT_NV12;
-		/*HACK: See b/28671744 */
-		return DRM_FORMAT_XBGR8888;
+		if (use_flags & (BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE)) {
+			*out_format = DRM_FORMAT_NV12;
+		} else {
+			/* HACK: See b/28671744 */
+			*out_format = DRM_FORMAT_XBGR8888;
+			*out_use_flags &= ~BO_USE_HW_VIDEO_ENCODER;
+		}
+		break;
 	case DRM_FORMAT_FLEX_YCbCr_420_888:
-		/*
-		 * All of our host drivers prefer NV12 as their flexible media format.
-		 * If that changes, this will need to be modified.
-		 */
-		if (params[param_3d].value)
-			return DRM_FORMAT_NV12;
-		else
-			return DRM_FORMAT_YVU420_ANDROID;
+		/* All of our host drivers prefer NV12 as their flexible media format.
+		 * If that changes, this will need to be modified. */
+		*out_format = DRM_FORMAT_NV12;
+		/* fallthrough */
+	case DRM_FORMAT_NV12:
+	case DRM_FORMAT_ABGR8888:
+	case DRM_FORMAT_ARGB8888:
+	case DRM_FORMAT_RGB565:
+	case DRM_FORMAT_XBGR8888:
+	case DRM_FORMAT_XRGB8888:
+		/* These are the scanout capable formats to the guest. Strip scanout use_flag if the
+		 * host does not natively support scanout on the requested format. */
+		if ((use_flags & BO_USE_SCANOUT) &&
+		    !virgl_supports_combination_natively(drv, format, BO_USE_SCANOUT))
+			*out_use_flags &= ~BO_USE_SCANOUT;
+		break;
+	case DRM_FORMAT_YVU420_ANDROID:
+		*out_use_flags &= ~BO_USE_SCANOUT;
+		/* HACK: See b/172389166. Also see gbm_bo_create. */
+		*out_use_flags |= BO_USE_LINEAR;
+		break;
 	default:
-		return format;
+		break;
 	}
 }
+
+static void virgl_2d_resolve_format_and_use_flags(uint32_t format, uint64_t use_flags,
+						  uint32_t *out_format, uint64_t *out_use_flags)
+{
+	*out_format = format;
+	*out_use_flags = use_flags;
+
+	/* HACK: See crrev/c/1849773 */
+	if (format != DRM_FORMAT_XRGB8888)
+		*out_use_flags &= ~BO_USE_SCANOUT;
+
+	switch (format) {
+	case DRM_FORMAT_FLEX_IMPLEMENTATION_DEFINED:
+		/* Camera subsystem requires NV12. */
+		if (use_flags & (BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE)) {
+			*out_format = DRM_FORMAT_NV12;
+		} else {
+			/* HACK: See b/28671744 */
+			*out_format = DRM_FORMAT_XBGR8888;
+			*out_use_flags &= ~BO_USE_HW_VIDEO_ENCODER;
+		}
+		break;
+	case DRM_FORMAT_FLEX_YCbCr_420_888:
+		*out_format = DRM_FORMAT_YVU420_ANDROID;
+		/* fallthrough */
+	case DRM_FORMAT_YVU420_ANDROID:
+		*out_use_flags &= ~BO_USE_SCANOUT;
+		/* HACK: See b/172389166. Also see gbm_bo_create. */
+		*out_use_flags |= BO_USE_LINEAR;
+		break;
+	default:
+		break;
+	}
+}
+
+static void virgl_resolve_format_and_use_flags(struct driver *drv, uint32_t format,
+					       uint64_t use_flags, uint32_t *out_format,
+					       uint64_t *out_use_flags)
+{
+	if (params[param_3d].value) {
+		return virgl_3d_resolve_format_and_use_flags(drv, format, use_flags, out_format,
+							     out_use_flags);
+	} else {
+		return virgl_2d_resolve_format_and_use_flags(format, use_flags, out_format,
+							     out_use_flags);
+	}
+}
+
 static int virgl_resource_info(struct bo *bo, uint32_t strides[DRV_MAX_PLANES],
 			       uint32_t offsets[DRV_MAX_PLANES], uint64_t *format_modifier)
 {
@@ -973,34 +1082,46 @@ static int virgl_resource_info(struct bo *bo, uint32_t strides[DRV_MAX_PLANES],
 	res_info.type = VIRTGPU_RESOURCE_INFO_TYPE_EXTENDED;
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_VIRTGPU_RESOURCE_INFO_CROS, &res_info);
 	if (ret) {
-		drv_log("DRM_IOCTL_VIRTGPU_RESOURCE_INFO failed with %s\n", strerror(errno));
+		drv_loge("DRM_IOCTL_VIRTGPU_RESOURCE_INFO failed with %s\n", strerror(errno));
 		return ret;
 	}
 
-	for (uint32_t plane = 0; plane < bo->meta.num_planes; plane++) {
+	for (uint32_t plane = 0; plane < DRV_MAX_PLANES; plane++) {
 		/*
 		 * Currently, kernel v4.14 (Betty) doesn't have the extended resource info
 		 * ioctl.
 		 */
-		if (res_info.strides[plane]) {
-			strides[plane] = res_info.strides[plane];
-			offsets[plane] = res_info.offsets[plane];
-		}
+		if (!res_info.strides[plane])
+			break;
+
+		strides[plane] = res_info.strides[plane];
+		offsets[plane] = res_info.offsets[plane];
 	}
 	*format_modifier = res_info.format_modifier;
 
 	return 0;
 }
 
+static uint32_t virgl_get_max_texture_2d_size(struct driver *drv)
+{
+	if (params[param_3d].value)
+		return virgl_3d_get_max_texture_2d_size(drv);
+	else
+		return VIRGL_2D_MAX_TEXTURE_2D_SIZE;
+}
+
 const struct backend virtgpu_virgl = { .name = "virtgpu_virgl",
 				       .init = virgl_init,
 				       .close = virgl_close,
 				       .bo_create = virgl_bo_create,
+				       .bo_create_with_modifiers = virgl_bo_create_with_modifiers,
 				       .bo_destroy = virgl_bo_destroy,
 				       .bo_import = drv_prime_bo_import,
 				       .bo_map = virgl_bo_map,
 				       .bo_unmap = drv_bo_munmap,
 				       .bo_invalidate = virgl_bo_invalidate,
 				       .bo_flush = virgl_bo_flush,
-				       .resolve_format = virgl_resolve_format,
-				       .resource_info = virgl_resource_info };
+				       .resolve_format_and_use_flags =
+					   virgl_resolve_format_and_use_flags,
+				       .resource_info = virgl_resource_info,
+				       .get_max_texture_2d_size = virgl_get_max_texture_2d_size };

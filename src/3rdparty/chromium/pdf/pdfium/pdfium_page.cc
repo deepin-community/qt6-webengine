@@ -1,4 +1,4 @@
-// Copyright (c) 2010 The Chromium Authors. All rights reserved.
+// Copyright 2010 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,10 +11,10 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/check_op.h"
 #include "base/cxx17_backports.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/numerics/math_constants.h"
 #include "base/numerics/safe_math.h"
@@ -562,6 +562,19 @@ gfx::RectF PDFiumPage::GetCroppedRect() {
   return FloatPageRectToPixelRect(page, rect);
 }
 
+bool PDFiumPage::IsCharInPageBounds(int char_index,
+                                    const gfx::RectF& page_bounds) {
+  gfx::RectF char_bounds = GetCharBounds(char_index);
+
+  // Make sure `char_bounds` has a minimum size so Intersects() works correctly.
+  if (char_bounds.IsEmpty()) {
+    static constexpr gfx::SizeF kMinimumSize(0.0001f, 0.0001f);
+    char_bounds.set_size(kMinimumSize);
+  }
+
+  return page_bounds.Intersects(char_bounds);
+}
+
 std::vector<AccessibilityLinkInfo> PDFiumPage::GetLinkInfo(
     const std::vector<AccessibilityTextRunInfo>& text_runs) {
   std::vector<AccessibilityLinkInfo> link_info;
@@ -909,7 +922,7 @@ PDFiumPage::Area PDFiumPage::GetURITarget(FPDF_ACTION uri_action,
     std::string url = CallPDFiumStringBufferApi(
         base::BindRepeating(&FPDFAction_GetURIPath, engine_->doc(), uri_action),
         /*check_expected_size=*/true);
-    if (!url.empty())
+    if (!url.empty() && base::IsStringUTF8AllowingNoncharacters(url))
       target->url = url;
   }
   return WEBLINK_AREA;

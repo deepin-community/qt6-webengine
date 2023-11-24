@@ -1,11 +1,11 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef DEVICE_VR_OPENXR_OPENXR_ANCHOR_REQUEST_H_
 #define DEVICE_VR_OPENXR_OPENXR_ANCHOR_REQUEST_H_
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/time/time.h"
 #include "device/vr/public/mojom/vr_service.mojom.h"
 #include "ui/gfx/geometry/transform.h"
@@ -32,7 +32,7 @@ class CreateAnchorRequest {
   ~CreateAnchorRequest();
 
  private:
-  const mojom::XRNativeOriginInformation native_origin_information_;
+  mojom::XRNativeOriginInformationPtr native_origin_information_;
   const gfx::Transform native_origin_from_anchor_;
   const base::TimeTicks request_start_time_;
 

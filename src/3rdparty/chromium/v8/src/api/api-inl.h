@@ -7,20 +7,19 @@
 
 #include "include/v8-fast-api-calls.h"
 #include "src/api/api.h"
+#include "src/common/assert-scope.h"
 #include "src/execution/interrupts-scope.h"
 #include "src/execution/microtask-queue.h"
-#include "src/execution/protectors.h"
 #include "src/handles/handles-inl.h"
 #include "src/heap/heap-inl.h"
 #include "src/objects/foreign-inl.h"
-#include "src/objects/js-weak-refs.h"
 #include "src/objects/objects-inl.h"
 
 namespace v8 {
 
 template <typename T>
 inline T ToCData(v8::internal::Object obj) {
-  STATIC_ASSERT(sizeof(T) == sizeof(v8::internal::Address));
+  static_assert(sizeof(T) == sizeof(v8::internal::Address));
   if (obj == v8::internal::Smi::zero()) return nullptr;
   return reinterpret_cast<T>(
       v8::internal::Foreign::cast(obj).foreign_address());
@@ -35,7 +34,7 @@ inline v8::internal::Address ToCData(v8::internal::Object obj) {
 template <typename T>
 inline v8::internal::Handle<v8::internal::Object> FromCData(
     v8::internal::Isolate* isolate, T obj) {
-  STATIC_ASSERT(sizeof(T) == sizeof(v8::internal::Address));
+  static_assert(sizeof(T) == sizeof(v8::internal::Address));
   if (obj == nullptr) return handle(v8::internal::Smi::zero(), isolate);
   return isolate->factory()->NewForeign(
       reinterpret_cast<v8::internal::Address>(obj));
@@ -53,7 +52,12 @@ inline v8::internal::Handle<v8::internal::Object> FromCData(
 template <class From, class To>
 inline Local<To> Utils::Convert(v8::internal::Handle<From> obj) {
   DCHECK(obj.is_null() || (obj->IsSmi() || !obj->IsTheHole()));
+#ifdef V8_ENABLE_CONSERVATIVE_STACK_SCANNING
+  if (obj.is_null()) return Local<To>();
+  return Local<To>(reinterpret_cast<To*>(*obj.location()));
+#else
   return Local<To>(reinterpret_cast<To*>(obj.location()));
+#endif
 }
 
 // Implementations of ToLocal
@@ -88,6 +92,7 @@ MAKE_TO_LOCAL(ToLocal, JSProxy, Proxy)
 MAKE_TO_LOCAL(ToLocal, JSArrayBuffer, ArrayBuffer)
 MAKE_TO_LOCAL(ToLocal, JSArrayBufferView, ArrayBufferView)
 MAKE_TO_LOCAL(ToLocal, JSDataView, DataView)
+MAKE_TO_LOCAL(ToLocal, JSRabGsabDataView, DataView)
 MAKE_TO_LOCAL(ToLocal, JSTypedArray, TypedArray)
 MAKE_TO_LOCAL(ToLocalShared, JSArrayBuffer, SharedArrayBuffer)
 
@@ -96,7 +101,6 @@ TYPED_ARRAYS(MAKE_TO_LOCAL_TYPED_ARRAY)
 MAKE_TO_LOCAL(ToLocal, FunctionTemplateInfo, FunctionTemplate)
 MAKE_TO_LOCAL(ToLocal, ObjectTemplateInfo, ObjectTemplate)
 MAKE_TO_LOCAL(SignatureToLocal, FunctionTemplateInfo, Signature)
-MAKE_TO_LOCAL(AccessorSignatureToLocal, FunctionTemplateInfo, AccessorSignature)
 MAKE_TO_LOCAL(MessageToLocal, Object, Message)
 MAKE_TO_LOCAL(PromiseToLocal, JSObject, Promise)
 MAKE_TO_LOCAL(StackTraceToLocal, FixedArray, StackTrace)
@@ -117,6 +121,29 @@ MAKE_TO_LOCAL(ToLocal, ScriptOrModule, ScriptOrModule)
 
 // Implementations of OpenHandle
 
+#ifdef V8_ENABLE_CONSERVATIVE_STACK_SCANNING
+
+#define MAKE_OPEN_HANDLE(From, To)                                             \
+  v8::internal::Handle<v8::internal::To> Utils::OpenHandle(                    \
+      const v8::From* that, bool allow_empty_handle) {                         \
+    DCHECK(allow_empty_handle ||                                               \
+           reinterpret_cast<v8::internal::Address>(that) !=                    \
+               v8::internal::kLocalTaggedNullAddress);                         \
+    DCHECK(reinterpret_cast<v8::internal::Address>(that) ==                    \
+               v8::internal::kLocalTaggedNullAddress ||                        \
+           v8::internal::Object(reinterpret_cast<v8::internal::Address>(that)) \
+               .Is##To());                                                     \
+    if (reinterpret_cast<v8::internal::Address>(that) ==                       \
+        v8::internal::kLocalTaggedNullAddress) {                               \
+      return v8::internal::Handle<v8::internal::To>::null();                   \
+    }                                                                          \
+    return v8::internal::Handle<v8::internal::To>(                             \
+        v8::HandleScope::CreateHandleForCurrentIsolate(                        \
+            reinterpret_cast<v8::internal::Address>(that)));                   \
+  }
+
+#else
+
 #define MAKE_OPEN_HANDLE(From, To)                                    \
   v8::internal::Handle<v8::internal::To> Utils::OpenHandle(           \
       const v8::From* that, bool allow_empty_handle) {                \
@@ -129,6 +156,8 @@ MAKE_TO_LOCAL(ToLocal, ScriptOrModule, ScriptOrModule)
         reinterpret_cast<v8::internal::Address*>(                     \
             const_cast<v8::From*>(that)));                            \
   }
+
+#endif
 
 OPEN_HANDLE_LIST(MAKE_OPEN_HANDLE)
 
@@ -153,12 +182,13 @@ class V8_NODISCARD CallDepthScope {
     isolate_->thread_local_top()->IncrementCallDepth(this);
     isolate_->set_next_v8_call_is_safe_for_termination(false);
     if (!context.IsEmpty()) {
-      i::Handle<i::Context> env = Utils::OpenHandle(*context);
+      i::DisallowGarbageCollection no_gc;
+      i::Context env = *Utils::OpenHandle(*context);
       i::HandleScopeImplementer* impl = isolate->handle_scope_implementer();
       if (isolate->context().is_null() ||
-          isolate->context().native_context() != env->native_context()) {
+          isolate->context().native_context() != env.native_context()) {
         impl->SaveContext(isolate->context());
-        isolate->set_context(*env);
+        isolate->set_context(env);
         did_enter_context_ = true;
       }
     }
@@ -185,8 +215,8 @@ class V8_NODISCARD CallDepthScope {
                !microtask_queue->DebugMicrotasksScopeDepthIsZero());
       }
     }
-#endif
     DCHECK(CheckKeptObjectsClearedAfterMicrotaskCheckpoint(microtask_queue));
+#endif
     isolate_->set_next_v8_call_is_safe_for_termination(safe_for_termination_);
   }
 
@@ -204,6 +234,7 @@ class V8_NODISCARD CallDepthScope {
   }
 
  private:
+#ifdef DEBUG
   bool CheckKeptObjectsClearedAfterMicrotaskCheckpoint(
       i::MicrotaskQueue* microtask_queue) {
     bool did_perform_microtask_checkpoint =
@@ -213,6 +244,7 @@ class V8_NODISCARD CallDepthScope {
     return !did_perform_microtask_checkpoint ||
            isolate_->heap()->weak_refs_keep_during_job().IsUndefined(isolate_);
   }
+#endif
 
   i::Isolate* const isolate_;
   Local<Context> context_;
@@ -232,14 +264,6 @@ class V8_NODISCARD InternalEscapableScope : public EscapableHandleScope {
   explicit inline InternalEscapableScope(i::Isolate* isolate)
       : EscapableHandleScope(reinterpret_cast<v8::Isolate*>(isolate)) {}
 };
-
-inline bool IsExecutionTerminatingCheck(i::Isolate* isolate) {
-  if (isolate->has_scheduled_exception()) {
-    return isolate->scheduled_exception() ==
-           i::ReadOnlyRoots(isolate).termination_exception();
-  }
-  return false;
-}
 
 template <typename T>
 void CopySmiElementsToTypedBuffer(T* dst, uint32_t length,

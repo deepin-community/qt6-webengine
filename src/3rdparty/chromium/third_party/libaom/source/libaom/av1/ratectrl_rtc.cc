@@ -65,8 +65,13 @@ std::unique_ptr<AV1RateControlRTC> AV1RateControlRTC::Create(
   rc_api->cpi_->ppi =
       static_cast<AV1_PRIMARY *>(aom_memalign(32, sizeof(AV1_PRIMARY)));
   if (!rc_api->cpi_->ppi) return nullptr;
+  av1_zero(*rc_api->cpi_->ppi);
   rc_api->cpi_->common.seq_params = &rc_api->cpi_->ppi->seq_params;
   av1_zero(*rc_api->cpi_->common.seq_params);
+  const int num_layers = cfg.ss_number_layers * cfg.ts_number_layers;
+  if (num_layers > 1 && !av1_alloc_layer_context(rc_api->cpi_, num_layers)) {
+    return nullptr;
+  }
   rc_api->InitRateControl(cfg);
   if (cfg.aq_mode) {
     AV1_COMP *const cpi = rc_api->cpi_;
@@ -94,6 +99,9 @@ AV1RateControlRTC::~AV1RateControlRTC() {
         }
       }
     }
+    aom_free(cpi_->svc.layer_context);
+    cpi_->svc.layer_context = nullptr;
+
     if (cpi_->oxcf.q_cfg.aq_mode == CYCLIC_REFRESH_AQ) {
       aom_free(cpi_->enc_seg.map);
       cpi_->enc_seg.map = nullptr;
@@ -112,6 +120,7 @@ void AV1RateControlRTC::InitRateControl(const AV1RateControlRtcConfig &rc_cfg) {
   cm->seq_params->bit_depth = AOM_BITS_8;
   cm->show_frame = 1;
   oxcf->profile = cm->seq_params->profile;
+  oxcf->mode = REALTIME;
   oxcf->rc_cfg.mode = AOM_CBR;
   oxcf->pass = AOM_RC_ONE_PASS;
   oxcf->q_cfg.aq_mode = rc_cfg.aq_mode ? CYCLIC_REFRESH_AQ : NO_AQ;
@@ -146,7 +155,6 @@ void AV1RateControlRTC::UpdateRateControl(
   AV1_COMMON *cm = &cpi_->common;
   AV1EncoderConfig *oxcf = &cpi_->oxcf;
   RATE_CONTROL *const rc = &cpi_->rc;
-
   initial_width_ = rc_cfg.width;
   initial_height_ = rc_cfg.height;
   cm->width = rc_cfg.width;
@@ -173,29 +181,31 @@ void AV1RateControlRTC::UpdateRateControl(
   cpi_->svc.number_temporal_layers = rc_cfg.ts_number_layers;
   set_primary_rc_buffer_sizes(oxcf, cpi_->ppi);
   enc_set_mb_mi(&cm->mi_params, cm->width, cm->height, BLOCK_8X8);
-  int64_t target_bandwidth_svc = 0;
-  for (int sl = 0; sl < cpi_->svc.number_spatial_layers; ++sl) {
-    for (int tl = 0; tl < cpi_->svc.number_temporal_layers; ++tl) {
-      const int layer =
-          LAYER_IDS_TO_IDX(sl, tl, cpi_->svc.number_temporal_layers);
-      LAYER_CONTEXT *lc = &cpi_->svc.layer_context[layer];
-      RATE_CONTROL *const lrc = &lc->rc;
-      lc->layer_target_bitrate = 1000 * rc_cfg.layer_target_bitrate[layer];
-      lc->max_q = rc_cfg.max_quantizers[layer];
-      lc->min_q = rc_cfg.min_quantizers[layer];
-      lrc->worst_quality =
-          av1_quantizer_to_qindex(rc_cfg.max_quantizers[layer]);
-      lrc->best_quality = av1_quantizer_to_qindex(rc_cfg.min_quantizers[layer]);
-      lc->scaling_factor_num = rc_cfg.scaling_factor_num[sl];
-      lc->scaling_factor_den = rc_cfg.scaling_factor_den[sl];
-      lc->framerate_factor = rc_cfg.ts_rate_decimator[tl];
-      if (tl == cpi_->svc.number_temporal_layers - 1)
-        target_bandwidth_svc += lc->layer_target_bitrate;
-    }
-  }
   av1_new_framerate(cpi_, cpi_->framerate);
   if (cpi_->svc.number_temporal_layers > 1 ||
       cpi_->svc.number_spatial_layers > 1) {
+    int64_t target_bandwidth_svc = 0;
+    for (int sl = 0; sl < cpi_->svc.number_spatial_layers; ++sl) {
+      for (int tl = 0; tl < cpi_->svc.number_temporal_layers; ++tl) {
+        const int layer =
+            LAYER_IDS_TO_IDX(sl, tl, cpi_->svc.number_temporal_layers);
+        LAYER_CONTEXT *lc = &cpi_->svc.layer_context[layer];
+        RATE_CONTROL *const lrc = &lc->rc;
+        lc->layer_target_bitrate = 1000 * rc_cfg.layer_target_bitrate[layer];
+        lc->max_q = rc_cfg.max_quantizers[layer];
+        lc->min_q = rc_cfg.min_quantizers[layer];
+        lrc->worst_quality =
+            av1_quantizer_to_qindex(rc_cfg.max_quantizers[layer]);
+        lrc->best_quality =
+            av1_quantizer_to_qindex(rc_cfg.min_quantizers[layer]);
+        lc->scaling_factor_num = rc_cfg.scaling_factor_num[sl];
+        lc->scaling_factor_den = rc_cfg.scaling_factor_den[sl];
+        lc->framerate_factor = rc_cfg.ts_rate_decimator[tl];
+        if (tl == cpi_->svc.number_temporal_layers - 1)
+          target_bandwidth_svc += lc->layer_target_bitrate;
+      }
+    }
+
     if (cm->current_frame.frame_number == 0) av1_init_layer_context(cpi_);
     // This is needed to initialize external RC flag in layer context structure.
     cpi_->rc.rtc_external_ratectrl = 1;
@@ -231,7 +241,6 @@ void AV1RateControlRTC::ComputeQP(const AV1FrameParamsRTC &frame_params) {
     gf_group->update_type[cpi_->gf_frame_index] = KF_UPDATE;
     gf_group->frame_type[cpi_->gf_frame_index] = KEY_FRAME;
     gf_group->refbuf_state[cpi_->gf_frame_index] = REFBUF_RESET;
-    cpi_->rc.frames_since_key = 0;
     if (cpi_->ppi->use_svc) {
       const int layer = LAYER_IDS_TO_IDX(cpi_->svc.spatial_layer_id,
                                          cpi_->svc.temporal_layer_id,
@@ -250,8 +259,9 @@ void AV1RateControlRTC::ComputeQP(const AV1FrameParamsRTC &frame_params) {
                                          cpi_->svc.number_temporal_layers);
       cpi_->svc.layer_context[layer].is_key_frame = 0;
     }
-    cpi_->rc.frames_since_key++;
   }
+  if (cpi_->svc.spatial_layer_id == cpi_->svc.number_spatial_layers - 1)
+    cpi_->rc.frames_since_key++;
   if (cpi_->svc.number_spatial_layers > 1 ||
       cpi_->svc.number_temporal_layers > 1) {
     av1_update_temporal_layer_framerate(cpi_);
@@ -261,11 +271,13 @@ void AV1RateControlRTC::ComputeQP(const AV1FrameParamsRTC &frame_params) {
   if (cpi_->oxcf.rc_cfg.mode == AOM_CBR) {
     if (cpi_->oxcf.q_cfg.aq_mode == CYCLIC_REFRESH_AQ)
       av1_cyclic_refresh_update_parameters(cpi_);
-    if (frame_is_intra_only(cm))
+    if (frame_is_intra_only(cm)) {
       target = av1_calc_iframe_target_size_one_pass_cbr(cpi_);
-    else
+      cpi_->common.current_frame.frame_number = 0;
+    } else {
       target = av1_calc_pframe_target_size_one_pass_cbr(
           cpi_, gf_group->update_type[cpi_->gf_frame_index]);
+    }
   }
   av1_rc_set_frame_target(cpi_, target, cm->width, cm->height);
 
@@ -291,11 +303,13 @@ int *AV1RateControlRTC::GetDeltaQ() const {
 }
 
 void AV1RateControlRTC::PostEncodeUpdate(uint64_t encoded_frame_size) {
+  cpi_->common.current_frame.frame_number++;
+  if (cpi_->svc.spatial_layer_id == cpi_->svc.number_spatial_layers - 1)
+    cpi_->svc.prev_number_spatial_layers = cpi_->svc.number_spatial_layers;
   av1_rc_postencode_update(cpi_, encoded_frame_size);
   if (cpi_->svc.number_spatial_layers > 1 ||
       cpi_->svc.number_temporal_layers > 1)
     av1_save_layer_context(cpi_);
-  cpi_->common.current_frame.frame_number++;
 }
 
 }  // namespace aom

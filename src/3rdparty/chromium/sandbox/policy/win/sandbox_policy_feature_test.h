@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,8 +13,6 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if BUILDFLAG(IS_WIN)
-#include "base/win/windows_version.h"
-#include "sandbox/policy/win/sandbox_test_utils.h"
 #include "sandbox/policy/win/sandbox_win.h"
 #include "sandbox/win/src/app_container_base.h"
 #include "sandbox/win/src/sandbox_factory.h"
@@ -42,13 +40,12 @@ class SandboxFeatureTest
   virtual MitigationFlags GetExpectedMitigationFlags();
   virtual MitigationFlags GetExpectedDelayedMitigationFlags();
 
-  // App Containers are only available in Windows 8 and up
   virtual AppContainerType GetExpectedAppContainerType();
   virtual std::vector<base::win::Sid> GetExpectedCapabilities();
 
-  void ValidateSecurityLevels(TargetPolicy* policy);
-  void ValidatePolicyFlagSettings(TargetPolicy* policy);
-  void ValidateAppContainerSettings(TargetPolicy* policy);
+  void ValidateSecurityLevels(TargetConfig* config);
+  void ValidatePolicyFlagSettings(TargetConfig* config);
+  void ValidateAppContainerSettings(TargetConfig* config);
 
   base::test::ScopedFeatureList feature_list_;
 };

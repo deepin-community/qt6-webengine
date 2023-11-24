@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,11 +8,12 @@
 
 #include <stdint.h>
 
-#include "base/bind.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/test/gmock_callback_support.h"
 #include "base/test/mock_callback.h"
@@ -32,7 +33,6 @@
 #include "media/video/mock_gpu_video_accelerator_factories.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/renderer/platform/peerconnection/rtc_video_decoder_adapter.h"
 #include "third_party/blink/renderer/platform/peerconnection/rtc_video_decoder_stream_adapter.h"
 #include "third_party/webrtc/api/video_codecs/video_codec.h"
 #include "third_party/webrtc/api/video_codecs/vp9_profile.h"
@@ -201,8 +201,8 @@ class RTCVideoDecoderStreamAdapterTest
         sdp_format_(webrtc::SdpVideoFormat(
             webrtc::CodecTypeToPayloadString(webrtc::kVideoCodecVP9))),
         spatial_index_(0) {
-    std::vector<base::Feature> enabled_features;
-    std::vector<base::Feature> disabled_features;
+    std::vector<base::test::FeatureRef> enabled_features;
+    std::vector<base::test::FeatureRef> disabled_features;
 #if BUILDFLAG(IS_WIN)
     enabled_features.push_back(::media::kD3D11Vp9kSVCHWDecoding);
 #endif
@@ -322,7 +322,7 @@ class RTCVideoDecoderStreamAdapterTest
   void FinishDecodeOnMediaThread(uint32_t timestamp) {
     DCHECK(media_thread_task_runner_->RunsTasksInCurrentSequence());
     gpu::MailboxHolder mailbox_holders[media::VideoFrame::kMaxPlanes];
-    mailbox_holders[0].mailbox = gpu::Mailbox::Generate();
+    mailbox_holders[0].mailbox = gpu::Mailbox::GenerateForSharedImage();
     scoped_refptr<media::VideoFrame> frame =
         media::VideoFrame::WrapNativeTextures(
             media::PIXEL_FORMAT_ARGB, mailbox_holders,
@@ -401,8 +401,10 @@ class RTCVideoDecoderStreamAdapterTest
 };
 
 TEST_P(RTCVideoDecoderStreamAdapterTest, Create_UnknownFormat) {
-  auto adapter = RTCVideoDecoderAdapter::Create(
+  auto adapter = RTCVideoDecoderStreamAdapter::Create(
       use_hw_decoders_ ? &gpu_factories_ : nullptr,
+      decoder_factory_->GetWeakPtr(), media_thread_task_runner_,
+      gfx::ColorSpace{},
       webrtc::SdpVideoFormat(
           webrtc::CodecTypeToPayloadString(webrtc::kVideoCodecGeneric)));
   ASSERT_FALSE(adapter);
@@ -654,7 +656,7 @@ TEST_P(RTCVideoDecoderStreamAdapterTest, UseD3D11ToDecodeVP9kSVCStream) {
 
 // On ChromeOS, only based on x86(use VaapiDecoder) architecture has the ability
 // to decode VP9 kSVC Stream. Other cases should fallback to sw decoder.
-#if !(defined(ARCH_CPU_X86_FAMILY) && BUILDFLAG(IS_CHROMEOS_ASH))
+#if !(defined(ARCH_CPU_X86_FAMILY) && BUILDFLAG(IS_CHROMEOS))
 TEST_P(RTCVideoDecoderStreamAdapterTest,
        FallbackToSoftwareWhenDecodeVP9kSVCStream) {
   auto* decoder = decoder_factory_->decoder();

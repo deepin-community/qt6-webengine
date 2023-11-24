@@ -34,7 +34,8 @@
 #include <memory>
 
 #include "services/network/public/mojom/ip_address_space.mojom-shared.h"
-#include "third_party/blink/public/mojom/loader/code_cache.mojom.h"
+#include "third_party/blink/public/mojom/loader/code_cache.mojom-shared.h"
+#include "third_party/blink/public/platform/cross_variant_mojo_util.h"
 #include "third_party/blink/public/platform/web_archive_info.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "third_party/blink/public/platform/web_source_location.h"
@@ -77,12 +78,12 @@ class BLINK_EXPORT WebDocumentLoader {
   virtual WebString Referrer() const = 0;
 
   // Returns the response associated with this datasource.
-  virtual const WebURLResponse& GetResponse() const = 0;
+  virtual const WebURLResponse& GetWebResponse() const = 0;
 
   // When this datasource was created as a result of WebFrame::loadData,
   // there may be an associated unreachableURL.
   virtual bool HasUnreachableURL() const = 0;
-  virtual WebURL UnreachableURL() const = 0;
+  virtual WebURL UnreachableWebURL() const = 0;
 
   // Returns whether the navigation associated with this datasource is a
   // client redirect.
@@ -135,7 +136,10 @@ class BLINK_EXPORT WebDocumentLoader {
 
   // Sets the CodeCacheHost for this loader.
   virtual void SetCodeCacheHost(
-      mojo::PendingRemote<mojom::CodeCacheHost> code_cache_host) = 0;
+      CrossVariantMojoRemote<mojom::CodeCacheHostInterfaceBase>
+          code_cache_host) = 0;
+
+  virtual WebString OriginCalculationDebugInfo() const = 0;
 
  protected:
   ~WebDocumentLoader() = default;

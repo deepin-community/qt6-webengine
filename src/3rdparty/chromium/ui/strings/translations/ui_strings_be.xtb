@@ -6,6 +6,7 @@
 <translation id="1127811143501539442">{DAYS,plural, =1{1 дзень таму}one{# дзень таму}few{# дні таму}many{# дзён таму}other{# дня таму}}</translation>
 <translation id="1156623771253174079">{SECONDS,plural, =1{1 хвіліну таму}one{# хвіліну таму}few{# хвіліны таму}many{# хвілін таму}other{# хвіліны таму}}</translation>
 <translation id="1169783199079129864">{MINUTES,plural, =1{1 хв}one{# хв}few{# хв}many{# хв}other{# хв}}</translation>
+<translation id="1181037720776840403">Выдаліць</translation>
 <translation id="1243314992276662751">Запампаваць</translation>
 <translation id="1266864766717917324">Не ўдалося абагуліць змесціва наступнага тыпу: <ph name="CONTENT_TYPE" /></translation>
 <translation id="1269641567813814718">Win</translation>
@@ -25,6 +26,7 @@
 <translation id="1803208670097017349">{MONTHS,plural, =1{1 месяц}one{# месяц}few{# месяцы}many{# месяцаў}other{# месяца}}</translation>
 <translation id="1809410197924942083"><ph name="QUANTITY" /> МБ/с</translation>
 <translation id="1830179671306812954">{HOURS,plural, =1{1 гадзіна і }one{# гадзіна і }few{# гадзіны і }many{# гадзін і }other{# гадзіны і }}</translation>
+<translation id="185013357618350178">&amp;Вылучыць</translation>
 <translation id="1859234291848436338">Напрамак пісьма</translation>
 <translation id="1860796786778352021">Закрыць апавяшчэнне</translation>
 <translation id="186476001994626254">Змесціва разумнай вэб-устаўкі</translation>
@@ -52,7 +54,6 @@
 <translation id="2445449901874883781">Выкарыстоўваць высокую шчыльнасць</translation>
 <translation id="2482878487686419369">Апавяшчэнні</translation>
 <translation id="2497284189126895209">Усе файлы</translation>
-<translation id="2498950423397131220">Рухомая кнопка</translation>
 <translation id="2515586267016047495">Alt</translation>
 <translation id="2522350507219695259">Каліброўка завершана</translation>
 <translation id="252373100621549798">Невядомы дысплэй</translation>
@@ -60,6 +61,7 @@
 <translation id="2573731672208488250">{HOURS,plural, =1{праз 1 гадз}one{праз # гадз}few{праз # гадз}many{праз # гадз}other{праз # гадз}}</translation>
 <translation id="2583543531130364912">Адкалібруйце сэнсарны экран</translation>
 <translation id="2586657967955657006">Буфер абмену</translation>
+<translation id="2653844658857826081">НОВАЕ</translation>
 <translation id="2666092431469916601">Зверху</translation>
 <translation id="2701330563083355633">Абагулена з прылады <ph name="DEVICE_NAME" /></translation>
 <translation id="271033894570825754">Новае</translation>

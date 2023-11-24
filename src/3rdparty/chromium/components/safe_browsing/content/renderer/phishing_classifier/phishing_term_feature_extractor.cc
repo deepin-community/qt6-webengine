@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,15 +10,14 @@
 #include <unordered_set>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/compiler_specific.h"
+#include "base/functional/bind.h"
 #include "base/i18n/break_iterator.h"
 #include "base/i18n/case_conversion.h"
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
@@ -96,10 +95,7 @@ PhishingTermFeatureExtractor::PhishingTermFeatureExtractor(
 }
 
 PhishingTermFeatureExtractor::~PhishingTermFeatureExtractor() {
-  // The RenderView should have called CancelPendingExtraction() before
-  // we are destroyed.
-  DCHECK(done_callback_.is_null());
-  DCHECK(!state_.get());
+  CancelPendingExtraction();
 }
 
 void PhishingTermFeatureExtractor::ExtractFeatures(
@@ -123,7 +119,7 @@ void PhishingTermFeatureExtractor::ExtractFeatures(
   shingle_hashes_ = shingle_hashes, done_callback_ = std::move(done_callback);
 
   state_ = std::make_unique<ExtractionState>(*page_text_, clock_->NowTicks());
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(&PhishingTermFeatureExtractor::ExtractFeaturesWithTimeout,
                      weak_factory_.GetWeakPtr()));
@@ -174,7 +170,7 @@ void PhishingTermFeatureExtractor::ExtractFeaturesWithTimeout() {
         // clock granularity.
         UMA_HISTOGRAM_TIMES("SBClientPhishing.TermFeatureChunkTime",
                             chunk_elapsed);
-        base::ThreadTaskRunnerHandle::Get()->PostTask(
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE,
             base::BindOnce(
                 &PhishingTermFeatureExtractor::ExtractFeaturesWithTimeout,

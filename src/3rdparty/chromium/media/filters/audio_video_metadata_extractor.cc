@@ -1,10 +1,10 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "media/filters/audio_video_metadata_extractor.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
@@ -24,7 +24,7 @@ void OnError(bool* succeeded) {
 bool ExtractString(AVDictionaryEntry* tag,
                    const char* expected_key,
                    std::string* destination) {
-  if (!base::LowerCaseEqualsASCII(std::string(tag->key), expected_key))
+  if (!base::EqualsCaseInsensitiveASCII(std::string(tag->key), expected_key))
     return false;
 
   if (destination->empty())
@@ -37,7 +37,7 @@ bool ExtractString(AVDictionaryEntry* tag,
 bool ExtractInt(AVDictionaryEntry* tag,
                 const char* expected_key,
                 int* destination) {
-  if (!base::LowerCaseEqualsASCII(std::string(tag->key), expected_key))
+  if (!base::EqualsCaseInsensitiveASCII(std::string(tag->key), expected_key))
     return false;
 
   int temporary = -1;

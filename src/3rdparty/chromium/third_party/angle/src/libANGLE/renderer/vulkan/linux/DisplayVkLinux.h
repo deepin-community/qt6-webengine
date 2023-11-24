@@ -5,8 +5,8 @@
 //
 // DisplayVkLinux.h:
 //    Defines the class interface for DisplayVkLinux, which is the base of DisplayVkSimple,
-//    DisplayVkHeadless and DisplayVkXcb.  This base class implements the common functionality of
-//    handling Linux dma-bufs.
+//    DisplayVkHeadless, DisplayVkXcb and DisplayVkWayland.  This base class implements the
+//    common functionality of handling Linux dma-bufs.
 //
 
 #ifndef LIBANGLE_RENDERER_VULKAN_DISPLAY_DISPLAYVKLINUX_H_
@@ -21,10 +21,30 @@ class DisplayVkLinux : public DisplayVk
   public:
     DisplayVkLinux(const egl::DisplayState &state);
 
+    DeviceImpl *createDevice() override;
+
     ExternalImageSiblingImpl *createExternalImageSibling(const gl::Context *context,
                                                          EGLenum target,
                                                          EGLClientBuffer buffer,
                                                          const egl::AttributeMap &attribs) override;
+    std::vector<VkDrmFormatModifierPropertiesEXT> GetDrmModifiers(const DisplayVk *displayVk,
+                                                                  VkFormat vkFormat);
+    bool SupportsDrmModifiers(VkPhysicalDevice device, VkFormat vkFormat);
+    std::vector<VkFormat> GetVkFormatsWithDrmModifiers(const RendererVk *rendererVk);
+    std::vector<EGLint> GetDrmFormats(const RendererVk *rendererVk);
+    bool supportsDmaBufFormat(EGLint format) const override;
+    egl::Error queryDmaBufFormats(EGLint maxFormats, EGLint *formats, EGLint *numFormats) override;
+    egl::Error queryDmaBufModifiers(EGLint format,
+                                    EGLint maxModifiers,
+                                    EGLuint64KHR *modifiers,
+                                    EGLBoolean *externalOnly,
+                                    EGLint *numModifiers) override;
+
+  private:
+    // Supported DRM formats
+    std::vector<EGLint> mDrmFormats;
+
+    bool mDrmFormatsInitialized;
 };
 
 }  // namespace rx

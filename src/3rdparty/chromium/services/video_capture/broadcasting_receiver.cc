@@ -1,51 +1,20 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "services/video_capture/broadcasting_receiver.h"
 
-#include "base/bind.h"
+#include <utility>
+
+#include "base/functional/bind.h"
+#include "base/memory/platform_shared_memory_region.h"
+#include "base/memory/unsafe_shared_memory_region.h"
+#include "base/ranges/algorithm.h"
 #include "build/build_config.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
+#include "mojo/public/cpp/system/platform_handle.h"
 
 namespace video_capture {
-
-namespace {
-
-void CloneSharedBufferHandle(const mojo::ScopedSharedBufferHandle& source,
-                             media::mojom::VideoBufferHandlePtr* target) {
-  // Buffers are always cloned read-write, as they can be used as output
-  // buffers for the cross-process MojoMjpegDecodeAccelerator.
-  //
-  // TODO(crbug.com/793446): VideoBufferHandle.shared_buffer_handle is also
-  // managed in VideoCaptureController, which makes it hard to keep shared
-  // memory permissions consistent. Permissions should be coordinated better
-  // between these two classes.
-  (*target)->set_shared_buffer_handle(
-      source->Clone(mojo::SharedBufferHandle::AccessMode::READ_WRITE));
-}
-
-void CloneSharedBufferToRawFileDescriptorHandle(
-    const mojo::ScopedSharedBufferHandle& source,
-    media::mojom::VideoBufferHandlePtr* target) {
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-  // |source| is unwrapped to a |PlatformSharedMemoryRegion|, from whence a file
-  // descriptor can be extracted which is then mojo-wrapped.
-  base::subtle::PlatformSharedMemoryRegion platform_region =
-      mojo::UnwrapPlatformSharedMemoryRegion(
-          source->Clone(mojo::SharedBufferHandle::AccessMode::READ_WRITE));
-  auto sub_struct = media::mojom::SharedMemoryViaRawFileDescriptor::New();
-  sub_struct->shared_memory_size_in_bytes = platform_region.GetSize();
-  base::subtle::ScopedFDPair fds = platform_region.PassPlatformHandle();
-  sub_struct->file_descriptor_handle = mojo::PlatformHandle(std::move(fds.fd));
-  (*target)->set_shared_memory_via_raw_file_descriptor(std::move(sub_struct));
-#else
-  NOTREACHED() << "Cannot convert buffer handle to "
-                  "kSharedMemoryViaRawFileDescriptor on non-Linux platform.";
-#endif
-}
-
-}  // anonymous namespace
 
 // A mojom::VideoFrameAccessHandler implementation that forwards buffer release
 // calls to the BroadcastingReceiver.
@@ -111,25 +80,17 @@ BroadcastingReceiver::BufferContext::BufferContext(
   buffer_context_id_ = next_buffer_context_id++;
 }
 
-BroadcastingReceiver::BufferContext::~BufferContext() {
-  // Signal that the buffer is no longer in use, if we haven't already.
-  if (consumer_hold_count_ != 0) {
-    DCHECK(frame_access_handler_remote_);
-    (*frame_access_handler_remote_)->OnFinishedConsumingBuffer(buffer_id_);
-  }
-}
+BroadcastingReceiver::BufferContext::~BufferContext() = default;
 
 BroadcastingReceiver::BufferContext::BufferContext(
     BroadcastingReceiver::BufferContext&& other)
     : buffer_context_id_(other.buffer_context_id_),
       buffer_id_(other.buffer_id_),
-      frame_access_handler_remote_(other.frame_access_handler_remote_),
       buffer_handle_(std::move(other.buffer_handle_)),
       consumer_hold_count_(other.consumer_hold_count_),
       is_retired_(other.is_retired_) {
   // The consumer hold was moved from |other|.
   other.consumer_hold_count_ = 0;
-  other.frame_access_handler_remote_ = nullptr;
 }
 
 BroadcastingReceiver::BufferContext&
@@ -137,34 +98,20 @@ BroadcastingReceiver::BufferContext::operator=(
     BroadcastingReceiver::BufferContext&& other) {
   buffer_context_id_ = other.buffer_context_id_;
   buffer_id_ = other.buffer_id_;
-  frame_access_handler_remote_ = other.frame_access_handler_remote_;
   buffer_handle_ = std::move(other.buffer_handle_);
   consumer_hold_count_ = other.consumer_hold_count_;
   is_retired_ = other.is_retired_;
   // The consumer hold was moved from |other|.
   other.consumer_hold_count_ = 0;
-  other.frame_access_handler_remote_ = nullptr;
   return *this;
 }
 
-void BroadcastingReceiver::BufferContext::SetFrameAccessHandlerRemote(
-    scoped_refptr<VideoFrameAccessHandlerRemote> frame_access_handler_remote) {
-  frame_access_handler_remote_ = frame_access_handler_remote;
-}
-
 void BroadcastingReceiver::BufferContext::IncreaseConsumerCount() {
-  // The access handler should be ready if we have a consumer since it is needed
-  // when the consumer decreases the consumer count.
-  DCHECK(frame_access_handler_remote_);
   consumer_hold_count_++;
 }
 
 void BroadcastingReceiver::BufferContext::DecreaseConsumerCount() {
-  DCHECK(frame_access_handler_remote_);
   consumer_hold_count_--;
-  if (consumer_hold_count_ == 0) {
-    (*frame_access_handler_remote_)->OnFinishedConsumingBuffer(buffer_id_);
-  }
 }
 
 bool BroadcastingReceiver::BufferContext::IsStillBeingConsumed() const {
@@ -174,22 +121,18 @@ bool BroadcastingReceiver::BufferContext::IsStillBeingConsumed() const {
 media::mojom::VideoBufferHandlePtr
 BroadcastingReceiver::BufferContext::CloneBufferHandle(
     media::VideoCaptureBufferType target_buffer_type) {
-  media::mojom::VideoBufferHandlePtr result =
-      media::mojom::VideoBufferHandle::New();
-
   // If the source uses mailbox handles, i.e. textures, we pass those through
   // without conversion, no matter what clients requested.
   if (buffer_handle_->is_mailbox_handles()) {
-    result->set_mailbox_handles(buffer_handle_->get_mailbox_handles()->Clone());
-    return result;
+    return media::mojom::VideoBufferHandle::NewMailboxHandles(
+        buffer_handle_->get_mailbox_handles()->Clone());
   }
 
   // If the source uses GpuMemoryBuffer handles, we pass those through without
   // conversion, no matter what clients requested.
   if (buffer_handle_->is_gpu_memory_buffer_handle()) {
-    result->set_gpu_memory_buffer_handle(
+    return media::mojom::VideoBufferHandle::NewGpuMemoryBufferHandle(
         buffer_handle_->get_gpu_memory_buffer_handle().Clone());
-    return result;
   }
 
   switch (target_buffer_type) {
@@ -198,25 +141,9 @@ BroadcastingReceiver::BufferContext::CloneBufferHandle(
                       "handle type other than mailbox handles.";
       break;
     case media::VideoCaptureBufferType::kSharedMemory:
-      if (buffer_handle_->is_shared_buffer_handle()) {
-        CloneSharedBufferHandle(buffer_handle_->get_shared_buffer_handle(),
-                                &result);
-      } else if (buffer_handle_->is_shared_memory_via_raw_file_descriptor()) {
-        ConvertRawFileDescriptorToSharedBuffer();
-        CloneSharedBufferHandle(buffer_handle_->get_shared_buffer_handle(),
-                                &result);
-      } else {
-        NOTREACHED() << "Unexpected video buffer handle type";
-      }
-      break;
-    case media::VideoCaptureBufferType::kSharedMemoryViaRawFileDescriptor:
-      if (buffer_handle_->is_shared_buffer_handle()) {
-        CloneSharedBufferToRawFileDescriptorHandle(
-            buffer_handle_->get_shared_buffer_handle(), &result);
-      } else if (buffer_handle_->is_shared_memory_via_raw_file_descriptor()) {
-        ConvertRawFileDescriptorToSharedBuffer();
-        CloneSharedBufferToRawFileDescriptorHandle(
-            buffer_handle_->get_shared_buffer_handle(), &result);
+      if (buffer_handle_->is_unsafe_shmem_region()) {
+        return media::mojom::VideoBufferHandle::NewUnsafeShmemRegion(
+            buffer_handle_->get_unsafe_shmem_region().Duplicate());
       } else {
         NOTREACHED() << "Unexpected video buffer handle type";
       }
@@ -225,48 +152,15 @@ BroadcastingReceiver::BufferContext::CloneBufferHandle(
 #if BUILDFLAG(IS_WIN)
       // On windows with MediaFoundationD3D11VideoCapture if the
       // texture capture path fails, a ShMem buffer might be produced instead.
-      DCHECK(buffer_handle_->is_shared_buffer_handle());
-      CloneSharedBufferHandle(buffer_handle_->get_shared_buffer_handle(),
-                              &result);
+      DCHECK(buffer_handle_->is_unsafe_shmem_region());
+      return media::mojom::VideoBufferHandle::NewUnsafeShmemRegion(
+          buffer_handle_->get_unsafe_shmem_region().Duplicate());
 #else
       NOTREACHED() << "Unexpected GpuMemoryBuffer handle type";
-#endif
       break;
-  }
-  return result;
-}
-
-void BroadcastingReceiver::BufferContext::
-    ConvertRawFileDescriptorToSharedBuffer() {
-  DCHECK(buffer_handle_->is_shared_memory_via_raw_file_descriptor());
-
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-  // The conversion unwraps the descriptor from its mojo handle to the raw file
-  // descriptor (ie, an int). This is used to create a
-  // PlatformSharedMemoryRegion which is then wrapped as a
-  // mojo::ScopedSharedBufferHandle.
-  const size_t handle_size =
-      buffer_handle_->get_shared_memory_via_raw_file_descriptor()
-          ->shared_memory_size_in_bytes;
-  base::ScopedFD platform_file =
-      buffer_handle_->get_shared_memory_via_raw_file_descriptor()
-          ->file_descriptor_handle.TakeFD();
-  base::UnguessableToken guid = base::UnguessableToken::Create();
-  base::subtle::PlatformSharedMemoryRegion platform_region =
-      base::subtle::PlatformSharedMemoryRegion::Take(
-          std::move(platform_file),
-          base::subtle::PlatformSharedMemoryRegion::Mode::kUnsafe, handle_size,
-          guid);
-  if (!platform_region.IsValid()) {
-    NOTREACHED();
-    return;
-  }
-  buffer_handle_->set_shared_buffer_handle(
-      mojo::WrapPlatformSharedMemoryRegion(std::move(platform_region)));
-#else
-  NOTREACHED() << "Unable to consume buffer handle of type "
-                  "kSharedMemoryViaRawFileDescriptor on non-Linux platform.";
 #endif
+  }
+  return media::mojom::VideoBufferHandlePtr();
 }
 
 BroadcastingReceiver::BroadcastingReceiver()
@@ -276,6 +170,10 @@ BroadcastingReceiver::BroadcastingReceiver()
 
 BroadcastingReceiver::~BroadcastingReceiver() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+}
+
+base::WeakPtr<media::VideoFrameReceiver> BroadcastingReceiver::GetWeakPtr() {
+  return weak_factory_.GetWeakPtr();
 }
 
 void BroadcastingReceiver::HideSourceRestartFromClients(
@@ -342,6 +240,13 @@ mojo::Remote<mojom::VideoFrameHandler> BroadcastingReceiver::RemoveClient(
   return std::move(client.client());
 }
 
+void BroadcastingReceiver::OnCaptureConfigurationChanged() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  for (auto& client : clients_) {
+    client.second.client()->OnCaptureConfigurationChanged();
+  }
+}
+
 void BroadcastingReceiver::OnNewBuffer(
     int32_t buffer_id,
     media::mojom::VideoBufferHandlePtr buffer_handle) {
@@ -357,20 +262,9 @@ void BroadcastingReceiver::OnNewBuffer(
   }
 }
 
-void BroadcastingReceiver::OnFrameAccessHandlerReady(
-    mojo::PendingRemote<video_capture::mojom::VideoFrameAccessHandler>
-        pending_frame_access_handler) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(!frame_access_handler_remote_);
-  frame_access_handler_remote_ =
-      base::MakeRefCounted<VideoFrameAccessHandlerRemote>(
-          mojo::Remote<video_capture::mojom::VideoFrameAccessHandler>(
-              std::move(pending_frame_access_handler)));
-}
-
 void BroadcastingReceiver::OnFrameReadyInBuffer(
-    mojom::ReadyFrameInBufferPtr buffer,
-    std::vector<mojom::ReadyFrameInBufferPtr> scaled_buffers) {
+    media::ReadyFrameInBuffer frame,
+    std::vector<media::ReadyFrameInBuffer> scaled_frames) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   bool has_consumers = false;
   for (auto& client : clients_) {
@@ -381,27 +275,26 @@ void BroadcastingReceiver::OnFrameReadyInBuffer(
   }
   // If we don't have any consumers to forward the frame to, signal to finish
   // consuming the buffers immediately.
-  if (!has_consumers) {
-    if (frame_access_handler_remote_) {
-      (*frame_access_handler_remote_)
-          ->OnFinishedConsumingBuffer(buffer->buffer_id);
-      for (const auto& scaled_buffer : scaled_buffers) {
-        (*frame_access_handler_remote_)
-            ->OnFinishedConsumingBuffer(scaled_buffer->buffer_id);
-      }
-    }
+  if (!has_consumers)
     return;
-  }
 
   // Obtain buffer contexts for all frame representations.
-  auto it = FindUnretiredBufferContextFromBufferId(buffer->buffer_id);
+  auto it = FindUnretiredBufferContextFromBufferId(frame.buffer_id);
   CHECK(it != buffer_contexts_.end());
   BufferContext* buffer_context = &(*it);
+  auto result = scoped_access_permissions_by_buffer_context_id_.insert(
+      std::make_pair(buffer_context->buffer_context_id(),
+                     std::move(frame.buffer_read_permission)));
+  DCHECK(result.second);
   std::vector<BufferContext*> scaled_buffer_contexts;
-  scaled_buffer_contexts.reserve(scaled_buffers.size());
-  for (const auto& scaled_buffer : scaled_buffers) {
-    it = FindUnretiredBufferContextFromBufferId(scaled_buffer->buffer_id);
+  scaled_buffer_contexts.reserve(scaled_frames.size());
+  for (auto& scaled_frame : scaled_frames) {
+    it = FindUnretiredBufferContextFromBufferId(scaled_frame.buffer_id);
     CHECK(it != buffer_contexts_.end());
+    result = scoped_access_permissions_by_buffer_context_id_.insert(
+        std::make_pair(it->buffer_context_id(),
+                       std::move(scaled_frame.buffer_read_permission)));
+    DCHECK(result.second);
     scaled_buffer_contexts.push_back(&(*it));
   }
   // Broadcast to all clients.
@@ -423,22 +316,19 @@ void BroadcastingReceiver::OnFrameReadyInBuffer(
       client.second.set_has_client_frame_access_handler_remote();
     }
 
-    buffer_context->SetFrameAccessHandlerRemote(frame_access_handler_remote_);
     buffer_context->IncreaseConsumerCount();
     mojom::ReadyFrameInBufferPtr ready_buffer = mojom::ReadyFrameInBuffer::New(
-        buffer_context->buffer_context_id(), buffer->frame_feedback_id,
-        buffer->frame_info.Clone());
+        buffer_context->buffer_context_id(), frame.frame_feedback_id,
+        frame.frame_info.Clone());
 
     std::vector<mojom::ReadyFrameInBufferPtr> scaled_ready_buffers;
-    scaled_ready_buffers.reserve(scaled_buffers.size());
-    for (size_t i = 0; i < scaled_buffers.size(); ++i) {
-      scaled_buffer_contexts[i]->SetFrameAccessHandlerRemote(
-          frame_access_handler_remote_);
+    scaled_ready_buffers.reserve(scaled_frames.size());
+    for (size_t i = 0; i < scaled_frames.size(); ++i) {
       scaled_buffer_contexts[i]->IncreaseConsumerCount();
       scaled_ready_buffers.push_back(mojom::ReadyFrameInBuffer::New(
           scaled_buffer_contexts[i]->buffer_context_id(),
-          scaled_buffers[i]->frame_feedback_id,
-          scaled_buffers[i]->frame_info.Clone()));
+          scaled_frames[i].frame_feedback_id,
+          scaled_frames[i].frame_info.Clone()));
     }
     client.second.client()->OnFrameReadyInBuffer(
         std::move(ready_buffer), std::move(scaled_ready_buffers));
@@ -478,6 +368,13 @@ void BroadcastingReceiver::OnFrameDropped(
     if (client.second.is_suspended())
       continue;
     client.second.client()->OnFrameDropped(reason);
+  }
+}
+
+void BroadcastingReceiver::OnNewCropVersion(uint32_t crop_version) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  for (auto& client : clients_) {
+    client.second.client()->OnNewCropVersion(crop_version);
   }
 }
 
@@ -532,13 +429,21 @@ void BroadcastingReceiver::OnStopped() {
 void BroadcastingReceiver::OnClientFinishedConsumingFrame(
     int32_t buffer_context_id) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  auto buffer_context_iter =
-      std::find_if(buffer_contexts_.begin(), buffer_contexts_.end(),
-                   [buffer_context_id](const BufferContext& entry) {
-                     return entry.buffer_context_id() == buffer_context_id;
-                   });
+  auto buffer_context_iter = base::ranges::find(
+      buffer_contexts_, buffer_context_id, &BufferContext::buffer_context_id);
   CHECK(buffer_context_iter != buffer_contexts_.end());
   buffer_context_iter->DecreaseConsumerCount();
+
+  if (!buffer_context_iter->IsStillBeingConsumed()) {
+    auto it =
+        scoped_access_permissions_by_buffer_context_id_.find(buffer_context_id);
+    if (it == scoped_access_permissions_by_buffer_context_id_.end()) {
+      NOTREACHED();
+      return;
+    }
+    scoped_access_permissions_by_buffer_context_id_.erase(it);
+  }
+
   if (buffer_context_iter->is_retired() &&
       !buffer_context_iter->IsStillBeingConsumed()) {
     buffer_contexts_.erase(buffer_context_iter);
@@ -554,11 +459,10 @@ std::vector<BroadcastingReceiver::BufferContext>::iterator
 BroadcastingReceiver::FindUnretiredBufferContextFromBufferId(
     int32_t buffer_id) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return std::find_if(buffer_contexts_.begin(), buffer_contexts_.end(),
-                      [buffer_id](const BufferContext& entry) {
-                        return !entry.is_retired() &&
-                               entry.buffer_id() == buffer_id;
-                      });
+  return base::ranges::find_if(
+      buffer_contexts_, [buffer_id](const BufferContext& entry) {
+        return !entry.is_retired() && entry.buffer_id() == buffer_id;
+      });
 }
 
 }  // namespace video_capture

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -41,6 +41,7 @@ class AURA_EXPORT EnvInputStateController {
   void UpdateStateForTouchEvent(const ui::TouchEvent& event);
   void SetLastMouseLocation(const Window* root_window,
                             const gfx::Point& location_in_root) const;
+  uint32_t touch_ids_down() const { return touch_ids_down_; }
 
  private:
   friend class test::EnvTestHelper;

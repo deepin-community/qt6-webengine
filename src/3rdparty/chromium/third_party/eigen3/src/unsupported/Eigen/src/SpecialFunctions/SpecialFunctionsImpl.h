@@ -685,11 +685,11 @@ struct igammac_retval {
 template <typename Scalar>
 struct cephes_helper {
   EIGEN_DEVICE_FUNC
-  static EIGEN_STRONG_INLINE Scalar machep() { assert(false && "machep not supported for this type"); return 0.0; }
+  static EIGEN_STRONG_INLINE Scalar machep() { eigen_assert(false && "machep not supported for this type"); return 0.0; }
   EIGEN_DEVICE_FUNC
-  static EIGEN_STRONG_INLINE Scalar big() { assert(false && "big not supported for this type"); return 0.0; }
+  static EIGEN_STRONG_INLINE Scalar big() { eigen_assert(false && "big not supported for this type"); return 0.0; }
   EIGEN_DEVICE_FUNC
-  static EIGEN_STRONG_INLINE Scalar biginv() { assert(false && "biginv not supported for this type"); return 0.0; }
+  static EIGEN_STRONG_INLINE Scalar biginv() { eigen_assert(false && "biginv not supported for this type"); return 0.0; }
 };
 
 template <>
@@ -1388,7 +1388,7 @@ struct zeta_impl {
             };
 
         const Scalar maxnum = NumTraits<Scalar>::infinity();
-        const Scalar zero = 0.0, half = 0.5, one = 1.0;
+        const Scalar zero = Scalar(0.0), half = Scalar(0.5), one = Scalar(1.0);
         const Scalar machep = cephes_helper<Scalar>::machep();
         const Scalar nan = NumTraits<Scalar>::quiet_NaN();
 
@@ -1430,11 +1430,19 @@ struct zeta_impl {
             return s;
         }
 
+        // If b is zero, then the tail sum will also end up being zero.
+        // Exiting early here can prevent NaNs for some large inputs, where
+        // the tail sum computed below has term `a` which can overflow to `inf`.
+        if (numext::equal_strict(b, zero)) {
+          return s;
+        }
+
         w = a;
         s += b*w/(x-one);
         s -= half * b;
         a = one;
         k = zero;
+        
         for( i=0; i<12; i++ )
         {
             a *= x + k;

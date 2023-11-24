@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 
+#include "base/component_export.h"
 #include "base/gtest_prod_util.h"
 #include "base/strings/string_piece_forward.h"
 #include "base/values.h"
@@ -38,7 +39,7 @@ class FilePath;
 //     ...
 //   }
 // }
-class GaiaConfig {
+class COMPONENT_EXPORT(GOOGLE_APIS) GaiaConfig {
  public:
   // Returns a global instance of GaiaConfig.
   // This may return nullptr if the config file was not specified by a command

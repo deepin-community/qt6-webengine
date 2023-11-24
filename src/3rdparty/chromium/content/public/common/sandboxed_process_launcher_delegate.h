@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,9 +13,9 @@
 #include "content/public/common/zygote/zygote_buildflags.h"
 #include "sandbox/policy/sandbox_delegate.h"
 
-#if BUILDFLAG(USE_ZYGOTE_HANDLE)
+#if BUILDFLAG(USE_ZYGOTE)
 #include "content/public/common/zygote/zygote_handle.h"  // nogncheck
-#endif  // BUILDFLAG(USE_ZYGOTE_HANDLE)
+#endif  // BUILDFLAG(USE_ZYGOTE)
 
 namespace content {
 
@@ -30,6 +30,7 @@ class CONTENT_EXPORT SandboxedProcessLauncherDelegate
 
 #if BUILDFLAG(IS_WIN)
   // SandboxDelegate:
+  std::string GetSandboxTag() override;
   bool DisableDefaultPolicy() override;
   bool GetAppContainerId(std::string* appcontainer_id) override;
   bool PreSpawnTarget(sandbox::TargetPolicy* policy) override;
@@ -42,10 +43,10 @@ class CONTENT_EXPORT SandboxedProcessLauncherDelegate
   virtual bool ShouldLaunchElevated();
 #endif  // BUILDFLAG(IS_WIN)
 
-#if BUILDFLAG(USE_ZYGOTE_HANDLE)
+#if BUILDFLAG(USE_ZYGOTE)
   // Returns the zygote used to launch the process.
-  virtual ZygoteHandle GetZygote();
-#endif  // BUILDFLAG(USE_ZYGOTE_HANDLE)
+  virtual ZygoteCommunication* GetZygote();
+#endif  // BUILDFLAG(USE_ZYGOTE)
 
 #if BUILDFLAG(IS_POSIX)
   // Override this if the process needs a non-empty environment map.

@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include "third_party/blink/renderer/core/paint/paint_auto_dark_mode.h"
 #include "third_party/blink/renderer/core/paint/paint_info.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
+#include "third_party/blink/renderer/platform/fonts/ng_text_fragment_paint_info.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context_state_saver.h"
 
@@ -17,11 +18,12 @@ namespace blink {
 NGTextCombinePainter::NGTextCombinePainter(GraphicsContext& context,
                                            const ComputedStyle& style,
                                            const PhysicalRect& text_frame_rect)
-    : TextPainterBase(context,
-                      style.GetFont(),
-                      text_frame_rect.offset,
-                      text_frame_rect,
-                      /* horizontal */ false),
+    : NGTextPainterBase(context,
+                        style.GetFont(),
+                        text_frame_rect.offset,
+                        text_frame_rect,
+                        /* inline_context */ nullptr,
+                        /* horizontal */ false),
       style_(style) {}
 
 NGTextCombinePainter::~NGTextCombinePainter() = default;
@@ -50,8 +52,7 @@ void NGTextCombinePainter::Paint(const PaintInfo& paint_info,
   // These values come from |NGBoxFragmentPainter::PaintAllPhasesAtomically()|.
 
   const ComputedStyle& style = text_combine.Parent()->StyleRef();
-  const bool has_text_decoration =
-      style.TextDecorationsInEffect() != TextDecorationLine::kNone;
+  const bool has_text_decoration = style.HasAppliedTextDecorations();
   const bool has_emphasis_mark =
       style.GetTextEmphasisMark() != TextEmphasisMark::kNone;
   DCHECK(has_text_decoration | has_emphasis_mark);
@@ -82,11 +83,12 @@ void NGTextCombinePainter::Paint(const PaintInfo& paint_info,
 bool NGTextCombinePainter::ShouldPaint(
     const LayoutNGTextCombine& text_combine) {
   const auto& style = text_combine.Parent()->StyleRef();
-  return style.TextDecorationsInEffect() != TextDecorationLine::kNone ||
+  return style.HasAppliedTextDecorations() ||
          style.GetTextEmphasisMark() != TextEmphasisMark::kNone;
 }
 
-void NGTextCombinePainter::ClipDecorationsStripe(float upper,
+void NGTextCombinePainter::ClipDecorationsStripe(const NGTextFragmentPaintInfo&,
+                                                 float upper,
                                                  float stripe_width,
                                                  float dilation) {
   // Nothing to do.
@@ -96,26 +98,19 @@ void NGTextCombinePainter::PaintDecorations(const PaintInfo& paint_info,
                                             const TextPaintStyle& text_style) {
   // Setup arguments for painting text decorations
   const absl::optional<AppliedTextDecoration> selection_text_decoration;
-  const ComputedStyle* const decorating_box_style = nullptr;
   TextDecorationInfo decoration_info(
-      text_frame_rect_.offset, text_frame_rect_.size.width,
-      style_.GetFontBaseline(), style_, style_.GetFont(),
-      selection_text_decoration, decorating_box_style);
+      text_frame_rect_.offset, text_frame_rect_.size.width, style_,
+      /* inline_context */ nullptr, selection_text_decoration);
 
-  const NGTextDecorationOffset decoration_offset(style_, style_, nullptr);
-  const auto& applied_text_decorations = style_.AppliedTextDecorations();
+  const NGTextDecorationOffset decoration_offset(style_, style_);
 
-  // Paint text decorations except line through
-  bool has_line_through_decoration = false;
-  PaintDecorationsExceptLineThrough(decoration_offset, decoration_info,
-                                    paint_info, applied_text_decorations,
-                                    text_style, &has_line_through_decoration);
-  if (!has_line_through_decoration)
-    return;
+  // Paint underline and overline text decorations
+  PaintUnderOrOverLineDecorations(NGTextFragmentPaintInfo{}, decoration_offset,
+                                  decoration_info, ~TextDecorationLine::kNone,
+                                  paint_info, text_style);
 
-  // Paint line through
-  PaintDecorationsOnlyLineThrough(decoration_info, paint_info,
-                                  applied_text_decorations, text_style);
+  // Paint line through if needed
+  PaintDecorationsOnlyLineThrough(decoration_info, paint_info, text_style);
 }
 
 void NGTextCombinePainter::PaintEmphasisMark(const TextPaintStyle& text_style,

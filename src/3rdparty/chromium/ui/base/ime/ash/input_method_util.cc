@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,13 +6,13 @@
 
 #include <stddef.h>
 
-#include <algorithm>
 #include <functional>
 #include <map>
 #include <memory>
 #include <unordered_set>
 #include <utility>
 
+#include "base/containers/contains.h"
 #include "base/logging.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -253,6 +253,9 @@ const struct InputMethodNameMap {
     {"__MSG_KEYBOARD_DANISH__", IDS_IME_NAME_KEYBOARD_DANISH},
     {"__MSG_KEYBOARD_DEVANAGARI_PHONETIC__",
      IDS_IME_NAME_KEYBOARD_DEVANAGARI_PHONETIC},
+    {"__MSG_KEYBOARD_ENGLISH_INDIA__", IDS_IME_NAME_KEYBOARD_ENGLISH_INDIA},
+    {"__MSG_KEYBOARD_ENGLISH_PAKISTAN__",
+     IDS_IME_NAME_KEYBOARD_ENGLISH_PAKISTAN},
     {"__MSG_KEYBOARD_ENGLISH_SOUTH_AFRICA__",
      IDS_IME_NAME_KEYBOARD_ENGLISH_SOUTH_AFRICA},
     {"__MSG_KEYBOARD_ESTONIAN__", IDS_IME_NAME_KEYBOARD_ESTONIAN},
@@ -269,6 +272,7 @@ const struct InputMethodNameMap {
     {"__MSG_KEYBOARD_GUJARATI_PHONETIC__",
      IDS_IME_NAME_KEYBOARD_GUJARATI_PHONETIC},
     {"__MSG_KEYBOARD_HEBREW__", IDS_IME_NAME_KEYBOARD_HEBREW},
+    {"__MSG_KEYBOARD_HINDI_INSCRIPT__", IDS_IME_NAME_KEYBOARD_HINDI_INSCRIPT},
     {"__MSG_KEYBOARD_HUNGARIAN_QWERTY__",
      IDS_IME_NAME_KEYBOARD_HUNGARIAN_QWERTY},
     {"__MSG_KEYBOARD_HUNGARIAN__", IDS_IME_NAME_KEYBOARD_HUNGARIAN},
@@ -595,8 +599,7 @@ void InputMethodUtil::GetLanguageCodesFromInputMethodIds(
     DCHECK(!input_method->language_codes().empty());
     const std::string language_code = input_method->language_codes().at(0);
     // Add it if it's not already present.
-    if (std::count(out_language_codes->begin(), out_language_codes->end(),
-                   language_code) == 0) {
+    if (!base::Contains(*out_language_codes, language_code)) {
       out_language_codes->push_back(language_code);
     }
   }

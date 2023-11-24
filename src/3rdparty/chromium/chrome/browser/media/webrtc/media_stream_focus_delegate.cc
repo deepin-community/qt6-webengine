@@ -1,4 +1,4 @@
-// Copyright (c) 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -165,8 +165,10 @@ void MediaStreamFocusDelegate::FocusWindow(
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   std::unique_ptr<webrtc::DesktopCapturer> window_capturer =
-      webrtc::DesktopCapturer::CreateWindowCapturer(
-          content::desktop_capture::CreateDesktopCaptureOptions());
+      window_capturer_for_testing_ != nullptr
+          ? std::move(window_capturer_for_testing_)
+          : webrtc::DesktopCapturer::CreateWindowCapturer(
+                content::desktop_capture::CreateDesktopCaptureOptions());
   if (window_capturer && window_capturer->SelectSource(media_id.id)) {
     window_capturer->FocusOnSelectedSource();
   }
@@ -244,7 +246,8 @@ bool MediaStreamFocusDelegate::UpdateUMA(bool focus,
 
 bool MediaStreamFocusDelegate::BadMessage(
     bad_message::BadMessageReason reason) {
-  content::RenderFrameHost* const rfh = capturing_web_contents_->GetMainFrame();
+  content::RenderFrameHost* const rfh =
+      capturing_web_contents_->GetPrimaryMainFrame();
   if (rfh) {
     bad_message::ReceivedBadMessage(rfh->GetProcess(), reason);
   }

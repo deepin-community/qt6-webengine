@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,11 +6,11 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/run_loop.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "gpu/command_buffer/client/gles2_cmd_helper.h"
 #include "gpu/command_buffer/client/raster_cmd_helper.h"
 #include "gpu/command_buffer/client/raster_implementation_gles.h"
@@ -46,9 +46,6 @@ ContextResult RasterInProcessContext::Initialize(
     CommandBufferTaskExecutor* task_executor,
     const ContextCreationAttribs& attribs,
     const SharedMemoryLimits& memory_limits,
-    GpuMemoryBufferManager* gpu_memory_buffer_manager,
-    ImageFactory* image_factory,
-    GpuChannelManagerDelegate* gpu_channel_manager_delegate,
     gpu::raster::GrShaderCache* gr_shader_cache,
     GpuProcessActivityFlags* activity_flags) {
   DCHECK(attribs.enable_raster_interface);
@@ -63,11 +60,7 @@ ContextResult RasterInProcessContext::Initialize(
   command_buffer_ =
       std::make_unique<InProcessCommandBuffer>(task_executor, GURL());
   auto result = command_buffer_->Initialize(
-      nullptr /* surface */, true /* is_offscreen */, kNullSurfaceHandle,
-      attribs, gpu_memory_buffer_manager, image_factory,
-      gpu_channel_manager_delegate, base::ThreadTaskRunnerHandle::Get(),
-      nullptr /* task_sequence */,
-      nullptr /*display_compositor_memory_and_task_controller_on_gpu */,
+      attribs, base::SingleThreadTaskRunner::GetCurrentDefault(),
       gr_shader_cache, activity_flags);
   if (result != ContextResult::kSuccess) {
     DLOG(ERROR) << "Failed to initialize InProcessCommmandBuffer";

@@ -1,10 +1,11 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef SERVICES_VIZ_PUBLIC_CPP_COMPOSITING_SHARED_QUAD_STATE_MOJOM_TRAITS_H_
 #define SERVICES_VIZ_PUBLIC_CPP_COMPOSITING_SHARED_QUAD_STATE_MOJOM_TRAITS_H_
 
+#include "base/memory/raw_ptr.h"
 #include "components/viz/common/quads/shared_quad_state.h"
 #include "services/viz/public/mojom/compositing/shared_quad_state.mojom-shared.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
@@ -14,7 +15,7 @@
 namespace mojo {
 
 struct OptSharedQuadState {
-  const viz::SharedQuadState* sqs;
+  raw_ptr<const viz::SharedQuadState> sqs;
 };
 
 template <>
@@ -66,10 +67,6 @@ struct StructTraits<viz::mojom::SharedQuadStateDataView, OptSharedQuadState> {
   static bool is_fast_rounded_corner(const OptSharedQuadState& input) {
     return input.sqs->is_fast_rounded_corner;
   }
-
-  static float de_jelly_delta_y(const OptSharedQuadState& input) {
-    return input.sqs->de_jelly_delta_y;
-  }
 };
 
 template <>
@@ -116,10 +113,6 @@ struct StructTraits<viz::mojom::SharedQuadStateDataView, viz::SharedQuadState> {
     return sqs.is_fast_rounded_corner;
   }
 
-  static float de_jelly_delta_y(const viz::SharedQuadState& sqs) {
-    return sqs.de_jelly_delta_y;
-  }
-
   static bool Read(viz::mojom::SharedQuadStateDataView data,
                    viz::SharedQuadState* out) {
     if (!data.ReadQuadToTargetTransform(&out->quad_to_target_transform) ||
@@ -137,7 +130,6 @@ struct StructTraits<viz::mojom::SharedQuadStateDataView, viz::SharedQuadState> {
     out->blend_mode = static_cast<SkBlendMode>(data.blend_mode());
     out->sorting_context_id = data.sorting_context_id();
     out->is_fast_rounded_corner = data.is_fast_rounded_corner();
-    out->de_jelly_delta_y = data.de_jelly_delta_y();
 
     return true;
   }

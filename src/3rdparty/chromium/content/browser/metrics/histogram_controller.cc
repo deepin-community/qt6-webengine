@@ -1,10 +1,10 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/metrics/histogram_controller.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/process/process_handle.h"
 #include "content/browser/metrics/histogram_subscriber.h"
@@ -13,8 +13,8 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_data.h"
+#include "content/public/browser/child_process_host.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/common/child_process_host.h"
 #include "content/public/common/process_type.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 
@@ -59,7 +59,7 @@ void HistogramController::Unregister(const HistogramSubscriber* subscriber) {
 
 template <class T>
 void HistogramController::NotifyChildDied(T* host) {
-  RemoveChildHistogramFetcherInterface(host);
+  RemoveChildHistogramFetcherInterface(MayBeDangling<T>(host));
 }
 
 template void HistogramController::NotifyChildDied(RenderProcessHost* host);
@@ -104,9 +104,13 @@ void HistogramController::InsertChildHistogramFetcherInterface(
         child_histogram_fetcher) {
   // Broken pipe means remove this from the map. The map size is a proxy for
   // the number of known processes
+  //
+  // `RemoveChildHistogramFetcherInterface` will only use `host` for address
+  // comparison without being dereferenced , therefore it's not going to create
+  // a UAF.
   child_histogram_fetcher.set_disconnect_handler(base::BindOnce(
       &HistogramController::RemoveChildHistogramFetcherInterface<T>,
-      base::Unretained(this), base::Unretained(host)));
+      base::Unretained(this), base::UnsafeDangling(host)));
   GetChildHistogramFetcherMap<T>()[host] = std::move(child_histogram_fetcher);
 }
 
@@ -121,7 +125,8 @@ HistogramController::GetChildHistogramFetcherInterface(T* host) {
 }
 
 template <class T>
-void HistogramController::RemoveChildHistogramFetcherInterface(T* host) {
+void HistogramController::RemoveChildHistogramFetcherInterface(
+    MayBeDangling<T> host) {
   GetChildHistogramFetcherMap<T>().erase(host);
 }
 

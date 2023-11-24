@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,13 +10,13 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/check.h"
 #include "base/component_export.h"
 #include "base/containers/span.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/memory/ptr_util.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/strings/string_piece.h"
 #include "base/task/sequenced_task_runner.h"
 #include "mojo/public/cpp/bindings/async_flusher.h"
@@ -31,7 +31,6 @@
 #include "mojo/public/cpp/bindings/pending_flush.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/scoped_interface_endpoint_handle.h"
-#include "mojo/public/cpp/system/core.h"
 
 namespace mojo {
 
@@ -97,7 +96,7 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) BindingStateBase {
                     base::span<const uint32_t> sync_method_ordinals,
                     MessageReceiverWithResponderStatus* stub,
                     uint32_t interface_version,
-                    MessageToStableIPCHashCallback ipc_hash_callback,
+                    MessageToMethodInfoCallback method_info_callback,
                     MessageToMethodNameCallback method_name_callback);
 
   scoped_refptr<internal::MultiplexRouter> router_;
@@ -127,7 +126,7 @@ class BindingState : public BindingStateBase {
         std::make_unique<typename Interface::RequestValidator_>(),
         Interface::PassesAssociatedKinds_,
         SyncMethodTraits<Interface>::GetOrdinals(), &stub_, Interface::Version_,
-        Interface::MessageToStableIPCHash_, Interface::MessageToMethodName_);
+        Interface::MessageToMethodInfo_, Interface::MessageToMethodName_);
   }
 
   PendingReceiver<Interface> Unbind() {

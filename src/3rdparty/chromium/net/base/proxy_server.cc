@@ -1,4 +1,4 @@
-// Copyright (c) 2010 The Chromium Authors. All rights reserved.
+// Copyright 2010 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -83,7 +83,7 @@ ProxyServer ProxyServer::FromSchemeHostAndPort(Scheme scheme,
                              &canonicalized_output, &component_output)) {
     return ProxyServer();
   }
-  if (!component_output.is_nonempty())
+  if (component_output.is_empty())
     return ProxyServer();
 
   canonicalized_output.Complete();

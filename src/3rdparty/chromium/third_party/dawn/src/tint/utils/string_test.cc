@@ -20,16 +20,58 @@ namespace tint::utils {
 namespace {
 
 TEST(StringTest, ReplaceAll) {
-  ASSERT_EQ("xybbcc", ReplaceAll("aabbcc", "aa", "xy"));
-  ASSERT_EQ("aaxycc", ReplaceAll("aabbcc", "bb", "xy"));
-  ASSERT_EQ("aabbxy", ReplaceAll("aabbcc", "cc", "xy"));
-  ASSERT_EQ("xyxybbcc", ReplaceAll("aabbcc", "a", "xy"));
-  ASSERT_EQ("aaxyxycc", ReplaceAll("aabbcc", "b", "xy"));
-  ASSERT_EQ("aabbxyxy", ReplaceAll("aabbcc", "c", "xy"));
-  // Replacement string includes the searched-for string.
-  // This proves that the algorithm needs to advance 'pos'
-  // past the replacement.
-  ASSERT_EQ("aabxybbxybcc", ReplaceAll("aabbcc", "b", "bxyb"));
+    EXPECT_EQ("xybbcc", ReplaceAll("aabbcc", "aa", "xy"));
+    EXPECT_EQ("aaxycc", ReplaceAll("aabbcc", "bb", "xy"));
+    EXPECT_EQ("aabbxy", ReplaceAll("aabbcc", "cc", "xy"));
+    EXPECT_EQ("xyxybbcc", ReplaceAll("aabbcc", "a", "xy"));
+    EXPECT_EQ("aaxyxycc", ReplaceAll("aabbcc", "b", "xy"));
+    EXPECT_EQ("aabbxyxy", ReplaceAll("aabbcc", "c", "xy"));
+    // Replacement string includes the searched-for string.
+    // This proves that the algorithm needs to advance 'pos'
+    // past the replacement.
+    EXPECT_EQ("aabxybbxybcc", ReplaceAll("aabbcc", "b", "bxyb"));
+}
+
+TEST(StringTest, ToString) {
+    EXPECT_EQ("123", ToString(123));
+    EXPECT_EQ("hello", ToString("hello"));
+}
+
+TEST(StringTest, HasPrefix) {
+    EXPECT_TRUE(HasPrefix("abc", "a"));
+    EXPECT_TRUE(HasPrefix("abc", "ab"));
+    EXPECT_TRUE(HasPrefix("abc", "abc"));
+    EXPECT_FALSE(HasPrefix("abc", "abc1"));
+    EXPECT_FALSE(HasPrefix("abc", "ac"));
+    EXPECT_FALSE(HasPrefix("abc", "b"));
+}
+
+TEST(StringTest, Distance) {
+    EXPECT_EQ(Distance("hello world", "hello world"), 0u);
+    EXPECT_EQ(Distance("hello world", "helloworld"), 1u);
+    EXPECT_EQ(Distance("helloworld", "hello world"), 1u);
+    EXPECT_EQ(Distance("hello world", "hello  world"), 1u);
+    EXPECT_EQ(Distance("hello  world", "hello world"), 1u);
+    EXPECT_EQ(Distance("Hello World", "hello world"), 2u);
+    EXPECT_EQ(Distance("hello world", "Hello World"), 2u);
+    EXPECT_EQ(Distance("Hello world", ""), 11u);
+    EXPECT_EQ(Distance("", "Hello world"), 11u);
+}
+
+TEST(StringTest, SuggestAlternatives) {
+    {
+        const char* alternatives[] = {"hello world", "Hello World"};
+        std::ostringstream ss;
+        SuggestAlternatives("hello wordl", alternatives, ss);
+        EXPECT_EQ(ss.str(), R"(Did you mean 'hello world'?
+Possible values: 'hello world', 'Hello World')");
+    }
+    {
+        const char* alternatives[] = {"foobar", "something else"};
+        std::ostringstream ss;
+        SuggestAlternatives("hello world", alternatives, ss);
+        EXPECT_EQ(ss.str(), R"(Possible values: 'foobar', 'something else')");
+    }
 }
 
 }  // namespace

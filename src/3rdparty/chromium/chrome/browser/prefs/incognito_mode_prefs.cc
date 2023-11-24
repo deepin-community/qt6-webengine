@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 #include "base/logging.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
+#include "chrome/browser/defaults.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
@@ -25,7 +26,7 @@
 #endif  // BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/lacros/lacros_service.h"
+#include "chromeos/startup/browser_params_proxy.h"
 #endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 
 // static
@@ -72,23 +73,14 @@ void IncognitoModePrefs::RegisterProfilePrefs(
 bool IncognitoModePrefs::ShouldLaunchIncognito(
     const base::CommandLine& command_line,
     const PrefService* prefs) {
-  // Note: This code only checks parental controls if the user requested
-  // to launch in incognito mode or if it was forced via prefs. This way,
-  // the parental controls check (which can be quite slow) can be avoided
-  // most of the time.
-  bool should_use_incognito =
-      command_line.HasSwitch(switches::kIncognito) ||
-      GetAvailabilityInternal(prefs, DONT_CHECK_PARENTAL_CONTROLS) ==
-          IncognitoModePrefs::Availability::kForced;
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  auto* init_params = chromeos::LacrosService::Get()->init_params();
-  should_use_incognito |=
-      init_params->initial_browser_action ==
-      crosapi::mojom::InitialBrowserAction::kOpenIncognitoWindow;
-#endif
-  return should_use_incognito &&
-         GetAvailabilityInternal(prefs, CHECK_PARENTAL_CONTROLS) !=
-             IncognitoModePrefs::Availability::kDisabled;
+  return ShouldLaunchIncognitoInternal(command_line, prefs, false);
+}
+
+// static
+bool IncognitoModePrefs::ShouldOpenSubsequentBrowsersInIncognito(
+    const base::CommandLine& command_line,
+    const PrefService* prefs) {
+  return ShouldLaunchIncognitoInternal(command_line, prefs, true);
 }
 
 // static
@@ -143,4 +135,35 @@ IncognitoModePrefs::Availability IncognitoModePrefs::GetAvailabilityInternal(
     return IncognitoModePrefs::Availability::kDisabled;
   }
   return result;
+}
+
+// static
+bool IncognitoModePrefs::ShouldLaunchIncognitoInternal(
+    const base::CommandLine& command_line,
+    const PrefService* prefs,
+    const bool for_subsequent_browsers) {
+  // Note: This code only checks parental controls if the user requested
+  // to launch in incognito mode or if it was forced via prefs. This way,
+  // the parental controls check (which can be quite slow) can be avoided
+  // most of the time.
+  bool forced_by_switch = command_line.HasSwitch(switches::kIncognito);
+  if (for_subsequent_browsers) {
+    forced_by_switch =
+        forced_by_switch &&
+        browser_defaults::
+            kAlwaysOpenIncognitoBrowserIfStartedWithIncognitoSwitch;
+  }
+  bool should_use_incognito =
+      forced_by_switch ||
+      GetAvailabilityInternal(prefs, DONT_CHECK_PARENTAL_CONTROLS) ==
+          IncognitoModePrefs::Availability::kForced;
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  auto* init_params = chromeos::BrowserParamsProxy::Get();
+  should_use_incognito |=
+      init_params->InitialBrowserAction() ==
+      crosapi::mojom::InitialBrowserAction::kOpenIncognitoWindow;
+#endif
+  return should_use_incognito &&
+         GetAvailabilityInternal(prefs, CHECK_PARENTAL_CONTROLS) !=
+             IncognitoModePrefs::Availability::kDisabled;
 }

@@ -1,8 +1,9 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {$} from 'chrome://resources/js/util.m.js';
+import {$} from 'chrome://resources/js/util_ts.js';
+
 import {millisecondsToString} from './util.js';
 
 /**
@@ -51,7 +52,9 @@ function createSelectableButton(
 }
 
 function selectSelectableButton(id) {
-  var element = $(id);
+  // |id| is usually not a valid selector for querySelector so we cannot use $
+  // here.
+  var element = document.getElementById(id);
   if (!element) {
     console.error('failed to select button with id: ' + id);
     return;
@@ -248,8 +251,14 @@ export class ClientRenderer {
       player.destructed = true;
     }
     if ([
-          'url', 'frame_url', 'frame_title', 'audio_codec_name',
-          'video_codec_name', 'width', 'height', 'event'
+          'url',
+          'frame_url',
+          'frame_title',
+          'audio_codec_name',
+          'video_codec_name',
+          'width',
+          'height',
+          'event',
         ].includes(key)) {
       this.redrawPlayerList_(players);
     }

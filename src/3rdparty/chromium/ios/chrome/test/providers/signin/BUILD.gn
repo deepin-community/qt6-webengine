@@ -1,4 +1,4 @@
-# Copyright 2022 The Chromium Authors. All rights reserved.
+# Copyright 2022 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -6,8 +6,10 @@ group("signin") {
   testonly = true
   deps = [
     ":signin_error",
+    ":signin_identity",
     ":signin_resources",
     ":signin_sso",
+    ":trusted_vault",
   ]
 }
 
@@ -18,6 +20,17 @@ source_set("signin_error") {
   deps = [
     "//base",
     "//ios/public/provider/chrome/browser/signin:signin_error_api",
+  ]
+  frameworks = [ "Foundation.framework" ]
+}
+
+source_set("signin_identity") {
+  testonly = true
+  configs += [ "//build/config/compiler:enable_arc" ]
+  sources = [ "test_signin_identity.mm" ]
+  deps = [
+    "//ios/chrome/browser/signin:fake_system_identity_manager",
+    "//ios/public/provider/chrome/browser/signin:signin_identity_api",
   ]
   frameworks = [ "Foundation.framework" ]
 }
@@ -39,4 +52,20 @@ source_set("signin_sso") {
   sources = [ "test_signin_sso.mm" ]
   deps = [ "//ios/public/provider/chrome/browser/signin:signin_sso_api" ]
   frameworks = [ "Foundation.framework" ]
+}
+
+source_set("trusted_vault") {
+  testonly = true
+  configs += [ "//build/config/compiler:enable_arc" ]
+  sources = [
+    "fake_trusted_vault_client_backend.h",
+    "fake_trusted_vault_client_backend.mm",
+    "test_trusted_vault.mm",
+  ]
+  deps = [
+    "//base",
+    "//ios/chrome/browser/signin:trusted_vault",
+    "//ios/public/provider/chrome/browser/signin:trusted_vault_api",
+  ]
+  frameworks = [ "UIKit.framework" ]
 }

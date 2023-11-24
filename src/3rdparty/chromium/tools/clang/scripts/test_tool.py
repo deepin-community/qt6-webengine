@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright (c) 2013 The Chromium Authors. All rights reserved.
+# Copyright 2013 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -116,7 +116,7 @@ def _ApplyTool(tools_clang_scripts_directory,
       _RunGit(args)
     else:
       with open(actual_files[0], 'w') as output_file:
-        output_file.write(stdout)
+        output_file.write(stdout.decode('utf-8'))
 
     return 0
 
@@ -146,8 +146,9 @@ def _NormalizeSingleRawOutputLine(output_line, test_dir):
 
 
 def _NormalizeRawOutput(output_lines, test_dir):
-  return map(lambda line: _NormalizeSingleRawOutputLine(line, test_dir),
-             output_lines)
+  return list(
+      map(lambda line: _NormalizeSingleRawOutputLine(line, test_dir),
+          output_lines))
 
 
 def main(argv):

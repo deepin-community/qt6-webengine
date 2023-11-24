@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -113,7 +113,12 @@ bool SensorProxy::ShouldSuspendUpdates() const {
   if (!GetPage()->IsPageVisible())
     return true;
 
-  LocalFrame* focused_frame = GetPage()->GetFocusController().FocusedFrame();
+  const FocusController& focus_controller = GetPage()->GetFocusController();
+  if (!focus_controller.IsFocused()) {
+    return true;
+  }
+
+  LocalFrame* focused_frame = focus_controller.FocusedFrame();
   LocalFrame* this_frame = provider_->GetSupplementable()->GetFrame();
 
   if (!focused_frame || !this_frame)

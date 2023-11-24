@@ -50,10 +50,12 @@
 
 namespace cc {
 class AnimationHost;
+class AnimationTimeline;
 class ScrollbarLayerBase;
 }
 
 namespace blink {
+
 enum class PaintPropertyChangeType : unsigned char;
 class EffectPaintPropertyNode;
 class GraphicsContext;
@@ -65,6 +67,8 @@ class ScrollPaintPropertyNode;
 class TracedValue;
 class TransformPaintPropertyNode;
 struct PaintPropertyTreeBuilderFragmentContext;
+
+enum class OverscrollType { kNone, kTransform };
 
 // Represents the visual viewport the user is currently seeing the page through.
 // This class corresponds to the InnerViewport on the compositor. It is a
@@ -90,7 +94,6 @@ struct PaintPropertyTreeBuilderFragmentContext;
 //           +- scroll_translation_node_ (scroll: scroll_node_)
 // Effect tree:
 //  parent effect state
-//  +- overscroll_elasticity_effect_node_
 //  +- horizontal_scrollbar_effect_node_
 //  +- vertical_scrollbar_effect_node_
 //
@@ -211,6 +214,7 @@ class CORE_EXPORT VisualViewport : public GarbageCollected<VisualViewport>,
   gfx::Vector2d MinimumScrollOffsetInt() const override;
   gfx::Vector2d MaximumScrollOffsetInt() const override;
   ScrollOffset MaximumScrollOffset() const override;
+  ScrollOffset MaximumScrollOffsetAtScale(float scale) const;
   // Note: Because scrollbars are conceptually owned by the LayoutView,
   // ContentsSize includes the main frame's scrollbars. This is necessary for
   // correct cc Layer sizing.
@@ -229,7 +233,7 @@ class CORE_EXPORT VisualViewport : public GarbageCollected<VisualViewport>,
   bool ScheduleAnimation() override;
   bool UsesCompositedScrolling() const override { return true; }
   cc::AnimationHost* GetCompositorAnimationHost() const override;
-  CompositorAnimationTimeline* GetCompositorAnimationTimeline() const override;
+  cc::AnimationTimeline* GetCompositorAnimationTimeline() const override;
   gfx::Rect VisibleContentRect(
       IncludeScrollbarsInRect = kExcludeScrollbars) const override;
   scoped_refptr<base::SingleThreadTaskRunner> GetTimerTaskRunner()
@@ -265,12 +269,14 @@ class CORE_EXPORT VisualViewport : public GarbageCollected<VisualViewport>,
   // for viewing websites that are not optimized for mobile devices.
   bool ShouldDisableDesktopWorkarounds() const;
 
-  TransformPaintPropertyNode* GetDeviceEmulationTransformNode() const;
-  TransformPaintPropertyNode* GetOverscrollElasticityTransformNode() const;
-  EffectPaintPropertyNode* GetOverscrollElasticityEffectNode() const;
-  TransformPaintPropertyNode* GetPageScaleNode() const;
-  TransformPaintPropertyNode* GetScrollTranslationNode() const;
-  ScrollPaintPropertyNode* GetScrollNode() const;
+  const TransformPaintPropertyNode* GetDeviceEmulationTransformNode() const;
+  const TransformPaintPropertyNode* GetOverscrollElasticityTransformNode()
+      const;
+  const TransformPaintPropertyNode* GetPageScaleNode() const;
+  const TransformPaintPropertyNode* GetScrollTranslationNode() const;
+  const ScrollPaintPropertyNode* GetScrollNode() const;
+
+  const TransformPaintPropertyNode* TransformNodeForViewportScrollbars() const;
 
   // Create/update the page scale translation, viewport scroll, and viewport
   // translation property nodes. Returns the maximum paint property change
@@ -278,14 +284,36 @@ class CORE_EXPORT VisualViewport : public GarbageCollected<VisualViewport>,
   PaintPropertyChangeType UpdatePaintPropertyNodesIfNeeded(
       PaintPropertyTreeBuilderFragmentContext& context);
 
-  void SetNeedsPaintPropertyUpdate() { needs_paint_property_update_ = true; }
-  bool NeedsPaintPropertyUpdate() const { return needs_paint_property_update_; }
+  void SetNeedsPaintPropertyUpdate() {
+    DCHECK(IsActiveViewport());
+    needs_paint_property_update_ = true;
+  }
+  bool NeedsPaintPropertyUpdate() const {
+    DCHECK(IsActiveViewport());
+    return needs_paint_property_update_;
+  }
 
   void DisposeImpl() override;
 
   void Paint(GraphicsContext&) const;
 
   void UsedColorSchemeChanged();
+
+  // Returns whether this VisualViewport is "active", that is, whether it'll
+  // affect paint property trees. If false, this renderer cannot be
+  // independently scaled.
+  //
+  // A VisualViewport is created in renderers for remote frames / nested pages;
+  // however, in those cases it is "inert", it cannot change scale or location
+  // values. Only a <portal> or outermost main frame can have an active
+  // viewport.
+  bool IsActiveViewport() const;
+
+  OverscrollType GetOverscrollType() const { return overscroll_type_; }
+  void SetOverscrollTypeForTesting(OverscrollType type) {
+    overscroll_type_ = type;
+    SetNeedsPaintPropertyUpdate();
+  }
 
  private:
   bool DidSetScaleOrLocation(float scale,
@@ -304,12 +332,6 @@ class CORE_EXPORT VisualViewport : public GarbageCollected<VisualViewport>,
   void NotifyRootFrameViewport() const;
 
   RootFrameViewport* GetRootFrameViewport() const;
-
-  // VisualViewport is created in renderers for remote frames / nested pages.
-  // However, in those cases it is "inert", it cannot change scale or location
-  // values. Only the VisualViewport created in the outermost main frame's
-  // renderer is "active".
-  bool IsActiveViewport() const;
 
   // Returns the local main frame, this can only be called for an active
   // VisualViewport.
@@ -343,7 +365,6 @@ class CORE_EXPORT VisualViewport : public GarbageCollected<VisualViewport>,
   scoped_refptr<TransformPaintPropertyNode> page_scale_node_;
   scoped_refptr<TransformPaintPropertyNode> scroll_translation_node_;
   scoped_refptr<ScrollPaintPropertyNode> scroll_node_;
-  scoped_refptr<EffectPaintPropertyNode> overscroll_elasticity_effect_node_;
   scoped_refptr<EffectPaintPropertyNode> horizontal_scrollbar_effect_node_;
   scoped_refptr<EffectPaintPropertyNode> vertical_scrollbar_effect_node_;
 
@@ -377,10 +398,10 @@ class CORE_EXPORT VisualViewport : public GarbageCollected<VisualViewport>,
   // For scrolling, on scroll_layer_, scroll_node_, and scroll element ids of
   // scrollbar layers.
   CompositorElementId scroll_element_id_;
-  // For overscroll elasticity.
-  CompositorElementId elasticity_effect_node_id_;
 
   bool needs_paint_property_update_;
+
+  OverscrollType overscroll_type_;
 };
 
 }  // namespace blink

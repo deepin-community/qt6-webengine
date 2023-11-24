@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,9 +20,7 @@ namespace blink {
 BlinkTransferableMessage BlinkTransferableMessage::FromTransferableMessage(
     TransferableMessage message) {
   BlinkTransferableMessage result;
-  result.message = SerializedScriptValue::Create(
-      reinterpret_cast<const char*>(message.encoded_message.data()),
-      message.encoded_message.size());
+  result.message = SerializedScriptValue::Create(message.encoded_message);
   for (auto& blob : message.blobs) {
     result.message->BlobDataHandles().Set(
         String::FromUTF8(blob->uuid),
@@ -39,7 +37,9 @@ BlinkTransferableMessage BlinkTransferableMessage::FromTransferableMessage(
       std::make_pair(message.stack_trace_debugger_id_first,
                      message.stack_trace_debugger_id_second),
       message.stack_trace_should_pause);
-  result.locked_agent_cluster_id = message.locked_agent_cluster_id;
+  result.sender_agent_cluster_id = message.sender_agent_cluster_id;
+  result.locked_to_sender_agent_cluster =
+      message.locked_to_sender_agent_cluster;
   result.ports.AppendRange(message.ports.begin(), message.ports.end());
   for (auto& channel : message.stream_channels) {
     result.message->GetStreams().push_back(
@@ -50,7 +50,9 @@ BlinkTransferableMessage BlinkTransferableMessage::FromTransferableMessage(
         message.user_activation->has_been_active,
         message.user_activation->was_active);
   }
-  result.delegate_payment_request = message.delegate_payment_request;
+  result.delegated_capability = message.delegated_capability;
+
+  result.parent_task_id = message.parent_task_id;
 
   if (!message.array_buffer_contents_array.empty()) {
     SerializedScriptValue::ArrayBufferContentsArray array_buffer_contents_array;
@@ -60,7 +62,11 @@ BlinkTransferableMessage BlinkTransferableMessage::FromTransferableMessage(
 
     for (auto& item : message.array_buffer_contents_array) {
       mojo_base::BigBuffer& big_buffer = item->contents;
-      ArrayBufferContents contents(big_buffer.size(), 1,
+      absl::optional<size_t> max_byte_length;
+      if (item->is_resizable_by_user_javascript) {
+        max_byte_length = base::checked_cast<size_t>(item->max_byte_length);
+      }
+      ArrayBufferContents contents(big_buffer.size(), max_byte_length, 1,
                                    ArrayBufferContents::kNotShared,
                                    ArrayBufferContents::kDontInitialize);
       // Check if we allocated the backing store of the ArrayBufferContents

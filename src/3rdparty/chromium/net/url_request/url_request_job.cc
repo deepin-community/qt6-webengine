@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,15 +6,14 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/compiler_specific.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "net/base/auth.h"
 #include "net/base/features.h"
@@ -24,7 +23,9 @@
 #include "net/base/net_errors.h"
 #include "net/base/network_delegate.h"
 #include "net/base/proxy_server.h"
+#include "net/base/schemeful_site.h"
 #include "net/cert/x509_certificate.h"
+#include "net/cookies/cookie_setting_override.h"
 #include "net/log/net_log.h"
 #include "net/log/net_log_capture_mode.h"
 #include "net/log/net_log_event_type.h"
@@ -40,9 +41,9 @@ namespace {
 
 // Callback for TYPE_URL_REQUEST_FILTERS_SET net-internals event.
 base::Value SourceStreamSetParams(SourceStream* source_stream) {
-  base::Value event_params(base::Value::Type::DICTIONARY);
-  event_params.SetStringKey("filters", source_stream->Description());
-  return event_params;
+  base::Value::Dict event_params;
+  event_params.Set("filters", source_stream->Description());
+  return base::Value(std::move(event_params));
 }
 
 }  // namespace
@@ -86,14 +87,12 @@ class URLRequestJob::URLRequestJobSourceStream : public SourceStream {
 
 URLRequestJob::URLRequestJob(URLRequest* request)
     : request_(request),
-      done_(false),
-      prefilter_bytes_read_(0),
-      postfilter_bytes_read_(0),
-      has_handled_response_(false),
-      expected_content_size_(-1) {}
+      request_initiator_site_(request->initiator().has_value()
+                                  ? absl::make_optional(net::SchemefulSite(
+                                        request->initiator().value()))
+                                  : absl::nullopt) {}
 
-URLRequestJob::~URLRequestJob() {
-}
+URLRequestJob::~URLRequestJob() = default;
 
 void URLRequestJob::SetUpload(UploadDataStream* upload) {
 }
@@ -414,11 +413,6 @@ void URLRequestJob::NotifyHeadersComplete() {
   if (has_handled_response_)
     return;
 
-  // The URLRequest status should still be IO_PENDING, which it was set to
-  // before the URLRequestJob was started.  On error or cancellation, this
-  // method should not be called.
-  DCHECK_EQ(ERR_IO_PENDING, request_->status());
-
   // Initialize to the current time, and let the subclass optionally override
   // the time stamps if it has that information.  The default request_time is
   // set by URLRequest before it calls our Start method.
@@ -602,7 +596,7 @@ void URLRequestJob::OnDone(int net_error, bool notify_done) {
   if (notify_done) {
     // Complete this notification later.  This prevents us from re-entering the
     // delegate if we're done because of a synchronous call.
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(&URLRequestJob::NotifyDone, weak_factory_.GetWeakPtr()));
   }

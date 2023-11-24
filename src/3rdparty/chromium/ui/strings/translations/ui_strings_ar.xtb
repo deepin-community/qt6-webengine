@@ -6,6 +6,7 @@
 <translation id="1127811143501539442">{DAYS,plural, =1{قبل يوم واحد}zero{قبل # من الأيام}two{قبل يومين (#)}few{قبل # أيام}many{قبل # يومًا}other{قبل # من الأيام}}</translation>
 <translation id="1156623771253174079">{SECONDS,plural, =1{قبل دقيقة واحدة}zero{قبل # دقيقة}two{قبل دقيقتين (#)}few{قبل # دقائق}many{قبل # دقيقة}other{قبل # دقيقة}}</translation>
 <translation id="1169783199079129864">{MINUTES,plural, =1{دقيقة واحدة}zero{# دقيقة}two{دقيقتان (#)}few{# دقائق}many{# دقيقة}other{# دقيقة}}</translation>
+<translation id="1181037720776840403">إزالة</translation>
 <translation id="1243314992276662751">تحميل</translation>
 <translation id="1266864766717917324">تعذَّرت مشاركة <ph name="CONTENT_TYPE" />.</translation>
 <translation id="1269641567813814718">Win</translation>
@@ -25,6 +26,7 @@
 <translation id="1803208670097017349">{MONTHS,plural, =1{شهر واحد}zero{# شهر}two{شهران (#)}few{# أشهر}many{# شهرًا}other{# شهر}}</translation>
 <translation id="1809410197924942083"><ph name="QUANTITY" /> ميغابايات/ثانية</translation>
 <translation id="1830179671306812954">{HOURS,plural, =1{ساعة واحدة و }zero{# من الساعات و }two{ساعتان (#) و }few{# ساعات و }many{# ساعة و }other{# من الساعات و }}</translation>
+<translation id="185013357618350178">&amp;اختيار</translation>
 <translation id="1859234291848436338">اتجاه الكتابة</translation>
 <translation id="1860796786778352021">إغلاق الإشعار</translation>
 <translation id="186476001994626254">‏محتوى Web Smart Paste</translation>
@@ -52,7 +54,6 @@
 <translation id="2445449901874883781">استخدام كثافة عالية</translation>
 <translation id="2482878487686419369">الإشعارات</translation>
 <translation id="2497284189126895209">الملفّات كلّها</translation>
-<translation id="2498950423397131220">تعويم</translation>
 <translation id="2515586267016047495">Alt</translation>
 <translation id="2522350507219695259">اكتملت المعايرة</translation>
 <translation id="252373100621549798">شاشة عرض غير معروفة</translation>
@@ -60,9 +61,10 @@
 <translation id="2573731672208488250">{HOURS,plural, =1{خلال ساعة واحدة}zero{خلال # ساعة}two{خلال ساعتين (#)}few{خلال # ساعات}many{خلال # ساعة}other{خلال # ساعة}}</translation>
 <translation id="2583543531130364912">معايرة الشاشة التي تعمل باللمس</translation>
 <translation id="2586657967955657006">الحافظة</translation>
+<translation id="2653844658857826081">جديد</translation>
 <translation id="2666092431469916601">أعلى</translation>
 <translation id="2701330563083355633">تمت المشاركة من <ph name="DEVICE_NAME" /></translation>
-<translation id="271033894570825754">جديدة</translation>
+<translation id="271033894570825754">جديد</translation>
 <translation id="2824719307700604149">{YEARS,plural, =1{قبل عام واحد}zero{قبل # عام}two{قبل عامين (#)}few{قبل # أعوام}many{قبل # عامًا}other{قبل # عام}}</translation>
 <translation id="2878511608894704031">حذف الكل</translation>
 <translation id="2907671656515444832">{DAYS,plural, =1{خلال يوم واحد}zero{خلال # يوم}two{خلال يومين (#)}few{خلال # أيام}many{خلال # يومًا}other{خلال # يوم}}</translation>

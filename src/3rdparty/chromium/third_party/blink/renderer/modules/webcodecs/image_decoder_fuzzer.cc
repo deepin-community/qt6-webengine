@@ -1,12 +1,10 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/run_loop.h"
-#include "base/test/scoped_feature_list.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/libfuzzer/proto/lpm_interface.h"
-#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/renderer/bindings/core/v8/to_v8_traits.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_arraybufferallowshared_arraybufferviewallowshared_readablestream.h"
@@ -24,7 +22,6 @@
 #include "third_party/blink/renderer/modules/webcodecs/image_track_list.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
-#include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/testing/blink_fuzzer_test_support.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -35,17 +32,6 @@
 namespace blink {
 
 namespace {
-
-String ToPremultiplyAlpha(wc_fuzzer::ImageBitmapOptions_PremultiplyAlpha type) {
-  switch (type) {
-    case wc_fuzzer::ImageBitmapOptions_PremultiplyAlpha_PREMULTIPLY_NONE:
-      return "none";
-    case wc_fuzzer::ImageBitmapOptions_PremultiplyAlpha_PREMULTIPLY:
-      return "premultiply";
-    case wc_fuzzer::ImageBitmapOptions_PremultiplyAlpha_PREMULTIPLY_DEFAULT:
-      return "default";
-  }
-}
 
 String ToColorSpaceConversion(
     wc_fuzzer::ImageBitmapOptions_ColorSpaceConversion type) {
@@ -99,8 +85,8 @@ DEFINE_BINARY_PROTO_FUZZER(
     return page_holder.release();
   }();
 
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(features::kJXL);
+  // Request a full GC upon returning.
+  auto scoped_gc = MakeScopedGarbageCollectionRequest();
 
   //
   // NOTE: GC objects that need to survive iterations of the loop below
@@ -129,8 +115,6 @@ DEFINE_BINARY_PROTO_FUZZER(
         proto.config().data().data(), proto.config().data().size());
     image_decoder_init->setData(
         MakeGarbageCollected<V8ImageBufferSource>(data_copy));
-    image_decoder_init->setPremultiplyAlpha(
-        ToPremultiplyAlpha(proto.config().options().premultiply_alpha()));
     image_decoder_init->setColorSpaceConversion(ToColorSpaceConversion(
         proto.config().options().color_space_conversion()));
 
@@ -204,15 +188,8 @@ DEFINE_BINARY_PROTO_FUZZER(
     }
   }
 
-  // Request a V8 GC. Oilpan will be invoked by the GC epilogue.
-  //
-  // Multiple GCs may be required to ensure everything is collected (due to
-  // a chain of persistent handles), so some objects may not be collected until
-  // a subsequent iteration. This is slow enough as is, so we compromise on one
-  // major GC, as opposed to the 5 used in V8GCController for unit tests.
+  // Give other tasks a chance to run before we GC.
   base::RunLoop().RunUntilIdle();
-  V8PerIsolateData::MainThreadIsolate()->RequestGarbageCollectionForTesting(
-      v8::Isolate::kFullGarbageCollection);
 }
 
 }  // namespace blink

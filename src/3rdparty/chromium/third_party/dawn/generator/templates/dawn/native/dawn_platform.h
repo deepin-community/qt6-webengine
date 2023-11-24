@@ -48,6 +48,23 @@ namespace {{native_namespace}} {
         inline {{as_cppType(type.name)}}* FromAPI({{as_cType(type.name)}}* rhs) {
             return reinterpret_cast<{{as_cppType(type.name)}}*>(rhs);
         }
+
+        inline const {{metadata.namespace}}::{{as_cppType(type.name)}}* ToCppAPI(const {{as_cppType(type.name)}}* rhs) {
+            return reinterpret_cast<const {{metadata.namespace}}::{{as_cppType(type.name)}}*>(rhs);
+        }
+
+        inline {{metadata.namespace}}::{{as_cppType(type.name)}}* ToCppAPI({{as_cppType(type.name)}}* rhs) {
+            return reinterpret_cast<{{metadata.namespace}}::{{as_cppType(type.name)}}*>(rhs);
+        }
+
+        inline const {{as_cppType(type.name)}}* FromCppAPI(const {{metadata.namespace}}::{{as_cppType(type.name)}}* rhs) {
+            return reinterpret_cast<const {{as_cppType(type.name)}}*>(rhs);
+        }
+
+        inline {{as_cppType(type.name)}}* FromCppAPI({{metadata.namespace}}::{{as_cppType(type.name)}}* rhs) {
+            return reinterpret_cast<{{as_cppType(type.name)}}*>(rhs);
+        }
+
     {% endfor %}
 
     {% for type in by_category["object"] %}
@@ -77,6 +94,16 @@ namespace {{native_namespace}} {
             static constexpr uint32_t value = {{len(e.values)}};
         };
     {% endfor %}
-}
+
+    {% for type in by_category["enum"] + by_category["bitmask"] %}
+        inline {{as_cType(type.name)}} ToAPI({{namespace}}::{{as_cppType(type.name)}} rhs) {
+            return static_cast<{{as_cType(type.name)}}>(rhs);
+        }
+
+        inline {{namespace}}::{{as_cppType(type.name)}} FromAPI({{as_cType(type.name)}} rhs) {
+            return static_cast<{{namespace}}::{{as_cppType(type.name)}}>(rhs);
+        }
+    {% endfor %}
+}  // namespace {{native_namespace}}
 
 #endif  // {{NATIVE_DIR}}_{{PREFIX}}_PLATFORM_AUTOGEN_H_

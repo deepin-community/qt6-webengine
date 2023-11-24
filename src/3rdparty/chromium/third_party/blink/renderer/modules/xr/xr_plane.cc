@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -52,12 +52,12 @@ XRSpace* XRPlane::planeSpace() const {
   return plane_space_;
 }
 
-absl::optional<TransformationMatrix> XRPlane::MojoFromObject() const {
+absl::optional<gfx::Transform> XRPlane::MojoFromObject() const {
   if (!mojo_from_plane_) {
     return absl::nullopt;
   }
 
-  return TransformationMatrix(mojo_from_plane_->ToTransform());
+  return mojo_from_plane_->ToTransform();
 }
 
 device::mojom::blink::XRNativeOriginInformationPtr XRPlane::NativeOrigin()

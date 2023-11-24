@@ -1,15 +1,18 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/memory/raw_ptr.h"
+
+#import "base/task/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #import "ui/views/cocoa/drag_drop_client_mac.h"
 
 #import <Cocoa/Cocoa.h>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #import "base/mac/scoped_objc_class_swizzler.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/thread_task_runner_handle.h"
 #import "components/remote_cocoa/app_shim/native_widget_ns_window_bridge.h"
 #import "ui/base/clipboard/clipboard_util_mac.h"
 #import "ui/base/dragdrop/drag_drop_types.h"
@@ -115,8 +118,7 @@ enumerateDraggingItemsWithOptions:(NSDraggingItemEnumerationOptions)enumOpts
 
 @end
 
-namespace views {
-namespace test {
+namespace views::test {
 
 using ::base::ASCIIToUTF16;
 using ::ui::mojom::DragOperation;
@@ -203,7 +205,7 @@ class DragDropClientMacTest : public WidgetTest {
     widget_->Show();
 
     target_ = new DragDropView();
-    widget_->non_client_view()->frame_view()->AddChildView(target_);
+    widget_->non_client_view()->frame_view()->AddChildView(target_.get());
     target_->SetBoundsRect(bounds);
 
     drag_drop_client()->source_operation_ = ui::DragDropTypes::DRAG_COPY;
@@ -216,10 +218,10 @@ class DragDropClientMacTest : public WidgetTest {
   }
 
  protected:
-  Widget* widget_ = nullptr;
-  remote_cocoa::NativeWidgetNSWindowBridge* bridge_ = nullptr;
-  NativeWidgetMacNSWindowHost* ns_window_host_ = nullptr;
-  DragDropView* target_ = nullptr;
+  raw_ptr<Widget> widget_ = nullptr;
+  raw_ptr<remote_cocoa::NativeWidgetNSWindowBridge> bridge_ = nullptr;
+  raw_ptr<NativeWidgetMacNSWindowHost> ns_window_host_ = nullptr;
+  raw_ptr<DragDropView> target_ = nullptr;
   base::scoped_nsobject<MockDraggingInfo> dragging_info_;
 };
 
@@ -264,7 +266,7 @@ TEST_F(DragDropClientMacTest, ReleaseCapture) {
       @selector(cr_beginDraggingSessionWithItems:event:source:));
 
   // Immediately quit drag'n'drop, or we'll hang.
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&DragDropClientMac::EndDrag,
                                 base::Unretained(drag_drop_client())));
 
@@ -314,7 +316,7 @@ TEST_F(DragDropClientMacTest, PasteboardToOSExchangeTest) {
 // View object that will close Widget on drop.
 class DragDropCloseView : public DragDropView {
  public:
-  DragDropCloseView() {}
+  DragDropCloseView() = default;
 
   DragDropCloseView(const DragDropCloseView&) = delete;
   DragDropCloseView& operator=(const DragDropCloseView&) = delete;
@@ -343,7 +345,7 @@ TEST_F(DragDropClientMacTest, CloseWidgetOnDrop) {
   SetData(data);
 
   target_ = new DragDropCloseView();
-  widget_->non_client_view()->frame_view()->AddChildView(target_);
+  widget_->non_client_view()->frame_view()->AddChildView(target_.get());
   target_->SetBoundsRect(gfx::Rect(0, 0, 100, 100));
   target_->set_formats(ui::OSExchangeData::STRING | ui::OSExchangeData::URL);
 
@@ -354,5 +356,4 @@ TEST_F(DragDropClientMacTest, CloseWidgetOnDrop) {
   widget_ = nullptr;
 }
 
-}  // namespace test
-}  // namespace views
+}  // namespace views::test

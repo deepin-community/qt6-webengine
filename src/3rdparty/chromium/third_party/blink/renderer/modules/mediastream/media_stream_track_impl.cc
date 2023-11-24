@@ -27,9 +27,7 @@
 
 #include <memory>
 
-#include "base/callback_helpers.h"
-#include "base/strings/stringprintf.h"
-#include "build/build_config.h"
+#include "base/functional/callback_helpers.h"
 #include "third_party/blink/public/platform/modules/mediastream/web_media_stream_track.h"
 #include "third_party/blink/public/platform/modules/webrtc/webrtc_logging.h"
 #include "third_party/blink/public/web/modules/mediastream/media_stream_video_source.h"
@@ -49,18 +47,18 @@
 #include "third_party/blink/renderer/modules/mediastream/apply_constraints_request.h"
 #include "third_party/blink/renderer/modules/mediastream/browser_capture_media_stream_track.h"
 #include "third_party/blink/renderer/modules/mediastream/media_constraints_impl.h"
-#include "third_party/blink/renderer/modules/mediastream/media_error_state.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream_utils.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream_video_track.h"
 #include "third_party/blink/renderer/modules/mediastream/overconstrained_error.h"
 #include "third_party/blink/renderer/modules/mediastream/processed_local_audio_source.h"
 #include "third_party/blink/renderer/modules/mediastream/transferred_media_stream_track.h"
-#include "third_party/blink/renderer/modules/mediastream/user_media_controller.h"
+#include "third_party/blink/renderer/modules/mediastream/user_media_client.h"
 #include "third_party/blink/renderer/modules/mediastream/webaudio_media_stream_audio_sink.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_audio_source.h"
+#include "third_party/blink/renderer/platform/mediastream/media_stream_audio_track.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_component.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_web_audio_source.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
@@ -70,13 +68,6 @@
 namespace blink {
 
 namespace {
-
-static const char kContentHintStringNone[] = "";
-static const char kContentHintStringAudioSpeech[] = "speech";
-static const char kContentHintStringAudioMusic[] = "music";
-static const char kContentHintStringVideoMotion[] = "motion";
-static const char kContentHintStringVideoDetail[] = "detail";
-static const char kContentHintStringVideoText[] = "text";
 
 // The set of constrainable properties for image capture is available at
 // https://w3c.github.io/mediacapture-image/#constrainable-properties
@@ -95,11 +86,14 @@ bool ConstraintSetHasImageCapture(
          constraint_set->hasSaturation() || constraint_set->hasSharpness() ||
          constraint_set->hasFocusDistance() || constraint_set->hasPan() ||
          constraint_set->hasTilt() || constraint_set->hasZoom() ||
-         constraint_set->hasTorch();
+         constraint_set->hasTorch() || constraint_set->hasBackgroundBlur();
 }
 
 bool ConstraintSetHasNonImageCapture(
     const MediaTrackConstraintSet* constraint_set) {
+  // TODO(crbug.com/1381959): Add hasSuppressLocalAudioPlayback() to this list
+  // and complete support for toggling suppressLocalAudioPlayback using
+  // the applyConstraints() API.
   return constraint_set->hasAspectRatio() ||
          constraint_set->hasChannelCount() || constraint_set->hasDeviceId() ||
          constraint_set->hasEchoCancellation() ||
@@ -172,47 +166,32 @@ CreateWebAudioSourceFromMediaStreamTrack(MediaStreamComponent* component,
                                                         context_sample_rate);
 }
 
-void CloneNativeVideoMediaStreamTrack(MediaStreamComponent* original,
-                                      MediaStreamComponent* clone) {
-  DCHECK(!clone->GetPlatformTrack());
-  MediaStreamSource* source = clone->Source();
+// TODO(crbug.com/1302689): Move inside MediaStreamComponent.
+std::unique_ptr<MediaStreamVideoTrack> CloneNativeVideoMediaStreamTrack(
+    MediaStreamComponent* original) {
+  MediaStreamSource* source = original->Source();
   DCHECK_EQ(source->GetType(), MediaStreamSource::kTypeVideo);
   MediaStreamVideoSource* native_source =
       MediaStreamVideoSource::GetVideoSource(source);
   DCHECK(native_source);
   MediaStreamVideoTrack* original_track = MediaStreamVideoTrack::From(original);
   DCHECK(original_track);
-  clone->SetPlatformTrack(std::make_unique<MediaStreamVideoTrack>(
+  return std::make_unique<MediaStreamVideoTrack>(
       native_source, original_track->adapter_settings(),
       original_track->noise_reduction(), original_track->is_screencast(),
       original_track->min_frame_rate(), original_track->pan(),
       original_track->tilt(), original_track->zoom(),
       original_track->pan_tilt_zoom_allowed(),
-      MediaStreamVideoSource::ConstraintsOnceCallback(), clone->Enabled()));
+      MediaStreamVideoSource::ConstraintsOnceCallback(), original->Enabled());
 }
 
-void DidSetMediaStreamTrackEnabled(MediaStreamComponent* component) {
-  auto* native_track =
-      MediaStreamTrackPlatform::GetTrack(WebMediaStreamTrack(component));
-  if (native_track)
-    native_track->SetEnabled(component->Enabled());
-}
-
-void DidCloneMediaStreamTrack(MediaStreamComponent* original,
-                              MediaStreamComponent* clone) {
+void DidCloneMediaStreamTrack(MediaStreamComponent* clone) {
   DCHECK(clone);
-  DCHECK(!clone->GetPlatformTrack());
   DCHECK(clone->Source());
 
-  switch (clone->Source()->GetType()) {
-    case MediaStreamSource::kTypeAudio:
-      // TODO(crbug.com/704136): Use per thread task runner.
-      MediaStreamUtils::CreateNativeAudioMediaStreamTrack(
-          clone, Thread::MainThread()->GetTaskRunner());
-      break;
-    case MediaStreamSource::kTypeVideo:
-      CloneNativeVideoMediaStreamTrack(original, clone);
-      break;
+  if (clone->GetSourceType() == MediaStreamSource::kTypeAudio) {
+    MediaStreamAudioSource::From(clone->Source())
+        ->ConnectToInitializedTrack(clone);
   }
 }
 
@@ -231,12 +210,25 @@ absl::optional<media::mojom::DisplayCaptureSurfaceType> GetDisplayCaptureType(
   return settings.display_surface;
 }
 
+WebString GetDisplaySurfaceString(
+    media::mojom::DisplayCaptureSurfaceType value) {
+  switch (value) {
+    case media::mojom::DisplayCaptureSurfaceType::MONITOR:
+      return WebString::FromUTF8("monitor");
+    case media::mojom::DisplayCaptureSurfaceType::WINDOW:
+      return WebString::FromUTF8("window");
+    case media::mojom::DisplayCaptureSurfaceType::BROWSER:
+      return WebString::FromUTF8("browser");
+  }
+  NOTREACHED();
+  return WebString();
+}
+
 }  // namespace
 
 MediaStreamTrack* MediaStreamTrackImpl::Create(ExecutionContext* context,
                                                MediaStreamComponent* component,
-                                               base::OnceClosure callback,
-                                               const String& descriptor_id) {
+                                               base::OnceClosure callback) {
   DCHECK(context);
   DCHECK(component);
 
@@ -245,22 +237,10 @@ MediaStreamTrack* MediaStreamTrackImpl::Create(ExecutionContext* context,
   const bool is_tab_capture =
       (display_surface_type ==
        media::mojom::DisplayCaptureSurfaceType::BROWSER);
-  const bool is_window_capture =
-      (display_surface_type == media::mojom::DisplayCaptureSurfaceType::WINDOW);
 
   if (is_tab_capture && RuntimeEnabledFeatures::RegionCaptureEnabled(context)) {
-    // Note:
-    // * ConditionalFocus is `implied_by` RegionCapture.
-    // * BrowserCaptureMediaStreamTrack a subclass of FocusableMediaStreamTrack.
-    // Therefore, tab-capture with ConditionalFocus/RegionCapture active
-    // instantiates a track on which focus() is exposed - as intended.
-    DCHECK(RuntimeEnabledFeatures::ConditionalFocusEnabled(context));
     return MakeGarbageCollected<BrowserCaptureMediaStreamTrack>(
-        context, component, std::move(callback), descriptor_id);
-  } else if ((is_tab_capture || is_window_capture) &&
-             RuntimeEnabledFeatures::ConditionalFocusEnabled(context)) {
-    return MakeGarbageCollected<FocusableMediaStreamTrack>(
-        context, component, std::move(callback), descriptor_id);
+        context, component, std::move(callback));
   } else {
     return MakeGarbageCollected<MediaStreamTrackImpl>(context, component,
                                                       std::move(callback));
@@ -271,7 +251,7 @@ MediaStreamTrackImpl::MediaStreamTrackImpl(ExecutionContext* context,
                                            MediaStreamComponent* component)
     : MediaStreamTrackImpl(context,
                            component,
-                           component->Source()->GetReadyState(),
+                           component->GetReadyState(),
                            /*callback=*/base::DoNothing()) {}
 
 MediaStreamTrackImpl::MediaStreamTrackImpl(ExecutionContext* context,
@@ -279,34 +259,34 @@ MediaStreamTrackImpl::MediaStreamTrackImpl(ExecutionContext* context,
                                            base::OnceClosure callback)
     : MediaStreamTrackImpl(context,
                            component,
-                           component->Source()->GetReadyState(),
+                           component->GetReadyState(),
                            std::move(callback)) {}
 
 MediaStreamTrackImpl::MediaStreamTrackImpl(
     ExecutionContext* context,
     MediaStreamComponent* component,
     MediaStreamSource::ReadyState ready_state,
-    base::OnceClosure callback)
+    base::OnceClosure callback,
+    bool is_clone)
     : ready_state_(ready_state),
+      has_clones_(is_clone),
       component_(component),
       execution_context_(context) {
-  component_->Source()->AddObserver(this);
+  component_->AddSourceObserver(this);
 
   // If the source is already non-live at this point, the observer won't have
   // been called. Update the muted state manually.
-  component_->SetMuted(ready_state_ == MediaStreamSource::kReadyStateMuted);
+  muted_ = ready_state_ == MediaStreamSource::kReadyStateMuted;
 
   SendLogMessage(String::Format("%s()", __func__));
 
   MediaStreamVideoTrack* const video_track =
       MediaStreamVideoTrack::From(Component());
   if (video_track && component_->Source() &&
-      component_->Source()->GetType() == MediaStreamSource::kTypeVideo) {
-    bool pan_tilt_zoom_allowed =
-        image_capture_ ? image_capture_->HasPanTiltZoomPermissionGranted()
-                       : video_track->pan_tilt_zoom_allowed();
+      component_->GetSourceType() == MediaStreamSource::kTypeVideo) {
     image_capture_ = MakeGarbageCollected<ImageCapture>(
-        context, this, pan_tilt_zoom_allowed, std::move(callback));
+        context, this, video_track->pan_tilt_zoom_allowed(),
+        std::move(callback));
   } else {
     if (execution_context_) {
       execution_context_->GetTaskRunner(TaskType::kInternalMedia)
@@ -328,7 +308,7 @@ String MediaStreamTrackImpl::kind() const {
   DEFINE_THREAD_SAFE_STATIC_LOCAL(String, audio_kind, ("audio"));
   DEFINE_THREAD_SAFE_STATIC_LOCAL(String, video_kind, ("video"));
 
-  switch (component_->Source()->GetType()) {
+  switch (component_->GetSourceType()) {
     case MediaStreamSource::kTypeAudio:
       return audio_kind;
     case MediaStreamSource::kTypeVideo:
@@ -344,11 +324,7 @@ String MediaStreamTrackImpl::id() const {
 }
 
 String MediaStreamTrackImpl::label() const {
-  String label = component_->Source()->GetName();
-  if (label.Contains("AirPods")) {
-    label = "AirPods";
-  }
-  return label;
+  return component_->GetSourceName();
 }
 
 bool MediaStreamTrackImpl::enabled() const {
@@ -363,36 +339,14 @@ void MediaStreamTrackImpl::setEnabled(bool enabled) {
 
   SendLogMessage(
       String::Format("%s({enabled=%s})", __func__, enabled ? "true" : "false"));
-
-  if (Ended())
-    return;
-
-  DidSetMediaStreamTrackEnabled(component_.Get());
 }
 
 bool MediaStreamTrackImpl::muted() const {
-  return component_->Muted();
+  return muted_;
 }
 
 String MediaStreamTrackImpl::ContentHint() const {
-  WebMediaStreamTrack::ContentHintType hint = component_->ContentHint();
-  switch (hint) {
-    case WebMediaStreamTrack::ContentHintType::kNone:
-      return kContentHintStringNone;
-    case WebMediaStreamTrack::ContentHintType::kAudioSpeech:
-      return kContentHintStringAudioSpeech;
-    case WebMediaStreamTrack::ContentHintType::kAudioMusic:
-      return kContentHintStringAudioMusic;
-    case WebMediaStreamTrack::ContentHintType::kVideoMotion:
-      return kContentHintStringVideoMotion;
-    case WebMediaStreamTrack::ContentHintType::kVideoDetail:
-      return kContentHintStringVideoDetail;
-    case WebMediaStreamTrack::ContentHintType::kVideoText:
-      return kContentHintStringVideoText;
-  }
-
-  NOTREACHED();
-  return String();
+  return ContentHintToString(component_->ContentHint());
 }
 
 void MediaStreamTrackImpl::SetContentHint(const String& hint) {
@@ -400,7 +354,7 @@ void MediaStreamTrackImpl::SetContentHint(const String& hint) {
       String::Format("%s({hint=%s})", __func__, hint.Utf8().c_str()));
   WebMediaStreamTrack::ContentHintType translated_hint =
       WebMediaStreamTrack::ContentHintType::kNone;
-  switch (component_->Source()->GetType()) {
+  switch (component_->GetSourceType()) {
     case MediaStreamSource::kTypeAudio:
       if (hint == kContentHintStringNone) {
         translated_hint = WebMediaStreamTrack::ContentHintType::kNone;
@@ -438,19 +392,7 @@ void MediaStreamTrackImpl::SetContentHint(const String& hint) {
 String MediaStreamTrackImpl::readyState() const {
   if (Ended())
     return "ended";
-
-  // Although muted is tracked as a ReadyState, only "live" and "ended" are
-  // visible externally.
-  switch (ready_state_) {
-    case MediaStreamSource::kReadyStateLive:
-    case MediaStreamSource::kReadyStateMuted:
-      return "live";
-    case MediaStreamSource::kReadyStateEnded:
-      return "ended";
-  }
-
-  NOTREACHED();
-  return String();
+  return ReadyStateToString(ready_state_);
 }
 
 void MediaStreamTrackImpl::setReadyState(
@@ -463,8 +405,7 @@ void MediaStreamTrackImpl::setReadyState(
 
     // Observers may dispatch events which create and add new Observers;
     // take a snapshot so as to safely iterate.
-    HeapVector<Member<MediaStreamTrack::Observer>> observers;
-    CopyToVector(observers_, observers);
+    HeapVector<Member<MediaStreamTrack::Observer>> observers(observers_);
     for (auto observer : observers)
       observer->TrackChangedState();
   }
@@ -475,33 +416,48 @@ void MediaStreamTrackImpl::stopTrack(ExecutionContext* execution_context) {
   if (Ended())
     return;
 
+  if (auto* track = Component()->GetPlatformTrack()) {
+    // Synchronously disable the platform track to prevent media from flowing,
+    // even if the stopTrack() below is completed asynchronously.
+    // See https://crbug.com/1320312.
+    track->SetEnabled(false);
+  }
+
   setReadyState(MediaStreamSource::kReadyStateEnded);
   feature_handle_for_scheduler_.reset();
-  UserMediaController* user_media =
-      UserMediaController::From(To<LocalDOMWindow>(execution_context));
-  if (user_media)
-    user_media->StopTrack(Component());
+  UserMediaClient* user_media_client =
+      UserMediaClient::From(To<LocalDOMWindow>(execution_context));
+  if (user_media_client)
+    user_media_client->StopTrack(Component());
 
   PropagateTrackEnded();
 }
+// TODO(crbug.com/1302689): Move inside MediaStreamComponent.
+std::unique_ptr<MediaStreamTrackPlatform>
+MediaStreamTrackImpl::ClonePlatformTrack() {
+  switch (Component()->GetSourceType()) {
+    case MediaStreamSource::kTypeVideo:
+      return CloneNativeVideoMediaStreamTrack(Component());
+    case MediaStreamSource::kTypeAudio:
+      return MediaStreamAudioSource::From(Component()->Source())
+          ->CreateMediaStreamAudioTrack(Component()->Id().Utf8());
+  }
+}
 
-MediaStreamTrack* MediaStreamTrackImpl::clone(ScriptState* script_state) {
+MediaStreamTrack* MediaStreamTrackImpl::clone(
+    ExecutionContext* execution_context) {
   SendLogMessage(String::Format("%s()", __func__));
 
   // Instantiate the clone.
   MediaStreamTrackImpl* cloned_track =
       MakeGarbageCollected<MediaStreamTrackImpl>(
-          ExecutionContext::From(script_state), Component()->Clone(),
-          ready_state_, base::DoNothing());
+          execution_context, Component()->Clone(ClonePlatformTrack()),
+          ready_state_, base::DoNothing(), /*is_clone=*/true);
 
   // Copy state.
   CloneInternal(cloned_track);
 
   return cloned_track;
-}
-
-void MediaStreamTrackImpl::SetConstraints(const MediaConstraints& constraints) {
-  component_->SetConstraints(constraints);
 }
 
 MediaTrackCapabilities* MediaStreamTrackImpl::getCapabilities() const {
@@ -514,7 +470,7 @@ MediaTrackCapabilities* MediaStreamTrackImpl::getCapabilities() const {
   if (!platform_capabilities.group_id.IsNull())
     capabilities->setGroupId(platform_capabilities.group_id);
 
-  if (component_->Source()->GetType() == MediaStreamSource::kTypeAudio) {
+  if (component_->GetSourceType() == MediaStreamSource::kTypeAudio) {
     Vector<bool> echo_cancellation, auto_gain_control, noise_suppression;
     for (bool value : platform_capabilities.echo_cancellation)
       echo_cancellation.push_back(value);
@@ -558,7 +514,7 @@ MediaTrackCapabilities* MediaStreamTrackImpl::getCapabilities() const {
     }
   }
 
-  if (component_->Source()->GetType() == MediaStreamSource::kTypeVideo) {
+  if (component_->GetSourceType() == MediaStreamSource::kTypeVideo) {
     if (platform_capabilities.width.size() == 2) {
       LongRange* width = LongRange::Create();
       width->setMin(platform_capabilities.width[0]);
@@ -603,13 +559,18 @@ MediaTrackCapabilities* MediaStreamTrackImpl::getCapabilities() const {
     capabilities->setFacingMode(facing_mode);
     capabilities->setResizeMode({WebMediaStreamTrack::kResizeModeNone,
                                  WebMediaStreamTrack::kResizeModeRescale});
+    const absl::optional<const MediaStreamDevice> source_device = device();
+    if (source_device && source_device->display_media_info) {
+      capabilities->setDisplaySurface(GetDisplaySurfaceString(
+          source_device->display_media_info->display_surface));
+    }
   }
   return capabilities;
 }
 
 MediaTrackConstraints* MediaStreamTrackImpl::getConstraints() const {
   MediaTrackConstraints* constraints =
-      media_constraints_impl::ConvertConstraints(component_->Constraints());
+      media_constraints_impl::ConvertConstraints(constraints_);
   if (!image_capture_)
     return constraints;
 
@@ -684,22 +645,8 @@ MediaTrackSettings* MediaStreamTrackImpl::getSettings() const {
     image_capture_->GetMediaTrackSettings(settings);
 
   if (platform_settings.display_surface) {
-    WTF::String value;
-    switch (platform_settings.display_surface.value()) {
-      case media::mojom::DisplayCaptureSurfaceType::MONITOR:
-        value = "monitor";
-        break;
-      case media::mojom::DisplayCaptureSurfaceType::WINDOW:
-        value = "window";
-        break;
-      case media::mojom::DisplayCaptureSurfaceType::APPLICATION:
-        value = "application";
-        break;
-      case media::mojom::DisplayCaptureSurfaceType::BROWSER:
-        value = "browser";
-        break;
-    }
-    settings->setDisplaySurface(value);
+    settings->setDisplaySurface(
+        GetDisplaySurfaceString(platform_settings.display_surface.value()));
   }
   if (platform_settings.logical_surface)
     settings->setLogicalSurface(platform_settings.logical_surface.value());
@@ -717,6 +664,11 @@ MediaTrackSettings* MediaStreamTrackImpl::getSettings() const {
         break;
     }
     settings->setCursor(value);
+  }
+
+  if (suppress_local_audio_playback_setting_.has_value()) {
+    settings->setSuppressLocalAudioPlayback(
+        suppress_local_audio_playback_setting_.value());
   }
 
   return settings;
@@ -747,15 +699,48 @@ ScriptPromise MediaStreamTrackImpl::applyConstraints(
 
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = resolver->Promise();
+  applyConstraints(resolver, constraints);
+  return promise;
+}
 
-  MediaErrorState error_state;
-  ExecutionContext* execution_context = ExecutionContext::From(script_state);
+void MediaStreamTrackImpl::SetInitialConstraints(
+    const MediaConstraints& constraints) {
+  SetConstraintsInternal(constraints, /*initial_values=*/true);
+}
+
+void MediaStreamTrackImpl::SetConstraints(const MediaConstraints& constraints) {
+  SetConstraintsInternal(constraints, /*initial_values=*/false);
+}
+
+// TODO(crbug.com/1381959): Remove this helper.
+void MediaStreamTrackImpl::SetConstraintsInternal(
+    const MediaConstraints& constraints,
+    bool initial_values) {
+  constraints_ = constraints;
+
+  if (!initial_values)
+    return;
+
+  DCHECK(!suppress_local_audio_playback_setting_.has_value());
+  if (!constraints_.IsNull() &&
+      constraints_.Basic().suppress_local_audio_playback.HasIdeal()) {
+    suppress_local_audio_playback_setting_ =
+        constraints_.Basic().suppress_local_audio_playback.Ideal();
+  }
+}
+
+void MediaStreamTrackImpl::applyConstraints(
+    ScriptPromiseResolver* resolver,
+    const MediaTrackConstraints* constraints) {
+  String error_message;
+  ExecutionContext* execution_context =
+      ExecutionContext::From(resolver->GetScriptState());
   MediaConstraints web_constraints = media_constraints_impl::Create(
-      execution_context, constraints, error_state);
-  if (error_state.HadException()) {
+      execution_context, constraints, error_message);
+  if (web_constraints.IsNull()) {
     resolver->Reject(
         OverconstrainedError::Create(String(), "Cannot parse constraints"));
-    return promise;
+    return;
   }
 
   if (image_capture_) {
@@ -766,7 +751,7 @@ ScriptPromise MediaStreamTrackImpl::applyConstraints(
           String(),
           "Mixing ImageCapture and non-ImageCapture "
           "constraints is not currently supported"));
-      return promise;
+      return;
     }
 
     if (ConstraintsAreEmpty(constraints)) {
@@ -775,44 +760,33 @@ ScriptPromise MediaStreamTrackImpl::applyConstraints(
       // implementation.
       image_capture_->ClearMediaTrackConstraints();
     } else if (ConstraintsHaveImageCapture(constraints)) {
-      applyConstraintsImageCapture(resolver, constraints);
-      return promise;
+      image_capture_->SetMediaTrackConstraints(resolver, constraints);
+      return;
     }
   }
 
-  // Resolve empty constraints here instead of relying on UserMediaController
+  // Resolve empty constraints here instead of relying on UserMediaClient
   // because the empty constraints have already been applied to image capture
   // and the promise must resolve. Empty constraints do not change any setting,
   // so resolving here is OK.
   if (ConstraintsAreEmpty(constraints)) {
     SetConstraints(web_constraints);
     resolver->Resolve();
-    return promise;
+    return;
   }
 
-  UserMediaController* user_media =
-      UserMediaController::From(To<LocalDOMWindow>(execution_context));
-  if (!user_media) {
+  UserMediaClient* user_media_client =
+      UserMediaClient::From(To<LocalDOMWindow>(execution_context));
+  if (!user_media_client) {
     resolver->Reject(OverconstrainedError::Create(
         String(), "Cannot apply constraints due to unexpected error"));
-    return promise;
+    return;
   }
 
-  user_media->ApplyConstraints(MakeGarbageCollected<ApplyConstraintsRequest>(
-      Component(), web_constraints, resolver));
-  return promise;
-}
-
-void MediaStreamTrackImpl::applyConstraintsImageCapture(
-    ScriptPromiseResolver* resolver,
-    const MediaTrackConstraints* constraints) {
-  // |constraints| empty means "remove/clear all current constraints".
-  if (!constraints->hasAdvanced() || constraints->advanced().IsEmpty()) {
-    image_capture_->ClearMediaTrackConstraints();
-    resolver->Resolve();
-  } else {
-    image_capture_->SetMediaTrackConstraints(resolver, constraints->advanced());
-  }
+  user_media_client->ApplyConstraints(
+      MakeGarbageCollected<ApplyConstraintsRequest>(this, web_constraints,
+                                                    resolver));
+  return;
 }
 
 bool MediaStreamTrackImpl::Ended() const {
@@ -827,25 +801,56 @@ void MediaStreamTrackImpl::SourceChangedState() {
   // Note that both 'live' and 'muted' correspond to a 'live' ready state in the
   // web API, hence the following logic around |feature_handle_for_scheduler_|.
 
-  setReadyState(component_->Source()->GetReadyState());
+  setReadyState(component_->GetReadyState());
   switch (ready_state_) {
     case MediaStreamSource::kReadyStateLive:
-      component_->SetMuted(false);
+      muted_ = false;
       DispatchEvent(*Event::Create(event_type_names::kUnmute));
       EnsureFeatureHandleForScheduler();
       break;
     case MediaStreamSource::kReadyStateMuted:
-      component_->SetMuted(true);
+      muted_ = true;
       DispatchEvent(*Event::Create(event_type_names::kMute));
       EnsureFeatureHandleForScheduler();
       break;
     case MediaStreamSource::kReadyStateEnded:
-      DispatchEvent(*Event::Create(event_type_names::kEnded));
+      // SourceChangedState() may be called in kReadyStateEnded during object
+      // disposal if there are no event listeners (otherwise disposal is blocked
+      // by HasPendingActivity). In that case it is not allowed to create
+      // objects, so check if there are event listeners before the event object
+      // is created.
+      if (HasEventListeners(event_type_names::kEnded)) {
+        DispatchEvent(*Event::Create(event_type_names::kEnded));
+      }
       PropagateTrackEnded();
       feature_handle_for_scheduler_.reset();
       break;
   }
   SendLogMessage(String::Format("%s()", __func__));
+}
+
+void MediaStreamTrackImpl::SourceChangedCaptureConfiguration() {
+  DCHECK(IsMainThread());
+
+  if (Ended()) {
+    return;
+  }
+
+  // Update the current image capture capabilities and settings and dispatch a
+  // configurationchange event if they differ from the old ones.
+  if (image_capture_) {
+    image_capture_->UpdateAndCheckMediaTrackSettingsAndCapabilities(
+        WTF::BindOnce(&MediaStreamTrackImpl::MaybeDispatchConfigurationChange,
+                      WrapWeakPersistent(this)));
+  }
+}
+
+void MediaStreamTrackImpl::MaybeDispatchConfigurationChange(bool has_changed) {
+  DCHECK(IsMainThread());
+
+  if (has_changed) {
+    DispatchEvent(*Event::Create(event_type_names::kConfigurationchange));
+  }
 }
 
 void MediaStreamTrackImpl::SourceChangedCaptureHandle() {
@@ -891,19 +896,58 @@ std::unique_ptr<AudioSourceProvider> MediaStreamTrackImpl::CreateWebAudioSource(
                                                context_sample_rate));
 }
 
-absl::optional<base::UnguessableToken>
-MediaStreamTrackImpl::serializable_session_id() const {
+absl::optional<const MediaStreamDevice> MediaStreamTrackImpl::device() const {
   if (!component_->Source()->GetPlatformSource())
     return absl::nullopt;
-  return component_->Source()
-      ->GetPlatformSource()
-      ->device()
-      .serializable_session_id();
+  return component_->Source()->GetPlatformSource()->device();
 }
 
-#if !BUILDFLAG(IS_ANDROID)
-void MediaStreamTrackImpl::CloseFocusWindowOfOpportunity() {}
-#endif
+void MediaStreamTrackImpl::BeingTransferred(
+    const base::UnguessableToken& transfer_id) {
+  // Creates a clone track to keep a reference in the renderer while
+  // KeepDeviceAliveForTransfer is being called.
+  MediaStreamTrack* cloned_track = clone(GetExecutionContext());
+
+  UserMediaClient* user_media_client =
+      UserMediaClient::From(To<LocalDOMWindow>(GetExecutionContext()));
+  if (user_media_client) {
+    user_media_client->KeepDeviceAliveForTransfer(
+        device()->serializable_session_id().value(), transfer_id,
+        WTF::BindOnce(
+            [](MediaStreamTrack* cloned_track,
+               ExecutionContext* execution_context, bool device_found) {
+              if (!device_found) {
+                DLOG(ERROR) << "MediaStreamDevice corresponding to transferred "
+                               "track not found.";
+              }
+              cloned_track->stopTrack(execution_context);
+            },
+            WrapPersistent(cloned_track),
+            WrapWeakPersistent(GetExecutionContext())));
+  } else {
+    cloned_track->stopTrack(GetExecutionContext());
+  }
+
+  stopTrack(GetExecutionContext());
+  return;
+}
+
+bool MediaStreamTrackImpl::TransferAllowed(String& message) const {
+  if (Ended()) {
+    message = "MediaStreamTrack has ended.";
+    return false;
+  }
+  if (has_clones_) {
+    message = "MediaStreamTracks with clones cannot be transferred.";
+    return false;
+  }
+  if (!(device() && device()->serializable_session_id() &&
+        IsMediaStreamDeviceTransferrable(*device()))) {
+    message = "MediaStreamTrack could not be serialized.";
+    return false;
+  }
+  return true;
+}
 
 void MediaStreamTrackImpl::RegisterMediaStream(MediaStream* media_stream) {
   CHECK(!is_iterating_registered_media_streams_);
@@ -948,12 +992,15 @@ void MediaStreamTrackImpl::Trace(Visitor* visitor) const {
 void MediaStreamTrackImpl::CloneInternal(MediaStreamTrackImpl* cloned_track) {
   DCHECK(cloned_track);
 
-  DidCloneMediaStreamTrack(Component(), cloned_track->Component());
+  DidCloneMediaStreamTrack(cloned_track->Component());
 
-  DCHECK(!cloned_track->image_capture_);
+  cloned_track->SetInitialConstraints(constraints_);
+
   if (image_capture_) {
     cloned_track->image_capture_ = image_capture_->Clone();
   }
+
+  has_clones_ = true;
 }
 
 void MediaStreamTrackImpl::EnsureFeatureHandleForScheduler() {
@@ -970,7 +1017,8 @@ void MediaStreamTrackImpl::EnsureFeatureHandleForScheduler() {
   feature_handle_for_scheduler_ =
       window->GetFrame()->GetFrameScheduler()->RegisterFeature(
           SchedulingPolicy::Feature::kWebRTC,
-          SchedulingPolicy::DisableAggressiveThrottling());
+          {SchedulingPolicy::DisableAggressiveThrottling(),
+           SchedulingPolicy::DisableAlignWakeUps()});
 }
 
 void MediaStreamTrackImpl::AddObserver(MediaStreamTrack::Observer* observer) {
@@ -985,7 +1033,7 @@ void MediaStreamTrackImpl::SendLogMessage(const WTF::String& message) {
           message.Utf8().c_str(), kind().Utf8().c_str(), id().Utf8().c_str(),
           label().Utf8().c_str(), enabled() ? "true" : "false",
           muted() ? "true" : "false", readyState().Utf8().c_str(),
-          component_->Source()->Remote() ? "true" : "false")
+          component_->Remote() ? "true" : "false")
           .Utf8());
 }
 

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,9 @@
 #include <string>
 
 #include "base/command_line.h"
+#include "base/memory/raw_ref.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
@@ -19,7 +19,6 @@
 #include "components/signin/core/browser/chrome_connected_header_helper.h"
 #include "components/signin/public/base/account_consistency_method.h"
 #include "components/signin/public/base/signin_buildflags.h"
-#include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/tribool.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "google_apis/gaia/gaia_urls.h"
@@ -54,7 +53,7 @@ class RequestAdapterWrapper {
   RequestAdapter* adapter() { return &adapter_; }
 
   net::HttpRequestHeaders GetFinalHeaders() {
-    net::HttpRequestHeaders final_headers(original_headers_);
+    net::HttpRequestHeaders final_headers(*original_headers_);
     final_headers.MergeFrom(modified_request_headers_);
     for (const std::string& name : to_be_removed_request_headers_)
       final_headers.RemoveHeader(name);
@@ -63,7 +62,7 @@ class RequestAdapterWrapper {
 
  private:
   RequestAdapter adapter_;
-  const net::HttpRequestHeaders& original_headers_;
+  const raw_ref<const net::HttpRequestHeaders> original_headers_;
   net::HttpRequestHeaders modified_request_headers_;
   std::vector<std::string> to_be_removed_request_headers_;
 };
@@ -85,7 +84,7 @@ class SigninHeaderHelperTest : public testing::Test {
 
     settings_map_ = new HostContentSettingsMap(
         &prefs_, false /* is_off_the_record */, false /* store_last_modified */,
-        false /* restore_session */);
+        false /* restore_session */, false /* should_record_metrics */);
     cookie_settings_ = new content_settings::CookieSettings(settings_map_.get(),
                                                             &prefs_, false, "");
   }
@@ -173,8 +172,6 @@ class SigninHeaderHelperTest : public testing::Test {
   sync_preferences::TestingPrefServiceSyncable prefs_;
 
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
-  base::test::ScopedFeatureList scoped_feature_list_{
-      switches::kLacrosNonSyncingProfiles};
   std::unique_ptr<chromeos::ScopedLacrosServiceTestHelper>
       scoped_lacros_test_helper_;
 #endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
@@ -182,7 +179,7 @@ class SigninHeaderHelperTest : public testing::Test {
   scoped_refptr<content_settings::CookieSettings> cookie_settings_;
 };
 
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS)
 // Tests that Mirror request is returned on Chrome OS for Public Sessions (no
 // account id).
 TEST_F(SigninHeaderHelperTest, TestMirrorRequestNoAccountIdChromeOS) {
@@ -198,7 +195,7 @@ TEST_F(SigninHeaderHelperTest, TestMirrorRequestNoAccountIdChromeOS) {
                            "consistency_enabled_by_default=" +
                                consistency_enabled_by_default_value());
 }
-#else  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#else  // BUILDFLAG(IS_CHROMEOS)
 #if BUILDFLAG(IS_ANDROID)
 // Tests that eligible_for_consistency request is returned on Android
 // when reaching to Gaia origin and there's no primary account.
@@ -243,6 +240,16 @@ TEST_F(SigninHeaderHelperTest, TestNoMirrorRequestNoAccountId) {
   CheckMirrorCookieRequest(GURL("https://docs.google.com"), /*gaia_id=*/"", "");
 }
 #endif
+
+// Tests that no Mirror request is returned for youtubekids.com.
+//
+// Regression test for b/247647476
+TEST_F(SigninHeaderHelperTest, TestNoMirrorHeaderForYoutubekids) {
+  account_consistency_ = AccountConsistencyMethod::kMirror;
+  CheckMirrorHeaderRequest(GURL("https://youtubekids.com"), "0123456789",
+                           /*is_child_account=*/Tribool::kUnknown, "");
+  CheckMirrorCookieRequest(GURL("https://youtubekids.com"), "0123456789", "");
+}
 
 // Tests that no Mirror request is returned when the cookies aren't allowed to
 // be set.

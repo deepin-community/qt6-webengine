@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,13 +34,14 @@ bool FontData::operator<(const FontData& other) const {
   return type < other.type;
 }
 
-CPDF_PageObjectHolder::CPDF_PageObjectHolder(CPDF_Document* pDoc,
-                                             CPDF_Dictionary* pDict,
-                                             CPDF_Dictionary* pPageResources,
-                                             CPDF_Dictionary* pResources)
-    : m_pPageResources(pPageResources),
-      m_pResources(pResources),
-      m_pDict(pDict),
+CPDF_PageObjectHolder::CPDF_PageObjectHolder(
+    CPDF_Document* pDoc,
+    RetainPtr<CPDF_Dictionary> pDict,
+    RetainPtr<CPDF_Dictionary> pPageResources,
+    RetainPtr<CPDF_Dictionary> pResources)
+    : m_pPageResources(std::move(pPageResources)),
+      m_pResources(std::move(pResources)),
+      m_pDict(std::move(pDict)),
       m_pDocument(pDoc) {
   DCHECK(m_pDict);
 }
@@ -113,11 +114,11 @@ void CPDF_PageObjectHolder::FontsMapInsert(const FontData& fd,
 }
 
 void CPDF_PageObjectHolder::LoadTransparencyInfo() {
-  CPDF_Dictionary* pGroup = m_pDict->GetDictFor("Group");
+  RetainPtr<const CPDF_Dictionary> pGroup = m_pDict->GetDictFor("Group");
   if (!pGroup)
     return;
 
-  if (pGroup->GetStringFor(pdfium::transparency::kGroupSubType) !=
+  if (pGroup->GetByteStringFor(pdfium::transparency::kGroupSubType) !=
       pdfium::transparency::kTransparency) {
     return;
   }
@@ -138,22 +139,21 @@ void CPDF_PageObjectHolder::AppendPageObject(
   m_PageObjectList.push_back(std::move(pPageObj));
 }
 
-bool CPDF_PageObjectHolder::RemovePageObject(CPDF_PageObject* pPageObj) {
-  fxcrt::FakeUniquePtr<CPDF_PageObject> p(pPageObj);
-
-  auto it =
-      std::find(std::begin(m_PageObjectList), std::end(m_PageObjectList), p);
+std::unique_ptr<CPDF_PageObject> CPDF_PageObjectHolder::RemovePageObject(
+    CPDF_PageObject* pPageObj) {
+  auto it = std::find(std::begin(m_PageObjectList), std::end(m_PageObjectList),
+                      fxcrt::MakeFakeUniquePtr(pPageObj));
   if (it == std::end(m_PageObjectList))
-    return false;
+    return nullptr;
 
-  it->release();
+  std::unique_ptr<CPDF_PageObject> result = std::move(*it);
   m_PageObjectList.erase(it);
 
   int32_t content_stream = pPageObj->GetContentStream();
   if (content_stream >= 0)
     m_DirtyStreams.insert(content_stream);
 
-  return true;
+  return result;
 }
 
 bool CPDF_PageObjectHolder::ErasePageObjectAtIndex(size_t index) {

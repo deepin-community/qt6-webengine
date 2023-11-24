@@ -45,6 +45,7 @@ bool Pipeline::uses(const TVariable &var) const
             {
                 case TQualifier::EvqVertexOut:
                 case TQualifier::EvqPosition:
+                case TQualifier::EvqClipDistance:
                 case TQualifier::EvqFlatOut:
                 case TQualifier::EvqPointSize:
                 case TQualifier::EvqSmoothOut:
@@ -74,9 +75,12 @@ bool Pipeline::uses(const TVariable &var) const
             switch (qualifier)
             {
                 case TQualifier::EvqFragmentOut:
+                case TQualifier::EvqFragmentInOut:
                 case TQualifier::EvqFragColor:
                 case TQualifier::EvqFragData:
                 case TQualifier::EvqFragDepth:
+                case TQualifier::EvqSecondaryFragColorEXT:
+                case TQualifier::EvqSecondaryFragDataEXT:
                 case TQualifier::EvqSampleMask:
                     return true;
                 default:
@@ -136,6 +140,9 @@ bool Pipeline::uses(const TVariable &var) const
         case Type::Texture:
             return IsSampler(nodeType.getBasicType());
 
+        case Type::Image:
+            return IsImage(nodeType.getBasicType());
+
         case Type::InstanceId:
             return Name(var) == Name(*BuiltInVariable::gl_InstanceID());
     }
@@ -175,6 +182,9 @@ Name Pipeline::getStructTypeName(Variant variant) const
             break;
         case Type::Texture:
             name = VARIANT_NAME(variant, "TextureEnvs");
+            break;
+        case Type::Image:
+            name = VARIANT_NAME(variant, "Images");
             break;
         case Type::InstanceId:
             name = VARIANT_NAME(variant, "InstanceId");
@@ -220,6 +230,9 @@ Name Pipeline::getStructInstanceName(Variant variant) const
         case Type::Texture:
             name = VARIANT_NAME(variant, "textureEnvs");
             break;
+        case Type::Image:
+            name = VARIANT_NAME(variant, "images");
+            break;
         case Type::InstanceId:
             name = VARIANT_NAME(variant, "instanceId");
             break;
@@ -231,26 +244,7 @@ Name Pipeline::getStructInstanceName(Variant variant) const
 
 static bool AllowPacking(Pipeline::Type type)
 {
-    using Type = Pipeline::Type;
-
-    switch (type)
-    {
-        case Type::UniformBuffer:
-        case Type::UserUniforms:
-            return true;
-
-        case Type::VertexIn:
-        case Type::VertexOut:
-        case Type::FragmentIn:
-        case Type::FragmentOut:
-        case Type::AngleUniforms:
-        case Type::NonConstantGlobals:
-        case Type::InvocationVertexGlobals:
-        case Type::InvocationFragmentGlobals:
-        case Type::Texture:
-        case Type::InstanceId:
-            return false;
-    }
+    return false;
 }
 
 static bool AllowPadding(Pipeline::Type type)
@@ -259,7 +253,6 @@ static bool AllowPadding(Pipeline::Type type)
 
     switch (type)
     {
-        case Type::UserUniforms:
         case Type::VertexIn:
         case Type::VertexOut:
         case Type::FragmentIn:
@@ -268,11 +261,13 @@ static bool AllowPadding(Pipeline::Type type)
         case Type::NonConstantGlobals:
         case Type::InvocationVertexGlobals:
         case Type::InvocationFragmentGlobals:
-        case Type::UniformBuffer:
             return true;
 
+        case Type::UserUniforms:
         case Type::Texture:
+        case Type::Image:
         case Type::InstanceId:
+        case Type::UniformBuffer:
             return false;
     }
 }
@@ -342,7 +337,10 @@ ModifyStructConfig Pipeline::externalStructModifyConfig() const
             break;
 
         case Type::VertexOut:
-            config.inlineArray        = Pred::True;
+            config.inlineArray = [](const TField &field) -> bool {
+                // Clip distance output uses float[n] type instead of metal::array.
+                return field.type()->getQualifier() != TQualifier::EvqClipDistance;
+            };
             config.splitMatrixColumns = Pred::True;
             config.inlineStruct       = Pred::True;
             break;
@@ -378,9 +376,9 @@ ModifyStructConfig Pipeline::externalStructModifyConfig() const
             };
             break;
         case Type::UserUniforms:
-            config.promoteBoolToUint            = Pred::True;
-            config.saturateMatrixRows           = SatVec::FullySaturate;
-            config.saturateScalarOrVectorArrays = SatVec::FullySaturate;
+            config.promoteBoolToUint            = Pred::False;
+            config.saturateMatrixRows           = SatVec::DontSaturate;
+            config.saturateScalarOrVectorArrays = SatVec::DontSaturate;
             config.recurseStruct                = Pred::True;
             break;
 
@@ -391,14 +389,15 @@ ModifyStructConfig Pipeline::externalStructModifyConfig() const
         case Type::NonConstantGlobals:
             break;
         case Type::UniformBuffer:
-            config.promoteBoolToUint            = Pred::True;
-            config.saturateMatrixRows           = SatVec::FullySaturate;
-            config.saturateScalarOrVectorArrays = SatVec::FullySaturate;
+            config.promoteBoolToUint            = Pred::False;
+            config.saturateMatrixRows           = SatVec::DontSaturate;
+            config.saturateScalarOrVectorArrays = SatVec::DontSaturate;
             config.recurseStruct                = Pred::True;
             break;
         case Type::InvocationVertexGlobals:
         case Type::InvocationFragmentGlobals:
         case Type::Texture:
+        case Type::Image:
         case Type::InstanceId:
             break;
     }
@@ -415,6 +414,7 @@ bool Pipeline::alwaysRequiresLocalVariableDeclarationInMain() const
         case Type::UserUniforms:
         case Type::AngleUniforms:
         case Type::UniformBuffer:
+        case Type::Image:
             return false;
 
         case Type::VertexOut:
@@ -440,6 +440,7 @@ bool Pipeline::isPipelineOut() const
         case Type::InvocationVertexGlobals:
         case Type::InvocationFragmentGlobals:
         case Type::Texture:
+        case Type::Image:
         case Type::InstanceId:
         case Type::UniformBuffer:
             return false;
@@ -460,6 +461,7 @@ AddressSpace Pipeline::externalAddressSpace() const
         case Type::InvocationVertexGlobals:
         case Type::InvocationFragmentGlobals:
         case Type::Texture:
+        case Type::Image:
         case Type::InstanceId:
         case Type::FragmentOut:
         case Type::VertexOut:

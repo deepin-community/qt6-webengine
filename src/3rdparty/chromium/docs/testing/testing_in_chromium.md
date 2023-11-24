@@ -112,7 +112,7 @@ The following is the recommended thresholds for different code coverage levels:
 * >level 3(commendable): 75%
 * >level 4(exemplary): 90%
 
-Go to [code coverage dashboard](https://analysis.chromium.org/p/chromium/coverage) to check the code coverage for your project.
+Go to [code coverage dashboard](https://analysis.chromium.org/coverage/p/chromium) to check the code coverage for your project.
 
 
 ## How to write new tests
@@ -168,7 +168,7 @@ Use `--help` for more ways to select and run tests.
 
 ## How to deal with flaky tests
 
-Go to [Flake Portal] to find reports about flaky tests in your projects.
+Go to [LUCI Analysis] to find reports about flaky tests in your projects.
 
 * [Addressing Flaky GTests](./gtest_flake_tips.md)
 * [Addressing Flaky Web Tests](./web_tests_addressing_flake.md)
@@ -177,6 +177,10 @@ Go to [Flake Portal] to find reports about flaky tests in your projects.
 If you cannot fix a flaky test in a short timeframe, disable it first to reduce
 development pain for other and then fix it later. "[How do I disable a flaky
 test]" has instructions on how to disable a flaky test.
+
+## Other
+
+Tests are not configured to upload metrics, such as UMA, UKM or crash reports.
 
 [gtest]: https://github.com/google/googletest
 [Simple gtests]: https://github.com/google/googletest/blob/main/docs/primer.md#simple-tests
@@ -188,7 +192,7 @@ test]" has instructions on how to disable a flaky test.
 [Tast]: https://chromium.googlesource.com/chromiumos/platform/tast/+/HEAD/README.md
 [Web Tests]: ./web_tests.md
 [crbug/611756]: https://bugs.chromium.org/p/chromium/issues/detail?id=611756
-[Flake Portal]: https://analysis.chromium.org/p/chromium/flake-portal
+[LUCI Analysis]: https://luci-analysis.appspot.com/
 [Write Fuzz Target]: https://chromium.googlesource.com/chromium/src/+/main/testing/libfuzzer/getting_started.md#write-fuzz-target
 [Telemetry: Run benchmarks locally]: https://chromium.googlesource.com/catapult/+/HEAD/telemetry/docs/run_benchmarks_locally.md
 [Run fuzz target locally]: https://chromium.googlesource.com/chromium/src/+/main/testing/libfuzzer/getting_started.md#build-and-run-fuzz-target-locally

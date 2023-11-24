@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -61,7 +61,7 @@ TEST_F(ConstantCategoryRankerTest, ShouldSortRemoteCategoriesByWhenAdded) {
 TEST_F(ConstantCategoryRankerTest, ShouldSortLocalCategoriesBeforeRemote) {
   const Category remote_category = AddUnusedRemoteCategory();
   const Category local_category =
-      Category::FromKnownCategory(KnownCategories::READING_LIST);
+      Category::FromKnownCategory(KnownCategories::READING_LIST_DEPRECATED);
   EXPECT_TRUE(CompareCategories(local_category, remote_category));
   EXPECT_FALSE(CompareCategories(remote_category, local_category));
 }
@@ -71,7 +71,7 @@ TEST_F(ConstantCategoryRankerTest, CompareShouldReturnFalseForSameCategories) {
   EXPECT_FALSE(CompareCategories(remote_category, remote_category));
 
   const Category local_category =
-      Category::FromKnownCategory(KnownCategories::READING_LIST);
+      Category::FromKnownCategory(KnownCategories::READING_LIST_DEPRECATED);
   EXPECT_FALSE(CompareCategories(local_category, local_category));
 }
 

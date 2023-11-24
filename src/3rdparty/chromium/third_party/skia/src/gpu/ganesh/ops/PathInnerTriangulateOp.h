@@ -8,10 +8,14 @@
 #ifndef PathInnerTriangulateOp_DEFINED
 #define PathInnerTriangulateOp_DEFINED
 
+#if !defined(SK_ENABLE_OPTIMIZE_SIZE)
+
+#include "src/gpu/ganesh/GrBuffer.h"
+#include "src/gpu/ganesh/GrGpuBuffer.h"
 #include "src/gpu/ganesh/geometry/GrInnerFanTriangulator.h"
 #include "src/gpu/ganesh/ops/FillPathFlags.h"
 #include "src/gpu/ganesh/ops/GrDrawOp.h"
-#include "src/gpu/ganesh/tessellate/shaders/GrTessellationShader.h"
+#include "src/gpu/ganesh/tessellate/GrTessellationShader.h"
 
 namespace skgpu::v1 {
 
@@ -102,5 +106,7 @@ private:
 };
 
 } // namespace skgpu::v1
+
+#endif // SK_ENABLE_OPTIMIZE_SIZE
 
 #endif // PathInnerTriangulateOp_DEFINED

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,8 +13,10 @@
 #include "base/memory/ptr_util.h"
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/values.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
+#include "components/cloud_devices/common/cloud_device_description.h"
 #include "components/cloud_devices/common/printer_description.h"
 #include "printing/backend/print_backend.h"
 #include "printing/mojom/print.mojom.h"
@@ -24,6 +26,11 @@ namespace printer = cloud_devices::printer;
 namespace cloud_print {
 
 namespace {
+
+#if BUILDFLAG(IS_WIN)
+constexpr char kIdPageOutputQuality[] = "page_output_quality";
+constexpr char kDisplayNamePageOutputQuality[] = "Page output quality";
+#endif  // BUILDFLAG(IS_WIN)
 
 printer::DuplexType ToCloudDuplexType(printing::mojom::DuplexMode mode) {
   switch (mode) {
@@ -61,9 +68,17 @@ printer::TypedValueVendorCapability::ValueType ToCloudValueType(
 printer::Media ConvertPaperToMedia(
     const printing::PrinterSemanticCapsAndDefaults::Paper& paper) {
   gfx::Size paper_size = paper.size_um;
-  if (paper_size.width() > paper_size.height())
+  gfx::Rect paper_printable_area = paper.printable_area_um;
+  // When converting to Media, the size and printable area should have a larger
+  // height than width.
+  if (paper_size.width() > paper_size.height()) {
     paper_size.SetSize(paper_size.height(), paper_size.width());
-  printer::Media new_media(paper.display_name, paper.vendor_id, paper_size);
+    paper_printable_area.SetRect(
+        paper_printable_area.y(), paper_printable_area.x(),
+        paper_printable_area.height(), paper_printable_area.width());
+  }
+  printer::Media new_media(paper.display_name, paper.vendor_id, paper_size,
+                           paper_printable_area);
   new_media.MatchBySize();
   return new_media;
 }
@@ -73,9 +88,11 @@ printer::MediaCapability GetMediaCapabilities(
   printer::MediaCapability media_capabilities;
   bool is_default_set = false;
 
-  printer::Media default_media(semantic_info.default_paper.display_name,
-                               semantic_info.default_paper.vendor_id,
-                               semantic_info.default_paper.size_um);
+  const printing::PrinterSemanticCapsAndDefaults::Paper& default_paper =
+      semantic_info.default_paper;
+  printer::Media default_media(default_paper.display_name,
+                               default_paper.vendor_id, default_paper.size_um,
+                               default_paper.printable_area_um);
   default_media.MatchBySize();
 
   for (const auto& paper : semantic_info.papers) {
@@ -165,6 +182,22 @@ printer::VendorCapabilities GetVendorCapabilities(
 }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
+#if BUILDFLAG(IS_WIN)
+printer::SelectVendorCapability GetPageOutputQualityCapabilities(
+    const printing::PrinterSemanticCapsAndDefaults& semantic_info) {
+  printer::SelectVendorCapability page_output_quality_capabilities;
+  const absl::optional<printing::PageOutputQuality>& page_output_quality =
+      semantic_info.page_output_quality;
+  for (const auto& attribute : page_output_quality->qualities) {
+    page_output_quality_capabilities.AddDefaultOption(
+        printer::SelectVendorCapabilityOption(attribute.name,
+                                              attribute.display_name),
+        attribute.name == page_output_quality->default_quality);
+  }
+  return page_output_quality_capabilities;
+}
+#endif  // BUILDFLAG(IS_WIN)
+
 }  // namespace
 
 base::Value PrinterSemanticCapsAndDefaultsToCdd(
@@ -241,6 +274,16 @@ base::Value PrinterSemanticCapsAndDefaultsToCdd(
     vendor_capabilities.SaveTo(&description);
   }
 #endif  // BUILDFLAG(IS_CHROMEOS)
+
+#if BUILDFLAG(IS_WIN)
+  if (semantic_info.page_output_quality) {
+    printer::VendorCapabilities vendor_capabilities;
+    vendor_capabilities.AddOption(printer::VendorCapability(
+        kIdPageOutputQuality, kDisplayNamePageOutputQuality,
+        GetPageOutputQualityCapabilities(semantic_info)));
+    vendor_capabilities.SaveTo(&description);
+  }
+#endif  // BUILDFLAG(IS_WIN)
 
   return std::move(description).ToValue();
 }

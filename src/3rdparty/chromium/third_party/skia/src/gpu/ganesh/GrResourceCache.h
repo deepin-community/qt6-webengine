@@ -9,12 +9,13 @@
 #define GrResourceCache_DEFINED
 
 #include "include/core/SkRefCnt.h"
+#include "include/core/SkTypes.h"
 #include "include/gpu/GrDirectContext.h"
-#include "include/private/SkTArray.h"
-#include "include/private/SkTHash.h"
+#include "include/private/base/SkTArray.h"
+#include "src/base/SkTDPQueue.h"
+#include "src/base/SkTInternalLList.h"
 #include "src/core/SkMessageBus.h"
-#include "src/core/SkTDPQueue.h"
-#include "src/core/SkTInternalLList.h"
+#include "src/core/SkTHash.h"
 #include "src/core/SkTMultiMap.h"
 #include "src/gpu/ResourceKey.h"
 #include "src/gpu/ganesh/GrGpuResource.h"
@@ -30,16 +31,6 @@ class GrThreadSafeCache;
 
 namespace skgpu {
 class SingleOwner;
-}
-
-struct GrTextureFreedMessage {
-    GrTexture* fTexture;
-    GrDirectContext::DirectContextID fIntendedRecipient;
-};
-
-static inline bool SkShouldPostMessageToBus(
-        const GrTextureFreedMessage& msg, GrDirectContext::DirectContextID potentialRecipient) {
-    return potentialRecipient == msg.fIntendedRecipient;
 }
 
 /**
@@ -66,6 +57,25 @@ public:
                     uint32_t familyID);
     ~GrResourceCache();
 
+    /**
+     * This is used to safely return a resource to the cache when the owner may be on another
+     * thread from GrDirectContext. If the context still exists then using this method ensures that
+     * the resource is received by the cache for processing (recycling or destruction) on the
+     * context's thread.
+     *
+     * This is templated as it is rather than simply taking sk_sp<GrGpuResource> in order to enforce
+     * that the caller passes an rvalue. If the caller doesn't move its ref into this function
+     * then it will retain ownership, defeating the purpose. (Note that sk_sp<GrGpuResource>&&
+     * doesn't work either because calling with sk_sp<GrSpecificResource> will create a temporary
+     * sk_sp<GrGpuResource> which is an rvalue).
+     */
+    template<typename T>
+    static std::enable_if_t<std::is_base_of_v<GrGpuResource, T>, void>
+    ReturnResourceFromThread(sk_sp<T>&& resource, GrDirectContext::DirectContextID id) {
+        UnrefResourceMessage msg(std::move(resource), id);
+        UnrefResourceMessage::Bus::Post(std::move(msg));
+    }
+
     // Default maximum number of bytes of gpu memory of budgeted resources in the cache.
     static const size_t kDefaultMaxSize             = 256 * (1 << 20);
 
@@ -83,7 +93,7 @@ public:
      * Returns the number of resources.
      */
     int getResourceCount() const {
-        return fPurgeableQueue.count() + fNonpurgeableResources.count();
+        return fPurgeableQueue.count() + fNonpurgeableResources.size();
     }
 
     /**
@@ -195,9 +205,6 @@ public:
         purgeable. */
     bool requestsFlush() const;
 
-    /** Maintain a ref to this texture until we receive a GrTextureFreedMessage. */
-    void insertDelayedTextureUnref(GrTexture*);
-
 #if GR_CACHE_STATS
     struct Stats {
         int fTotal;
@@ -256,6 +263,33 @@ public:
         fThreadSafeCache = threadSafeCache;
     }
 
+    // It'd be nice if this could be private but SkMessageBus relies on macros to define types that
+    // require this to be public.
+    class UnrefResourceMessage {
+    public:
+        GrDirectContext::DirectContextID recipient() const { return fRecipient; }
+
+        UnrefResourceMessage(UnrefResourceMessage&&) = default;
+        UnrefResourceMessage& operator=(UnrefResourceMessage&&) = default;
+
+    private:
+        friend class GrResourceCache;
+
+        using Bus = SkMessageBus<UnrefResourceMessage,
+                                 GrDirectContext::DirectContextID,
+                                 /*AllowCopyableMessage=*/false>;
+
+        UnrefResourceMessage(sk_sp<GrGpuResource>&& resource,
+                             GrDirectContext::DirectContextID recipient)
+                : fResource(std::move(resource)), fRecipient(recipient) {}
+
+        UnrefResourceMessage(const UnrefResourceMessage&) = delete;
+        UnrefResourceMessage& operator=(const UnrefResourceMessage&) = delete;
+
+        sk_sp<GrGpuResource> fResource;
+        GrDirectContext::DirectContextID fRecipient;
+    };
+
 private:
     ///////////////////////////////////////////////////////////////////////////
     /// @name Methods accessible via ResourceAccess
@@ -308,25 +342,6 @@ private:
     };
     typedef SkTDynamicHash<GrGpuResource, skgpu::UniqueKey, UniqueHashTraits> UniqueHash;
 
-    class TextureAwaitingUnref {
-    public:
-        TextureAwaitingUnref();
-        TextureAwaitingUnref(GrTexture* texture);
-        TextureAwaitingUnref(const TextureAwaitingUnref&) = delete;
-        TextureAwaitingUnref& operator=(const TextureAwaitingUnref&) = delete;
-        TextureAwaitingUnref(TextureAwaitingUnref&&);
-        TextureAwaitingUnref& operator=(TextureAwaitingUnref&&);
-        ~TextureAwaitingUnref();
-        void addRef();
-        void unref();
-        bool finished();
-
-    private:
-        GrTexture* fTexture = nullptr;
-        int fNumUnrefs = 0;
-    };
-    using TexturesAwaitingUnref = SkTHashMap<uint32_t, TextureAwaitingUnref>;
-
     static bool CompareTimestamp(GrGpuResource* const& a, GrGpuResource* const& b) {
         return a->cacheAccess().timestamp() < b->cacheAccess().timestamp();
     }
@@ -334,9 +349,6 @@ private:
     static int* AccessResourceIndex(GrGpuResource* const& res) {
         return res->cacheAccess().accessCacheIndex();
     }
-
-    using TextureFreedMessageBus = SkMessageBus<GrTextureFreedMessage,
-                                                GrDirectContext::DirectContextID>;
 
     typedef SkMessageBus<skgpu::UniqueKeyInvalidatedMessage, uint32_t>::Inbox InvalidUniqueKeyInbox;
     typedef SkTDPQueue<GrGpuResource*, CompareTimestamp, AccessResourceIndex> PurgeableQueue;
@@ -378,8 +390,7 @@ private:
     int                                 fNumBudgetedResourcesFlushWillMakePurgeable = 0;
 
     InvalidUniqueKeyInbox               fInvalidUniqueKeyInbox;
-    TextureFreedMessageBus::Inbox       fFreedTextureInbox;
-    TexturesAwaitingUnref               fTexturesAwaitingUnref;
+    UnrefResourceMessage::Bus::Inbox    fUnrefResourceInbox;
 
     GrDirectContext::DirectContextID    fOwningContextID;
     uint32_t                            fContextUniqueID = SK_InvalidUniqueID;
@@ -464,6 +475,11 @@ private:
     friend class GrGpuResource; // To access all the proxy inline methods.
     friend class GrResourceCache; // To create this type.
 };
+
+static inline bool SkShouldPostMessageToBus(const GrResourceCache::UnrefResourceMessage& msg,
+                                            GrDirectContext::DirectContextID potentialRecipient) {
+    return potentialRecipient == msg.recipient();
+}
 
 inline GrResourceCache::ResourceAccess GrResourceCache::resourceAccess() {
     return ResourceAccess(this);

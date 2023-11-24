@@ -181,6 +181,9 @@ config("openscreen_code") {
 
         # Warn on enumeration type mismatches.
         "-Wenum-compare-conditional",
+
+        # Warn on non-virtual destructors in virtual classes.
+        "-Wnon-virtual-dtor",
       ]
     }
 
@@ -199,6 +202,13 @@ config("openscreen_code") {
 
         # Allow designated initializers.
         "-Wno-c++20-designator",
+      ]
+    }
+
+    if (sysroot != "") {
+      cflags += [
+        # Use the generated sysroot path, if any, for compilation.
+        "--sysroot=$sysroot",
       ]
     }
 

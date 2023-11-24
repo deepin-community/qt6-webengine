@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium OS Authors. All rights reserved.
+// Copyright 2021 The ChromiumOS Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,7 @@ const char kFeaturedServicePath[] = "/org/chromium/featured";
 const char kFeaturedServiceName[] = "org.chromium.featured";
 
 // Methods.
-const char kIsPlatformFeatureEnabled[] = "IsPlatformFeatureEnabled";
+constexpr char kHandleSeedFetchedMethod[] = "HandleSeedFetched";
 
 }  // namespace featured
 

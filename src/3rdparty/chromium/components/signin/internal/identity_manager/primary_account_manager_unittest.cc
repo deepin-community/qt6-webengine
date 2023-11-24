@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,10 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "build/build_config.h"
@@ -25,13 +26,29 @@
 #include "components/signin/internal/identity_manager/fake_account_capabilities_fetcher_factory.h"
 #include "components/signin/internal/identity_manager/fake_profile_oauth2_token_service_delegate.h"
 #include "components/signin/internal/identity_manager/profile_oauth2_token_service.h"
+#include "components/signin/public/base/signin_client.h"
+#include "components/signin/public/base/signin_metrics.h"
 #include "components/signin/public/base/signin_pref_names.h"
 #include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/base/test_signin_client.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
+using base::Bucket;
 using signin::ConsentLevel;
+using signin_metrics::AccessPoint;
+using signin_metrics::ProfileSignout;
+using testing::ElementsAreArray;
+
+namespace {
+struct ExpectedAccessPoints {
+  absl::optional<AccessPoint> sign_in = absl::nullopt;
+  absl::optional<AccessPoint> sync_opt_in = absl::nullopt;
+  absl::optional<ProfileSignout> sign_out = absl::nullopt;
+  absl::optional<ProfileSignout> turn_off_sync = absl::nullopt;
+};
+}  // namespace
 
 class PrimaryAccountManagerTest : public testing::Test,
                                   public PrimaryAccountManager::Observer {
@@ -72,6 +89,37 @@ class PrimaryAccountManagerTest : public testing::Test,
                                     const std::string& email) {
     account_tracker_.SeedAccountInfo(gaia_id, email);
     return account_tracker_.PickAccountIdForAccount(gaia_id, email);
+  }
+
+  void CheckSigninMetrics(ExpectedAccessPoints access_points) {
+    std::vector<Bucket> expected_sign_in_buckets;
+    if (access_points.sign_in.has_value()) {
+      expected_sign_in_buckets.emplace_back(*access_points.sign_in, 1);
+    }
+    EXPECT_THAT(histogram_tester_.GetAllSamples("Signin.SignIn.Completed"),
+                ElementsAreArray(expected_sign_in_buckets));
+
+    std::vector<Bucket> expected_sync_opt_in_buckets;
+    if (access_points.sync_opt_in.has_value()) {
+      expected_sync_opt_in_buckets.emplace_back(*access_points.sync_opt_in, 1);
+    }
+    EXPECT_THAT(histogram_tester_.GetAllSamples("Signin.SyncOptIn.Completed"),
+                ElementsAreArray(expected_sync_opt_in_buckets));
+
+    std::vector<Bucket> expected_sign_out_buckets;
+    if (access_points.sign_out.has_value()) {
+      expected_sign_out_buckets.emplace_back(*access_points.sign_out, 1);
+    }
+    EXPECT_THAT(histogram_tester_.GetAllSamples("Signin.SignOut.Completed"),
+                ElementsAreArray(expected_sign_out_buckets));
+
+    std::vector<Bucket> expected_turn_off_sync_buckets;
+    if (access_points.turn_off_sync.has_value()) {
+      expected_turn_off_sync_buckets.emplace_back(*access_points.turn_off_sync,
+                                                  1);
+    }
+    EXPECT_THAT(histogram_tester_.GetAllSamples("Signin.SyncTurnOff.Completed"),
+                ElementsAreArray(expected_turn_off_sync_buckets));
   }
 
   void CreatePrimaryAccountManager() {
@@ -127,6 +175,7 @@ class PrimaryAccountManagerTest : public testing::Test,
   std::unique_ptr<PrimaryAccountManager> manager_;
   std::vector<std::string> oauth_tokens_fetched_;
   std::vector<std::string> cookies_;
+  base::HistogramTester histogram_tester_;
   int num_successful_signins_{0};
   int num_successful_signouts_{0};
   int num_unconsented_account_changed_{0};
@@ -138,8 +187,12 @@ TEST_F(PrimaryAccountManagerTest, SignOut) {
   CoreAccountId main_account_id =
       AddToAccountTracker("account_id", "user@gmail.com");
   manager_->SetPrimaryAccountInfo(
-      account_tracker()->GetAccountInfo(main_account_id), ConsentLevel::kSync);
-  manager_->ClearPrimaryAccount(signin_metrics::SIGNOUT_TEST,
+      account_tracker()->GetAccountInfo(main_account_id), ConsentLevel::kSync,
+      AccessPoint::ACCESS_POINT_UNKNOWN);
+  CheckSigninMetrics({.sign_in = AccessPoint::ACCESS_POINT_UNKNOWN,
+                      .sync_opt_in = AccessPoint::ACCESS_POINT_UNKNOWN});
+
+  manager_->ClearPrimaryAccount(signin_metrics::ProfileSignout::kTest,
                                 signin_metrics::SignoutDelete::kIgnoreMetric);
   EXPECT_EQ(1, num_successful_signouts_);
   EXPECT_FALSE(manager_->HasPrimaryAccount(ConsentLevel::kSync));
@@ -147,6 +200,11 @@ TEST_F(PrimaryAccountManagerTest, SignOut) {
       manager_->GetPrimaryAccountInfo(ConsentLevel::kSync).email.empty());
   EXPECT_TRUE(manager_->GetPrimaryAccountId(ConsentLevel::kSync).empty());
   EXPECT_TRUE(manager_->GetPrimaryAccountInfo(ConsentLevel::kSignin).IsEmpty());
+  CheckSigninMetrics({.sign_in = AccessPoint::ACCESS_POINT_UNKNOWN,
+                      .sync_opt_in = AccessPoint::ACCESS_POINT_UNKNOWN,
+                      .sign_out = signin_metrics::ProfileSignout::kTest,
+                      .turn_off_sync = signin_metrics::ProfileSignout::kTest});
+
   // Should not be persisted anymore
   ShutDownManager();
   CreatePrimaryAccountManager();
@@ -166,13 +224,20 @@ TEST_F(PrimaryAccountManagerTest, SignOutRevoke) {
   token_service_.UpdateCredentials(main_account_id, "token");
   token_service_.UpdateCredentials(other_account_id, "token");
   manager_->SetPrimaryAccountInfo(
-      account_tracker()->GetAccountInfo(main_account_id), ConsentLevel::kSync);
+      account_tracker()->GetAccountInfo(main_account_id), ConsentLevel::kSync,
+      AccessPoint::ACCESS_POINT_UNKNOWN);
+  CheckSigninMetrics({.sign_in = AccessPoint::ACCESS_POINT_UNKNOWN,
+                      .sync_opt_in = AccessPoint::ACCESS_POINT_UNKNOWN});
   EXPECT_TRUE(manager_->HasPrimaryAccount(ConsentLevel::kSync));
   EXPECT_EQ(main_account_id,
             manager_->GetPrimaryAccountId(ConsentLevel::kSync));
 
-  manager_->ClearPrimaryAccount(signin_metrics::SIGNOUT_TEST,
+  manager_->ClearPrimaryAccount(signin_metrics::ProfileSignout::kTest,
                                 signin_metrics::SignoutDelete::kIgnoreMetric);
+  CheckSigninMetrics({.sign_in = AccessPoint::ACCESS_POINT_UNKNOWN,
+                      .sync_opt_in = AccessPoint::ACCESS_POINT_UNKNOWN,
+                      .sign_out = signin_metrics::ProfileSignout::kTest,
+                      .turn_off_sync = signin_metrics::ProfileSignout::kTest});
 
   // Tokens are revoked.
   EXPECT_EQ(1, num_successful_signouts_);
@@ -190,17 +255,39 @@ TEST_F(PrimaryAccountManagerTest, SignOutWhileProhibited) {
   CoreAccountId main_account_id =
       AddToAccountTracker("gaia_id", "user@gmail.com");
   manager_->SetPrimaryAccountInfo(
-      account_tracker()->GetAccountInfo(main_account_id), ConsentLevel::kSync);
-  signin_client()->set_is_signout_allowed(false);
-  manager_->ClearPrimaryAccount(signin_metrics::SIGNOUT_TEST,
+      account_tracker()->GetAccountInfo(main_account_id), ConsentLevel::kSync,
+      AccessPoint::ACCESS_POINT_UNKNOWN);
+  CheckSigninMetrics({.sign_in = AccessPoint::ACCESS_POINT_UNKNOWN,
+                      .sync_opt_in = AccessPoint::ACCESS_POINT_UNKNOWN});
+
+  signin_client()->set_is_clear_primary_account_allowed_for_testing(
+      SigninClient::SignoutDecision::CLEAR_PRIMARY_ACCOUNT_DISALLOWED);
+  manager_->ClearPrimaryAccount(signin_metrics::ProfileSignout::kTest,
                                 signin_metrics::SignoutDelete::kIgnoreMetric);
   EXPECT_EQ(0, num_successful_signouts_);
   EXPECT_TRUE(manager_->HasPrimaryAccount(ConsentLevel::kSync));
-  signin_client()->set_is_signout_allowed(true);
-  manager_->ClearPrimaryAccount(signin_metrics::SIGNOUT_TEST,
+  CheckSigninMetrics({.sign_in = AccessPoint::ACCESS_POINT_UNKNOWN,
+                      .sync_opt_in = AccessPoint::ACCESS_POINT_UNKNOWN});
+
+  signin_client()->set_is_clear_primary_account_allowed_for_testing(
+      SigninClient::SignoutDecision::REVOKE_SYNC_DISALLOWED);
+  manager_->ClearPrimaryAccount(signin_metrics::ProfileSignout::kTest,
+                                signin_metrics::SignoutDelete::kIgnoreMetric);
+  EXPECT_EQ(0, num_successful_signouts_);
+  EXPECT_TRUE(manager_->HasPrimaryAccount(ConsentLevel::kSync));
+  CheckSigninMetrics({.sign_in = AccessPoint::ACCESS_POINT_UNKNOWN,
+                      .sync_opt_in = AccessPoint::ACCESS_POINT_UNKNOWN});
+
+  signin_client()->set_is_clear_primary_account_allowed_for_testing(
+      SigninClient::SignoutDecision::ALLOW);
+  manager_->ClearPrimaryAccount(signin_metrics::ProfileSignout::kTest,
                                 signin_metrics::SignoutDelete::kIgnoreMetric);
   EXPECT_EQ(1, num_successful_signouts_);
   EXPECT_FALSE(manager_->HasPrimaryAccount(ConsentLevel::kSync));
+  CheckSigninMetrics({.sign_in = AccessPoint::ACCESS_POINT_UNKNOWN,
+                      .sync_opt_in = AccessPoint::ACCESS_POINT_UNKNOWN,
+                      .sign_out = signin_metrics::ProfileSignout::kTest,
+                      .turn_off_sync = signin_metrics::ProfileSignout::kTest});
 }
 
 TEST_F(PrimaryAccountManagerTest, UnconsentedSignOutWhileProhibited) {
@@ -212,19 +299,69 @@ TEST_F(PrimaryAccountManagerTest, UnconsentedSignOutWhileProhibited) {
 
   CoreAccountId account_id = AddToAccountTracker("gaia_id", "user@gmail.com");
   CoreAccountInfo account_info = account_tracker()->GetAccountInfo(account_id);
-  manager_->SetPrimaryAccountInfo(account_info, ConsentLevel::kSignin);
+  manager_->SetPrimaryAccountInfo(account_info, ConsentLevel::kSignin,
+                                  AccessPoint::ACCESS_POINT_UNKNOWN);
   EXPECT_TRUE(manager_->HasPrimaryAccount(ConsentLevel::kSignin));
   EXPECT_FALSE(manager_->HasPrimaryAccount(ConsentLevel::kSync));
-  signin_client()->set_is_signout_allowed(false);
-  manager_->ClearPrimaryAccount(signin_metrics::SIGNOUT_TEST,
+  CheckSigninMetrics({.sign_in = AccessPoint::ACCESS_POINT_UNKNOWN});
+
+  signin_client()->set_is_clear_primary_account_allowed_for_testing(
+      SigninClient::SignoutDecision::CLEAR_PRIMARY_ACCOUNT_DISALLOWED);
+  manager_->ClearPrimaryAccount(signin_metrics::ProfileSignout::kTest,
                                 signin_metrics::SignoutDelete::kIgnoreMetric);
   EXPECT_TRUE(manager_->HasPrimaryAccount(ConsentLevel::kSignin));
-  signin_client()->set_is_signout_allowed(true);
-  manager_->ClearPrimaryAccount(signin_metrics::SIGNOUT_TEST,
+  CheckSigninMetrics({.sign_in = AccessPoint::ACCESS_POINT_UNKNOWN});
+
+  signin_client()->set_is_clear_primary_account_allowed_for_testing(
+      SigninClient::SignoutDecision::ALLOW);
+  manager_->ClearPrimaryAccount(signin_metrics::ProfileSignout::kTest,
                                 signin_metrics::SignoutDelete::kIgnoreMetric);
   EXPECT_FALSE(manager_->HasPrimaryAccount(ConsentLevel::kSignin));
+  CheckSigninMetrics({.sign_in = AccessPoint::ACCESS_POINT_UNKNOWN,
+                      .sign_out = signin_metrics::ProfileSignout::kTest});
 }
 #endif
+
+TEST_F(PrimaryAccountManagerTest, RevokeSyncConsentAllowedSignoutProhibited) {
+  CreatePrimaryAccountManager();
+  EXPECT_FALSE(manager_->HasPrimaryAccount(ConsentLevel::kSync));
+  EXPECT_TRUE(
+      manager_->GetPrimaryAccountInfo(ConsentLevel::kSync).email.empty());
+  EXPECT_TRUE(manager_->GetPrimaryAccountId(ConsentLevel::kSync).empty());
+
+  CoreAccountId main_account_id =
+      AddToAccountTracker("gaia_id", "user@gmail.com");
+  manager_->SetPrimaryAccountInfo(
+      account_tracker()->GetAccountInfo(main_account_id), ConsentLevel::kSync,
+      AccessPoint::ACCESS_POINT_UNKNOWN);
+  EXPECT_TRUE(manager_->HasPrimaryAccount(ConsentLevel::kSync));
+  CheckSigninMetrics({.sign_in = AccessPoint::ACCESS_POINT_UNKNOWN,
+                      .sync_opt_in = AccessPoint::ACCESS_POINT_UNKNOWN});
+
+  signin_client()->set_is_clear_primary_account_allowed_for_testing(
+      SigninClient::SignoutDecision::CLEAR_PRIMARY_ACCOUNT_DISALLOWED);
+  manager_->RevokeSyncConsent(signin_metrics::ProfileSignout::kTest,
+                              signin_metrics::SignoutDelete::kIgnoreMetric);
+  CheckSigninMetrics({.sign_in = AccessPoint::ACCESS_POINT_UNKNOWN,
+                      .sync_opt_in = AccessPoint::ACCESS_POINT_UNKNOWN,
+                      .turn_off_sync = signin_metrics::ProfileSignout::kTest});
+
+  // Unconsented primary account not changed.
+  EXPECT_EQ(1, num_unconsented_account_changed_);
+  // Sync consent cleared
+  EXPECT_EQ(1, num_successful_signouts_);
+  EXPECT_FALSE(manager_->HasPrimaryAccount(ConsentLevel::kSync));
+  EXPECT_TRUE(manager_->HasPrimaryAccount(ConsentLevel::kSignin));
+
+#if !BUILDFLAG(IS_CHROMEOS_ASH)
+  manager_->ClearPrimaryAccount(signin_metrics::ProfileSignout::kTest,
+                                signin_metrics::SignoutDelete::kIgnoreMetric);
+  EXPECT_TRUE(manager_->HasPrimaryAccount(ConsentLevel::kSignin));
+  CheckSigninMetrics({.sign_in = AccessPoint::ACCESS_POINT_UNKNOWN,
+                      .sync_opt_in = AccessPoint::ACCESS_POINT_UNKNOWN,
+                      .turn_off_sync = signin_metrics::ProfileSignout::kTest});
+#endif
+}
 
 // Regression test for https://crbug.com/1155519.
 TEST_F(PrimaryAccountManagerTest, NoopSignOutDoesNotNotifyObservers) {
@@ -233,12 +370,13 @@ TEST_F(PrimaryAccountManagerTest, NoopSignOutDoesNotNotifyObservers) {
 
   CoreAccountId account_id = AddToAccountTracker("gaia_id", "user@gmail.com");
   CoreAccountInfo account_info = account_tracker()->GetAccountInfo(account_id);
-  manager_->SetPrimaryAccountInfo(account_info, ConsentLevel::kSignin);
+  manager_->SetPrimaryAccountInfo(account_info, ConsentLevel::kSignin,
+                                  AccessPoint::ACCESS_POINT_UNKNOWN);
   EXPECT_EQ(1, num_unconsented_account_changed_);
   EXPECT_TRUE(manager_->HasPrimaryAccount(ConsentLevel::kSignin));
   EXPECT_FALSE(manager_->HasPrimaryAccount(ConsentLevel::kSync));
 
-  manager_->RevokeSyncConsent(signin_metrics::SIGNOUT_TEST,
+  manager_->RevokeSyncConsent(signin_metrics::ProfileSignout::kTest,
                               signin_metrics::SignoutDelete::kIgnoreMetric);
 
   // Since there was no sync consent, observers shouldn't be notified.
@@ -253,10 +391,12 @@ TEST_F(PrimaryAccountManagerTest, SignIn) {
             manager_->GetPrimaryAccountId(ConsentLevel::kSync));
   EXPECT_EQ(0, num_successful_signins_);
   EXPECT_EQ(0, num_unconsented_account_changed_);
+  CheckSigninMetrics({});
 
   CoreAccountId account_id = AddToAccountTracker("gaia_id", "user@gmail.com");
   manager_->SetPrimaryAccountInfo(account_tracker()->GetAccountInfo(account_id),
-                                  ConsentLevel::kSync);
+                                  ConsentLevel::kSync,
+                                  AccessPoint::ACCESS_POINT_SETTINGS);
   EXPECT_EQ(1, num_successful_signins_);
   EXPECT_EQ(1, num_unconsented_account_changed_);
   EXPECT_EQ("user@gmail.com",
@@ -264,6 +404,8 @@ TEST_F(PrimaryAccountManagerTest, SignIn) {
   EXPECT_EQ(account_id, manager_->GetPrimaryAccountId(ConsentLevel::kSync));
   EXPECT_EQ(manager_->GetPrimaryAccountInfo(ConsentLevel::kSignin),
             manager_->GetPrimaryAccountInfo(ConsentLevel::kSync));
+  CheckSigninMetrics({.sign_in = AccessPoint::ACCESS_POINT_SETTINGS,
+                      .sync_opt_in = AccessPoint::ACCESS_POINT_SETTINGS});
 }
 
 TEST_F(PrimaryAccountManagerTest,
@@ -277,28 +419,30 @@ TEST_F(PrimaryAccountManagerTest,
 
   CoreAccountId account_id = AddToAccountTracker("gaia_id", "user@gmail.com");
   manager_->SetPrimaryAccountInfo(account_tracker()->GetAccountInfo(account_id),
-                                  ConsentLevel::kSync);
+                                  ConsentLevel::kSync,
+                                  AccessPoint::ACCESS_POINT_SETTINGS);
   EXPECT_EQ(1, num_successful_signins_);
   EXPECT_EQ(1, num_unconsented_account_changed_);
   EXPECT_EQ("user@gmail.com",
             manager_->GetPrimaryAccountInfo(ConsentLevel::kSync).email);
   EXPECT_EQ(account_id, manager_->GetPrimaryAccountId(ConsentLevel::kSync));
+  CheckSigninMetrics({.sign_in = AccessPoint::ACCESS_POINT_SETTINGS,
+                      .sync_opt_in = AccessPoint::ACCESS_POINT_SETTINGS});
 
   manager_->SetPrimaryAccountInfo(account_tracker()->GetAccountInfo(account_id),
-                                  ConsentLevel::kSync);
+                                  ConsentLevel::kSync,
+                                  AccessPoint::ACCESS_POINT_WEB_SIGNIN);
   EXPECT_EQ(1, num_successful_signins_);
   EXPECT_EQ(1, num_unconsented_account_changed_);
   EXPECT_EQ("user@gmail.com",
             manager_->GetPrimaryAccountInfo(ConsentLevel::kSync).email);
   EXPECT_EQ(account_id, manager_->GetPrimaryAccountId(ConsentLevel::kSync));
+  CheckSigninMetrics({.sign_in = AccessPoint::ACCESS_POINT_SETTINGS,
+                      .sync_opt_in = AccessPoint::ACCESS_POINT_SETTINGS});
 }
 
-TEST_F(PrimaryAccountManagerTest, GaiaIdMigration) {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(switches::kAccountIdMigration);
-#endif
-
+TEST_F(PrimaryAccountManagerTest, GaiaIdMigration) {
   ASSERT_EQ(AccountTrackerService::MIGRATION_DONE,
             account_tracker()->GetMigrationState());
   std::string email = "user@gmail.com";
@@ -307,12 +451,12 @@ TEST_F(PrimaryAccountManagerTest, GaiaIdMigration) {
   PrefService* client_prefs = signin_client()->GetPrefs();
   client_prefs->SetInteger(prefs::kAccountIdMigrationState,
                            AccountTrackerService::MIGRATION_NOT_STARTED);
-  ListPrefUpdate update(client_prefs, prefs::kAccountInfo);
-  update->ClearList();
-  base::Value dict(base::Value::Type::DICTIONARY);
-  dict.SetStringKey("account_id", email);
-  dict.SetStringKey("email", email);
-  dict.SetStringKey("gaia", gaia_id);
+  ScopedListPrefUpdate update(client_prefs, prefs::kAccountInfo);
+  update->clear();
+  base::Value::Dict dict;
+  dict.Set("account_id", email);
+  dict.Set("email", email);
+  dict.Set("gaia", gaia_id);
   update->Append(std::move(dict));
 
   account_tracker()->ResetForTesting();
@@ -327,11 +471,6 @@ TEST_F(PrimaryAccountManagerTest, GaiaIdMigration) {
 }
 
 TEST_F(PrimaryAccountManagerTest, GaiaIdMigrationCrashInTheMiddle) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(switches::kAccountIdMigration);
-#endif
-
   ASSERT_EQ(AccountTrackerService::MIGRATION_DONE,
             account_tracker()->GetMigrationState());
   std::string email = "user@gmail.com";
@@ -340,12 +479,12 @@ TEST_F(PrimaryAccountManagerTest, GaiaIdMigrationCrashInTheMiddle) {
   PrefService* client_prefs = signin_client()->GetPrefs();
   client_prefs->SetInteger(prefs::kAccountIdMigrationState,
                            AccountTrackerService::MIGRATION_NOT_STARTED);
-  ListPrefUpdate update(client_prefs, prefs::kAccountInfo);
-  update->ClearList();
-  base::Value dict(base::Value::Type::DICTIONARY);
-  dict.SetStringKey("account_id", email);
-  dict.SetStringKey("email", email);
-  dict.SetStringKey("gaia", gaia_id);
+  ScopedListPrefUpdate update(client_prefs, prefs::kAccountInfo);
+  update->clear();
+  base::Value::Dict dict;
+  dict.Set("account_id", email);
+  dict.Set("email", email);
+  dict.Set("gaia", gaia_id);
   update->Append(std::move(dict));
 
   account_tracker()->ResetForTesting();
@@ -361,38 +500,6 @@ TEST_F(PrimaryAccountManagerTest, GaiaIdMigrationCrashInTheMiddle) {
   EXPECT_EQ(AccountTrackerService::MIGRATION_DONE,
             account_tracker()->GetMigrationState());
 }
-
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
-// Test that force migrating the account id to Gaia ID is finished.
-TEST_F(PrimaryAccountManagerTest, GaiaIdMigration_ForceAllAccounts) {
-  ASSERT_EQ(AccountTrackerService::MIGRATION_DONE,
-            account_tracker()->GetMigrationState());
-  std::string email = "user@gmail.com";
-  std::string gaia_id = "account_gaia_id";
-
-  PrefService* client_prefs = signin_client()->GetPrefs();
-  client_prefs->SetInteger(prefs::kAccountIdMigrationState,
-                           AccountTrackerService::MIGRATION_NOT_STARTED);
-  ListPrefUpdate update(client_prefs, prefs::kAccountInfo);
-  update->ClearList();
-  base::Value dict(base::Value::Type::DICTIONARY);
-  dict.SetStringKey("account_id", email);
-  dict.SetStringKey("email", email);
-  update->Append(std::move(dict));
-
-  account_tracker()->ResetForTesting();
-
-  client_prefs->SetString(prefs::kGoogleServicesAccountId, email);
-
-  CreatePrimaryAccountManager();
-  base::RunLoop().RunUntilIdle();
-
-  EXPECT_FALSE(manager_->HasPrimaryAccount(ConsentLevel::kSignin));
-  EXPECT_EQ("", user_prefs_.GetString(prefs::kGoogleServicesAccountId));
-  EXPECT_TRUE(account_tracker()->GetAccounts().empty());
-  EXPECT_EQ(AccountTrackerService::MIGRATION_DONE,
-            account_tracker()->GetMigrationState());
-}
 #endif
 
 TEST_F(PrimaryAccountManagerTest, RestoreFromPrefsConsented) {
@@ -405,6 +512,9 @@ TEST_F(PrimaryAccountManagerTest, RestoreFromPrefsConsented) {
   EXPECT_EQ(account_id, manager_->GetPrimaryAccountId(ConsentLevel::kSync));
   EXPECT_EQ(manager_->GetPrimaryAccountInfo(ConsentLevel::kSignin),
             manager_->GetPrimaryAccountInfo(ConsentLevel::kSync));
+
+  // Not a logged event.
+  CheckSigninMetrics({});
 }
 
 TEST_F(PrimaryAccountManagerTest, RestoreFromPrefsUnconsented) {
@@ -417,6 +527,9 @@ TEST_F(PrimaryAccountManagerTest, RestoreFromPrefsUnconsented) {
   EXPECT_EQ(account_id,
             manager_->GetPrimaryAccountInfo(ConsentLevel::kSignin).account_id);
   EXPECT_TRUE(manager_->GetPrimaryAccountInfo(ConsentLevel::kSync).IsEmpty());
+
+  // Not a logged event.
+  CheckSigninMetrics({});
 }
 
 // If kGoogleServicesConsentedToSync is missing, the account is fully
@@ -445,11 +558,13 @@ TEST_F(PrimaryAccountManagerTest, SetUnconsentedPrimaryAccountInfo) {
             manager_->GetPrimaryAccountInfo(ConsentLevel::kSignin));
   EXPECT_EQ(0, num_unconsented_account_changed_);
   EXPECT_EQ(0, num_successful_signins_);
+  CheckSigninMetrics({});
 
   // Set the unconsented primary account.
   CoreAccountId account_id = AddToAccountTracker("gaia_id", "user@gmail.com");
   CoreAccountInfo account_info = account_tracker()->GetAccountInfo(account_id);
-  manager_->SetPrimaryAccountInfo(account_info, ConsentLevel::kSignin);
+  manager_->SetPrimaryAccountInfo(account_info, ConsentLevel::kSignin,
+                                  AccessPoint::ACCESS_POINT_SETTINGS);
   EXPECT_EQ(0, num_successful_signins_);
   EXPECT_EQ(0, num_successful_signouts_);
   EXPECT_EQ(1, num_unconsented_account_changed_);
@@ -457,9 +572,11 @@ TEST_F(PrimaryAccountManagerTest, SetUnconsentedPrimaryAccountInfo) {
             manager_->GetPrimaryAccountInfo(ConsentLevel::kSignin));
   EXPECT_EQ(CoreAccountInfo(),
             manager_->GetPrimaryAccountInfo(ConsentLevel::kSync));
+  CheckSigninMetrics({.sign_in = AccessPoint::ACCESS_POINT_SETTINGS});
 
   // Set the same account again.
-  manager_->SetPrimaryAccountInfo(account_info, ConsentLevel::kSignin);
+  manager_->SetPrimaryAccountInfo(account_info, ConsentLevel::kSignin,
+                                  AccessPoint::ACCESS_POINT_WEB_SIGNIN);
   EXPECT_EQ(0, num_successful_signins_);
   EXPECT_EQ(0, num_successful_signouts_);
   EXPECT_EQ(1, num_unconsented_account_changed_);
@@ -467,11 +584,13 @@ TEST_F(PrimaryAccountManagerTest, SetUnconsentedPrimaryAccountInfo) {
             manager_->GetPrimaryAccountInfo(ConsentLevel::kSignin));
   EXPECT_EQ(CoreAccountInfo(),
             manager_->GetPrimaryAccountInfo(ConsentLevel::kSync));
+  CheckSigninMetrics({.sign_in = AccessPoint::ACCESS_POINT_SETTINGS});
 
   // Change the email to another equivalent email. The account is updated but
   // observers are not notified.
   account_info.email = "us.er@gmail.com";
-  manager_->SetPrimaryAccountInfo(account_info, ConsentLevel::kSignin);
+  manager_->SetPrimaryAccountInfo(account_info, ConsentLevel::kSignin,
+                                  AccessPoint::ACCESS_POINT_SIGNIN_PROMO);
   EXPECT_EQ(0, num_successful_signins_);
   EXPECT_EQ(0, num_successful_signouts_);
   EXPECT_EQ(1, num_unconsented_account_changed_);
@@ -479,16 +598,18 @@ TEST_F(PrimaryAccountManagerTest, SetUnconsentedPrimaryAccountInfo) {
             manager_->GetPrimaryAccountInfo(ConsentLevel::kSignin));
   EXPECT_EQ(CoreAccountInfo(),
             manager_->GetPrimaryAccountInfo(ConsentLevel::kSync));
+  CheckSigninMetrics({.sign_in = AccessPoint::ACCESS_POINT_SETTINGS});
 }
 
 TEST_F(PrimaryAccountManagerTest, RevokeSyncConsent) {
   CreatePrimaryAccountManager();
   CoreAccountId account_id = AddToAccountTracker("gaia_id", "user@gmail.com");
   manager_->SetPrimaryAccountInfo(account_tracker()->GetAccountInfo(account_id),
-                                  ConsentLevel::kSync);
+                                  ConsentLevel::kSync,
+                                  AccessPoint::ACCESS_POINT_UNKNOWN);
   EXPECT_TRUE(manager_->HasPrimaryAccount(ConsentLevel::kSync));
 
-  manager_->RevokeSyncConsent(signin_metrics::ProfileSignout::SIGNOUT_TEST,
+  manager_->RevokeSyncConsent(signin_metrics::ProfileSignout::kTest,
                               signin_metrics::SignoutDelete::kIgnoreMetric);
   EXPECT_EQ(1, num_successful_signouts_);
   EXPECT_FALSE(manager_->HasPrimaryAccount(ConsentLevel::kSync));
@@ -502,10 +623,11 @@ TEST_F(PrimaryAccountManagerTest, ClearPrimaryAccount) {
   CreatePrimaryAccountManager();
   CoreAccountId account_id = AddToAccountTracker("gaia_id", "user@gmail.com");
   manager_->SetPrimaryAccountInfo(account_tracker()->GetAccountInfo(account_id),
-                                  ConsentLevel::kSync);
+                                  ConsentLevel::kSync,
+                                  AccessPoint::ACCESS_POINT_UNKNOWN);
   EXPECT_TRUE(manager_->HasPrimaryAccount(ConsentLevel::kSync));
 
-  manager_->ClearPrimaryAccount(signin_metrics::ProfileSignout::SIGNOUT_TEST,
+  manager_->ClearPrimaryAccount(signin_metrics::ProfileSignout::kTest,
                                 signin_metrics::SignoutDelete::kIgnoreMetric);
   EXPECT_EQ(1, num_successful_signouts_);
   EXPECT_FALSE(manager_->HasPrimaryAccount(ConsentLevel::kSync));

@@ -85,21 +85,48 @@ TEST(HeaderValidatorTest, ValueHasInvalidChar) {
   // These characters should be allowed. (Not exhaustive.)
   for (const char* c :
        {"!", "3", "a", "_", "|", "~", "\\", "<", ";", "[", "=", "A", "\t"}) {
+    const std::string value = absl::StrCat("val", c, "ue");
+    EXPECT_TRUE(
+        HeaderValidator::IsValidHeaderValue(value, ObsTextOption::kDisallow));
     HeaderValidator::HeaderStatus status =
-        v.ValidateSingleHeader("name", absl::StrCat("val", c, "ue"));
+        v.ValidateSingleHeader("name", value);
     EXPECT_EQ(HeaderValidator::HEADER_OK, status);
   }
   // These should not.
   for (const char* c : {"\r", "\n"}) {
+    const std::string value = absl::StrCat("val", c, "ue");
+    EXPECT_FALSE(
+        HeaderValidator::IsValidHeaderValue(value, ObsTextOption::kDisallow));
     HeaderValidator::HeaderStatus status =
-        v.ValidateSingleHeader("name", absl::StrCat("val", c, "ue"));
+        v.ValidateSingleHeader("name", value);
     EXPECT_EQ(HeaderValidator::HEADER_FIELD_INVALID, status);
   }
   // Test nul separately.
   {
+    const std::string value("val\0ue", 6);
+    EXPECT_FALSE(
+        HeaderValidator::IsValidHeaderValue(value, ObsTextOption::kDisallow));
     HeaderValidator::HeaderStatus status =
-        v.ValidateSingleHeader("name", absl::string_view("val\0ue", 6));
+        v.ValidateSingleHeader("name", value);
     EXPECT_EQ(HeaderValidator::HEADER_FIELD_INVALID, status);
+  }
+  {
+    const std::string obs_text_value = "val\xa9ue";
+    // Test that obs-text is disallowed by default.
+    EXPECT_EQ(HeaderValidator::HEADER_FIELD_INVALID,
+              v.ValidateSingleHeader("name", obs_text_value));
+    // Test that obs-text is disallowed when configured.
+    v.SetObsTextOption(ObsTextOption::kDisallow);
+    EXPECT_FALSE(HeaderValidator::IsValidHeaderValue(obs_text_value,
+                                                     ObsTextOption::kDisallow));
+    EXPECT_EQ(HeaderValidator::HEADER_FIELD_INVALID,
+              v.ValidateSingleHeader("name", obs_text_value));
+    // Test that obs-text is allowed when configured.
+    v.SetObsTextOption(ObsTextOption::kAllow);
+    EXPECT_TRUE(HeaderValidator::IsValidHeaderValue(obs_text_value,
+                                                    ObsTextOption::kAllow));
+    EXPECT_EQ(HeaderValidator::HEADER_OK,
+              v.ValidateSingleHeader("name", obs_text_value));
   }
 }
 
@@ -137,45 +164,59 @@ TEST(HeaderValidatorTest, AuthorityHasInvalidChar) {
   for (absl::string_view key : {":authority", "host"}) {
     // These characters should be allowed. (Not exhaustive.)
     for (const absl::string_view c : {"1", "-", "!", ":", "+", "=", ","}) {
+      const std::string value = absl::StrCat("ho", c, "st.example.com");
+      EXPECT_TRUE(HeaderValidator::IsValidAuthority(value));
+
       HeaderValidator v;
       v.StartHeaderBlock();
-      HeaderValidator::HeaderStatus status =
-          v.ValidateSingleHeader(key, absl::StrCat("ho", c, "st.example.com"));
+      HeaderValidator::HeaderStatus status = v.ValidateSingleHeader(key, value);
       EXPECT_EQ(HeaderValidator::HEADER_OK, status);
     }
     // These should not.
     for (const absl::string_view c : {"\r", "\n", "|", "\\", "`"}) {
+      const std::string value = absl::StrCat("ho", c, "st.example.com");
+      EXPECT_FALSE(HeaderValidator::IsValidAuthority(value));
+
       HeaderValidator v;
       v.StartHeaderBlock();
-      HeaderValidator::HeaderStatus status =
-          v.ValidateSingleHeader(key, absl::StrCat("ho", c, "st.example.com"));
+      HeaderValidator::HeaderStatus status = v.ValidateSingleHeader(key, value);
       EXPECT_EQ(HeaderValidator::HEADER_FIELD_INVALID, status);
     }
 
     {
       // IPv4 example
+      const std::string value = "123.45.67.89";
+      EXPECT_TRUE(HeaderValidator::IsValidAuthority(value));
+
       HeaderValidator v;
       v.StartHeaderBlock();
-      HeaderValidator::HeaderStatus status =
-          v.ValidateSingleHeader(key, "123.45.67.89");
+      HeaderValidator::HeaderStatus status = v.ValidateSingleHeader(key, value);
       EXPECT_EQ(HeaderValidator::HEADER_OK, status);
     }
 
     {
       // IPv6 examples
+      const std::string value1 = "2001:0db8:85a3:0000:0000:8a2e:0370:7334";
+      EXPECT_TRUE(HeaderValidator::IsValidAuthority(value1));
+
       HeaderValidator v;
       v.StartHeaderBlock();
-      HeaderValidator::HeaderStatus status = v.ValidateSingleHeader(
-          key, "2001:0db8:85a3:0000:0000:8a2e:0370:7334");
+      HeaderValidator::HeaderStatus status =
+          v.ValidateSingleHeader(key, value1);
       EXPECT_EQ(HeaderValidator::HEADER_OK, status);
+
+      const std::string value2 = "[::1]:80";
+      EXPECT_TRUE(HeaderValidator::IsValidAuthority(value2));
       HeaderValidator v2;
       v2.StartHeaderBlock();
-      status = v2.ValidateSingleHeader(key, "[::1]:80");
+      status = v2.ValidateSingleHeader(key, value2);
       EXPECT_EQ(HeaderValidator::HEADER_OK, status);
     }
 
     {
       // Empty field
+      EXPECT_TRUE(HeaderValidator::IsValidAuthority(""));
+
       HeaderValidator v;
       v.StartHeaderBlock();
       HeaderValidator::HeaderStatus status = v.ValidateSingleHeader(key, "");
@@ -253,6 +294,54 @@ TEST(HeaderValidatorTest, RequestPseudoHeaders) {
   }
 }
 
+TEST(HeaderValidatorTest, ConnectHeaders) {
+  // Too few headers.
+  HeaderValidator v;
+  v.StartHeaderBlock();
+  EXPECT_EQ(HeaderValidator::HEADER_OK,
+            v.ValidateSingleHeader(":authority", "athena.dialup.mit.edu:23"));
+  EXPECT_FALSE(v.FinishHeaderBlock(HeaderType::REQUEST));
+
+  v.StartHeaderBlock();
+  EXPECT_EQ(HeaderValidator::HEADER_OK,
+            v.ValidateSingleHeader(":method", "CONNECT"));
+  EXPECT_FALSE(v.FinishHeaderBlock(HeaderType::REQUEST));
+
+  // Too many headers.
+  v.StartHeaderBlock();
+  EXPECT_EQ(HeaderValidator::HEADER_OK,
+            v.ValidateSingleHeader(":authority", "athena.dialup.mit.edu:23"));
+  EXPECT_EQ(HeaderValidator::HEADER_OK,
+            v.ValidateSingleHeader(":method", "CONNECT"));
+  EXPECT_EQ(HeaderValidator::HEADER_OK, v.ValidateSingleHeader(":path", "/"));
+  EXPECT_FALSE(v.FinishHeaderBlock(HeaderType::REQUEST));
+
+  // Empty :authority
+  v.StartHeaderBlock();
+  EXPECT_EQ(HeaderValidator::HEADER_OK,
+            v.ValidateSingleHeader(":authority", ""));
+  EXPECT_EQ(HeaderValidator::HEADER_OK,
+            v.ValidateSingleHeader(":method", "CONNECT"));
+  EXPECT_FALSE(v.FinishHeaderBlock(HeaderType::REQUEST));
+
+  // Just right.
+  v.StartHeaderBlock();
+  EXPECT_EQ(HeaderValidator::HEADER_OK,
+            v.ValidateSingleHeader(":authority", "athena.dialup.mit.edu:23"));
+  EXPECT_EQ(HeaderValidator::HEADER_OK,
+            v.ValidateSingleHeader(":method", "CONNECT"));
+  EXPECT_TRUE(v.FinishHeaderBlock(HeaderType::REQUEST));
+
+  v.SetAllowExtendedConnect();
+  // "Classic" CONNECT headers should still be accepted.
+  v.StartHeaderBlock();
+  EXPECT_EQ(HeaderValidator::HEADER_OK,
+            v.ValidateSingleHeader(":authority", "athena.dialup.mit.edu:23"));
+  EXPECT_EQ(HeaderValidator::HEADER_OK,
+            v.ValidateSingleHeader(":method", "CONNECT"));
+  EXPECT_TRUE(v.FinishHeaderBlock(HeaderType::REQUEST));
+}
+
 TEST(HeaderValidatorTest, WebsocketPseudoHeaders) {
   HeaderValidator v;
   v.StartHeaderBlock();
@@ -267,7 +356,7 @@ TEST(HeaderValidatorTest, WebsocketPseudoHeaders) {
 
   // Future header blocks may send the `:protocol` pseudo-header for CONNECT
   // requests.
-  v.AllowConnect();
+  v.SetAllowExtendedConnect();
 
   v.StartHeaderBlock();
   for (Header to_add : kSampleRequestPseudoheaders) {
@@ -413,6 +502,30 @@ TEST(HeaderValidatorTest, Response204) {
   EXPECT_EQ(HeaderValidator::HEADER_OK,
             v.ValidateSingleHeader("x-content", "is not present"));
   EXPECT_TRUE(v.FinishHeaderBlock(HeaderType::RESPONSE));
+}
+
+TEST(HeaderValidatorTest, ResponseWithMultipleIdenticalContentLength) {
+  HeaderValidator v;
+
+  v.StartHeaderBlock();
+  EXPECT_EQ(HeaderValidator::HEADER_OK,
+            v.ValidateSingleHeader(":status", "200"));
+  EXPECT_EQ(HeaderValidator::HEADER_OK,
+            v.ValidateSingleHeader("content-length", "13"));
+  EXPECT_EQ(HeaderValidator::HEADER_SKIP,
+            v.ValidateSingleHeader("content-length", "13"));
+}
+
+TEST(HeaderValidatorTest, ResponseWithMultipleDifferingContentLength) {
+  HeaderValidator v;
+
+  v.StartHeaderBlock();
+  EXPECT_EQ(HeaderValidator::HEADER_OK,
+            v.ValidateSingleHeader(":status", "200"));
+  EXPECT_EQ(HeaderValidator::HEADER_OK,
+            v.ValidateSingleHeader("content-length", "13"));
+  EXPECT_EQ(HeaderValidator::HEADER_FIELD_INVALID,
+            v.ValidateSingleHeader("content-length", "17"));
 }
 
 TEST(HeaderValidatorTest, Response204WithContentLengthZero) {

@@ -1,12 +1,12 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <limits>
 
-#include "base/callback_helpers.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
+#include "base/functional/callback_helpers.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_number_conversions.h"
 #include "build/build_config.h"
@@ -17,23 +17,17 @@
 #include "media/base/test_data_util.h"
 #include "media/base/video_decoder_config.h"
 #include "media/base/video_transformation.h"
+#include "media/filters/dav1d_video_decoder.h"
 #include "media/gpu/test/video.h"
 #include "media/gpu/test/video_frame_file_writer.h"
 #include "media/gpu/test/video_frame_validator.h"
+#include "media/gpu/test/video_player/decoder_listener.h"
+#include "media/gpu/test/video_player/decoder_wrapper.h"
 #include "media/gpu/test/video_player/frame_renderer_dummy.h"
-#include "media/gpu/test/video_player/frame_renderer_thumbnail.h"
-#include "media/gpu/test/video_player/video_decoder_client.h"
-#include "media/gpu/test/video_player/video_player.h"
 #include "media/gpu/test/video_player/video_player_test_environment.h"
 #include "media/gpu/test/video_test_helpers.h"
 #include "media/media_buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-#if BUILDFLAG(ENABLE_DAV1D_DECODER)
-#include "media/filters/dav1d_video_decoder.h"
-#elif BUILDFLAG(ENABLE_LIBGAV1_DECODER)
-#include "media/filters/gav1_video_decoder.h"
-#endif
 
 namespace media {
 namespace test {
@@ -49,6 +43,7 @@ constexpr const char* usage_msg =
            [--output_frames=(all|corrupt)] [--output_format=(png|yuv)]
            [--output_limit=<number>] [--output_folder=<folder>]
            [--linear_output] ([--use-legacy]|[--use_vd_vda])
+           [--use-gl=<backend>] [--ozone-platform=<platform>]
            [--disable_vaapi_lock]
            [--gtest_help] [--help]
            [<video path>] [<video metadata path>]
@@ -70,7 +65,7 @@ The following arguments are supported:
   --vmodule             enable verbose mode for the specified module,
                         e.g. --vmodule=*media/gpu*=2.
 
- --validator_type       validate decoded frames, possible values are
+  --validator_type      validate decoded frames, possible values are
                         md5 (default, compare against md5hash of expected
                         frames), ssim (compute SSIM against expected
                         frames, currently allowed for AV1 streams only)
@@ -91,6 +86,12 @@ The following arguments are supported:
   --output_limit        limit the number of frames saved to disk.
   --output_folder       set the folder used to store frames, defaults to
                         "<testname>".
+  --use-gl              specify which GPU backend to use, possible values
+                        include desktop (GLX), egl (GLES w/ ANGLE), and
+                        swiftshader (software rendering)
+  --ozone-platform      specify which Ozone platform to use, possible values
+                        depend on build configuration but normally include
+                        x11, drm, wayland, and headless
   --disable_vaapi_lock  disable the global VA-API lock if applicable,
                         i.e., only on devices that use the VA-API with a libva
                         backend that's known to be thread-safe and only in
@@ -115,10 +116,10 @@ media::test::VideoPlayerTestEnvironment* g_env;
 // Video decode test class. Performs setup and teardown for each single test.
 class VideoDecoderTest : public ::testing::Test {
  public:
-  std::unique_ptr<VideoPlayer> CreateVideoPlayer(
+  std::unique_ptr<DecoderListener> CreateDecoderListener(
       const Video* video,
-      VideoDecoderClientConfig config = VideoDecoderClientConfig(),
-      std::unique_ptr<FrameRenderer> frame_renderer =
+      DecoderWrapperConfig config = DecoderWrapperConfig(),
+      std::unique_ptr<FrameRendererDummy> frame_renderer =
           FrameRendererDummy::Create()) {
     LOG_ASSERT(video);
     std::vector<std::unique_ptr<VideoFrameProcessor>> frame_processors;
@@ -183,9 +184,8 @@ class VideoDecoderTest : public ::testing::Test {
     config.implementation = g_env->GetDecoderImplementation();
     config.linear_output = g_env->ShouldOutputLinearBuffers();
 
-    auto video_player = VideoPlayer::Create(
-        config, g_env->GetGpuMemoryBufferFactory(), std::move(frame_renderer),
-        std::move(frame_processors));
+    auto video_player = DecoderListener::Create(
+        config, std::move(frame_renderer), std::move(frame_processors));
     LOG_ASSERT(video_player);
     LOG_ASSERT(video_player->Initialize(video));
 
@@ -205,11 +205,8 @@ class VideoDecoderTest : public ::testing::Test {
       LOG(ERROR) << "Frame validation by SSIM is allowed for AV1 streams only";
       return false;
     }
-#if BUILDFLAG(ENABLE_DAV1D_DECODER)
+
     Dav1dVideoDecoder decoder(
-#elif BUILDFLAG(ENABLE_LIBGAV1_DECODER)
-    Gav1VideoDecoder decoder(
-#endif
         /*media_log=*/nullptr,
         OffloadableVideoDecoder::OffloadState::kOffloaded);
     VideoDecoderConfig decoder_config(
@@ -279,7 +276,7 @@ class VideoDecoderTest : public ::testing::Test {
 // Play video from start to end. Wait for the kFlushDone event at the end of the
 // stream, that notifies us all frames have been decoded.
 TEST_F(VideoDecoderTest, FlushAtEndOfStream) {
-  auto tvp = CreateVideoPlayer(g_env->Video());
+  auto tvp = CreateDecoderListener(g_env->Video());
 
   tvp->Play();
   EXPECT_TRUE(tvp->WaitForFlushDone());
@@ -291,7 +288,7 @@ TEST_F(VideoDecoderTest, FlushAtEndOfStream) {
 
 // Flush the decoder immediately after initialization.
 TEST_F(VideoDecoderTest, FlushAfterInitialize) {
-  auto tvp = CreateVideoPlayer(g_env->Video());
+  auto tvp = CreateDecoderListener(g_env->Video());
 
   tvp->Flush();
   EXPECT_TRUE(tvp->WaitForFlushDone());
@@ -305,7 +302,7 @@ TEST_F(VideoDecoderTest, FlushAfterInitialize) {
 
 // Reset the decoder immediately after initialization.
 TEST_F(VideoDecoderTest, ResetAfterInitialize) {
-  auto tvp = CreateVideoPlayer(g_env->Video());
+  auto tvp = CreateDecoderListener(g_env->Video());
 
   tvp->Reset();
   EXPECT_TRUE(tvp->WaitForResetDone());
@@ -320,7 +317,7 @@ TEST_F(VideoDecoderTest, ResetAfterInitialize) {
 
 // Reset the decoder when the middle of the stream is reached.
 TEST_F(VideoDecoderTest, ResetMidStream) {
-  auto tvp = CreateVideoPlayer(g_env->Video());
+  auto tvp = CreateDecoderListener(g_env->Video());
 
   tvp->Play();
   EXPECT_TRUE(tvp->WaitForFrameDecoded(g_env->Video()->NumFrames() / 2));
@@ -343,7 +340,7 @@ TEST_F(VideoDecoderTest, ResetMidStream) {
 
 // Reset the decoder when the end of the stream is reached.
 TEST_F(VideoDecoderTest, ResetEndOfStream) {
-  auto tvp = CreateVideoPlayer(g_env->Video());
+  auto tvp = CreateDecoderListener(g_env->Video());
 
   tvp->Play();
   EXPECT_TRUE(tvp->WaitForFlushDone());
@@ -362,7 +359,7 @@ TEST_F(VideoDecoderTest, ResetEndOfStream) {
 // Reset the decoder immediately when the end-of-stream flush starts, without
 // waiting for a kFlushDone event.
 TEST_F(VideoDecoderTest, ResetBeforeFlushDone) {
-  auto tvp = CreateVideoPlayer(g_env->Video());
+  auto tvp = CreateDecoderListener(g_env->Video());
 
   // Reset when a kFlushing event is received.
   tvp->Play();
@@ -389,10 +386,10 @@ TEST_F(VideoDecoderTest, ResetAfterFirstConfigInfo) {
       g_env->Video()->Codec() != media::VideoCodec::kHEVC)
     GTEST_SKIP();
 
-  auto tvp = CreateVideoPlayer(g_env->Video());
+  auto tvp = CreateDecoderListener(g_env->Video());
 
-  tvp->PlayUntil(VideoPlayerEvent::kConfigInfo);
-  EXPECT_TRUE(tvp->WaitForEvent(VideoPlayerEvent::kConfigInfo));
+  tvp->PlayUntil(DecoderListener::Event::kConfigInfo);
+  EXPECT_TRUE(tvp->WaitForEvent(DecoderListener::Event::kConfigInfo));
   tvp->Reset();
   EXPECT_TRUE(tvp->WaitForResetDone());
   size_t numFramesDecoded = tvp->GetFrameDecodedCount();
@@ -403,7 +400,7 @@ TEST_F(VideoDecoderTest, ResetAfterFirstConfigInfo) {
   EXPECT_EQ(tvp->GetFlushDoneCount(), 1u);
   EXPECT_EQ(tvp->GetFrameDecodedCount(),
             numFramesDecoded + g_env->Video()->NumFrames());
-  EXPECT_GE(tvp->GetEventCount(VideoPlayerEvent::kConfigInfo), 1u);
+  EXPECT_GE(tvp->GetEventCount(DecoderListener::Event::kConfigInfo), 1u);
   EXPECT_TRUE(tvp->WaitForFrameProcessors());
 }
 
@@ -411,10 +408,10 @@ TEST_F(VideoDecoderTest, ResolutionChangeAbortedByReset) {
   if (g_env->GetDecoderImplementation() != DecoderImplementation::kVDVDA)
     GTEST_SKIP();
 
-  auto tvp = CreateVideoPlayer(g_env->Video());
+  auto tvp = CreateDecoderListener(g_env->Video());
 
-  tvp->PlayUntil(VideoPlayerEvent::kNewBuffersRequested);
-  EXPECT_TRUE(tvp->WaitForEvent(VideoPlayerEvent::kNewBuffersRequested));
+  tvp->PlayUntil(DecoderListener::Event::kNewBuffersRequested);
+  EXPECT_TRUE(tvp->WaitForEvent(DecoderListener::Event::kNewBuffersRequested));
 
   // TODO(b/192523692): Add a new test case that continues passing input buffers
   // between the resolution change has been aborted and resetting the decoder.
@@ -434,9 +431,9 @@ TEST_F(VideoDecoderTest, ResolutionChangeAbortedByReset) {
 // Play video from start to end. Multiple buffer decodes will be queued in the
 // decoder, without waiting for the result of the previous decode requests.
 TEST_F(VideoDecoderTest, FlushAtEndOfStream_MultipleOutstandingDecodes) {
-  VideoDecoderClientConfig config;
+  DecoderWrapperConfig config;
   config.max_outstanding_decode_requests = 4;
-  auto tvp = CreateVideoPlayer(g_env->Video(), config);
+  auto tvp = CreateDecoderListener(g_env->Video(), config);
 
   tvp->Play();
   EXPECT_TRUE(tvp->WaitForFlushDone());
@@ -451,10 +448,10 @@ TEST_F(VideoDecoderTest, FlushAtEndOfStream_MultipleConcurrentDecodes) {
   // The minimal number of concurrent decoders we expect to be supported.
   constexpr size_t kMinSupportedConcurrentDecoders = 3;
 
-  std::vector<std::unique_ptr<VideoPlayer>> tvps(
+  std::vector<std::unique_ptr<DecoderListener>> tvps(
       kMinSupportedConcurrentDecoders);
   for (size_t i = 0; i < kMinSupportedConcurrentDecoders; ++i)
-    tvps[i] = CreateVideoPlayer(g_env->Video());
+    tvps[i] = CreateDecoderListener(g_env->Video());
 
   for (size_t i = 0; i < kMinSupportedConcurrentDecoders; ++i)
     tvps[i]->Play();
@@ -472,8 +469,8 @@ TEST_F(VideoDecoderTest, FlushAtEndOfStream_MultipleConcurrentDecodes) {
 // video's configuration (e.g. codec and resolution). The test only verifies
 // initialization and doesn't decode the video.
 TEST_F(VideoDecoderTest, Initialize) {
-  auto tvp = CreateVideoPlayer(g_env->Video());
-  EXPECT_EQ(tvp->GetEventCount(VideoPlayerEvent::kInitialized), 1u);
+  auto tvp = CreateDecoderListener(g_env->Video());
+  EXPECT_EQ(tvp->GetEventCount(DecoderListener::Event::kInitialized), 1u);
 }
 
 // Test video decoder re-initialization. Re-initialization is only supported by
@@ -484,12 +481,12 @@ TEST_F(VideoDecoderTest, Reinitialize) {
     GTEST_SKIP();
 
   // Create and initialize the video decoder.
-  auto tvp = CreateVideoPlayer(g_env->Video());
-  EXPECT_EQ(tvp->GetEventCount(VideoPlayerEvent::kInitialized), 1u);
+  auto tvp = CreateDecoderListener(g_env->Video());
+  EXPECT_EQ(tvp->GetEventCount(DecoderListener::Event::kInitialized), 1u);
 
   // Re-initialize the video decoder, without having played the video.
   EXPECT_TRUE(tvp->Initialize(g_env->Video()));
-  EXPECT_EQ(tvp->GetEventCount(VideoPlayerEvent::kInitialized), 2u);
+  EXPECT_EQ(tvp->GetEventCount(DecoderListener::Event::kInitialized), 2u);
 
   // Play the video from start to end.
   tvp->Play();
@@ -500,7 +497,7 @@ TEST_F(VideoDecoderTest, Reinitialize) {
 
   // Try re-initializing the video decoder again.
   EXPECT_TRUE(tvp->Initialize(g_env->Video()));
-  EXPECT_EQ(tvp->GetEventCount(VideoPlayerEvent::kInitialized), 3u);
+  EXPECT_EQ(tvp->GetEventCount(DecoderListener::Event::kInitialized), 3u);
 }
 
 // Create a video decoder and immediately destroy it without initializing. The
@@ -508,10 +505,9 @@ TEST_F(VideoDecoderTest, Reinitialize) {
 // of scope at the end of the test. The test will pass if no asserts or crashes
 // are triggered upon destroying.
 TEST_F(VideoDecoderTest, DestroyBeforeInitialize) {
-  VideoDecoderClientConfig config = VideoDecoderClientConfig();
+  DecoderWrapperConfig config = DecoderWrapperConfig();
   config.implementation = g_env->GetDecoderImplementation();
-  auto tvp = VideoPlayer::Create(config, g_env->GetGpuMemoryBufferFactory(),
-                                 FrameRendererDummy::Create());
+  auto tvp = DecoderListener::Create(config, FrameRendererDummy::Create());
   EXPECT_NE(tvp, nullptr);
 }
 
@@ -547,12 +543,8 @@ int main(int argc, char** argv) {
   bool use_legacy = false;
   bool use_vd_vda = false;
   bool linear_output = false;
-  std::vector<base::Feature> disabled_features;
-  std::vector<base::Feature> enabled_features;
-
-#if defined(ARCH_CPU_ARM_FAMILY)
-  enabled_features.push_back(media::kPreferLibYuvImageProcessor);
-#endif  // defined(ARCH_CPU_ARM_FAMILY)
+  std::vector<base::test::FeatureRef> disabled_features;
+  std::vector<base::test::FeatureRef> enabled_features;
 
   media::test::DecoderImplementation implementation =
       media::test::DecoderImplementation::kVD;
@@ -560,6 +552,8 @@ int main(int argc, char** argv) {
   for (base::CommandLine::SwitchMap::const_iterator it = switches.begin();
        it != switches.end(); ++it) {
     if (it->first.find("gtest_") == 0 ||               // Handled by GoogleTest
+        it->first == "ozone-platform" ||               // Handled by Chrome
+        it->first == "use-gl" ||                       // Handled by Chrome
         it->first == "v" || it->first == "vmodule") {  // Handled by Chrome
       continue;
     }

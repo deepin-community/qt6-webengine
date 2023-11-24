@@ -9,7 +9,7 @@
 #include "include/core/SkScalar.h"
 #include "include/core/SkSpan.h"
 #include "include/core/SkTypes.h"
-#include "include/private/SkTArray.h"
+#include "include/private/base/SkTArray.h"
 #include "modules/skparagraph/include/DartTypes.h"
 #include "modules/skparagraph/include/TextStyle.h"
 #include "modules/skshaper/include/SkShaper.h"
@@ -120,7 +120,7 @@ public:
         return SkRect::MakeXYWH(fOffset.fX, fOffset.fY, fAdvance.fX, fAdvance.fY);
     }
 
-    SkScalar addSpacesAtTheEnd(SkScalar space, Cluster* cluster);
+    void addSpacesAtTheEnd(SkScalar space, Cluster* cluster);
     SkScalar addSpacesEvenly(SkScalar space, Cluster* cluster);
     SkScalar addSpacesEvenly(SkScalar space);
     void shift(const Cluster* cluster, SkScalar offset);
@@ -143,12 +143,16 @@ public:
     void iterateThroughClusters(const ClusterVisitor& visitor);
 
     std::tuple<bool, ClusterIndex, ClusterIndex> findLimitingClusters(TextRange text) const;
+    std::tuple<bool, TextIndex, TextIndex> findLimitingGlyphClusters(TextRange text) const;
     std::tuple<bool, TextIndex, TextIndex> findLimitingGraphemes(TextRange text) const;
     SkSpan<const SkGlyphID> glyphs() const {
         return SkSpan<const SkGlyphID>(fGlyphs.begin(), fGlyphs.size());
     }
     SkSpan<const SkPoint> positions() const {
         return SkSpan<const SkPoint>(fPositions.begin(), fPositions.size());
+    }
+    SkSpan<const SkPoint> offsets() const {
+        return SkSpan<const SkPoint>(fOffsets.begin(), fOffsets.size());
     }
     SkSpan<const uint32_t> clusterIndexes() const {
         return SkSpan<const uint32_t>(fClusterIndexes.begin(), fClusterIndexes.size());
@@ -157,8 +161,10 @@ public:
     void commit() { }
 
     void resetJustificationShifts() {
-        fJustificationShifts.reset();
+        fJustificationShifts.clear();
     }
+
+    bool isResolved() const;
 private:
     friend class ParagraphImpl;
     friend class TextLine;
@@ -183,11 +189,13 @@ private:
     struct GlyphData {
         SkSTArray<64, SkGlyphID, true> glyphs;
         SkSTArray<64, SkPoint, true> positions;
+        SkSTArray<64, SkPoint, true> offsets;
         SkSTArray<64, uint32_t, true> clusterIndexes;
     };
     std::shared_ptr<GlyphData> fGlyphData;
     SkSTArray<64, SkGlyphID, true>& fGlyphs;
     SkSTArray<64, SkPoint, true>& fPositions;
+    SkSTArray<64, SkPoint, true>& fOffsets;
     SkSTArray<64, uint32_t, true>& fClusterIndexes;
 
     SkSTArray<64, SkPoint, true> fJustificationShifts; // For justification (current and prev shifts)
@@ -288,7 +296,7 @@ public:
 
     size_t roundPos(SkScalar s) const;
 
-    void space(SkScalar shift, SkScalar space) {
+    void space(SkScalar shift) {
         fWidth += shift;
     }
 
@@ -401,7 +409,6 @@ public:
         if (fForceStrut) {
             return;
         }
-
         fAscent = std::min(fAscent, run->correctAscent());
         fDescent = std::max(fDescent, run->correctDescent());
         fLeading = std::max(fLeading, run->correctLeading());
@@ -427,6 +434,15 @@ public:
         fRawAscent = SK_ScalarMax;
         fRawDescent = SK_ScalarMin;
         fRawLeading = 0;
+    }
+
+    bool isClean() {
+        return (fAscent == SK_ScalarMax &&
+                fDescent == SK_ScalarMin &&
+                fLeading == 0 &&
+                fRawAscent == SK_ScalarMax &&
+                fRawDescent == SK_ScalarMin &&
+                fRawLeading == 0);
     }
 
     SkScalar delta() const { return height() - ideographicBaseline(); }
@@ -463,6 +479,11 @@ public:
         fLeading = l;
     }
 
+    void updateRawData(SkScalar ra, SkScalar rd) {
+        fRawAscent = ra;
+        fRawDescent = rd;
+    }
+
     SkScalar alphabeticBaseline() const { return fLeading / 2 - fAscent; }
     SkScalar ideographicBaseline() const { return fDescent - fAscent + fLeading; }
     SkScalar deltaBaselines() const { return fLeading / 2 + fDescent; }
@@ -477,6 +498,7 @@ public:
 
 private:
 
+    friend class ParagraphImpl;
     friend class TextWrapper;
     friend class TextLine;
 

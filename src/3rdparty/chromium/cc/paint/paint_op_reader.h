@@ -1,10 +1,12 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CC_PAINT_PAINT_OP_READER_H_
 #define CC_PAINT_PAINT_OP_READER_H_
 
+#include "base/bits.h"
+#include "base/memory/raw_ref.h"
 #include "base/memory/scoped_refptr.h"
 #include "cc/paint/paint_export.h"
 #include "cc/paint/paint_filter.h"
@@ -29,24 +31,22 @@ class CC_PAINT_EXPORT PaintOpReader {
  public:
   // The DeserializeOptions passed to the reader must set all fields if it can
   // be used to for deserializing images, paint records or text blobs.
+  // See PaintOpWriter for the alignment requirement for `memory`.
   PaintOpReader(const volatile void* memory,
                 size_t size,
                 const PaintOp::DeserializeOptions& options,
-                bool enable_security_constraints = false)
-      : memory_(static_cast<const volatile char*>(memory) +
-                PaintOpWriter::HeaderBytes()),
-        remaining_bytes_(size - PaintOpWriter::HeaderBytes()),
-        options_(options),
-        enable_security_constraints_(enable_security_constraints) {
-    if (size < PaintOpWriter::HeaderBytes())
-      valid_ = false;
-  }
+                bool enable_security_constraints = false);
 
   static void FixupMatrixPostSerialization(SkMatrix* matrix);
-  static bool ReadAndValidateOpHeader(const volatile void* input,
-                                      size_t input_size,
-                                      uint8_t* type,
-                                      uint32_t* skip);
+
+  // This should be called before before reading PaintOp data. This function
+  // should not be called if this PaintOpReader is used to read specific data
+  // instead of a whole PaintOp.
+  bool ReadAndValidateOpHeader(uint8_t* op_type, size_t* serialized_size);
+
+  size_t BufferAlignment() const {
+    return PaintOpWriter::BufferAlignment(enable_security_constraints_);
+  }
 
   bool valid() const { return valid_; }
   size_t remaining_bytes() const { return remaining_bytes_; }
@@ -62,12 +62,12 @@ class CC_PAINT_EXPORT PaintOpReader {
   void Read(SkRect* rect);
   void Read(SkIRect* rect);
   void Read(SkRRect* rect);
+  void Read(SkColor4f* color);
 
   void Read(SkPath* path);
   void Read(PaintFlags* flags);
   void Read(PaintImage* image);
   void Read(sk_sp<SkData>* data);
-  void Read(sk_sp<SkTextBlob>* blob);
   void Read(sk_sp<GrSlug>* slug);
   void Read(sk_sp<PaintFilter>* filter);
   void Read(sk_sp<PaintShader>* shader);
@@ -123,8 +123,15 @@ class CC_PAINT_EXPORT PaintOpReader {
   // would exceed the available budfer.
   const volatile void* ExtractReadableMemory(size_t bytes);
 
-  // Aligns the memory to the given alignment.
+  // Aligns the memory to the given `alignment` which must be within the range
+  // of [PaintOpWriter::kDefaultAlignment, BufferAlignment()].
   void AlignMemory(size_t alignment);
+
+  void AssertFieldAlignment() {
+#if DCHECK_IS_ON()
+    PaintOpWriter::AssertAlignment(memory_, PaintOpWriter::kDefaultAlignment);
+#endif
+  }
 
  private:
   enum class DeserializationError {
@@ -142,7 +149,7 @@ class CC_PAINT_EXPORT PaintOpReader {
     kInsufficientRemainingBytes_Read_SkData = 9,
     kInsufficientRemainingBytes_Read_SkPath = 10,
     kInsufficientRemainingBytes_Read_SkRegion = 11,
-    kInsufficientRemainingBytes_Read_SkTextBlob = 12,
+    kInsufficientRemainingBytes_Read_GrSlug = 12,
     kInsufficientRemainingBytes_ReadData = 13,
     kInsufficientRemainingBytes_ReadFlattenable = 14,
     kInsufficientRemainingBytes_ReadMatrixConvolutionPaintFilter = 15,
@@ -173,7 +180,7 @@ class CC_PAINT_EXPORT PaintOpReader {
     kSkPathEffectUnflattenFailure = 40,
     kSkPathReadFromMemoryFailure = 41,
     kSkRegionReadFromMemoryFailure = 42,
-    kSkTextBlobDeserializeFailure = 43,
+    kGrSlugDeserializeFailure = 43,
     kUnexpectedPaintShaderType = 44,
     kUnexpectedSerializedImageType = 45,
     kZeroMailbox = 46,
@@ -284,20 +291,18 @@ class CC_PAINT_EXPORT PaintOpReader {
   void ReadLightingSpotPaintFilter(
       sk_sp<PaintFilter>* filter,
       const absl::optional<PaintFilter::CropRect>& crop_rect);
-  void ReadStretchPaintFilter(
-      sk_sp<PaintFilter>* filter,
-      const absl::optional<PaintFilter::CropRect>& crop_rect);
 
   // Returns the size of the read record, 0 if error.
-  size_t Read(sk_sp<PaintRecord>* record);
+  size_t Read(absl::optional<PaintRecord>* record);
 
   void Read(SkRegion* region);
   uint8_t* CopyScratchSpace(size_t bytes);
+  void DidRead(size_t bytes_read);
 
   const volatile char* memory_ = nullptr;
   size_t remaining_bytes_ = 0u;
   bool valid_ = true;
-  const PaintOp::DeserializeOptions& options_;
+  const raw_ref<const PaintOp::DeserializeOptions> options_;
 
   // Indicates that the data was serialized with the following constraints:
   // 1) PaintRecords and SkDrawLoopers are ignored.

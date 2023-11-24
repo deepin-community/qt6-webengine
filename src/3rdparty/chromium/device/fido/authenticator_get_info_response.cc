@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/containers/contains.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/ranges/algorithm.h"
 #include "components/cbor/values.h"
 #include "components/cbor/writer.h"
@@ -103,6 +104,14 @@ std::vector<uint8_t> AuthenticatorGetInfoResponse::EncodeToCBOR(
         0x08, base::strict_cast<int64_t>(*response.max_credential_id_length));
   }
 
+  if (response.transports) {
+    std::vector<cbor::Value> transport_values;
+    for (FidoTransportProtocol transport : *response.transports) {
+      transport_values.emplace_back(ToString(transport));
+    }
+    device_info_map.emplace(0x09, std::move(transport_values));
+  }
+
   if (response.remaining_discoverable_credentials) {
     device_info_map.emplace(0x14,
                             base::strict_cast<int64_t>(
@@ -139,9 +148,9 @@ std::vector<uint8_t> AuthenticatorGetInfoResponse::EncodeToCBOR(
         cbor::Value(base::strict_cast<int64_t>(*response.min_pin_length)));
   }
 
-  if (response.max_cred_blob_length) {
-    device_info_map.emplace(
-        0x0f, base::strict_cast<int64_t>(*response.max_cred_blob_length));
+  if (response.options.max_cred_blob_length) {
+    device_info_map.emplace(0x0f, base::strict_cast<int64_t>(
+                                      *response.options.max_cred_blob_length));
   }
 
   auto encoded_bytes =

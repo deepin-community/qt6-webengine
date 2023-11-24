@@ -1,11 +1,12 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "extensions/browser/api/system_network/system_network_api.h"
-#include "build/build_config.h"
+
 #include "extensions/browser/api_test_utils.h"
 #include "extensions/browser/api_unittest.h"
+#include "extensions/common/api/system_network.h"
 #include "extensions/common/extension_builder.h"
 
 using extensions::api_test_utils::RunFunctionAndReturnSingleResult;
@@ -20,13 +21,7 @@ using SystemNetworkApiUnitTest = extensions::ApiUnitTest;
 
 }  // namespace
 
-// TODO(crbug.com/1255187): Fails on Fuchsia running with run-test-component.
-#if BUILDFLAG(IS_FUCHSIA)
-#define MAYBE_GetNetworkInterfaces DISABLED_GetNetworkInterfaces
-#else
-#define MAYBE_GetNetworkInterfaces GetNetworkInterfaces
-#endif  // BUILDFLAG(IS_FUCHSIA)
-TEST_F(SystemNetworkApiUnitTest, MAYBE_GetNetworkInterfaces) {
+TEST_F(SystemNetworkApiUnitTest, GetNetworkInterfaces) {
   scoped_refptr<SystemNetworkGetNetworkInterfacesFunction> socket_function(
       new SystemNetworkGetNetworkInterfacesFunction());
   scoped_refptr<const Extension> empty_extension(
@@ -35,16 +30,15 @@ TEST_F(SystemNetworkApiUnitTest, MAYBE_GetNetworkInterfaces) {
   socket_function->set_extension(empty_extension.get());
   socket_function->set_has_callback(true);
 
-  std::unique_ptr<base::Value> result(RunFunctionAndReturnSingleResult(
+  absl::optional<base::Value> result(RunFunctionAndReturnSingleResult(
       socket_function.get(), "[]", browser_context()));
-  ASSERT_EQ(base::Value::Type::LIST, result->type());
+  ASSERT_TRUE(result->is_list());
 
   // All we can confirm is that we have at least one address, but not what it
   // is.
-  base::ListValue* value = static_cast<base::ListValue*>(result.get());
-  ASSERT_TRUE(value->GetListDeprecated().size() > 0);
+  ASSERT_FALSE(result->GetList().empty());
 
-  for (const auto& network_interface_value : value->GetListDeprecated()) {
+  for (const auto& network_interface_value : result->GetList()) {
     NetworkInterface network_interface;
     ASSERT_TRUE(NetworkInterface::Populate(network_interface_value,
                                            &network_interface));

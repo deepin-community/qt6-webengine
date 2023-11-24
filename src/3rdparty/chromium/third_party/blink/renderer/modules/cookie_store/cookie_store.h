@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,6 +17,7 @@
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_receiver.h"
+#include "third_party/blink/renderer/platform/wtf/gc_plugin.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -129,6 +130,7 @@ class CookieStore final : public EventTargetWithInlineData,
   void StopObserving();
 
   // Wraps an always-on Mojo pipe for sending requests to the Network Service.
+  GC_PLUGIN_IGNORE("https://crbug.com/1381979")
   mojo::Remote<network::mojom::blink::RestrictedCookieManager> backend_;
 
   // Wraps a Mojo pipe used to receive cookie change notifications.

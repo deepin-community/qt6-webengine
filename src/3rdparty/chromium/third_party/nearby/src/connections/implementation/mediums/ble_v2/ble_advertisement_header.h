@@ -19,7 +19,6 @@
 
 #include "internal/platform/byte_array.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 namespace mediums {
@@ -60,13 +59,14 @@ class BleAdvertisementHeader {
   bool operator==(const BleAdvertisementHeader &rhs) const;
   template <typename H>
   friend H AbslHashValue(H h, const BleAdvertisementHeader &b) {
-    return H::combine(std::move(h), b.version_, b.extended_advertisement_,
-                      b.num_slots_, b.service_id_bloom_filter_,
-                      b.advertisement_hash_, b.psm_);
+    return H::combine(std::move(h), b.version_,
+                      b.support_extended_advertisement_, b.num_slots_,
+                      b.service_id_bloom_filter_, b.advertisement_hash_,
+                      b.psm_);
   }
 
   BleAdvertisementHeader() = default;
-  BleAdvertisementHeader(Version version, bool extended_advertisement,
+  BleAdvertisementHeader(Version version, bool support_extended_advertisement,
                          int num_slots,
                          const ByteArray &service_id_bloom_filter,
                          const ByteArray &advertisement_hash, int psm);
@@ -82,7 +82,9 @@ class BleAdvertisementHeader {
 
   bool IsValid() const { return version_ == Version::kV2; }
   Version GetVersion() const { return version_; }
-  bool IsExtendedAdvertisement() const { return extended_advertisement_; }
+  bool IsSupportExtendedAdvertisement() const {
+    return support_extended_advertisement_;
+  }
   int GetNumSlots() const { return num_slots_; }
   ByteArray GetServiceIdBloomFilter() const { return service_id_bloom_filter_; }
   ByteArray GetAdvertisementHash() const { return advertisement_hash_; }
@@ -99,7 +101,7 @@ class BleAdvertisementHeader {
   static constexpr int kNumSlotsBitmask = 0x00F;
 
   Version version_ = Version::kUndefined;
-  bool extended_advertisement_ = false;
+  bool support_extended_advertisement_ = false;
   int num_slots_ = 0;
   ByteArray service_id_bloom_filter_;
   ByteArray advertisement_hash_;
@@ -109,6 +111,5 @@ class BleAdvertisementHeader {
 }  // namespace mediums
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location
 
 #endif  // CORE_INTERNAL_MEDIUMS_BLE_V2_BLE_ADVERTISEMENT_HEADER_H_

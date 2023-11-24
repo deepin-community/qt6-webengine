@@ -35,7 +35,6 @@
 
 #include "base/memory/scoped_refptr.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/platform/web_url_loader_mock_factory.h"
 #include "third_party/blink/public/platform/web_url_response.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
 #include "third_party/blink/renderer/core/dom/document.h"
@@ -58,21 +57,18 @@
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support.h"
+#include "third_party/blink/renderer/platform/testing/url_loader_mock_factory.h"
 #include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 #include "v8/include/v8.h"
 
 namespace blink {
 namespace {
 
-void DeactivateNewTransactions(v8::Isolate* isolate) {
-  V8PerIsolateData::From(isolate)->RunEndOfScopeTasks();
-}
-
 class IDBTransactionTest : public testing::Test,
                            public ScopedMockOverlayScrollbars {
  protected:
   void SetUp() override {
-    url_loader_mock_factory_ = WebURLLoaderMockFactory::GetSingletonInstance();
+    url_loader_mock_factory_ = URLLoaderMockFactory::GetSingletonInstance();
     WebURLResponse response;
     response.SetCurrentRequestUrl(KURL("blob:"));
     url_loader_mock_factory_->RegisterURLProtocol(WebString("blob"), response,
@@ -111,7 +107,7 @@ class IDBTransactionTest : public testing::Test,
     store_ = MakeGarbageCollected<IDBObjectStore>(store_metadata, transaction_);
   }
 
-  WebURLLoaderMockFactory* url_loader_mock_factory_;
+  URLLoaderMockFactory* url_loader_mock_factory_;
   Persistent<IDBDatabase> db_;
   Persistent<IDBTransaction> transaction_;
   Persistent<IDBObjectStore> store_;
@@ -141,7 +137,7 @@ TEST_F(IDBTransactionTest, ContextDestroyedEarlyDeath) {
       IDBRequest::Create(scope.GetScriptState(), store_.Get(),
                          transaction_.Get(), IDBRequest::AsyncTraceState());
 
-  DeactivateNewTransactions(scope.GetIsolate());
+  scope.PerformMicrotaskCheckpoint();
 
   request.Clear();  // The transaction is holding onto the request.
   ThreadState::Current()->CollectAllGarbageForTesting();
@@ -178,7 +174,7 @@ TEST_F(IDBTransactionTest, ContextDestroyedAfterDone) {
   Persistent<IDBRequest> request =
       IDBRequest::Create(scope.GetScriptState(), store_.Get(),
                          transaction_.Get(), IDBRequest::AsyncTraceState());
-  DeactivateNewTransactions(scope.GetIsolate());
+  scope.PerformMicrotaskCheckpoint();
 
   // This response should result in an event being enqueued immediately.
   request->HandleResponse(CreateIDBValueForTesting(scope.GetIsolate(), false));
@@ -222,7 +218,7 @@ TEST_F(IDBTransactionTest, ContextDestroyedWithQueuedResult) {
   Persistent<IDBRequest> request =
       IDBRequest::Create(scope.GetScriptState(), store_.Get(),
                          transaction_.Get(), IDBRequest::AsyncTraceState());
-  DeactivateNewTransactions(scope.GetIsolate());
+  scope.PerformMicrotaskCheckpoint();
 
   request->HandleResponse(CreateIDBValueForTesting(scope.GetIsolate(), true));
 
@@ -266,7 +262,7 @@ TEST_F(IDBTransactionTest, ContextDestroyedWithTwoQueuedResults) {
   Persistent<IDBRequest> request2 =
       IDBRequest::Create(scope.GetScriptState(), store_.Get(),
                          transaction_.Get(), IDBRequest::AsyncTraceState());
-  DeactivateNewTransactions(scope.GetIsolate());
+  scope.PerformMicrotaskCheckpoint();
 
   request1->HandleResponse(CreateIDBValueForTesting(scope.GetIsolate(), true));
   request2->HandleResponse(CreateIDBValueForTesting(scope.GetIsolate(), true));
@@ -318,7 +314,7 @@ TEST_F(IDBTransactionTest, DocumentShutdownWithQueuedAndBlockedResults) {
     Persistent<IDBRequest> request2 =
         IDBRequest::Create(scope.GetScriptState(), store_.Get(),
                            transaction_.Get(), IDBRequest::AsyncTraceState());
-    DeactivateNewTransactions(scope.GetIsolate());
+    scope.PerformMicrotaskCheckpoint();
 
     request1->HandleResponse(
         CreateIDBValueForTesting(scope.GetIsolate(), true));
@@ -362,7 +358,7 @@ TEST_F(IDBTransactionTest, TransactionFinish) {
   ThreadState::Current()->CollectAllGarbageForTesting();
   EXPECT_EQ(1U, live_transactions->size());
 
-  DeactivateNewTransactions(scope.GetIsolate());
+  scope.PerformMicrotaskCheckpoint();
 
   ThreadState::Current()->CollectAllGarbageForTesting();
   EXPECT_EQ(1U, live_transactions->size());

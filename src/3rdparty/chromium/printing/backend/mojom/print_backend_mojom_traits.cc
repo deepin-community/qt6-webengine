@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include <map>
 
+#include "base/containers/contains.h"
 #include "base/logging.h"
 #include "build/build_config.h"
 #include "ui/gfx/geometry/mojom/geometry.mojom-shared.h"
@@ -111,8 +112,28 @@ bool StructTraits<printing::mojom::PaperDataView,
                   printing::PrinterSemanticCapsAndDefaults::Paper>::
     Read(printing::mojom::PaperDataView data,
          printing::PrinterSemanticCapsAndDefaults::Paper* out) {
-  return data.ReadDisplayName(&out->display_name) &&
-         data.ReadVendorId(&out->vendor_id) && data.ReadSizeUm(&out->size_um);
+  absl::optional<gfx::Rect> printable_area_um;
+  if (!data.ReadDisplayName(&out->display_name) ||
+      !data.ReadVendorId(&out->vendor_id) || !data.ReadSizeUm(&out->size_um) ||
+      !data.ReadPrintableAreaUm(&printable_area_um)) {
+    return false;
+  }
+
+  // For backwards compatibility, allow printable area to be missing. Set the
+  // default printable area to be the page size.
+  out->printable_area_um = printable_area_um.value_or(gfx::Rect(out->size_um));
+
+  // Allow empty Papers, since PrinterSemanticCapsAndDefaults can have empty
+  // default Papers.
+  if (out->display_name.empty() && out->vendor_id.empty() &&
+      out->size_um.IsEmpty() && out->printable_area_um.IsEmpty()) {
+    return true;
+  }
+
+  // Invalid if the printable area is empty or if the printable area is out of
+  // bounds of the paper size.
+  return !out->printable_area_um.IsEmpty() &&
+         gfx::Rect(out->size_um).Contains(out->printable_area_um);
 }
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -179,6 +200,25 @@ bool StructTraits<printing::mojom::AdvancedCapabilityDataView,
 }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
+#if BUILDFLAG(IS_WIN)
+// static
+bool StructTraits<printing::mojom::PageOutputQualityAttributeDataView,
+                  printing::PageOutputQualityAttribute>::
+    Read(printing::mojom::PageOutputQualityAttributeDataView data,
+         printing::PageOutputQualityAttribute* out) {
+  return data.ReadDisplayName(&out->display_name) && data.ReadName(&out->name);
+}
+
+// static
+bool StructTraits<printing::mojom::PageOutputQualityDataView,
+                  printing::PageOutputQuality>::
+    Read(printing::mojom::PageOutputQualityDataView data,
+         printing::PageOutputQuality* out) {
+  return data.ReadQualities(&out->qualities) &&
+         data.ReadDefaultQuality(&out->default_quality);
+}
+#endif
+
 // static
 bool StructTraits<printing::mojom::PrinterSemanticCapsAndDefaultsDataView,
                   printing::PrinterSemanticCapsAndDefaults>::
@@ -239,6 +279,36 @@ bool StructTraits<printing::mojom::PrinterSemanticCapsAndDefaultsDataView,
   }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
+#if BUILDFLAG(IS_WIN)
+  if (!data.ReadPageOutputQuality(&out->page_output_quality)) {
+    return false;
+  }
+  DuplicateChecker<printing::PageOutputQualityAttribute>
+      page_output_quality_dup_checker;
+  if (out->page_output_quality) {
+    printing::PageOutputQualityAttributes qualities =
+        out->page_output_quality->qualities;
+    absl::optional<std::string> default_quality =
+        out->page_output_quality->default_quality;
+
+    // If non-null `default_quality`, there should be a matching element in
+    // `qualities` array.
+    if (default_quality) {
+      if (!base::Contains(qualities, *default_quality,
+                          &printing::PageOutputQualityAttribute::name)) {
+        DLOG(ERROR) << "Non-null default quality, but page output qualities "
+                       "does not contain default quality";
+        return false;
+      }
+    }
+
+    // There should be no duplicates in `qualities` array.
+    if (page_output_quality_dup_checker.HasDuplicates(qualities)) {
+      DLOG(ERROR) << "Duplicate page output qualities detected.";
+      return false;
+    }
+  }
+#endif
   return true;
 }
 

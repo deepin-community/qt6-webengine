@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,10 +34,9 @@ class MultiColumnFragmentainerGroupTest : public RenderingTest {
 
 void MultiColumnFragmentainerGroupTest::SetUp() {
   RenderingTest::SetUp();
-  scoped_refptr<ComputedStyle> style =
-      GetDocument().GetStyleResolver().CreateComputedStyle();
+  const ComputedStyle& style = GetDocument().GetStyleResolver().InitialStyle();
   flow_thread_ = LayoutMultiColumnFlowThread::CreateAnonymous(
-      GetDocument(), *style.get(), /* needs_paint_layer */ true);
+      GetDocument(), style, /* needs_paint_layer */ true);
   column_set_ = LayoutMultiColumnSet::CreateAnonymous(*flow_thread_,
                                                       *flow_thread_->Style());
 }

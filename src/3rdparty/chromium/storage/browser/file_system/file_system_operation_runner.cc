@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,12 +11,14 @@
 #include <utility>
 
 #include "base/auto_reset.h"
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/ptr_util.h"
-#include "base/threading/thread_task_runner_handle.h"
-#include "net/url_request/url_request_context.h"
+#include "base/task/bind_post_task.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "storage/browser/blob/shareable_file_reference.h"
 #include "storage/browser/file_system/copy_or_move_hook_delegate.h"
 #include "storage/browser/file_system/file_observers.h"
@@ -380,7 +382,7 @@ OperationID FileSystemOperationRunner::TouchFile(
 }
 
 OperationID FileSystemOperationRunner::OpenFile(const FileSystemURL& url,
-                                                int file_flags,
+                                                uint32_t file_flags,
                                                 OpenFileCallback callback) {
   base::File::Error error = base::File::FILE_OK;
   std::unique_ptr<FileSystemOperation> operation =
@@ -393,6 +395,10 @@ OperationID FileSystemOperationRunner::OpenFile(const FileSystemURL& url,
                 base::OnceClosure());
     return id;
   }
+
+  // This file might be passed to an untrusted process.
+  file_flags = base::File::AddFlagsForPassingToUntrustedProcess(file_flags);
+
   if (file_flags &
       (base::File::FLAG_CREATE | base::File::FLAG_OPEN_ALWAYS |
        base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_OPEN_TRUNCATED |
@@ -567,7 +573,7 @@ void FileSystemOperationRunner::DidFinish(const OperationID id,
 
   if (is_beginning_operation_) {
     finished_operations_.insert(id);
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&FileSystemOperationRunner::DidFinish,
                                   weak_ptr_, id, std::move(callback), rv));
     return;
@@ -588,7 +594,7 @@ void FileSystemOperationRunner::DidGetMetadata(
 
   if (is_beginning_operation_) {
     finished_operations_.insert(id);
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(&FileSystemOperationRunner::DidGetMetadata, weak_ptr_,
                        id, std::move(callback), rv, file_info));
@@ -611,7 +617,7 @@ void FileSystemOperationRunner::DidReadDirectory(
 
   if (is_beginning_operation_) {
     finished_operations_.insert(id);
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(&FileSystemOperationRunner::DidReadDirectory, weak_ptr_,
                        id, callback, rv, std::move(entries), has_more));
@@ -634,7 +640,7 @@ void FileSystemOperationRunner::DidWrite(const OperationID id,
 
   if (is_beginning_operation_) {
     finished_operations_.insert(id);
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(&FileSystemOperationRunner::DidWrite, weak_ptr_, id,
                        callback, rv, bytes, complete));
@@ -657,14 +663,21 @@ void FileSystemOperationRunner::DidOpenFile(
 
   if (is_beginning_operation_) {
     finished_operations_.insert(id);
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(&FileSystemOperationRunner::DidOpenFile, weak_ptr_, id,
                        std::move(callback), std::move(file),
                        std::move(on_close_callback)));
     return;
   }
-  std::move(callback).Run(std::move(file), std::move(on_close_callback));
+  base::ScopedClosureRunner scoped_on_close_callback;
+  if (on_close_callback) {
+    // Wrap `on_close_callback` to ensure it always runs, and on the IO thread.
+    scoped_on_close_callback = base::ScopedClosureRunner(
+        base::BindPostTaskToCurrentDefault(std::move(on_close_callback)));
+  }
+
+  std::move(callback).Run(std::move(file), std::move(scoped_on_close_callback));
   FinishOperation(id);
 }
 
@@ -682,7 +695,7 @@ void FileSystemOperationRunner::DidCreateSnapshot(
 
   if (is_beginning_operation_) {
     finished_operations_.insert(id);
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(&FileSystemOperationRunner::DidCreateSnapshot, weak_ptr_,
                        id, std::move(callback), rv, file_info, platform_path,

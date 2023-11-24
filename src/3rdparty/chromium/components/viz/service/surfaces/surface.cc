@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,6 +15,7 @@
 #include "base/containers/contains.h"
 #include "base/containers/cxx20_erase.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/ranges/algorithm.h"
 #include "base/time/tick_clock.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
@@ -80,11 +81,13 @@ void Surface::PresentationHelper::DidPresent(
 Surface::Surface(const SurfaceInfo& surface_info,
                  SurfaceManager* surface_manager,
                  SurfaceAllocationGroup* allocation_group,
-                 base::WeakPtr<SurfaceClient> surface_client)
+                 base::WeakPtr<SurfaceClient> surface_client,
+                 size_t max_uncommitted_frames)
     : surface_info_(surface_info),
       surface_manager_(surface_manager),
       surface_client_(std::move(surface_client)),
-      allocation_group_(allocation_group) {
+      allocation_group_(allocation_group),
+      max_uncommitted_frames_(max_uncommitted_frames) {
   TRACE_EVENT_ASYNC_BEGIN1(TRACE_DISABLED_BY_DEFAULT("viz.surface_lifetime"),
                            "Surface", this, "surface_info",
                            surface_info.ToString());
@@ -96,8 +99,6 @@ Surface::Surface(const SurfaceInfo& surface_info,
 Surface::~Surface() {
   ClearCopyRequests();
 
-  if (surface_client_)
-    surface_client_->OnSurfaceDestroyed(this);
   surface_manager_->SurfaceDestroyed(this);
 
   UnrefFrameResourcesAndRunCallbacks(std::move(pending_frame_data_));
@@ -117,6 +118,9 @@ Surface::~Surface() {
                          "Surface", this, "surface_info",
                          surface_info_.ToString());
   allocation_group_->UnregisterSurface(this);
+  if (surface_client_) {
+    surface_client_->OnSurfaceDestroyed(this);
+  }
 }
 
 void Surface::SetDependencyDeadline(
@@ -189,30 +193,70 @@ Surface::QueueFrameResult Surface::QueueFrame(
     return QueueFrameResult::REJECTED;
   }
 
-  QueueFrameResult result = QueueFrameResult::ACCEPTED_ACTIVE;
+  // Receive and track the resources referenced from the CompositorFrame
+  // regardless of whether it's pending or active.
+  surface_client_->ReceiveFromChild(frame.resource_list);
+
+  QueueFrameResult result = QueueFrameResult::ACCEPTED_PENDING;
+
+  if (!max_uncommitted_frames_) {
+    result = CommitFrame(FrameData(std::move(frame), frame_index));
+  } else {
+    // Return oldest frame if uncommitted queue is full.
+    DCHECK_LE(uncommitted_frames_.size(), max_uncommitted_frames_);
+    if (uncommitted_frames_.size() == max_uncommitted_frames_) {
+      TRACE_EVENT_INSTANT1("viz", "DropUncommitedFrame",
+                           TRACE_EVENT_SCOPE_THREAD, "queue_length",
+                           uncommitted_frames_.size());
+
+      UnrefFrameResourcesAndRunCallbacks(
+          std::move(uncommitted_frames_.front()));
+      uncommitted_frames_.pop_front();
+    }
+
+    uncommitted_frames_.push_back(FrameData(std::move(frame), frame_index));
+
+    // If we still have space in queue we should send ack the client because we
+    // can receive another frame without dropping it.
+    if (uncommitted_frames_.size() < max_uncommitted_frames_) {
+      TRACE_EVENT_INSTANT1("viz", "AckingUncommitedFrame",
+                           TRACE_EVENT_SCOPE_THREAD, "queue_length",
+                           uncommitted_frames_.size());
+      uncommitted_frames_.back().SendAckIfNeeded(surface_client_.get());
+    }
+
+    surface_manager_->OnSurfaceHasNewUncommittedFrame(this);
+  }
+  // The frame should not fail to display beyond this point. Release the
+  // callback so it is not called.
+  std::ignore = frame_rejected_callback.Release();
+
+  return result;
+}
+
+Surface::QueueFrameResult Surface::CommitFrame(FrameData frame) {
+  TRACE_EVENT1("viz", "Surface::CommitFrame", "SurfaceId",
+               surface_id().ToString());
 
   is_latency_info_taken_ = false;
 
   if (active_frame_data_ || pending_frame_data_)
     previous_frame_surface_id_ = surface_id();
 
-  TakePendingLatencyInfo(&frame.metadata.latency_info);
+  TakePendingLatencyInfo(&frame.frame.metadata.latency_info);
 
   absl::optional<FrameData> previous_pending_frame_data =
       std::move(pending_frame_data_);
   pending_frame_data_.reset();
 
-  UpdateActivationDependencies(frame);
+  UpdateActivationDependencies(frame.frame);
 
-  // Receive and track the resources referenced from the CompositorFrame
-  // regardless of whether it's pending or active.
-  surface_client_->ReceiveFromChild(frame.resource_list);
-
+  QueueFrameResult result = QueueFrameResult::ACCEPTED_ACTIVE;
   if (activation_dependencies_.empty()) {
     // If there are no blockers, then immediately activate the frame.
-    ActivateFrame(FrameData(std::move(frame), frame_index));
+    ActivateFrame(std::move(frame));
   } else {
-    pending_frame_data_ = FrameData(std::move(frame), frame_index);
+    pending_frame_data_ = std::move(frame);
 
     auto traced_value = std::make_unique<base::trace_event::TracedValue>();
     traced_value->BeginArray("Pending");
@@ -240,9 +284,8 @@ Surface::QueueFrameResult Surface::QueueFrame(
   // Returns resources for the previous pending frame.
   UnrefFrameResourcesAndRunCallbacks(std::move(previous_pending_frame_data));
 
-  // The frame should not fail to display beyond this point. Release the
-  // callback so it is not called.
-  std::ignore = frame_rejected_callback.Release();
+  if (surface_client_)
+    surface_client_->OnSurfaceCommitted(this);
 
   return result;
 }
@@ -340,6 +383,14 @@ Surface::FrameData& Surface::FrameData::operator=(FrameData&& other) = default;
 
 Surface::FrameData::~FrameData() = default;
 
+void Surface::FrameData::SendAckIfNeeded(SurfaceClient* client) {
+  if (!frame_acked) {
+    frame_acked = true;
+    if (client)
+      client->SendCompositorFrameAck();
+  }
+}
+
 void Surface::ActivatePendingFrame() {
   DCHECK(pending_frame_data_);
   FrameData frame_data = std::move(*pending_frame_data_);
@@ -354,6 +405,67 @@ void Surface::ActivatePendingFrame() {
   }
 
   ActivateFrame(std::move(frame_data));
+}
+
+void Surface::CommitFramesRecursively(const CommitPredicate& predicate) {
+  TRACE_EVENT1("viz", "Surface::CommitFramesRecursively", "SurfaceId",
+               surface_id().ToString());
+
+  // This should only be called if we use uncommitted frames queue.
+  DCHECK_GT(max_uncommitted_frames_, 0u);
+
+  while (!uncommitted_frames_.empty()) {
+    const auto& ack =
+        uncommitted_frames_.front().frame.metadata.begin_frame_ack;
+
+    if (!predicate.Run(surface_id(), ack.frame_id))
+      break;
+
+    CommitFrame(std::move(uncommitted_frames_.front()));
+    uncommitted_frames_.pop_front();
+  }
+
+  if (HasPendingFrame()) {
+    for (auto& range : pending_frame_data_->frame.metadata.referenced_surfaces)
+      surface_manager_->CommitFramesInRangeRecursively(range, predicate);
+  }
+
+  if (HasActiveFrame()) {
+    for (auto& range : active_frame_data_->frame.metadata.referenced_surfaces)
+      surface_manager_->CommitFramesInRangeRecursively(range, predicate);
+  }
+
+  // If we freed up some space in queue send ack for the last frame if it's
+  // still unacked, so client can continue producing frames.
+  if (uncommitted_frames_.size() < max_uncommitted_frames_) {
+    if (!uncommitted_frames_.empty())
+      uncommitted_frames_.back().SendAckIfNeeded(surface_client_.get());
+
+      // Only last frame can be unacked because we ack frames as we put them in
+      // queue if queue isn't full. If we acked frame above, now verify that
+      // they all are acked, to ensure we ack frame in order.
+#if DCHECK_IS_ON()
+    for (auto& frames : uncommitted_frames_) {
+      DCHECK(frames.frame_acked);
+    }
+#endif
+  }
+}
+
+absl::optional<BeginFrameId> Surface::GetFirstUncommitedFrameId() {
+  if (uncommitted_frames_.empty())
+    return absl::nullopt;
+  return uncommitted_frames_.front().frame.metadata.begin_frame_ack.frame_id;
+}
+
+absl::optional<BeginFrameId> Surface::GetUncommitedFrameIdNewerThan(
+    const BeginFrameId& frame_id) {
+  for (auto& frame : uncommitted_frames_) {
+    if (frame.frame.metadata.begin_frame_ack.frame_id.IsNextInSequenceTo(
+            frame_id))
+      return frame.frame.metadata.begin_frame_ack.frame_id;
+  }
+  return absl::nullopt;
 }
 
 void Surface::UpdateReferencedAllocationGroups(
@@ -668,11 +780,8 @@ Surface::TakePresentationHelperForPresentNotification() {
 }
 
 void Surface::SendAckToClient() {
-  if (!active_frame_data_ || active_frame_data_->frame_acked)
-    return;
-  active_frame_data_->frame_acked = true;
-  if (surface_client_)
-    surface_client_->OnSurfaceProcessed(this);
+  if (active_frame_data_)
+    active_frame_data_->SendAckIfNeeded(surface_client_.get());
 }
 
 void Surface::MarkAsDrawn() {
@@ -718,8 +827,7 @@ void Surface::UnrefFrameResourcesAndRunCallbacks(
     resource.sync_token.Clear();
   surface_client_->UnrefResources(std::move(resources));
 
-  if (!frame_data->frame_acked)
-    surface_client_->OnSurfaceProcessed(this);
+  frame_data->SendAckIfNeeded(surface_client_.get());
 
   // If we won't be getting a presented notification, we'll notify the client
   // when the frame is unref'd.
@@ -761,9 +869,8 @@ void Surface::TakeLatencyInfoFromFrame(
     frame->metadata.latency_info.swap(*latency_info);
     return;
   }
-  std::copy(frame->metadata.latency_info.begin(),
-            frame->metadata.latency_info.end(),
-            std::back_inserter(*latency_info));
+  base::ranges::copy(frame->metadata.latency_info,
+                     std::back_inserter(*latency_info));
   frame->metadata.latency_info.clear();
   if (!ui::LatencyInfo::Verify(*latency_info,
                                "Surface::TakeLatencyInfoFromFrame")) {
@@ -790,7 +897,6 @@ void Surface::OnWillBeDrawn() {
 }
 
 void Surface::ActivatePendingFrameForInheritedDeadline() {
-  DCHECK(HasPendingFrame());
   // Deadline inheritance implies that this surface was blocking the embedder,
   // so there shouldn't be an active frame.
   DCHECK(!HasActiveFrame());

@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <map>
 #include <memory>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "base/types/pass_key.h"
@@ -22,6 +22,7 @@
 namespace gfx {
 class Rect;
 class RoundedCornersF;
+class LinearGradient;
 }  // namespace gfx
 
 namespace ui {
@@ -119,6 +120,14 @@ class VIEWS_EXPORT AnimationSequenceBlock {
       ui::LayerOwner* target,
       const gfx::RoundedCornersF& rounded_corners,
       gfx::Tween::Type tween_type = gfx::Tween::LINEAR);
+  AnimationSequenceBlock& SetGradientMask(
+      ui::Layer* target,
+      const gfx::LinearGradient& gradient_mask,
+      gfx::Tween::Type tween_type = gfx::Tween::LINEAR);
+  AnimationSequenceBlock& SetGradientMask(
+      ui::LayerOwner* target,
+      const gfx::LinearGradient& gradient_mask,
+      gfx::Tween::Type tween_type = gfx::Tween::LINEAR);
   AnimationSequenceBlock& SetVisibility(
       ui::Layer* target,
       bool visible,
@@ -138,6 +147,7 @@ class VIEWS_EXPORT AnimationSequenceBlock {
                                        float,
                                        SkColor,
                                        gfx::RoundedCornersF,
+                                       gfx::LinearGradient,
                                        bool,
                                        gfx::Transform>;
 

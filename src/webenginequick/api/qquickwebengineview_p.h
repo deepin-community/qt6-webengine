@@ -16,6 +16,8 @@
 //
 
 #include <QtWebEngineCore/qtwebenginecoreglobal.h>
+#include <QtWebEngineCore/qwebenginequotarequest.h>
+#include <QtWebEngineCore/qwebenginedownloadrequest.h>
 #include <QtWebEngineQuick/private/qtwebenginequickglobal_p.h>
 #include <QtGui/qcolor.h>
 #include <QtQml/qqmlregistration.h>
@@ -46,7 +48,6 @@ class QWebEngineHistory;
 class QWebEngineLoadingInfo;
 class QWebEngineNavigationRequest;
 class QWebEngineNewWindowRequest;
-class QWebEngineQuotaRequest;
 class QWebEngineRegisterProtocolHandlerRequest;
 class QQuickWebEngineScriptCollection;
 class QQuickWebEngineTouchSelectionMenuRequest;
@@ -80,6 +81,7 @@ class Q_WEBENGINEQUICK_PRIVATE_EXPORT QQuickWebEngineView : public QQuickItem {
 
     Q_PROPERTY(QQuickWebEngineView *inspectedView READ inspectedView WRITE setInspectedView NOTIFY inspectedViewChanged REVISION(1,7) FINAL)
     Q_PROPERTY(QQuickWebEngineView *devToolsView READ devToolsView WRITE setDevToolsView NOTIFY devToolsViewChanged REVISION(1,7) FINAL)
+    Q_PROPERTY(QString devToolsId READ devToolsId CONSTANT REVISION(6,6) FINAL)
 
     Q_PROPERTY(LifecycleState lifecycleState READ lifecycleState WRITE setLifecycleState NOTIFY lifecycleStateChanged REVISION(1,10) FINAL)
     Q_PROPERTY(LifecycleState recommendedState READ recommendedState NOTIFY recommendedStateChanged REVISION(1,10) FINAL)
@@ -212,6 +214,7 @@ QT_WARNING_POP
         RequestClose,
         Unselect,
         SavePage,
+        OpenLinkInNewBackgroundTab, // Not supported in QML
         ViewSource,
 
         ToggleBold,
@@ -228,6 +231,9 @@ QT_WARNING_POP
 
         InsertOrderedList,
         InsertUnorderedList,
+
+        ChangeTextDirectionLTR,
+        ChangeTextDirectionRTL,
 
         WebActionCount
     };
@@ -454,6 +460,7 @@ QT_WARNING_POP
     QQuickWebEngineView *inspectedView() const;
     void setDevToolsView(QQuickWebEngineView *);
     QQuickWebEngineView *devToolsView() const;
+    QString devToolsId();
 
     LifecycleState lifecycleState() const;
     void setLifecycleState(LifecycleState state);
@@ -481,6 +488,9 @@ public Q_SLOTS:
     Q_REVISION(1,3) void printToPdf(const QString &filePath, PrintedPageSizeId pageSizeId = PrintedPageSizeId::A4, PrintedPageOrientation orientation = PrintedPageOrientation::Portrait);
     Q_REVISION(1,3) void printToPdf(const QJSValue &callback, PrintedPageSizeId pageSizeId = PrintedPageSizeId::A4, PrintedPageOrientation orientation = PrintedPageOrientation::Portrait);
     Q_REVISION(1,4) void replaceMisspelledWord(const QString &replacement);
+    Q_REVISION(6, 6) void save(const QString &filePath,
+                               QWebEngineDownloadRequest::SavePageFormat format =
+                                       QWebEngineDownloadRequest::MimeHtmlSaveFormat) const;
 
 private Q_SLOTS:
     void lazyInitialize();
@@ -516,7 +526,10 @@ Q_SIGNALS:
     Q_REVISION(1,4) void colorDialogRequested(QQuickWebEngineColorDialogRequest *request);
     Q_REVISION(1,4) void fileDialogRequested(QQuickWebEngineFileDialogRequest *request);
     Q_REVISION(1,5) void pdfPrintingFinished(const QString &filePath, bool success);
-    Q_REVISION(1,7) void quotaRequested(const QWebEngineQuotaRequest &request);
+#if QT_DEPRECATED_SINCE(6, 5)
+    QT_DEPRECATED_VERSION_X_6_5("Requesting host quota is no longer supported.")
+    Q_REVISION(1, 7) void quotaRequested(const QWebEngineQuotaRequest &request);
+#endif
     Q_REVISION(1,7) void geometryChangeRequested(const QRect &geometry, const QRect &frameGeometry);
     Q_REVISION(1,7) void inspectedViewChanged();
     Q_REVISION(1,7) void devToolsViewChanged();

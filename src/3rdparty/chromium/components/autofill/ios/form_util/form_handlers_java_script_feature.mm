@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,7 +16,7 @@
 #endif
 
 namespace {
-constexpr char kScriptName[] = "form_handlers_js";
+constexpr char kScriptName[] = "form_handlers";
 constexpr char kScriptMessageName[] = "FormHandlersMessage";
 }  // namespace
 
@@ -30,9 +30,9 @@ FormHandlersJavaScriptFeature* FormHandlersJavaScriptFeature::GetInstance() {
 
 FormHandlersJavaScriptFeature::FormHandlersJavaScriptFeature()
     : web::JavaScriptFeature(
-          // TODO(crbug.com/1175793): Move autofill code to kAnyContentWorld
+          // TODO(crbug.com/1175793): Move autofill code to kIsolatedWorld
           // once all scripts are converted to JavaScriptFeatures.
-          ContentWorld::kPageContentWorld,
+          web::ContentWorld::kPageContentWorld,
           {FeatureScript::CreateWithFilename(
               kScriptName,
               FeatureScript::InjectionTime::kDocumentStart,

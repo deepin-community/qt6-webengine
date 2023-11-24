@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,6 +23,7 @@ constexpr size_t kAttestedCredentialDataOffset =
 
 uint8_t AuthenticatorDataFlags(bool user_present,
                                bool user_verified,
+                               bool backup_eligible,
                                bool has_attested_credential_data,
                                bool has_extension_data) {
   return (user_present ? base::strict_cast<uint8_t>(
@@ -31,6 +32,9 @@ uint8_t AuthenticatorDataFlags(bool user_present,
          (user_verified ? base::strict_cast<uint8_t>(
                               AuthenticatorData::Flag::kTestOfUserVerification)
                         : 0) |
+         (backup_eligible ? base::strict_cast<uint8_t>(
+                                AuthenticatorData::Flag::kBackupEligible)
+                          : 0) |
          (has_attested_credential_data
               ? base::strict_cast<uint8_t>(
                     AuthenticatorData::Flag::kAttestation)
@@ -112,6 +116,7 @@ AuthenticatorData::AuthenticatorData(
     base::span<const uint8_t, kRpIdHashLength> rp_id_hash,
     bool user_present,
     bool user_verified,
+    bool backup_eligible,
     uint32_t sign_counter,
     absl::optional<AttestedCredentialData> attested_credential_data,
     absl::optional<cbor::Value> extensions)
@@ -119,6 +124,7 @@ AuthenticatorData::AuthenticatorData(
           rp_id_hash,
           AuthenticatorDataFlags(user_present,
                                  user_verified,
+                                 backup_eligible,
                                  attested_credential_data.has_value(),
                                  extensions.has_value()),
           std::array<uint8_t, kSignCounterLength>{
@@ -135,11 +141,36 @@ AuthenticatorData& AuthenticatorData::operator=(AuthenticatorData&& other) =
 
 AuthenticatorData::~AuthenticatorData() = default;
 
-void AuthenticatorData::DeleteDeviceAaguid() {
+bool AuthenticatorData::DeleteDeviceAaguid() {
   if (!attested_data_)
-    return;
+    return false;
 
-  attested_data_->DeleteAaguid();
+  return attested_data_->DeleteAaguid();
+}
+
+bool AuthenticatorData::EraseExtension(base::StringPiece name) {
+  if (!extensions_) {
+    return false;
+  }
+
+  DCHECK(extensions_->is_map());
+  const cbor::Value::MapValue& orig_map = extensions_->GetMap();
+  const auto it = orig_map.find(cbor::Value(name));
+  if (it == orig_map.end()) {
+    return false;
+  }
+
+  cbor::Value::MapValue new_map;
+  for (const auto& [key, value] : orig_map) {
+    if (key.is_string() && name == key.GetString()) {
+      continue;
+    }
+
+    new_map.emplace(key.Clone(), value.Clone());
+  }
+
+  extensions_ = cbor::Value(std::move(new_map));
+  return true;
 }
 
 std::vector<uint8_t> AuthenticatorData::SerializeToByteArray() const {

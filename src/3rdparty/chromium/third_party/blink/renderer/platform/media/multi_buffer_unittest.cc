@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,9 +11,9 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/circular_deque.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/task/single_thread_task_runner.h"
@@ -97,7 +97,8 @@ class FakeMultiBufferDataProvider : public MultiBuffer::DataProvider {
     --blocks_until_deferred_;
 
     bool ret = true;
-    auto block = base::MakeRefCounted<media::DataBuffer>(kBlockSize);
+    auto block =
+        base::MakeRefCounted<media::DataBuffer>(static_cast<int>(kBlockSize));
     size_t x = 0;
     size_t byte_pos = (fifo_.size() + pos_) * kBlockSize;
     for (x = 0; x < kBlockSize; x++, byte_pos++) {
@@ -266,8 +267,9 @@ TEST_F(MultiBufferTest, ReadAll) {
   size_t end = 10000;
   multibuffer_.SetFileSize(10000);
   multibuffer_.SetMustReadWholeFile(true);
-  MultiBufferReader reader(&multibuffer_, pos, end, base::NullCallback(),
-                           task_runner_);
+  MultiBufferReader reader(&multibuffer_, pos, end,
+                           /*is_client_audio_element=*/false,
+                           base::NullCallback(), task_runner_);
   reader.SetPinRange(2000, 5000);
   reader.SetPreload(1000, 1000);
   while (pos < end) {
@@ -294,8 +296,9 @@ TEST_F(MultiBufferTest, ReadAllAdvanceFirst) {
   size_t end = 10000;
   multibuffer_.SetFileSize(10000);
   multibuffer_.SetMustReadWholeFile(true);
-  MultiBufferReader reader(&multibuffer_, pos, end, base::NullCallback(),
-                           task_runner_);
+  MultiBufferReader reader(&multibuffer_, pos, end,
+                           /*is_client_audio_element=*/false,
+                           base::NullCallback(), task_runner_);
   reader.SetPinRange(2000, 5000);
   reader.SetPreload(1000, 1000);
   while (pos < end) {
@@ -324,8 +327,9 @@ TEST_F(MultiBufferTest, ReadAllAdvanceFirst_NeverDefer) {
   multibuffer_.SetFileSize(10000);
   multibuffer_.SetMaxBlocksAfterDefer(-10000);
   multibuffer_.SetRangeSupported(true);
-  MultiBufferReader reader(&multibuffer_, pos, end, base::NullCallback(),
-                           task_runner_);
+  MultiBufferReader reader(&multibuffer_, pos, end,
+                           /*is_client_audio_element=*/false,
+                           base::NullCallback(), task_runner_);
   reader.SetPinRange(2000, 5000);
   reader.SetPreload(1000, 1000);
   while (pos < end) {
@@ -355,8 +359,9 @@ TEST_F(MultiBufferTest, ReadAllAdvanceFirst_NeverDefer2) {
   multibuffer_.SetFileSize(10000);
   multibuffer_.SetMustReadWholeFile(true);
   multibuffer_.SetMaxBlocksAfterDefer(-10000);
-  MultiBufferReader reader(&multibuffer_, pos, end, base::NullCallback(),
-                           task_runner_);
+  MultiBufferReader reader(&multibuffer_, pos, end,
+                           /*is_client_audio_element=*/false,
+                           base::NullCallback(), task_runner_);
   reader.SetPinRange(2000, 5000);
   reader.SetPreload(1000, 1000);
   while (pos < end) {
@@ -385,8 +390,9 @@ TEST_F(MultiBufferTest, LRUTest) {
   size_t pos = 0;
   size_t end = 10000;
   multibuffer_.SetFileSize(10000);
-  MultiBufferReader reader(&multibuffer_, pos, end, base::NullCallback(),
-                           task_runner_);
+  MultiBufferReader reader(&multibuffer_, pos, end,
+                           /*is_client_audio_element=*/false,
+                           base::NullCallback(), task_runner_);
   reader.SetPreload(10000, 10000);
   // Note, no pinning, all data should end up in LRU.
   EXPECT_EQ(current_size, lru_->Size());
@@ -414,8 +420,9 @@ TEST_F(MultiBufferTest, LRUTest2) {
   size_t pos = 0;
   size_t end = 10000;
   multibuffer_.SetFileSize(10000);
-  MultiBufferReader reader(&multibuffer_, pos, end, base::NullCallback(),
-                           task_runner_);
+  MultiBufferReader reader(&multibuffer_, pos, end,
+                           /*is_client_audio_element=*/false,
+                           base::NullCallback(), task_runner_);
   reader.SetPreload(10000, 10000);
   // Note, no pinning, all data should end up in LRU.
   EXPECT_EQ(current_size, lru_->Size());
@@ -444,8 +451,9 @@ TEST_F(MultiBufferTest, LRUTestExpirationTest) {
   size_t pos = 0;
   size_t end = 10000;
   multibuffer_.SetFileSize(10000);
-  MultiBufferReader reader(&multibuffer_, pos, end, base::NullCallback(),
-                           task_runner_);
+  MultiBufferReader reader(&multibuffer_, pos, end,
+                           /*is_client_audio_element=*/false,
+                           base::NullCallback(), task_runner_);
   reader.SetPreload(10000, 10000);
   // Note, no pinning, all data should end up in LRU.
   EXPECT_EQ(current_size, lru_->Size());
@@ -494,6 +502,7 @@ class ReadHelper {
         reader_(multibuffer,
                 pos_,
                 end_,
+                /*is_client_audio_element=*/false,
                 base::NullCallback(),
                 std::move(task_runner)) {
     reader_.SetPinRange(2000, 5000);

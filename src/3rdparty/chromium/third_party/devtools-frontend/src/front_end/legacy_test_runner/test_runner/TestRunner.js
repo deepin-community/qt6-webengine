@@ -23,6 +23,7 @@ self.Platform = self.Platform || {};
 self.Platform.StringUtilities = Platform.StringUtilities;
 self.Platform.MapUtilities = Platform.MapUtilities;
 self.Platform.ArrayUtilities = Platform.ArrayUtilities;
+self.Platform.DOMUtilities = Platform.DOMUtilities;
 self.createPlainTextSearchRegex = Platform.StringUtilities.createPlainTextSearchRegex;
 String.sprintf = Platform.StringUtilities.sprintf;
 String.regexSpecialCharacters = Platform.StringUtilities.regexSpecialCharacters;
@@ -233,6 +234,29 @@ export function addSnifferPromise(receiver, methodName) {
   });
 }
 
+/**
+ * @param {Text} textNode
+ * @param {number=} start
+ * @param {number=} end
+ * @return {Text}
+ */
+export function selectTextInTextNode(textNode, start, end) {
+  start = start || 0;
+  end = end || textNode.textContent.length;
+
+  if (start < 0) {
+    start = end + start;
+  }
+
+  const selection = textNode.getComponentSelection();
+  selection.removeAllRanges();
+  const range = textNode.ownerDocument.createRange();
+  range.setStart(textNode, start);
+  range.setEnd(textNode, end);
+  selection.addRange(range);
+  return textNode;
+}
+
 const mappingForLayoutTests = new Map([
   ['panels/animation', 'animation'],
   ['panels/browser_debugger', 'browser_debugger'],
@@ -392,7 +416,7 @@ export function textContentWithLineBreaks(node) {
   let ignoreFirst = false;
   while (currentNode.traverseNextNode(node)) {
     currentNode = currentNode.traverseNextNode(node);
-    if (currentNode.nodeType === Node.TEXT_NODE) {
+    if (currentNode.nodeType === Node.TEXT_NODE && currentNode.parentNode?.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) {
       buffer += currentNode.nodeValue;
     } else if (currentNode.nodeName === 'LI' || currentNode.nodeName === 'TR') {
       if (!ignoreFirst) {
@@ -727,17 +751,17 @@ export function addScriptForFrame(url, content, frame) {
 export const formatters = {
 
   /**
- * @param {*} value
- * @return {string}
- */
+   * @param {*} value
+   * @return {string}
+   */
   formatAsTypeName(value) {
     return '<' + typeof value + '>';
   },
 
   /**
- * @param {*} value
- * @return {string}
- */
+   * @param {*} value
+   * @return {string}
+   */
   formatAsTypeNameOrNull(value) {
     if (value === null) {
       return 'null';
@@ -746,9 +770,9 @@ export const formatters = {
   },
 
   /**
- * @param {*} value
- * @return {string|!Date}
- */
+   * @param {*} value
+   * @return {string|!Date}
+   */
   formatAsRecentTime(value) {
     if (typeof value !== 'object' || !(value instanceof Date)) {
       return formatters.formatAsTypeName(value);
@@ -758,9 +782,9 @@ export const formatters = {
   },
 
   /**
- * @param {string} value
- * @return {string}
- */
+   * @param {string} value
+   * @return {string}
+   */
   formatAsURL(value) {
     if (!value) {
       return value;
@@ -773,9 +797,9 @@ export const formatters = {
   },
 
   /**
- * @param {string} value
- * @return {string}
- */
+   * @param {string} value
+   * @return {string}
+   */
   formatAsDescription(value) {
     if (!value) {
       return value;
@@ -1505,5 +1529,6 @@ TestRunner.runAsyncTestSuite = runAsyncTestSuite;
 TestRunner.dumpInspectedPageElementText = dumpInspectedPageElementText;
 TestRunner.waitForPendingLiveLocationUpdates = waitForPendingLiveLocationUpdates;
 TestRunner.findLineEndingIndexes = findLineEndingIndexes;
+TestRunner.selectTextInTextNode = selectTextInTextNode;
 
 TestRunner.isScrolledToBottom = UI.UIUtils.isScrolledToBottom;

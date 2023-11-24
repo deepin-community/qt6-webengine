@@ -11,7 +11,7 @@
 
 #include "base/base_paths.h"
 #include "base/base_switches.h"
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -21,7 +21,6 @@
 #include "base/path_service.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task/post_task.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
@@ -70,28 +69,28 @@ namespace extensions {
 
 namespace {
 
-std::string GenerateId(const base::DictionaryValue *manifest, const base::FilePath &path)
+std::string GenerateId(const base::Value::Dict &manifest, const base::FilePath &path)
 {
-    std::string raw_key;
+    const std::string *raw_key;
     std::string id_input;
-    CHECK(manifest->GetString(manifest_keys::kPublicKey, &raw_key));
-    CHECK(Extension::ParsePEMKeyBytes(raw_key, &id_input));
+    CHECK(raw_key = manifest.FindString(manifest_keys::kPublicKey));
+    CHECK(Extension::ParsePEMKeyBytes(*raw_key, &id_input));
     std::string id = crx_file::id_util::GenerateId(id_input);
     return id;
 }
 
 // Implementation based on ComponentLoader::ParseManifest.
-std::unique_ptr<base::DictionaryValue> ParseManifest(const std::string &manifest_contents)
+absl::optional<base::Value::Dict> ParseManifest(base::StringPiece manifest_contents)
 {
     JSONStringValueDeserializer deserializer(manifest_contents);
-    std::unique_ptr<base::Value> manifest(deserializer.Deserialize(NULL, NULL));
+    std::unique_ptr<base::Value> manifest = deserializer.Deserialize(nullptr, nullptr);
 
     if (!manifest.get() || !manifest->is_dict()) {
         LOG(ERROR) << "Failed to parse extension manifest.";
-        return NULL;
+        return absl::nullopt;
     }
-    // Transfer ownership to the caller.
-    return base::DictionaryValue::From(std::move(manifest));
+
+    return std::move(*manifest).TakeDict();
 }
 
 } // namespace
@@ -130,20 +129,21 @@ public:
     void Shutdown() override {}
 };
 
-void ExtensionSystemQt::LoadExtension(std::string extension_id, std::unique_ptr<base::DictionaryValue> manifest, const base::FilePath &directory)
+void ExtensionSystemQt::LoadExtension(std::string extension_id, const base::Value::Dict &manifest, const base::FilePath &directory)
 {
     int flags = Extension::REQUIRE_KEY;
     std::string error;
+
     scoped_refptr<const Extension> extension = Extension::Create(
             directory,
             mojom::ManifestLocation::kComponent,
-            *manifest,
+            manifest,
             flags,
             &error);
     if (!extension.get())
         LOG(ERROR) << error;
 
-    base::PostTask(FROM_HERE, {content::BrowserThread::IO},
+    content::GetIOThreadTaskRunner({})->PostTask(FROM_HERE,
             base::BindOnce(&InfoMap::AddExtension,
                            base::Unretained(info_map()),
                            base::RetainedRef(extension),
@@ -192,8 +192,10 @@ void ExtensionSystemQt::NotifyExtensionLoaded(const Extension *extension)
 #if BUILDFLAG(ENABLE_PLUGINS)
     // Register plugins included with the extension.
     // Implementation based on PluginManager::OnExtensionLoaded.
+    bool plugins_changed = false;
     const MimeTypesHandler *handler = MimeTypesHandler::GetHandler(extension);
     if (handler && handler->HasPlugin()) {
+        plugins_changed = true;
         content::WebPluginInfo info;
         info.type = content::WebPluginInfo::PLUGIN_TYPE_BROWSER_PLUGIN;
         info.name = base::UTF8ToUTF16(extension->name());
@@ -215,6 +217,8 @@ void ExtensionSystemQt::NotifyExtensionLoaded(const Extension *extension)
         plugin_service->RefreshPlugins();
         plugin_service->RegisterInternalPlugin(info, true);
     }
+    if (plugins_changed)
+      content::PluginService::GetInstance()->PurgePluginListCache(browser_context_, false);
 #endif // BUILDFLAG(ENABLE_PLUGINS)
 }
 
@@ -332,24 +336,26 @@ void ExtensionSystemQt::Init(bool extensions_enabled)
             std::string pdf_manifest = ui::ResourceBundle::GetSharedInstance().LoadDataResourceString(IDR_PDF_MANIFEST);
             base::ReplaceFirstSubstringAfterOffset(&pdf_manifest, 0, "<NAME>", "chromium-pdf");
 
-            std::unique_ptr<base::DictionaryValue> pdfManifestDict = ParseManifest(pdf_manifest);
+            auto pdfManifestDict = ParseManifest(pdf_manifest);
+            CHECK(pdfManifestDict);
             base::FilePath path;
             base::PathService::Get(base::DIR_QT_LIBRARY_DATA, &path);
             path = path.Append(base::FilePath(FILE_PATH_LITERAL("pdf")));
-            std::string id = GenerateId(pdfManifestDict.get(), path);
-            LoadExtension(id, std::move(pdfManifestDict), path);
+            std::string id = GenerateId(pdfManifestDict.value(), path);
+            LoadExtension(id, pdfManifestDict.value(), path);
         }
 #endif // BUILDFLAG(ENABLE_PDF)
 
 #if BUILDFLAG(ENABLE_HANGOUT_SERVICES_EXTENSION)
         {
             std::string hangout_manifest = ui::ResourceBundle::GetSharedInstance().LoadDataResourceString(IDR_HANGOUT_SERVICES_MANIFEST);
-            std::unique_ptr<base::DictionaryValue> hangoutManifestDict = ParseManifest(hangout_manifest);
+            auto hangoutManifestDict = ParseManifest(hangout_manifest);
+            CHECK(hangoutManifestDict);
             base::FilePath path;
             base::PathService::Get(base::DIR_QT_LIBRARY_DATA, &path);
             path = path.Append(base::FilePath(FILE_PATH_LITERAL("hangout_services")));
-            std::string id = GenerateId(hangoutManifestDict.get(), path);
-            LoadExtension(id, std::move(hangoutManifestDict), path);
+            std::string id = GenerateId(hangoutManifestDict.value(), path);
+            LoadExtension(id, hangoutManifestDict.value(), path);
         }
 #endif // BUILDFLAG(ENABLE_HANGOUT_SERVICES_EXTENSION)
     }
@@ -378,8 +384,7 @@ void ExtensionSystemQt::RegisterExtensionWithRequestContexts(const Extension *ex
     bool incognito_enabled = false;
     bool notifications_disabled = false;
 
-    base::PostTaskAndReply(
-            FROM_HERE, {BrowserThread::IO},
+    content::GetIOThreadTaskRunner({})->PostTaskAndReply(FROM_HERE,
             base::BindOnce(&InfoMap::AddExtension, info_map(),
                            base::RetainedRef(extension), install_time, incognito_enabled,
                            notifications_disabled),
@@ -388,8 +393,7 @@ void ExtensionSystemQt::RegisterExtensionWithRequestContexts(const Extension *ex
 
 void ExtensionSystemQt::UnregisterExtensionWithRequestContexts(const std::string &extension_id)
 {
-    base::PostTask(
-        FROM_HERE, {BrowserThread::IO},
+    content::GetIOThreadTaskRunner({})->PostTask(FROM_HERE,
         base::BindOnce(&InfoMap::RemoveExtension, info_map(), extension_id));
 }
 

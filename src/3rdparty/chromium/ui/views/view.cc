@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,21 +8,24 @@
 #include <memory>
 #include <utility>
 
-#include "base/callback_helpers.h"
 #include "base/check_op.h"
 #include "base/command_line.h"
 #include "base/containers/adapters.h"
 #include "base/containers/contains.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/feature_list.h"
+#include "base/functional/callback_helpers.h"
 #include "base/i18n/rtl.h"
 #include "base/logging.h"
 #include "base/notreached.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/observer_list.h"
+#include "base/ranges/algorithm.h"
 #include "base/scoped_observation.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkRect.h"
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/accessibility/ax_enums.mojom.h"
@@ -46,6 +49,8 @@
 #include "ui/gfx/geometry/angle_conversions.h"
 #include "ui/gfx/geometry/point3_f.h"
 #include "ui/gfx/geometry/point_conversions.h"
+#include "ui/gfx/geometry/rect_f.h"
+#include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/gfx/geometry/transform.h"
 #include "ui/gfx/interpolated_transform.h"
 #include "ui/gfx/scoped_canvas.h"
@@ -193,7 +198,7 @@ void ViewMaskLayer::OnDeviceScaleFactorChanged(float old_device_scale_factor,
 
 void ViewMaskLayer::OnPaintLayer(const ui::PaintContext& context) {
   cc::PaintFlags flags;
-  flags.setAlpha(255);
+  flags.setAlphaf(1.0f);
   flags.setStyle(cc::PaintFlags::kFill_Style);
   flags.setAntiAlias(true);
 
@@ -225,6 +230,8 @@ View::View() {
 }
 
 View::~View() {
+  life_cycle_state_ = LifeCycleState::kDestroying;
+
   if (parent_)
     parent_->RemoveChildView(this);
 
@@ -243,6 +250,12 @@ View::~View() {
     internal::ScopedChildrenLock lock(this);
     for (auto* child : children_) {
       child->parent_ = nullptr;
+
+      // Remove any references to |child| to avoid holding a dangling ptr.
+      if (child->previous_focusable_view_)
+        child->previous_focusable_view_->next_focusable_view_ = nullptr;
+      if (child->next_focusable_view_)
+        child->next_focusable_view_->previous_focusable_view_ = nullptr;
 
       // Since all children are removed here, it is safe to set
       // |child|'s focus list pointers to null and expect any references
@@ -263,8 +276,9 @@ View::~View() {
   for (ViewObserver& observer : observers_)
     observer.OnViewIsDeleting(this);
 
-  for (ui::Layer* layer_beneath : layers_beneath_)
-    layer_beneath->RemoveObserver(this);
+  for (ui::Layer* layer : GetLayersInOrder(ViewLayer::kExclude)) {
+    layer->RemoveObserver(this);
+  }
 
   // Clearing properties explicitly here lets us guarantee that properties
   // outlive |this| (at least the View part of |this|). This is intentionally
@@ -286,16 +300,15 @@ Widget* View::GetWidget() {
   return const_cast<Widget*>(const_cast<const View*>(this)->GetWidget());
 }
 
-void View::ReorderChildView(View* view, int index) {
+void View::ReorderChildView(View* view, size_t index) {
   DCHECK_EQ(view->parent_, this);
-  const auto i = std::find(children_.begin(), children_.end(), view);
+  const auto i = base::ranges::find(children_, view);
   DCHECK(i != children_.end());
 
   // If |view| is already at the desired position, there's nothing to do.
-  const bool move_to_end =
-      (index < 0) || (static_cast<size_t>(index) >= children_.size());
-  const auto pos = move_to_end ? std::prev(children_.end())
-                               : std::next(children_.begin(), index);
+  const auto pos =
+      std::next(children_.begin(),
+                static_cast<ptrdiff_t>(std::min(index, children_.size() - 1)));
   if (i == pos)
     return;
 
@@ -345,14 +358,14 @@ bool View::Contains(const View* view) const {
 }
 
 View::Views::const_iterator View::FindChild(const View* view) const {
-  return std::find(children_.cbegin(), children_.cend(), view);
+  return base::ranges::find(children_, view);
 }
 
-int View::GetIndexOf(const View* view) const {
+absl::optional<size_t> View::GetIndexOf(const View* view) const {
   const auto i = FindChild(view);
-  return i == children_.cend()
-             ? -1
-             : static_cast<int>(std::distance(children_.cbegin(), i));
+  return i == children_.cend() ? absl::nullopt
+                               : absl::make_optional(static_cast<size_t>(
+                                     std::distance(children_.cbegin(), i)));
 }
 
 // Size and disposition --------------------------------------------------------
@@ -484,11 +497,11 @@ gfx::Rect View::GetVisibleBounds() const {
   gfx::Transform transform;
 
   while (view != nullptr && !vis_bounds.IsEmpty()) {
-    transform.ConcatTransform(view->GetTransform());
+    transform.PostConcat(view->GetTransform());
     gfx::Transform translation;
     translation.Translate(static_cast<float>(view->GetMirroredX()),
                           static_cast<float>(view->y()));
-    transform.ConcatTransform(translation);
+    transform.PostConcat(translation);
 
     vis_bounds = view->ConvertRectToParent(vis_bounds);
     const View* ancestor = view->parent_;
@@ -503,11 +516,10 @@ gfx::Rect View::GetVisibleBounds() const {
   }
   if (vis_bounds.IsEmpty())
     return vis_bounds;
-  // Convert back to this views coordinate system.
-  gfx::RectF views_vis_bounds(vis_bounds);
-  transform.TransformRectReverse(&views_vis_bounds);
-  // Partially visible pixels should be considered visible.
-  return gfx::ToEnclosingRect(views_vis_bounds);
+  // Convert back to this views coordinate system. This mapping returns the
+  // enclosing rect, which is good because partially visible pixels should
+  // be considered visible.
+  return transform.InverseMapRect(vis_bounds).value_or(vis_bounds);
 }
 
 gfx::Rect View::GetBoundsInScreen() const {
@@ -526,15 +538,21 @@ gfx::Size View::GetPreferredSize() const {
   return CalculatePreferredSize();
 }
 
+gfx::Size View::GetPreferredSize(const SizeBounds& available_size) const {
+  if (preferred_size_)
+    return *preferred_size_;
+  return CalculatePreferredSize(available_size);
+}
+
 int View::GetBaseline() const {
   return -1;
 }
 
-void View::SetPreferredSize(const gfx::Size& size) {
-  if (preferred_size_ && *preferred_size_ == size)
+void View::SetPreferredSize(absl::optional<gfx::Size> size) {
+  if (preferred_size_ == size)
     return;
 
-  preferred_size_ = size;
+  preferred_size_ = std::move(size);
   PreferredSizeChanged();
 }
 
@@ -595,6 +613,9 @@ void View::SetVisible(bool visible) {
 
     // Notify all other subscriptions of the change.
     OnPropertyChanged(&visible_, kPropertyEffectsPaint);
+
+    if (was_visible)
+      UpdateTooltip();
   }
 
   if (parent_) {
@@ -680,8 +701,9 @@ void View::SetTransform(const gfx::Transform& transform) {
     layer()->ScheduleDraw();
   }
 
-  for (ui::Layer* layer_beneath : layers_beneath_)
-    layer_beneath->SetTransform(transform);
+  for (ui::Layer* layer : GetLayersInOrder(ViewLayer::kExclude)) {
+    layer->SetTransform(transform);
+  }
 }
 
 void View::SetPaintToLayer(ui::LayerType layer_type) {
@@ -711,35 +733,13 @@ void View::DestroyLayer() {
   CreateOrDestroyLayer();
 }
 
-void View::AddLayerBeneathView(ui::Layer* new_layer) {
-  DCHECK(new_layer);
-  DCHECK(!base::Contains(layers_beneath_, new_layer)) << "Layer already added.";
-
-  new_layer->AddObserver(this);
-  new_layer->SetVisible(GetVisible());
-  layers_beneath_.push_back(new_layer);
-
-  // If painting to a layer already, ensure |new_layer| gets added and stacked
-  // correctly. If not, this will happen on layer creation.
-  if (layer()) {
-    ui::Layer* parent_layer = layer()->parent();
-    // Note that |new_layer| may have already been added to the parent, for
-    // example when the layer of a LayerOwner is recreated.
-    if (parent_layer && parent_layer != new_layer->parent())
-      parent_layer->Add(new_layer);
-    new_layer->SetBounds(gfx::Rect(new_layer->size()) +
-                         layer()->bounds().OffsetFromOrigin());
-    if (parent())
-      parent()->ReorderLayers();
-  }
-
-  CreateOrDestroyLayer();
-
-  layer()->SetFillsBoundsOpaquely(false);
+void View::AddLayerToRegion(ui::Layer* new_layer, LayerRegion region) {
+  AddLayerToRegionImpl(
+      new_layer, region == LayerRegion::kAbove ? layers_above_ : layers_below_);
 }
 
-void View::RemoveLayerBeneathView(ui::Layer* old_layer) {
-  RemoveLayerBeneathViewKeepInLayerTree(old_layer);
+void View::RemoveLayerFromRegions(ui::Layer* old_layer) {
+  RemoveLayerFromRegionsKeepInLayerTree(old_layer);
 
   // Note that |old_layer| may have already been removed from its parent.
   ui::Layer* parent_layer = layer()->parent();
@@ -749,33 +749,48 @@ void View::RemoveLayerBeneathView(ui::Layer* old_layer) {
   CreateOrDestroyLayer();
 }
 
-void View::RemoveLayerBeneathViewKeepInLayerTree(ui::Layer* old_layer) {
-  auto layer_pos =
-      std::find(layers_beneath_.begin(), layers_beneath_.end(), old_layer);
-  DCHECK(layer_pos != layers_beneath_.end())
-      << "Attempted to remove a layer that was never added.";
-  layers_beneath_.erase(layer_pos);
-  old_layer->RemoveObserver(this);
+void View::RemoveLayerFromRegionsKeepInLayerTree(ui::Layer* old_layer) {
+  auto remove_layer = [old_layer, this](std::vector<ui::Layer*>& layer_vector) {
+    auto layer_pos = base::ranges::find(layer_vector, old_layer);
+    if (layer_pos == layer_vector.end()) {
+      return false;
+    }
+    layer_vector.erase(layer_pos);
+    old_layer->RemoveObserver(this);
+    return true;
+  };
+  const bool layer_removed =
+      remove_layer(layers_below_) || remove_layer(layers_above_);
+  DCHECK(layer_removed) << "Attempted to remove a layer that was never added.";
 }
 
-std::vector<ui::Layer*> View::GetLayersInOrder() {
+std::vector<ui::Layer*> View::GetLayersInOrder(ViewLayer view_layer) {
   // If not painting to a layer, there are no layers immediately related to this
   // view.
-  if (!layer())
+  if (!layer()) {
+    // If there is no View layer, there should be no layers above or below.
+    DCHECK(layers_above_.empty() && layers_below_.empty());
     return {};
+  }
 
   std::vector<ui::Layer*> result;
-  for (ui::Layer* layer_beneath : layers_beneath_)
-    result.push_back(layer_beneath);
-  result.push_back(layer());
+  for (ui::Layer* layer_below : layers_below_) {
+    result.push_back(layer_below);
+  }
+  if (view_layer == ViewLayer::kInclude) {
+    result.push_back(layer());
+  }
+  for (auto* layer_above : layers_above_) {
+    result.push_back(layer_above);
+  }
 
   return result;
 }
 
 void View::LayerDestroyed(ui::Layer* layer) {
-  // Only layers added with |AddLayerBeneathView()| are observed so |layer| can
-  // safely be removed.
-  RemoveLayerBeneathView(layer);
+  // Only layers added with |AddLayerToRegion()| or |AddLayerAboveView()|
+  // are observed so |layer| can safely be removed.
+  RemoveLayerFromRegions(layer);
 }
 
 std::unique_ptr<ui::Layer> View::RecreateLayer() {
@@ -983,13 +998,36 @@ void View::ConvertPointToTarget(const View* source,
     return;
 
   const View* root = GetHierarchyRoot(target);
+#if BUILDFLAG(IS_MAC)
+  // If the root views don't match make sure we are in the same widget tree.
+  // Full screen in macOS creates a child widget that hosts top chrome.
+  // TODO(bur): Remove this check when top chrome can be composited into its own
+  // NSView without the need for a new widget.
+  if (GetHierarchyRoot(source) != root) {
+    const Widget* source_top_level_widget =
+        source->GetWidget()->GetTopLevelWidget();
+    const Widget* target_top_level_widget =
+        target->GetWidget()->GetTopLevelWidget();
+    CHECK_EQ(source_top_level_widget, target_top_level_widget);
+  }
+#else  // IS_MAC
   CHECK_EQ(GetHierarchyRoot(source), root);
+#endif
 
   if (source != root)
     source->ConvertPointForAncestor(root, point);
 
   if (target != root)
     target->ConvertPointFromAncestor(root, point);
+}
+
+// static
+gfx::Point View::ConvertPointToTarget(const View* source,
+                                      const View* target,
+                                      const gfx::Point& point) {
+  gfx::Point local_point = point;
+  ConvertPointToTarget(source, target, &local_point);
+  return local_point;
 }
 
 // static
@@ -1009,6 +1047,15 @@ void View::ConvertRectToTarget(const View* source,
 
   if (target != root)
     target->ConvertRectFromAncestor(root, rect);
+}
+
+// static
+gfx::RectF View::ConvertRectToTarget(const View* source,
+                                     const View* target,
+                                     const gfx::RectF& rect) {
+  gfx::RectF local_rect = rect;
+  ConvertRectToTarget(source, target, &local_rect);
+  return local_rect;
 }
 
 // static
@@ -1063,11 +1110,11 @@ void View::ConvertRectToScreen(const View* src, gfx::Rect* rect) {
 }
 
 gfx::Rect View::ConvertRectToParent(const gfx::Rect& rect) const {
-  gfx::RectF x_rect = gfx::RectF(rect);
-  GetTransform().TransformRect(&x_rect);
+  // This mapping returns the enclosing rect, which is good because pixels that
+  // partially occupy in the parent should be included.
+  gfx::Rect x_rect = GetTransform().MapRect(rect);
   x_rect.Offset(GetMirroredPosition().OffsetFromOrigin());
-  // Pixels we partially occupy in the parent should be included.
-  return gfx::ToEnclosingRect(x_rect);
+  return x_rect;
 }
 
 gfx::Rect View::ConvertRectToWidget(const gfx::Rect& rect) const {
@@ -1167,7 +1214,8 @@ void View::Paint(const PaintInfo& parent_paint_info) {
           SkFloatToScalar(paint_info.paint_recording_scale_x()),
           SkFloatToScalar(paint_info.paint_recording_scale_y()));
 
-      clip_path_in_parent.transform(to_parent_recording_space.matrix().asM33());
+      clip_path_in_parent.transform(
+          gfx::TransformToFlattenedSkMatrix(to_parent_recording_space));
       clip_recorder.ClipPathWithAntiAliasing(clip_path_in_parent);
     }
   }
@@ -1214,6 +1262,8 @@ Background* View::GetBackground() const {
 void View::SetBorder(std::unique_ptr<Border> b) {
   const gfx::Rect old_contents_bounds = GetContentsBounds();
   border_ = std::move(b);
+  if (border_ && GetWidget())
+    border_->OnViewThemeChanged(this);
 
   // Conceptually, this should be PreferredSizeChanged(), but for some view
   // hierarchies that triggers synchronous add/remove operations that are unsafe
@@ -1356,8 +1406,8 @@ View* View::GetTooltipHandlerForPoint(const gfx::Point& point) {
   return this;
 }
 
-gfx::NativeCursor View::GetCursor(const ui::MouseEvent& event) {
-  return gfx::kNullCursor;
+ui::Cursor View::GetCursor(const ui::MouseEvent& event) {
+  return ui::Cursor();
 }
 
 bool View::HitTestPoint(const gfx::Point& point) const {
@@ -1478,7 +1528,7 @@ void View::OnMouseEvent(ui::MouseEvent* event) {
 void View::OnScrollEvent(ui::ScrollEvent* event) {}
 
 void View::OnTouchEvent(ui::TouchEvent* event) {
-  NOTREACHED() << "Views should not receive touch events.";
+  NOTREACHED_NORETURN() << "Views should not receive touch events.";
 }
 
 void View::OnGestureEvent(ui::GestureEvent* event) {}
@@ -1562,18 +1612,12 @@ void View::AddAccelerator(const ui::Accelerator& accelerator) {
 }
 
 void View::RemoveAccelerator(const ui::Accelerator& accelerator) {
-  if (!accelerators_) {
-    NOTREACHED() << "Removing non-existing accelerator";
-    return;
-  }
+  CHECK(accelerators_) << "Removing non-existent accelerator";
 
-  auto i(std::find(accelerators_->begin(), accelerators_->end(), accelerator));
-  if (i == accelerators_->end()) {
-    NOTREACHED() << "Removing non-existing accelerator";
-    return;
-  }
+  auto i(base::ranges::find(*accelerators_, accelerator));
+  CHECK(i != accelerators_->end()) << "Removing non-existent accelerator";
 
-  size_t index = i - accelerators_->begin();
+  auto index = static_cast<size_t>(i - accelerators_->begin());
   accelerators_->erase(i);
   if (index >= registered_accelerator_count_) {
     // The accelerator is not registered to FocusManager.
@@ -1847,6 +1891,20 @@ ViewAccessibility& View::GetViewAccessibility() const {
   return *view_accessibility_;
 }
 
+void View::SetAccessibleName(const std::u16string& name) {
+  if (name == accessible_name_) {
+    return;
+  }
+  accessible_name_ = name;
+  OnPropertyChanged(&accessible_name_, kPropertyEffectsNone);
+  NotifyAccessibilityEvent(ax::mojom::Event::kTextChanged, true);
+  OnAccessibleNameChanged(name);
+}
+
+const std::u16string& View::GetAccessibleName() const {
+  return accessible_name_;
+}
+
 bool View::HandleAccessibleAction(const ui::AXActionData& action_data) {
   switch (action_data.action) {
     case ax::mojom::Action::kBlur:
@@ -1943,6 +2001,10 @@ gfx::Size View::CalculatePreferredSize() const {
   if (HasLayoutManager())
     return GetLayoutManager()->GetPreferredSize(this);
   return gfx::Size();
+}
+
+gfx::Size View::CalculatePreferredSize(const SizeBounds& available_size) const {
+  return CalculatePreferredSize();
 }
 
 void View::PreferredSizeChanged() {
@@ -2050,13 +2112,7 @@ void View::MoveLayerToParent(ui::Layer* parent_layer,
     local_offset_data += GetMirroredPosition().OffsetFromOrigin();
 
   if (layer() && parent_layer != layer()) {
-    // Adding the main layer can trigger a call to |SnapLayerToPixelBoundary()|.
-    // That method assumes layers beneath have already been added. Therefore
-    // layers beneath must be added first here. See crbug.com/961212.
-    for (ui::Layer* layer_beneath : layers_beneath_)
-      parent_layer->Add(layer_beneath);
-    parent_layer->Add(layer());
-
+    SetLayerParent(parent_layer);
     SetLayerBounds(size(), local_offset_data);
   } else {
     internal::ScopedChildrenLock lock(this);
@@ -2076,9 +2132,9 @@ void View::UpdateLayerVisibility() {
 void View::UpdateChildLayerVisibility(bool ancestor_visible) {
   const bool layers_visible = ancestor_visible && visible_;
   if (layer()) {
-    layer()->SetVisible(layers_visible);
-    for (ui::Layer* layer_beneath : layers_beneath_)
-      layer_beneath->SetVisible(layers_visible);
+    for (ui::Layer* layer : GetLayersInOrder()) {
+      layer->SetVisible(layers_visible);
+    }
   }
   {
     internal::ScopedChildrenLock lock(this);
@@ -2088,10 +2144,11 @@ void View::UpdateChildLayerVisibility(bool ancestor_visible) {
 }
 
 void View::DestroyLayerImpl(LayerChangeNotifyBehavior notify_parents) {
-  // Normally, adding layers beneath will trigger painting to a layer. It would
-  // leave this view in an inconsistent state if its layer were destroyed while
-  // layers beneath were still present. So, assume this doesn't happen.
-  DCHECK(layers_beneath_.empty());
+  // Normally, adding layers above or below will trigger painting to a layer.
+  // It would leave this view in an inconsistent state if its layer were
+  // destroyed while layers beneath were still present. So, assume this doesn't
+  // happen.
+  DCHECK(layers_below_.empty() && layers_above_.empty());
 
   if (!layer())
     return;
@@ -2189,7 +2246,7 @@ void View::OnDeviceScaleFactorChanged(float old_device_scale_factor,
 
 void View::CreateOrDestroyLayer() {
   if (paint_to_layer_explicitly_set_ || paint_to_layer_for_transform_ ||
-      !layers_beneath_.empty()) {
+      !layers_below_.empty() || !layers_above_.empty()) {
     // If we need to paint to a layer, make sure we have one.
     if (!layer())
       CreateLayer(ui::LAYER_TEXTURED);
@@ -2225,12 +2282,64 @@ void View::ReorderLayers() {
   }
 }
 
+void View::AddLayerToRegionImpl(ui::Layer* new_layer,
+                                std::vector<ui::Layer*>& layer_vector) {
+  DCHECK(new_layer);
+  DCHECK(!base::Contains(layer_vector, new_layer)) << "Layer already added.";
+
+  new_layer->AddObserver(this);
+  new_layer->SetVisible(GetVisible());
+  layer_vector.push_back(new_layer);
+
+  // If painting to a layer already, ensure |new_layer| gets added and stacked
+  // correctly. If not, this will happen on layer creation.
+  if (layer()) {
+    ui::Layer* const parent_layer = layer()->parent();
+    // Note that |new_layer| may have already been added to the parent, for
+    // example when the layer of a LayerOwner is recreated.
+    if (parent_layer && parent_layer != new_layer->parent()) {
+      parent_layer->Add(new_layer);
+    }
+    new_layer->SetBounds(gfx::Rect(new_layer->size()) +
+                         layer()->bounds().OffsetFromOrigin());
+    if (parent()) {
+      parent()->ReorderLayers();
+    }
+  }
+
+  CreateOrDestroyLayer();
+
+  layer()->SetFillsBoundsOpaquely(false);
+}
+
+void View::SetLayerParent(ui::Layer* parent_layer) {
+  // Adding the main layer can trigger a call to |SnapLayerToPixelBoundary()|.
+  // That method assumes layers beneath have already been added. Therefore
+  // layers above and below must be added first here. See crbug.com/961212.
+  for (ui::Layer* extra_layer : GetLayersInOrder(ViewLayer::kExclude)) {
+    parent_layer->Add(extra_layer);
+  }
+  parent_layer->Add(layer());
+  // After adding the main layer, it's relative position in the stack needs
+  // to be adjusted. This will ensure the layer is between any of the layers
+  // above and below the main layer.
+  if (!layers_below_.empty()) {
+    parent_layer->StackAbove(layer(), layers_below_.back());
+  } else if (!layers_above_.empty()) {
+    parent_layer->StackBelow(layer(), layers_above_.front());
+  }
+}
+
 void View::ReorderChildLayers(ui::Layer* parent_layer) {
   if (layer() && layer() != parent_layer) {
     DCHECK_EQ(parent_layer, layer()->parent());
+    for (ui::Layer* layer_above : layers_above_) {
+      parent_layer->StackAtBottom(layer_above);
+    }
     parent_layer->StackAtBottom(layer());
-    for (ui::Layer* layer_beneath : layers_beneath_)
-      parent_layer->StackAtBottom(layer_beneath);
+    for (ui::Layer* layer_below : layers_below_) {
+      parent_layer->StackAtBottom(layer_below);
+    }
   } else {
     // Iterate backwards through the children so that a child with a layer
     // which is further to the back is stacked above one which is further to
@@ -2364,7 +2473,8 @@ void View::HandlePropertyChangeEffects(PropertyEffects effects) {
 void View::AfterPropertyChange(const void* key, int64_t old_value) {
   if (key == kElementIdentifierKey) {
     const ui::ElementIdentifier old_element_id =
-        ui::ElementIdentifier::FromRawValue(old_value);
+        ui::ElementIdentifier::FromRawValue(
+            base::checked_cast<intptr_t>(old_value));
     if (old_element_id) {
       views::ElementTrackerViews::GetInstance()->UnregisterView(old_element_id,
                                                                 this);
@@ -2554,10 +2664,9 @@ void View::PaintDebugRects(const PaintInfo& parent_paint_info) {
 
 // Tree operations -------------------------------------------------------------
 
-void View::AddChildViewAtImpl(View* view, int index) {
+void View::AddChildViewAtImpl(View* view, size_t index) {
   CHECK_NE(view, this) << "You cannot add a view as its own child";
-  DCHECK_GE(index, 0);
-  DCHECK_LE(static_cast<size_t>(index), children_.size());
+  DCHECK_LE(index, children_.size());
 
   // TODO(https://crbug.com/942298): Should just DCHECK(!view->parent_);.
   View* parent = view->parent_;
@@ -2576,7 +2685,8 @@ void View::AddChildViewAtImpl(View* view, int index) {
 #if DCHECK_IS_ON()
   DCHECK(!iterating_);
 #endif
-  const auto pos = children_.insert(std::next(children_.cbegin(), index), view);
+  const auto pos = children_.insert(
+      std::next(children_.cbegin(), static_cast<ptrdiff_t>(index)), view);
 
   view->RemoveFromFocusList();
   SetFocusSiblings(view, pos);
@@ -2631,7 +2741,7 @@ void View::DoRemoveChildView(View* view,
                              View* new_parent) {
   DCHECK(view);
 
-  const auto i = std::find(children_.cbegin(), children_.cend(), view);
+  const auto i = FindChild(view);
   if (i == children_.cend())
     return;
 
@@ -2771,9 +2881,11 @@ void View::SnapLayerToPixelBoundary(const LayerOffsetData& offset_data) {
     return;
 
 #if DCHECK_IS_ON()
-  // We rely on our layers beneath being parented correctly at this point.
-  for (ui::Layer* layer_beneath : layers_beneath_)
-    DCHECK_EQ(layer()->parent(), layer_beneath->parent());
+  // We rely on our layers above and below being parented correctly at this
+  // point.
+  for (ui::Layer* layer_above_below : GetLayersInOrder(ViewLayer::kExclude)) {
+    DCHECK_EQ(layer()->parent(), layer_above_below->parent());
+  }
 #endif  // DCHECK_IS_ON()
 
   if (layer()->GetCompositor() && layer()->GetCompositor()->is_pixel_canvas()) {
@@ -2781,8 +2893,9 @@ void View::SnapLayerToPixelBoundary(const LayerOffsetData& offset_data) {
                                 ? offset_data.GetSubpixelOffset()
                                 : gfx::Vector2dF();
     layer()->SetSubpixelPositionOffset(offset);
-    for (ui::Layer* layer_beneath : layers_beneath_)
-      layer_beneath->SetSubpixelPositionOffset(offset);
+    for (ui::Layer* layer : GetLayersInOrder(ViewLayer::kExclude)) {
+      layer->SetSubpixelPositionOffset(offset);
+    }
   }
 }
 
@@ -2829,8 +2942,7 @@ void View::AddDescendantToNotify(View* view) {
 
 void View::RemoveDescendantToNotify(View* view) {
   DCHECK(view && descendants_to_notify_);
-  auto i(std::find(descendants_to_notify_->begin(),
-                   descendants_to_notify_->end(), view));
+  auto i = base::ranges::find(*descendants_to_notify_, view);
   DCHECK(i != descendants_to_notify_->end());
   descendants_to_notify_->erase(i);
   if (descendants_to_notify_->empty())
@@ -2860,9 +2972,8 @@ void View::SetLayerBounds(const gfx::Size& size,
   const gfx::Rect bounds = gfx::Rect(size) + offset_data.offset();
   const bool bounds_changed = (bounds != layer()->GetTargetBounds());
   layer()->SetBounds(bounds);
-  for (ui::Layer* layer_beneath : layers_beneath_) {
-    layer_beneath->SetBounds(gfx::Rect(layer_beneath->size()) +
-                             bounds.OffsetFromOrigin());
+  for (ui::Layer* layer : GetLayersInOrder(ViewLayer::kExclude)) {
+    layer->SetBounds(gfx::Rect(layer->size()) + bounds.OffsetFromOrigin());
   }
   SnapLayerToPixelBoundary(offset_data);
   if (bounds_changed) {
@@ -2878,11 +2989,11 @@ bool View::GetTransformRelativeTo(const View* ancestor,
   const View* p = this;
 
   while (p && p != ancestor) {
-    transform->ConcatTransform(p->GetTransform());
+    transform->PostConcat(p->GetTransform());
     gfx::Transform translation;
     translation.Translate(static_cast<float>(p->GetMirroredX()),
                           static_cast<float>(p->y()));
-    transform->ConcatTransform(translation);
+    transform->PostConcat(translation);
 
     p = p->parent_;
   }
@@ -2897,9 +3008,7 @@ bool View::ConvertPointForAncestor(const View* ancestor,
   gfx::Transform trans;
   // TODO(sad): Have some way of caching the transformation results.
   bool result = GetTransformRelativeTo(ancestor, &trans);
-  auto p = gfx::Point3F(gfx::PointF(*point));
-  trans.TransformPoint(&p);
-  *point = gfx::ToFlooredPoint(p.AsPointF());
+  *point = gfx::ToFlooredPoint(trans.MapPoint(gfx::PointF(*point)));
   return result;
 }
 
@@ -2907,9 +3016,10 @@ bool View::ConvertPointFromAncestor(const View* ancestor,
                                     gfx::Point* point) const {
   gfx::Transform trans;
   bool result = GetTransformRelativeTo(ancestor, &trans);
-  auto p = gfx::Point3F(gfx::PointF(*point));
-  trans.TransformPointReverse(&p);
-  *point = gfx::ToFlooredPoint(p.AsPointF());
+  if (const absl::optional<gfx::PointF> transformed_point =
+          trans.InverseMapPoint(gfx::PointF(*point))) {
+    *point = gfx::ToFlooredPoint(transformed_point.value());
+  }
   return result;
 }
 
@@ -2918,7 +3028,7 @@ bool View::ConvertRectForAncestor(const View* ancestor,
   gfx::Transform trans;
   // TODO(sad): Have some way of caching the transformation results.
   bool result = GetTransformRelativeTo(ancestor, &trans);
-  trans.TransformRect(rect);
+  *rect = trans.MapRect(*rect);
   return result;
 }
 
@@ -2926,7 +3036,7 @@ bool View::ConvertRectFromAncestor(const View* ancestor,
                                    gfx::RectF* rect) const {
   gfx::Transform trans;
   bool result = GetTransformRelativeTo(ancestor, &trans);
-  trans.TransformRectReverse(rect);
+  *rect = trans.InverseMapRect(*rect).value_or(*rect);
   return result;
 }
 
@@ -2989,9 +3099,9 @@ void View::OrphanLayers() {
   if (layer()) {
     ui::Layer* parent = layer()->parent();
     if (parent) {
-      parent->Remove(layer());
-      for (ui::Layer* layer_beneath : layers_beneath_)
-        parent->Remove(layer_beneath);
+      for (ui::Layer* layer : GetLayersInOrder()) {
+        parent->Remove(layer);
+      }
     }
 
     // The layer belonging to this View has already been orphaned. It is not
@@ -3006,12 +3116,7 @@ void View::OrphanLayers() {
 void View::ReparentLayer(ui::Layer* parent_layer) {
   DCHECK_NE(layer(), parent_layer);
   if (parent_layer) {
-    // Adding the main layer can trigger a call to |SnapLayerToPixelBoundary()|.
-    // That method assumes layers beneath have already been added. Therefore
-    // layers beneath must be added first here. See crbug.com/961212.
-    for (ui::Layer* layer_beneath : layers_beneath_)
-      parent_layer->Add(layer_beneath);
-    parent_layer->Add(layer());
+    SetLayerParent(parent_layer);
   }
   // Update the layer bounds; this needs to be called after this layer is added
   // to the new parent layer since snapping to pixel boundary will be affected
@@ -3133,15 +3238,10 @@ void View::RegisterPendingAccelerators() {
   }
 
   accelerator_focus_manager_ = GetFocusManager();
-  if (!accelerator_focus_manager_) {
-    // Some crash reports seem to show that we may get cases where we have no
-    // focus manager (see bug #1291225).  This should never be the case, just
-    // making sure we don't crash.
-    NOTREACHED();
-    return;
-  }
-  for (std::vector<ui::Accelerator>::const_iterator i(
-           accelerators_->begin() + registered_accelerator_count_);
+  CHECK(accelerator_focus_manager_);
+  for (std::vector<ui::Accelerator>::const_iterator i =
+           accelerators_->begin() +
+           static_cast<ptrdiff_t>(registered_accelerator_count_);
        i != accelerators_->end(); ++i) {
     accelerator_focus_manager_->RegisterAccelerator(
         *i, ui::AcceleratorManager::kNormalPriority, this);
@@ -3179,9 +3279,8 @@ void View::SetFocusSiblings(View* view, Views::const_iterator pos) {
       // |view| was inserted at the end, but the end of the child list may not
       // be the last focusable element. Try to hook in after the last focusable
       // child.
-      View* const old_last =
-          *std::find_if(children_.cbegin(), pos,
-                        [](View* v) { return !v->next_focusable_view_; });
+      View* const old_last = *base::ranges::find_if_not(
+          children_.cbegin(), pos, &View::next_focusable_view_);
       DCHECK_NE(old_last, view);
       view->InsertAfterInFocusList(old_last);
     } else {

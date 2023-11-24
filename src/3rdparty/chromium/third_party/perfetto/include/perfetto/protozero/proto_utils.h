@@ -24,6 +24,15 @@
 
 #include "perfetto/base/logging.h"
 
+// Helper macro for the constexpr functions containing
+// the switch statement: if C++14 is supported, this macro
+// resolves to `constexpr` and just `inline` otherwise.
+#if __cpp_constexpr >= 201304
+#define PERFETTO_PROTOZERO_CONSTEXPR14_OR_INLINE constexpr
+#else
+#define PERFETTO_PROTOZERO_CONSTEXPR14_OR_INLINE inline
+#endif
+
 namespace protozero {
 namespace proto_utils {
 
@@ -164,12 +173,14 @@ inline typename std::make_signed<T>::type ZigZagDecode(T value) {
   using UnsignedType = typename std::make_unsigned<T>::type;
   using SignedType = typename std::make_signed<T>::type;
   auto u_value = static_cast<UnsignedType>(value);
-  auto mask = static_cast<UnsignedType>(-static_cast<SignedType>(u_value & 1U));
+  auto mask = static_cast<UnsignedType>(-static_cast<SignedType>(u_value & 1));
   return static_cast<SignedType>((u_value >> 1) ^ mask);
 }
 
 template <typename T>
-inline uint8_t* WriteVarInt(T value, uint8_t* target) {
+auto ExtendValueForVarIntSerialization(T value) -> typename std::make_unsigned<
+    typename std::conditional<std::is_unsigned<T>::value, T, int64_t>::type>::
+    type {
   // If value is <= 0 we must first sign extend to int64_t (see [1]).
   // Finally we always cast to an unsigned value to to avoid arithmetic
   // (sign expanding) shifts in the while loop.
@@ -188,6 +199,13 @@ inline uint8_t* WriteVarInt(T value, uint8_t* target) {
 
   MaybeExtendedType extended_value = static_cast<MaybeExtendedType>(value);
   UnsignedType unsigned_value = static_cast<UnsignedType>(extended_value);
+
+  return unsigned_value;
+}
+
+template <typename T>
+inline uint8_t* WriteVarInt(T value, uint8_t* target) {
+  auto unsigned_value = ExtendValueForVarIntSerialization(value);
 
   while (unsigned_value >= 0x80) {
     *target++ = static_cast<uint8_t>(unsigned_value) | 0x80;

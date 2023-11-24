@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,7 +14,6 @@
 #include "fxjs/gc/container_trace.h"
 #include "fxjs/xfa/cjx_object.h"
 #include "third_party/base/check.h"
-#include "third_party/base/compiler_specific.h"
 #include "third_party/base/containers/adapters.h"
 #include "third_party/base/notreached.h"
 #include "xfa/fxfa/cxfa_ffdoc.h"
@@ -886,14 +885,14 @@ CXFA_ContentLayoutProcessor::GotoNextContainerNode(Stage nCurStage,
 
     case Stage::kNone:
       pCurActionNode = nullptr;
-      FALLTHROUGH;
+      [[fallthrough]];
 
     case Stage::kBookendLeader:
       ret = HandleBookendLeader(pParentContainer, &pCurActionNode);
       if (ret.has_value())
         return {ret.value(), pCurActionNode};
       pCurActionNode = nullptr;
-      FALLTHROUGH;
+      [[fallthrough]];
 
     case Stage::kBreakBefore:
       ret = HandleBreakBefore(pChildContainer, &pCurActionNode);
@@ -903,7 +902,7 @@ CXFA_ContentLayoutProcessor::GotoNextContainerNode(Stage nCurStage,
 
     case Stage::kContainer:
       pCurActionNode = nullptr;
-      FALLTHROUGH;
+      [[fallthrough]];
 
     case Stage::kBreakAfter:
       ret = HandleBreakAfter(pChildContainer, &pCurActionNode);
@@ -915,7 +914,7 @@ CXFA_ContentLayoutProcessor::GotoNextContainerNode(Stage nCurStage,
       ret = HandleBookendTrailer(pParentContainer, &pCurActionNode);
       if (ret.has_value())
         return {ret.value(), pCurActionNode};
-      FALLTHROUGH;
+      [[fallthrough]];
 
     default:
       return {Stage::kDone, nullptr};
@@ -1842,10 +1841,10 @@ CXFA_ContentLayoutProcessor::DoLayoutFlowedContainer(
           switch (rs) {
             case Result::kManualBreak:
               bIsManualBreak = true;
-              FALLTHROUGH;
+              [[fallthrough]];
             case Result::kPageFullBreak:
               bForceEndPage = true;
-              FALLTHROUGH;
+              [[fallthrough]];
             case Result::kRowFullBreak:
               goto SuspendAndCreateNewRow;
             case Result::kDone:
@@ -2431,7 +2430,7 @@ CXFA_ContentLayoutProcessor::InsertFlowedItem(
     pFormNode =
         m_pViewLayoutProcessor->QueryOverflow(pProcessor->GetFormNode());
     if (!pFormNode && pLayoutContext && pLayoutContext->m_pOverflowProcessor) {
-      pFormNode = pLayoutContext->m_pOverflowNode.Get();
+      pFormNode = pLayoutContext->m_pOverflowNode;
       bUseInherited = true;
     }
     absl::optional<CXFA_ViewLayoutProcessor::OverflowData> overflow_data =

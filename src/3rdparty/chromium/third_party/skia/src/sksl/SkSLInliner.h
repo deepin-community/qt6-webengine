@@ -8,12 +8,14 @@
 #ifndef SKSL_INLINER
 #define SKSL_INLINER
 
-#include "include/private/SkTHash.h"
+#ifndef SK_ENABLE_OPTIMIZE_SIZE
+
+#include "src/core/SkTHash.h"
 #include "src/sksl/SkSLContext.h"
+#include "src/sksl/SkSLMangler.h"
 #include "src/sksl/SkSLProgramSettings.h"
 #include "src/sksl/ir/SkSLBlock.h"
 #include "src/sksl/ir/SkSLExpression.h"
-#include "src/sksl/ir/SkSLProgram.h"
 
 #include <memory>
 #include <vector>
@@ -25,11 +27,13 @@ class FunctionDeclaration;
 class FunctionDefinition;
 class Position;
 class ProgramElement;
+class ProgramUsage;
 class Statement;
 class SymbolTable;
 class Variable;
 struct InlineCandidate;
 struct InlineCandidateList;
+namespace Analysis { enum class ReturnComplexity; }
 
 /**
  * Converts a FunctionCall in the IR to a set of statements to be injected ahead of the function
@@ -41,8 +45,6 @@ class Inliner {
 public:
     Inliner(const Context* context) : fContext(context) {}
 
-    void reset();
-
     /** Inlines any eligible functions that are found. Returns true if any changes are made. */
     bool analyze(const std::vector<std::unique_ptr<ProgramElement>>& elements,
                  std::shared_ptr<SymbolTable> symbols,
@@ -51,13 +53,7 @@ public:
 private:
     using VariableRewriteMap = SkTHashMap<const Variable*, std::unique_ptr<Expression>>;
 
-    enum class ReturnComplexity {
-        kSingleSafeReturn,
-        kScopedReturns,
-        kEarlyReturns,
-    };
-
-    const Program::Settings& settings() const { return fContext->fConfig->fSettings; }
+    const ProgramSettings& settings() const { return fContext->fConfig->fSettings; }
 
     void buildCandidateList(const std::vector<std::unique_ptr<ProgramElement>>& elements,
                             std::shared_ptr<SymbolTable> symbols, ProgramUsage* usage,
@@ -71,8 +67,9 @@ private:
                                                VariableRewriteMap* varMap,
                                                SymbolTable* symbolTableForStatement,
                                                std::unique_ptr<Expression>* resultExpr,
-                                               ReturnComplexity returnComplexity,
+                                               Analysis::ReturnComplexity returnComplexity,
                                                const Statement& statement,
+                                               const ProgramUsage& usage,
                                                bool isBuiltinCode);
 
     /**
@@ -81,9 +78,6 @@ private:
      */
     static const Variable* RemapVariable(const Variable* variable,
                                          const VariableRewriteMap* varMap);
-
-    /** Determines if a given function has multiple and/or early returns. */
-    static ReturnComplexity GetReturnComplexity(const FunctionDefinition& funcDef);
 
     using InlinabilityCache = SkTHashMap<const FunctionDeclaration*, bool>;
     bool candidateCanBeInlined(const InlineCandidate& candidate,
@@ -102,7 +96,7 @@ private:
         std::unique_ptr<Block> fInlinedBody;
         std::unique_ptr<Expression> fReplacementExpr;
     };
-    InlinedCall inlineCall(FunctionCall*,
+    InlinedCall inlineCall(const FunctionCall&,
                            std::shared_ptr<SymbolTable>,
                            const ProgramUsage&,
                            const FunctionDeclaration* caller);
@@ -114,9 +108,12 @@ private:
     bool isSafeToInline(const FunctionDefinition* functionDef, const ProgramUsage& usage);
 
     const Context* fContext = nullptr;
+    Mangler fMangler;
     int fInlinedStatementCounter = 0;
 };
 
 }  // namespace SkSL
+
+#endif  // SK_ENABLE_OPTIMIZE_SIZE
 
 #endif  // SKSL_INLINER

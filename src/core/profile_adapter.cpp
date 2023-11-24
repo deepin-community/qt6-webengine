@@ -63,6 +63,7 @@ ProfileAdapter::ProfileAdapter(const QString &storageName):
     , m_httpCacheType(DiskHttpCache)
     , m_persistentCookiesPolicy(AllowPersistentCookies)
     , m_visitedLinksPolicy(TrackVisitedLinksOnDisk)
+    , m_pushServiceEnabled(false)
     , m_httpCacheMaxSize(0)
 {
     WebEngineContext::current()->addProfileAdapter(this);
@@ -76,6 +77,8 @@ ProfileAdapter::ProfileAdapter(const QString &storageName):
         extensions::ExtensionSystem::Get(m_profile.data())->InitForRegularProfile(true);
 #endif
     m_cancelableTaskTracker.reset(new base::CancelableTaskTracker());
+
+    m_profile->DoFinalInit();
 }
 
 ProfileAdapter::~ProfileAdapter()
@@ -319,7 +322,7 @@ void ProfileAdapter::setHttpUserAgent(const QString &userAgent)
         if (web_contents->GetBrowserContext() == m_profile.data())
             web_contents->SetUserAgentOverride(blink::UserAgentOverride::UserAgentOnly(stdUserAgent), true);
 
-    m_profile->ForEachStoragePartition(
+    m_profile->ForEachLoadedStoragePartition(
                 base::BindRepeating([](const std::string &user_agent, content::StoragePartition *storage_partition) {
                     storage_partition->GetNetworkContext()->SetUserAgent(user_agent);
                 }, stdUserAgent));
@@ -461,7 +464,7 @@ const QList<QByteArray> ProfileAdapter::customUrlSchemes() const
 
 void ProfileAdapter::updateCustomUrlSchemeHandlers()
 {
-    m_profile->ForEachStoragePartition(
+    m_profile->ForEachLoadedStoragePartition(
         base::BindRepeating([](content::StoragePartition *storage_partition) {
             storage_partition->ResetURLLoaderFactories();
         }));
@@ -583,7 +586,7 @@ void ProfileAdapter::setHttpAcceptLanguage(const QString &httpAcceptLanguage)
         }
     }
 
-    m_profile->ForEachStoragePartition(
+    m_profile->ForEachLoadedStoragePartition(
         base::BindRepeating([](std::string accept_language, content::StoragePartition *storage_partition) {
             storage_partition->GetNetworkContext()->SetAcceptLanguage(accept_language);
         }, http_accept_language));
@@ -624,6 +627,16 @@ bool ProfileAdapter::isSpellCheckEnabled() const
 #else
     return false;
 #endif
+}
+
+bool ProfileAdapter::pushServiceEnabled() const
+{
+  return m_pushServiceEnabled;
+}
+
+void ProfileAdapter::setPushServiceEnabled(bool enabled)
+{
+    m_pushServiceEnabled = enabled;
 }
 
 void ProfileAdapter::addWebContentsAdapterClient(WebContentsAdapterClient *client)

@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,9 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
@@ -29,6 +29,7 @@
 #include "cc/input/layer_selection_bound.h"
 #include "cc/layers/layer.h"
 #include "cc/metrics/web_vital_metrics.h"
+#include "cc/tiles/raster_dark_mode_filter.h"
 #include "cc/trees/layer_tree_host.h"
 #include "cc/trees/layer_tree_mutator.h"
 #include "cc/trees/paint_holding_reason.h"
@@ -42,10 +43,10 @@
 #include "services/metrics/public/cpp/mojo_ukm_recorder.h"
 #include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/platform.h"
-#include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
 #include "third_party/blink/renderer/platform/graphics/dark_mode_filter.h"
 #include "third_party/blink/renderer/platform/graphics/dark_mode_settings_builder.h"
 #include "third_party/blink/renderer/platform/graphics/raster_dark_mode_filter_impl.h"
+#include "third_party/blink/renderer/platform/scheduler/public/widget_scheduler.h"
 #include "ui/gfx/presentation_feedback.h"
 
 namespace cc {
@@ -75,12 +76,11 @@ class UkmRecorderFactoryImpl : public cc::UkmRecorderFactory {
 
 }  // namespace
 
-LayerTreeView::LayerTreeView(LayerTreeViewDelegate* delegate,
-                             scheduler::WebThreadScheduler* scheduler)
-    : web_main_thread_scheduler_(scheduler),
+LayerTreeView::LayerTreeView(
+    LayerTreeViewDelegate* delegate,
+    scoped_refptr<scheduler::WidgetScheduler> scheduler)
+    : widget_scheduler_(std::move(scheduler)),
       animation_host_(cc::AnimationHost::CreateMainInstance()),
-      dark_mode_filter_(std::make_unique<RasterDarkModeFilterImpl>(
-          GetCurrentDarkModeSettings())),
       delegate_(delegate) {}
 
 LayerTreeView::~LayerTreeView() = default;
@@ -100,7 +100,7 @@ void LayerTreeView::Initialize(
   params.task_graph_runner = task_graph_runner;
   params.main_task_runner = std::move(main_thread);
   params.mutator_host = animation_host_.get();
-  params.dark_mode_filter = dark_mode_filter_.get();
+  params.dark_mode_filter = &RasterDarkModeFilterImpl::Instance();
   params.ukm_recorder_factory = std::make_unique<UkmRecorderFactoryImpl>();
   if (base::ThreadPoolInstance::Get()) {
     // The image worker thread needs to allow waiting since it makes discardable
@@ -190,8 +190,7 @@ void LayerTreeView::DidUpdateLayers() {
 void LayerTreeView::BeginMainFrame(const viz::BeginFrameArgs& args) {
   if (!delegate_)
     return;
-  if (web_main_thread_scheduler_)
-    web_main_thread_scheduler_->WillBeginFrame(args);
+  widget_scheduler_->WillBeginFrame(args);
   delegate_->BeginMainFrame(args.frame_time);
 }
 
@@ -201,23 +200,37 @@ void LayerTreeView::OnDeferMainFrameUpdatesChanged(bool status) {
   delegate_->OnDeferMainFrameUpdatesChanged(status);
 }
 
-void LayerTreeView::OnDeferCommitsChanged(bool status,
-                                          cc::PaintHoldingReason reason) {
+void LayerTreeView::OnPauseRenderingChanged(bool paused) {
   if (!delegate_)
     return;
-  delegate_->OnDeferCommitsChanged(status, reason);
+  delegate_->OnPauseRenderingChanged(paused);
+}
+
+void LayerTreeView::OnCommitRequested() {
+  if (!delegate_)
+    return;
+  delegate_->OnCommitRequested();
+}
+
+void LayerTreeView::OnDeferCommitsChanged(
+    bool status,
+    cc::PaintHoldingReason reason,
+    absl::optional<cc::PaintHoldingCommitTrigger> trigger) {
+  if (!delegate_)
+    return;
+  delegate_->OnDeferCommitsChanged(status, reason, trigger);
 }
 
 void LayerTreeView::BeginMainFrameNotExpectedSoon() {
-  if (!delegate_ || !web_main_thread_scheduler_)
+  if (!delegate_)
     return;
-  web_main_thread_scheduler_->BeginFrameNotExpectedSoon();
+  widget_scheduler_->BeginFrameNotExpectedSoon();
 }
 
 void LayerTreeView::BeginMainFrameNotExpectedUntil(base::TimeTicks time) {
-  if (!delegate_ || !web_main_thread_scheduler_)
+  if (!delegate_)
     return;
-  web_main_thread_scheduler_->BeginMainFrameNotExpectedUntil(time);
+  widget_scheduler_->BeginMainFrameNotExpectedUntil(time);
 }
 
 void LayerTreeView::UpdateLayerTreeHost() {
@@ -291,8 +304,7 @@ void LayerTreeView::WillCommit(const cc::CommitState&) {
     return;
   delegate_->WillCommitCompositorFrame();
   if (base::FeatureList::IsEnabled(::features::kNonBlockingCommit)) {
-    if (web_main_thread_scheduler_)
-      web_main_thread_scheduler_->DidCommitFrameToCompositor();
+    widget_scheduler_->DidCommitFrameToCompositor();
   }
 }
 
@@ -302,8 +314,7 @@ void LayerTreeView::DidCommit(base::TimeTicks commit_start_time,
     return;
   delegate_->DidCommitCompositorFrame(commit_start_time, commit_finish_time);
   if (!base::FeatureList::IsEnabled(::features::kNonBlockingCommit)) {
-    if (web_main_thread_scheduler_)
-      web_main_thread_scheduler_->DidCommitFrameToCompositor();
+    widget_scheduler_->DidCommitFrameToCompositor();
   }
 }
 
@@ -339,7 +350,7 @@ void LayerTreeView::DidPresentCompositorFrame(
     presentation_callbacks_.erase(front);
   }
 
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_APPLE)
   while (!core_animation_error_code_callbacks_.empty()) {
     const auto& front = core_animation_error_code_callbacks_.begin();
     if (viz::FrameTokenGT(front->first, frame_token))
@@ -399,16 +410,11 @@ void LayerTreeView::RunPaintBenchmark(int repeat_count,
     delegate_->RunPaintBenchmark(repeat_count, result);
 }
 
-void LayerTreeView::DidScheduleBeginMainFrame() {
-  if (!delegate_ || !web_main_thread_scheduler_)
-    return;
-  web_main_thread_scheduler_->DidScheduleBeginMainFrame();
-}
-
 void LayerTreeView::DidRunBeginMainFrame() {
-  if (!delegate_ || !web_main_thread_scheduler_)
+  if (!delegate_)
     return;
-  web_main_thread_scheduler_->DidRunBeginMainFrame();
+
+  widget_scheduler_->DidRunBeginMainFrame();
 }
 
 void LayerTreeView::DidSubmitCompositorFrame() {}
@@ -428,7 +434,7 @@ void LayerTreeView::AddPresentationCallback(
   AddCallback(frame_token, std::move(callback), presentation_callbacks_);
 }
 
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_APPLE)
 void LayerTreeView::AddCoreAnimationErrorCodeCallback(
     uint32_t frame_token,
     base::OnceCallback<void(gfx::CALayerResult)> callback) {

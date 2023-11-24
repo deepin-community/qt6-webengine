@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -211,8 +211,8 @@ class GlobalDumpGraph {
     int priority() const { return priority_; }
 
    private:
-    GlobalDumpGraph::Node* const source_;
-    GlobalDumpGraph::Node* const target_;
+    const raw_ptr<GlobalDumpGraph::Node> source_;
+    const raw_ptr<GlobalDumpGraph::Node> target_;
     const int priority_;
   };
 

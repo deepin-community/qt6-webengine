@@ -1,12 +1,12 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/background_fetch/storage/get_initialization_data_task.h"
 
 #include "base/barrier_closure.h"
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/task_traits.h"
@@ -34,6 +34,12 @@ class InitializationSubTask : public DatabaseTask {
   // Holds data used by all SubTasks.
   struct SubTaskInit {
     SubTaskInit() = delete;
+    SubTaskInit(int64_t service_worker_registration_id,
+                std::string unique_id,
+                BackgroundFetchInitializationData* initialization_data)
+        : service_worker_registration_id(service_worker_registration_id),
+          unique_id(std::move(unique_id)),
+          initialization_data(initialization_data) {}
     ~SubTaskInit() = default;
 
     // Service Worker Database metadata.
@@ -335,9 +341,7 @@ class FillFromMetadataTask : public InitializationSubTask {
     sub_task_init().initialization_data->registration_id =
         BackgroundFetchRegistrationId(
             sub_task_init().service_worker_registration_id,
-            // TODO(https://crbug.com/1199077): Store the full serialization of
-            // the storage key inside `metadata`.
-            blink::StorageKey(url::Origin::Create(GURL(metadata.origin()))),
+            GetMetadataStorageKey(metadata),
             metadata.registration().developer_id(),
             metadata.registration().unique_id());
 
@@ -365,11 +369,11 @@ class FillFromMetadataTask : public InitializationSubTask {
       ir.purpose.reserve(icon.purpose_size());
       for (auto purpose : icon.purpose()) {
         switch (purpose) {
-          case proto::BackgroundFetchOptions_ImageResource_Purpose_ANY:
+          case proto::ImageResource_Purpose_ANY:
             ir.purpose.push_back(
                 blink::mojom::ManifestImageResource_Purpose::ANY);
             break;
-          case proto::BackgroundFetchOptions_ImageResource_Purpose_MONOCHROME:
+          case proto::ImageResource_Purpose_MONOCHROME:
             ir.purpose.push_back(
                 blink::mojom::ManifestImageResource_Purpose::MONOCHROME);
             break;

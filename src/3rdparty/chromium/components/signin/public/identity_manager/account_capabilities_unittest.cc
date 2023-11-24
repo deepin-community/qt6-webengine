@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,6 +12,21 @@
 #endif
 
 class AccountCapabilitiesTest : public testing::Test {};
+
+TEST_F(AccountCapabilitiesTest, CanHaveEmailAddressDisplayed) {
+  AccountCapabilities capabilities;
+  EXPECT_EQ(capabilities.can_have_email_address_displayed(),
+            signin::Tribool::kUnknown);
+
+  AccountCapabilitiesTestMutator mutator(&capabilities);
+  mutator.set_can_have_email_address_displayed(true);
+  EXPECT_EQ(capabilities.can_have_email_address_displayed(),
+            signin::Tribool::kTrue);
+
+  mutator.set_can_have_email_address_displayed(false);
+  EXPECT_EQ(capabilities.can_have_email_address_displayed(),
+            signin::Tribool::kFalse);
+}
 
 TEST_F(AccountCapabilitiesTest, CanOfferExtendedChromeSyncPromos) {
   AccountCapabilities capabilities;
@@ -55,6 +70,48 @@ TEST_F(AccountCapabilitiesTest, CanStopParentalSupervision) {
 
   mutator.set_can_stop_parental_supervision(false);
   EXPECT_EQ(capabilities.can_stop_parental_supervision(),
+            signin::Tribool::kFalse);
+}
+
+TEST_F(AccountCapabilitiesTest, CanToggleAutoUpdates) {
+  AccountCapabilities capabilities;
+  EXPECT_EQ(capabilities.can_toggle_auto_updates(), signin::Tribool::kUnknown);
+
+  AccountCapabilitiesTestMutator mutator(&capabilities);
+  mutator.set_can_toggle_auto_updates(true);
+  EXPECT_EQ(capabilities.can_toggle_auto_updates(), signin::Tribool::kTrue);
+
+  mutator.set_can_toggle_auto_updates(false);
+  EXPECT_EQ(capabilities.can_toggle_auto_updates(), signin::Tribool::kFalse);
+}
+
+TEST_F(AccountCapabilitiesTest, IsAllowedForMachineLearning) {
+  AccountCapabilities capabilities;
+  EXPECT_EQ(capabilities.is_allowed_for_machine_learning(),
+            signin::Tribool::kUnknown);
+
+  AccountCapabilitiesTestMutator mutator(&capabilities);
+  mutator.set_is_allowed_for_machine_learning(true);
+  EXPECT_EQ(capabilities.is_allowed_for_machine_learning(),
+            signin::Tribool::kTrue);
+
+  mutator.set_is_allowed_for_machine_learning(false);
+  EXPECT_EQ(capabilities.is_allowed_for_machine_learning(),
+            signin::Tribool::kFalse);
+}
+
+TEST_F(AccountCapabilitiesTest, IsSubjectToEnterprisePolicies) {
+  AccountCapabilities capabilities;
+  EXPECT_EQ(capabilities.is_subject_to_enterprise_policies(),
+            signin::Tribool::kUnknown);
+
+  AccountCapabilitiesTestMutator mutator(&capabilities);
+  mutator.set_is_subject_to_enterprise_policies(true);
+  EXPECT_EQ(capabilities.is_subject_to_enterprise_policies(),
+            signin::Tribool::kTrue);
+
+  mutator.set_is_subject_to_enterprise_policies(false);
+  EXPECT_EQ(capabilities.is_subject_to_enterprise_policies(),
             signin::Tribool::kFalse);
 }
 

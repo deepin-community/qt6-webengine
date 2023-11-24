@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,17 +10,15 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/task/task_runner_util.h"
 #import "media/capture/video/mac/video_capture_device_avfoundation_mac.h"
 #import "media/capture/video/mac/video_capture_device_avfoundation_utils_mac.h"
 #import "media/capture/video/mac/video_capture_device_decklink_mac.h"
 #include "media/capture/video/mac/video_capture_device_mac.h"
-#include "services/video_capture/public/uma/video_capture_service_event.h"
 
 namespace {
 
@@ -39,7 +37,32 @@ void EnsureRunsOnCFRunLoopEnabledThread() {
 media::VideoCaptureFormats GetDeviceSupportedFormats(
     const media::VideoCaptureDeviceDescriptor& descriptor) {
   media::VideoCaptureFormats formats;
-  NSArray* devices = [AVCaptureDevice devices];
+
+  NSArray<AVCaptureDevice*>* devices = nil;
+  // The awkward repeated if statements are required for the compiler to
+  // recognise that the contained code is protected by an API version check.
+  if (@available(macOS 10.15, *)) {
+    if (base::FeatureList::IsEnabled(
+            media::kUseAVCaptureDeviceDiscoverySession)) {
+      // Query for all camera device types available on macOS. The others in the
+      // enum are only supported on iOS/iPadOS.
+      NSArray* captureDeviceType = @[
+        AVCaptureDeviceTypeBuiltInWideAngleCamera,
+        AVCaptureDeviceTypeExternalUnknown
+      ];
+      AVCaptureDeviceDiscoverySession* deviceDescoverySession =
+          [AVCaptureDeviceDiscoverySession
+              discoverySessionWithDeviceTypes:captureDeviceType
+                                    mediaType:AVMediaTypeVideo
+                                     position:
+                                         AVCaptureDevicePositionUnspecified];
+      devices = deviceDescoverySession.devices;
+    }
+  }
+  if (!devices) {
+    devices = [AVCaptureDevice devices];
+  }
+
   AVCaptureDevice* device = nil;
   for (device in devices) {
     if (base::SysNSStringToUTF8([device uniqueID]) == descriptor.device_id)
@@ -47,18 +70,18 @@ media::VideoCaptureFormats GetDeviceSupportedFormats(
   }
   if (device == nil)
     return media::VideoCaptureFormats();
-  for (AVCaptureDeviceFormat* format in device.formats) {
+  for (AVCaptureDeviceFormat* device_format in device.formats) {
     // MediaSubType is a CMPixelFormatType but can be used as CVPixelFormatType
     // as well according to CMFormatDescription.h
     const media::VideoPixelFormat pixelFormat = [VideoCaptureDeviceAVFoundation
         FourCCToChromiumPixelFormat:CMFormatDescriptionGetMediaSubType(
-                                        [format formatDescription])];
+                                        [device_format formatDescription])];
 
-    CMVideoDimensions dimensions =
-        CMVideoFormatDescriptionGetDimensions([format formatDescription]);
+    CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(
+        [device_format formatDescription]);
 
     for (AVFrameRateRange* frameRate in
-         [format videoSupportedFrameRateRanges]) {
+         [device_format videoSupportedFrameRateRanges]) {
       media::VideoCaptureFormat format(
           gfx::Size(dimensions.width, dimensions.height),
           frameRate.maxFrameRate, pixelFormat);
@@ -73,8 +96,6 @@ media::VideoCaptureFormats GetDeviceSupportedFormats(
 // Blocked devices are identified by a characteristic trailing substring of
 // uniqueId. At the moment these are just Blackmagic devices.
 const char* kBlockedCamerasIdSignature[] = {"-01FDA82C8A9C"};
-
-int32_t get_device_descriptors_retry_count = 0;
 
 }  // anonymous namespace
 
@@ -99,16 +120,6 @@ VideoCaptureDeviceFactoryMac::VideoCaptureDeviceFactoryMac() {
 }
 
 VideoCaptureDeviceFactoryMac::~VideoCaptureDeviceFactoryMac() {
-}
-
-// static
-void VideoCaptureDeviceFactoryMac::SetGetDevicesInfoRetryCount(int count) {
-  get_device_descriptors_retry_count = count;
-}
-
-// static
-int VideoCaptureDeviceFactoryMac::GetGetDevicesInfoRetryCount() {
-  return get_device_descriptors_retry_count;
 }
 
 VideoCaptureErrorOrDevice VideoCaptureDeviceFactoryMac::CreateDevice(
@@ -174,11 +185,6 @@ void VideoCaptureDeviceFactoryMac::GetDevicesInfo(
 
   // Also retrieve Blackmagic devices, if present, via DeckLink SDK API.
   VideoCaptureDeviceDeckLinkMac::EnumerateDevices(&devices_info);
-
-  if ([capture_devices count] > 0 && devices_info.empty()) {
-    video_capture::uma::LogMacbookRetryGetDeviceInfosEvent(
-        video_capture::uma::AVF_DROPPED_DESCRIPTORS_AT_FACTORY);
-  }
 
   std::move(callback).Run(std::move(devices_info));
 }

@@ -24,15 +24,14 @@
 #include "connections/implementation/mediums/webrtc/session_description_wrapper.h"
 #include "connections/implementation/mediums/webrtc_socket.h"
 #include "internal/platform/byte_array.h"
-#include "internal/platform/medium_environment.h"
 #include "internal/platform/count_down_latch.h"
+#include "internal/platform/medium_environment.h"
 #include "internal/platform/webrtc.h"
 #include "webrtc/api/data_channel_interface.h"
 #include "webrtc/api/jsep.h"
 #include "webrtc/api/rtc_error.h"
 #include "webrtc/api/scoped_refptr.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 namespace mediums {
@@ -41,9 +40,9 @@ namespace {
 class ConnectionFlowTest : public ::testing::Test {
  protected:
   ConnectionFlowTest() {
-    MediumEnvironment::Instance().Stop();
     MediumEnvironment::Instance().Start({.webrtc_enabled = true});
   }
+  ~ConnectionFlowTest() override { MediumEnvironment::Instance().Stop(); }
 };
 
 std::unique_ptr<webrtc::IceCandidateInterface> CopyCandidate(
@@ -405,4 +404,3 @@ TEST_F(ConnectionFlowTest, TerminateOfferer) {
 }  // namespace mediums
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location

@@ -28,118 +28,128 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-import indexedDBViewsStyles from './indexedDBViews.css.js';
 import * as i18n from '../../core/i18n/i18n.js';
+
+import indexedDBViewsStyles from './indexedDBViews.css.js';
+
 import type * as SDK from '../../core/sdk/sdk.js';
 import * as DataGrid from '../../ui/legacy/components/data_grid/data_grid.js';
 import * as ObjectUI from '../../ui/legacy/components/object_ui/object_ui.js';
 import * as UI from '../../ui/legacy/legacy.js';
 
-import type {Database, DatabaseId, Entry, Index, IndexedDBModel, ObjectStore, ObjectStoreMetadata} from './IndexedDBModel.js';
+import {
+  type Database,
+  type DatabaseId,
+  type Entry,
+  type Index,
+  type IndexedDBModel,
+  type ObjectStore,
+  type ObjectStoreMetadata,
+} from './IndexedDBModel.js';
 
 const UIStrings = {
   /**
-  *@description Text when something is loading
-  */
+   *@description Text when something is loading
+   */
   loading: 'Loading…',
   /**
-  *@description Text in Indexed DBViews of the Application panel
-  */
+   *@description Text in Indexed DBViews of the Application panel
+   */
   securityOrigin: 'Security origin',
   /**
-  *@description Text in Indexed DBViews of the Application panel
-  */
+   *@description Text in Indexed DBViews of the Application panel
+   */
   version: 'Version',
   /**
-  *@description Text in Indexed DBViews of the Application panel
-  */
+   *@description Text in Indexed DBViews of the Application panel
+   */
   objectStores: 'Object stores',
   /**
-  *@description Text of button in Indexed DBViews of the Application panel
-  */
+   *@description Text of button in Indexed DBViews of the Application panel
+   */
   deleteDatabase: 'Delete database',
   /**
-  *@description Text of button in Indexed DBViews of the Application panel
-  */
+   *@description Text of button in Indexed DBViews of the Application panel
+   */
   refreshDatabase: 'Refresh database',
   /**
-  *@description Text in Indexed DBViews of the Application panel
-  *@example {msb} PH1
-  */
+   *@description Text in Indexed DBViews of the Application panel
+   *@example {msb} PH1
+   */
   pleaseConfirmDeleteOfSDatabase: 'Please confirm delete of "{PH1}" database.',
   /**
-  *@description Text in Indexed DBViews of the Application panel
-  */
+   *@description Text in Indexed DBViews of the Application panel
+   */
   idb: 'IDB',
   /**
-  *@description Text to refresh the page
-  */
+   *@description Text to refresh the page
+   */
   refresh: 'Refresh',
   /**
-  *@description Tooltip text that appears when hovering over the largeicon delete button in the Indexed DBViews of the Application panel
-  */
+   *@description Tooltip text that appears when hovering over the largeicon delete button in the Indexed DBViews of the Application panel
+   */
   deleteSelected: 'Delete selected',
   /**
-  *@description Tooltip text that appears when hovering over the largeicon clear button in the Indexed DBViews of the Application panel
-  */
+   *@description Tooltip text that appears when hovering over the largeicon clear button in the Indexed DBViews of the Application panel
+   */
   clearObjectStore: 'Clear object store',
   /**
-  *@description Text in Indexed DBViews of the Application panel
-  */
+   *@description Text in Indexed DBViews of the Application panel
+   */
   dataMayBeStale: 'Data may be stale',
   /**
-  *@description Title of needs refresh in indexed dbviews of the application panel
-  */
+   *@description Title of needs refresh in indexed dbviews of the application panel
+   */
   someEntriesMayHaveBeenModified: 'Some entries may have been modified',
   /**
-  *@description Text in DOMStorage Items View of the Application panel
-  */
+   *@description Text in DOMStorage Items View of the Application panel
+   */
   keyString: 'Key',
   /**
-  *@description Text in Indexed DBViews of the Application panel
-  */
+   *@description Text in Indexed DBViews of the Application panel
+   */
   primaryKey: 'Primary key',
   /**
-  *@description Text for the value of something
-  */
+   *@description Text for the value of something
+   */
   valueString: 'Value',
   /**
-  *@description Data grid name for Indexed DB data grids
-  */
+   *@description Data grid name for Indexed DB data grids
+   */
   indexedDb: 'Indexed DB',
   /**
-  *@description Text in Indexed DBViews of the Application panel
-  */
+   *@description Text in Indexed DBViews of the Application panel
+   */
   keyPath: 'Key path: ',
   /**
-  *@description Tooltip text that appears when hovering over the largeicon play back button in the Indexed DBViews of the Application panel
-  */
+   *@description Tooltip text that appears when hovering over the largeicon play back button in the Indexed DBViews of the Application panel
+   */
   showPreviousPage: 'Show previous page',
   /**
-  *@description Tooltip text that appears when hovering over the largeicon play button in the Indexed DBViews of the Application panel
-  */
+   *@description Tooltip text that appears when hovering over the largeicon play button in the Indexed DBViews of the Application panel
+   */
   showNextPage: 'Show next page',
   /**
-  *@description Text in Indexed DBViews of the Application panel
-  */
+   *@description Text in Indexed DBViews of the Application panel
+   */
   startFromKey: 'Start from key',
   /**
-  *@description Text in Context menu for expanding objects in IndexedDB tables
-  */
+   *@description Text in Context menu for expanding objects in IndexedDB tables
+   */
   expandRecursively: 'Expand Recursively',
   /**
-  *@description Text in Context menu for collapsing objects in IndexedDB tables
-  */
+   *@description Text in Context menu for collapsing objects in IndexedDB tables
+   */
   collapse: 'Collapse',
   /**
-  *@description Span text content in Indexed DBViews of the Application panel
-  *@example {2} PH1
-  */
+   *@description Span text content in Indexed DBViews of the Application panel
+   *@example {2} PH1
+   */
   totalEntriesS: 'Total entries: {PH1}',
   /**
-  *@description Text in Indexed DBViews of the Application panel
-  *@example {2} PH1
-  */
+   *@description Text in Indexed DBViews of the Application panel
+   *@example {2} PH1
+   */
   keyGeneratorValueS: 'Key generator value: {PH1}',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/application/IndexedDBViews.ts', UIStrings);
@@ -188,7 +198,7 @@ export class IDBDatabaseView extends UI.Widget.VBox {
   }
 
   private refreshDatabase(): void {
-    this.securityOriginElement.textContent = this.database.databaseId.securityOrigin;
+    this.securityOriginElement.textContent = this.database.databaseId.storageKey;
     if (this.versionElement) {
       this.versionElement.textContent = this.database.version.toString();
     }

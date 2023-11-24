@@ -1,9 +1,9 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 import 'chrome://resources/js/action_link.js';
-import 'chrome://resources/cr_elements/action_link_css.m.js';
+import 'chrome://resources/cr_elements/action_link.css.js';
 
 import {assertNotReached} from 'chrome://resources/js/assert_ts.js';
 import {getFaviconForPageURL} from 'chrome://resources/js/icon.js';
@@ -16,9 +16,9 @@ import {getTemplate} from './discards_tab.html.js';
 import {LifecycleUnitDiscardReason, LifecycleUnitLoadingState, LifecycleUnitState} from './lifecycle_unit_state.mojom-webui.js';
 import {SortedTableMixin} from './sorted_table_mixin.js';
 
-type dictType = {
-  [key: string]: (boolean|number|string),
-};
+interface DictType {
+  [key: string]: (boolean|number|string);
+}
 
 /**
  * Compares two TabDiscardsInfos based on the data in the provided sort-key.
@@ -30,7 +30,7 @@ type dictType = {
  *     number if a > b.
  */
 export function compareTabDiscardsInfos(
-    sortKey: string, a: dictType, b: dictType): number {
+    sortKey: string, a: DictType, b: DictType): number {
   let val1 = a[sortKey];
   let val2 = b[sortKey];
 
@@ -71,7 +71,6 @@ export function compareTabDiscardsInfos(
         'loadingState',
         'discardCount',
         'utilityRank',
-        'reactivationScore',
         'lastActiveSeconds',
         'siteEngagementScore',
       ].includes(sortKey)) {
@@ -123,14 +122,14 @@ class DiscardsTabElement extends DiscardsTabElementBase {
    * @private
    */
   private computeSortFunction_(sortKey: string, sortReverse: boolean):
-      (a: dictType, b: dictType) => number {
+      (a: DictType, b: DictType) => number {
     // Polymer 2.0 may invoke multi-property observers before all properties
     // are defined.
     if (!sortKey) {
-      return (_a: dictType, _b: dictType) => 0;
+      return (_a: DictType, _b: DictType) => 0;
     }
 
-    return function(a: dictType, b: dictType) {
+    return function(a: DictType, b: DictType) {
       const comp = compareTabDiscardsInfos(sortKey, a, b);
       return sortReverse ? -comp : comp;
     };
@@ -151,7 +150,6 @@ class DiscardsTabElement extends DiscardsTabElementBase {
       case LifecycleUnitVisibility.VISIBLE:
         return 'visible';
     }
-    assertNotReached('Unknown visibility: ' + visibility);
   }
 
   /**
@@ -170,7 +168,6 @@ class DiscardsTabElement extends DiscardsTabElementBase {
       case LifecycleUnitLoadingState.LOADED:
         return 'loaded';
     }
-    assertNotReached('Unknown loadingState: ' + loadingState);
   }
 
   /**
@@ -184,8 +181,9 @@ class DiscardsTabElement extends DiscardsTabElementBase {
         return 'external';
       case LifecycleUnitDiscardReason.URGENT:
         return 'urgent';
+      case LifecycleUnitDiscardReason.PROACTIVE:
+        return 'proactive';
     }
-    assertNotReached('Unknown discard reason: ' + reason);
   }
 
   /**
@@ -213,7 +211,6 @@ class DiscardsTabElement extends DiscardsTabElementBase {
         case LifecycleUnitVisibility.VISIBLE:
           return hasFocus ? 'active' : 'passive';
       }
-      assertNotReached('Unknown visibility: ' + visibility);
     }
 
     switch (state) {
@@ -232,7 +229,6 @@ class DiscardsTabElement extends DiscardsTabElementBase {
                           .toLocaleString()) :
                                                               '');
     }
-    assertNotReached('Unknown lifecycle state: ' + state);
   }
 
   /** Dispatches a request to update tabInfos_. */
@@ -253,16 +249,6 @@ class DiscardsTabElement extends DiscardsTabElementBase {
     }
     this.updateTableImpl_();
     this.updateTimer_ = setInterval(this.updateTableImpl_.bind(this), 1000);
-  }
-
-  /**
-   * Formats an items reactivation for display.
-   * @param item The item in question.
-   * @return The formatted reactivation score.
-   */
-  private getReactivationScore_(item: TabDiscardsInfo): string {
-    return item.hasReactivationScore ? item.reactivationScore.toFixed(4) :
-                                       'N/A';
   }
 
   /**
@@ -386,6 +372,14 @@ class DiscardsTabElement extends DiscardsTabElementBase {
   /** Event handler that discards the next discardable tab urgently. */
   private discardUrgentNow_(_e: Event) {
     this.discardImpl_();
+  }
+
+  private toggleHighEfficiencyMode_(_e: Event) {
+    this.discardsDetailsProvider_!.toggleHighEfficiencyMode();
+  }
+
+  private toggleBatterySaverMode_(_e: Event) {
+    this.discardsDetailsProvider_!.toggleBatterySaverMode();
   }
 }
 

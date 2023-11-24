@@ -1,4 +1,4 @@
-// Copyright (c) 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,14 +12,15 @@
 
 #include "base/logging.h"
 #include "base/numerics/checked_math.h"
-#include "base/scoped_generic.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/scoped_blocking_call.h"
+#include "base/threading/scoped_thread_priority.h"
 #include "crypto/random.h"
+#include "crypto/scoped_cng_types.h"
 #include "crypto/sha2.h"
 #include "crypto/unexportable_key.h"
 #include "third_party/boringssl/src/include/openssl/bn.h"
@@ -34,24 +35,6 @@
 namespace crypto {
 
 namespace {
-
-// NCrypt has a style of returning handles by writing opaque pointers to
-// caller-provided locations. These pointers must be passed to
-// |NCryptFreeObject| when no longer needed.
-template <typename T>
-struct NCryptObjectTraits {
-  // In practice a value of zero makes |NCryptFreeObject| a no-op, but this
-  // isn't specified by the documentation so the code below avoids depending on
-  // this by releasing() values that were never initialised.
-  static T InvalidValue() { return 0; }
-  static void Free(T handle) { NCryptFreeObject(handle); }
-};
-
-using ScopedProvider =
-    base::ScopedGeneric<NCRYPT_PROV_HANDLE,
-                        NCryptObjectTraits<NCRYPT_PROV_HANDLE>>;
-using ScopedKey = base::ScopedGeneric<NCRYPT_KEY_HANDLE,
-                                      NCryptObjectTraits<NCRYPT_KEY_HANDLE>>;
 
 std::vector<uint8_t> CBBToVector(const CBB* cbb) {
   return std::vector<uint8_t>(CBB_data(cbb), CBB_data(cbb) + CBB_len(cbb));
@@ -85,6 +68,7 @@ absl::optional<SignatureVerifier::SignatureAlgorithm> GetBestSupported(
       continue;
     }
 
+    SCOPED_MAY_LOAD_LIBRARY_AT_BACKGROUND_PRIORITY();
     if (!FAILED(NCryptIsAlgSupported(provider, *bcrypto_algo_name,
                                      /*flags=*/0))) {
       return algo;
@@ -97,6 +81,7 @@ absl::optional<SignatureVerifier::SignatureAlgorithm> GetBestSupported(
 // GetKeyProperty returns the given NCrypt key property of |key|.
 absl::optional<std::vector<uint8_t>> GetKeyProperty(NCRYPT_KEY_HANDLE key,
                                                     LPCWSTR property) {
+  SCOPED_MAY_LOAD_LIBRARY_AT_BACKGROUND_PRIORITY();
   DWORD size;
   if (FAILED(NCryptGetProperty(key, property, nullptr, 0, &size, 0))) {
     return absl::nullopt;
@@ -115,6 +100,7 @@ absl::optional<std::vector<uint8_t>> GetKeyProperty(NCRYPT_KEY_HANDLE key,
 // ExportKey returns |key| exported in the given format or nullopt on error.
 absl::optional<std::vector<uint8_t>> ExportKey(NCRYPT_KEY_HANDLE key,
                                                LPCWSTR format) {
+  SCOPED_MAY_LOAD_LIBRARY_AT_BACKGROUND_PRIORITY();
   DWORD output_size;
   if (FAILED(NCryptExportKey(key, 0, format, nullptr, nullptr, 0, &output_size,
                              0))) {
@@ -148,10 +134,28 @@ absl::optional<std::vector<uint8_t>> GetP256ECDSASPKI(NCRYPT_KEY_HANDLE key) {
   memcpy(&header, pub_key->data(), sizeof(header));
   // |cbKey| is documented[1] as "the length, in bytes, of the key". It is
   // not. For ECDSA public keys it is the length of a field element.
-  if (header.dwMagic != BCRYPT_ECDSA_PUBLIC_P256_MAGIC ||
+  if ((header.dwMagic != BCRYPT_ECDSA_PUBLIC_P256_MAGIC &&
+       header.dwMagic != BCRYPT_ECDSA_PUBLIC_GENERIC_MAGIC) ||
       header.cbKey != 256 / 8 ||
       pub_key->size() - sizeof(BCRYPT_ECCKEY_BLOB) != 64) {
     return absl::nullopt;
+  }
+
+  // Sometimes NCrypt will return a generic dwMagic even when asked for a P-256
+  // key. In that case, do extra validation to make sure that `key` is in fact
+  // a P-256 key.
+  if (header.dwMagic == BCRYPT_ECDSA_PUBLIC_GENERIC_MAGIC) {
+    const absl::optional<std::vector<uint8_t>> curve_name =
+        GetKeyProperty(key, NCRYPT_ECC_CURVE_NAME_PROPERTY);
+    if (!curve_name) {
+      return absl::nullopt;
+    }
+
+    if (curve_name->size() != sizeof(BCRYPT_ECC_CURVE_NISTP256) ||
+        memcmp(curve_name->data(), BCRYPT_ECC_CURVE_NISTP256,
+               sizeof(BCRYPT_ECC_CURVE_NISTP256)) != 0) {
+      return absl::nullopt;
+    }
   }
 
   uint8_t x962[1 + 32 + 32];
@@ -225,8 +229,8 @@ absl::optional<std::vector<uint8_t>> GetRSASPKI(NCRYPT_KEY_HANDLE key) {
 // ECDSAKey wraps a TPM-stored P-256 ECDSA key.
 class ECDSAKey : public UnexportableSigningKey {
  public:
-  ECDSAKey(ScopedProvider provider,
-           ScopedKey key,
+  ECDSAKey(ScopedNCryptProvider provider,
+           ScopedNCryptKey key,
            std::vector<uint8_t> wrapped,
            std::vector<uint8_t> spki)
       : provider_(std::move(provider)),
@@ -254,10 +258,13 @@ class ECDSAKey : public UnexportableSigningKey {
     // ECDSA.
     std::vector<uint8_t> sig(64);
     DWORD sig_size;
-    if (FAILED(NCryptSignHash(key_.get(), nullptr, digest.data(), digest.size(),
-                              sig.data(), sig.size(), &sig_size,
-                              NCRYPT_SILENT_FLAG))) {
-      return absl::nullopt;
+    {
+      SCOPED_MAY_LOAD_LIBRARY_AT_BACKGROUND_PRIORITY();
+      if (FAILED(NCryptSignHash(key_.get(), nullptr, digest.data(),
+                                digest.size(), sig.data(), sig.size(),
+                                &sig_size, NCRYPT_SILENT_FLAG))) {
+        return absl::nullopt;
+      }
     }
     CHECK_EQ(sig.size(), sig_size);
 
@@ -274,8 +281,8 @@ class ECDSAKey : public UnexportableSigningKey {
   }
 
  private:
-  ScopedProvider provider_;
-  ScopedKey key_;
+  ScopedNCryptProvider provider_;
+  ScopedNCryptKey key_;
   const std::vector<uint8_t> wrapped_;
   const std::vector<uint8_t> spki_;
 };
@@ -283,8 +290,8 @@ class ECDSAKey : public UnexportableSigningKey {
 // RSAKey wraps a TPM-stored RSA key.
 class RSAKey : public UnexportableSigningKey {
  public:
-  RSAKey(ScopedProvider provider,
-         ScopedKey key,
+  RSAKey(ScopedNCryptProvider provider,
+         ScopedNCryptKey key,
          std::vector<uint8_t> wrapped,
          std::vector<uint8_t> spki)
       : provider_(std::move(provider)),
@@ -312,6 +319,7 @@ class RSAKey : public UnexportableSigningKey {
     padding_info.pszAlgId = NCRYPT_SHA256_ALGORITHM;
 
     DWORD sig_size;
+    SCOPED_MAY_LOAD_LIBRARY_AT_BACKGROUND_PRIORITY();
     if (FAILED(NCryptSignHash(key_.get(), &padding_info, digest.data(),
                               digest.size(), nullptr, 0, &sig_size,
                               NCRYPT_SILENT_FLAG | BCRYPT_PAD_PKCS1))) {
@@ -330,8 +338,8 @@ class RSAKey : public UnexportableSigningKey {
   }
 
  private:
-  ScopedProvider provider_;
-  ScopedKey key_;
+  ScopedNCryptProvider provider_;
+  ScopedNCryptKey key_;
   const std::vector<uint8_t> wrapped_;
   const std::vector<uint8_t> spki_;
 };
@@ -345,14 +353,14 @@ class UnexportableKeyProviderWin : public UnexportableKeyProvider {
   absl::optional<SignatureVerifier::SignatureAlgorithm> SelectAlgorithm(
       base::span<const SignatureVerifier::SignatureAlgorithm>
           acceptable_algorithms) override {
-    ScopedProvider provider;
-    if (FAILED(NCryptOpenStorageProvider(
-            ScopedProvider::Receiver(provider).get(),
-            MS_PLATFORM_CRYPTO_PROVIDER, /*flags=*/0))) {
-      // If the operation failed then |provider| doesn't have a valid handle in
-      // it and we shouldn't try to free it.
-      std::ignore = provider.release();
-      return absl::nullopt;
+    ScopedNCryptProvider provider;
+    {
+      SCOPED_MAY_LOAD_LIBRARY_AT_BACKGROUND_PRIORITY();
+      if (FAILED(NCryptOpenStorageProvider(
+              ScopedNCryptProvider::Receiver(provider).get(),
+              MS_PLATFORM_CRYPTO_PROVIDER, /*flags=*/0))) {
+        return absl::nullopt;
+      }
     }
 
     return GetBestSupported(provider.get(), acceptable_algorithms);
@@ -364,14 +372,14 @@ class UnexportableKeyProviderWin : public UnexportableKeyProvider {
     base::ScopedBlockingCall scoped_blocking_call(
         FROM_HERE, base::BlockingType::WILL_BLOCK);
 
-    ScopedProvider provider;
-    if (FAILED(NCryptOpenStorageProvider(
-            ScopedProvider::Receiver(provider).get(),
-            MS_PLATFORM_CRYPTO_PROVIDER, /*flags=*/0))) {
-      // If the operation failed when |provider| doesn't have a valid handle in
-      // it and we shouldn't try to free it.
-      std::ignore = provider.release();
-      return nullptr;
+    ScopedNCryptProvider provider;
+    {
+      SCOPED_MAY_LOAD_LIBRARY_AT_BACKGROUND_PRIORITY();
+      if (FAILED(NCryptOpenStorageProvider(
+              ScopedNCryptProvider::Receiver(provider).get(),
+              MS_PLATFORM_CRYPTO_PROVIDER, /*flags=*/0))) {
+        return nullptr;
+      }
     }
 
     absl::optional<SignatureVerifier::SignatureAlgorithm> algo =
@@ -380,20 +388,20 @@ class UnexportableKeyProviderWin : public UnexportableKeyProvider {
       return nullptr;
     }
 
-    ScopedKey key;
-    // An empty key name stops the key being persisted to disk.
-    if (FAILED(NCryptCreatePersistedKey(
-            provider.get(), ScopedKey::Receiver(key).get(),
-            BCryptAlgorithmFor(*algo).value(), /*pszKeyName=*/nullptr,
-            /*dwLegacyKeySpec=*/0, /*dwFlags=*/0))) {
-      // If the operation failed then |key| doesn't have a valid handle in it
-      // and we shouldn't try and free it.
-      std::ignore = key.release();
-      return nullptr;
-    }
+    ScopedNCryptKey key;
+    {
+      SCOPED_MAY_LOAD_LIBRARY_AT_BACKGROUND_PRIORITY();
+      // An empty key name stops the key being persisted to disk.
+      if (FAILED(NCryptCreatePersistedKey(
+              provider.get(), ScopedNCryptKey::Receiver(key).get(),
+              BCryptAlgorithmFor(*algo).value(), /*pszKeyName=*/nullptr,
+              /*dwLegacyKeySpec=*/0, /*dwFlags=*/0))) {
+        return nullptr;
+      }
 
-    if (FAILED(NCryptFinalizeKey(key.get(), NCRYPT_SILENT_FLAG))) {
-      return nullptr;
+      if (FAILED(NCryptFinalizeKey(key.get(), NCRYPT_SILENT_FLAG))) {
+        return nullptr;
+      }
     }
 
     const absl::optional<std::vector<uint8_t>> wrapped_key =
@@ -430,26 +438,23 @@ class UnexportableKeyProviderWin : public UnexportableKeyProvider {
     base::ScopedBlockingCall scoped_blocking_call(
         FROM_HERE, base::BlockingType::WILL_BLOCK);
 
-    ScopedProvider provider;
-    if (FAILED(NCryptOpenStorageProvider(
-            ScopedProvider::Receiver(provider).get(),
-            MS_PLATFORM_CRYPTO_PROVIDER, /*flags=*/0))) {
-      // If the operation failed when |provider| doesn't have a valid handle in
-      // it and we shouldn't try to free it.
-      std::ignore = provider.release();
-      return nullptr;
-    }
+    ScopedNCryptProvider provider;
+    ScopedNCryptKey key;
+    {
+      SCOPED_MAY_LOAD_LIBRARY_AT_BACKGROUND_PRIORITY();
+      if (FAILED(NCryptOpenStorageProvider(
+              ScopedNCryptProvider::Receiver(provider).get(),
+              MS_PLATFORM_CRYPTO_PROVIDER, /*flags=*/0))) {
+        return nullptr;
+      }
 
-    ScopedKey key;
-    if (FAILED(NCryptImportKey(
-            provider.get(), /*hImportKey=*/NULL, BCRYPT_OPAQUE_KEY_BLOB,
-            /*pParameterList=*/nullptr, ScopedKey::Receiver(key).get(),
-            const_cast<PBYTE>(wrapped.data()), wrapped.size(),
-            /*dwFlags=*/NCRYPT_SILENT_FLAG))) {
-      // If the operation failed then |key| doesn't have a valid handle in it
-      // and we shouldn't try and free it.
-      std::ignore = key.release();
-      return nullptr;
+      if (FAILED(NCryptImportKey(
+              provider.get(), /*hImportKey=*/NULL, BCRYPT_OPAQUE_KEY_BLOB,
+              /*pParameterList=*/nullptr, ScopedNCryptKey::Receiver(key).get(),
+              const_cast<PBYTE>(wrapped.data()), wrapped.size(),
+              /*dwFlags=*/NCRYPT_SILENT_FLAG))) {
+        return nullptr;
+      }
     }
 
     const absl::optional<std::vector<uint8_t>> algo_bytes =

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,7 +22,6 @@
 
 namespace blink {
 
-class ComputedStyle;
 class LayoutBox;
 class LayoutObject;
 class NGBlockBreakToken;
@@ -57,11 +56,9 @@ class CORE_EXPORT NGOutOfFlowLayoutPart {
       bool is_absolute_container,
       bool is_fixed_container,
       bool is_grid_container,
-      const ComputedStyle& container_style,
       const NGConstraintSpace& container_space,
       NGBoxFragmentBuilder* container_builder,
-      absl::optional<LogicalSize> initial_containing_block_fixed_size =
-          absl::nullopt);
+      absl::optional<LogicalSize> initial_containing_block_fixed_size);
 
   // Normally this function lays out and positions all out-of-flow objects from
   // the container_builder and additional ones it discovers through laying out
@@ -71,8 +68,54 @@ class CORE_EXPORT NGOutOfFlowLayoutPart {
   // LayoutResult::OutOfFlowPositionedDescendants.
   void Run(const LayoutBox* only_layout = nullptr);
 
-  // Handle the layout of any OOF elements in a fragmentation context.
-  void HandleFragmentation();
+  struct ColumnBalancingInfo {
+    DISALLOW_NEW();
+
+   public:
+    ColumnBalancingInfo() = default;
+
+    bool HasOutOfFlowFragmentainerDescendants() const {
+      return !out_of_flow_fragmentainer_descendants.empty();
+    }
+    void SwapOutOfFlowFragmentainerDescendants(
+        HeapVector<NGLogicalOOFNodeForFragmentation>* descendants) {
+      DCHECK(descendants->empty());
+      std::swap(out_of_flow_fragmentainer_descendants, *descendants);
+    }
+
+    void PropagateSpaceShortage(LayoutUnit space_shortage);
+
+    // The list of columns to balance.
+    NGContainerFragmentBuilder::ChildrenVector columns;
+    // The list of OOF fragmentainer descendants of |columns|.
+    HeapVector<NGLogicalOOFNodeForFragmentation>
+        out_of_flow_fragmentainer_descendants;
+    // The smallest space shortage found while laying out the members of
+    // |out_of_flow_fragmentainer_descendants| within the set of existing
+    // |columns|.
+    LayoutUnit minimal_space_shortage = kIndefiniteSize;
+    // The number of new columns needed to hold the
+    // |out_of_flow_fragmentainer_descendants| within the existing set of
+    // |columns|.
+    wtf_size_t num_new_columns = 0;
+    // True if there is any violating breaks found when performing layout on the
+    // |out_of_flow_fragmentainer_descendants|. Since break avoidance rules
+    // don't apply to OOFs, this can only happen when a monolithic OOF has to
+    // overflow.
+    bool has_violating_break = false;
+
+    void Trace(Visitor* visitor) const {
+      visitor->Trace(columns);
+      visitor->Trace(out_of_flow_fragmentainer_descendants);
+    }
+  };
+
+  // Handle the layout of any OOF elements in a fragmentation context. If
+  // |column_balancing_info| is set, perform layout on the column and OOF
+  // members of |column_balancing_info| rather than of the builder, and keep
+  // track of any info needed for the OOF children to affect column balancing.
+  void HandleFragmentation(
+      ColumnBalancingInfo* column_balancing_info = nullptr);
 
   // Information needed to position descendant within a containing block.
   // Geometry expressed here is complicated:
@@ -133,6 +176,7 @@ class CORE_EXPORT NGOutOfFlowLayoutPart {
     PhysicalSize container_physical_content_size;
     const ContainingBlockInfo container_info;
     const WritingDirectionMode default_writing_direction;
+    const NGContainingBlock<LogicalOffset> containing_block;
     const NGContainingBlock<LogicalOffset> fixedpos_containing_block;
     const NGInlineContainer<LogicalOffset> fixedpos_inline_container;
     bool inline_container = false;
@@ -145,6 +189,7 @@ class CORE_EXPORT NGOutOfFlowLayoutPart {
              const ContainingBlockInfo container_info,
              const WritingDirectionMode default_writing_direction,
              bool is_fragmentainer_descendant,
+             const NGContainingBlock<LogicalOffset>& containing_block,
              const NGContainingBlock<LogicalOffset>& fixedpos_containing_block,
              const NGInlineContainer<LogicalOffset>& fixedpos_inline_container,
              bool inline_container,
@@ -155,6 +200,7 @@ class CORE_EXPORT NGOutOfFlowLayoutPart {
           container_physical_content_size(container_physical_content_size),
           container_info(container_info),
           default_writing_direction(default_writing_direction),
+          containing_block(containing_block),
           fixedpos_containing_block(fixedpos_containing_block),
           fixedpos_inline_container(fixedpos_inline_container),
           inline_container(inline_container),
@@ -183,11 +229,12 @@ class CORE_EXPORT NGOutOfFlowLayoutPart {
     NGLogicalOutOfFlowDimensions node_dimensions;
 
     bool inline_size_depends_on_min_max_sizes = false;
-    bool block_size_depends_on_layout = false;
 
     // If true, a cached layout result was found. See the comment for
     // |initial_layout_result| for more details.
     bool has_cached_layout_result = false;
+
+    bool disable_first_tier_cache = false;
 
     // The offset from the OOF to the top of the fragmentation context root.
     // This should only be used when laying out a fragmentainer descendant.
@@ -212,9 +259,12 @@ class CORE_EXPORT NGOutOfFlowLayoutPart {
     void Trace(Visitor* visitor) const;
   };
 
+  static absl::optional<LogicalSize> InitialContainingBlockFixedSize(
+      NGBlockNode container);
+
  private:
   bool SweepLegacyCandidates(
-      HeapHashSet<Member<const LayoutObject>>* placed_objects);
+      const HeapHashSet<Member<const LayoutObject>>& placed_objects);
 
   const ContainingBlockInfo GetContainingBlockInfo(
       const NGLogicalOutOfFlowPositionedNode&);
@@ -223,6 +273,9 @@ class CORE_EXPORT NGOutOfFlowLayoutPart {
     if (container_builder_->Node().IsPaginatedRoot())
       return kFragmentPage;
     return kFragmentColumn;
+  }
+  const NGConstraintSpace& ConstraintSpace() const {
+    return container_builder_->ConstraintSpace();
   }
 
   void ComputeInlineContainingBlocks(
@@ -266,30 +319,39 @@ class CORE_EXPORT NGOutOfFlowLayoutPart {
   const NGLayoutResult* LayoutOOFNode(
       NodeToLayout& oof_node_to_layout,
       const LayoutBox* only_layout,
-      const NGConstraintSpace* fragmentainer_constraint_space = nullptr);
+      const NGConstraintSpace* fragmentainer_constraint_space = nullptr,
+      bool is_last_fragmentainer_so_far = false);
 
   // TODO(almaher): We are calculating more than just the offset. Consider
   // changing this to a more accurate name.
-  OffsetInfo CalculateOffset(const NodeInfo& node_info,
-                             const LayoutBox* only_layout,
-                             bool is_first_run = true);
+  OffsetInfo CalculateOffset(
+      const NodeInfo& node_info,
+      const LayoutBox* only_layout,
+      bool is_first_run = true,
+      const NGLogicalAnchorQueryMap* anchor_queries = nullptr);
+  // Calculates offsets with the given ComputedStyle. Returns nullopt if
+  // |try_fit_available_space| is true and the layout result does not fit the
+  // available space.
+  absl::optional<OffsetInfo> TryCalculateOffset(
+      const NodeInfo& node_info,
+      const ComputedStyle& style,
+      const LayoutBox* only_layout,
+      const NGLogicalAnchorQueryMap* anchor_queries,
+      const LayoutObject* implicit_anchor,
+      bool try_fit_available_space,
+      bool is_first_run);
 
   const NGLayoutResult* Layout(
       const NodeToLayout& oof_node_to_layout,
-      const NGConstraintSpace* fragmentainer_constraint_space);
+      const NGConstraintSpace* fragmentainer_constraint_space,
+      bool is_last_fragmentainer_so_far);
 
   bool IsContainingBlockForCandidate(const NGLogicalOutOfFlowPositionedNode&);
 
   const NGLayoutResult* GenerateFragment(
-      NGBlockNode node,
-      const LogicalSize& container_content_size_in_child_writing_mode,
-      const absl::optional<LayoutUnit>& block_estimate,
-      const NGLogicalOutOfFlowDimensions& node_dimensions,
-      const LayoutUnit block_offset,
-      const NGBlockBreakToken* break_token,
+      const NodeToLayout& oof_node_to_layout,
       const NGConstraintSpace* fragmentainer_constraint_space,
-      bool should_use_fixed_block_size,
-      bool requires_content_before_breaking);
+      bool is_last_fragmentainer_so_far);
 
   // Performs layout on the OOFs stored in |pending_descendants| and
   // |fragmented_descendants|, adding them as children in the fragmentainer
@@ -300,15 +362,20 @@ class CORE_EXPORT NGOutOfFlowLayoutPart {
   // |fragmented_descendants| is also an output variable in that any OOF that
   // has not finished layout in the current pass will be added back to
   // |fragmented_descendants| to continue layout in the next fragmentainer.
+  // |has_actual_break_inside| will be set to true if any of the OOFs laid out
+  // broke (this does not include repeated fixed-positioned elements).
   void LayoutOOFsInFragmentainer(
       HeapVector<NodeToLayout>& pending_descendants,
       wtf_size_t index,
       LogicalOffset fragmentainer_progression,
+      bool* has_actual_break_inside,
       HeapVector<NodeToLayout>* fragmented_descendants);
   void AddOOFToFragmentainer(NodeToLayout& descendant,
                              const NGConstraintSpace* fragmentainer_space,
                              LogicalOffset fragmentainer_offset,
                              wtf_size_t index,
+                             bool is_last_fragmentainer_so_far,
+                             bool* has_actual_break_inside,
                              NGSimplifiedOOFLayoutAlgorithm* algorithm,
                              HeapVector<NodeToLayout>* fragmented_descendants);
   void ReplaceFragmentainer(wtf_size_t index,
@@ -324,6 +391,7 @@ class CORE_EXPORT NGOutOfFlowLayoutPart {
   void ComputeStartFragmentIndexAndRelativeOffset(
       WritingMode default_writing_mode,
       LayoutUnit block_estimate,
+      absl::optional<LayoutUnit> clipped_container_block_offset,
       wtf_size_t* start_index,
       LogicalOffset* offset) const;
 
@@ -339,13 +407,21 @@ class CORE_EXPORT NGOutOfFlowLayoutPart {
   NGLogicalStaticPosition ToStaticPositionForLegacy(
       NGLogicalStaticPosition position) const;
 
+  const NGContainerFragmentBuilder::ChildrenVector&
+  FragmentationContextChildren() const {
+    DCHECK(container_builder_->IsBlockFragmentationContextRoot());
+    return column_balancing_info_ ? column_balancing_info_->columns
+                                  : container_builder_->Children();
+  }
+
   NGBoxFragmentBuilder* container_builder_;
+  // The builder for the outer block fragmentation context when this is an inner
+  // layout of nested block fragmentation.
+  NGBoxFragmentBuilder* outer_container_builder_ = nullptr;
   ContainingBlockInfo default_containing_block_info_for_absolute_;
   ContainingBlockInfo default_containing_block_info_for_fixed_;
   HeapHashMap<Member<const LayoutObject>, ContainingBlockInfo>
       containing_blocks_map_;
-  const WritingMode writing_mode_;
-  const WritingDirectionMode default_writing_direction_;
 
   // Out-of-flow positioned nodes that we should lay out at a later time. For
   // example, if the containing block has not finished layout.
@@ -354,6 +430,11 @@ class CORE_EXPORT NGOutOfFlowLayoutPart {
   // Holds the children of an inner multicol if we are laying out OOF elements
   // inside a nested fragmentation context.
   HeapVector<MulticolChildInfo>* multicol_children_;
+  // If set, we are currently attempting to balance the columns of a multicol.
+  // In which case, we need to know how much any OOF fragmentainer descendants
+  // will affect column balancing, if any, without actually adding the OOFs to
+  // the associated columns.
+  ColumnBalancingInfo* column_balancing_info_ = nullptr;
   // The block size of the multi-column (before adjustment for spanners, etc.)
   // This is used to calculate the column size of any newly added proxy
   // fragments when handling fragmentation for abspos elements.

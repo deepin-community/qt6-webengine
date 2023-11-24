@@ -1,3 +1,5 @@
+//go:build
+
 // break-kat corrupts a known-answer-test input in a binary and writes the
 // corrupted binary to stdout. This is used to demonstrate that the KATs in the
 // binary notice the error.
@@ -8,7 +10,6 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"sort"
 )
@@ -63,7 +64,7 @@ func main() {
 		panic("invalid kat data: " + err.Error())
 	}
 
-	binaryContents, err := ioutil.ReadFile(inPath)
+	binaryContents, err := os.ReadFile(inPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -75,7 +76,17 @@ func main() {
 		os.Exit(3)
 	}
 
-	binaryContents[i] ^= 1
+	// Zero out the entire value because the compiler may produce code
+	// where parts of the value are embedded in the instructions.
+	for j := range testInputValue {
+		binaryContents[i+j] = 0
+	}
+
+	if bytes.Index(binaryContents, testInputValue) >= 0 {
+		fmt.Fprintln(os.Stderr, "Test input value was still found after erasing it. Second copy?")
+		os.Exit(4)
+	}
+
 	os.Stdout.Write(binaryContents)
 }
 

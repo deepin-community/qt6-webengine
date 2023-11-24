@@ -134,6 +134,7 @@ else()
 endif()
 
 option(EIGEN_BUILD_BTL "Build benchmark suite" OFF)
+option(EIGEN_BUILD_SPBENCH "Build sparse benchmark suite" OFF)
 
 # Disable pkgconfig only for native Windows builds
 if(NOT WIN32 OR NOT CMAKE_HOST_SYSTEM_NAME MATCHES Windows)
@@ -258,6 +259,12 @@ if(NOT MSVC)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx512dq -mfma")
     message(STATUS "Enabling AVX512DQ in tests/examples")
   endif()
+  
+  option(EIGEN_TEST_AVX512FP16 "Enable/Disable AVX512-FP16 in tests/examples" OFF)
+  if(EIGEN_TEST_AVX512FP16)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx512f -mfma -mavx512vl -mavx512fp16")
+	message(STATUS "Enabling AVX512-FP16 in tests/examples")
+  endif()
 
   option(EIGEN_TEST_F16C "Enable/Disable F16C in tests/examples" OFF)
   if(EIGEN_TEST_F16C)
@@ -360,9 +367,17 @@ else()
   endif()
 
   option(EIGEN_TEST_FMA "Enable/Disable FMA/AVX2 in tests/examples" OFF)
-  if(EIGEN_TEST_FMA AND NOT EIGEN_TEST_NEON)
+  option(EIGEN_TEST_AVX2 "Enable/Disable FMA/AVX2 in tests/examples" OFF)
+  if((EIGEN_TEST_FMA AND NOT EIGEN_TEST_NEON) OR EIGEN_TEST_AVX2)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /arch:AVX2")
     message(STATUS "Enabling FMA/AVX2 in tests/examples")
+  endif()
+
+  option(EIGEN_TEST_AVX512 "Enable/Disable AVX512 in tests/examples" OFF)
+  option(EIGEN_TEST_AVX512DQ "Enable/Disable AVX512DQ in tests/examples" OFF)
+  if(EIGEN_TEST_AVX512 OR EIGEN_TEST_AVX512DQ)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /arch:AVX512")
+    message(STATUS "Enabling AVX512 in tests/examples")
   endif()
 
 endif()
@@ -490,14 +505,19 @@ endif()
 
 # add SYCL
 option(EIGEN_TEST_SYCL "Add Sycl support." OFF)
-option(EIGEN_SYCL_TRISYCL "Use the triSYCL Sycl implementation (ComputeCPP by default)." OFF)
 if(EIGEN_TEST_SYCL)
+  option(EIGEN_SYCL_DPCPP "Use the DPCPP Sycl implementation (DPCPP is default SYCL-Compiler)." ON)
+  option(EIGEN_SYCL_TRISYCL "Use the triSYCL Sycl implementation." OFF)
+  option(EIGEN_SYCL_ComputeCpp "Use the DPCPP Sycl implementation." OFF)
+  set(CMAKE_CXX_STANDARD 17)
+  set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -Wno-deprecated-declarations -Wno-shorten-64-to-32 -Wno-cast-align") 
+  set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -Wno-deprecated-copy-with-user-provided-copy -Wno-unused-variable")
   set (CMAKE_MODULE_PATH "${CMAKE_ROOT}/Modules" "cmake/Modules/" "${CMAKE_MODULE_PATH}")
   find_package(Threads REQUIRED)
   if(EIGEN_SYCL_TRISYCL)
     message(STATUS "Using triSYCL")
     include(FindTriSYCL)
-  else()
+  elseif(EIGEN_SYCL_ComputeCpp)
     message(STATUS "Using ComputeCPP SYCL")
     include(FindComputeCpp)
     set(COMPUTECPP_DRIVER_DEFAULT_VALUE OFF)
@@ -508,8 +528,12 @@ if(EIGEN_TEST_SYCL)
       "Use ComputeCpp driver instead of a 2 steps compilation"
       ${COMPUTECPP_DRIVER_DEFAULT_VALUE}
     )
+  else() #Default SYCL compiler is DPCPP (EIGEN_SYCL_DPCPP)
+    set(DPCPP_SYCL_TARGET "spir64" CACHE STRING "Defualt target for Intel CPU/GPU")
+    message(STATUS "Using DPCPP")
+    find_package(DPCPP)
+    add_definitions(-DSYCL_COMPILER_IS_DPCPP)
   endif(EIGEN_SYCL_TRISYCL)
-  option(EIGEN_DONT_VECTORIZE_SYCL "Don't use vectorisation in the SYCL tests." OFF)
   if(EIGEN_DONT_VECTORIZE_SYCL)
     message(STATUS "Disabling SYCL vectorization in tests/examples")
     # When disabling SYCL vectorization, also disable Eigen default vectorization
@@ -547,7 +571,7 @@ foreach(DIR ${FORMAT_SUBDIRS})
     DEPENDS ${FORMAT_SOURCES})
 endif()
 
-if(NOT WIN32)
+if(NOT WIN32 AND EIGEN_BUILD_SPBENCH)
   add_subdirectory(bench/spbench EXCLUDE_FROM_ALL)
 endif()
 
@@ -658,8 +682,10 @@ install (FILES ${CMAKE_CURRENT_BINARY_DIR}/Eigen3Config.cmake
          DESTINATION ${CMAKEPACKAGE_INSTALL_DIR})
 
 # Add uninstall target
-add_custom_target ( uninstall
-    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EigenUninstall.cmake)
+if(NOT TARGET uninstall)
+  add_custom_target ( uninstall
+      COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EigenUninstall.cmake)
+endif()
 endif()
 
 if (EIGEN_SPLIT_TESTSUITE)

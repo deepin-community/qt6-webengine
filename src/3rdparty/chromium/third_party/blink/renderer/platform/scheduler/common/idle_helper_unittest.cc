@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,10 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/run_loop.h"
+#include "base/task/common/lazy_now.h"
 #include "base/task/sequence_manager/sequence_manager.h"
 #include "base/task/sequence_manager/task_queue.h"
 #include "base/task/sequence_manager/test/sequence_manager_for_test.h"
@@ -19,11 +20,10 @@
 #include "base/time/time.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/scheduler/common/scheduler_helper.h"
 #include "third_party/blink/renderer/platform/scheduler/common/single_thread_idle_task_runner.h"
+#include "third_party/blink/renderer/platform/scheduler/public/non_main_thread.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
-#include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/scheduler/worker/non_main_thread_scheduler_helper.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_copier_base.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_copier_std.h"
@@ -187,17 +187,24 @@ class BaseIdleHelperTest : public testing::Test {
       base::TimeDelta required_quiescence_duration_before_long_idle_period)
       : test_task_runner_(base::MakeRefCounted<base::TestMockTimeTaskRunner>(
             base::TestMockTimeTaskRunner::Type::kStandalone)) {
+    auto settings = base::sequence_manager::SequenceManager::Settings::Builder()
+                        .SetPrioritySettings(CreatePrioritySettings())
+                        .Build();
     sequence_manager_ = base::sequence_manager::SequenceManagerForTest::Create(
-        nullptr, test_task_runner_, test_task_runner_->GetMockTickClock());
+        nullptr, test_task_runner_, test_task_runner_->GetMockTickClock(),
+        std::move(settings));
     scheduler_helper_ = std::make_unique<NonMainThreadSchedulerHelper>(
         sequence_manager_.get(), nullptr, TaskType::kInternalTest);
     scheduler_helper_->AttachToCurrentThread();
+    idle_helper_queue_ = scheduler_helper_->NewTaskQueue(
+        TaskQueue::Spec(base::sequence_manager::QueueName::IDLE_TQ));
     idle_helper_ = std::make_unique<IdleHelperForTest>(
         scheduler_helper_.get(),
         required_quiescence_duration_before_long_idle_period,
-        scheduler_helper_->NewTaskQueue(TaskQueue::Spec("idle_test")));
+        idle_helper_queue_->GetTaskQueue());
     default_task_queue_ = scheduler_helper_->DefaultNonMainThreadTaskQueue();
-    default_task_runner_ = default_task_queue_->CreateTaskRunner(0);
+    default_task_runner_ =
+        default_task_queue_->GetTaskRunnerWithDefaultTaskType();
     idle_task_runner_ = idle_helper_->IdleTaskRunner();
     test_task_runner_->AdvanceMockTickClock(base::Microseconds(5000));
   }
@@ -275,8 +282,9 @@ class BaseIdleHelperTest : public testing::Test {
   scoped_refptr<base::TestMockTimeTaskRunner> test_task_runner_;
   std::unique_ptr<SequenceManager> sequence_manager_;
   std::unique_ptr<NonMainThreadSchedulerHelper> scheduler_helper_;
+  scoped_refptr<NonMainThreadTaskQueue> idle_helper_queue_;
   std::unique_ptr<IdleHelperForTest> idle_helper_;
-  scoped_refptr<base::sequence_manager::TaskQueue> default_task_queue_;
+  scoped_refptr<NonMainThreadTaskQueue> default_task_queue_;
   scoped_refptr<base::SingleThreadTaskRunner> default_task_runner_;
   scoped_refptr<SingleThreadIdleTaskRunner> idle_task_runner_;
 };
@@ -666,8 +674,7 @@ TEST_F(IdleHelperTest, TestLongIdlePeriodPaused) {
   idle_helper_->EnableLongIdlePeriod();
   CheckIdlePeriodStateIs("in_long_idle_period_paused");
   // There shouldn't be any delayed tasks posted by the idle helper when paused.
-  base::sequence_manager::LazyNow lazy_now_1(
-      test_task_runner_->GetMockTickClock());
+  base::LazyNow lazy_now_1(test_task_runner_->GetMockTickClock());
   EXPECT_FALSE(scheduler_helper_->GetNextWakeUp());
 
   // Posting a task should transition us to the an active state.
@@ -688,8 +695,7 @@ TEST_F(IdleHelperTest, TestLongIdlePeriodPaused) {
 
   // Once all task have been run we should go back to the paused state.
   CheckIdlePeriodStateIs("in_long_idle_period_paused");
-  base::sequence_manager::LazyNow lazy_now_2(
-      test_task_runner_->GetMockTickClock());
+  base::LazyNow lazy_now_2(test_task_runner_->GetMockTickClock());
   EXPECT_FALSE(scheduler_helper_->GetNextWakeUp());
 
   idle_helper_->EndIdlePeriod();
@@ -1102,7 +1108,7 @@ class MultiThreadedIdleHelperTest : public IdleHelperTest {
   }
 
   void PostDelayedIdleTaskFromNewThread(base::TimeDelta delay, int* run_count) {
-    std::unique_ptr<Thread> thread = Platform::Current()->CreateThread(
+    std::unique_ptr<NonMainThread> thread = NonMainThread::CreateThread(
         ThreadCreationParams(ThreadType::kTestThread)
             .SetThreadNameForTest("TestBackgroundThread"));
     PostCrossThreadTask(

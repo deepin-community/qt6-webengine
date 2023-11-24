@@ -1,11 +1,11 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "weblayer/browser/page_specific_content_settings_delegate.h"
 
-#include "base/callback_helpers.h"
 #include "base/feature_list.h"
+#include "base/functional/callback_helpers.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/permissions/permission_decision_auto_blocker.h"
 #include "content/public/browser/render_process_host.h"
@@ -34,12 +34,9 @@ void PageSpecificContentSettingsDelegate::InitializeRenderer(
   process->GetChannel()->GetRemoteAssociatedInterface(&rc_interface);
   mojo::PendingRemote<content_settings::mojom::ContentSettingsManager>
       content_settings_manager;
-  if (base::FeatureList::IsEnabled(
-          features::kNavigationThreadingOptimizations)) {
-    content_settings::ContentSettingsManagerImpl::Create(
-        process, content_settings_manager.InitWithNewPipeAndPassReceiver(),
-        std::make_unique<ContentSettingsManagerDelegate>());
-  }
+  content_settings::ContentSettingsManagerImpl::Create(
+      process, content_settings_manager.InitWithNewPipeAndPassReceiver(),
+      std::make_unique<ContentSettingsManagerDelegate>());
   rc_interface->SetInitialConfiguration(std::move(content_settings_manager));
 }
 
@@ -58,15 +55,6 @@ HostContentSettingsMap* PageSpecificContentSettingsDelegate::GetSettingsMap() {
 void PageSpecificContentSettingsDelegate::SetDefaultRendererContentSettingRules(
     content::RenderFrameHost* rfh,
     RendererContentSettingRules* rules) {}
-
-ContentSetting PageSpecificContentSettingsDelegate::GetEmbargoSetting(
-    const GURL& request_origin,
-    ContentSettingsType permission) {
-  return PermissionDecisionAutoBlockerFactory::GetForBrowserContext(
-             web_contents_->GetBrowserContext())
-      ->GetEmbargoResult(request_origin, permission)
-      .content_setting;
-}
 
 std::vector<storage::FileSystemType>
 PageSpecificContentSettingsDelegate::GetAdditionalFileSystemTypes() {
@@ -90,6 +78,12 @@ content_settings::PageSpecificContentSettings::MicrophoneCameraState
 PageSpecificContentSettingsDelegate::GetMicrophoneCameraState() {
   return content_settings::PageSpecificContentSettings::
       MICROPHONE_CAMERA_NOT_ACCESSED;
+}
+
+content::WebContents* PageSpecificContentSettingsDelegate::
+    MaybeGetSyncedWebContentsForPictureInPicture(
+        content::WebContents* web_contents) {
+  return nullptr;
 }
 
 void PageSpecificContentSettingsDelegate::OnContentAllowed(

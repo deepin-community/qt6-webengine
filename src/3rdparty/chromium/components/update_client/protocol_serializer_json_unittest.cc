@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,9 +22,6 @@
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/re2/src/re2/re2.h"
 
-using base::Value;
-using std::string;
-
 namespace update_client {
 
 TEST(SerializeRequestJSON, Serialize) {
@@ -40,16 +37,14 @@ TEST(SerializeRequestJSON, Serialize) {
     std::vector<std::string> items = {"id1"};
     test::SetDateLastData(metadata.get(), items, 1234);
 
-    std::vector<base::Value> events;
-    events.emplace_back(Value::Type::DICTIONARY);
-    events.emplace_back(Value::Type::DICTIONARY);
-    events[0].SetKey("a", Value(1));
-    events[0].SetKey("b", Value("2"));
-    events[1].SetKey("error", Value(0));
+    std::vector<base::Value::Dict> events(2);
+    events[0].Set("a", 1);
+    events[0].Set("b", "2");
+    events[1].Set("error", 0);
 
     std::vector<protocol_request::App> apps;
     apps.push_back(MakeProtocolApp(
-        "id1", base::Version("1.0"), "ap1", "BRND", "lang", "source1",
+        "id1", base::Version("1.0"), "ap1", "BRND", "lang", -1, "source1",
         "location1", "fp1", {{"attr1", "1"}, {"attr2", "2"}}, "c1", "ch1",
         "cn1", "test", {0, 1},
         MakeProtocolUpdateCheck(true, "33.12", true, false),
@@ -69,6 +64,7 @@ TEST(SerializeRequestJSON, Serialize) {
         R"("data":\[{"index":"foobar_install_data_index","name":"install"}],)"
         R"("disabled":\[{"reason":0},{"reason":1}],"enabled":false,)"
         R"("event":\[{"a":1,"b":"2"},{"error":0}],)"
+        R"("installdate":-1,)"
         R"("installedby":"location1","installsource":"source1",)"
         R"("lang":"lang",)"
         R"("packages":{"package":\[{"fp":"fp1"}]},)"
@@ -94,9 +90,9 @@ TEST(SerializeRequestJSON, Serialize) {
     // Tests `sameversionupdate` presence with a minimal request for one app.
     std::vector<protocol_request::App> apps;
     apps.push_back(MakeProtocolApp(
-        "id1", base::Version("1.0"), "", "", "", "", "", "", {}, "", "", "", "",
-        {}, MakeProtocolUpdateCheck(false, "", false, true), {}, absl::nullopt,
-        absl::nullopt));
+        "id1", base::Version("1.0"), "", "", "", -2, "", "", "", {}, "", "", "",
+        "", {}, MakeProtocolUpdateCheck(false, "", false, true), {},
+        absl::nullopt, absl::nullopt));
 
     const auto request = std::make_unique<ProtocolSerializerJSON>()->Serialize(
         MakeProtocolRequest(false, "{15160585-8ADE-4D3C-839B-1281A6035D1F}", "",

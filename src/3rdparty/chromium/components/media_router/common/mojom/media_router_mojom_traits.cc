@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,9 +19,6 @@ bool StructTraits<media_router::mojom::IssueDataView, media_router::IssueInfo>::
   if (!data.ReadTitle(&out->title))
     return false;
 
-  if (!data.ReadDefaultAction(&out->default_action))
-    return false;
-
   if (!data.ReadSeverity(&out->severity))
     return false;
 
@@ -31,17 +28,11 @@ bool StructTraits<media_router::mojom::IssueDataView, media_router::IssueInfo>::
 
   out->message = message.value_or(std::string());
 
-  if (!data.ReadSecondaryActions(&out->secondary_actions))
-    return false;
-
   if (!data.ReadRouteId(&out->route_id))
     return false;
 
   if (!data.ReadSinkId(&out->sink_id))
     return false;
-
-  out->is_blocking = data.is_blocking();
-  out->help_page_id = data.help_page_id();
 
   return true;
 }
@@ -52,14 +43,12 @@ UnionTraits<media_router::mojom::MediaSinkExtraDataDataView,
             media_router::MediaSinkInternal>::
     GetTag(const media_router::MediaSinkInternal& sink) {
   if (sink.is_dial_sink()) {
-    return media_router::mojom::MediaSinkExtraDataDataView::Tag::
-        DIAL_MEDIA_SINK;
+    return media_router::mojom::MediaSinkExtraDataDataView::Tag::kDialMediaSink;
   } else if (sink.is_cast_sink()) {
-    return media_router::mojom::MediaSinkExtraDataDataView::Tag::
-        CAST_MEDIA_SINK;
+    return media_router::mojom::MediaSinkExtraDataDataView::Tag::kCastMediaSink;
   }
   NOTREACHED();
-  return media_router::mojom::MediaSinkExtraDataDataView::Tag::CAST_MEDIA_SINK;
+  return media_router::mojom::MediaSinkExtraDataDataView::Tag::kCastMediaSink;
 }
 
 // static
@@ -80,20 +69,6 @@ bool StructTraits<media_router::mojom::MediaSinkDataView,
     return false;
 
   out->sink().set_name(name);
-
-  absl::optional<std::string> description;
-  if (!data.ReadDescription(&description))
-    return false;
-
-  if (description)
-    out->sink().set_description(*description);
-
-  absl::optional<std::string> domain;
-  if (!data.ReadDomain(&domain))
-    return false;
-
-  if (domain)
-    out->sink().set_domain(*domain);
 
   media_router::SinkIconType icon_type;
   if (!data.ReadIconType(&icon_type))
@@ -119,16 +94,14 @@ bool UnionTraits<media_router::mojom::MediaSinkExtraDataDataView,
     Read(media_router::mojom::MediaSinkExtraDataDataView data,
          media_router::MediaSinkInternal* out) {
   switch (data.tag()) {
-    case media_router::mojom::MediaSinkExtraDataDataView::Tag::
-        DIAL_MEDIA_SINK: {
+    case media_router::mojom::MediaSinkExtraDataDataView::Tag::kDialMediaSink: {
       media_router::DialSinkExtraData extra_data;
       if (!data.ReadDialMediaSink(&extra_data))
         return false;
       out->set_dial_data(extra_data);
       return true;
     }
-    case media_router::mojom::MediaSinkExtraDataDataView::Tag::
-        CAST_MEDIA_SINK: {
+    case media_router::mojom::MediaSinkExtraDataDataView::Tag::kCastMediaSink: {
       media_router::CastSinkExtraData extra_data;
       if (!data.ReadCastMediaSink(&extra_data))
         return false;

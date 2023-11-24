@@ -1,4 +1,4 @@
-# Copyright 2016 The PDFium Authors. All rights reserved.
+# Copyright 2016 The PDFium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 #
@@ -10,7 +10,7 @@
 # Column 1: platform: *, win, mac, linux
 # Column 2: v8 support: *, nov8, v8
 # Column 3: xfa support: *, noxfa, xfa
-# Column 4: rendering support: *, agg, skia, skiapaths
+# Column 4: rendering support: *, agg, skia
 #
 # All columns on a line on a line must match, but filenames may be repeated
 # on subsequent lines to suppress more cases.  Within each column, any one of
@@ -22,11 +22,17 @@
 #
 # Corpus tests
 #
+# TODO(pdfium:1811): Remove after associated bug is fixed
+11.pdf * * * skia
+
 12.pdf mac * * *
-1_10_watermark.pdf * * * *
 1_1_textbox.pdf * * * *
 1_2_typewriter.pdf * * * *
 1_3_callout.pdf * * * *
+
+# TODO(pdfium:1805): Remove after associated bug is fixed
+1_matrix.pdf * * * skia
+
 1_matrix.pdf mac * * *
 1m_diff_lsjdf.pdf mac * * *
 1m_same_xxxx.pdf mac * * *
@@ -64,6 +70,7 @@ FRC_8.4.1_Annotations_M.pdf * * * *
 FRC_8.4.1_Annotations_NM.pdf * * * *
 FRC_8.5_Page_C_SubmitForm.pdf * * * *
 FRC_8.5_Page_PI_ResetForm_Phantom.pdf * * * *
+
 FRC_8.5_Widget_F.pdf * nov8 * *
 FRC_8_8.2.2__T8.3_Count_remove.pdf * * * *
 FRC_9_8.2.2__T8.3_remove_first_item.pdf * * * *
@@ -77,9 +84,7 @@ action_reset.pdf mac * * *
 action_run_javascript.pdf mac * * *
 action_submit_a_form.pdf mac * * *
 all_trigger_alert.pdf * * * *
-all_trigger_browsefordoc.pdf * * * *
 all_trigger_mailmsg.pdf * * * *
-all_trigger_newdoc.pdf * * * *
 all_trigger_print.pdf * * * *
 all_trigger_run_js_lunchurl.pdf mac * * *
 all_trigger_run_js_maildoc.pdf mac * * *
@@ -88,9 +93,14 @@ annotation_highlight_long_content.pdf mac * * *
 annotation_highlight_no_author.pdf mac * * *
 app_launchurl.pdf mac * * *
 appstoredescription3.1_en_updated.pdf mac * * *
+
 bookmark.pdf * * * *
 bookmarkgetcolor.pdf mac * * *
 bug_0_length_line.pdf mac * * *
+
+# TODO(pdfium:1812): Remove after associated bug is fixed
+bug_0_length_line.pdf * * * skia
+
 bug_0_width_line.pdf mac * * *
 bug_440132.pdf mac * * *
 bug_white_space.pdf mac * * *
@@ -206,8 +216,16 @@ form_combobox_per.pdf mac * * *
 form_combobox_per.pdf * nov8 * *
 form_combobox_plus.pdf mac * * *
 form_combobox_plus.pdf * nov8 * *
+
+# TODO(pdfium:1963): Remove after associated bug is fixed
+form_combobox_plus.pdf * * * skia
+
 form_combobox_product.pdf mac * * *
 form_combobox_product.pdf * nov8 * *
+
+# TODO(pdfium:1963): Remove after associated bug is fixed
+form_combobox_product.pdf * * * skia
+
 form_combobox_resetform.pdf * * * *
 form_combobox_time.pdf mac * * *
 form_combobox_time.pdf * nov8 * *
@@ -281,6 +299,13 @@ transformation.pdf mac * * *
 transparent.pdf mac * * *
 whats_new_in_v3.0.pdf mac * * *
 widget_javascript.pdf mac * * *
+
+# TODO(pdfium:1959): Remove after associated bug is fixed
+xfermodes2.pdf * * * skia
+
+# TODO(pdfium:1959): Remove after associated bug is fixed
+xfermodes3.pdf * * * skia
+
 zh_file1.pdf mac * * *
 zh_function_list.pdf mac * * *
 zh_shared_document.pdf mac * * *
@@ -314,6 +339,10 @@ bug_679642.in * * noxfa *
 bug_679643.in * * noxfa *
 bug_735912.in * * noxfa *
 
+# JS tests in nov8 mode expect empty results. This one will
+# not be empty as the callback is not js-based.
+named_action.in * nov8 * *
+
 # xfa_specific
 
 # TODO(pdfium:1106): Remove after associated bug is fixed
@@ -326,11 +355,11 @@ resolve_nodes_1.pdf * * * *
 # TODO(pdfium:1747): Remove after associated bug is fixed
 bug_1258634.in * * * skia
 
-# TODO(pdfium:1748): Remove after associated bug is fixed
-bug_1286.in * * * skia
-
 # TODO(pdfium:1331): Remove after associated bug is fixed
 bug_1331.in * * * *
+
+# TODO(chromium:1356149): Remove after associated bug is fixed
+bug_1356149.in mac * * agg
 
 # TODO(pdfium:1457): Remove after associated bug is fixed
 bug_1457.in * * * *
@@ -344,51 +373,40 @@ bug_1571.in * * * *
 # TODO(pdfium:1723): Remove after associated bug is fixed
 bug_1723.in * * * *
 
+# TODO(pdfium:1846): Remove after associated bug is fixed
+bug_1846.in * * * agg
+
+# TODO(pdfium:1963): Remove after associated bug is fixed
+bug_1963.in * * * skia
+
+# TODO(pdfium:1973): Remove after associated bug is fixed
+bug_1973.in * * * agg,skia
+
 # TODO(chromium:237527): Remove after associated bug is fixed
 bug_237527_1.in * * * *
 
 # TODO(chromium:451366): Remove after associated bug is fixed
-bug_451366.in * * * *
+bug_451366.in * * * agg
 
 # TODO(pdfium:492): Remove after associated bug is fixed
 bug_492.in * nov8 * *
 
 # TODO(chromium:725555, skia:9265): Remove after associated bug is fixed
-bug_725555.in * * * skia,skiapaths
+bug_725555.in * * * skia
 
-# TODO(pdfiu,:1310): Remove after associated bug is fixed
-radial_shading_point_at_border.in * * * skia,skiapaths
+# TODO(chromium:983289): Remove after associated bug is fixed
+bug_983289.in * * * agg
 
 # TODO(chromium:1028991): Remove after associated bug is fixed
 reset_button.in * * * *
 
 # xfa_specific
 
-# TODO(pdfium:1743): Remove after associated bug is fixed
-barcode_test.pdf * * * skia,skiapaths
 # TODO(pdfium:1095): Remove after associated bug is fixed
 bug_997412.in win * * *
-# TODO(pdfium:1354): Remove after associated bug is fixed
-bug_997412.in * * * skia,skiapaths
-# TODO(pdfium:1743): Remove after associated bug is fixed
-dynamic_list_box_allow_multiple_selection.pdf * * * skia,skiapaths
-# TODO(pdfium:1743): Remove after associated bug is fixed
-dynamic_password_field_background_fill.pdf * * * skia,skiapaths
-# TODO(pdfium:1743): Remove after associated bug is fixed
-dynamic_table_color_and_width.pdf * * * skia,skiapaths
-# TODO(pdfium:1743): Remove after associated bug is fixed
-resolve_nodes_0.pdf * * * skia,skiapaths
 # TODO(pdfium:1107): Remove after associated bug is fixed
 standard_symbols.pdf * * * *
-# TODO(pdfium:1168): Remove after associated bug is fixed
-xfa_bmp_image.in * * * *
 # TODO(pdfium:1095): Remove after associated bug is fixed
 xfa_example.in win * * *
-# TODO(pdfium:1354): Remove after associated bug is fixed
-xfa_example.in * * * skia,skiapaths
-# TODO(pdfium:1743): Remove after associated bug is fixed
-xfa_node_caption.pdf * * * skia,skiapaths
 # TODO(pdfium:1095): Remove after associated bug is fixed
 xfa_textfield.in win * * *
-# TODO(pdfium:1354): Remove after associated bug is fixed
-xfa_textfield.in * * * skia,skiapaths

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,10 @@
 
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/checked_math.h"
+#include "base/task/single_thread_task_runner.h"
 #include "build/chromeos_buildflags.h"
 #include "components/viz/host/gpu_host_impl.h"
 #include "components/viz/host/host_gpu_memory_buffer_manager.h"
@@ -87,6 +88,30 @@ void GpuClient::SetClientPid(base::ProcessId client_pid) {
 
   if (GpuHostImpl* gpu_host = delegate_->EnsureGpuHost())
     gpu_host->SetChannelClientPid(client_id_, client_pid);
+}
+
+void GpuClient::SetDiskCacheHandle(const gpu::GpuDiskCacheHandle& handle) {
+  if (!task_runner_->RunsTasksInCurrentSequence()) {
+    task_runner_->PostTask(FROM_HERE,
+                           base::BindOnce(&GpuClient::SetDiskCacheHandle,
+                                          weak_factory_.GetWeakPtr(), handle));
+    return;
+  }
+
+  if (GpuHostImpl* gpu_host = delegate_->EnsureGpuHost())
+    gpu_host->SetChannelDiskCacheHandle(client_id_, handle);
+}
+
+void GpuClient::RemoveDiskCacheHandles() {
+  if (!task_runner_->RunsTasksInCurrentSequence()) {
+    task_runner_->PostTask(FROM_HERE,
+                           base::BindOnce(&GpuClient::RemoveDiskCacheHandles,
+                                          weak_factory_.GetWeakPtr()));
+    return;
+  }
+
+  if (GpuHostImpl* gpu_host = delegate_->EnsureGpuHost())
+    gpu_host->RemoveChannelDiskCacheHandles(client_id_);
 }
 
 void GpuClient::SetConnectionErrorHandler(
@@ -234,12 +259,10 @@ void GpuClient::CreateGpuMemoryBuffer(
                      weak_factory_.GetWeakPtr(), id));
 }
 
-void GpuClient::DestroyGpuMemoryBuffer(gfx::GpuMemoryBufferId id,
-                                       const gpu::SyncToken& sync_token) {
+void GpuClient::DestroyGpuMemoryBuffer(gfx::GpuMemoryBufferId id) {
   if (auto* gpu_memory_buffer_manager =
           delegate_->GetGpuMemoryBufferManager()) {
-    gpu_memory_buffer_manager->DestroyGpuMemoryBuffer(id, client_id_,
-                                                      sync_token);
+    gpu_memory_buffer_manager->DestroyGpuMemoryBuffer(id, client_id_);
   }
 }
 

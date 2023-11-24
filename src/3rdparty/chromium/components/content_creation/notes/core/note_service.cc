@@ -1,10 +1,10 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/content_creation/notes/core/note_service.h"
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "components/content_creation/notes/core/note_features.h"
 #include "components/content_creation/notes/core/server/notes_repository.h"
 

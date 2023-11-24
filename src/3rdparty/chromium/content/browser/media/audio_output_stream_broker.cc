@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/trace_event/trace_event.h"
 #include "content/browser/media/media_internals.h"
@@ -20,8 +20,6 @@ namespace content {
 
 namespace {
 
-// Used in Media.Audio.Render.StreamBrokerDisconnectReason2 histogram, matches
-// StreamBrokerDisconnectReason2 enum.
 enum class StreamBrokerDisconnectReason {
   kDefault = 0,
   kPlatformError,

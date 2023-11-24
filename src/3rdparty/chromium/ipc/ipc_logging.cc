@@ -1,9 +1,10 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ipc/ipc_logging.h"
 
+#include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 
 #if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
@@ -13,16 +14,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "ipc/ipc_message_utils.h"
@@ -51,7 +51,7 @@ Logging::Logging()
       enabled_color_(false),
       queue_invoke_later_pending_(false),
       sender_(nullptr),
-      main_thread_(base::ThreadTaskRunnerHandle::Get()),
+      main_thread_(base::SingleThreadTaskRunner::GetCurrentDefault()),
       consumer_(nullptr) {
 #if BUILDFLAG(IS_WIN)
   // getenv triggers an unsafe warning. Simply check how big of a buffer
@@ -235,7 +235,7 @@ void Logging::Log(const LogData& data) {
       queued_logs_.push_back(data);
       if (!queue_invoke_later_pending_) {
         queue_invoke_later_pending_ = true;
-        base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
             FROM_HERE,
             base::BindOnce(&Logging::OnSendLogs, base::Unretained(this)),
             base::Milliseconds(kLogSendDelayMs));

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -138,12 +138,9 @@ class GPURenderPassEncoder : public DawnObject<WGPURenderPassEncoder>,
     GetProcs().renderPassEncoderEndOcclusionQuery(GetHandle());
   }
   void writeTimestamp(const DawnObject<WGPUQuerySet>* querySet,
-                      uint32_t queryIndex) {
-    GetProcs().renderPassEncoderWriteTimestamp(
-        GetHandle(), querySet->GetHandle(), queryIndex);
-  }
+                      uint32_t queryIndex,
+                      ExceptionState& exception_state);
   void end() { GetProcs().renderPassEncoderEnd(GetHandle()); }
-  void endPass();
 
   void setLabelImpl(const String& value) override {
     std::string utf8_label = value.Utf8();

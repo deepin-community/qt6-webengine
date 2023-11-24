@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -292,7 +292,7 @@ void CSSClipInterpolationType::ApplyStandardPropertyValue(
         .CreateLength(state.CssToLengthConversionData(),
                       Length::ValueRange::kAll);
   };
-  state.Style()->SetClip(
+  state.StyleBuilder().SetClip(
       LengthBox(convert_index(autos.is_top_auto, kClipTop),
                 convert_index(autos.is_right_auto, kClipRight),
                 convert_index(autos.is_bottom_auto, kClipBottom),

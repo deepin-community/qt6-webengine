@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,8 +11,8 @@
 #include <utility>
 #include <vector>
 
-#include "base/callback_forward.h"
 #include "base/containers/ring_buffer.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "cc/cc_export.h"
@@ -91,6 +91,7 @@ class CC_EXPORT DroppedFrameCounter {
   void AddDroppedFrame();
   void ReportFrames();
   void ReportFramesForUI();
+  void ReportFramesOnEveryFrameForUI();
 
   void OnBeginFrame(const viz::BeginFrameArgs& args, bool is_scroll_active);
   void OnEndFrame(const viz::BeginFrameArgs& args, const FrameInfo& frame_info);
@@ -161,6 +162,10 @@ class CC_EXPORT DroppedFrameCounter {
     return &sliding_window_histogram_[strategy];
   }
 
+  double sliding_window_current_percent_dropped() const {
+    return sliding_window_current_percent_dropped_.value_or(0);
+  }
+
  private:
   void NotifyFrameResult(const viz::BeginFrameArgs& args,
                          const FrameInfo& frame_info);
@@ -194,7 +199,6 @@ class CC_EXPORT DroppedFrameCounter {
   absl::optional<double> sliding_window_max_percent_dropped_After_2_sec_;
   absl::optional<double> sliding_window_max_percent_dropped_After_5_sec_;
   base::TimeTicks time_fcp_received_;
-  base::TimeDelta time_max_delta_;
   raw_ptr<UkmSmoothnessDataShared> ukm_smoothness_data_ = nullptr;
   FrameSorter frame_sorter_;
   raw_ptr<TotalFrameCounter> total_counter_ = nullptr;
@@ -217,7 +221,7 @@ class CC_EXPORT DroppedFrameCounter {
   absl::optional<SortedFrameCallback> sorted_frame_callback_;
 
   bool report_for_ui_ = false;
-  double sliding_window_current_percent_dropped_ = 0.0;
+  absl::optional<double> sliding_window_current_percent_dropped_;
 
   // Sets to true on a newly dropped frame and stays true as long as the frames
   // that follow are dropped. Reset when a frame is presented. It is used to

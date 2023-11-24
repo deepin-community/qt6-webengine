@@ -1,10 +1,11 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_GPU_XR_FRAME_TRANSPORT_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_GPU_XR_FRAME_TRANSPORT_H_
 
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "device/vr/public/mojom/vr_service.mojom-blink.h"
 #include "third_party/blink/public/platform/web_graphics_context_3d_provider.h"
@@ -20,6 +21,7 @@ class GpuFence;
 }
 
 namespace gpu {
+class SharedImageInterface;
 namespace gles2 {
 class GLES2Interface;
 }
@@ -55,6 +57,7 @@ class PLATFORM_EXPORT XRFrameTransport final
 
   void FrameSubmit(device::mojom::blink::XRPresentationProvider*,
                    gpu::gles2::GLES2Interface*,
+                   gpu::SharedImageInterface*,
                    DrawingBuffer::Client*,
                    scoped_refptr<Image> image_ref,
                    int16_t vr_frame_id);

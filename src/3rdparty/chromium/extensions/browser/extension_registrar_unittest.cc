@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 #include <memory>
 
 #include "base/location.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "build/chromeos_buildflags.h"
 #include "content/public/browser/browser_context.h"
 #include "extensions/browser/blocklist_extension_prefs.h"
@@ -27,6 +27,7 @@
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/ash/crosapi/browser_util.h"
 #include "chrome/common/pref_names.h"  // nogncheck
+#include "chromeos/ash/components/standalone_browser/lacros_availability.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/testing_pref_service.h"
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
@@ -54,8 +55,8 @@ class TestExtensionSystem : public MockExtensionSystem {
   void RegisterExtensionWithRequestContexts(
       const Extension* extension,
       base::OnceClosure callback) override {
-    base::SequencedTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                     std::move(callback));
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, std::move(callback));
   }
 };
 
@@ -567,15 +568,16 @@ TEST_F(ExtensionRegistrarTest, DisableNotAshKeeplistedExtension) {
 TEST_F(ExtensionRegistrarTest,
        DisableNotAshKeeplistedForceInstalledExtensionIfAshDisabled) {
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(chromeos::features::kLacrosOnly);
+  feature_list.InitAndEnableFeature(ash::features::kLacrosOnly);
 
-  crosapi::browser_util::SetLacrosPrimaryBrowserForTest(true);
+  auto set_lacros_primary =
+      crosapi::browser_util::SetLacrosPrimaryBrowserForTest(true);
   static_cast<TestingPrefServiceSimple*>(pref_service())
       ->registry()
       ->RegisterIntegerPref(
           prefs::kLacrosLaunchSwitch,
           static_cast<int>(
-              crosapi::browser_util::LacrosAvailability::kLacrosOnly));
+              ash::standalone_browser::LacrosAvailability::kLacrosOnly));
   EXPECT_FALSE(crosapi::browser_util::IsAshWebBrowserEnabled());
 
   // Prevent the extension from being disabled (by the user).
@@ -590,13 +592,14 @@ TEST_F(ExtensionRegistrarTest,
 // disabled if ash is still enabled.
 TEST_F(ExtensionRegistrarTest,
        NotDisableNotAshKeeplistedForceInstalledExtensionIfAshEnabled) {
-  crosapi::browser_util::SetLacrosPrimaryBrowserForTest(true);
+  auto set_lacros_primary =
+      crosapi::browser_util::SetLacrosPrimaryBrowserForTest(true);
   static_cast<TestingPrefServiceSimple*>(pref_service())
       ->registry()
       ->RegisterIntegerPref(
           prefs::kLacrosLaunchSwitch,
           static_cast<int>(
-              crosapi::browser_util::LacrosAvailability::kLacrosPrimary));
+              ash::standalone_browser::LacrosAvailability::kLacrosPrimary));
   EXPECT_TRUE(crosapi::browser_util::IsAshWebBrowserEnabled());
 
   // Prevent the extension from being disabled (by the user).

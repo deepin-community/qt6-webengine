@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -33,6 +33,7 @@
 #include "third_party/blink/renderer/core/inspector/inspector_style_sheet.h"
 #include "third_party/blink/renderer/core/inspector/v8_inspector_string.h"
 #include "third_party/blink/renderer/platform/animation/timing_function.h"
+#include "third_party/blink/renderer/platform/crypto.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/text/base64.h"
 
@@ -40,8 +41,15 @@ namespace blink {
 
 namespace {
 
+double AsDoubleOrZero(Timing::V8Delay* value) {
+  if (!value->IsDouble())
+    return 0;
+
+  return value->GetAsDouble();
+}
+
 String AnimationDisplayName(const Animation& animation) {
-  if (!animation.id().IsEmpty())
+  if (!animation.id().empty())
     return animation.id();
   else if (auto* css_animation = DynamicTo<CSSAnimation>(animation))
     return css_animation->animationName();
@@ -64,7 +72,9 @@ InspectorAnimationAgent::InspectorAnimationAgent(
       v8_session_(v8_session),
       is_cloning_(false),
       enabled_(&agent_state_, /*default_value=*/false),
-      playback_rate_(&agent_state_, /*default_value=*/1.0) {}
+      playback_rate_(&agent_state_, /*default_value=*/1.0) {
+  DCHECK(css_agent);
+}
 
 void InspectorAnimationAgent::Restore() {
   if (enabled_.Get()) {
@@ -103,14 +113,15 @@ void InspectorAnimationAgent::DidCommitLoadForLocalFrame(LocalFrame* frame) {
 static std::unique_ptr<protocol::Animation::AnimationEffect>
 BuildObjectForAnimationEffect(KeyframeEffect* effect) {
   ComputedEffectTiming* computed_timing = effect->getComputedTiming();
-  double delay = computed_timing->delay();
+  double delay = AsDoubleOrZero(computed_timing->delay());
+  double end_delay = AsDoubleOrZero(computed_timing->endDelay());
   double duration = computed_timing->duration()->GetAsUnrestrictedDouble();
   String easing = effect->SpecifiedTiming().timing_function->ToString();
 
   std::unique_ptr<protocol::Animation::AnimationEffect> animation_object =
       protocol::Animation::AnimationEffect::create()
           .setDelay(delay)
-          .setEndDelay(computed_timing->endDelay())
+          .setEndDelay(end_delay)
           .setIterationStart(computed_timing->iterationStart())
           .setIterations(computed_timing->iterations())
           .setDuration(duration)
@@ -393,7 +404,7 @@ Response InspectorAnimationAgent::setTiming(const String& animation_id,
   timing->setDuration(
       MakeGarbageCollected<V8UnionCSSNumericValueOrStringOrUnrestrictedDouble>(
           duration));
-  timing->setDelay(delay);
+  timing->setDelay(MakeGarbageCollected<Timing::V8Delay>(delay));
   animation->effect()->updateTiming(timing, exception_state);
   return Response::Success();
 }
@@ -436,7 +447,8 @@ Response InspectorAnimationAgent::resolveAnimation(
 
 String InspectorAnimationAgent::CreateCSSId(blink::Animation& animation) {
   static CSSPropertyID g_animation_properties[] = {
-      CSSPropertyID::kAnimationDelay,
+      CSSPropertyID::kAnimationDelayStart,
+      CSSPropertyID::kAnimationDelayEnd,
       CSSPropertyID::kAnimationDirection,
       CSSPropertyID::kAnimationDuration,
       CSSPropertyID::kAnimationFillMode,

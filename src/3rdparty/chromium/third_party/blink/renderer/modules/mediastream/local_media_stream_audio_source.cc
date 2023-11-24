@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/strings/stringprintf.h"
+#include "base/task/single_thread_task_runner.h"
 #include "media/audio/audio_source_parameters.h"
 #include "media/media_buildflags.h"
 #include "third_party/blink/public/mojom/mediastream/media_stream.mojom-blink.h"
@@ -46,11 +47,10 @@ LocalMediaStreamAudioSource::LocalMediaStreamAudioSource(
   // channel layout is reported since it will result in an invalid channel
   // count (=0) if only default constructions is used.
   media::AudioParameters params(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                                device.input.channel_layout(),
+                                device.input.channel_layout_config(),
                                 device.input.sample_rate(), frames_per_buffer);
   if (device.input.channel_layout() == media::CHANNEL_LAYOUT_DISCRETE) {
     DCHECK_LE(device.input.channels(), 2);
-    params.set_channels_for_discrete(device.input.channels());
   }
   SetFormat(params);
 }

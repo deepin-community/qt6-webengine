@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,6 @@
 #include "base/files/file_path.h"
 #include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/signin/public/base/signin_buildflags.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 
@@ -19,9 +18,10 @@
 #endif
 
 #if BUILDFLAG(IS_WIN)
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #endif
 
+class AccountCapabilitiesFetcherFactory;
 class PrefService;
 class SigninClient;
 
@@ -41,7 +41,7 @@ namespace network {
 class NetworkConnectionTracker;
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS)
 namespace account_manager {
 class AccountManagerFacade;
 }
@@ -62,14 +62,20 @@ struct IdentityManagerBuildParams {
   raw_ptr<PrefService> pref_service = nullptr;
   base::FilePath profile_path;
   raw_ptr<SigninClient> signin_client = nullptr;
+  std::unique_ptr<AccountCapabilitiesFetcherFactory>
+      account_capabilities_fetcher_factory;
+
+#if BUILDFLAG(ENABLE_DICE_SUPPORT) || BUILDFLAG(IS_CHROMEOS_LACROS)
+  bool delete_signin_cookies_on_exit = false;
+#endif
 
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
-  bool delete_signin_cookies_on_exit = false;
   scoped_refptr<TokenWebData> token_web_data;
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
-  account_manager::AccountManagerFacade* account_manager_facade = nullptr;
+#if BUILDFLAG(IS_CHROMEOS)
+  raw_ptr<account_manager::AccountManagerFacade> account_manager_facade =
+      nullptr;
   bool is_regular_profile = false;
 #endif
 

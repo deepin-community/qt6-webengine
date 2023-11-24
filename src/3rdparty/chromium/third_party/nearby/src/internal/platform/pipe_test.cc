@@ -19,12 +19,12 @@
 #include <atomic>
 #include <cstring>
 #include <string>
+#include <utility>
 
 #include "gtest/gtest.h"
 #include "internal/platform/prng.h"
 #include "internal/platform/runnable.h"
 
-namespace location {
 namespace nearby {
 
 TEST(PipeTest, ConstructorDestructorWorks) {
@@ -163,7 +163,7 @@ class Thread {
   ~Thread() { pthread_attr_destroy(&attr_); }
 
   void Start(Runnable runnable) {
-    runnable_ = runnable;
+    runnable_ = std::move(runnable);
 
     pthread_create(&thread_, &attr_, Thread::Body, this);
   }
@@ -246,7 +246,7 @@ TEST(PipeTest, ConcurrentWriteAndRead) {
   class BaseRunnable {
    protected:
     explicit BaseRunnable(const std::vector<std::string>& chunks)
-        : chunks_(chunks), prng_() {}
+        : chunks_(chunks) {}
     virtual ~BaseRunnable() = default;
 
     void RandomSleep() {
@@ -260,11 +260,9 @@ TEST(PipeTest, ConcurrentWriteAndRead) {
     // Both ends of the bounds are inclusive.
     std::uint32_t BoundedUint32(std::uint32_t lower_bound,
                                 std::uint32_t upper_bound) {
-      return (prng_.NextUint32() % (upper_bound - lower_bound + 1)) +
+      return (Prng().NextUint32() % (upper_bound - lower_bound + 1)) +
              lower_bound;
     }
-
-    Prng prng_;
   };
 
   class WriterRunnable : public BaseRunnable {
@@ -343,4 +341,3 @@ TEST(PipeTest, ConcurrentWriteAndRead) {
 }
 
 }  // namespace nearby
-}  // namespace location

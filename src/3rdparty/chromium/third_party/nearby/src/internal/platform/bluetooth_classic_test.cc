@@ -20,13 +20,12 @@
 #include "protobuf-matchers/protocol-buffer-matchers.h"
 #include "gtest/gtest.h"
 #include "absl/time/time.h"
-#include "internal/platform/medium_environment.h"
 #include "internal/platform/bluetooth_adapter.h"
 #include "internal/platform/count_down_latch.h"
 #include "internal/platform/logging.h"
+#include "internal/platform/medium_environment.h"
 #include "internal/platform/single_thread_executor.h"
 
-namespace location {
 namespace nearby {
 namespace {
 
@@ -47,7 +46,6 @@ class BluetoothClassicMediumTest
   using DiscoveryCallback = BluetoothClassicMedium::DiscoveryCallback;
   BluetoothClassicMediumTest() {
     env_.Start();
-    env_.Reset();
     adapter_a_ = std::make_unique<BluetoothAdapter>();
     adapter_b_ = std::make_unique<BluetoothAdapter>();
     bt_a_ = std::make_unique<BluetoothClassicMedium>(*adapter_a_);
@@ -67,7 +65,6 @@ class BluetoothClassicMediumTest
     env_.Sync(false);
     adapter_a_.reset();
     adapter_b_.reset();
-    env_.Reset();
     env_.Stop();
   }
 
@@ -291,4 +288,3 @@ TEST_F(BluetoothClassicMediumTest, FailIfDiscovering) {
 
 }  // namespace
 }  // namespace nearby
-}  // namespace location

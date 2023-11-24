@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,8 +17,7 @@
 #include "ui/views/layout/box_layout_view.h"
 #include "ui/views/layout/fill_layout.h"
 
-namespace views {
-namespace examples {
+namespace views::examples {
 
 namespace {
 
@@ -32,9 +31,10 @@ class ComboboxModelExample : public ui::ComboboxModel {
 
  private:
   // ui::ComboboxModel:
-  int GetItemCount() const override { return 10; }
-  std::u16string GetItemAt(int index) const override {
-    return base::UTF8ToUTF16(base::StringPrintf("%c item", 'A' + index));
+  size_t GetItemCount() const override { return 10; }
+  std::u16string GetItemAt(size_t index) const override {
+    return base::UTF8ToUTF16(
+        base::StringPrintf("%c item", static_cast<char>('A' + index)));
   }
 };
 
@@ -79,9 +79,8 @@ void ComboboxExample::CreateExampleView(View* container) {
 void ComboboxExample::ValueChanged() {
   PrintStatus("Selected: %s",
               base::UTF16ToUTF8(combobox_->GetModel()->GetItemAt(
-                                    combobox_->GetSelectedIndex()))
+                                    combobox_->GetSelectedIndex().value()))
                   .c_str());
 }
 
-}  // namespace examples
-}  // namespace views
+}  // namespace views::examples

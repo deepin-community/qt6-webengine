@@ -5,13 +5,18 @@
  * found in the LICENSE file.
  */
 
-#include "src/gpu/graphite/mtl/MtlUtils.h"
+#include "include/gpu/graphite/mtl/MtlUtils.h"
+#include "src/gpu/graphite/mtl/MtlUtilsPriv.h"
 
 #include "include/gpu/ShaderErrorHandler.h"
+#include "include/gpu/graphite/Context.h"
 #include "include/private/SkSLString.h"
 #include "src/core/SkTraceEvent.h"
-#include "src/gpu/graphite/mtl/MtlGpu.h"
+#include "src/gpu/graphite/ContextPriv.h"
+#include "src/gpu/graphite/mtl/MtlQueueManager.h"
+#include "src/gpu/graphite/mtl/MtlSharedContext.h"
 #include "src/sksl/SkSLCompiler.h"
+#include "src/sksl/SkSLProgramSettings.h"
 #include "src/utils/SkShaderUtils.h"
 
 #ifdef SK_BUILD_FOR_IOS
@@ -19,6 +24,29 @@
 #endif
 
 namespace skgpu::graphite {
+
+namespace ContextFactory {
+
+std::unique_ptr<Context> MakeMetal(const MtlBackendContext& backendContext,
+                                   const ContextOptions& options) {
+    sk_sp<SharedContext> sharedContext = MtlSharedContext::Make(backendContext, options);
+    if (!sharedContext) {
+        return nullptr;
+    }
+
+    sk_cfp<id<MTLCommandQueue>> queue =
+            sk_ret_cfp((id<MTLCommandQueue>)(backendContext.fQueue.get()));
+    auto queueManager = std::make_unique<MtlQueueManager>(std::move(queue), sharedContext.get());
+    if (!queueManager) {
+        return nullptr;
+    }
+
+    return ContextCtorAccessor::MakeContext(std::move(sharedContext),
+                                            std::move(queueManager),
+                                            options);
+}
+
+} // namespace ContextFactory
 
 bool MtlFormatIsDepthOrStencil(MTLPixelFormat format) {
     switch (format) {
@@ -51,7 +79,7 @@ bool MtlFormatIsStencil(MTLPixelFormat format) {
     }
 }
 
-MTLPixelFormat MtlDepthStencilFlagsToFormat(Mask<DepthStencilFlags> mask) {
+MTLPixelFormat MtlDepthStencilFlagsToFormat(SkEnumBitMask<DepthStencilFlags> mask) {
     // TODO: Decide if we want to change this to always return a combined depth and stencil format
     // to allow more sharing of depth stencil allocations.
     if (mask == DepthStencilFlags::kDepth) {
@@ -68,13 +96,22 @@ MTLPixelFormat MtlDepthStencilFlagsToFormat(Mask<DepthStencilFlags> mask) {
 }
 
 // Print the source code for all shaders generated.
+#ifdef SK_PRINT_SKSL_SHADERS
+static const bool gPrintSKSL = true;
+#else
 static const bool gPrintSKSL = false;
-static const bool gPrintMSL = false;
+#endif
 
-bool SkSLToMSL(const MtlGpu* gpu,
+#ifdef SK_PRINT_NATIVE_SHADERS
+static const bool gPrintMSL = true;
+#else
+static const bool gPrintMSL = false;
+#endif
+
+bool SkSLToMSL(SkSL::Compiler* compiler,
                const std::string& sksl,
                SkSL::ProgramKind programKind,
-               const SkSL::Program::Settings& settings,
+               const SkSL::ProgramSettings& settings,
                std::string* msl,
                SkSL::Program::Inputs* outInputs,
                ShaderErrorHandler* errorHandler) {
@@ -83,11 +120,9 @@ bool SkSLToMSL(const MtlGpu* gpu,
 #else
     const std::string& src = sksl;
 #endif
-    SkSL::Compiler* compiler = gpu->shaderCompiler();
-    std::unique_ptr<SkSL::Program> program =
-            gpu->shaderCompiler()->convertProgram(programKind,
-                                                  src,
-                                                  settings);
+    std::unique_ptr<SkSL::Program> program = compiler->convertProgram(programKind,
+                                                                      src,
+                                                                      settings);
     if (!program || !compiler->toMetal(*program, msl)) {
         errorHandler->compileError(src.c_str(), compiler->errorText().c_str());
         return false;
@@ -109,14 +144,17 @@ bool SkSLToMSL(const MtlGpu* gpu,
     return true;
 }
 
-sk_cfp<id<MTLLibrary>> MtlCompileShaderLibrary(const MtlGpu* gpu,
+sk_cfp<id<MTLLibrary>> MtlCompileShaderLibrary(const MtlSharedContext* sharedContext,
                                                const std::string& msl,
                                                ShaderErrorHandler* errorHandler) {
     TRACE_EVENT0("skia.shaders", "driver_compile_shader");
-    auto nsSource = [[NSString alloc] initWithBytesNoCopy:const_cast<char*>(msl.c_str())
-                                                   length:msl.size()
-                                                 encoding:NSUTF8StringEncoding
-                                             freeWhenDone:NO];
+    NSString* nsSource = [[NSString alloc] initWithBytesNoCopy:const_cast<char*>(msl.c_str())
+                                                        length:msl.size()
+                                                      encoding:NSUTF8StringEncoding
+                                                  freeWhenDone:NO];
+    if (!nsSource) {
+        return nil;
+    }
     MTLCompileOptions* options = [[MTLCompileOptions alloc] init];
     // array<> is supported in MSL 2.0 on MacOS 10.13+ and iOS 11+,
     // and in MSL 1.2 on iOS 10+ (but not MacOS).
@@ -130,15 +168,29 @@ sk_cfp<id<MTLLibrary>> MtlCompileShaderLibrary(const MtlGpu* gpu,
 
     NSError* error = nil;
     // TODO: do we need a version with a timeout?
-    sk_cfp<id<MTLLibrary>> compiledLibrary([gpu->device() newLibraryWithSource:nsSource
-                                                                       options:options
-                                                                         error:&error]);
+    sk_cfp<id<MTLLibrary>> compiledLibrary(
+            [sharedContext->device() newLibraryWithSource:(NSString* _Nonnull)nsSource
+                                                  options:options
+                                                    error:&error]);
     if (!compiledLibrary) {
         errorHandler->compileError(msl.c_str(), error.debugDescription.UTF8String);
         return nil;
     }
 
     return compiledLibrary;
+}
+
+bool MtlFormatIsCompressed(MTLPixelFormat mtlFormat) {
+    switch (mtlFormat) {
+        case MTLPixelFormatETC2_RGB8:
+            return true;
+#ifdef SK_BUILD_FOR_MAC
+        case MTLPixelFormatBC1_RGBA:
+            return true;
+#endif
+        default:
+            return false;
+    }
 }
 
 #ifdef SK_BUILD_FOR_IOS

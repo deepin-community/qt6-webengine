@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -313,7 +313,8 @@ TEST_P(LegalMessageLineTest, Parsing) {
   ASSERT_TRUE(value);
   ASSERT_TRUE(value->is_dict());
   LegalMessageLines actual_lines;
-  LegalMessageLine::Parse(*value, &actual_lines, test_case.escape_apostrophes);
+  LegalMessageLine::Parse(value->GetDict(), &actual_lines,
+                          test_case.escape_apostrophes);
 
   EXPECT_EQ(test_case.expected_lines, actual_lines);
 }

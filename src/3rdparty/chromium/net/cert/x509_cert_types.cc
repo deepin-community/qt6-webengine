@@ -1,10 +1,10 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "net/cert/x509_cert_types.h"
 
-#include "net/cert/internal/parse_name.h"
+#include "net/cert/pki/parse_name.h"
 #include "net/der/input.h"
 
 namespace net {
@@ -16,14 +16,12 @@ CertPrincipal::CertPrincipal(const std::string& name) : common_name(name) {}
 CertPrincipal::~CertPrincipal() = default;
 
 bool CertPrincipal::ParseDistinguishedName(
-    const void* ber_name_data,
-    size_t length,
+    der::Input ber_name_data,
     PrintableStringHandling printable_string_handling) {
   RDNSequence rdns;
-  if (!ParseName(
-          der::Input(reinterpret_cast<const uint8_t*>(ber_name_data), length),
-          &rdns))
+  if (!ParseName(ber_name_data, &rdns)) {
     return false;
+  }
 
   auto string_handling =
       printable_string_handling == PrintableStringHandling::kAsUTF8Hack

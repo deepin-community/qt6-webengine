@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 #define CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_NEW_SCRIPT_LOADER_H_
 
 #include "content/browser/service_worker/service_worker_cache_writer.h"
+#include "content/browser/service_worker/url_loader_client_checker.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/global_routing_id.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -38,11 +39,10 @@ class ServiceWorkerVersion;
 //   1. Makes a network request.
 //   2. OnReceiveResponse() is called, writes the response headers to the
 //      service worker script storage and responds with them to the |client|
-//      (which is the service worker in the renderer).
-//   3. OnStartLoadingResponseBody() is called, reads the network response from
-//      the data pipe. While reading the response, writes it to the service
-//      worker script storage and responds with it to the |client|.
-//   4. OnComplete() for the network load and OnWriteDataComplete() are called,
+//      (which is the service worker in the renderer). Reads the network
+//      response from the data pipe. While reading the response, writes it to
+//      the service worker script storage and responds with it to the |client|.
+//   3. OnComplete() for the network load and OnWriteDataComplete() are called,
 //      calls CommitCompleted() and closes the connections with the network
 //      service and the renderer process.
 //
@@ -116,18 +116,17 @@ class CONTENT_EXPORT ServiceWorkerNewScriptLoader final
 
   // network::mojom::URLLoaderClient for the network load:
   void OnReceiveEarlyHints(network::mojom::EarlyHintsPtr early_hints) override;
-  void OnReceiveResponse(network::mojom::URLResponseHeadPtr response_head,
-                         mojo::ScopedDataPipeConsumerHandle body) override;
+  void OnReceiveResponse(
+      network::mojom::URLResponseHeadPtr response_head,
+      mojo::ScopedDataPipeConsumerHandle body,
+      absl::optional<mojo_base::BigBuffer> cached_metadata) override;
   void OnReceiveRedirect(
       const net::RedirectInfo& redirect_info,
       network::mojom::URLResponseHeadPtr response_head) override;
   void OnUploadProgress(int64_t current_position,
                         int64_t total_size,
                         OnUploadProgressCallback ack_callback) override;
-  void OnReceiveCachedMetadata(mojo_base::BigBuffer data) override;
   void OnTransferSizeUpdated(int32_t transfer_size_diff) override;
-  void OnStartLoadingResponseBody(
-      mojo::ScopedDataPipeConsumerHandle body) override;
   void OnComplete(const network::URLLoaderCompletionStatus& status) override;
 
   // Buffer size for reading script data from network.
@@ -171,23 +170,19 @@ class CONTENT_EXPORT ServiceWorkerNewScriptLoader final
   // This is the last method that is called on this class. Notifies the final
   // result to |client_| and clears all mojo connections etc.
   void CommitCompleted(const network::URLLoaderCompletionStatus& status,
-                       const std::string& status_message);
+                       const std::string& status_message,
+                       network::mojom::URLResponseHeadPtr response_head);
 
-  // Called when |client_producer_| is writable. It writes |data_to_send_|
-  // to |client_producer_|. If all data is written, the observer has completed
-  // its work and |write_observer_complete_callback_| is called. Otherwise,
-  // |client_producer_watcher_| is armed to wait for |client_producer_| to be
-  // writable again.
+  // Called when `client_producer_` is writable. Must be called only when
+  // `pending_write_buffer_` is available. It writes
+  // `pending_write_buffer_` to `client_producer_` via WriteData().
   void OnClientWritable(MojoResult);
 
   // Called when ServiceWorkerCacheWriter::Resume() completes its work.
   // If not all data are received, it continues to download from network.
   void OnCacheWriterResumed(net::Error error);
 
-  // 'response_head' is only valid when kCombineResponseBody is enabled.
-  void OnStartLoadingResponseBodyInternal(
-      network::mojom::URLResponseHeadPtr response_head,
-      mojo::ScopedDataPipeConsumerHandle consumer);
+  const int request_id_;
 
   const GURL request_url_;
 
@@ -213,16 +208,22 @@ class CONTENT_EXPORT ServiceWorkerNewScriptLoader final
   scoped_refptr<network::SharedURLLoaderFactory> loader_factory_;
 
   // Used for responding with the fetched script to this loader's client.
-  mojo::Remote<network::mojom::URLLoaderClient> client_;
+  URLLoaderClientCheckedRemote client_;
   mojo::ScopedDataPipeProducerHandle client_producer_;
+  mojo::SimpleWatcher client_producer_watcher_;
+
+  // Holds a part of body data from network that wasn't able to write to
+  // `client_producer_` since the data pipe was full. Only available when
+  // `client_producer_` gets blocked.
+  scoped_refptr<network::MojoToNetPendingBuffer> pending_network_buffer_;
+  uint32_t pending_network_bytes_available_ = 0;
 
   // Represents the state of |network_loader_|.
   // Corresponds to the steps described in the class comments.
   //
   // When response body exists:
   // CreateLoaderAndStart(): kNotStarted -> kLoadingHeader
-  // OnReceiveResponse(): kLoadingHeader -> kWaitingForBody
-  // OnStartLoadingResponseBody(): kWaitingForBody -> kLoadingBody
+  // OnReceiveResponse(): kLoadingHeader -> kLoadingBody
   // OnComplete(): kLoadingBody -> kCompleted
   //
   // When response body is empty:
@@ -243,7 +244,7 @@ class CONTENT_EXPORT ServiceWorkerNewScriptLoader final
   // Set to kWriting when |this| starts watching |network_consumer_|, and set to
   // kCompleted when all data has been written to |cache_writer_|.
   //
-  // OnStartLoadingResponseBody() && OnWriteHeadersComplete():
+  // OnWriteHeadersComplete():
   //     kNotStarted -> kWriting
   // OnNetworkDataAvailable() && MOJO_RESULT_FAILED_PRECONDITION:
   //     kWriting -> kCompleted

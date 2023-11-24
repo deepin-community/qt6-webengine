@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,11 +7,17 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/json/json_writer.h"
+#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/scoped_observation.h"
 #include "base/stl_util.h"
+#include "base/strings/strcat.h"
 #include "base/strings/stringprintf.h"
+#include "base/test/gtest_util.h"
+#include "base/test/values_test_util.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
 #include "chrome/browser/extensions/error_console/error_console.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
@@ -23,6 +29,7 @@
 #include "chrome/browser/extensions/permissions_test_util.h"
 #include "chrome/browser/extensions/permissions_updater.h"
 #include "chrome/browser/extensions/scripting_permissions_modifier.h"
+#include "chrome/browser/extensions/site_permissions_helper.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/extensions/api/developer_private.h"
 #include "chrome/common/pref_names.h"
@@ -30,8 +37,9 @@
 #include "chrome/test/base/testing_profile.h"
 #include "components/crx_file/id_util.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
+#include "components/supervised_user/core/common/buildflags.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
-#include "content/public/browser/notification_service.h"
+#include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/web_contents_tester.h"
 #include "extensions/browser/api_test_utils.h"
 #include "extensions/browser/event_router.h"
@@ -44,7 +52,6 @@
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/install/extension_install_ui.h"
 #include "extensions/browser/mock_external_provider.h"
-#include "extensions/browser/notification_types.h"
 #include "extensions/browser/permissions_manager.h"
 #include "extensions/browser/test_event_router_observer.h"
 #include "extensions/browser/test_extension_registry_observer.h"
@@ -97,11 +104,9 @@ bool WasItemChangedEventDispatched(
     return false;
 
   const Event& event = *iter->second;
-  CHECK(event.event_args);
-  CHECK_GE(1u, event.event_args->GetListDeprecated().size());
+  CHECK_GE(1u, event.event_args.size());
   std::unique_ptr<api::developer_private::EventData> event_data =
-      api::developer_private::EventData::FromValue(
-          event.event_args->GetListDeprecated()[0]);
+      api::developer_private::EventData::FromValue(event.event_args[0]);
   if (!event_data)
     return false;
 
@@ -124,10 +129,9 @@ bool WasUserSiteSettingsChangedEventDispatched(
     return false;
 
   const Event& event = *iter->second;
-  CHECK(event.event_args);
-  CHECK_GE(1u, event.event_args->GetListDeprecated().size());
-  auto site_settings = api::developer_private::UserSiteSettings::FromValue(
-      event.event_args->GetListDeprecated()[0]);
+  CHECK_GE(1u, event.event_args.size());
+  auto site_settings =
+      api::developer_private::UserSiteSettings::FromValue(event.event_args[0]);
   if (!site_settings)
     return false;
 
@@ -138,11 +142,11 @@ bool WasUserSiteSettingsChangedEventDispatched(
 void AddUserSpecifiedSites(Profile* profile,
                            const std::string& hosts,
                            bool restricted) {
-  scoped_refptr<ExtensionFunction> function = base::MakeRefCounted<
+  auto function = base::MakeRefCounted<
       api::DeveloperPrivateAddUserSpecifiedSitesFunction>();
-  std::string args = base::StringPrintf(R"([{"siteList":"%s","hosts":%s}])",
-                                        restricted ? "RESTRICTED" : "PERMITTED",
-                                        hosts.c_str());
+  std::string args = base::StringPrintf(
+      R"([{"siteSet":"%s","hosts":%s}])",
+      restricted ? "USER_RESTRICTED" : "USER_PERMITTED", hosts.c_str());
   EXPECT_TRUE(api_test_utils::RunFunction(function.get(), args, profile))
       << function->GetError();
 }
@@ -150,12 +154,103 @@ void AddUserSpecifiedSites(Profile* profile,
 void RemoveUserSpecifiedSites(Profile* profile,
                               const std::string& hosts,
                               bool restricted) {
-  scoped_refptr<ExtensionFunction> function = base::MakeRefCounted<
+  auto function = base::MakeRefCounted<
       api::DeveloperPrivateRemoveUserSpecifiedSitesFunction>();
-  std::string args = base::StringPrintf(R"([{"siteList":"%s","hosts":%s}])",
-                                        restricted ? "RESTRICTED" : "PERMITTED",
-                                        hosts.c_str());
+  std::string args = base::StringPrintf(
+      R"([{"siteSet":"%s","hosts":%s}])",
+      restricted ? "USER_RESTRICTED" : "USER_PERMITTED", hosts.c_str());
   EXPECT_TRUE(api_test_utils::RunFunction(function.get(), args, profile))
+      << function->GetError();
+}
+
+void AddExtensionAndGrantPermissions(Profile* profile,
+                                     ExtensionService* service,
+                                     const Extension& extension) {
+  PermissionsUpdater updater(profile);
+  updater.InitializePermissions(&extension);
+  updater.GrantActivePermissions(&extension);
+  service->AddExtension(&extension);
+}
+
+void RunAddHostPermission(Profile* profile,
+                          const Extension& extension,
+                          base::StringPiece host,
+                          bool should_succeed,
+                          const char* expected_error) {
+  SCOPED_TRACE(host);
+  auto function =
+      base::MakeRefCounted<api::DeveloperPrivateAddHostPermissionFunction>();
+
+  std::string args = base::StringPrintf(R"(["%s", "%s"])",
+                                        extension.id().c_str(), host.data());
+  if (should_succeed) {
+    EXPECT_TRUE(api_test_utils::RunFunction(function.get(), args, profile))
+        << function->GetError();
+  } else {
+    EXPECT_EQ(expected_error, api_test_utils::RunFunctionAndReturnError(
+                                  function.get(), args, profile));
+  }
+}
+
+void GetMatchingExtensionsForSite(
+    Profile* profile,
+    const std::string& site,
+    std::vector<api::developer_private::MatchingExtensionInfo>* infos) {
+  auto function = base::MakeRefCounted<
+      api::DeveloperPrivateGetMatchingExtensionsForSiteFunction>();
+  EXPECT_TRUE(api_test_utils::RunFunction(
+      function.get(), base::StringPrintf(R"(["%s"])", site.c_str()), profile))
+      << function->GetError();
+  const base::Value::List* results = function->GetResultListForTest();
+  ASSERT_EQ(1u, results->size());
+  ASSERT_TRUE((*results)[0].is_list());
+
+  infos->clear();
+  for (const auto& value : (*results)[0].GetList()) {
+    infos->push_back(std::move(
+        *api::developer_private::MatchingExtensionInfo::FromValue(value)));
+  }
+}
+
+auto MatchMatchingExtensionInfo(
+    const std::string& extension_id,
+    const api::developer_private::HostAccess& host_access) {
+  return testing::AllOf(
+      testing::Field(&api::developer_private::MatchingExtensionInfo::id,
+                     extension_id),
+      testing::Field(
+          &api::developer_private::MatchingExtensionInfo::site_access,
+          host_access));
+}
+
+api::developer_private::ExtensionSiteAccessUpdate CreateSiteAccessUpdate(
+    const std::string& id,
+    api::developer_private::HostAccess access) {
+  api::developer_private::ExtensionSiteAccessUpdate update;
+  update.id = id;
+  update.site_access = access;
+  return update;
+}
+
+void UpdateSiteAccess(
+    Profile* profile,
+    const std::string& site,
+    const std::vector<api::developer_private::ExtensionSiteAccessUpdate>&
+        updates) {
+  base::Value::List update_entries;
+  update_entries.reserve(updates.size());
+  for (const auto& update : updates) {
+    update_entries.Append(update.ToValue());
+  }
+  std::string updates_arg;
+  EXPECT_TRUE(base::JSONWriter::Write(update_entries, &updates_arg));
+
+  scoped_refptr<ExtensionFunction> function =
+      base::MakeRefCounted<api::DeveloperPrivateUpdateSiteAccessFunction>();
+  EXPECT_TRUE(api_test_utils::RunFunction(
+      function.get(),
+      base::StringPrintf(R"(["%s", %s])", site.c_str(), updates_arg.c_str()),
+      profile))
       << function->GetError();
 }
 
@@ -179,7 +274,7 @@ class DeveloperPrivateApiUnitTest : public ExtensionServiceTestWithInstall {
   // A wrapper around extension_function_test_utils::RunFunction that runs with
   // the associated browser, no flags, and can take stack-allocated arguments.
   bool RunFunction(const scoped_refptr<ExtensionFunction>& function,
-                   const base::ListValue& args);
+                   const base::Value::List& args);
 
   // Loads an unpacked extension that is backed by a real directory, allowing
   // it to be reloaded.
@@ -192,10 +287,11 @@ class DeveloperPrivateApiUnitTest : public ExtensionServiceTestWithInstall {
   // Tests modifying the extension's configuration.
   void TestExtensionPrefSetting(const base::RepeatingCallback<bool()>& has_pref,
                                 const std::string& key,
-                                const std::string& extension_id);
+                                const std::string& extension_id,
+                                bool expected_default_value);
 
   testing::AssertionResult TestPackExtensionFunction(
-      const base::ListValue& args,
+      const base::Value::List& args,
       api::developer_private::PackStatus expected_status,
       int expected_flags);
 
@@ -220,6 +316,10 @@ class DeveloperPrivateApiUnitTest : public ExtensionServiceTestWithInstall {
 
   Browser* browser() { return browser_.get(); }
 
+  content::RenderProcessHost* render_process_host() const {
+    return render_process_host_.get();
+  }
+
  private:
   // ExtensionServiceTestBase:
   void SetUp() override;
@@ -228,17 +328,16 @@ class DeveloperPrivateApiUnitTest : public ExtensionServiceTestWithInstall {
   // The browser (and accompanying window).
   std::unique_ptr<TestBrowserWindow> browser_window_;
   std::unique_ptr<Browser> browser_;
+  std::unique_ptr<content::RenderProcessHost> render_process_host_;
 
   std::vector<std::unique_ptr<TestExtensionDir>> test_extension_dirs_;
 };
 
 bool DeveloperPrivateApiUnitTest::RunFunction(
     const scoped_refptr<ExtensionFunction>& function,
-    const base::ListValue& args) {
+    const base::Value::List& args) {
   return extension_function_test_utils::RunFunction(
-      function.get(),
-      base::ListValue::From(base::Value::ToUniquePtrValue(args.Clone())),
-      browser(), api_test_utils::NONE);
+      function.get(), args.Clone(), browser(), api_test_utils::NONE);
 }
 
 const Extension* DeveloperPrivateApiUnitTest::LoadUnpackedExtension() {
@@ -284,29 +383,31 @@ const Extension* DeveloperPrivateApiUnitTest::LoadSimpleExtension() {
 void DeveloperPrivateApiUnitTest::TestExtensionPrefSetting(
     const base::RepeatingCallback<bool()>& has_pref,
     const std::string& key,
-    const std::string& extension_id) {
-  scoped_refptr<ExtensionFunction> function(
-      new api::DeveloperPrivateUpdateExtensionConfigurationFunction());
-
-  EXPECT_FALSE(has_pref.Run()) << key;
+    const std::string& extension_id,
+    bool expected_default_value) {
+  EXPECT_EQ(expected_default_value, has_pref.Run()) << key;
 
   {
     base::Value::Dict parameters;
     parameters.Set("extensionId", extension_id);
     parameters.Set(key, true);
 
-    base::ListValue args;
-    args.Append(base::Value(std::move(parameters)));
+    base::Value::List args;
+    args.Append(std::move(parameters));
+    auto function = base::MakeRefCounted<
+        api::DeveloperPrivateUpdateExtensionConfigurationFunction>();
     EXPECT_FALSE(RunFunction(function, args)) << key;
     EXPECT_EQ("This action requires a user gesture.", function->GetError());
 
-    function = new api::DeveloperPrivateUpdateExtensionConfigurationFunction();
+    function = base::MakeRefCounted<
+        api::DeveloperPrivateUpdateExtensionConfigurationFunction>();
     function->set_source_context_type(Feature::WEBUI_CONTEXT);
     EXPECT_TRUE(RunFunction(function, args)) << key;
     EXPECT_TRUE(has_pref.Run()) << key;
 
     ExtensionFunction::ScopedUserGestureForTests scoped_user_gesture;
-    function = new api::DeveloperPrivateUpdateExtensionConfigurationFunction();
+    function = base::MakeRefCounted<
+        api::DeveloperPrivateUpdateExtensionConfigurationFunction>();
     EXPECT_TRUE(RunFunction(function, args)) << key;
     EXPECT_TRUE(has_pref.Run()) << key;
   }
@@ -316,29 +417,29 @@ void DeveloperPrivateApiUnitTest::TestExtensionPrefSetting(
     parameters.Set("extensionId", extension_id);
     parameters.Set(key, false);
 
-    base::ListValue args;
-    args.Append(base::Value(std::move(parameters)));
+    base::Value::List args;
+    args.Append(std::move(parameters));
 
     ExtensionFunction::ScopedUserGestureForTests scoped_user_gesture;
-    function = new api::DeveloperPrivateUpdateExtensionConfigurationFunction();
+    auto function = base::MakeRefCounted<
+        api::DeveloperPrivateUpdateExtensionConfigurationFunction>();
     EXPECT_TRUE(RunFunction(function, args)) << key;
     EXPECT_FALSE(has_pref.Run()) << key;
   }
 }
 
 testing::AssertionResult DeveloperPrivateApiUnitTest::TestPackExtensionFunction(
-    const base::ListValue& args,
+    const base::Value::List& args,
     api::developer_private::PackStatus expected_status,
     int expected_flags) {
-  scoped_refptr<ExtensionFunction> function(
-      new api::DeveloperPrivatePackDirectoryFunction());
+  auto function =
+      base::MakeRefCounted<api::DeveloperPrivatePackDirectoryFunction>();
   if (!RunFunction(function, args))
     return testing::AssertionFailure() << "Could not run function.";
 
   // Extract the result. We don't have to test this here, since it's verified as
   // part of the general extension api system.
-  const base::Value& response_value =
-      function->GetResultList()->GetListDeprecated()[0];
+  const base::Value& response_value = (*function->GetResultListForTest())[0];
   std::unique_ptr<api::developer_private::PackDirectoryResponse> response =
       api::developer_private::PackDirectoryResponse::FromValue(response_value);
   CHECK(response);
@@ -359,26 +460,25 @@ testing::AssertionResult DeveloperPrivateApiUnitTest::TestPackExtensionFunction(
 
 void DeveloperPrivateApiUnitTest::UpdateProfileConfigurationDevMode(
     bool dev_mode) {
-  scoped_refptr<ExtensionFunction> function(
-      new api::DeveloperPrivateUpdateProfileConfigurationFunction());
-  std::unique_ptr<base::ListValue> args =
+  auto function = base::MakeRefCounted<
+      api::DeveloperPrivateUpdateProfileConfigurationFunction>();
+  base::Value::List args =
       ListBuilder()
           .Append(DictionaryBuilder().Set("inDeveloperMode", dev_mode).Build())
           .Build();
-  EXPECT_TRUE(RunFunction(function, *args)) << function->GetError();
+  EXPECT_TRUE(RunFunction(function, args)) << function->GetError();
 }
 
 void DeveloperPrivateApiUnitTest::GetProfileConfiguration(
     std::unique_ptr<api::developer_private::ProfileInfo>* profile_info) {
-  scoped_refptr<ExtensionFunction> function(
-      new api::DeveloperPrivateGetProfileConfigurationFunction());
-  base::ListValue args;
+  auto function = base::MakeRefCounted<
+      api::DeveloperPrivateGetProfileConfigurationFunction>();
+  base::Value::List args;
   EXPECT_TRUE(RunFunction(function, args)) << function->GetError();
 
-  ASSERT_TRUE(function->GetResultList());
-  ASSERT_EQ(1u, function->GetResultList()->GetListDeprecated().size());
-  const base::Value& response_value =
-      function->GetResultList()->GetListDeprecated()[0];
+  ASSERT_TRUE(function->GetResultListForTest());
+  ASSERT_EQ(1u, function->GetResultListForTest()->size());
+  const base::Value& response_value = (*function->GetResultListForTest())[0];
   *profile_info =
       api::developer_private::ProfileInfo::FromValue(response_value);
 }
@@ -388,7 +488,7 @@ void DeveloperPrivateApiUnitTest::RunUpdateHostAccess(
     base::StringPiece new_access) {
   SCOPED_TRACE(new_access);
   ExtensionFunction::ScopedUserGestureForTests scoped_user_gesture;
-  scoped_refptr<ExtensionFunction> function = base::MakeRefCounted<
+  auto function = base::MakeRefCounted<
       api::DeveloperPrivateUpdateExtensionConfigurationFunction>();
   std::string args =
       base::StringPrintf(R"([{"extensionId": "%s", "hostAccess": "%s"}])",
@@ -424,12 +524,15 @@ void DeveloperPrivateApiUnitTest::SetUp() {
   // Loading unpacked extensions through the developerPrivate API requires
   // developer mode to be enabled.
   profile()->GetPrefs()->SetBoolean(prefs::kExtensionsUIDeveloperMode, true);
+  render_process_host_ =
+      std::make_unique<content::MockRenderProcessHost>(profile());
 }
 
 void DeveloperPrivateApiUnitTest::TearDown() {
   test_extension_dirs_.clear();
   browser_.reset();
   browser_window_.reset();
+  render_process_host_.reset();
   ExtensionServiceTestBase::TearDown();
 }
 
@@ -447,20 +550,25 @@ TEST_F(DeveloperPrivateApiUnitTest,
   TestExtensionPrefSetting(
       base::BindRepeating(&HasPrefsPermission, &util::IsIncognitoEnabled,
                           profile(), id),
-      "incognitoAccess", id);
+      "incognitoAccess", id, /*expected_default_value=*/false);
   TestExtensionPrefSetting(
       base::BindRepeating(&HasPrefsPermission, &util::AllowFileAccess,
                           profile(), id),
-      "fileAccess", id);
+      "fileAccess", id, /*expected_default_value=*/false);
+
+  SitePermissionsHelper helper(profile());
+  TestExtensionPrefSetting(
+      base::BindRepeating(&SitePermissionsHelper::ShowAccessRequestsInToolbar,
+                          base::Unretained(&helper), id),
+      "showAccessRequestsInToolbar", id, /*expected_default_value=*/true);
 }
 
 // Test developerPrivate.reload.
 TEST_F(DeveloperPrivateApiUnitTest, DeveloperPrivateReload) {
   const Extension* extension = LoadUnpackedExtension();
   std::string extension_id = extension->id();
-  scoped_refptr<ExtensionFunction> function(
-      new api::DeveloperPrivateReloadFunction());
-  base::ListValue reload_args;
+  auto function = base::MakeRefCounted<api::DeveloperPrivateReloadFunction>();
+  base::Value::List reload_args;
   reload_args.Append(extension_id);
 
   TestExtensionRegistryObserver registry_observer(registry());
@@ -494,7 +602,7 @@ TEST_F(DeveloperPrivateApiUnitTest, DeveloperPrivatePackFunction) {
       << "pem should not exist before the test is run!";
 
   // First, test a directory that should pack properly.
-  base::ListValue pack_args;
+  base::Value::List pack_args;
   pack_args.Append(temp_root_path.AsUTF8Unsafe());
   EXPECT_TRUE(TestPackExtensionFunction(
       pack_args, api::developer_private::PACK_STATUS_SUCCESS, 0));
@@ -520,10 +628,8 @@ TEST_F(DeveloperPrivateApiUnitTest, DeveloperPrivatePackFunction) {
   // Try to pack a final time when omitting (an existing) pem file. We should
   // get an error.
   base::DeleteFile(crx_path);
-  EXPECT_TRUE(pack_args.EraseListIter(pack_args.GetListDeprecated().begin() +
-                                      1u));  // Remove the pem key argument.
-  EXPECT_TRUE(pack_args.EraseListIter(pack_args.GetListDeprecated().begin() +
-                                      1u));  // Remove the flags argument.
+  // Remove the pem key and flags arguments.
+  pack_args.erase(pack_args.begin() + 1, pack_args.begin() + 3);
   EXPECT_TRUE(TestPackExtensionFunction(
       pack_args, api::developer_private::PACK_STATUS_ERROR, 0));
 }
@@ -538,47 +644,42 @@ TEST_F(DeveloperPrivateApiUnitTest, DeveloperPrivateChoosePath) {
   api::EntryPicker::SkipPickerAndAlwaysSelectPathForTest(&expected_dir_path);
 
   // Try selecting a directory.
-  base::ListValue choose_args;
+  base::Value::List choose_args;
   choose_args.Append("FOLDER");
   choose_args.Append("LOAD");
-  scoped_refptr<ExtensionFunction> function(
-      new api::DeveloperPrivateChoosePathFunction());
-  function->SetRenderFrameHost(web_contents->GetMainFrame());
+  auto function =
+      base::MakeRefCounted<api::DeveloperPrivateChoosePathFunction>();
+  function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
   EXPECT_TRUE(RunFunction(function, choose_args)) << function->GetError();
   std::string path;
-  const base::Value* result_list = function->GetResultList();
+  const base::Value::List* result_list = function->GetResultListForTest();
   ASSERT_TRUE(result_list);
-  ASSERT_TRUE(result_list->is_list());
-  base::Value::ConstListView result_list_view =
-      result_list->GetListDeprecated();
-  ASSERT_GT(result_list_view.size(), 0u);
-  ASSERT_TRUE(result_list_view[0].is_string());
-  path = result_list_view[0].GetString();
+  ASSERT_GT(result_list->size(), 0u);
+  ASSERT_TRUE((*result_list)[0].is_string());
+  path = (*result_list)[0].GetString();
   EXPECT_EQ(path, expected_dir_path.AsUTF8Unsafe());
 
   // Try selecting a pem file.
   base::FilePath expected_file_path =
       data_dir().AppendASCII("simple_with_popup.pem");
   api::EntryPicker::SkipPickerAndAlwaysSelectPathForTest(&expected_file_path);
-  choose_args.ClearList();
+  choose_args.clear();
   choose_args.Append("FILE");
   choose_args.Append("PEM");
-  function = new api::DeveloperPrivateChoosePathFunction();
-  function->SetRenderFrameHost(web_contents->GetMainFrame());
+  function = base::MakeRefCounted<api::DeveloperPrivateChoosePathFunction>();
+  function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
   EXPECT_TRUE(RunFunction(function, choose_args)) << function->GetError();
-  result_list = function->GetResultList();
+  result_list = function->GetResultListForTest();
   ASSERT_TRUE(result_list);
-  ASSERT_TRUE(result_list->is_list());
-  result_list_view = result_list->GetListDeprecated();
-  ASSERT_GT(result_list_view.size(), 0u);
-  ASSERT_TRUE(result_list_view[0].is_string());
-  path = result_list_view[0].GetString();
+  ASSERT_GT(result_list->size(), 0u);
+  ASSERT_TRUE((*result_list)[0].is_string());
+  path = (*result_list)[0].GetString();
   EXPECT_EQ(path, expected_file_path.AsUTF8Unsafe());
 
   // Try canceling the file dialog.
   api::EntryPicker::SkipPickerAndAlwaysCancelForTest();
-  function = new api::DeveloperPrivateChoosePathFunction();
-  function->SetRenderFrameHost(web_contents->GetMainFrame());
+  function = base::MakeRefCounted<api::DeveloperPrivateChoosePathFunction>();
+  function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
   EXPECT_FALSE(RunFunction(function, choose_args));
   EXPECT_EQ(std::string("File selection was canceled."), function->GetError());
 }
@@ -593,11 +694,12 @@ TEST_F(DeveloperPrivateApiUnitTest, DeveloperPrivateLoadUnpacked) {
 
   // Try loading a good extension (it should succeed, and the extension should
   // be added).
-  scoped_refptr<ExtensionFunction> function(
-      new api::DeveloperPrivateLoadUnpackedFunction());
-  function->SetRenderFrameHost(web_contents->GetMainFrame());
+  auto function =
+      base::MakeRefCounted<api::DeveloperPrivateLoadUnpackedFunction>();
+  function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
   ExtensionIdSet current_ids = registry()->enabled_extensions().GetIDs();
-  EXPECT_TRUE(RunFunction(function, base::ListValue())) << function->GetError();
+  EXPECT_TRUE(RunFunction(function, base::Value::List()))
+      << function->GetError();
   // We should have added one new extension.
   ExtensionIdSet id_difference = base::STLSetDifference<ExtensionIdSet>(
       registry()->enabled_extensions().GetIDs(), current_ids);
@@ -611,12 +713,12 @@ TEST_F(DeveloperPrivateApiUnitTest, DeveloperPrivateLoadUnpacked) {
   api::EntryPicker::SkipPickerAndAlwaysSelectPathForTest(&path);
 
   // Try loading a bad extension (it should fail, and we should get an error).
-  function = new api::DeveloperPrivateLoadUnpackedFunction();
-  function->SetRenderFrameHost(web_contents->GetMainFrame());
-  base::ListValue unpacked_args;
+  function = base::MakeRefCounted<api::DeveloperPrivateLoadUnpackedFunction>();
+  function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
+  base::Value::List unpacked_args;
   base::Value::Dict options;
   options.Set("failQuietly", true);
-  unpacked_args.Append(base::Value(std::move(options)));
+  unpacked_args.Append(std::move(options));
   current_ids = registry()->enabled_extensions().GetIDs();
   EXPECT_FALSE(RunFunction(function, unpacked_args));
   EXPECT_EQ(manifest_errors::kManifestUnreadable, function->GetError());
@@ -643,10 +745,10 @@ TEST_F(DeveloperPrivateApiUnitTest, DeveloperPrivateLoadUnpackedLoadError) {
     base::FilePath path = dir.UnpackedPath();
     api::EntryPicker::SkipPickerAndAlwaysSelectPathForTest(&path);
 
-    scoped_refptr<ExtensionFunction> function(
-        new api::DeveloperPrivateLoadUnpackedFunction());
-    function->SetRenderFrameHost(web_contents->GetMainFrame());
-    std::unique_ptr<base::Value> result =
+    auto function =
+        base::MakeRefCounted<api::DeveloperPrivateLoadUnpackedFunction>();
+    function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
+    absl::optional<base::Value> result =
         api_test_utils::RunFunctionAndReturnSingleResult(
             function.get(),
             "[{\"failQuietly\": true, \"populateError\": true}]", profile());
@@ -670,10 +772,10 @@ TEST_F(DeveloperPrivateApiUnitTest, DeveloperPrivateLoadUnpackedLoadError) {
     base::FilePath path = dir.UnpackedPath();
     api::EntryPicker::SkipPickerAndAlwaysSelectPathForTest(&path);
 
-    scoped_refptr<ExtensionFunction> function(
-        new api::DeveloperPrivateLoadUnpackedFunction());
-    function->SetRenderFrameHost(web_contents->GetMainFrame());
-    std::unique_ptr<base::Value> result =
+    auto function =
+        base::MakeRefCounted<api::DeveloperPrivateLoadUnpackedFunction>();
+    function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
+    absl::optional<base::Value> result =
         api_test_utils::RunFunctionAndReturnSingleResult(
             function.get(),
             "[{\"failQuietly\": true, \"populateError\": true}]", profile());
@@ -702,10 +804,10 @@ TEST_F(DeveloperPrivateApiUnitTest, DeveloperPrivateLoadUnpackedLoadError) {
     base::FilePath path = dir.UnpackedPath();
     api::EntryPicker::SkipPickerAndAlwaysSelectPathForTest(&path);
 
-    scoped_refptr<ExtensionFunction> function(
-        new api::DeveloperPrivateLoadUnpackedFunction());
-    function->SetRenderFrameHost(web_contents->GetMainFrame());
-    std::unique_ptr<base::Value> result =
+    auto function =
+        base::MakeRefCounted<api::DeveloperPrivateLoadUnpackedFunction>();
+    function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
+    absl::optional<base::Value> result =
         api_test_utils::RunFunctionAndReturnSingleResult(
             function.get(),
             "[{\"failQuietly\": true, \"populateError\": true}]", profile());
@@ -735,10 +837,10 @@ TEST_F(DeveloperPrivateApiUnitTest, LoadUnpackedRetryId) {
   {
     // Trying to load the extension should result in a load error with the
     // retry id populated.
-    scoped_refptr<ExtensionFunction> function(
-        new api::DeveloperPrivateLoadUnpackedFunction());
-    function->SetRenderFrameHost(web_contents->GetMainFrame());
-    std::unique_ptr<base::Value> result =
+    auto function =
+        base::MakeRefCounted<api::DeveloperPrivateLoadUnpackedFunction>();
+    function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
+    absl::optional<base::Value> result =
         api_test_utils::RunFunctionAndReturnSingleResult(
             function.get(),
             "[{\"failQuietly\": true, \"populateError\": true}]", profile());
@@ -755,10 +857,10 @@ TEST_F(DeveloperPrivateApiUnitTest, LoadUnpackedRetryId) {
     // same retry id.  This is somewhat an implementation detail, but is
     // important to ensure we don't allocate crazy numbers of ids if the user
     // just retries continuously.
-    scoped_refptr<ExtensionFunction> function(
-        new api::DeveloperPrivateLoadUnpackedFunction());
-    function->SetRenderFrameHost(web_contents->GetMainFrame());
-    std::unique_ptr<base::Value> result =
+    auto function =
+        base::MakeRefCounted<api::DeveloperPrivateLoadUnpackedFunction>();
+    function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
+    absl::optional<base::Value> result =
         api_test_utils::RunFunctionAndReturnSingleResult(
             function.get(),
             "[{\"failQuietly\": true, \"populateError\": true}]", profile());
@@ -784,10 +886,10 @@ TEST_F(DeveloperPrivateApiUnitTest, LoadUnpackedRetryId) {
     base::FilePath second_path = second_dir.UnpackedPath();
     api::EntryPicker::SkipPickerAndAlwaysSelectPathForTest(&second_path);
 
-    scoped_refptr<ExtensionFunction> function(
-        new api::DeveloperPrivateLoadUnpackedFunction());
-    function->SetRenderFrameHost(web_contents->GetMainFrame());
-    std::unique_ptr<base::Value> result =
+    auto function =
+        base::MakeRefCounted<api::DeveloperPrivateLoadUnpackedFunction>();
+    function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
+    absl::optional<base::Value> result =
         api_test_utils::RunFunctionAndReturnSingleResult(
             function.get(),
             "[{\"failQuietly\": true, \"populateError\": true}]", profile());
@@ -815,9 +917,9 @@ TEST_F(DeveloperPrivateApiUnitTest, LoadUnpackedRetryId) {
 
   {
     // Try reloading the extension by supplying the retry id. It should succeed.
-    scoped_refptr<ExtensionFunction> function(
-        new api::DeveloperPrivateLoadUnpackedFunction());
-    function->SetRenderFrameHost(web_contents->GetMainFrame());
+    auto function =
+        base::MakeRefCounted<api::DeveloperPrivateLoadUnpackedFunction>();
+    function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
     TestExtensionRegistryObserver observer(registry());
     api_test_utils::RunFunction(function.get(),
                                 base::StringPrintf("[{\"failQuietly\": true,"
@@ -833,9 +935,9 @@ TEST_F(DeveloperPrivateApiUnitTest, LoadUnpackedRetryId) {
 
   {
     // Try supplying an invalid retry id. It should fail with an error.
-    scoped_refptr<ExtensionFunction> function(
-        new api::DeveloperPrivateLoadUnpackedFunction());
-    function->SetRenderFrameHost(web_contents->GetMainFrame());
+    auto function =
+        base::MakeRefCounted<api::DeveloperPrivateLoadUnpackedFunction>();
+    function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
     std::string error = api_test_utils::RunFunctionAndReturnError(
         function.get(),
         "[{\"failQuietly\": true,"
@@ -923,7 +1025,7 @@ TEST_F(DeveloperPrivateApiUnitTest, ReloadBadExtensionToLoadUnpackedRetry) {
     UnloadedRegistryObserver unload_observer(path, registry());
     auto function =
         base::MakeRefCounted<api::DeveloperPrivateReloadFunction>();
-    function->SetRenderFrameHost(web_contents->GetMainFrame());
+    function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
     api_test_utils::RunFunction(function.get(), reload_args, profile());
     // Note: no need to validate a saw_load()-type method because the presence
     // in enabled_extensions() indicates the extension was loaded.
@@ -938,8 +1040,8 @@ TEST_F(DeveloperPrivateApiUnitTest, ReloadBadExtensionToLoadUnpackedRetry) {
     // Trying to load the extension should result in a load error with the
     // retry GUID populated.
     auto function = base::MakeRefCounted<api::DeveloperPrivateReloadFunction>();
-    function->SetRenderFrameHost(web_contents->GetMainFrame());
-    std::unique_ptr<base::Value> result =
+    function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
+    absl::optional<base::Value> result =
         api_test_utils::RunFunctionAndReturnSingleResult(
             function.get(), reload_args, profile());
     ASSERT_TRUE(result);
@@ -957,7 +1059,7 @@ TEST_F(DeveloperPrivateApiUnitTest, ReloadBadExtensionToLoadUnpackedRetry) {
     // and the extension should be enabled again.
     auto function =
         base::MakeRefCounted<api::DeveloperPrivateLoadUnpackedFunction>();
-    function->SetRenderFrameHost(web_contents->GetMainFrame());
+    function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
     TestExtensionRegistryObserver observer(registry());
     std::string args =
         base::StringPrintf(R"([{"failQuietly": true, "populateError": true,
@@ -992,7 +1094,7 @@ TEST_F(DeveloperPrivateApiUnitTest,
   {
     auto function = base::MakeRefCounted<
         api::DeveloperPrivateNotifyDragInstallInProgressFunction>();
-    function->SetRenderFrameHost(web_contents->GetMainFrame());
+    function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
     api_test_utils::RunFunction(function.get(), "[]", profile());
   }
 
@@ -1010,7 +1112,7 @@ TEST_F(DeveloperPrivateApiUnitTest,
     // Try reloading the extension by supplying the retry id. It should succeed.
     auto function =
         base::MakeRefCounted<api::DeveloperPrivateLoadUnpackedFunction>();
-    function->SetRenderFrameHost(web_contents->GetMainFrame());
+    function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
     TestExtensionRegistryObserver observer(registry());
     api_test_utils::RunFunction(function.get(), kLoadUnpackedArgs, profile());
     scoped_refptr<const Extension> extension =
@@ -1028,8 +1130,8 @@ TEST_F(DeveloperPrivateApiUnitTest,
   {
     auto function = base::MakeRefCounted<
         api::DeveloperPrivateNotifyDragInstallInProgressFunction>();
-    function->SetRenderFrameHost(web_contents->GetMainFrame());
-    std::unique_ptr<base::Value> result =
+    function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
+    absl::optional<base::Value> result =
         api_test_utils::RunFunctionAndReturnSingleResult(function.get(), "[]",
                                                          profile());
   }
@@ -1039,9 +1141,9 @@ TEST_F(DeveloperPrivateApiUnitTest,
     // the directory) should result in a load error.
     auto function =
         base::MakeRefCounted<api::DeveloperPrivateLoadUnpackedFunction>();
-    function->SetRenderFrameHost(web_contents->GetMainFrame());
+    function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
     TestExtensionRegistryObserver observer(registry());
-    std::unique_ptr<base::Value> result =
+    absl::optional<base::Value> result =
         api_test_utils::RunFunctionAndReturnSingleResult(
             function.get(), kLoadUnpackedArgs, profile());
     ASSERT_TRUE(result);
@@ -1065,17 +1167,15 @@ TEST_F(DeveloperPrivateApiUnitTest, DeveloperPrivateRequestFileSource) {
   properties.extension_id = extension->id();
   properties.path_suffix = "manifest.json";
   properties.message = kErrorMessage;
-  properties.manifest_key = std::make_unique<std::string>("name");
+  properties.manifest_key = "name";
 
-  scoped_refptr<ExtensionFunction> function(
-      new api::DeveloperPrivateRequestFileSourceFunction());
-  base::ListValue file_source_args;
-  file_source_args.Append(
-      base::Value::FromUniquePtrValue(properties.ToValue()));
+  auto function =
+      base::MakeRefCounted<api::DeveloperPrivateRequestFileSourceFunction>();
+  base::Value::List file_source_args;
+  file_source_args.Append(properties.ToValue());
   EXPECT_TRUE(RunFunction(function, file_source_args)) << function->GetError();
 
-  const base::Value& response_value =
-      function->GetResultList()->GetListDeprecated()[0];
+  const base::Value& response_value = (*function->GetResultListForTest())[0];
   std::unique_ptr<api::developer_private::RequestFileSourceResponse> response =
       api::developer_private::RequestFileSourceResponse::FromValue(
           response_value);
@@ -1094,35 +1194,39 @@ TEST_F(DeveloperPrivateApiUnitTest, DeveloperPrivateGetExtensionsInfo) {
   // ExtensionInfoGenerator's unittest), but rather just to make sure we can
   // serialize/deserialize the result - which implicity tests that everything
   // has a sane value.
-  scoped_refptr<ExtensionFunction> function(
-      new api::DeveloperPrivateGetExtensionsInfoFunction());
-  EXPECT_TRUE(RunFunction(function, base::ListValue())) << function->GetError();
-  const base::ListValue* results = function->GetResultList();
-  base::Value::ConstListView results_list = results->GetListDeprecated();
-  ASSERT_EQ(1u, results_list.size());
-  ASSERT_TRUE(results_list[0].is_list());
-  base::Value::ConstListView list = results_list[0].GetListDeprecated();
-  ASSERT_EQ(1u, list.size());
-  std::unique_ptr<api::developer_private::ExtensionInfo> info =
-      api::developer_private::ExtensionInfo::FromValue(list[0]);
-  ASSERT_TRUE(info);
+  {
+    auto function =
+        base::MakeRefCounted<api::DeveloperPrivateGetExtensionsInfoFunction>();
+    EXPECT_TRUE(RunFunction(function, base::Value::List()))
+        << function->GetError();
+    const base::Value::List* results = function->GetResultListForTest();
+    ASSERT_EQ(1u, results->size());
+    ASSERT_TRUE((*results)[0].is_list());
+    const base::Value::List& list = (*results)[0].GetList();
+    ASSERT_EQ(1u, list.size());
+    std::unique_ptr<api::developer_private::ExtensionInfo> info =
+        api::developer_private::ExtensionInfo::FromValue(list[0]);
+    ASSERT_TRUE(info);
+  }
 
   // As a sanity check, also run the GetItemsInfo and make sure it returns a
   // sane value.
-  function = new api::DeveloperPrivateGetItemsInfoFunction();
-  base::ListValue args;
-  args.Append(false);
-  args.Append(false);
-  EXPECT_TRUE(RunFunction(function, args)) << function->GetError();
-  results = function->GetResultList();
-  results_list = results->GetListDeprecated();
-  ASSERT_EQ(1u, results_list.size());
-  ASSERT_TRUE(results_list[0].is_list());
-  list = results_list[0].GetListDeprecated();
-  ASSERT_EQ(1u, list.size());
-  std::unique_ptr<api::developer_private::ItemInfo> item_info =
-      api::developer_private::ItemInfo::FromValue(list[0]);
-  ASSERT_TRUE(item_info);
+  {
+    auto function =
+        base::MakeRefCounted<api::DeveloperPrivateGetItemsInfoFunction>();
+    base::Value::List args;
+    args.Append(false);
+    args.Append(false);
+    EXPECT_TRUE(RunFunction(function, args)) << function->GetError();
+    const base::Value::List* results = function->GetResultListForTest();
+    ASSERT_EQ(1u, results->size());
+    ASSERT_TRUE((*results)[0].is_list());
+    const base::Value::List& list = (*results)[0].GetList();
+    ASSERT_EQ(1u, list.size());
+    std::unique_ptr<api::developer_private::ItemInfo> item_info =
+        api::developer_private::ItemInfo::FromValue(list[0]);
+    ASSERT_TRUE(item_info);
+  }
 }
 
 // Test developerPrivate.deleteExtensionErrors.
@@ -1144,16 +1248,15 @@ TEST_F(DeveloperPrivateApiUnitTest, DeveloperPrivateDeleteExtensionErrors) {
   // Start by removing all errors for the extension of a given type (manifest).
   std::string type_string = api::developer_private::ToString(
       api::developer_private::ERROR_TYPE_MANIFEST);
-  std::unique_ptr<base::ListValue> args =
-      ListBuilder()
-          .Append(DictionaryBuilder()
-                      .Set("extensionId", extension->id())
-                      .Set("type", type_string)
-                      .Build())
-          .Build();
-  scoped_refptr<ExtensionFunction> function =
-      new api::DeveloperPrivateDeleteExtensionErrorsFunction();
-  EXPECT_TRUE(RunFunction(function, *args)) << function->GetError();
+  base::Value::List args = ListBuilder()
+                               .Append(DictionaryBuilder()
+                                           .Set("extensionId", extension->id())
+                                           .Set("type", type_string)
+                                           .Build())
+                               .Build();
+  auto function = base::MakeRefCounted<
+      api::DeveloperPrivateDeleteExtensionErrorsFunction>();
+  EXPECT_TRUE(RunFunction(function, args)) << function->GetError();
   // Two errors should remain.
   const ErrorList& error_list =
       error_console->GetErrorsForExtension(extension->id());
@@ -1168,8 +1271,9 @@ TEST_F(DeveloperPrivateApiUnitTest, DeveloperPrivateDeleteExtensionErrors) {
                       .Set("errorIds", ListBuilder().Append(error_id).Build())
                       .Build())
           .Build();
-  function = new api::DeveloperPrivateDeleteExtensionErrorsFunction();
-  EXPECT_TRUE(RunFunction(function, *args)) << function->GetError();
+  function = base::MakeRefCounted<
+      api::DeveloperPrivateDeleteExtensionErrorsFunction>();
+  EXPECT_TRUE(RunFunction(function, args)) << function->GetError();
   // And then there was one.
   EXPECT_EQ(1u, error_console->GetErrorsForExtension(extension->id()).size());
 
@@ -1179,8 +1283,9 @@ TEST_F(DeveloperPrivateApiUnitTest, DeveloperPrivateDeleteExtensionErrors) {
           .Append(
               DictionaryBuilder().Set("extensionId", extension->id()).Build())
           .Build();
-  function = new api::DeveloperPrivateDeleteExtensionErrorsFunction();
-  EXPECT_TRUE(RunFunction(function, *args)) << function->GetError();
+  function = base::MakeRefCounted<
+      api::DeveloperPrivateDeleteExtensionErrorsFunction>();
+  EXPECT_TRUE(RunFunction(function, args)) << function->GetError();
   // No more errors!
   EXPECT_TRUE(error_console->GetErrorsForExtension(extension->id()).empty());
 }
@@ -1192,11 +1297,10 @@ TEST_F(DeveloperPrivateApiUnitTest, RepairNotBrokenExtension) {
   const Extension* extension = InstallCRX(extension_path, INSTALL_NEW);
 
   // Attempt to repair the good extension, expect failure.
-  std::unique_ptr<base::ListValue> args =
-      ListBuilder().Append(extension->id()).Build();
-  scoped_refptr<ExtensionFunction> function =
-      new api::DeveloperPrivateRepairExtensionFunction();
-  EXPECT_FALSE(RunFunction(function, *args));
+  base::Value::List args = ListBuilder().Append(extension->id()).Build();
+  auto function =
+      base::MakeRefCounted<api::DeveloperPrivateRepairExtensionFunction>();
+  EXPECT_FALSE(RunFunction(function, args));
   EXPECT_EQ("Cannot repair a healthy extension.", function->GetError());
 }
 
@@ -1216,26 +1320,26 @@ TEST_F(DeveloperPrivateApiUnitTest, RepairPolicyExtension) {
                                           data_dir().AppendASCII("good.crx"));
   // Reloading extensions should find our externally registered extension
   // and install it.
-  content::WindowedNotificationObserver observer(
-      extensions::NOTIFICATION_CRX_INSTALLER_DONE,
-      content::NotificationService::AllSources());
-  service()->CheckForExternalUpdates();
-  observer.Wait();
+  {
+    TestExtensionRegistryObserver observer(registry());
+    service()->CheckForExternalUpdates();
+    EXPECT_EQ(extension_id, observer.WaitForExtensionLoaded()->id());
+  }
 
   // Attempt to repair the good extension, expect failure.
-  std::unique_ptr<base::ListValue> args =
-      ListBuilder().Append(extension_id).Build();
-  scoped_refptr<ExtensionFunction> function =
-      new api::DeveloperPrivateRepairExtensionFunction();
-  EXPECT_FALSE(RunFunction(function, *args));
+  base::Value::List args = ListBuilder().Append(extension_id).Build();
+  auto function =
+      base::MakeRefCounted<api::DeveloperPrivateRepairExtensionFunction>();
+  EXPECT_FALSE(RunFunction(function, args));
   EXPECT_EQ("Cannot repair a healthy extension.", function->GetError());
 
   // Corrupt the extension , still expect repair failure because this is a
   // policy extension.
   service()->DisableExtension(extension_id, disable_reason::DISABLE_CORRUPTED);
   args = ListBuilder().Append(extension_id).Build();
-  function = new api::DeveloperPrivateRepairExtensionFunction();
-  EXPECT_FALSE(RunFunction(function, *args));
+  function =
+      base::MakeRefCounted<api::DeveloperPrivateRepairExtensionFunction>();
+  EXPECT_FALSE(RunFunction(function, args));
   EXPECT_EQ("Cannot repair a policy-installed extension.",
             function->GetError());
 }
@@ -1290,9 +1394,9 @@ TEST_F(DeveloperPrivateApiUnitTest, LoadUnpackedFailsWithoutDevMode) {
 
   PrefService* prefs = profile()->GetPrefs();
   prefs->SetBoolean(prefs::kExtensionsUIDeveloperMode, false);
-  scoped_refptr<ExtensionFunction> function =
+  auto function =
       base::MakeRefCounted<api::DeveloperPrivateLoadUnpackedFunction>();
-  function->SetRenderFrameHost(web_contents->GetMainFrame());
+  function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
   std::string error = extension_function_test_utils::RunFunctionAndReturnError(
       function.get(), "[]", browser());
   EXPECT_THAT(error, testing::HasSubstr("developer mode"));
@@ -1323,9 +1427,9 @@ TEST_F(DeveloperPrivateApiUnitTest, LoadUnpackedFailsWithBlocklistingPolicy) {
 
   EXPECT_FALSE(info->can_load_unpacked);
 
-  scoped_refptr<ExtensionFunction> function =
+  auto function =
       base::MakeRefCounted<api::DeveloperPrivateLoadUnpackedFunction>();
-  function->SetRenderFrameHost(web_contents->GetMainFrame());
+  function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
   std::string error = extension_function_test_utils::RunFunctionAndReturnError(
       function.get(), "[]", browser());
   EXPECT_THAT(error, testing::HasSubstr("policy"));
@@ -1366,9 +1470,9 @@ TEST_F(DeveloperPrivateApiUnitTest, InstallDroppedFileNoDraggedPath) {
   std::unique_ptr<content::WebContents> web_contents(
       content::WebContentsTester::CreateTestWebContents(profile(), nullptr));
 
-  scoped_refptr<ExtensionFunction> function =
+  auto function =
       base::MakeRefCounted<api::DeveloperPrivateInstallDroppedFileFunction>();
-  function->SetRenderFrameHost(web_contents->GetMainFrame());
+  function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
 
   TestExtensionRegistryObserver observer(registry());
   EXPECT_EQ("No dragged path", api_test_utils::RunFunctionAndReturnError(
@@ -1392,9 +1496,9 @@ TEST_F(DeveloperPrivateApiUnitTest, InstallDroppedFileCrx) {
   DeveloperPrivateAPI::Get(profile())->SetDraggedPath(web_contents.get(),
                                                       crx_path);
 
-  scoped_refptr<ExtensionFunction> function =
+  auto function =
       base::MakeRefCounted<api::DeveloperPrivateInstallDroppedFileFunction>();
-  function->SetRenderFrameHost(web_contents->GetMainFrame());
+  function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
 
   TestExtensionRegistryObserver observer(registry());
   ASSERT_TRUE(api_test_utils::RunFunction(function.get(), "[]", profile()))
@@ -1416,9 +1520,9 @@ TEST_F(DeveloperPrivateApiUnitTest, InstallDroppedFileUserScript) {
   DeveloperPrivateAPI::Get(profile())->SetDraggedPath(web_contents.get(),
                                                       script_path);
 
-  scoped_refptr<ExtensionFunction> function =
+  auto function =
       base::MakeRefCounted<api::DeveloperPrivateInstallDroppedFileFunction>();
-  function->SetRenderFrameHost(web_contents->GetMainFrame());
+  function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
 
   TestExtensionRegistryObserver observer(registry());
   ASSERT_TRUE(api_test_utils::RunFunction(function.get(), "[]", profile()))
@@ -1433,64 +1537,64 @@ TEST_F(DeveloperPrivateApiUnitTest, GrantHostPermission) {
   scoped_refptr<const Extension> extension =
       ExtensionBuilder("test").AddPermission("<all_urls>").Build();
   service()->AddExtension(extension.get());
+
+  PermissionsManager* permissions_manager = PermissionsManager::Get(profile());
+  EXPECT_FALSE(permissions_manager->HasWithheldHostPermissions(*extension));
+
   ScriptingPermissionsModifier modifier(profile(), extension.get());
-  EXPECT_FALSE(modifier.HasWithheldHostPermissions());
   modifier.SetWithholdHostPermissions(true);
 
-  auto run_add_host_permission = [this, extension](base::StringPiece host,
-                                                   bool should_succeed,
-                                                   const char* expected_error) {
-    SCOPED_TRACE(host);
-    scoped_refptr<ExtensionFunction> function =
-        base::MakeRefCounted<api::DeveloperPrivateAddHostPermissionFunction>();
-
-    std::string args = base::StringPrintf(R"(["%s", "%s"])",
-                                          extension->id().c_str(), host.data());
-    if (should_succeed) {
-      EXPECT_TRUE(api_test_utils::RunFunction(function.get(), args, profile()))
-          << function->GetError();
-    } else {
-      EXPECT_EQ(expected_error, api_test_utils::RunFunctionAndReturnError(
-                                    function.get(), args, profile()));
-    }
-  };
-
   const GURL kExampleCom("https://example.com/");
-  EXPECT_FALSE(modifier.HasGrantedHostPermission(kExampleCom));
-  run_add_host_permission("https://example.com/*", true, nullptr);
-  EXPECT_TRUE(modifier.HasGrantedHostPermission(kExampleCom));
+  EXPECT_FALSE(
+      permissions_manager->HasGrantedHostPermission(*extension, kExampleCom));
+  RunAddHostPermission(profile(), *extension, "https://example.com/*",
+                       /*should_succeed=*/true, nullptr);
+  EXPECT_TRUE(
+      permissions_manager->HasGrantedHostPermission(*extension, kExampleCom));
 
   const GURL kGoogleCom("https://google.com");
   const GURL kMapsGoogleCom("https://maps.google.com/");
-  EXPECT_FALSE(modifier.HasGrantedHostPermission(kGoogleCom));
-  EXPECT_FALSE(modifier.HasGrantedHostPermission(kMapsGoogleCom));
-  run_add_host_permission("https://*.google.com/*", true, nullptr);
-  EXPECT_TRUE(modifier.HasGrantedHostPermission(kGoogleCom));
-  EXPECT_TRUE(modifier.HasGrantedHostPermission(kMapsGoogleCom));
+  EXPECT_FALSE(
+      permissions_manager->HasGrantedHostPermission(*extension, kGoogleCom));
+  EXPECT_FALSE(permissions_manager->HasGrantedHostPermission(*extension,
+                                                             kMapsGoogleCom));
+  RunAddHostPermission(profile(), *extension, "https://*.google.com/*",
+                       /*should_succeed=*/true, nullptr);
+  EXPECT_TRUE(
+      permissions_manager->HasGrantedHostPermission(*extension, kGoogleCom));
+  EXPECT_TRUE(permissions_manager->HasGrantedHostPermission(*extension,
+                                                            kMapsGoogleCom));
 
-  run_add_host_permission(kInvalidHost, false, kInvalidHostError);
+  RunAddHostPermission(profile(), *extension, kInvalidHost,
+                       /*should_succeed=*/false, kInvalidHostError);
   // Path of the pattern must exactly match "/*".
-  run_add_host_permission("https://example.com/", false, kInvalidHostError);
-  run_add_host_permission("https://example.com/foobar", false,
-                          kInvalidHostError);
-  run_add_host_permission("https://example.com/#foobar", false,
-                          kInvalidHostError);
-  run_add_host_permission("https://example.com/*foobar", false,
-                          kInvalidHostError);
+  RunAddHostPermission(profile(), *extension, "https://example.com/",
+                       /*should_succeed=*/false, kInvalidHostError);
+  RunAddHostPermission(profile(), *extension, "https://example.com/foobar",
+                       /*should_succeed=*/false, kInvalidHostError);
+  RunAddHostPermission(profile(), *extension, "https://example.com/#foobar",
+                       /*should_succeed=*/false, kInvalidHostError);
+  RunAddHostPermission(profile(), *extension, "https://example.com/*foobar",
+                       /*should_succeed=*/false, kInvalidHostError);
 
   // Cannot grant chrome:-scheme URLs.
   GURL chrome_host("chrome://settings/*");
-  run_add_host_permission(chrome_host.spec(), false, kInvalidHostError);
+  RunAddHostPermission(profile(), *extension, chrome_host.spec(),
+                       /*should_succeed=*/false, kInvalidHostError);
 
-  EXPECT_FALSE(modifier.HasGrantedHostPermission(chrome_host));
+  EXPECT_FALSE(
+      permissions_manager->HasGrantedHostPermission(*extension, chrome_host));
 }
 
 TEST_F(DeveloperPrivateApiUnitTest, RemoveHostPermission) {
   scoped_refptr<const Extension> extension =
       ExtensionBuilder("test").AddPermission("<all_urls>").Build();
   service()->AddExtension(extension.get());
+
+  PermissionsManager* permissions_manager = PermissionsManager::Get(profile());
+  EXPECT_FALSE(permissions_manager->HasWithheldHostPermissions(*extension));
+
   ScriptingPermissionsModifier modifier(profile(), extension.get());
-  EXPECT_FALSE(modifier.HasWithheldHostPermissions());
   modifier.SetWithholdHostPermissions(true);
 
   auto run_remove_host_permission = [this, extension](
@@ -1498,7 +1602,7 @@ TEST_F(DeveloperPrivateApiUnitTest, RemoveHostPermission) {
                                         bool should_succeed,
                                         const char* expected_error) {
     SCOPED_TRACE(host);
-    scoped_refptr<ExtensionFunction> function = base::MakeRefCounted<
+    auto function = base::MakeRefCounted<
         api::DeveloperPrivateRemoveHostPermissionFunction>();
     std::string args = base::StringPrintf(R"(["%s", "%s"])",
                                           extension->id().c_str(), host.data());
@@ -1516,7 +1620,8 @@ TEST_F(DeveloperPrivateApiUnitTest, RemoveHostPermission) {
 
   const GURL kExampleCom("https://example.com");
   modifier.GrantHostPermission(kExampleCom);
-  EXPECT_TRUE(modifier.HasGrantedHostPermission(kExampleCom));
+  EXPECT_TRUE(
+      permissions_manager->HasGrantedHostPermission(*extension, kExampleCom));
 
   // Path of the pattern must exactly match "/*".
   run_remove_host_permission("https://example.com/", false, kInvalidHostError);
@@ -1527,10 +1632,12 @@ TEST_F(DeveloperPrivateApiUnitTest, RemoveHostPermission) {
   run_remove_host_permission("https://example.com/*foobar", false,
                              kInvalidHostError);
   run_remove_host_permission(kInvalidHost, false, kInvalidHostError);
-  EXPECT_TRUE(modifier.HasGrantedHostPermission(kExampleCom));
+  EXPECT_TRUE(
+      permissions_manager->HasGrantedHostPermission(*extension, kExampleCom));
 
   run_remove_host_permission("https://example.com/*", true, nullptr);
-  EXPECT_FALSE(modifier.HasGrantedHostPermission(kExampleCom));
+  EXPECT_FALSE(
+      permissions_manager->HasGrantedHostPermission(*extension, kExampleCom));
 
   URLPattern new_pattern(Extension::kValidHostPermissionSchemes,
                          "https://*.google.com/*");
@@ -1541,30 +1648,35 @@ TEST_F(DeveloperPrivateApiUnitTest, RemoveHostPermission) {
 
   const GURL kGoogleCom("https://google.com/");
   const GURL kMapsGoogleCom("https://maps.google.com/");
-  EXPECT_TRUE(modifier.HasGrantedHostPermission(kGoogleCom));
-  EXPECT_TRUE(modifier.HasGrantedHostPermission(kMapsGoogleCom));
+  EXPECT_TRUE(
+      permissions_manager->HasGrantedHostPermission(*extension, kGoogleCom));
+  EXPECT_TRUE(permissions_manager->HasGrantedHostPermission(*extension,
+                                                            kMapsGoogleCom));
 
   run_remove_host_permission("https://*.google.com/*", true, nullptr);
-  EXPECT_FALSE(modifier.HasGrantedHostPermission(kGoogleCom));
-  EXPECT_FALSE(modifier.HasGrantedHostPermission(kMapsGoogleCom));
+  EXPECT_FALSE(
+      permissions_manager->HasGrantedHostPermission(*extension, kGoogleCom));
+  EXPECT_FALSE(permissions_manager->HasGrantedHostPermission(*extension,
+                                                             kMapsGoogleCom));
 }
 
 TEST_F(DeveloperPrivateApiUnitTest, UpdateHostAccess) {
   scoped_refptr<const Extension> extension =
       ExtensionBuilder("test").AddPermission("<all_urls>").Build();
   service()->AddExtension(extension.get());
-  ScriptingPermissionsModifier modifier(profile(), extension.get());
 
-  EXPECT_FALSE(modifier.HasWithheldHostPermissions());
+  PermissionsManager* permissions_manager =
+      PermissionsManager::Get(browser()->profile());
+  EXPECT_FALSE(permissions_manager->HasWithheldHostPermissions(*extension));
 
   RunUpdateHostAccess(*extension, "ON_CLICK");
-  EXPECT_TRUE(modifier.HasWithheldHostPermissions());
+  EXPECT_TRUE(permissions_manager->HasWithheldHostPermissions(*extension));
 
   RunUpdateHostAccess(*extension, "ON_ALL_SITES");
-  EXPECT_FALSE(modifier.HasWithheldHostPermissions());
+  EXPECT_FALSE(permissions_manager->HasWithheldHostPermissions(*extension));
 
   RunUpdateHostAccess(*extension, "ON_SPECIFIC_SITES");
-  EXPECT_TRUE(modifier.HasWithheldHostPermissions());
+  EXPECT_TRUE(permissions_manager->HasWithheldHostPermissions(*extension));
 }
 
 TEST_F(DeveloperPrivateApiUnitTest,
@@ -1575,15 +1687,20 @@ TEST_F(DeveloperPrivateApiUnitTest,
   ScriptingPermissionsModifier modifier(profile(), extension.get());
   modifier.SetWithholdHostPermissions(true);
 
-  RunUpdateHostAccess(*extension, "ON_SPECIFIC_SITES");
   const GURL example_com("https://example.com");
   modifier.GrantHostPermission(example_com);
-  EXPECT_TRUE(modifier.HasWithheldHostPermissions());
-  EXPECT_TRUE(modifier.HasGrantedHostPermission(example_com));
+  PermissionsManager* permissions_manager =
+      PermissionsManager::Get(browser()->profile());
+
+  RunUpdateHostAccess(*extension, "ON_SPECIFIC_SITES");
+  EXPECT_TRUE(permissions_manager->HasWithheldHostPermissions(*extension));
+  EXPECT_TRUE(
+      permissions_manager->HasGrantedHostPermission(*extension, example_com));
 
   RunUpdateHostAccess(*extension, "ON_CLICK");
-  EXPECT_TRUE(modifier.HasWithheldHostPermissions());
-  EXPECT_FALSE(modifier.HasGrantedHostPermission(example_com));
+  EXPECT_TRUE(permissions_manager->HasWithheldHostPermissions(*extension));
+  EXPECT_FALSE(
+      permissions_manager->HasGrantedHostPermission(*extension, example_com));
 
   // NOTE(devlin): It's a bit unfortunate that by cycling between host access
   // settings, a user loses any stored state. This would be painful if the user
@@ -1603,8 +1720,9 @@ TEST_F(DeveloperPrivateApiUnitTest,
   // transitions between states. Since this is definitely a power-user surface,
   // this is likely okay.
   RunUpdateHostAccess(*extension, "ON_SPECIFIC_SITES");
-  EXPECT_TRUE(modifier.HasWithheldHostPermissions());
-  EXPECT_FALSE(modifier.HasGrantedHostPermission(example_com));
+  EXPECT_TRUE(permissions_manager->HasWithheldHostPermissions(*extension));
+  EXPECT_FALSE(
+      permissions_manager->HasGrantedHostPermission(*extension, example_com));
 }
 
 TEST_F(DeveloperPrivateApiUnitTest,
@@ -1615,19 +1733,25 @@ TEST_F(DeveloperPrivateApiUnitTest,
   ScriptingPermissionsModifier modifier(profile(), extension.get());
   modifier.SetWithholdHostPermissions(true);
 
-  RunUpdateHostAccess(*extension, "ON_SPECIFIC_SITES");
+  PermissionsManager* permissions_manager =
+      PermissionsManager::Get(browser()->profile());
   const GURL example_com("https://example.com");
+
+  RunUpdateHostAccess(*extension, "ON_SPECIFIC_SITES");
   modifier.GrantHostPermission(example_com);
-  EXPECT_TRUE(modifier.HasWithheldHostPermissions());
-  EXPECT_TRUE(modifier.HasGrantedHostPermission(example_com));
+  EXPECT_TRUE(permissions_manager->HasWithheldHostPermissions(*extension));
+  EXPECT_TRUE(
+      permissions_manager->HasGrantedHostPermission(*extension, example_com));
 
   RunUpdateHostAccess(*extension, "ON_ALL_SITES");
-  EXPECT_FALSE(modifier.HasWithheldHostPermissions());
-  EXPECT_TRUE(modifier.HasGrantedHostPermission(example_com));
+  EXPECT_FALSE(permissions_manager->HasWithheldHostPermissions(*extension));
+  EXPECT_TRUE(
+      permissions_manager->HasGrantedHostPermission(*extension, example_com));
 
   RunUpdateHostAccess(*extension, "ON_SPECIFIC_SITES");
-  EXPECT_TRUE(modifier.HasWithheldHostPermissions());
-  EXPECT_FALSE(modifier.HasGrantedHostPermission(example_com));
+  EXPECT_TRUE(permissions_manager->HasWithheldHostPermissions(*extension));
+  EXPECT_FALSE(
+      permissions_manager->HasGrantedHostPermission(*extension, example_com));
 }
 
 TEST_F(DeveloperPrivateApiUnitTest,
@@ -1657,16 +1781,22 @@ TEST_F(DeveloperPrivateApiUnitTest,
   // Even though <all_urls> has been granted, it was granted as a runtime host
   // pattern, so the extension is still is considered to have withheld host
   // permissions.
-  EXPECT_TRUE(modifier.HasWithheldHostPermissions());
-  EXPECT_TRUE(modifier.HasGrantedHostPermission(kGoogleCom));
-  EXPECT_TRUE(modifier.HasGrantedHostPermission(kChromiumCom));
+  PermissionsManager* permissions_manager =
+      PermissionsManager::Get(browser()->profile());
+  EXPECT_TRUE(permissions_manager->HasWithheldHostPermissions(*extension));
+  EXPECT_TRUE(
+      permissions_manager->HasGrantedHostPermission(*extension, kGoogleCom));
+  EXPECT_TRUE(
+      permissions_manager->HasGrantedHostPermission(*extension, kChromiumCom));
 
   // Changing to specific sites should now remove the broad pattern, leaving
   // only the google match pattern.
   RunUpdateHostAccess(*extension, "ON_SPECIFIC_SITES");
-  EXPECT_TRUE(modifier.HasWithheldHostPermissions());
-  EXPECT_TRUE(modifier.HasGrantedHostPermission(kGoogleCom));
-  EXPECT_FALSE(modifier.HasGrantedHostPermission(kChromiumCom));
+  EXPECT_TRUE(permissions_manager->HasWithheldHostPermissions(*extension));
+  EXPECT_TRUE(
+      permissions_manager->HasGrantedHostPermission(*extension, kGoogleCom));
+  EXPECT_FALSE(
+      permissions_manager->HasGrantedHostPermission(*extension, kChromiumCom));
 }
 
 TEST_F(DeveloperPrivateApiUnitTest,
@@ -1684,7 +1814,7 @@ TEST_F(DeveloperPrivateApiUnitTest,
             *extension_prefs->GetRuntimeGrantedPermissions(extension->id()));
 
   {
-    scoped_refptr<ExtensionFunction> function =
+    auto function =
         base::MakeRefCounted<api::DeveloperPrivateAddHostPermissionFunction>();
     std::string args = base::StringPrintf(
         R"(["%s", "%s"])", extension->id().c_str(), "*://chromium.org/*");
@@ -1715,7 +1845,7 @@ TEST_F(DeveloperPrivateApiUnitTest,
             *extension_prefs->GetRuntimeGrantedPermissions(extension->id()));
 
   {
-    scoped_refptr<ExtensionFunction> function = base::MakeRefCounted<
+    auto function = base::MakeRefCounted<
         api::DeveloperPrivateRemoveHostPermissionFunction>();
     std::string args = base::StringPrintf(
         R"(["%s", "%s"])", extension->id().c_str(), "*://chromium.org/*");
@@ -1747,10 +1877,10 @@ TEST_F(DeveloperPrivateApiUnitTest,
 
   // The DeveloperPrivateEventRouter will only dispatch events if there's at
   // least one listener to dispatch to. Create one.
-  content::RenderProcessHost* process = nullptr;
   const char* kEventName =
       api::developer_private::OnItemStateChanged::kEventName;
-  event_router->AddEventListener(kEventName, process, listener_id);
+  event_router->AddEventListener(kEventName, render_process_host(),
+                                 listener_id);
 
   TestEventRouterObserver test_observer(event_router);
   EXPECT_FALSE(WasItemChangedEventDispatched(
@@ -1790,10 +1920,10 @@ TEST_F(DeveloperPrivateApiUnitTest, ExtensionUpdatedEventOnPermissionsChange) {
 
   // The DeveloperPrivateEventRouter will only dispatch events if there's at
   // least one listener to dispatch to. Create one.
-  content::RenderProcessHost* process = nullptr;
   const char* kEventName =
       api::developer_private::OnItemStateChanged::kEventName;
-  event_router->AddEventListener(kEventName, process, listener_id);
+  event_router->AddEventListener(kEventName, render_process_host(),
+                                 listener_id);
 
   scoped_refptr<const Extension> dummy_extension =
       ExtensionBuilder("dummy")
@@ -1841,9 +1971,9 @@ TEST_F(DeveloperPrivateApiUnitTest, InstallDroppedFileZip) {
   DeveloperPrivateAPI::Get(profile())->SetDraggedPath(web_contents.get(),
                                                       zip_path);
 
-  scoped_refptr<ExtensionFunction> function =
+  auto function =
       base::MakeRefCounted<api::DeveloperPrivateInstallDroppedFileFunction>();
-  function->SetRenderFrameHost(web_contents->GetMainFrame());
+  function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
 
   TestExtensionRegistryObserver observer(registry());
   ASSERT_TRUE(api_test_utils::RunFunction(function.get(), "[]", profile()))
@@ -1857,6 +1987,125 @@ TEST_F(DeveloperPrivateApiUnitTest, InstallDroppedFileZip) {
 // Test developerPrivate.getUserSiteSettings.
 TEST_F(DeveloperPrivateApiUnitTest, DeveloperPrivateGetUserSiteSettings) {
   PermissionsManager* manager = PermissionsManager::Get(browser_context());
+  const url::Origin restricted_url =
+      url::Origin::Create(GURL("http://example.com"));
+
+  manager->AddUserRestrictedSite(restricted_url);
+
+  auto function =
+      base::MakeRefCounted<api::DeveloperPrivateGetUserSiteSettingsFunction>();
+
+  absl::optional<base::Value> result =
+      api_test_utils::RunFunctionAndReturnSingleResult(
+          function.get(), /*args=*/"[]", profile());
+  ASSERT_TRUE(result.has_value());
+  std::unique_ptr<api::developer_private::UserSiteSettings> settings =
+      api::developer_private::UserSiteSettings::FromValue(result.value());
+
+  ASSERT_TRUE(settings);
+  EXPECT_THAT(settings->permitted_sites, testing::IsEmpty());
+  EXPECT_THAT(settings->restricted_sites,
+              testing::UnorderedElementsAre("http://example.com"));
+}
+
+// Test developerPrivate.addUserSpecifiedSite and removeUserSpecifiedSite for
+// restricted sites.
+TEST_F(DeveloperPrivateApiUnitTest, DeveloperPrivateModifyUserSiteSettings) {
+  static constexpr char kExample[] = "http://example.com";
+  static constexpr char kChromium[] = "http://chromium.org";
+
+  const url::Origin example_url = url::Origin::Create(GURL(kExample));
+  const url::Origin chromium_url = url::Origin::Create(GURL(kChromium));
+
+  // Add restricted sites, and check that these sites are stored in the manager.
+  EXPECT_NO_FATAL_FAILURE(AddUserSpecifiedSites(
+      profile(), base::StringPrintf(R"(["%s","%s"])", kExample, kChromium),
+      /*restricted=*/true));
+
+  PermissionsManager* manager = PermissionsManager::Get(browser_context());
+  EXPECT_THAT(manager->GetUserPermissionsSettings().permitted_sites,
+              testing::IsEmpty());
+  EXPECT_THAT(manager->GetUserPermissionsSettings().restricted_sites,
+              testing::UnorderedElementsAre(example_url, chromium_url));
+
+  // Remove restricted site, and check that the site was removed in the manager.
+  EXPECT_NO_FATAL_FAILURE(RemoveUserSpecifiedSites(
+      profile(), base::StringPrintf(R"(["%s"])", kExample),
+      /*restricted=*/true));
+
+  EXPECT_THAT(manager->GetUserPermissionsSettings().permitted_sites,
+              testing::IsEmpty());
+  EXPECT_THAT(manager->GetUserPermissionsSettings().restricted_sites,
+              testing::UnorderedElementsAre(chromium_url));
+}
+
+// Test that the OnUserSiteSettingsChanged event is fired whenever the user
+// defined site settings update.
+TEST_F(DeveloperPrivateApiUnitTest, OnUserSiteSettingsChanged) {
+  static constexpr char kExample[] = "http://example.com";
+
+  // We need to call DeveloperPrivateAPI::Get() in order to instantiate the
+  // keyed service, since it's not created by default in unit tests.
+  DeveloperPrivateAPI::Get(profile());
+  EventRouter* event_router = EventRouter::Get(profile());
+
+  // The DeveloperPrivateEventRouter will only dispatch events if there's at
+  // least one listener to dispatch to. Create one.
+  const char* kEventName =
+      api::developer_private::OnUserSiteSettingsChanged::kEventName;
+  event_router->AddEventListener(kEventName, render_process_host(),
+                                 crx_file::id_util::GenerateId("listener"));
+
+  TestEventRouterObserver test_observer(event_router);
+
+  api::developer_private::UserSiteSettings settings;
+  EXPECT_FALSE(
+      WasUserSiteSettingsChangedEventDispatched(test_observer, &settings));
+
+  // Add a restricted site, and check the event that it's
+  // only contained in the restricted list.
+  const std::string kExampleArg = base::StringPrintf(R"(["%s"])", kExample);
+  EXPECT_NO_FATAL_FAILURE(
+      AddUserSpecifiedSites(profile(), kExampleArg, /*restricted=*/true));
+  EXPECT_TRUE(
+      WasUserSiteSettingsChangedEventDispatched(test_observer, &settings));
+  EXPECT_THAT(settings.permitted_sites, testing::IsEmpty());
+  EXPECT_THAT(settings.restricted_sites,
+              testing::UnorderedElementsAre(kExample));
+
+  // Remove the site, and check the event that both lists are empty.
+  EXPECT_NO_FATAL_FAILURE(
+      RemoveUserSpecifiedSites(profile(), kExampleArg, /*restricted=*/true));
+  EXPECT_TRUE(
+      WasUserSiteSettingsChangedEventDispatched(test_observer, &settings));
+  EXPECT_THAT(settings.permitted_sites, testing::IsEmpty());
+  EXPECT_THAT(settings.restricted_sites, testing::IsEmpty());
+}
+
+class DeveloperPrivateApiWithPermittedSitesUnitTest
+    : public DeveloperPrivateApiUnitTest {
+ public:
+  DeveloperPrivateApiWithPermittedSitesUnitTest();
+  DeveloperPrivateApiWithPermittedSitesUnitTest(
+      const DeveloperPrivateApiWithPermittedSitesUnitTest&) = delete;
+  const DeveloperPrivateApiWithPermittedSitesUnitTest& operator=(
+      const DeveloperPrivateApiWithPermittedSitesUnitTest&) = delete;
+  ~DeveloperPrivateApiWithPermittedSitesUnitTest() override = default;
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+DeveloperPrivateApiWithPermittedSitesUnitTest::
+    DeveloperPrivateApiWithPermittedSitesUnitTest() {
+  feature_list_.InitAndEnableFeature(
+      extensions_features::kExtensionsMenuAccessControlWithPermittedSites);
+}
+
+// Test developerPrivate.getUserSiteSettings.
+TEST_F(DeveloperPrivateApiWithPermittedSitesUnitTest,
+       DeveloperPrivateGetUserSiteSettings) {
+  PermissionsManager* manager = PermissionsManager::Get(browser_context());
   const url::Origin permitted_url =
       url::Origin::Create(GURL("http://a.example.com"));
   const url::Origin restricted_url =
@@ -1865,15 +2114,14 @@ TEST_F(DeveloperPrivateApiUnitTest, DeveloperPrivateGetUserSiteSettings) {
   manager->AddUserPermittedSite(permitted_url);
   manager->AddUserRestrictedSite(restricted_url);
 
-  scoped_refptr<ExtensionFunction> function(
-      new api::DeveloperPrivateGetUserSiteSettingsFunction());
+  auto function =
+      base::MakeRefCounted<api::DeveloperPrivateGetUserSiteSettingsFunction>();
 
-  base::ListValue args;
+  base::Value::List args;
   EXPECT_TRUE(RunFunction(function, args)) << function->GetError();
-  ASSERT_TRUE(function->GetResultList());
-  ASSERT_EQ(1u, function->GetResultList()->GetListDeprecated().size());
-  const base::Value& response_value =
-      function->GetResultList()->GetListDeprecated()[0];
+  ASSERT_TRUE(function->GetResultListForTest());
+  ASSERT_EQ(1u, function->GetResultListForTest()->size());
+  const base::Value& response_value = (*function->GetResultListForTest())[0];
   std::unique_ptr<api::developer_private::UserSiteSettings> settings =
       api::developer_private::UserSiteSettings::FromValue(response_value);
 
@@ -1884,9 +2132,9 @@ TEST_F(DeveloperPrivateApiUnitTest, DeveloperPrivateGetUserSiteSettings) {
               testing::UnorderedElementsAre("http://b.example.com"));
 }
 
-// Test developerPrivate.addUserPermittedSite, addUserRestrictedSite and
-// removeUserSpecifiedSite.
-TEST_F(DeveloperPrivateApiUnitTest, DeveloperPrivateModifyUserSiteSettings) {
+// Test developerPrivate.addUserSpecifiedSite and removeUserSpecifiedSite.
+TEST_F(DeveloperPrivateApiWithPermittedSitesUnitTest,
+       DeveloperPrivateModifyUserSiteSettings) {
   static constexpr char kExample[] = "http://example.com";
   static constexpr char kChromium[] = "http://chromium.org";
   static constexpr char kGoogle[] = "http://google.com";
@@ -1929,57 +2177,528 @@ TEST_F(DeveloperPrivateApiUnitTest, DeveloperPrivateModifyUserSiteSettings) {
   EXPECT_TRUE(manager->GetUserPermissionsSettings().restricted_sites.empty());
 }
 
-// Test that the OnUserSiteSettingsChanged event is fired whenever the user
-// defined site settings updates.
-TEST_F(DeveloperPrivateApiUnitTest, OnUserSiteSettingsChanged) {
-  static constexpr char kExample[] = "http://example.com";
+TEST_F(DeveloperPrivateApiWithPermittedSitesUnitTest,
+       DeveloperPrivateGetUserAndExtensionSitesByEtld_UserSites) {
+  PermissionsManager* manager = PermissionsManager::Get(browser_context());
 
-  // We need to call DeveloperPrivateAPI::Get() in order to instantiate the
-  // keyed service, since it's not created by default in unit tests.
-  DeveloperPrivateAPI::Get(profile());
-  EventRouter* event_router = EventRouter::Get(profile());
+  // Add two sites under the eTLD+1 example.com, and one under eTLD+1 google.ca.
+  manager->AddUserPermittedSite(
+      url::Origin::Create(GURL("http://a.example.com")));
+  manager->AddUserRestrictedSite(
+      url::Origin::Create(GURL("http://b.example.com")));
+  manager->AddUserRestrictedSite(url::Origin::Create(GURL("http://google.ca")));
 
-  // The DeveloperPrivateEventRouter will only dispatch events if there's at
-  // least one listener to dispatch to. Create one.
-  const char* kEventName =
-      api::developer_private::OnUserSiteSettingsChanged::kEventName;
-  event_router->AddEventListener(kEventName, /*process=*/nullptr,
-                                 crx_file::id_util::GenerateId("listener"));
+  auto function = base::MakeRefCounted<
+      api::DeveloperPrivateGetUserAndExtensionSitesByEtldFunction>();
+  EXPECT_TRUE(RunFunction(function, base::Value::List()))
+      << function->GetError();
+  const base::Value::List* results = function->GetResultListForTest();
+  ASSERT_EQ(1u, results->size());
 
-  TestEventRouterObserver test_observer(event_router);
+  EXPECT_THAT((*results)[0], base::test::IsJson(R"([{
+    "etldPlusOne": "example.com",
+    "numExtensions": 0,
+    "sites": [{
+      "siteSet": "USER_PERMITTED",
+      "numExtensions": 0,
+      "site": "a.example.com",
+    }, {
+      "siteSet": "USER_RESTRICTED",
+      "numExtensions": 0,
+      "site": "b.example.com",
+    }]
+  }, {
+    "etldPlusOne": "google.ca",
+    "numExtensions": 0,
+    "sites": [{
+      "siteSet": "USER_RESTRICTED",
+      "numExtensions": 0,
+      "site": "google.ca",
+    }]
+  }])"));
+}
 
-  api::developer_private::UserSiteSettings settings;
+TEST_F(DeveloperPrivateApiWithPermittedSitesUnitTest,
+       DeveloperPrivateGetUserAndExtensionSitesByEtld_UserAndExtensionSites) {
+  PermissionsManager* manager = PermissionsManager::Get(browser_context());
+  manager->AddUserPermittedSite(
+      url::Origin::Create(GURL("http://images.google.com")));
+  manager->AddUserRestrictedSite(
+      url::Origin::Create(GURL("http://www.asdf.com")));
+
+  scoped_refptr<const Extension> extension_1 =
+      ExtensionBuilder("test")
+          .AddPermission("https://*.google.com/")
+          .AddPermission("http://www.google.com/")
+          .AddPermission("http://images.google.com/")
+          .AddPermission("https://example.com/")
+          .AddPermission("*://localhost/")
+          .Build();
+
+  scoped_refptr<const Extension> extension_2 =
+      ExtensionBuilder("test_2")
+          .AddPermission("https://mail.google.com/")
+          .AddPermission("http://www.google.com/")
+          .AddPermission("http://www.asdf.com/")
+          .AddPermission("http://localhost:8080/")
+          .Build();
+  AddExtensionAndGrantPermissions(profile(), service(), *extension_1);
+  AddExtensionAndGrantPermissions(profile(), service(), *extension_2);
+
+  auto function = base::MakeRefCounted<
+      api::DeveloperPrivateGetUserAndExtensionSitesByEtldFunction>();
+  EXPECT_TRUE(RunFunction(function, base::Value::List()))
+      << function->GetError();
+  const base::Value::List* results = function->GetResultListForTest();
+  ASSERT_EQ(1u, results->size());
+
+  // asdf.com and http://www.asdf.com should not have any extensions counted
+  // because they are associated with user specified sites.
+  EXPECT_THAT((*results)[0], base::test::IsJson(R"([{
+    "etldPlusOne": "asdf.com",
+    "numExtensions": 0,
+    "sites": [{
+      "siteSet": "USER_RESTRICTED",
+      "numExtensions": 0,
+      "site": "www.asdf.com",
+    }]
+  }, {
+    "etldPlusOne": "example.com",
+    "numExtensions": 1,
+    "sites": [{
+      "siteSet": "EXTENSION_SPECIFIED",
+      "numExtensions": 1,
+      "site": "example.com",
+    }]
+  }, {
+    "etldPlusOne": "google.com",
+    "numExtensions": 2,
+    "sites": [{
+      "siteSet": "USER_PERMITTED",
+      "numExtensions": 0,
+      "site": "images.google.com",
+    }, {
+      "siteSet": "EXTENSION_SPECIFIED",
+      "numExtensions": 2,
+      "site": "mail.google.com",
+    }, {
+      "siteSet": "EXTENSION_SPECIFIED",
+      "numExtensions": 2,
+      "site": "www.google.com",
+    }, {
+      "siteSet": "EXTENSION_SPECIFIED",
+      "numExtensions": 1,
+      "site": "*.google.com",
+    },]
+  }, {
+    "etldPlusOne": "localhost",
+    "numExtensions": 2,
+    "sites": [{
+      "siteSet": "EXTENSION_SPECIFIED",
+      "numExtensions": 2,
+      "site": "localhost",
+    }]
+  }])"));
+}
+
+TEST_F(DeveloperPrivateApiWithPermittedSitesUnitTest,
+       DeveloperPrivateGetUserAndExtensionSitesByEtld_EffectiveAllHosts) {
+  PermissionsManager* manager = PermissionsManager::Get(browser_context());
+  manager->AddUserPermittedSite(
+      url::Origin::Create(GURL("http://images.google.ca")));
+  manager->AddUserRestrictedSite(url::Origin::Create(GURL("https://yahoo.ca")));
+
+  scoped_refptr<const Extension> extension_1 =
+      ExtensionBuilder("specific_hosts")
+          .AddPermission("https://*.google.ca/")
+          .AddPermission("http://www.example.com/")
+          .Build();
+
+  scoped_refptr<const Extension> extension_2 =
+      ExtensionBuilder("all_.com").AddPermission("*://*.com/*").Build();
+
+  scoped_refptr<const Extension> extension_3 =
+      ExtensionBuilder("all_urls").AddPermission("<all_urls>").Build();
+  AddExtensionAndGrantPermissions(profile(), service(), *extension_1);
+  AddExtensionAndGrantPermissions(profile(), service(), *extension_2);
+  AddExtensionAndGrantPermissions(profile(), service(), *extension_3);
+
+  auto function = base::MakeRefCounted<
+      api::DeveloperPrivateGetUserAndExtensionSitesByEtldFunction>();
+  EXPECT_TRUE(RunFunction(function, base::Value::List()))
+      << function->GetError();
+  const base::Value::List* results = function->GetResultListForTest();
+  ASSERT_EQ(1u, results->size());
+
+  // `extension_2` should not be counted for https://*.google.ca/* as it
+  // cannot run on .ca sites.
+  EXPECT_THAT((*results)[0], base::test::IsJson(R"([{
+    "etldPlusOne": "example.com",
+    "numExtensions": 3,
+    "sites": [{
+      "siteSet": "EXTENSION_SPECIFIED",
+      "numExtensions": 3,
+      "site": "www.example.com",
+    }, {
+      "siteSet": "EXTENSION_SPECIFIED",
+      "numExtensions": 2,
+      "site": "*.example.com",
+    }]
+  }, {
+    "etldPlusOne": "google.ca",
+    "numExtensions": 2,
+    "sites": [{
+      "siteSet": "USER_PERMITTED",
+      "numExtensions": 0,
+      "site": "images.google.ca",
+    }, {
+      "siteSet": "EXTENSION_SPECIFIED",
+      "numExtensions": 2,
+      "site": "*.google.ca",
+    }]
+  }, {
+    "etldPlusOne": "yahoo.ca",
+    "numExtensions": 1,
+    "sites": [{
+      "siteSet": "USER_RESTRICTED",
+      "numExtensions": 0,
+      "site": "yahoo.ca",
+    }, {
+      "siteSet": "EXTENSION_SPECIFIED",
+      "numExtensions": 1,
+      "site": "*.yahoo.ca",
+    }]
+  }])"));
+}
+
+TEST_F(DeveloperPrivateApiUnitTest,
+       DeveloperPrivateGetUserAndExtensionSitesByEtld_RuntimeGrantedHosts) {
+  scoped_refptr<const Extension> extension_1 =
+      ExtensionBuilder("runtime_hosts").AddPermission("<all_urls>").Build();
+  AddExtensionAndGrantPermissions(profile(), service(), *extension_1);
+
+  auto get_user_and_extension_sites = [this](const std::string& expected_json) {
+    auto function = base::MakeRefCounted<
+        api::DeveloperPrivateGetUserAndExtensionSitesByEtldFunction>();
+    EXPECT_TRUE(RunFunction(function, base::Value::List()))
+        << function->GetError();
+    const base::Value::List* results = function->GetResultListForTest();
+    ASSERT_EQ(1u, results->size());
+    EXPECT_THAT((*results)[0], base::test::IsJson(expected_json));
+  };
+
+  get_user_and_extension_sites(R"([])");
+
+  EXPECT_FALSE(PermissionsManager::Get(browser()->profile())
+                   ->HasWithheldHostPermissions(*extension_1));
+
+  ScriptingPermissionsModifier modifier(profile(), extension_1.get());
+  modifier.SetWithholdHostPermissions(true);
+
+  get_user_and_extension_sites(R"([])");
+
+  const std::string kExampleCom = "https://example.com/*";
+  RunAddHostPermission(profile(), *extension_1, kExampleCom,
+                       /*should_succeed=*/true, nullptr);
+
+  get_user_and_extension_sites(R"([{
+    "etldPlusOne": "example.com",
+    "numExtensions": 1,
+    "sites": [{
+      "siteSet": "EXTENSION_SPECIFIED",
+      "numExtensions": 1,
+      "site": "example.com",
+    }]
+  }])");
+
+  scoped_refptr<const Extension> extension_2 =
+      ExtensionBuilder("test").AddPermission(kExampleCom).Build();
+  AddExtensionAndGrantPermissions(profile(), service(), *extension_2);
+
+  get_user_and_extension_sites(R"([{
+    "etldPlusOne": "example.com",
+    "numExtensions": 2,
+    "sites": [{
+      "siteSet": "EXTENSION_SPECIFIED",
+      "numExtensions": 2,
+      "site": "example.com",
+    }]
+  }])");
+
+  RunUpdateHostAccess(*extension_1, "ON_ALL_SITES");
+  get_user_and_extension_sites(R"([{
+    "etldPlusOne": "example.com",
+    "numExtensions": 2,
+    "sites": [{
+      "siteSet": "EXTENSION_SPECIFIED",
+      "numExtensions": 2,
+      "site": "example.com",
+    }, {
+      "siteSet": "EXTENSION_SPECIFIED",
+      "numExtensions": 1,
+      "site": "*.example.com",
+    }]
+  }])");
+}
+
+TEST_F(DeveloperPrivateApiUnitTest,
+       DeveloperPrivateGetMatchingExtensionsForSite) {
+  namespace developer = api::developer_private;
+
+  scoped_refptr<const Extension> extension_1 =
+      ExtensionBuilder("test").AddPermission("*://mail.google.com/").Build();
+
+  scoped_refptr<const Extension> extension_2 =
+      ExtensionBuilder("test_2")
+          .AddPermission("*://images.google.com/")
+          .Build();
+  AddExtensionAndGrantPermissions(profile(), service(), *extension_1);
+  AddExtensionAndGrantPermissions(profile(), service(), *extension_2);
+
+  std::vector<developer::MatchingExtensionInfo> infos;
+  GetMatchingExtensionsForSite(profile(), "http://none.com/", &infos);
+  EXPECT_TRUE(infos.empty());
+
+  GetMatchingExtensionsForSite(profile(), "http://images.google.com/", &infos);
+
+  // "http://images.google.com/" should only match with `extension_2`.
+  EXPECT_THAT(infos, testing::UnorderedElementsAre(MatchMatchingExtensionInfo(
+                         extension_2->id(),
+                         developer::HostAccess::HOST_ACCESS_ON_ALL_SITES)));
+
+  service()->DisableExtension(extension_2->id(),
+                              disable_reason::DISABLE_USER_ACTION);
+  GetMatchingExtensionsForSite(profile(), "*://*.google.com/", &infos);
+
+  // "*://*.google.com/" should only match with both `extension_1` and
+  // `extension_2`.
+  EXPECT_THAT(infos, testing::UnorderedElementsAre(
+                         MatchMatchingExtensionInfo(
+                             extension_1->id(),
+                             developer::HostAccess::HOST_ACCESS_ON_ALL_SITES),
+                         MatchMatchingExtensionInfo(
+                             extension_2->id(),
+                             developer::HostAccess::HOST_ACCESS_ON_ALL_SITES)));
+}
+
+// Test that the host access returned by GetMatchingExtensionsForSite reflects
+// whether the extension has access to the queried site, or has withheld sites
+// in general.
+TEST_F(DeveloperPrivateApiUnitTest,
+       DeveloperPrivateGetMatchingExtensionsForSite_RuntimeGrantedHostAccess) {
+  namespace developer = api::developer_private;
+
+  scoped_refptr<const Extension> extension =
+      ExtensionBuilder("test").AddPermission("<all_urls>").Build();
+  AddExtensionAndGrantPermissions(profile(), service(), *extension);
+
+  std::vector<developer::MatchingExtensionInfo> infos;
+  GetMatchingExtensionsForSite(profile(), "http://example.com/", &infos);
+
+  EXPECT_THAT(infos, testing::UnorderedElementsAre(MatchMatchingExtensionInfo(
+                         extension->id(),
+                         developer::HostAccess::HOST_ACCESS_ON_ALL_SITES)));
+  EXPECT_FALSE(PermissionsManager::Get(browser()->profile())
+                   ->HasWithheldHostPermissions(*extension));
+
+  ScriptingPermissionsModifier modifier(profile(), extension.get());
+  modifier.SetWithholdHostPermissions(true);
+
+  GetMatchingExtensionsForSite(profile(), "http://example.com/", &infos);
+  EXPECT_THAT(infos, testing::UnorderedElementsAre(MatchMatchingExtensionInfo(
+                         extension->id(),
+                         developer::HostAccess::HOST_ACCESS_ON_CLICK)));
+
+  RunAddHostPermission(profile(), *extension, "*://*.google.com/*",
+                       /*should_succeed=*/true, nullptr);
+
+  GetMatchingExtensionsForSite(profile(), "http://google.com/", &infos);
+  EXPECT_THAT(infos,
+              testing::UnorderedElementsAre(MatchMatchingExtensionInfo(
+                  extension->id(),
+                  developer::HostAccess::HOST_ACCESS_ON_SPECIFIC_SITES)));
+
+  GetMatchingExtensionsForSite(profile(), "http://example.com/", &infos);
+  EXPECT_THAT(infos, testing::UnorderedElementsAre(MatchMatchingExtensionInfo(
+                         extension->id(),
+                         developer::HostAccess::HOST_ACCESS_ON_CLICK)));
+}
+
+// Tests the UpdateSiteAccess function when called on an extension with no
+// withheld host permissions.
+TEST_F(DeveloperPrivateApiUnitTest,
+       DeveloperPrivateUpdateSiteAccess_NoWithheldHostPermissions) {
+  namespace developer = api::developer_private;
+
+  ExtensionPrefs* extension_prefs = ExtensionPrefs::Get(profile());
+
+  scoped_refptr<const Extension> extension =
+      ExtensionBuilder("test")
+          .AddPermission("http://a.example.com/*")
+          .AddPermission("*://b.example.com/*")
+          .AddPermission("http://google.com/*")
+          .Build();
+  AddExtensionAndGrantPermissions(profile(), service(), *extension);
+
+  PermissionsManager* permissions_manager = PermissionsManager::Get(profile());
+  EXPECT_FALSE(permissions_manager->HasWithheldHostPermissions(*extension));
+
+  // Change state from ON_ALL_SITES to ON_CLICK.
+  std::vector<developer::ExtensionSiteAccessUpdate> updates;
+  updates.push_back(
+      CreateSiteAccessUpdate(extension->id(), developer::HOST_ACCESS_ON_CLICK));
+  UpdateSiteAccess(profile(), "http://google.com/*", updates);
+
+  // Check that all host permissions are withheld when the site access is
+  // changed to ON_CLICK if there are no withheld host permissions.
+  EXPECT_TRUE(permissions_manager->HasWithheldHostPermissions(*extension));
+  EXPECT_EQ(PermissionSet(),
+            *extension_prefs->GetRuntimeGrantedPermissions(extension->id()));
+
+  // Change state from ON_CLICK to ON_ALL_SITES.
+  updates.clear();
+  updates.push_back(CreateSiteAccessUpdate(
+      extension->id(), developer::HOST_ACCESS_ON_ALL_SITES));
+  UpdateSiteAccess(profile(), "http://google.com/*", updates);
+
+  EXPECT_FALSE(permissions_manager->HasWithheldHostPermissions(*extension));
+
+  // Change state from ON_ALL_SITES to ON_SPECIFIC_SITES.
+  updates.clear();
+  updates.push_back(CreateSiteAccessUpdate(
+      extension->id(), developer::HOST_ACCESS_ON_SPECIFIC_SITES));
+  UpdateSiteAccess(profile(), "*://*.example.com/*", updates);
+
+  // Check that the pattern is added as-is to the extension's runtime granted
+  // permissions when the site access is changed to ON_SPECIFIC_SITES if there
+  // are no withheld host permissions.
+  URLPattern example_pattern(Extension::kValidHostPermissionSchemes,
+                             "*://*.example.com/*");
+  EXPECT_EQ(URLPatternSet({example_pattern}),
+            (*extension_prefs->GetRuntimeGrantedPermissions(extension->id()))
+                .effective_hosts());
+
+  // Check that the extension's actual active host permissions is an
+  // intersection of their manifest and runtime granted hosts.
+  URLPattern a_example_pattern(Extension::kValidHostPermissionSchemes,
+                               "http://a.example.com/*");
+  URLPattern b_example_pattern(Extension::kValidHostPermissionSchemes,
+                               "*://b.example.com/*");
+  EXPECT_EQ(
+      URLPatternSet({a_example_pattern, b_example_pattern}),
+      extension->permissions_data()->active_permissions().effective_hosts());
+}
+
+// Tests the UpdateSiteAccess function when called on an extension with withheld
+// host permissions. In particular, test that if the site access is set to
+// ON_CLICK, all host permissions that match the specified site will be revoked.
+TEST_F(DeveloperPrivateApiUnitTest,
+       DeveloperPrivateUpdateSiteAccess_WitheldHostPermissions) {
+  namespace developer = api::developer_private;
+
+  scoped_refptr<const Extension> extension =
+      ExtensionBuilder("test")
+          .AddPermission("*://*.example.com/*")
+          .AddPermission("*://*.google.com/*")
+          .Build();
+  AddExtensionAndGrantPermissions(profile(), service(), *extension);
+
+  PermissionsManager* permissions_manager = PermissionsManager::Get(profile());
+  EXPECT_FALSE(permissions_manager->HasWithheldHostPermissions(*extension));
+
+  // Change state from ON_ALL_SITES to ON_SPECIFIC_SITES.
+  std::vector<developer::ExtensionSiteAccessUpdate> updates;
+  updates.push_back(CreateSiteAccessUpdate(
+      extension->id(), developer::HOST_ACCESS_ON_SPECIFIC_SITES));
+  UpdateSiteAccess(profile(), "http://google.com/*", updates);
+  UpdateSiteAccess(profile(), "*://mail.google.com/*", updates);
+  UpdateSiteAccess(profile(), "https://maps.google.com/*", updates);
+  UpdateSiteAccess(profile(), "*://example.com/*", updates);
+
+  // Confirm that all four sites have been added to runtime granted host
+  // permissions.
+  const GURL kGoogleCom("http://google.com");
+  const GURL kMailGoogleCom("https://mail.google.com/");
+  const GURL kMapsGoogleCom("https://maps.google.com/");
+  const GURL kExampleCom("http://example.com/");
+  EXPECT_TRUE(
+      permissions_manager->HasGrantedHostPermission(*extension, kGoogleCom));
+  EXPECT_TRUE(permissions_manager->HasGrantedHostPermission(*extension,
+                                                            kMailGoogleCom));
+  EXPECT_TRUE(permissions_manager->HasGrantedHostPermission(*extension,
+                                                            kMapsGoogleCom));
+  EXPECT_TRUE(
+      permissions_manager->HasGrantedHostPermission(*extension, kExampleCom));
+
+  // Change state from ON_SPECIFIC_SITES to ON_CLICK. This will revoke
+  // "http://google.com/*", "https://maps.google.com/*", and
+  // "*://mail.google.com/*" as they match the pattern "http://*.google.com/*"
+  // that is being removed.
+  updates.clear();
+  updates.push_back(
+      CreateSiteAccessUpdate(extension->id(), developer::HOST_ACCESS_ON_CLICK));
+  UpdateSiteAccess(profile(), "http://*.google.com/*", updates);
+
+  // The sites `kGoogleCom` and `kMailGoogleCom` match previously granted
+  // patterns that were revoked when they matched "http://*.google.com/*" that
+  // was called in UpdateSiteAccess. As such, they should no longer be granted.
   EXPECT_FALSE(
-      WasUserSiteSettingsChangedEventDispatched(test_observer, &settings));
-
-  // Add a permitted site, and check that it is contained within the event's
-  // payload.
-  const std::string kExampleArg = base::StringPrintf(R"(["%s"])", kExample);
-  EXPECT_NO_FATAL_FAILURE(
-      AddUserSpecifiedSites(profile(), kExampleArg, /*restricted=*/false));
+      permissions_manager->HasGrantedHostPermission(*extension, kGoogleCom));
+  EXPECT_FALSE(permissions_manager->HasGrantedHostPermission(*extension,
+                                                             kMailGoogleCom));
+  EXPECT_TRUE(permissions_manager->HasGrantedHostPermission(*extension,
+                                                            kMapsGoogleCom));
   EXPECT_TRUE(
-      WasUserSiteSettingsChangedEventDispatched(test_observer, &settings));
-  EXPECT_THAT(settings.permitted_sites,
-              testing::UnorderedElementsAre(kExample));
-  EXPECT_TRUE(settings.restricted_sites.empty());
+      permissions_manager->HasGrantedHostPermission(*extension, kExampleCom));
 
-  // Add the same site to the restricted site, and check the event that it's
-  // only contained in the restricted list.
-  EXPECT_NO_FATAL_FAILURE(
-      AddUserSpecifiedSites(profile(), kExampleArg, /*restricted=*/true));
+  // Change state from ON_CLICK to ON_SPECIFIC_SITES.
+  updates.clear();
+  updates.push_back(CreateSiteAccessUpdate(
+      extension->id(), developer::HOST_ACCESS_ON_SPECIFIC_SITES));
+  UpdateSiteAccess(profile(), "*://mail.google.com/*", updates);
+  // `kMailGoogleCom` matches the pattern "*://mail.google.com/*" that is being
+  // added, so it should be granted again.
+  EXPECT_FALSE(
+      permissions_manager->HasGrantedHostPermission(*extension, kGoogleCom));
+  EXPECT_TRUE(permissions_manager->HasGrantedHostPermission(*extension,
+                                                            kMailGoogleCom));
+  EXPECT_TRUE(permissions_manager->HasGrantedHostPermission(*extension,
+                                                            kMapsGoogleCom));
   EXPECT_TRUE(
-      WasUserSiteSettingsChangedEventDispatched(test_observer, &settings));
-  EXPECT_TRUE(settings.permitted_sites.empty());
-  EXPECT_THAT(settings.restricted_sites,
-              testing::UnorderedElementsAre(kExample));
+      permissions_manager->HasGrantedHostPermission(*extension, kExampleCom));
+}
 
-  // Remove the site, and check the event that both lists are empty.
-  EXPECT_NO_FATAL_FAILURE(
-      RemoveUserSpecifiedSites(profile(), kExampleArg, /*restricted=*/true));
+// Test that the UpdateSiteAccess function can be applied to multiple
+// extensions.
+TEST_F(DeveloperPrivateApiUnitTest,
+       DeveloperPrivateUpdateSiteAccess_MultipleExtensions) {
+  namespace developer = api::developer_private;
+
+  scoped_refptr<const Extension> extension_1 =
+      ExtensionBuilder("test_1").AddPermission("<all_urls>").Build();
+  scoped_refptr<const Extension> extension_2 =
+      ExtensionBuilder("test_2").AddPermission("<all_urls>").Build();
+  AddExtensionAndGrantPermissions(profile(), service(), *extension_1);
+  AddExtensionAndGrantPermissions(profile(), service(), *extension_2);
+
+  PermissionsManager* permissions_manager = PermissionsManager::Get(profile());
+  EXPECT_FALSE(permissions_manager->HasWithheldHostPermissions(*extension_1));
+  EXPECT_FALSE(permissions_manager->HasWithheldHostPermissions(*extension_2));
+
+  std::vector<developer::ExtensionSiteAccessUpdate> updates;
+  updates.push_back(CreateSiteAccessUpdate(
+      extension_1->id(), developer::HOST_ACCESS_ON_SPECIFIC_SITES));
+  updates.push_back(CreateSiteAccessUpdate(extension_2->id(),
+                                           developer::HOST_ACCESS_ON_CLICK));
+  UpdateSiteAccess(profile(), "http://google.com/*", updates);
+
+  // Confirm that `extension_1` can still access `kGoogleCom` but `extension_2`
+  // cannot.
+  const GURL kGoogleCom("http://google.com");
   EXPECT_TRUE(
-      WasUserSiteSettingsChangedEventDispatched(test_observer, &settings));
-  EXPECT_TRUE(settings.permitted_sites.empty());
-  EXPECT_TRUE(settings.restricted_sites.empty());
+      permissions_manager->HasGrantedHostPermission(*extension_1, kGoogleCom));
+  EXPECT_FALSE(
+      permissions_manager->HasGrantedHostPermission(*extension_2, kGoogleCom));
 }
 
 class DeveloperPrivateApiAllowlistUnitTest
@@ -2001,10 +2720,10 @@ TEST_F(DeveloperPrivateApiAllowlistUnitTest,
 
   // The DeveloperPrivateEventRouter will only dispatch events if there's at
   // least one listener to dispatch to. Create one.
-  content::RenderProcessHost* process = nullptr;
   const char* kEventName =
       api::developer_private::OnItemStateChanged::kEventName;
-  event_router->AddEventListener(kEventName, process, listener_id);
+  event_router->AddEventListener(kEventName, render_process_host(),
+                                 listener_id);
 
   scoped_refptr<const Extension> dummy_extension = LoadSimpleExtension();
   base::RunLoop().RunUntilIdle();
@@ -2074,9 +2793,9 @@ TEST_F(DeveloperPrivateApiSupervisedUserUnitTest,
 
   ASSERT_TRUE(profile()->IsChild());
 
-  scoped_refptr<ExtensionFunction> function =
+  auto function =
       base::MakeRefCounted<api::DeveloperPrivateLoadUnpackedFunction>();
-  function->SetRenderFrameHost(web_contents->GetMainFrame());
+  function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
   std::string error = extension_function_test_utils::RunFunctionAndReturnError(
       function.get(), "[]", browser());
   EXPECT_THAT(error, testing::HasSubstr("Child account"));

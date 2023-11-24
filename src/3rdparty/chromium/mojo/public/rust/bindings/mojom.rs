@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -162,7 +162,8 @@ pub trait MojomUnion: MojomEncodable {
         Bits(8 * (UNION_SIZE as usize))
     }
 
-    /// The encoding routine for when the union is inlined into the current context.
+    /// The encoding routine for when the union is inlined into the current
+    /// context.
     fn inline_encode(self, encoder: &mut Encoder, context: Context) {
         {
             let state = encoder.get_mut(&context);
@@ -178,7 +179,8 @@ pub trait MojomUnion: MojomEncodable {
         }
     }
 
-    /// The decoding routine for when the union is inlined into the current context.
+    /// The decoding routine for when the union is inlined into the current
+    /// context.
     fn inline_decode(decoder: &mut Decoder, context: Context) -> Result<Self, ValidationError> {
         {
             let state = decoder.get_mut(&context);
@@ -261,7 +263,7 @@ pub trait MojomInterfaceSend<R: MojomMessage>: MojomInterface {
             return Err(MojomSendError::OldVersion(self.version(), R::min_version()));
         }
         let (buffer, handles) = self.create_request(req_id, payload);
-        match self.pipe().write(&buffer, handles, mpflags!(Write::None)) {
+        match self.pipe().write(&buffer, handles) {
             MojoResult::Okay => Ok(()),
             err => Err(MojomSendError::FailedWrite(err)),
         }
@@ -293,7 +295,7 @@ pub trait MojomInterfaceRecv: MojomInterface {
 
     /// Tries to read a message from a pipe and decodes it.
     fn recv_response(&self) -> Result<(u64, Self::Container), MojomRecvError> {
-        match self.pipe().read(mpflags!(Read::None)) {
+        match self.pipe().read() {
             Ok((buffer, handles)) => match Self::Container::decode_message(buffer, handles) {
                 Ok((req_id, val)) => Ok((req_id, val)),
                 Err(err) => Err(MojomRecvError::FailedValidation(err)),
@@ -341,9 +343,9 @@ pub trait MojomMessage: MojomStruct {
 
 /// The trait for a "container" type intended to be used in MojomInterfaceRecv.
 ///
-/// This trait contains the decode logic which decodes based on the message header
-/// and returns itself: a union type which may contain any of the possible messages
-/// that may be sent across this interface.
+/// This trait contains the decode logic which decodes based on the message
+/// header and returns itself: a union type which may contain any of the
+/// possible messages that may be sent across this interface.
 pub trait MojomMessageOption: Sized {
     /// Decodes the actual payload of the message.
     ///

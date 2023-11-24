@@ -1,10 +1,8 @@
-// Copyright (c) 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/platform/graphics/graphics_context_state.h"
-
-#include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
 
 namespace blink {
 
@@ -50,9 +48,10 @@ void GraphicsContextState::Copy(const GraphicsContextState& source) {
 
 const cc::PaintFlags& GraphicsContextState::StrokeFlags(
     const int stroked_path_length,
-    const int dash_thickness) const {
+    const int dash_thickness,
+    const bool closed_path) const {
   stroke_data_.SetupPaintDashPathEffect(&stroke_flags_, stroked_path_length,
-                                        dash_thickness);
+                                        dash_thickness, closed_path);
   return stroke_flags_;
 }
 
@@ -101,13 +100,6 @@ void GraphicsContextState::SetDrawLooper(sk_sp<SkDrawLooper> draw_looper) {
 void GraphicsContextState::SetLineDash(const DashArray& dashes,
                                        float dash_offset) {
   stroke_data_.SetLineDash(dashes, dash_offset);
-}
-
-void GraphicsContextState::SetColorFilter(sk_sp<SkColorFilter> color_filter) {
-  // Grab a new ref for stroke.
-  stroke_flags_.setColorFilter(color_filter);
-  // Pass the existing ref to fill (to minimize refcount churn).
-  fill_flags_.setColorFilter(std::move(color_filter));
 }
 
 void GraphicsContextState::SetInterpolationQuality(

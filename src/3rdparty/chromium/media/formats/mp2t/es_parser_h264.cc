@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include <limits>
 
+#include "base/containers/adapters.h"
 #include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
 #include "media/base/decrypt_config.h"
@@ -113,8 +114,8 @@ std::unique_ptr<uint8_t[]> AdjustAUForSampleAES(
     result.reset(new uint8_t[au_end_pos]);
     uint8_t* temp = result.get();
     memcpy(temp, au, au_end_pos);
-    for (auto epb_pos = epbs.rbegin(); epb_pos != epbs.rend(); ++epb_pos) {
-      RemoveByte(temp, *epb_pos, au_end_pos);
+    for (const auto& epb : base::Reversed(epbs)) {
+      RemoveByte(temp, epb, au_end_pos);
       au_end_pos--;
     }
     au = temp;
@@ -215,9 +216,16 @@ void EsParserH264::Flush() {
   // Simulate an additional AUD to force emitting the last access unit
   // which is assumed to be complete at this point.
   uint8_t aud[] = {0x00, 0x00, 0x01, 0x09};
-  es_queue_->Push(aud, sizeof(aud));
-  ParseFromEsQueue();
 
+  // Fail if this AUD's push fails allocation, since otherwise the behavior of
+  // the subsequent parse would vary based on whether or not the system is
+  // near-OOM.
+  // TODO(crbug.com/1266639): Consider plumbing parse failure for this push
+  // failure case, instead of what used to OOM but now instead would fail this
+  // CHECK.
+  CHECK(es_queue_->Push(aud, sizeof(aud)));
+
+  ParseFromEsQueue();
   es_adapter_.Flush();
 }
 

@@ -1,4 +1,4 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -22,8 +22,8 @@ def _setup_sys_path():
         # //third_party/blink/renderer/build/scripts/blinkbuild
         os.path.join(root_dir, 'third_party', 'blink', 'renderer', 'build',
                      'scripts'),
-        # //third_party/mako/mako
-        os.path.join(root_dir, 'third_party', 'mako'),
+        # //third_party/mako/mako/mako
+        os.path.join(root_dir, 'third_party', 'mako', 'mako'),
     )
     for module_dir in reversed(module_dirs):
         # Preserve sys.path[0] as is.
@@ -40,6 +40,7 @@ from .enumeration import generate_enumerations
 from .interface import generate_interfaces
 from .namespace import generate_namespaces
 from .observable_array import generate_observable_arrays
+from .sync_iterator import generate_sync_iterators
 from .task_queue import TaskQueue
 from .typedef import generate_typedefs
 from .union import generate_unions

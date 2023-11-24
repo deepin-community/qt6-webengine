@@ -1,14 +1,15 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/permissions/permissions_client.h"
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "components/permissions/permission_request_enums.h"
 #include "components/permissions/permission_uma_util.h"
+#include "content/public/browser/web_contents.h"
 
 #if !BUILDFLAG(IS_ANDROID)
 #include "ui/gfx/paint_vector_icon.h"
@@ -56,7 +57,7 @@ bool PermissionsClient::IsCookieDeletionDisabled(
 #endif
 
 void PermissionsClient::GetUkmSourceId(content::BrowserContext* browser_context,
-                                       const content::WebContents* web_contents,
+                                       content::WebContents* web_contents,
                                        const GURL& requesting_origin,
                                        GetUkmSourceIdCallback callback) {
   std::move(callback).Run(absl::nullopt);
@@ -76,15 +77,29 @@ PermissionsClient::CreatePermissionUiSelectors(
   return std::vector<std::unique_ptr<PermissionUiSelector>>();
 }
 
+#if !BUILDFLAG(IS_ANDROID)
+void PermissionsClient::TriggerPromptHatsSurveyIfEnabled(
+    content::BrowserContext* context,
+    permissions::RequestType request_type,
+    absl::optional<permissions::PermissionAction> action,
+    permissions::PermissionPromptDisposition prompt_disposition,
+    permissions::PermissionPromptDispositionReason prompt_disposition_reason,
+    permissions::PermissionRequestGestureType gesture_type,
+    absl::optional<base::TimeDelta> prompt_display_duration,
+    bool is_post_prompt,
+    base::OnceCallback<void()> hats_shown_callback_) {}
+#endif
+
 void PermissionsClient::OnPromptResolved(
-    content::BrowserContext* browser_context,
     RequestType request_type,
     PermissionAction action,
     const GURL& origin,
     PermissionPromptDisposition prompt_disposition,
     PermissionPromptDispositionReason prompt_disposition_reason,
     PermissionRequestGestureType gesture_type,
-    absl::optional<QuietUiReason> quiet_ui_reason) {}
+    absl::optional<QuietUiReason> quiet_ui_reason,
+    base::TimeDelta prompt_display_duration,
+    content::WebContents* web_contents) {}
 
 absl::optional<bool>
 PermissionsClient::HadThreeConsecutiveNotificationPermissionDenies(
@@ -115,9 +130,14 @@ absl::optional<GURL> PermissionsClient::OverrideCanonicalOrigin(
   return absl::nullopt;
 }
 
-bool PermissionsClient::DoOriginsMatchNewTabPage(const GURL& requesting_origin,
-                                                 const GURL& embedding_origin) {
+bool PermissionsClient::DoURLsMatchNewTabPage(const GURL& requesting_origin,
+                                              const GURL& embedding_origin) {
   return false;
+}
+
+permissions::PermissionIgnoredReason PermissionsClient::DetermineIgnoreReason(
+    content::WebContents* web_contents) {
+  return permissions::PermissionIgnoredReason::UNKNOWN;
 }
 
 #if BUILDFLAG(IS_ANDROID)
@@ -151,6 +171,9 @@ PermissionsClient::MaybeCreateMessageUI(
 void PermissionsClient::RepromptForAndroidPermissions(
     content::WebContents* web_contents,
     const std::vector<ContentSettingsType>& content_settings_types,
+    const std::vector<ContentSettingsType>& filtered_content_settings_types,
+    const std::vector<std::string>& required_permissions,
+    const std::vector<std::string>& optional_permissions,
     PermissionsUpdatedCallback callback) {
   std::move(callback).Run(false);
 }

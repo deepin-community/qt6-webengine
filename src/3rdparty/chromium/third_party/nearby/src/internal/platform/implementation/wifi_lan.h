@@ -23,7 +23,6 @@
 #include "internal/platform/nsd_service_info.h"
 #include "internal/platform/output_stream.h"
 
-namespace location {
 namespace nearby {
 namespace api {
 
@@ -76,6 +75,9 @@ class WifiLanMedium {
  public:
   virtual ~WifiLanMedium() = default;
 
+  // Check if a network connection to a primary router exist.
+  virtual bool IsNetworkConnected() const = 0;
+
   // Starts WifiLan advertising.
   //
   // nsd_service_info - NsdServiceInfo data that's advertised through mDNS
@@ -97,9 +99,9 @@ class WifiLanMedium {
 
   // Callback that is invoked when a discovered service is found or lost.
   struct DiscoveredServiceCallback {
-    std::function<void(NsdServiceInfo service_info)> service_discovered_cb =
-        DefaultCallback<NsdServiceInfo>();
-    std::function<void(NsdServiceInfo service_info)> service_lost_cb =
+    absl::AnyInvocable<void(NsdServiceInfo service_info)>
+        service_discovered_cb = DefaultCallback<NsdServiceInfo>();
+    absl::AnyInvocable<void(NsdServiceInfo service_info)> service_lost_cb =
         DefaultCallback<NsdServiceInfo>();
   };
 
@@ -152,6 +154,5 @@ class WifiLanMedium {
 
 }  // namespace api
 }  // namespace nearby
-}  // namespace location
 
 #endif  // PLATFORM_API_WIFI_LAN_H_

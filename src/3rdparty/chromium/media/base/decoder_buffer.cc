@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "base/debug/alias.h"
+#include "media/base/subsample_entry.h"
 
 namespace media {
 
@@ -46,25 +47,19 @@ DecoderBuffer::DecoderBuffer(const uint8_t* data,
 }
 
 DecoderBuffer::DecoderBuffer(std::unique_ptr<uint8_t[]> data, size_t size)
-    : data_(std::move(data)),
-      size_(size),
-      side_data_size_(0),
-      is_key_frame_(false) {}
+    : data_(std::move(data)), size_(size) {}
 
-DecoderBuffer::DecoderBuffer(std::unique_ptr<UnalignedSharedMemory> shm,
+DecoderBuffer::DecoderBuffer(base::ReadOnlySharedMemoryMapping mapping,
                              size_t size)
-    : size_(size),
-      side_data_size_(0),
-      shm_(std::move(shm)),
-      is_key_frame_(false) {}
+    : size_(size), read_only_mapping_(std::move(mapping)) {}
 
-DecoderBuffer::DecoderBuffer(
-    std::unique_ptr<ReadOnlyUnalignedMapping> shared_mem_mapping,
-    size_t size)
-    : size_(size),
-      side_data_size_(0),
-      shared_mem_mapping_(std::move(shared_mem_mapping)),
-      is_key_frame_(false) {}
+DecoderBuffer::DecoderBuffer(base::WritableSharedMemoryMapping mapping,
+                             size_t size)
+    : size_(size), writable_mapping_(std::move(mapping)) {}
+
+DecoderBuffer::DecoderBuffer(std::unique_ptr<ExternalMemory> external_memory)
+    : size_(external_memory->span().size()),
+      external_memory_(std::move(external_memory)) {}
 
 DecoderBuffer::~DecoderBuffer() {
   data_.reset();
@@ -82,7 +77,7 @@ scoped_refptr<DecoderBuffer> DecoderBuffer::CopyFrom(const uint8_t* data,
                                                      size_t data_size) {
   // If you hit this CHECK you likely have a bug in a demuxer. Go fix it.
   CHECK(data);
-  return base::WrapRefCounted(new DecoderBuffer(data, data_size, NULL, 0));
+  return base::WrapRefCounted(new DecoderBuffer(data, data_size, nullptr, 0));
 }
 
 // static
@@ -107,39 +102,68 @@ scoped_refptr<DecoderBuffer> DecoderBuffer::FromArray(
 
 // static
 scoped_refptr<DecoderBuffer> DecoderBuffer::FromSharedMemoryRegion(
-    base::subtle::PlatformSharedMemoryRegion region,
-    off_t offset,
+    base::UnsafeSharedMemoryRegion region,
+    uint64_t offset,
     size_t size) {
-  // TODO(crbug.com/795291): when clients have converted to using
-  // base::ReadOnlySharedMemoryRegion the ugly mode check below will no longer
-  // be necessary.
-  auto shm = std::make_unique<UnalignedSharedMemory>(
-      std::move(region), size,
-      region.GetMode() ==
-              base::subtle::PlatformSharedMemoryRegion::Mode::kReadOnly
-          ? true
-          : false);
-  if (size == 0 || !shm->MapAt(offset, size))
+  if (size == 0) {
     return nullptr;
-  return base::WrapRefCounted(new DecoderBuffer(std::move(shm), size));
+  }
+
+  auto mapping = region.MapAt(offset, size);
+  if (!mapping.IsValid()) {
+    return nullptr;
+  }
+  return base::WrapRefCounted(new DecoderBuffer(std::move(mapping), size));
 }
 
 // static
 scoped_refptr<DecoderBuffer> DecoderBuffer::FromSharedMemoryRegion(
     base::ReadOnlySharedMemoryRegion region,
-    off_t offset,
+    uint64_t offset,
     size_t size) {
-  std::unique_ptr<ReadOnlyUnalignedMapping> unaligned_mapping =
-      std::make_unique<ReadOnlyUnalignedMapping>(region, size, offset);
-  if (!unaligned_mapping->IsValid())
+  if (size == 0) {
     return nullptr;
-  return base::WrapRefCounted(
-      new DecoderBuffer(std::move(unaligned_mapping), size));
+  }
+  auto mapping = region.MapAt(offset, size);
+  if (!mapping.IsValid()) {
+    return nullptr;
+  }
+  return base::WrapRefCounted(new DecoderBuffer(std::move(mapping), size));
+}
+
+// static
+scoped_refptr<DecoderBuffer> DecoderBuffer::FromExternalMemory(
+    std::unique_ptr<ExternalMemory> external_memory) {
+  DCHECK(external_memory);
+  if (external_memory->span().empty())
+    return nullptr;
+  return base::WrapRefCounted(new DecoderBuffer(std::move(external_memory)));
 }
 
 // static
 scoped_refptr<DecoderBuffer> DecoderBuffer::CreateEOSBuffer() {
-  return base::WrapRefCounted(new DecoderBuffer(NULL, 0, NULL, 0));
+  return base::WrapRefCounted(new DecoderBuffer(nullptr, 0, nullptr, 0));
+}
+
+// static
+bool DecoderBuffer::DoSubsamplesMatch(const DecoderBuffer& encrypted) {
+  // If buffer is at end of stream, no subsamples to verify
+  if (encrypted.end_of_stream()) {
+    return true;
+  }
+
+  // If stream is unencrypted, we do not have to verify subsamples size.
+  const DecryptConfig* decrypt_config = encrypted.decrypt_config();
+  if (decrypt_config == nullptr ||
+      decrypt_config->encryption_scheme() == EncryptionScheme::kUnencrypted) {
+    return true;
+  }
+
+  const auto& subsamples = decrypt_config->subsamples();
+  if (subsamples.empty()) {
+    return true;
+  }
+  return VerifySubsamplesMatchSize(subsamples, encrypted.data_size());
 }
 
 bool DecoderBuffer::MatchesMetadataForTesting(

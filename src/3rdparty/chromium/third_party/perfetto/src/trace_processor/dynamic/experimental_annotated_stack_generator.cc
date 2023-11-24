@@ -17,14 +17,29 @@
 #include "src/trace_processor/dynamic/experimental_annotated_stack_generator.h"
 
 #include "perfetto/ext/base/optional.h"
+#include "perfetto/ext/base/string_utils.h"
+#include "src/trace_processor/sqlite/sqlite_utils.h"
 #include "src/trace_processor/storage/trace_storage.h"
 #include "src/trace_processor/tables/profiler_tables.h"
 #include "src/trace_processor/types/trace_processor_context.h"
 
-#include "perfetto/ext/base/string_utils.h"
-
 namespace perfetto {
 namespace trace_processor {
+namespace tables {
+
+#define PERFETTO_TP_ANNOTATED_CALLSTACK_TABLE_DEF(NAME, PARENT, C) \
+  NAME(ExperimentalAnnotatedCallstackTable,                        \
+       "experimental_annotated_callstack")                         \
+  PARENT(PERFETTO_TP_STACK_PROFILE_CALLSITE_DEF, C)                \
+  C(StringId, annotation)                                          \
+  C(tables::StackProfileCallsiteTable::Id, start_id, Column::Flag::kHidden)
+
+PERFETTO_TP_TABLE(PERFETTO_TP_ANNOTATED_CALLSTACK_TABLE_DEF);
+
+ExperimentalAnnotatedCallstackTable::~ExperimentalAnnotatedCallstackTable() =
+    default;
+
+}  // namespace tables
 
 namespace {
 
@@ -41,97 +56,104 @@ enum class MapType {
 //   /system/lib64/libc.so
 //   /system/framework/framework.jar
 //   /memfd:jit-cache (deleted)
+//   /data/dalvik-cache/arm64/<snip>.apk@classes.dex
+//   /data/app/<snip>/base.apk!libmonochrome_64.so
 //   [vdso]
 // TODO(rsavitski): consider moving this to a hidden column on
-// stack_profile_mapping, once this logic is sufficiently stable.
+// stack_profile_mapping.
 MapType ClassifyMap(NullTermStringView map) {
   if (map.empty())
     return MapType::kOther;
 
   // Primary mapping where modern ART puts jitted code.
-  // TODO(rsavitski): look into /memfd:jit-zygote-cache.
-  if (!strncmp(map.c_str(), "/memfd:jit-cache", 16))
+  // The Zygote's JIT region is inherited by all descendant apps, so it can
+  // still appear in their callstacks.
+  if (map.StartsWith("/memfd:jit-cache") ||
+      map.StartsWith("/memfd:jit-zygote-cache")) {
     return MapType::kArtJit;
+  }
 
   size_t last_slash_pos = map.rfind('/');
   if (last_slash_pos != NullTermStringView::npos) {
-    if (!strncmp(map.c_str() + last_slash_pos, "/libart.so", 10))
-      return MapType::kNativeLibart;
-    if (!strncmp(map.c_str() + last_slash_pos, "/libartd.so", 11))
+    base::StringView suffix = map.substr(last_slash_pos);
+    if (suffix.StartsWith("/libart.so") || suffix.StartsWith("/libartd.so"))
       return MapType::kNativeLibart;
   }
-
   size_t extension_pos = map.rfind('.');
   if (extension_pos != NullTermStringView::npos) {
-    if (!strncmp(map.c_str() + extension_pos, ".so", 3))
+    base::StringView suffix = map.substr(extension_pos);
+    if (suffix.StartsWith(".so"))
       return MapType::kNativeOther;
+    // unqualified dex
+    if (suffix.StartsWith(".dex"))
+      return MapType::kArtInterp;
     // dex with verification speedup info, produced by dex2oat
-    if (!strncmp(map.c_str() + extension_pos, ".vdex", 5))
+    if (suffix.StartsWith(".vdex"))
       return MapType::kArtInterp;
     // possibly uncompressed dex in a jar archive
-    if (!strncmp(map.c_str() + extension_pos, ".jar", 4))
+    if (suffix.StartsWith(".jar"))
+      return MapType::kArtInterp;
+    // android package (zip file), this can contain uncompressed dexes or
+    // native libraries that are mmap'd directly into the process. We rely on
+    // libunwindstack's MapInfo::GetFullName, which suffixes the mapping with
+    // "!lib.so" if it knows that the referenced piece of the archive is an
+    // uncompressed ELF file. So an unadorned ".apk" is assumed to be a dex
+    // file.
+    if (suffix.StartsWith(".apk"))
       return MapType::kArtInterp;
     // ahead of time compiled ELFs
-    if (!strncmp(map.c_str() + extension_pos, ".oat", 4))
+    if (suffix.StartsWith(".oat"))
       return MapType::kArtAot;
     // older/alternative name for .oat
-    if (!strncmp(map.c_str() + extension_pos, ".odex", 5))
+    if (suffix.StartsWith(".odex"))
       return MapType::kArtAot;
   }
   return MapType::kOther;
 }
 
-uint32_t GetConstraintColumnIndex(TraceProcessorContext* context) {
-  // The dynamic table adds two columns on top of the callsite table. Last
-  // column is the hidden constrain (i.e. input arg) column.
-  return context->storage->stack_profile_callsite_table().GetColumnCount() + 1;
-}
-
 }  // namespace
 
 std::string ExperimentalAnnotatedStackGenerator::TableName() {
-  return "experimental_annotated_callstack";
+  return tables::ExperimentalAnnotatedCallstackTable::Name();
 }
 
 Table::Schema ExperimentalAnnotatedStackGenerator::CreateSchema() {
-  auto schema = tables::StackProfileCallsiteTable::Schema();
-  schema.columns.push_back(Table::Schema::Column{
-      "annotation", SqlValue::Type::kString, /* is_id = */ false,
-      /* is_sorted = */ false, /* is_hidden = */ false});
-  schema.columns.push_back(Table::Schema::Column{
-      "start_id", SqlValue::Type::kLong, /* is_id = */ false,
-      /* is_sorted = */ false, /* is_hidden = */ true});
-  return schema;
+  return tables::ExperimentalAnnotatedCallstackTable::ComputeStaticSchema();
 }
 
 base::Status ExperimentalAnnotatedStackGenerator::ValidateConstraints(
     const QueryConstraints& qc) {
   const auto& cs = qc.constraints();
-  int column = static_cast<int>(GetConstraintColumnIndex(context_));
+  int column = static_cast<int>(
+      tables::ExperimentalAnnotatedCallstackTable::ColumnIndex::start_id);
 
   auto id_fn = [column](const QueryConstraints::Constraint& c) {
-    return c.column == column && c.op == SQLITE_INDEX_CONSTRAINT_EQ;
+    return c.column == column && sqlite_utils::IsOpEq(c.op);
   };
   bool has_id_cs = std::find_if(cs.begin(), cs.end(), id_fn) != cs.end();
   return has_id_cs ? base::OkStatus()
                    : base::ErrStatus("Failed to find required constraints");
 }
 
+// TODO(carlscab): Replace annotation logic with
+// src/trace_processor/util/annotated_callsites.h
 base::Status ExperimentalAnnotatedStackGenerator::ComputeTable(
     const std::vector<Constraint>& cs,
     const std::vector<Order>&,
     const BitVector&,
     std::unique_ptr<Table>& table_return) {
+  using CallsiteTable = tables::StackProfileCallsiteTable;
+
   const auto& cs_table = context_->storage->stack_profile_callsite_table();
   const auto& f_table = context_->storage->stack_profile_frame_table();
   const auto& m_table = context_->storage->stack_profile_mapping_table();
 
   // Input (id of the callsite leaf) is the constraint on the hidden |start_id|
   // column.
-  uint32_t constraint_col = GetConstraintColumnIndex(context_);
+  using ColumnIndex = tables::ExperimentalAnnotatedCallstackTable::ColumnIndex;
   auto constraint_it =
-      std::find_if(cs.begin(), cs.end(), [constraint_col](const Constraint& c) {
-        return c.col_idx == constraint_col && c.op == FilterOp::kEq;
+      std::find_if(cs.begin(), cs.end(), [](const Constraint& c) {
+        return c.col_idx == ColumnIndex::start_id && c.op == FilterOp::kEq;
       });
   PERFETTO_DCHECK(constraint_it != cs.end());
   if (constraint_it == cs.end() ||
@@ -139,27 +161,29 @@ base::Status ExperimentalAnnotatedStackGenerator::ComputeTable(
     return base::ErrStatus("invalid input callsite id");
   }
 
-  uint32_t start_id = static_cast<uint32_t>(constraint_it->value.AsLong());
-  base::Optional<uint32_t> start_row =
-      cs_table.id().IndexOf(CallsiteId(start_id));
-  if (!start_row) {
-    return base::ErrStatus("callsite with id %" PRIu32 " not found", start_id);
+  CallsiteId start_id =
+      CallsiteId(static_cast<uint32_t>(constraint_it->value.AsLong()));
+  auto opt_start_ref = cs_table.FindById(start_id);
+  if (!opt_start_ref) {
+    return base::ErrStatus("callsite with id %" PRIu32 " not found",
+                           start_id.value);
   }
 
   // Iteratively walk the parent_id chain to construct the list of callstack
   // entries, each pointing at a frame.
-  std::vector<uint32_t> cs_rows;
-  cs_rows.push_back(*start_row);
-  base::Optional<CallsiteId> maybe_parent_id = cs_table.parent_id()[*start_row];
+  std::vector<CallsiteTable::RowNumber> cs_rows;
+  cs_rows.push_back(opt_start_ref->ToRowNumber());
+  base::Optional<CallsiteId> maybe_parent_id = opt_start_ref->parent_id();
   while (maybe_parent_id) {
-    uint32_t parent_row = cs_table.id().IndexOf(*maybe_parent_id).value();
-    cs_rows.push_back(parent_row);
-    maybe_parent_id = cs_table.parent_id()[parent_row];
+    auto parent_ref = *cs_table.FindById(*maybe_parent_id);
+    cs_rows.push_back(parent_ref.ToRowNumber());
+    maybe_parent_id = parent_ref.parent_id();
   }
 
   // Walk the callsites root-to-leaf, annotating:
   // * managed frames with their execution state (interpreted/jit/aot)
-  // * common ART frames, which are usually not relevant
+  // * common ART frames, which are usually not relevant to
+  //   visualisation/inspection
   //
   // This is not a per-frame decision, because we do not want to filter out ART
   // frames immediately after a JNI transition (such frames are often relevant).
@@ -167,13 +191,12 @@ base::Status ExperimentalAnnotatedStackGenerator::ComputeTable(
   // As a consequence of the logic being based on a root-to-leaf walk, a given
   // callsite will always have the same annotation, as the parent path is always
   // the same, and children callsites do not affect their parents' annotations.
-  //
-  // This could also be implemented as a hidden column on the callsite table
-  // (populated at import time), but we want to be more flexible for now.
   StringId art_jni_trampoline =
       context_->storage->InternString("art_jni_trampoline");
 
   StringId common_frame = context_->storage->InternString("common-frame");
+  StringId common_frame_interp =
+      context_->storage->InternString("common-frame-interp");
   StringId art_interp = context_->storage->InternString("interp");
   StringId art_jit = context_->storage->InternString("jit");
   StringId art_aot = context_->storage->InternString("aot");
@@ -192,11 +215,9 @@ base::Status ExperimentalAnnotatedStackGenerator::ComputeTable(
 
   std::vector<StringPool::Id> annotations_reversed;
   for (auto it = cs_rows.rbegin(); it != cs_rows.rend(); ++it) {
-    FrameId frame_id = cs_table.frame_id()[*it];
-    uint32_t frame_row = f_table.id().IndexOf(frame_id).value();
-
-    MappingId map_id = f_table.mapping()[frame_row];
-    uint32_t map_row = m_table.id().IndexOf(map_id).value();
+    auto cs_ref = it->ToRowReference(cs_table);
+    auto frame_ref = *f_table.FindById(cs_ref.frame_id());
+    auto map_ref = *m_table.FindById(frame_ref.mapping());
 
     // Keep immediate callee of a JNI trampoline, but keep tagging all
     // successive libart frames as common.
@@ -216,15 +237,14 @@ base::Status ExperimentalAnnotatedStackGenerator::ComputeTable(
     // TODO(rsavitski): consider detecting standard JNI upcall entrypoints -
     // _JNIEnv::Call*. These are sometimes inlined into other DSOs, so erasing
     // only the libart frames does not clean up all of the JNI-related frames.
-    StringId fname_id = f_table.name()[frame_row];
+    StringId fname_id = frame_ref.name();
     if (fname_id == art_jni_trampoline) {
       annotations_reversed.push_back(common_frame);
       annotation_state = State::kKeepNext;
       continue;
     }
 
-    NullTermStringView map_view =
-        context_->storage->GetString(m_table.name()[map_row]);
+    NullTermStringView map_view = context_->storage->GetString(map_ref.name());
     MapType map_type = ClassifyMap(map_view);
 
     // Annotate managed frames.
@@ -244,39 +264,61 @@ base::Status ExperimentalAnnotatedStackGenerator::ComputeTable(
       continue;
     }
 
+    // Mixed callstack, tag libart frames as uninteresting (common-frame).
+    // Special case a subset of interpreter implementation frames as
+    // "common-frame-interp" using frame name prefixes. Those functions are
+    // actually executed, whereas the managed "interp" frames are synthesised as
+    // their caller by the unwinding library (based on the dex_pc virtual
+    // register restored using the libart's DWARF info). The heuristic covers
+    // the "nterp" and "switch" interpreter implementations.
+    //
+    // Example:
+    //  <towards root>
+    //  android.view.WindowLayout.computeFrames [interp]
+    //  nterp_op_iget_object_slow_path [common-frame-interp]
+    //
+    // This annotation is helpful when trying to answer "what mode was the
+    // process in?" based on the leaf frame of the callstack. As we want to
+    // classify such cases as interpreted, even though the leaf frame is
+    // libart.so.
+    //
+    // For "switch" interpreter, we match any frame starting with
+    // "art::interpreter::" according to itanium mangling.
     if (annotation_state == State::kEraseLibart &&
         map_type == MapType::kNativeLibart) {
+      NullTermStringView fname = context_->storage->GetString(fname_id);
+      if (fname.StartsWith("nterp_") || fname.StartsWith("Nterp") ||
+          fname.StartsWith("ExecuteNterp") ||
+          fname.StartsWith("ExecuteSwitchImpl") ||
+          fname.StartsWith("_ZN3art11interpreter")) {
+        annotations_reversed.push_back(common_frame_interp);
+        continue;
+      }
       annotations_reversed.push_back(common_frame);
       continue;
     }
 
+    // default - no special annotation
     annotations_reversed.push_back(kNullStringId);
   }
 
   // Build the dynamic table.
-  auto base_rowmap = RowMap(std::move(cs_rows));
-
-  PERFETTO_DCHECK(base_rowmap.size() == annotations_reversed.size());
-  std::unique_ptr<NullableVector<StringPool::Id>> annotation_vals(
-      new NullableVector<StringPool::Id>());
+  PERFETTO_DCHECK(cs_rows.size() == annotations_reversed.size());
+  ColumnStorage<StringPool::Id> annotation_vals;
   for (auto it = annotations_reversed.rbegin();
        it != annotations_reversed.rend(); ++it) {
-    annotation_vals->Append(*it);
+    annotation_vals.Append(*it);
   }
 
   // Hidden column - always the input, i.e. the callsite leaf.
-  std::unique_ptr<NullableVector<uint32_t>> start_id_vals(
-      new NullableVector<uint32_t>());
-  for (uint32_t i = 0; i < base_rowmap.size(); i++)
-    start_id_vals->Append(start_id);
+  ColumnStorage<uint32_t> start_id_vals;
+  for (uint32_t i = 0; i < cs_rows.size(); i++)
+    start_id_vals.Append(start_id.value);
 
-  table_return.reset(new Table(
-      cs_table.Apply(std::move(base_rowmap))
-          .ExtendWithColumn("annotation", std::move(annotation_vals),
-                            TypedColumn<StringPool::Id>::default_flags())
-          .ExtendWithColumn("start_id", std::move(start_id_vals),
-                            TypedColumn<uint32_t>::default_flags() |
-                                TypedColumn<uint32_t>::kHidden)));
+  table_return =
+      tables::ExperimentalAnnotatedCallstackTable::SelectAndExtendParent(
+          cs_table, std::move(cs_rows), std::move(annotation_vals),
+          std::move(start_id_vals));
   return base::OkStatus();
 }
 

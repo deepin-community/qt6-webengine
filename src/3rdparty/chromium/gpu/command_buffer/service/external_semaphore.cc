@@ -1,10 +1,10 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "gpu/command_buffer/service/external_semaphore.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
 #include "build/build_config.h"
 #include "components/viz/common/gpu/vulkan_context_provider.h"
@@ -154,7 +154,7 @@ void ExternalSemaphore::Reset() {
 
   if (gl_semaphore_ != 0) {
     auto* current_gl = gl::g_current_gl_context_tls->Get();
-    auto* api = current_gl->Driver ? current_gl->Api : nullptr;
+    auto* api = current_gl->Driver ? current_gl->Api.get() : nullptr;
     // We assume there is always one GL context current. If there isn't a
     // GL context current, we assume the last GL context is destroyed, in that
     // case, we will skip glDeleteSemaphoresEXT().

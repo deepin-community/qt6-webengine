@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,6 +19,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
+#import "base/task/single_thread_task_runner.h"
 #include "components/crash/core/common/crash_key.h"
 #include "media/base/mac/color_space_util_mac.h"
 #include "media/base/media_switches.h"
@@ -29,7 +30,6 @@
 #include "media/capture/video/mac/video_capture_device_mac.h"
 #import "media/capture/video/mac/video_capture_metrics_mac.h"
 #include "media/capture/video_capture_types.h"
-#include "services/video_capture/public/uma/video_capture_service_event.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace {
@@ -44,7 +44,7 @@ constexpr gfx::ColorSpace kColorSpaceRec709Apple(
     gfx::ColorSpace::MatrixID::SMPTE170M,
     gfx::ColorSpace::RangeID::LIMITED);
 
-constexpr int kTimeToWaitBeforeStoppingStillImageCaptureInSeconds = 60;
+constexpr int kTimeToWaitBeforeStoppingPhotoOutputInSeconds = 60;
 constexpr FourCharCode kDefaultFourCCPixelFormat =
     kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;  // NV12 (a.k.a. 420v)
 
@@ -71,8 +71,14 @@ constexpr size_t kPixelBufferPoolSize = 10;
 
 namespace media {
 
-const base::Feature kInCapturerScaling{"InCapturerScaling",
-                                       base::FEATURE_DISABLED_BY_DEFAULT};
+BASE_FEATURE(kInCapturerScaling,
+             "InCapturerScaling",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Uses the most recent advice from Apple for configuring and starting.
+BASE_FEATURE(kConfigureCaptureBeforeStart,
+             "ConfigureCaptureBeforeStart",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 AVCaptureDeviceFormat* FindBestCaptureFormat(
     NSArray<AVCaptureDeviceFormat*>* formats,
@@ -173,7 +179,7 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
 - (instancetype)initWithFrameReceiver:
     (media::VideoCaptureDeviceAVFoundationFrameReceiver*)frameReceiver {
   if ((self = [super init])) {
-    _mainThreadTaskRunner = base::ThreadTaskRunnerHandle::Get();
+    _mainThreadTaskRunner = base::SingleThreadTaskRunner::GetCurrentDefault();
     _sampleQueue.reset(
         dispatch_queue_create("org.chromium.VideoCaptureDeviceAVFoundation."
                               "SampleDeliveryDispatchQueue",
@@ -192,11 +198,14 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
 }
 
 - (void)dealloc {
+  // Stopping a running photo output takes `_lock`. To avoid this happening
+  // inside stopCapture() below which would deadlock, we ensure that the photo
+  // output is already stopped before taking `_lock`.
+  [self stopPhotoOutput];
   {
     // To avoid races with concurrent callbacks, grab the lock before stopping
     // capture and clearing all the variables.
     base::AutoLock lock(_lock);
-    [self stopStillImageOutput];
     [self stopCapture];
     _frameReceiver = nullptr;
     _sampleBufferTransformer.reset();
@@ -231,9 +240,12 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
     [self stopCapture];
     // Now remove the input and output from the capture session.
     [_captureSession removeOutput:_captureVideoDataOutput];
-    [self stopStillImageOutput];
+    [self stopPhotoOutput];
     if (_captureDeviceInput) {
       DCHECK(_captureDevice);
+      if (@available(macOS 12.0, *)) {
+        [_captureDevice removeObserver:self forKeyPath:@"portraitEffectActive"];
+      }
       [_captureSession stopRunning];
       [_captureSession removeInput:_captureDeviceInput];
       _captureDeviceInput.reset();
@@ -277,6 +289,13 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
 
   [_captureVideoDataOutput setSampleBufferDelegate:self queue:_sampleQueue];
   [_captureSession addOutput:_captureVideoDataOutput];
+
+  if (@available(macOS 12.0, *)) {
+    [_captureDevice addObserver:self
+                     forKeyPath:@"portraitEffectActive"
+                        options:0
+                        context:_captureDevice.get()];
+  }
 
   return YES;
 }
@@ -331,20 +350,14 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
 
   AVCaptureConnection* captureConnection =
       [_captureVideoDataOutput connectionWithMediaType:AVMediaTypeVideo];
-  // Check selector existence, related to bugs http://crbug.com/327532 and
-  // http://crbug.com/328096.
-  // CMTimeMake accepts integer argumenst but |frameRate| is float, round it.
-  if ([captureConnection
-          respondsToSelector:@selector(isVideoMinFrameDurationSupported)] &&
-      [captureConnection isVideoMinFrameDurationSupported]) {
+  // CMTimeMake accepts integer arguments but |frameRate| is float, so round it.
+  if ([captureConnection isVideoMinFrameDurationSupported]) {
     [captureConnection
         setVideoMinFrameDuration:CMTimeMake(media::kFrameRatePrecision,
                                             (int)(frameRate *
                                                   media::kFrameRatePrecision))];
   }
-  if ([captureConnection
-          respondsToSelector:@selector(isVideoMaxFrameDurationSupported)] &&
-      [captureConnection isVideoMaxFrameDurationSupported]) {
+  if ([captureConnection isVideoMaxFrameDurationSupported]) {
     [captureConnection
         setVideoMaxFrameDuration:CMTimeMake(media::kFrameRatePrecision,
                                             (int)(frameRate *
@@ -415,12 +428,21 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
          selector:@selector(onVideoError:)
              name:AVCaptureSessionRuntimeErrorNotification
            object:_captureSession];
-  [_captureSession startRunning];
 
-  // Update the active capture format once the capture session is running.
-  // Setting it before the capture session is running has no effect.
-  if (_bestCaptureFormat) {
-    if ([_captureDevice lockForConfiguration:nil]) {
+  if (base::FeatureList::IsEnabled(media::kConfigureCaptureBeforeStart)) {
+    if (_bestCaptureFormat) {
+      [_captureSession beginConfiguration];
+      if ([_captureDevice lockForConfiguration:nil]) {
+        [_captureDevice setActiveFormat:_bestCaptureFormat];
+        [_captureDevice unlockForConfiguration];
+      }
+      [_captureSession commitConfiguration];
+    }
+
+    [_captureSession startRunning];
+  } else {
+    [_captureSession startRunning];
+    if (_bestCaptureFormat && [_captureDevice lockForConfiguration:nil]) {
       [_captureDevice setActiveFormat:_bestCaptureFormat];
       [_captureDevice unlockForConfiguration];
     }
@@ -438,93 +460,101 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
 - (void)stopCapture {
   DCHECK(_mainThreadTaskRunner->BelongsToCurrentThread());
   _weakPtrFactoryForStallCheck.reset();
-  [self stopStillImageOutput];
+  [self stopPhotoOutput];
   if ([_captureSession isRunning])
     [_captureSession stopRunning];  // Synchronous.
   [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (bool)useLegacyStillImageApi {
+  if (@available(macOS 10.15, *)) {
+    return _forceLegacyStillImageApi;
+  }
+  return true;
+}
+
+- (void)setForceLegacyStillImageApiForTesting:(bool)forceLegacyApi {
+  _forceLegacyStillImageApi = forceLegacyApi;
 }
 
 - (void)takePhoto {
   DCHECK(_mainThreadTaskRunner->BelongsToCurrentThread());
   DCHECK([_captureSession isRunning]);
 
-  ++_takePhotoStartedCount;
+  ++_pendingTakePhotos;
+  if (_pendingTakePhotos > 1u) {
+    // There is already pending takePhoto(). When it finishes it will kick off
+    // the next takePhotoInternal(), so there is nothing more to do here.
+    return;
+  }
+  // `_pendingTakePhotos` just went from 0 to 1. In case the 60 second delayed
+  // task to perform stopPhotoOutput() is in-flight, invalidate weak ptrs to
+  // cancel any such operation.
+  _weakPtrFactoryForTakePhoto->InvalidateWeakPtrs();
 
   // Ready to take a photo immediately?
-  if (_stillImageOutput && _stillImageOutputWarmupCompleted) {
+  // Thread-safe because `_photoOutput` is only modified on the main thread.
+  if (_photoOutput) {
     [self takePhotoInternal];
     return;
   }
 
-  // Lazily instantiate the |_stillImageOutput| the first time takePhoto() is
-  // called. When takePhoto() isn't called, this avoids JPEG compession work for
-  // every frame. This can save a lot of CPU in some cases (see
-  // https://crbug.com/1116241). However because it can take a couple of second
-  // for the 3A to stabilize, lazily instantiating like may result in noticeable
-  // delays. To avoid delays in future takePhoto() calls we don't delete
-  // |_stillImageOutput| until takePhoto() has not been called for 60 seconds.
-  if (!_stillImageOutput) {
-    // We use AVCaptureStillImageOutput for historical reasons, but note that it
-    // has been deprecated in macOS 10.15[1] in favor of
-    // AVCapturePhotoOutput[2].
-    //
-    // [1]
-    // https://developer.apple.com/documentation/avfoundation/avcapturestillimageoutput
-    // [2]
-    // https://developer.apple.com/documentation/avfoundation/avcapturephotooutput
-    // TODO(https://crbug.com/1124322): Migrate to the new API.
-    _stillImageOutput.reset([[AVCaptureStillImageOutput alloc] init]);
-    if (!_stillImageOutput ||
-        ![_captureSession canAddOutput:_stillImageOutput]) {
-      // Complete this started photo as error.
-      ++_takePhotoPendingCount;
-      {
-        base::AutoLock lock(_lock);
-        if (_frameReceiver) {
-          _frameReceiver->OnPhotoError();
-        }
-      }
-      [self takePhotoCompleted];
-      return;
+  // Lazily instantiate `_photoOutput` so that if the app never calls
+  // takePhoto() we don't have to pay the associated performance cost, see
+  // https://crbug.com/1116241. This procedure is purposefully delayed by 3
+  // seconds because the camera needs to ramp up after re-configuring itself in
+  // order for 3A to stabilize or else the photo is dark/black.
+  {
+    // `_lock` is needed since `_photoOutput` may be read from non-main thread.
+    base::AutoLock lock(_lock);
+    if ([self useLegacyStillImageApi]) {
+      _photoOutput.reset([[AVCaptureStillImageOutput alloc] init]);
+    } else if (@available(macOS 10.15, *)) {
+      _photoOutput.reset([[AVCapturePhotoOutput alloc] init]);
+    } else {
+      NOTREACHED();
     }
-    [_captureSession addOutput:_stillImageOutput];
-    // A delay is needed before taking the photo or else the photo may be dark.
-    // 2 seconds was enough in manual testing; we delay by 3 for good measure.
-    _mainThreadTaskRunner->PostDelayedTask(
-        FROM_HERE,
-        base::BindOnce(
-            [](base::WeakPtr<VideoCaptureDeviceAVFoundation> weakSelf) {
-              [weakSelf.get() takePhotoInternal];
-            },
-            _weakPtrFactoryForTakePhoto->GetWeakPtr()),
-        base::Seconds(3));
   }
+  if (![_captureSession canAddOutput:_photoOutput]) {
+    {
+      base::AutoLock lock(_lock);
+      if (_frameReceiver) {
+        _frameReceiver->OnPhotoError();
+      }
+    }
+    [self takePhotoResolved];
+    return;
+  } else {
+    [_captureSession addOutput:_photoOutput];
+  }
+  // A delay is needed before taking the photo or else the photo may be dark.
+  // 2 seconds was enough in manual testing; we delay by 3 for good measure.
+  _mainThreadTaskRunner->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(
+          [](base::WeakPtr<VideoCaptureDeviceAVFoundation> weakSelf) {
+            [weakSelf.get() takePhotoInternal];
+          },
+          _weakPtrFactoryForTakePhoto->GetWeakPtr()),
+      base::Seconds(3));
 }
 
-- (void)setOnStillImageOutputStoppedForTesting:
-    (base::RepeatingCallback<void()>)onStillImageOutputStopped {
+- (void)setOnPhotoOutputStoppedForTesting:
+    (base::RepeatingCallback<void()>)onPhotoOutputStopped {
   DCHECK(_mainThreadTaskRunner->BelongsToCurrentThread());
-  _onStillImageOutputStopped = onStillImageOutputStopped;
+  _onPhotoOutputStopped = onPhotoOutputStopped;
 }
 
 #pragma mark Private methods
 
 - (void)takePhotoInternal {
   DCHECK(_mainThreadTaskRunner->BelongsToCurrentThread());
-  // stopStillImageOutput invalidates all weak ptrs, meaning in-flight
-  // operations are affectively cancelled. So if this method is running, still
-  // image output must be good to go.
   DCHECK([_captureSession isRunning]);
-  DCHECK(_stillImageOutput);
-  DCHECK([[_stillImageOutput connections] count] == 1);
-  AVCaptureConnection* const connection =
-      [[_stillImageOutput connections] firstObject];
-  DCHECK(connection);
-  _stillImageOutputWarmupCompleted = true;
-
-  // For all photos started that are not yet pending, take photos.
-  while (_takePhotoPendingCount < _takePhotoStartedCount) {
-    ++_takePhotoPendingCount;
+  // takePhotoInternal() can only happen when we have a `_photoOutput` because
+  // stopPhotoOutput() cancels in-flight operations by invalidating weak ptrs.
+  DCHECK(_photoOutput);
+  if ([self useLegacyStillImageApi]) {
+    // `_photoOutput` is of type AVCaptureStillImageOutput.
     const auto handler = ^(CMSampleBufferRef sampleBuffer, NSError* error) {
       {
         base::AutoLock lock(_lock);
@@ -541,7 +571,6 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
             DCHECK_EQ(kCMVideoCodecType_JPEG,
                       CMFormatDescriptionGetMediaSubType(
                           CMSampleBufferGetFormatDescription(sampleBuffer)));
-
             char* baseAddress = 0;
             size_t length = 0;
             const bool sample_buffer_addressable =
@@ -556,75 +585,139 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
           }
         }
       }
-      // Called both on success and failure.
+      // Whether we succeeded or failed, we need to resolve the pending
+      // takePhoto() operation.
       _mainThreadTaskRunner->PostTask(
           FROM_HERE,
           base::BindOnce(
               [](base::WeakPtr<VideoCaptureDeviceAVFoundation> weakSelf) {
-                [weakSelf.get() takePhotoCompleted];
+                [weakSelf.get() takePhotoResolved];
               },
               _weakPtrFactoryForTakePhoto->GetWeakPtr()));
     };
-    [_stillImageOutput captureStillImageAsynchronouslyFromConnection:connection
-                                                   completionHandler:handler];
+    AVCaptureStillImageOutput* image_output =
+        static_cast<AVCaptureStillImageOutput*>(_photoOutput.get());
+    DCHECK([[image_output connections] count] == 1);
+    AVCaptureConnection* const connection =
+        [[image_output connections] firstObject];
+    DCHECK(connection);
+    [image_output captureStillImageAsynchronouslyFromConnection:connection
+                                              completionHandler:handler];
+  } else if (@available(macOS 10.15, *)) {
+    // `_photoOutput` is of type AVCapturePhotoOutput.
+    @try {
+      // Asynchronous success or failure is handled inside
+      // captureOutput:didFinishProcessingPhoto:error on an unknown thread.
+      // Synchronous failures are handled in the catch clause below.
+      [_photoOutput
+          capturePhotoWithSettings:[AVCapturePhotoSettings
+                                       photoSettingsWithFormat:@{
+                                         AVVideoCodecKey : AVVideoCodecTypeJPEG
+                                       }]
+                          delegate:self];
+    } @catch (id exception) {
+      {
+        base::AutoLock lock(_lock);
+        if (_frameReceiver) {
+          _frameReceiver->OnPhotoError();
+        }
+      }
+      [self takePhotoResolved];
+    }
+  } else {
+    NOTREACHED();
   }
 }
 
-- (void)takePhotoCompleted {
-  DCHECK(_mainThreadTaskRunner->BelongsToCurrentThread());
-  ++_takePhotoCompletedCount;
-  if (_takePhotoStartedCount != _takePhotoCompletedCount)
-    return;
-  // All pending takePhoto()s have completed. If no more photos are taken
-  // within 60 seconds, stop still image output to avoid expensive MJPEG
-  // conversions going forward.
-  _mainThreadTaskRunner->PostDelayedTask(
-      FROM_HERE,
-      base::BindOnce(
-          [](base::WeakPtr<VideoCaptureDeviceAVFoundation> weakSelf,
-             size_t takePhotoCount) {
-            VideoCaptureDeviceAVFoundation* strongSelf = weakSelf.get();
-            if (!strongSelf)
-              return;
-            // Don't stop the still image output if takePhoto() was called
-            // while the task was pending.
-            if (strongSelf->_takePhotoStartedCount != takePhotoCount)
-              return;
-            [strongSelf stopStillImageOutput];
-          },
-          _weakPtrFactoryForTakePhoto->GetWeakPtr(), _takePhotoStartedCount),
-      base::Seconds(kTimeToWaitBeforeStoppingStillImageCaptureInSeconds));
-}
-
-- (void)stopStillImageOutput {
-  DCHECK(_mainThreadTaskRunner->BelongsToCurrentThread());
-  if (!_stillImageOutput) {
-    // Already stopped.
-    return;
-  }
-  if (_captureSession) {
-    [_captureSession removeOutput:_stillImageOutput];
-  }
-  _stillImageOutput.reset();
-  _stillImageOutputWarmupCompleted = false;
-
-  // Cancel all in-flight operations.
-  _weakPtrFactoryForTakePhoto->InvalidateWeakPtrs();
-  // Report error for all pending calls that were stopped.
-  size_t pendingCalls = _takePhotoStartedCount - _takePhotoCompletedCount;
-  _takePhotoCompletedCount = _takePhotoPendingCount = _takePhotoStartedCount;
-  {
+// Callback for the `_photoOutput` operation started in takePhotoInternal().
+- (void)captureOutput:(id)output        // AVCapturePhotoOutput*
+    didFinishProcessingPhoto:(id)photo  // AVCapturePhoto*
+                       error:(NSError*)error {
+  if (@available(macOS 10.15, *)) {
     base::AutoLock lock(_lock);
+    // If `output` is no longer current, ignore the result of this operation.
+    // `_frameReceiver->OnPhotoError()` will already have been called inside
+    // stopPhotoOutput().
+    if (output != _photoOutput) {
+      return;
+    }
     if (_frameReceiver) {
-      for (size_t i = 0; i < pendingCalls; ++i) {
+      // Always non-nil according to Apple's documentation.
+      DCHECK(photo);
+      NSData* data = static_cast<AVCapturePhoto*>(photo).fileDataRepresentation;
+      if (!error && data) {
+        _frameReceiver->OnPhotoTaken(
+            reinterpret_cast<const uint8_t*>(data.bytes), data.length,
+            "image/jpeg");
+      } else {
         _frameReceiver->OnPhotoError();
       }
     }
+    // Whether we succeeded or failed, we need to resolve the pending
+    // takePhoto() operation.
+    _mainThreadTaskRunner->PostTask(
+        FROM_HERE,
+        base::BindOnce(
+            [](base::WeakPtr<VideoCaptureDeviceAVFoundation> weakSelf) {
+              [weakSelf.get() takePhotoResolved];
+            },
+            _weakPtrFactoryForTakePhoto->GetWeakPtr()));
+  } else {
+    NOTREACHED();
+  }
+}
+
+- (void)takePhotoResolved {
+  DCHECK(_mainThreadTaskRunner->BelongsToCurrentThread());
+  --_pendingTakePhotos;
+  if (_pendingTakePhotos > 0u) {
+    // Take another photo.
+    [self takePhotoInternal];
+    return;
+  }
+  // All pending takePhoto()s have completed. If no more photos are taken
+  // within 60 seconds, stop photo output to avoid expensive MJPEG conversions
+  // going forward.
+  _mainThreadTaskRunner->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(
+          [](base::WeakPtr<VideoCaptureDeviceAVFoundation> weakSelf) {
+            [weakSelf.get() stopPhotoOutput];
+          },
+          _weakPtrFactoryForTakePhoto->GetWeakPtr()),
+      base::Seconds(kTimeToWaitBeforeStoppingPhotoOutputInSeconds));
+}
+
+- (void)stopPhotoOutput {
+  DCHECK(_mainThreadTaskRunner->BelongsToCurrentThread());
+  // Already stopped?
+  // Thread-safe because `_photoOutput` is only modified on the main thread.
+  if (!_photoOutput) {
+    return;
+  }
+  // Cancel all in-flight operations.
+  _weakPtrFactoryForTakePhoto->InvalidateWeakPtrs();
+  {
+    base::AutoLock lock(_lock);
+    if (_captureSession) {
+      [_captureSession removeOutput:_photoOutput];
+    }
+    // `_lock` is needed since `_photoOutput` may be read from non-main thread.
+    _photoOutput.reset();
+    // For every pending photo, report OnPhotoError().
+    if (_pendingTakePhotos) {
+      if (_frameReceiver) {
+        for (size_t i = 0; i < _pendingTakePhotos; ++i) {
+          _frameReceiver->OnPhotoError();
+        }
+      }
+      _pendingTakePhotos = 0u;
+    }
   }
 
-  if (_onStillImageOutputStopped) {
+  if (_onPhotoOutputStopped) {
     // Callback used by tests.
-    _onStillImageOutputStopped.Run();
+    _onPhotoOutputStopped.Run();
   }
 }
 
@@ -637,6 +730,7 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
   char* baseAddress = 0;
   size_t frameSize = 0;
   _lock.AssertAcquired();
+  DCHECK(_frameReceiver);
   const bool sample_buffer_addressable = media::ExtractBaseAddressAndLength(
       &baseAddress, &frameSize, sampleBuffer);
   DCHECK(sample_buffer_addressable);
@@ -758,6 +852,7 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
   }
 
   _lock.AssertAcquired();
+  DCHECK(_frameReceiver);
   _frameReceiver->ReceiveFrame(
       packedBufferCopy.empty() ? pixelBufferAddresses[0]
                                : packedBufferCopy.data(),
@@ -823,6 +918,7 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
                                           colorSpace:colorSpace]);
   }
 
+  DCHECK(_frameReceiver);
   _frameReceiver->ReceiveExternalGpuMemoryBufferFrame(
       std::move(externalBuffer), std::move(scaledExternalBuffers), timestamp);
 }
@@ -877,8 +973,11 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
       nextFailedCheckCount = 0;
 
     // If we captured a frame since last check, then we aren't stalled.
-    if (_capturedFrameSinceLastStallCheck)
+    // We're also not considered stalled if takePhoto() is pending, avoiding
+    // excessive capture restarts in unit tests with mock time.
+    if (_capturedFrameSinceLastStallCheck || _pendingTakePhotos) {
       nextFailedCheckCount = 0;
+    }
     _capturedFrameSinceLastStallCheck = NO;
   }
 
@@ -927,8 +1026,9 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
   base::AutoLock destructionLock(_destructionLock);
   base::AutoLock lock(_lock);
   _capturedFrameSinceLastStallCheck = YES;
-  if (!_frameReceiver)
+  if (!_frameReceiver || !_sampleBufferTransformer) {
     return;
+  }
 
   const base::TimeDelta pres_timestamp =
       GetCMSampleBufferTimestamp(sampleBuffer);
@@ -1044,6 +1144,61 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
         captureFormat:captureFormat
            colorSpace:colorSpace
             timestamp:timestamp];
+}
+
+- (void)setIsPortraitEffectSupportedForTesting:
+    (bool)isPortraitEffectSupportedForTesting {
+  _isPortraitEffectSupportedForTesting = isPortraitEffectSupportedForTesting;
+}
+
+- (bool)isPortraitEffectSupported {
+  DCHECK(_mainThreadTaskRunner->BelongsToCurrentThread());
+  if (_isPortraitEffectSupportedForTesting.has_value()) {
+    return _isPortraitEffectSupportedForTesting.value();
+  }
+  if (@available(macOS 12.0, *)) {
+    return [[_captureDevice activeFormat] isPortraitEffectSupported];
+  }
+  return false;
+}
+
+- (void)setIsPortraitEffectActiveForTesting:
+    (bool)isPortraitEffectActiveForTesting {
+  if (_isPortraitEffectActiveForTesting.has_value() &&
+      _isPortraitEffectActiveForTesting == isPortraitEffectActiveForTesting) {
+    return;
+  }
+  _isPortraitEffectActiveForTesting = isPortraitEffectActiveForTesting;
+  [self captureConfigurationChanged];
+}
+
+- (bool)isPortraitEffectActive {
+  DCHECK(_mainThreadTaskRunner->BelongsToCurrentThread());
+  if (_isPortraitEffectActiveForTesting.has_value()) {
+    return _isPortraitEffectActiveForTesting.value();
+  }
+  if (@available(macOS 12.0, *)) {
+    return [_captureDevice isPortraitEffectActive];
+  }
+  return false;
+}
+
+- (void)observeValueForKeyPath:(NSString*)keyPath
+                      ofObject:(id)object
+                        change:(NSDictionary*)change
+                       context:(void*)context {
+  if (@available(macOS 12.0, *)) {
+    if ([keyPath isEqual:@"portraitEffectActive"]) {
+      [self captureConfigurationChanged];
+    }
+  }
+}
+
+- (void)captureConfigurationChanged {
+  base::AutoLock lock(_lock);
+  if (_frameReceiver) {
+    _frameReceiver->ReceiveCaptureConfigurationChanged();
+  }
 }
 
 - (void)onVideoError:(NSNotification*)errorNotification {

@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -83,6 +83,71 @@ TEST(InterestGroupMojomTraitsTest, SerializeAndDeserializePriority) {
   SerializeAndDeserializeAndCompare(interest_group);
 }
 
+TEST(InterestGroupMojomTraitsTest,
+     SerializeAndDeserializeEnableBiddingSignalsPrioritization) {
+  InterestGroup interest_group = CreateInterestGroup();
+  interest_group.enable_bidding_signals_prioritization = true;
+  SerializeAndDeserializeAndCompare(interest_group);
+}
+
+TEST(InterestGroupMojomTraitsTest, SerializeAndDeserializePriorityVector) {
+  InterestGroup interest_group = CreateInterestGroup();
+
+  interest_group.priority_vector = {{{"signals", 1.23}}};
+  SerializeAndDeserializeAndCompare(interest_group);
+
+  interest_group.priority_vector = {
+      {{"signals1", 1}, {"signals2", 3}, {"signals3", -5}}};
+  SerializeAndDeserializeAndCompare(interest_group);
+}
+
+TEST(InterestGroupMojomTraitsTest,
+     SerializeAndDeserializePrioritySignalsOverride) {
+  InterestGroup interest_group = CreateInterestGroup();
+  // `priority_vector` is currently always set when `priority_signals_override`
+  // is.
+  interest_group.priority_vector.emplace();
+
+  interest_group.priority_signals_overrides = {{{"signals", 0.51}}};
+  SerializeAndDeserializeAndCompare(interest_group);
+
+  interest_group.priority_signals_overrides = {
+      {{"signals1", 1}, {"signals2", 3}, {"signals3", -5}}};
+  SerializeAndDeserializeAndCompare(interest_group);
+}
+
+TEST(InterestGroupMojomTraitsTest, SerializeAndDeserializeSellerCapabilities) {
+  InterestGroup interest_group = CreateInterestGroup();
+
+  interest_group.seller_capabilities = {
+      {{url::Origin::Create(GURL(kOrigin1)), {}}}};
+  SerializeAndDeserializeAndCompare(interest_group);
+
+  interest_group.seller_capabilities = {
+      {{url::Origin::Create(GURL(kOrigin1)), {}},
+       {url::Origin::Create(GURL(kOrigin2)), {}}}};
+  SerializeAndDeserializeAndCompare(interest_group);
+}
+
+TEST(InterestGroupMojomTraitsTest,
+     SerializeAndDeserializeAllSellerCapabilities) {
+  InterestGroup interest_group = CreateInterestGroup();
+
+  interest_group.all_sellers_capabilities.Put(
+      SellerCapabilities::kInterestGroupCounts);
+  SerializeAndDeserializeAndCompare(interest_group);
+
+  interest_group.all_sellers_capabilities.Put(
+      SellerCapabilities::kLatencyStats);
+  SerializeAndDeserializeAndCompare(interest_group);
+
+  interest_group.all_sellers_capabilities.Put(
+      SellerCapabilities::kInterestGroupCounts);
+  interest_group.all_sellers_capabilities.Put(
+      SellerCapabilities::kLatencyStats);
+  SerializeAndDeserializeAndCompare(interest_group);
+}
+
 TEST(InterestGroupMojomTraitsTest, SerializeAndDeserializeBiddingUrl) {
   InterestGroup interest_group = CreateInterestGroup();
   interest_group.bidding_url = GURL(kUrl1);
@@ -139,6 +204,40 @@ TEST(InterestGroupMojomTraitsTest, SerializeAndDeserializeAdComponents) {
       InterestGroup::Ad(GURL(kUrl1), /*metadata=*/absl::nullopt));
   interest_group.ad_components->emplace_back(
       InterestGroup::Ad(GURL(kUrl2), /*metadata=*/"[]"));
+  SerializeAndDeserializeAndCompare(interest_group);
+}
+
+TEST(InterestGroupMojomTraitsTest, SerializeAndDeserializeAdSizes) {
+  InterestGroup interest_group = CreateInterestGroup();
+  interest_group.ad_sizes.emplace();
+  interest_group.ad_sizes->emplace(
+      "size_1", blink::InterestGroup::Size(
+                    300, blink::InterestGroup::Size::LengthUnit::kPixels, 150,
+                    blink::InterestGroup::Size::LengthUnit::kPixels));
+  interest_group.ad_sizes->emplace(
+      "size_2", blink::InterestGroup::Size(
+                    640, blink::InterestGroup::Size::LengthUnit::kPixels, 480,
+                    blink::InterestGroup::Size::LengthUnit::kPixels));
+  SerializeAndDeserializeAndCompare(interest_group);
+}
+
+TEST(InterestGroupMojomTraitsTest, SerializeAndDeserializeSizeGroups) {
+  InterestGroup interest_group = CreateInterestGroup();
+  // The size names must be in adSizes. Otherwise, the sizeGroups will fail
+  // validation.
+  interest_group.ad_sizes.emplace();
+  interest_group.ad_sizes->emplace(
+      "size_1", blink::InterestGroup::Size(
+                    300, blink::InterestGroup::Size::LengthUnit::kPixels, 150,
+                    blink::InterestGroup::Size::LengthUnit::kPixels));
+  interest_group.ad_sizes->emplace(
+      "size_2", blink::InterestGroup::Size(
+                    640, blink::InterestGroup::Size::LengthUnit::kPixels, 480,
+                    blink::InterestGroup::Size::LengthUnit::kPixels));
+  std::vector<std::string> size_list = {"size_1", "size_2"};
+  interest_group.size_groups.emplace();
+  interest_group.size_groups->emplace("group_1", size_list);
+  interest_group.size_groups->emplace("group_2", size_list);
   SerializeAndDeserializeAndCompare(interest_group);
 }
 

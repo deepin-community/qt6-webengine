@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,23 +23,23 @@ namespace {
 // This mapping is case-insensitive. If no type could be matched
 // returns SCHEME_INVALID.
 ProxyServer::Scheme GetSchemeFromPacTypeInternal(base::StringPiece type) {
-  if (base::LowerCaseEqualsASCII(type, "proxy"))
+  if (base::EqualsCaseInsensitiveASCII(type, "proxy"))
     return ProxyServer::SCHEME_HTTP;
-  if (base::LowerCaseEqualsASCII(type, "socks")) {
+  if (base::EqualsCaseInsensitiveASCII(type, "socks")) {
     // Default to v4 for compatibility. This is because the SOCKS4 vs SOCKS5
     // notation didn't originally exist, so if a client returns SOCKS they
     // really meant SOCKS4.
     return ProxyServer::SCHEME_SOCKS4;
   }
-  if (base::LowerCaseEqualsASCII(type, "socks4"))
+  if (base::EqualsCaseInsensitiveASCII(type, "socks4"))
     return ProxyServer::SCHEME_SOCKS4;
-  if (base::LowerCaseEqualsASCII(type, "socks5"))
+  if (base::EqualsCaseInsensitiveASCII(type, "socks5"))
     return ProxyServer::SCHEME_SOCKS5;
-  if (base::LowerCaseEqualsASCII(type, "direct"))
+  if (base::EqualsCaseInsensitiveASCII(type, "direct"))
     return ProxyServer::SCHEME_DIRECT;
-  if (base::LowerCaseEqualsASCII(type, "https"))
+  if (base::EqualsCaseInsensitiveASCII(type, "https"))
     return ProxyServer::SCHEME_HTTPS;
-  if (base::LowerCaseEqualsASCII(type, "quic"))
+  if (base::EqualsCaseInsensitiveASCII(type, "quic"))
     return ProxyServer::SCHEME_QUIC;
 
   return ProxyServer::SCHEME_INVALID;
@@ -68,7 +68,7 @@ ProxyServer FromSchemeHostAndPort(ProxyServer::Scheme scheme,
                       &username_component, &password_component,
                       &hostname_component, &port_component);
   if (username_component.is_valid() || password_component.is_valid() ||
-      !hostname_component.is_nonempty()) {
+      hostname_component.is_empty()) {
     return ProxyServer();
   }
 
@@ -78,7 +78,7 @@ ProxyServer FromSchemeHostAndPort(ProxyServer::Scheme scheme,
   // Reject inputs like "foo:". /url parsing and canonicalization code generally
   // allows it and treats it the same as a URL without a specified port, but
   // Chrome has traditionally disallowed it in proxy specifications.
-  if (port_component.is_valid() && !port_component.is_nonempty())
+  if (port_component.is_valid() && port_component.is_empty())
     return ProxyServer();
   base::StringPiece port =
       port_component.is_nonempty()
@@ -207,19 +207,19 @@ std::string ProxyServerToProxyUri(const ProxyServer& proxy_server) {
 }
 
 ProxyServer::Scheme GetSchemeFromUriScheme(base::StringPiece scheme) {
-  if (base::LowerCaseEqualsASCII(scheme, "http"))
+  if (base::EqualsCaseInsensitiveASCII(scheme, "http"))
     return ProxyServer::SCHEME_HTTP;
-  if (base::LowerCaseEqualsASCII(scheme, "socks4"))
+  if (base::EqualsCaseInsensitiveASCII(scheme, "socks4"))
     return ProxyServer::SCHEME_SOCKS4;
-  if (base::LowerCaseEqualsASCII(scheme, "socks"))
+  if (base::EqualsCaseInsensitiveASCII(scheme, "socks"))
     return ProxyServer::SCHEME_SOCKS5;
-  if (base::LowerCaseEqualsASCII(scheme, "socks5"))
+  if (base::EqualsCaseInsensitiveASCII(scheme, "socks5"))
     return ProxyServer::SCHEME_SOCKS5;
-  if (base::LowerCaseEqualsASCII(scheme, "direct"))
+  if (base::EqualsCaseInsensitiveASCII(scheme, "direct"))
     return ProxyServer::SCHEME_DIRECT;
-  if (base::LowerCaseEqualsASCII(scheme, "https"))
+  if (base::EqualsCaseInsensitiveASCII(scheme, "https"))
     return ProxyServer::SCHEME_HTTPS;
-  if (base::LowerCaseEqualsASCII(scheme, "quic"))
+  if (base::EqualsCaseInsensitiveASCII(scheme, "quic"))
     return ProxyServer::SCHEME_QUIC;
   return ProxyServer::SCHEME_INVALID;
 }

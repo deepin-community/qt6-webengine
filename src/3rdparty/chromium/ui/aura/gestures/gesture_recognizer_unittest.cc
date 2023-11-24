@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,7 +13,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/simple_test_tick_clock.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/timer/timer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/aura/env.h"
@@ -617,7 +616,7 @@ class RemoveOnTouchCancelHandler : public TestEventHandler {
 void DelayByLongPressTimeout() {
   ui::GestureProvider::Config config;
   base::RunLoop run_loop;
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE, run_loop.QuitClosure(),
       config.gesture_detector_config.longpress_timeout * 2);
   run_loop.Run();
@@ -626,7 +625,7 @@ void DelayByLongPressTimeout() {
 void DelayByShowPressTimeout() {
   ui::GestureProvider::Config config;
   base::RunLoop run_loop;
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE, run_loop.QuitClosure(),
       config.gesture_detector_config.showpress_timeout * 2);
   run_loop.Run();
@@ -4804,6 +4803,43 @@ TEST_F(GestureRecognizerTest, GestureConsumerCleanupBeforeTouchAck) {
   delegate->Reset();
   delegate->ReceivedAck();
   EXPECT_0_EVENTS(delegate->events());
+}
+
+// Verifies that destructing a `GestureRecognizerImpl` instance with gesture
+// providers works as expected (https://crbug.com/1325256).
+TEST_F(GestureRecognizerTest, ResetGestureRecognizerWithGestureProvider) {
+  TimedEvents tes;
+  const int kTouchId = 4;
+  std::unique_ptr<GestureEventConsumeDelegate> delegate(
+      new GestureEventConsumeDelegate());
+  std::unique_ptr<aura::Window> window(CreateTestWindowWithDelegate(
+      delegate.get(), /*id=*/-2345, /*bounds=*/gfx::Rect(0, 0, 50, 50),
+      /*parent=*/root_window()));
+
+  // Touch press then release on `window`.
+  constexpr gfx::Point touch_location(/*x=*/10, /*y=*/20);
+  ui::TouchEvent press(
+      ui::ET_TOUCH_PRESSED, touch_location, /*time_stamp=*/tes.Now(),
+      ui::PointerDetails(ui::EventPointerType::kTouch, kTouchId));
+  delegate->Reset();
+  DispatchEventUsingWindowDispatcher(&press);
+  EXPECT_TRUE(delegate->tap_down());
+  delegate->Reset();
+  ui::TouchEvent release(
+      ui::ET_TOUCH_RELEASED, touch_location,
+      /*time_stamp=*/press.time_stamp() + base::Milliseconds(50),
+      ui::PointerDetails(ui::EventPointerType::kTouch, kTouchId));
+  DispatchEventUsingWindowDispatcher(&release);
+  EXPECT_FALSE(delegate->tap_down());
+
+  // Check that the gesture recognizer owns one gesture provider.
+  EXPECT_EQ(1u, static_cast<ui::GestureRecognizerImpl*>(
+                    aura::Env::GetInstance()->gesture_recognizer())
+                    ->consumer_gesture_provider_.size());
+
+  // Destroy the current gesture recognizer.
+  aura::Env::GetInstance()->SetGestureRecognizer(
+      std::make_unique<ui::GestureRecognizerImpl>());
 }
 
 }  // namespace test

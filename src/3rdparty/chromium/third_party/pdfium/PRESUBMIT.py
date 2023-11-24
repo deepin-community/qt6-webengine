@@ -1,4 +1,4 @@
-# Copyright 2015 The Chromium Authors. All rights reserved.
+# Copyright 2015 The PDFium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -7,6 +7,8 @@
 See http://dev.chromium.org/developers/how-tos/depottools/presubmit-scripts
 for more details about the presubmit API built into depot_tools.
 """
+
+PRESUBMIT_VERSION = '2.0.0'
 
 USE_PYTHON3 = True
 
@@ -51,9 +53,11 @@ _BANNED_CPP_FUNCTIONS = (
     (
         r'/\busing namespace ',
         (
-            'Using directives ("using namespace x") are banned by the Google Style',
-            'Guide ( https://google.github.io/styleguide/cppguide.html#Namespaces ).',
-            'Explicitly qualify symbols or use using declarations ("using x::foo").',
+            'Using directives ("using namespace x") are banned by the Google',
+            'Style Guide (',
+            'https://google.github.io/styleguide/cppguide.html#Namespaces ).',
+            'Explicitly qualify symbols or use using declarations ("using',
+            'x::foo").',
         ),
         True,
         [_THIRD_PARTY],
@@ -61,9 +65,10 @@ _BANNED_CPP_FUNCTIONS = (
     (
         r'/v8::Isolate::(?:|Try)GetCurrent()',
         (
-            'v8::Isolate::GetCurrent() and v8::Isolate::TryGetCurrent() are banned. Hold',
-            'a pointer to the v8::Isolate that was entered. Use v8::Isolate::IsCurrent()',
-            'to check whether a given v8::Isolate is entered.',
+            'v8::Isolate::GetCurrent() and v8::Isolate::TryGetCurrent() are',
+            'banned. Hold a pointer to the v8::Isolate that was entered. Use',
+            'v8::Isolate::IsCurrent() to check whether a given v8::Isolate is',
+            'entered.',
         ),
         True,
         (),
@@ -367,6 +372,28 @@ def _CheckIncludeOrder(input_api, output_api):
   return results
 
 
+def _CheckLibcxxRevision(input_api, output_api):
+  """Makes sure that libcxx_revision is set correctly."""
+  if 'DEPS' not in [f.LocalPath() for f in input_api.AffectedFiles()]:
+    return []
+
+  script_path = input_api.os_path.join('testing', 'tools', 'libcxx_check.py')
+  buildtools_deps_path = input_api.os_path.join('buildtools',
+                                                'deps_revisions.gni')
+
+  try:
+    errors = input_api.subprocess.check_output(
+        [script_path, 'DEPS', buildtools_deps_path])
+  except input_api.subprocess.CalledProcessError as error:
+    msg = 'libcxx_check.py failed:'
+    long_text = error.output.decode('utf-8', 'ignore')
+    return [output_api.PresubmitError(msg, long_text=long_text)]
+
+  if errors:
+    return [output_api.PresubmitError(errors)]
+  return []
+
+
 def _CheckTestDuplicates(input_api, output_api):
   """Checks that pixel and javascript tests don't contain duplicates.
   We use .in and .pdf files, having both can cause race conditions on the bots,
@@ -397,23 +424,25 @@ def _CheckTestDuplicates(input_api, output_api):
   return results
 
 
-def _CheckPNGFormat(input_api, output_api):
-  """Checks that .png files have a format that will be considered valid by our
-  test runners. If a file ends with .png, then it must be of the form
-  NAME_expected(_(skia|skiapaths))?(_(win|mac|linux))?.pdf.#.png
-  The expected format used by _CheckPngNames() in testing/corpus/PRESUBMIT.py
-  must be the same as this one.
+def _CheckPngNames(input_api, output_api):
+  """Checks that .png files have the right file name format, which must be in
+  the form:
+
+  NAME_expected(_(agg|skia))?(_(linux|mac|win))?.pdf.\d+.png
+
+  This must be the same format as the one in testing/corpus's PRESUBMIT.py.
   """
   expected_pattern = input_api.re.compile(
-      r'.+_expected(_(skia|skiapaths))?(_(win|mac|linux))?\.pdf\.\d+.png')
+      r'.+_expected(_(agg|skia))?(_(linux|mac|win))?\.pdf\.\d+.png')
   results = []
   for f in input_api.AffectedFiles(include_deletes=False):
     if not f.LocalPath().endswith('.png'):
       continue
     if expected_pattern.match(f.LocalPath()):
       continue
-    results.append(output_api.PresubmitError(
-        'PNG file %s does not have the correct format' % f.LocalPath()))
+    results.append(
+        output_api.PresubmitError(
+            'PNG file %s does not have the correct format' % f.LocalPath()))
   return results
 
 
@@ -464,6 +493,29 @@ def _CheckUselessForwardDeclarations(input_api, output_api):
   return results
 
 
+def ChecksCommon(input_api, output_api):
+  results = []
+
+  results.extend(
+      input_api.canned_checks.PanProjectChecks(
+          input_api, output_api, project_name='PDFium'))
+
+  # PanProjectChecks() doesn't consider .gn/.gni files, so check those, too.
+  files_to_check = (
+      r'.*\.gn$',
+      r'.*\.gni$',
+  )
+  results.extend(
+      input_api.canned_checks.CheckLicense(
+          input_api,
+          output_api,
+          project_name='PDFium',
+          source_file_filter=lambda x: input_api.FilterSourceFile(
+              x, files_to_check=files_to_check)))
+
+  return results
+
+
 def CheckChangeOnUpload(input_api, output_api):
   results = []
   results.extend(_CheckNoBannedFunctions(input_api, output_api))
@@ -474,8 +526,9 @@ def CheckChangeOnUpload(input_api, output_api):
       input_api.canned_checks.CheckChangeLintsClean(
           input_api, output_api, lint_filters=LINT_FILTERS))
   results.extend(_CheckIncludeOrder(input_api, output_api))
+  results.extend(_CheckLibcxxRevision(input_api, output_api))
   results.extend(_CheckTestDuplicates(input_api, output_api))
-  results.extend(_CheckPNGFormat(input_api, output_api))
+  results.extend(_CheckPngNames(input_api, output_api))
   results.extend(_CheckUselessForwardDeclarations(input_api, output_api))
 
   author = input_api.change.author_email

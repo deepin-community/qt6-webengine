@@ -159,20 +159,6 @@ class QUIC_EXPORT_PRIVATE QuicUtils {
   static QuicStreamId GetMaxClientInitiatedBidirectionalStreamId(
       QuicTransportVersion version);
 
-  // Generates a connection ID of length |expected_connection_id_length|
-  // derived from |connection_id|.
-  // This is guaranteed to be deterministic (calling this method with two
-  // connection IDs that are equal is guaranteed to produce the same result).
-  static QuicConnectionId CreateReplacementConnectionId(
-      const QuicConnectionId& connection_id,
-      uint8_t expected_connection_id_length);
-
-  // Generates a 64bit connection ID derived from |connection_id|.
-  // This is guaranteed to be deterministic (calling this method with two
-  // connection IDs that are equal is guaranteed to produce the same result).
-  static QuicConnectionId CreateReplacementConnectionId(
-      const QuicConnectionId& connection_id);
-
   // Generates a random 64bit connection ID.
   static QuicConnectionId CreateRandomConnectionId();
 
@@ -209,8 +195,8 @@ class QUIC_EXPORT_PRIVATE QuicUtils {
   static PacketNumberSpace GetPacketNumberSpace(
       EncryptionLevel encryption_level);
 
-  // Determines encryption level to send packets in |packet_number_space|.
-  static EncryptionLevel GetEncryptionLevel(
+  // Determines encryption level to send ACK in |packet_number_space|.
+  static EncryptionLevel GetEncryptionLevelToSendAckofSpace(
       PacketNumberSpace packet_number_space);
 
   // Get the maximum value for a V99/IETF QUIC stream count. If a count

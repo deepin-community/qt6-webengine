@@ -1,4 +1,4 @@
-// Copyright 2018 PDFium Authors. All rights reserved.
+// Copyright 2018 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,7 @@
 
 class CPDF_IndirectObjectHolder;
 class CPDF_Stream;
+class CPDF_StreamAcc;
 class IFX_SeekableReadStream;
 
 // Implementation of logic of PDF "Object Streams".
@@ -31,7 +32,8 @@ class CPDF_ObjectStream {
     uint32_t obj_offset;
   };
 
-  static std::unique_ptr<CPDF_ObjectStream> Create(const CPDF_Stream* stream);
+  static std::unique_ptr<CPDF_ObjectStream> Create(
+      RetainPtr<const CPDF_Stream> stream);
 
   ~CPDF_ObjectStream();
 
@@ -41,13 +43,15 @@ class CPDF_ObjectStream {
   const std::vector<ObjectInfo>& object_info() const { return object_info_; }
 
  private:
-  explicit CPDF_ObjectStream(const CPDF_Stream* stream);
+  explicit CPDF_ObjectStream(RetainPtr<const CPDF_Stream> stream);
 
   void Init(const CPDF_Stream* stream);
   RetainPtr<CPDF_Object> ParseObjectAtOffset(
       CPDF_IndirectObjectHolder* pObjList,
       uint32_t object_offset) const;
 
+  // Must outlive `data_stream_`.
+  RetainPtr<CPDF_StreamAcc> const stream_acc_;
   RetainPtr<IFX_SeekableReadStream> data_stream_;
   int first_object_offset_ = 0;
   std::vector<ObjectInfo> object_info_;

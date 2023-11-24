@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,13 +8,14 @@
 
 #include "base/debug/dump_without_crashing.h"
 #include "base/memory/ref_counted.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "content/browser/background_sync/background_sync_scheduler.h"
 #include "content/browser/browsing_data/browsing_data_remover_impl.h"
 #include "content/browser/download/download_manager_impl.h"
 #include "content/browser/permissions/permission_controller_impl.h"
-#include "content/browser/speculation_rules/prefetch/prefetch_service.h"
+#include "content/browser/preloading/prefetch/prefetch_service.h"
 #include "content/browser/speech/tts_controller_impl.h"
 #include "content/browser/storage_partition_impl_map.h"
 #include "content/public/browser/browser_context.h"
@@ -136,9 +137,9 @@ void BrowserContextImpl::NotifyWillBeDestroyed() {
   // Shut down service worker and shared worker machinery because these can keep
   // RenderProcessHosts and SiteInstances alive, and the codebase assumes these
   // are destroyed before the BrowserContext is destroyed.
-  self_->ForEachStoragePartition(
+  self_->ForEachLoadedStoragePartition(
       base::BindRepeating(ShutdownServiceWorkerContext));
-  self_->ForEachStoragePartition(
+  self_->ForEachLoadedStoragePartition(
       base::BindRepeating(ShutdownSharedWorkerContext));
 
   // Also forcibly release keep alive refcounts on RenderProcessHosts, to ensure
@@ -163,7 +164,7 @@ StoragePartitionImplMap* BrowserContextImpl::GetOrCreateStoragePartitionMap() {
   return storage_partition_map_.get();
 }
 
-BrowsingDataRemover* BrowserContextImpl::GetBrowsingDataRemover() {
+BrowsingDataRemoverImpl* BrowserContextImpl::GetBrowsingDataRemover() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   if (!browsing_data_remover_) {
@@ -180,7 +181,7 @@ media::learning::LearningSession* BrowserContextImpl::GetLearningSession() {
 
   if (!learning_session_) {
     learning_session_ = std::make_unique<media::learning::LearningSessionImpl>(
-        base::SequencedTaskRunnerHandle::Get());
+        base::SequencedTaskRunner::GetCurrentDefault());
 
     // Using base::Unretained is safe below, because the callback here will not
     // be called or retained after the Register method below returns.

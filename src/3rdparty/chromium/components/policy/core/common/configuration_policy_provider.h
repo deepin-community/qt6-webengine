@@ -1,11 +1,9 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_POLICY_CORE_COMMON_CONFIGURATION_POLICY_PROVIDER_H_
 #define COMPONENTS_POLICY_CORE_COMMON_CONFIGURATION_POLICY_PROVIDER_H_
-
-#include <memory>
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
@@ -93,7 +91,7 @@ class POLICY_EXPORT ConfigurationPolicyProvider
   // Subclasses must invoke this to update the policies currently served by
   // this provider. UpdatePolicy() takes ownership of |policies|.
   // The observers are notified after the policies are updated.
-  void UpdatePolicy(std::unique_ptr<PolicyBundle> bundle);
+  void UpdatePolicy(PolicyBundle bundle);
 
   SchemaRegistry* schema_registry() const;
 

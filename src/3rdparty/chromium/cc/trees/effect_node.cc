@@ -1,10 +1,12 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "cc/trees/effect_node.h"
+
 #include "base/notreached.h"
 #include "base/trace_event/traced_value.h"
+#include "cc/base/math_util.h"
 #include "cc/layers/layer.h"
 #include "cc/trees/property_tree.h"
 
@@ -153,8 +155,8 @@ const char* RenderSurfaceReasonToString(RenderSurfaceReason reason) {
       return "mirrored";
     case RenderSurfaceReason::kSubtreeIsBeingCaptured:
       return "subtree being captured";
-    case RenderSurfaceReason::kDocumentTransitionParticipant:
-      return "document transition participant";
+    case RenderSurfaceReason::kViewTransitionParticipant:
+      return "view transition participant";
     case RenderSurfaceReason::kTest:
       return "test";
     default:
@@ -182,14 +184,15 @@ void EffectNode::AsValueInto(base::trace_event::TracedValue* value) const {
                                value);
     if (mask_filter_info.HasRoundedCorners()) {
       MathUtil::AddCornerRadiiToTracedValue(
-          "mask_filter_rounded_corner_raii",
+          "mask_filter_rounded_corners_radii",
           mask_filter_info.rounded_corner_bounds(), value);
       value->SetBoolean("mask_filter_is_fast_rounded_corner",
                         is_fast_rounded_corner);
     }
     if (mask_filter_info.HasGradientMask()) {
       MathUtil::AddToTracedValue("mask_filter_gradient_mask",
-                                 mask_filter_info.gradient_mask(), value);
+                                 mask_filter_info.gradient_mask().value(),
+                                 value);
     }
   }
   value->SetString("blend_mode", SkBlendMode_Name(blend_mode));
@@ -225,6 +228,14 @@ void EffectNode::AsValueInto(base::trace_event::TracedValue* value) const {
                     closest_ancestor_with_copy_request_id);
   value->SetInteger("closest_ancestor_being_captured_id",
                     closest_ancestor_being_captured_id);
+  if (view_transition_shared_element_id.valid()) {
+    value->SetString("view_transition_shared_element_id",
+                     view_transition_shared_element_id.ToString());
+  }
+  if (view_transition_element_resource_id.IsValid()) {
+    value->SetInteger("view_transition_element_resource_id",
+                      view_transition_element_resource_id.id());
+  }
 }
 
 }  // namespace cc

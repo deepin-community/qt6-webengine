@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,6 +15,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/perf/perf_result_reporter.h"
 #include "third_party/skia/include/core/SkSurface.h"
+#include "third_party/skia/include/gpu/GpuTypes.h"
 #include "third_party/skia/include/gpu/GrDirectContext.h"
 
 namespace cc {
@@ -51,12 +52,11 @@ class GpuImageDecodeCachePerfTest
                 /*support_locking=*/false)) {}
 
   void SetUp() override {
-    gpu::ContextResult result = context_provider_->BindToCurrentThread();
+    gpu::ContextResult result = context_provider_->BindToCurrentSequence();
     ASSERT_EQ(result, gpu::ContextResult::kSuccess);
     cache_ = std::make_unique<GpuImageDecodeCache>(
         context_provider_.get(), UseTransferCache(), kRGBA_8888_SkColorType,
-        kCacheSize, MaxTextureSize(), PaintImage::kDefaultGeneratorClientId,
-        nullptr);
+        kCacheSize, MaxTextureSize(), nullptr);
   }
 
  protected:
@@ -136,7 +136,7 @@ INSTANTIATE_TEST_SUITE_P(P,
 TEST_P(GpuImageDecodeCachePerfTestNoSw, DecodeWithMips) {
   // Surface to render into.
   auto surface = SkSurface::MakeRenderTarget(
-      context_provider_->GrContext(), SkBudgeted::kNo,
+      context_provider_->GrContext(), skgpu::Budgeted::kNo,
       SkImageInfo::MakeN32Premul(2048, 2048));
 
   timer_.Reset();

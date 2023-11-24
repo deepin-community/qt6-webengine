@@ -17,20 +17,27 @@ import type * as Protocol from '../../generated/protocol.js';
 
 const UIStrings = {
   /**
-  * @description Text that refers to the main target. The main target is the primary webpage that
-  * DevTools is connected to. This text is used in various places in the UI as a label/name to inform
-  * the user which target/webpage they are currently connected to, as DevTools may connect to multiple
-  * targets at the same time in some scenarios.
-  */
+   * @description Text that refers to the main target. The main target is the primary webpage that
+   * DevTools is connected to. This text is used in various places in the UI as a label/name to inform
+   * the user which target/webpage they are currently connected to, as DevTools may connect to multiple
+   * targets at the same time in some scenarios.
+   */
   main: 'Main',
   /**
-  * @description A warning shown to the user when JavaScript is disabled on the webpage that
-  * DevTools is connected to.
-  */
+   * @description Text that refers to the tab target. The tab target is the Chrome tab that
+   * DevTools is connected to. This text is used in various places in the UI as a label/name to inform
+   * the user which target they are currently connected to, as DevTools may connect to multiple
+   * targets at the same time in some scenarios.
+   */
+  tab: 'Tab',
+  /**
+   * @description A warning shown to the user when JavaScript is disabled on the webpage that
+   * DevTools is connected to.
+   */
   javascriptIsDisabled: 'JavaScript is disabled',
   /**
-  * @description A message that prompts the user to open devtools for a specific environment (Node.js)
-  */
+   * @description A message that prompts the user to open devtools for a specific environment (Node.js)
+   */
   openDedicatedTools: 'Open dedicated DevTools for `Node.js`',
 };
 const str_ = i18n.i18n.registerUIStrings('entrypoints/inspector_main/InspectorMain.ts', UIStrings);
@@ -52,12 +59,25 @@ export class InspectorMainImpl implements Common.Runnable.Runnable {
   async run(): Promise<void> {
     let firstCall = true;
     await SDK.Connections.initMainConnection(async () => {
-      const type = Root.Runtime.Runtime.queryParam('v8only') ? SDK.Target.Type.Node : SDK.Target.Type.Frame;
+      const type = Root.Runtime.Runtime.queryParam('v8only') ?
+          SDK.Target.Type.Node :
+          (Root.Runtime.Runtime.queryParam('targetType') === 'tab' ? SDK.Target.Type.Tab : SDK.Target.Type.Frame);
+      // TODO(crbug.com/1348385): support waiting for debugger with tab target.
       const waitForDebuggerInPage =
           type === SDK.Target.Type.Frame && Root.Runtime.Runtime.queryParam('panel') === 'sources';
+      const name = type === SDK.Target.Type.Frame ? i18nString(UIStrings.main) : i18nString(UIStrings.tab);
       const target = SDK.TargetManager.TargetManager.instance().createTarget(
-          'main', i18nString(UIStrings.main), type, null, undefined, waitForDebuggerInPage);
+          'main', name, type, null, undefined, waitForDebuggerInPage);
 
+      const targetManager = SDK.TargetManager.TargetManager.instance();
+      targetManager.observeTargets({
+        targetAdded: (target: SDK.Target.Target) => {
+          if (target === targetManager.mainFrameTarget()) {
+            target.setName(i18nString(UIStrings.main));
+          }
+        },
+        targetRemoved: (_: unknown) => {},
+      });
       // Only resume target during the first connection,
       // subsequent connections are due to connection hand-over,
       // there is no need to pause in debugger.
@@ -76,7 +96,9 @@ export class InspectorMainImpl implements Common.Runnable.Runnable {
         }
       }
 
-      void target.runtimeAgent().invoke_runIfWaitingForDebugger();
+      if (type !== SDK.Target.Type.Tab) {
+        void target.runtimeAgent().invoke_runIfWaitingForDebugger();
+      }
     }, Components.TargetDetachedDialog.TargetDetachedDialog.webSocketConnectionLost);
 
     new SourcesPanelIndicator();
@@ -133,7 +155,7 @@ export class FocusDebuggeeActionDelegate implements UI.ActionRegistration.Action
     return focusDebuggeeActionDelegateInstance;
   }
   handleAction(_context: UI.Context.Context, _actionId: string): boolean {
-    const mainTarget = SDK.TargetManager.TargetManager.instance().mainTarget();
+    const mainTarget = SDK.TargetManager.TargetManager.instance().mainFrameTarget();
     if (!mainTarget) {
       return false;
     }
@@ -224,7 +246,7 @@ export class BackendSettingsSync implements SDK.TargetManager.Observer {
   }
 
   #updateTarget(target: SDK.Target.Target): void {
-    if (target.type() !== SDK.Target.Type.Frame || target.parentTarget()) {
+    if (target.type() !== SDK.Target.Type.Frame || target.parentTarget()?.type() === SDK.Target.Type.Frame) {
       return;
     }
     void target.pageAgent().invoke_setAdBlockingEnabled({enabled: this.#adBlockEnabledSetting.get()});

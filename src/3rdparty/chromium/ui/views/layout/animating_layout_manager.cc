@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,7 +16,8 @@
 #include "base/memory/raw_ptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/observer_list.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/ranges/algorithm.h"
+#include "base/task/single_thread_task_runner.h"
 #include "ui/gfx/animation/animation.h"
 #include "ui/gfx/animation/animation_container.h"
 #include "ui/gfx/animation/slide_animation.h"
@@ -65,10 +66,9 @@ enum class LayoutFadeType {
 ProposedLayout WithOnlyVisibleViews(const ProposedLayout layout) {
   ProposedLayout result;
   result.host_size = layout.host_size;
-  std::copy_if(
-      layout.child_layouts.begin(), layout.child_layouts.end(),
-      std::back_inserter(result.child_layouts),
-      [](const ChildLayout& child_layout) { return child_layout.visible; });
+  base::ranges::copy_if(layout.child_layouts,
+                        std::back_inserter(result.child_layouts),
+                        &ChildLayout::visible);
   return result;
 }
 
@@ -88,14 +88,14 @@ struct AnimatingLayoutManager::LayoutFadeInfo {
   // How the child view is fading.
   LayoutFadeType fade_type;
   // The child view which is fading.
-  View* child_view = nullptr;
+  raw_ptr<View> child_view = nullptr;
   // The view previous (leading side) to the fading view which is in both the
   // starting and target layout, or null if none.
-  View* prev_view = nullptr;
+  raw_ptr<View> prev_view = nullptr;
   // The view next (trailing side) to the fading view which is in both the
   // starting and target layout, or null if none.
-  View* next_view = nullptr;
-  // The full-size bounds, normalized to the orientation of the layout manaer,
+  raw_ptr<View> next_view = nullptr;
+  // The full-size bounds, normalized to the orientation of the layout manager,
   // that |child_view| starts with, if fading out, or ends with, if fading in.
   NormalizedRect reference_bounds;
   // The offset from the end of |prev_view| and the start of |next_view|. Insets
@@ -371,6 +371,11 @@ gfx::Size AnimatingLayoutManager::GetPreferredSize(const View* host) const {
   if (!target_layout_manager())
     return gfx::Size();
 
+  // If animation is disabled, preferred size does not change with current
+  // animation state.
+  if (!gfx::Animation::ShouldRenderRichAnimation())
+    return target_layout_manager()->GetPreferredSize(host);
+
   switch (bounds_animation_mode_) {
     case BoundsAnimationMode::kUseHostBounds:
       return target_layout_manager()->GetPreferredSize(host);
@@ -495,8 +500,7 @@ ProposedLayout AnimatingLayoutManager::CalculateProposedLayout(
     const SizeBounds& size_bounds) const {
   // This class directly overrides Layout() so GetProposedLayout() and
   // CalculateProposedLayout() are not called.
-  NOTREACHED();
-  return ProposedLayout();
+  NOTREACHED_NORETURN();
 }
 
 void AnimatingLayoutManager::OnInstalled(View* host) {
@@ -717,7 +721,7 @@ void AnimatingLayoutManager::PostQueuedActions() {
   // * Keep "AnimatingLayoutManager::RunQueuedActions" in the stack frame.
   // * Tie the task lifetimes to AnimatingLayoutManager.
   run_queued_actions_is_pending_ =
-      base::ThreadTaskRunnerHandle::Get()->PostTask(
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
           FROM_HERE, base::BindOnce(&AnimatingLayoutManager::RunQueuedActions,
                                     weak_ptr_factory_.GetWeakPtr()));
 }
@@ -730,7 +734,7 @@ void AnimatingLayoutManager::UpdateCurrentLayout(double percent) {
 
   for (const LayoutFadeInfo& fade_info : fade_infos_) {
     // This shouldn't happen but we should ensure that with a check.
-    DCHECK_NE(-1, host_view()->GetIndexOf(fade_info.child_view));
+    DCHECK(host_view()->GetIndexOf(fade_info.child_view).has_value());
 
     // Views that were previously fading are animated as normal, so nothing to
     // do here.
@@ -752,8 +756,7 @@ void AnimatingLayoutManager::UpdateCurrentLayout(double percent) {
           child_layout.visible = false;
           break;
         case LayoutFadeType::kContinuingFade:
-          NOTREACHED();
-          continue;
+          NOTREACHED_NORETURN();
       }
     } else if (default_fade_mode_ == FadeInOutMode::kHide) {
       child_layout.child_view = fade_info.child_view;
@@ -765,8 +768,7 @@ void AnimatingLayoutManager::UpdateCurrentLayout(double percent) {
 
       switch (default_fade_mode_) {
         case FadeInOutMode::kHide:
-          NOTREACHED();
-          break;
+          NOTREACHED_NORETURN();
         case FadeInOutMode::kScaleFromMinimum:
           child_layout = CalculateScaleFade(fade_info, scale_percent,
                                             /* scale_from_zero */ false);
@@ -942,7 +944,7 @@ void AnimatingLayoutManager::ResolveFades() {
   for (const LayoutFadeInfo& fade_info : fade_infos_) {
     View* const child = fade_info.child_view;
     if (fade_info.fade_type == LayoutFadeType::kFadingOut &&
-        host_view()->GetIndexOf(child) >= 0 &&
+        host_view()->GetIndexOf(child).has_value() &&
         !IsChildViewIgnoredByLayout(child) && !IsChildIncludedInLayout(child)) {
       SetViewVisibility(child, false);
     }
@@ -1002,8 +1004,7 @@ ChildLayout AnimatingLayoutManager::CalculateScaleFade(
         new_bounds.set_origin_main(trailing_reference_point - new_size);
         break;
       case LayoutFadeType::kContinuingFade:
-        NOTREACHED();
-        break;
+        NOTREACHED_NORETURN();
     }
     new_bounds.set_size_main(new_size);
     child_layout.bounds = Denormalize(orientation(), new_bounds);
@@ -1038,8 +1039,7 @@ ChildLayout AnimatingLayoutManager::CalculateSlideFade(
       fully_faded_layout = &target_layout_;
       break;
     case LayoutFadeType::kContinuingFade:
-      NOTREACHED();
-      break;
+      NOTREACHED_NORETURN();
   }
 
   if (slide_from_leading) {

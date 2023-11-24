@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,16 +10,13 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/values.h"
 #include "components/guest_view/common/guest_view_constants.h"
 #include "content/public/browser/media_stream_request.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/guest_view/web_view/web_view_permission_types.h"
 #include "ppapi/buildflags/buildflags.h"
 #include "third_party/blink/public/common/mediastream/media_stream_request.h"
-
-namespace base {
-class DictionaryValue;
-}
 
 namespace extensions {
 
@@ -58,14 +55,15 @@ class WebViewPermissionHelper {
   using RequestMap = std::map<int, PermissionResponseInfo>;
 
   int RequestPermission(WebViewPermissionType permission_type,
-                        const base::DictionaryValue& request_info,
+                        base::Value::Dict request_info,
                         PermissionResponseCallback callback,
                         bool allowed_by_default);
 
-  static WebViewPermissionHelper* FromWebContents(
-      content::WebContents* web_contents);
-  static WebViewPermissionHelper* FromFrameID(int render_process_id,
-                                              int render_frame_id);
+  static WebViewPermissionHelper* FromRenderFrameHost(
+      content::RenderFrameHost* rfh);
+  static WebViewPermissionHelper* FromRenderFrameHostId(
+      const content::GlobalRenderFrameHostId& rfh_id);
+
   void RequestMediaAccessPermission(content::WebContents* source,
                                     const content::MediaStreamRequest& request,
                                     content::MediaResponseCallback callback);

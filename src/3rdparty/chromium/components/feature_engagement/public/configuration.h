@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,11 +11,8 @@
 #include <string>
 #include <vector>
 
+#include "base/feature_list.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
-
-namespace base {
-struct Feature;
-}
 
 namespace feature_engagement {
 
@@ -210,18 +207,49 @@ struct FeatureConfig {
 
   // Snoozing parameter to decide if in-product help should be shown.
   SnoozeParams snooze_params;
+
+  // Groups this feature is part of.
+  std::vector<std::string> groups;
 };
 
 bool operator==(const FeatureConfig& lhs, const FeatureConfig& rhs);
 std::ostream& operator<<(std::ostream& os, const FeatureConfig& feature_config);
+
+// A GroupConfig contains all the configuration for a given group.
+struct GroupConfig {
+ public:
+  GroupConfig();
+  GroupConfig(const GroupConfig& other);
+  ~GroupConfig();
+
+  // Whether the group configuration has been successfully parsed.
+  bool valid{false};
+
+  // For each feature in this group, the number of in-product help triggered
+  // within this session must fit this comparison (in addition to any
+  // |session_rate| from that feature itself).
+  Comparator session_rate;
+
+  // The configuration for a particular event that will be searched for when
+  // counting how many times in-product help has been triggered for features in
+  // this particular group.
+  EventConfig trigger;
+
+  // A set of all event configurations for this group.
+  std::set<EventConfig> event_configs;
+};
+
+bool operator==(const GroupConfig& lhs, const GroupConfig& rhs);
+std::ostream& operator<<(std::ostream& os, const GroupConfig& feature_config);
 
 // A Configuration contains the current set of runtime configurations.
 // It is up to each implementation of Configuration to provide a way to
 // register features and their configurations.
 class Configuration {
  public:
-  // Convenience alias for typical implementations of Configuration.
+  // Convenience aliases for typical implementations of Configuration.
   using ConfigMap = std::map<std::string, FeatureConfig>;
+  using GroupConfigMap = std::map<std::string, GroupConfig>;
 
   Configuration(const Configuration&) = delete;
   Configuration& operator=(const Configuration&) = delete;
@@ -241,8 +269,24 @@ class Configuration {
   // Returns the immutable ConfigMap that contains all registered features.
   virtual const ConfigMap& GetRegisteredFeatureConfigs() const = 0;
 
-  // Returns the list of the names of all registred features.
+  // Returns the list of the names of all registered features.
   virtual const std::vector<std::string> GetRegisteredFeatures() const = 0;
+
+  // Returns the GroupConfig for the given |group|. The |group| must
+  // be registered with the Configuration instance.
+  virtual const GroupConfig& GetGroupConfig(
+      const base::Feature& group) const = 0;
+
+  // Returns the GroupConfig for the given |group_name|. The |group_name| must
+  // be registered with the Configuration instance.
+  virtual const GroupConfig& GetGroupConfigByName(
+      const std::string& group_name) const = 0;
+
+  // Returns the immutable GroupConfigMap that contains all registered groups.
+  virtual const GroupConfigMap& GetRegisteredGroupConfigs() const = 0;
+
+  // Returns the list of the names of all registered groups.
+  virtual const std::vector<std::string> GetRegisteredGroups() const = 0;
 
  protected:
   Configuration() = default;

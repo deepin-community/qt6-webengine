@@ -1,16 +1,17 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/webui/history/navigation_handler.h"
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/values.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "ui/base/window_open_disposition.h"
+#include "ui/base/window_open_disposition_utils.h"
 
 namespace webui {
 
@@ -19,14 +20,13 @@ NavigationHandler::NavigationHandler() {}
 NavigationHandler::~NavigationHandler() {}
 
 void NavigationHandler::RegisterMessages() {
-  web_ui()->RegisterDeprecatedMessageCallback(
+  web_ui()->RegisterMessageCallback(
       "navigateToUrl",
       base::BindRepeating(&NavigationHandler::HandleNavigateToUrl,
                           base::Unretained(this)));
 }
 
-void NavigationHandler::HandleNavigateToUrl(const base::ListValue* args) {
-  base::Value::ConstListView list = args->GetListDeprecated();
+void NavigationHandler::HandleNavigateToUrl(const base::Value::List& list) {
   const std::string& url_string = list[0].GetString();
   const std::string& target_string = list[1].GetString();
   double button = list[2].GetDouble();

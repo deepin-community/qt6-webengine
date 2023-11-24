@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -77,6 +77,17 @@ enum class LargeBlobSupport {
   kNotRequested,
   kRequired,
   kPreferred,
+};
+
+// LargeBlobSupportType enumerates the methods by which an authenticator may
+// support large blobs.
+enum class LargeBlobSupportType {
+  // The `largeBlobKey` extension and `authenticatorLargeBlobs` command. See
+  // https://fidoalliance.org/specs/fido-v2.1-rd-20210309/fido-client-to-authenticator-protocol-v2.1-rd-20210309.html#authenticatorLargeBlobs
+  kKey,
+  // The `largeBlob` extension that includes blob data directly in getAssertion
+  // commands.
+  kExtension,
 };
 
 }  // namespace device

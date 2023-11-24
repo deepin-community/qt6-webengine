@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,10 +6,11 @@
 
 #include <memory>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/bind_post_task.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
@@ -395,7 +396,9 @@ void VideoFrameCompositor::SetIsPageVisible(bool is_visible) {
 
 void VideoFrameCompositor::SetForceSubmit(bool force_submit) {
   DCHECK(task_runner_->BelongsToCurrentThread());
-  submitter_->SetForceSubmit(force_submit);
+  // The `submitter_` can be null in tests.
+  if (submitter_)
+    submitter_->SetForceSubmit(force_submit);
 }
 
 base::TimeDelta VideoFrameCompositor::GetLastIntervalWithoutLock()
@@ -460,6 +463,21 @@ bool VideoFrameCompositor::CallRender(base::TimeTicks deadline_min,
   if (background_rendering_enabled_)
     background_rendering_timer_.Reset();
   return new_frame || had_new_background_frame;
+}
+
+void VideoFrameCompositor::OnContextLost() {
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  // current_frame_'s resource in the context has been lost, so current_frame_
+  // is not valid any more. current_frame_ should be reset. Now the compositor
+  // has no concept of resetting current_frame_, so a black frame is set.
+  base::AutoLock lock(current_frame_lock_);
+  if (!current_frame_ || (!current_frame_->HasTextures() &&
+                          !current_frame_->HasGpuMemoryBuffer())) {
+    return;
+  }
+  scoped_refptr<media::VideoFrame> black_frame =
+      media::VideoFrame::CreateBlackFrame(current_frame_->natural_size());
+  SetCurrentFrame_Locked(std::move(black_frame), tick_clock_->NowTicks());
 }
 
 }  // namespace blink

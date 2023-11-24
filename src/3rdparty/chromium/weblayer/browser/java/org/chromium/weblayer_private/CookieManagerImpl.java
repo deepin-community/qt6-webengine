@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,9 +12,12 @@ import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
 import org.chromium.base.annotations.NativeMethods;
 import org.chromium.weblayer_private.interfaces.CookieChangeCause;
+import org.chromium.weblayer_private.interfaces.ExceptionType;
+import org.chromium.weblayer_private.interfaces.IBooleanCallback;
 import org.chromium.weblayer_private.interfaces.ICookieChangedCallbackClient;
 import org.chromium.weblayer_private.interfaces.ICookieManager;
 import org.chromium.weblayer_private.interfaces.IObjectWrapper;
+import org.chromium.weblayer_private.interfaces.IStringCallback;
 import org.chromium.weblayer_private.interfaces.ObjectWrapper;
 import org.chromium.weblayer_private.interfaces.StrictModeWorkaround;
 
@@ -28,9 +31,11 @@ import java.util.List;
 @JNINamespace("weblayer")
 public final class CookieManagerImpl extends ICookieManager.Stub {
     private long mNativeCookieManager;
+    private ProfileImpl mProfile;
 
-    CookieManagerImpl(long nativeCookieManager) {
+    CookieManagerImpl(long nativeCookieManager, ProfileImpl profile) {
         mNativeCookieManager = nativeCookieManager;
+        mProfile = profile;
     }
 
     public void destroy() {
@@ -38,21 +43,53 @@ public final class CookieManagerImpl extends ICookieManager.Stub {
     }
 
     @Override
-    public boolean setCookie(String url, String value, IObjectWrapper callback) {
+    public void setCookie(String url, String value, IBooleanCallback callback) {
         StrictModeWorkaround.apply();
-        ValueCallback<Boolean> valueCallback =
-                (ValueCallback<Boolean>) ObjectWrapper.unwrap(callback, ValueCallback.class);
-        Callback<Boolean> baseCallback = (Boolean result) -> valueCallback.onReceiveValue(result);
-        return CookieManagerImplJni.get().setCookie(mNativeCookieManager, url, value, baseCallback);
+
+        WebLayerOriginVerificationScheduler originVerifier =
+                WebLayerOriginVerificationScheduler.getInstance();
+
+        originVerifier.verify(url, (verified) -> {
+            if (!verified) {
+                try {
+                    callback.onException(ExceptionType.RESTRICTED_API,
+                            "Application does not have permissions to modify " + url);
+                } catch (RemoteException e) {
+                }
+            }
+            Callback<Boolean> baseCallback = (Boolean result) -> {
+                try {
+                    callback.onResult(result);
+                } catch (RemoteException e) {
+                }
+            };
+            CookieManagerImplJni.get().setCookie(mNativeCookieManager, url, value, baseCallback);
+        });
     }
 
     @Override
-    public void getCookie(String url, IObjectWrapper callback) {
+    public void getCookie(String url, IStringCallback callback) {
         StrictModeWorkaround.apply();
-        ValueCallback<String> valueCallback =
-                (ValueCallback<String>) ObjectWrapper.unwrap(callback, ValueCallback.class);
-        Callback<String> baseCallback = (String result) -> valueCallback.onReceiveValue(result);
-        CookieManagerImplJni.get().getCookie(mNativeCookieManager, url, baseCallback);
+
+        WebLayerOriginVerificationScheduler originVerifier =
+                WebLayerOriginVerificationScheduler.getInstance();
+
+        originVerifier.verify(url, (verified) -> {
+            if (!verified) {
+                try {
+                    callback.onException(ExceptionType.RESTRICTED_API,
+                            "Application does not have permissions to modify " + url);
+                } catch (RemoteException e) {
+                }
+            }
+            Callback<String> baseCallback = (String result) -> {
+                try {
+                    callback.onResult(result);
+                } catch (RemoteException e) {
+                }
+            };
+            CookieManagerImplJni.get().getCookie(mNativeCookieManager, url, baseCallback);
+        });
     }
 
     @Override
@@ -114,7 +151,7 @@ public final class CookieManagerImpl extends ICookieManager.Stub {
 
     @NativeMethods
     interface Natives {
-        boolean setCookie(
+        void setCookie(
                 long nativeCookieManagerImpl, String url, String value, Callback<Boolean> callback);
         void getCookie(long nativeCookieManagerImpl, String url, Callback<String> callback);
         void getResponseCookies(

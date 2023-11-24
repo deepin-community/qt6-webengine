@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,7 +34,7 @@ bool FrameView::CanThrottleRenderingForPropagation() const {
   if (CanThrottleRendering())
     return true;
   Frame& frame = GetFrame();
-  if (!frame.IsCrossOriginToMainFrame())
+  if (!frame.IsCrossOriginToNearestMainFrame())
     return false;
   if (frame.IsLocalFrame() && To<LocalFrame>(frame).IsHidden())
     return true;
@@ -71,7 +71,7 @@ void FrameView::UpdateViewportIntersection(unsigned flags,
 
   Document& owner_document = owner_element->GetDocument();
   gfx::Rect viewport_intersection, mainframe_intersection;
-  TransformationMatrix main_frame_transform_matrix;
+  gfx::Transform main_frame_transform_matrix;
   DocumentLifecycle::LifecycleState parent_lifecycle_state =
       owner_document.Lifecycle().GetState();
   mojom::blink::FrameOcclusionState occlusion_state =
@@ -129,9 +129,9 @@ void FrameView::UpdateViewportIntersection(unsigned flags,
     // child frame.
     parent_frame_to_iframe_content_transform.Move(
         owner_layout_object->PhysicalContentBoxOffset());
-    TransformationMatrix matrix =
+    gfx::Transform matrix =
         parent_frame_to_iframe_content_transform.AccumulatedTransform()
-            .Inverse();
+            .InverseOrIdentity();
     if (geometry.IsIntersecting()) {
       PhysicalRect intersection_rect = PhysicalRect::EnclosingRect(
           matrix
@@ -192,6 +192,11 @@ void FrameView::UpdateViewportIntersection(unsigned flags,
 
     TransformState child_frame_to_root_frame(
         TransformState::kUnapplyInverseTransformDirection);
+    // TODO: Should this be IsOutermostMainFrame()?
+    if (owner_document.GetFrame()->LocalFrameRoot().IsMainFrame()) {
+      child_frame_to_root_frame.Move(PhysicalOffset::FromPointFRound(
+          gfx::PointF(frame.GetOutermostMainFrameScrollPosition())));
+    }
     if (owner_layout_object) {
       owner_layout_object->MapAncestorToLocal(
           nullptr, child_frame_to_root_frame,
@@ -210,14 +215,13 @@ void FrameView::UpdateViewportIntersection(unsigned flags,
 
   // An iframe's content is always pixel-snapped, even if the iframe element has
   // non-pixel-aligned location.
-  gfx::Transform main_frame_gfx_transform =
-      main_frame_transform_matrix.ToTransform();
-  main_frame_gfx_transform.RoundTranslationComponents();
+  gfx::Transform pixel_snapped_transform = main_frame_transform_matrix;
+  pixel_snapped_transform.Round2dTranslationComponents();
 
   SetViewportIntersection(mojom::blink::ViewportIntersectionState(
       viewport_intersection, mainframe_intersection, gfx::Rect(),
-      occlusion_state, frame.GetMainFrameViewportSize(),
-      frame.GetMainFrameScrollOffset(), main_frame_gfx_transform));
+      occlusion_state, frame.GetOutermostMainFrameSize(),
+      frame.GetOutermostMainFrameScrollPosition(), pixel_snapped_transform));
 
   UpdateFrameVisibility(!viewport_intersection.IsEmpty());
 
@@ -239,8 +243,8 @@ void FrameView::UpdateViewportIntersection(unsigned flags,
   bool zero_viewport_intersection = viewport_intersection.IsEmpty();
   bool is_display_none = !owner_layout_object;
   bool has_zero_area = FrameRect().IsEmpty();
-  bool has_flag = RuntimeEnabledFeatures::
-      ThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframesEnabled();
+  bool has_flag = features::
+      IsThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframesEnabled();
 
   bool should_throttle =
       has_flag

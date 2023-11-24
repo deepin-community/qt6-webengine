@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,12 +6,13 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
 #include "base/memory/weak_ptr.h"
-#include "build/build_config.h"
+#include "base/task/single_thread_task_runner.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver.h"
+#include "third_party/blink/public/mojom/input/handwriting_gesture_result.mojom-blink.h"
 #include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
 #include "third_party/blink/renderer/platform/widget/frame_widget.h"
 #include "third_party/blink/renderer/platform/widget/input/ime_event_guard.h"
@@ -145,6 +146,37 @@ void FrameWidgetInputHandlerImpl::SetEditableSelectionOffsets(int32_t start,
       widget_, main_thread_frame_widget_input_handler_, start, end));
 }
 
+void FrameWidgetInputHandlerImpl::HandleStylusWritingGestureAction(
+    mojom::blink::StylusWritingGestureDataPtr gesture_data,
+    HandleStylusWritingGestureActionCallback callback) {
+  if (ThreadedCompositingEnabled()) {
+    callback = base::BindOnce(
+        [](scoped_refptr<base::SingleThreadTaskRunner> callback_task_runner,
+           HandleStylusWritingGestureActionCallback callback,
+           mojom::blink::HandwritingGestureResult result) {
+          callback_task_runner->PostTask(
+              FROM_HERE,
+              base::BindOnce(std::move(callback), std::move(result)));
+        },
+        base::SingleThreadTaskRunner::GetCurrentDefault(), std::move(callback));
+  }
+
+  RunOnMainThread(base::BindOnce(
+      [](base::WeakPtr<mojom::blink::FrameWidgetInputHandler> handler,
+         mojom::blink::StylusWritingGestureDataPtr gesture_data,
+         HandleStylusWritingGestureActionCallback callback) {
+        if (handler) {
+          handler->HandleStylusWritingGestureAction(std::move(gesture_data),
+                                                    std::move(callback));
+        } else {
+          std::move(callback).Run(
+              mojom::blink::HandwritingGestureResult::kFailed);
+        }
+      },
+      main_thread_frame_widget_input_handler_, std::move(gesture_data),
+      std::move(callback)));
+}
+
 void FrameWidgetInputHandlerImpl::ExecuteEditCommand(const String& command,
                                                      const String& value) {
   RunOnMainThread(base::BindOnce(
@@ -153,8 +185,7 @@ void FrameWidgetInputHandlerImpl::ExecuteEditCommand(const String& command,
         if (handler)
           handler->ExecuteEditCommand(command, value);
       },
-      main_thread_frame_widget_input_handler_, command.IsolatedCopy(),
-      value.IsolatedCopy()));
+      main_thread_frame_widget_input_handler_, command, value));
 }
 
 void FrameWidgetInputHandlerImpl::Undo() {
@@ -213,7 +244,7 @@ void FrameWidgetInputHandlerImpl::Replace(const String& word) {
         if (handler)
           handler->Replace(word);
       },
-      main_thread_frame_widget_input_handler_, word.IsolatedCopy()));
+      main_thread_frame_widget_input_handler_, word));
 }
 
 void FrameWidgetInputHandlerImpl::ReplaceMisspelling(const String& word) {
@@ -223,7 +254,7 @@ void FrameWidgetInputHandlerImpl::ReplaceMisspelling(const String& word) {
         if (handler)
           handler->ReplaceMisspelling(word);
       },
-      main_thread_frame_widget_input_handler_, word.IsolatedCopy()));
+      main_thread_frame_widget_input_handler_, word));
 }
 
 void FrameWidgetInputHandlerImpl::Delete() {
@@ -270,8 +301,6 @@ void FrameWidgetInputHandlerImpl::SelectRange(const gfx::Point& base,
       widget_, main_thread_frame_widget_input_handler_, base, extent));
 }
 
-#if BUILDFLAG(IS_ANDROID)
-
 void FrameWidgetInputHandlerImpl::SelectAroundCaret(
     mojom::blink::SelectionGranularity granularity,
     bool should_show_handle,
@@ -289,7 +318,7 @@ void FrameWidgetInputHandlerImpl::SelectAroundCaret(
               FROM_HERE,
               base::BindOnce(std::move(callback), std::move(result)));
         },
-        base::ThreadTaskRunnerHandle::Get(), std::move(callback));
+        base::SingleThreadTaskRunner::GetCurrentDefault(), std::move(callback));
   }
 
   RunOnMainThread(base::BindOnce(
@@ -308,7 +337,6 @@ void FrameWidgetInputHandlerImpl::SelectAroundCaret(
       main_thread_frame_widget_input_handler_, granularity, should_show_handle,
       should_show_context_menu, std::move(callback)));
 }
-#endif  // BUILDFLAG(IS_ANDROID)
 
 void FrameWidgetInputHandlerImpl::AdjustSelectionByCharacterOffset(
     int32_t start,
@@ -348,15 +376,38 @@ void FrameWidgetInputHandlerImpl::MoveRangeSelectionExtent(
       widget_, main_thread_frame_widget_input_handler_, extent));
 }
 
-void FrameWidgetInputHandlerImpl::ScrollFocusedEditableNodeIntoRect(
-    const gfx::Rect& rect) {
+void FrameWidgetInputHandlerImpl::ScrollFocusedEditableNodeIntoView() {
+  RunOnMainThread(base::BindOnce(
+      [](base::WeakPtr<mojom::blink::FrameWidgetInputHandler> handler) {
+        if (handler)
+          handler->ScrollFocusedEditableNodeIntoView();
+      },
+      main_thread_frame_widget_input_handler_));
+}
+
+void FrameWidgetInputHandlerImpl::WaitForPageScaleAnimationForTesting(
+    WaitForPageScaleAnimationForTestingCallback callback) {
+  // Ensure the Mojo callback is invoked from the thread on which the message
+  // was received.
+  if (ThreadedCompositingEnabled()) {
+    callback = base::BindOnce(
+        [](scoped_refptr<base::SingleThreadTaskRunner> callback_task_runner,
+           WaitForPageScaleAnimationForTestingCallback callback) {
+          callback_task_runner->PostTask(FROM_HERE,
+                                         base::BindOnce(std::move(callback)));
+        },
+        base::SingleThreadTaskRunner::GetCurrentDefault(), std::move(callback));
+  }
+
   RunOnMainThread(base::BindOnce(
       [](base::WeakPtr<mojom::blink::FrameWidgetInputHandler> handler,
-         const gfx::Rect& rect) {
+         WaitForPageScaleAnimationForTestingCallback callback) {
         if (handler)
-          handler->ScrollFocusedEditableNodeIntoRect(rect);
+          handler->WaitForPageScaleAnimationForTesting(std::move(callback));
+        else
+          std::move(callback).Run();
       },
-      main_thread_frame_widget_input_handler_, rect));
+      main_thread_frame_widget_input_handler_, std::move(callback)));
 }
 
 void FrameWidgetInputHandlerImpl::MoveCaret(const gfx::Point& point) {

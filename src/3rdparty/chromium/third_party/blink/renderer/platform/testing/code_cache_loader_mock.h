@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -43,10 +43,10 @@ class CodeCacheLoaderMock : public WebCodeCacheLoader {
 
   // CodeCacheLoader methods:
   void FetchFromCodeCache(
-      blink::mojom::CodeCacheType cache_type,
+      mojom::CodeCacheType cache_type,
       const WebURL& url,
       WebCodeCacheLoader::FetchCodeCacheCallback callback) override;
-  void ClearCodeCacheEntry(blink::mojom::CodeCacheType cache_type,
+  void ClearCodeCacheEntry(mojom::CodeCacheType cache_type,
                            const WebURL& url) override;
 
  private:

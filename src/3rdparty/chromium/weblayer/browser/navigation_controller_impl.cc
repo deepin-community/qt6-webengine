@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,9 @@
 #include "base/containers/contains.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/sequenced_task_runner.h"
 #include "build/build_config.h"
+#include "components/digital_asset_links/response_header_verifier.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
@@ -18,6 +20,7 @@
 #include "content/public/browser/web_contents.h"
 #include "third_party/blink/public/mojom/navigation/was_activated_option.mojom-shared.h"
 #include "ui/base/page_transition_types.h"
+#include "weblayer/browser/browser_impl.h"
 #include "weblayer/browser/navigation_entry_data.h"
 #include "weblayer/browser/navigation_ui_data_impl.h"
 #include "weblayer/browser/page_impl.h"
@@ -107,7 +110,7 @@ class NavigationControllerImpl::NavigationThrottleImpl
 };
 
 NavigationControllerImpl::NavigationControllerImpl(TabImpl* tab)
-    : WebContentsObserver(tab->web_contents()) {}
+    : WebContentsObserver(tab->web_contents()), tab_(tab) {}
 
 NavigationControllerImpl::~NavigationControllerImpl() = default;
 
@@ -361,9 +364,10 @@ void NavigationControllerImpl::Stop() {
 }
 
 int NavigationControllerImpl::GetNavigationListSize() {
-  content::NavigationEntry* current_entry =
-      web_contents()->GetController().GetLastCommittedEntry();
-  if (current_entry && current_entry->IsInitialEntry()) {
+  if (web_contents()
+          ->GetController()
+          .GetLastCommittedEntry()
+          ->IsInitialEntry()) {
     // If we're currently on the initial NavigationEntry, no navigation has
     // committed, so the initial NavigationEntry should not be part of the
     // "Navigation List", and we should return 0 as the navigation list size.
@@ -376,9 +380,10 @@ int NavigationControllerImpl::GetNavigationListSize() {
 }
 
 int NavigationControllerImpl::GetNavigationListCurrentIndex() {
-  content::NavigationEntry* current_entry =
-      web_contents()->GetController().GetLastCommittedEntry();
-  if (current_entry && current_entry->IsInitialEntry()) {
+  if (web_contents()
+          ->GetController()
+          .GetLastCommittedEntry()
+          ->IsInitialEntry()) {
     // If we're currently on the initial NavigationEntry, no navigation has
     // committed, so the initial NavigationEntry should not be part of the
     // "Navigation List", and we should return -1 as the current index. This
@@ -556,6 +561,13 @@ void NavigationControllerImpl::DidFinishNavigation(
   if (navigation_handle->HasCommitted() &&
       navigation_handle->GetNetErrorCode() == net::OK &&
       !navigation_handle->IsErrorPage()) {
+    if (!navigation_handle->IsSameDocument()) {
+      navigation->set_consenting_content(
+          digital_asset_links::ResponseHeaderVerifier::Verify(
+              tab_->browser()->GetPackageName(),
+              navigation->GetNormalizedHeader(
+                  digital_asset_links::kEmbedderAncestorHeader)));
+    }
 #if BUILDFLAG(IS_ANDROID)
     if (java_controller_) {
       TRACE_EVENT0("weblayer",
@@ -574,6 +586,7 @@ void NavigationControllerImpl::DidFinishNavigation(
     }
   } else {
 #if BUILDFLAG(IS_ANDROID)
+    navigation->set_consenting_content(false);
     if (java_controller_) {
       TRACE_EVENT0("weblayer",
                    "Java_NavigationControllerImpl_navigationFailed");
@@ -595,9 +608,10 @@ void NavigationControllerImpl::DidFinishNavigation(
   // any delays from surface sync, ie a frame submitted by renderer may not
   // be displayed immediately. Such situations should be rare however, so
   // this should be good enough for the purposes needed.
-  web_contents()->GetMainFrame()->InsertVisualStateCallback(base::BindOnce(
-      &NavigationControllerImpl::OldPageNoLongerRendered,
-      weak_ptr_factory_.GetWeakPtr(), navigation_handle->GetURL()));
+  web_contents()->GetPrimaryMainFrame()->InsertVisualStateCallback(
+      base::BindOnce(&NavigationControllerImpl::OldPageNoLongerRendered,
+                     weak_ptr_factory_.GetWeakPtr(),
+                     navigation_handle->GetURL()));
 
   navigation_map_.erase(navigation_map_.find(navigation_handle));
 }
@@ -698,7 +712,7 @@ void NavigationControllerImpl::DoNavigate(
 void NavigationControllerImpl::ScheduleDelayedLoad(
     std::unique_ptr<content::NavigationController::LoadURLParams> params) {
   delayed_load_params_ = std::move(params);
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&NavigationControllerImpl::ProcessDelayedLoad,
                                 weak_ptr_factory_.GetWeakPtr()));
 }

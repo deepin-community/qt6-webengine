@@ -1,4 +1,4 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -71,20 +71,6 @@ if (safe_browsing_mode == 1) {
       "//third_party/unrar:unrar",
     ]
 
-    defines = [
-      "_FILE_OFFSET_BITS=64",
-      "LARGEFILE_SOURCE",
-      "RAR_SMP",
-      "SILENT",
-
-      # The following is set to disable certain macro definitions in the unrar
-      # source code.
-      "CHROMIUM_UNRAR",
-
-      # Disables exceptions in unrar, replaces them with process termination.
-      "UNRAR_NO_EXCEPTIONS",
-    ]
-
     public_deps = [ "//components/safe_browsing/core/common/proto:csd_proto" ]
   }
 
@@ -102,11 +88,6 @@ if (safe_browsing_mode == 1) {
         "//components/safe_browsing/content/common:file_type_policies",
         "//components/safe_browsing/core/common",
         "//third_party/maldoca:maldoca",
-      ]
-
-      defines = [
-        "MALDOCA_IN_CHROMIUM",
-        "MALDOCA_CHROME",
       ]
 
       public_deps = [ "//components/safe_browsing/core/common/proto:csd_proto" ]
@@ -178,6 +159,8 @@ source_set("safe_browsing") {
       "protobuf_message_log_macros.h",
       "protobuf_message_read_macros.h",
       "protobuf_message_write_macros.h",
+      "seven_zip_analyzer.cc",
+      "seven_zip_analyzer.h",
       "zip_analyzer.cc",
       "zip_analyzer.h",
     ]
@@ -188,6 +171,7 @@ source_set("safe_browsing") {
       ":download_type_util",
       ":rar_analyzer",
       "//components/safe_browsing/core/common",
+      "//third_party/lzma_sdk/google:seven_zip_reader",
     ]
 
     if (is_linux) {
@@ -207,9 +191,7 @@ source_set("safe_browsing") {
       deps += [ ":disk_image_type_sniffer_mac" ]
     }
     if (is_linux || is_win) {
-      public_deps += [
-        ":document_analyzer_results",
-      ]
+      public_deps += [ ":document_analyzer_results" ]
     }
   }
 }

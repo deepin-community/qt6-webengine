@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,9 @@
 #include <memory>
 
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "gpu/config/gpu_driver_bug_workarounds.h"
@@ -39,7 +40,7 @@ using GetCommandBufferStubCB =
 
 // Encapsulate parameters to pass to platform-specific helpers.
 struct VideoDecoderTraits {
-  scoped_refptr<base::SingleThreadTaskRunner> task_runner;
+  scoped_refptr<base::SequencedTaskRunner> task_runner;
   scoped_refptr<base::SingleThreadTaskRunner> gpu_task_runner;
   std::unique_ptr<MediaLog> media_log;
   RequestOverlayInfoCB request_overlay_info_cb;
@@ -58,8 +59,10 @@ struct VideoDecoderTraits {
 
   AndroidOverlayMojoFactoryCB android_overlay_factory_cb;
 
+  mojo::PendingRemote<stable::mojom::StableVideoDecoder> oop_video_decoder;
+
   VideoDecoderTraits(
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      scoped_refptr<base::SequencedTaskRunner> task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> gpu_task_runner,
       std::unique_ptr<MediaLog> media_log,
       RequestOverlayInfoCB request_overlay_info_cb,
@@ -71,15 +74,35 @@ struct VideoDecoderTraits {
       gpu::GpuMemoryBufferFactory* gpu_memory_buffer_factory,
       GetConfigCacheCB get_cached_configs_cb,
       GetCommandBufferStubCB get_command_buffer_stub_cb,
-      AndroidOverlayMojoFactoryCB android_overlay_factory_cb);
+      AndroidOverlayMojoFactoryCB android_overlay_factory_cb,
+      mojo::PendingRemote<stable::mojom::StableVideoDecoder> oop_video_decoder);
   ~VideoDecoderTraits();
 };
 
 // Find platform specific implementations of these in
 // gpu_mojo_media_client_{platform}.cc
 // Creates a platform-specific media::VideoDecoder.
-std::unique_ptr<VideoDecoder> CreatePlatformVideoDecoder(
-    const VideoDecoderTraits&);
+std::unique_ptr<VideoDecoder> CreatePlatformVideoDecoder(VideoDecoderTraits&);
+
+#if BUILDFLAG(USE_VAAPI) || BUILDFLAG(USE_V4L2_CODEC)
+// Ensures that the platform video decoder supported configurations are known.
+// When they are, |cb| is called with a PendingRemote that corresponds to the
+// same connection as |oop_video_decoder| (which may be |oop_video_decoder|
+// itself). |oop_video_decoder| may be used internally to query the supported
+// configurations of an out-of-process video decoder.
+//
+// |cb| is called with |oop_video_decoder| before NotifyPlatformDecoderSupport()
+// returns if the supported configurations are already known.
+//
+// This function is thread- and sequence-safe. |cb| is always called on the same
+// sequence as NotifyPlatformDecoderSupport().
+void NotifyPlatformDecoderSupport(
+    const gpu::GpuPreferences& gpu_preferences,
+    const gpu::GPUInfo& gpu_info,
+    mojo::PendingRemote<stable::mojom::StableVideoDecoder> oop_video_decoder,
+    base::OnceCallback<
+        void(mojo::PendingRemote<stable::mojom::StableVideoDecoder>)> cb);
+#endif  // BUILDFLAG(USE_VAAPI) || BUILDFLAG(USE_V4L2_CODEC)
 
 // Queries the platform-specific VideoDecoder implementation for its
 // supported profiles. Many platforms fall back to use the VDAVideoDecoder
@@ -95,7 +118,12 @@ GetPlatformSupportedVideoDecoderConfigs(
 // Creates a platform-specific media::AudioDecoder. Most platforms don't do
 // anything here, but android, for example, does.
 std::unique_ptr<AudioDecoder> CreatePlatformAudioDecoder(
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner);
+    scoped_refptr<base::SequencedTaskRunner> task_runner);
+
+// Creates a platform-specific media::AudioEncoder. Most platforms don't do
+// anything here.
+std::unique_ptr<AudioEncoder> CreatePlatformAudioEncoder(
+    scoped_refptr<base::SequencedTaskRunner> task_runner);
 
 // Creates a CDM factory, right now only used on android and chromeos.
 std::unique_ptr<CdmFactory> CreatePlatformCdmFactory(
@@ -132,16 +160,24 @@ class MEDIA_MOJO_EXPORT GpuMojoMediaClient final : public MojoMediaClient {
   SupportedVideoDecoderConfigs GetSupportedVideoDecoderConfigs() final;
   VideoDecoderType GetDecoderImplementationType() final;
   std::unique_ptr<AudioDecoder> CreateAudioDecoder(
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner) final;
+      scoped_refptr<base::SequencedTaskRunner> task_runner) final;
   std::unique_ptr<AudioEncoder> CreateAudioEncoder(
       scoped_refptr<base::SequencedTaskRunner> task_runner) final;
 
+#if BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
+  void NotifyDecoderSupportKnown(
+      mojo::PendingRemote<stable::mojom::StableVideoDecoder> oop_video_decoder,
+      base::OnceCallback<void(
+          mojo::PendingRemote<stable::mojom::StableVideoDecoder>)> cb) final;
+#endif  // BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
   std::unique_ptr<VideoDecoder> CreateVideoDecoder(
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      scoped_refptr<base::SequencedTaskRunner> task_runner,
       MediaLog* media_log,
       mojom::CommandBufferIdPtr command_buffer_id,
       RequestOverlayInfoCB request_overlay_info_cb,
-      const gfx::ColorSpace& target_color_space) final;
+      const gfx::ColorSpace& target_color_space,
+      mojo::PendingRemote<stable::mojom::StableVideoDecoder> oop_video_decoder)
+      final;
   std::unique_ptr<CdmFactory> CreateCdmFactory(
       mojom::FrameInterfaceFactory* interface_provider) final;
 

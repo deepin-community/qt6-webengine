@@ -1,4 +1,4 @@
-// Copyright (c) 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -46,8 +46,7 @@ gfx::Point GetArrowAnchorPointFromAnchorRect(BubbleBorder::Arrow arrow,
       return anchor_rect.left_center();
 
     default:
-      NOTREACHED();
-      return gfx::Point();
+      NOTREACHED_NORETURN();
   }
 }
 
@@ -93,20 +92,19 @@ gfx::Vector2d GetContentBoundsOffsetToArrowAnchorPoint(
       return anchor_point - contents_bounds.right_center();
 
     default:
-      NOTREACHED();
-      return gfx::Vector2d();
+      NOTREACHED_NORETURN();
   }
 }
 
 BubbleArrowSide GetBubbleArrowSide(BubbleBorder::Arrow arrow) {
   // Note: VERTICAL arrows are on the sides of the bubble, while !VERTICAL are
   // on the top or bottom.
-  if (arrow & BubbleBorder::VERTICAL) {
-    return (arrow & BubbleBorder::RIGHT) ? BubbleArrowSide::kRight
-                                         : BubbleArrowSide::kLeft;
+  if (int{arrow} & BubbleBorder::VERTICAL) {
+    return (int{arrow} & BubbleBorder::RIGHT) ? BubbleArrowSide::kRight
+                                              : BubbleArrowSide::kLeft;
   }
-  return (arrow & BubbleBorder::BOTTOM) ? BubbleArrowSide::kBottom
-                                        : BubbleArrowSide::kTop;
+  return (int{arrow} & BubbleBorder::BOTTOM) ? BubbleArrowSide::kBottom
+                                             : BubbleArrowSide::kTop;
 }
 
 gfx::Vector2d GetContentsBoundsOffsetToPlaceVisibleArrow(

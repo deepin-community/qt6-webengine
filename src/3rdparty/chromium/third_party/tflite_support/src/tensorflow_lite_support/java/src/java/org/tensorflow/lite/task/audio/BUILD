@@ -2,6 +2,7 @@ load("@org_tensorflow//tensorflow/lite/java:aar_with_jni.bzl", "aar_with_jni")
 load("@build_bazel_rules_android//android:rules.bzl", "android_library")
 
 package(
+    default_applicable_licenses = ["//tensorflow_lite_support:license"],
     default_visibility = ["//visibility:public"],
     licenses = ["notice"],  # Apache 2.0
 )
@@ -16,7 +17,6 @@ android_library(
         "//tensorflow_lite_support/java/src/java/org/tensorflow/lite/task/audio/classifier:audio_classifier_src",
     ],
     # TODO(b/163039980): Use JAVACOPTS in TF. "-Xep:RemoveUnusedImports:ERROR" wierdly break the build.
-    javacopts = ["-source 7 -target 7"],
     manifest = "AndroidManifest.xml",
     visibility = ["//visibility:public"],
     # LINT.IfChange(dep)

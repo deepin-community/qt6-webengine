@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,12 @@
 
 #include "base/component_export.h"
 #include "base/gtest_prod_util.h"
+#include "build/build_config.h"
 #include "ui/base/clipboard/clipboard.h"
+
+namespace headless {
+class HeadlessClipboard;
+}
 
 namespace ui {
 
@@ -52,6 +57,7 @@ class COMPONENT_EXPORT(UI_BASE_CLIPBOARD) ClipboardNonBacked
  private:
   friend class Clipboard;
   friend class ClipboardNonBackedTestBase;
+  friend class headless::HeadlessClipboard;
   FRIEND_TEST_ALL_PREFIXES(ClipboardNonBackedTest, TextURIList);
   FRIEND_TEST_ALL_PREFIXES(ClipboardNonBackedTest, ImageEncoding);
   FRIEND_TEST_ALL_PREFIXES(ClipboardNonBackedTest, EncodeImageOnce);
@@ -107,9 +113,9 @@ class COMPONENT_EXPORT(UI_BASE_CLIPBOARD) ClipboardNonBacked
   void ReadData(const ClipboardFormatType& format,
                 const DataTransferEndpoint* data_dst,
                 std::string* result) const override;
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
   bool IsSelectionBufferAvailable() const override;
-#endif  // defined(USE_OZONE)
+#endif  // BUILDFLAG(IS_OZONE)
   void WritePortableAndPlatformRepresentations(
       ClipboardBuffer buffer,
       const ObjectMap& objects,

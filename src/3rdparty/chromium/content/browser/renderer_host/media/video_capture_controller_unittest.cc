@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,16 +12,16 @@
 #include <utility>
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/task/single_thread_task_runner.h"
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "content/browser/renderer_host/media/media_stream_provider.h"
@@ -99,6 +99,8 @@ class MockVideoCaptureControllerEventHandler
   MOCK_METHOD2(DoBufferReady,
                void(ControllerIDAndSize buffer,
                     std::vector<ControllerIDAndSize> scaled_buffers));
+  MOCK_METHOD1(OnCaptureConfigurationChanged,
+               void(const VideoCaptureControllerID&));
   MOCK_METHOD1(OnFrameWithEmptyRegionCapture,
                void(const VideoCaptureControllerID&));
   MOCK_METHOD1(DoEnded, void(const VideoCaptureControllerID&));
@@ -106,6 +108,8 @@ class MockVideoCaptureControllerEventHandler
                void(const VideoCaptureControllerID&, media::VideoCaptureError));
   MOCK_METHOD1(OnStarted, void(const VideoCaptureControllerID&));
   MOCK_METHOD1(OnStartedUsingGpuDecode, void(const VideoCaptureControllerID&));
+  MOCK_METHOD2(OnNewCropVersion,
+               void(const VideoCaptureControllerID&, uint32_t));
 
   void OnError(const VideoCaptureControllerID& id,
                media::VideoCaptureError error) override {
@@ -133,12 +137,12 @@ class MockVideoCaptureControllerEventHandler
     DoBufferReady(ControllerIDAndSize(id, buffer.frame_info->coded_size),
                   std::move(scaled_frames));
     if (enable_auto_return_buffer_on_buffer_ready_) {
-      base::ThreadTaskRunnerHandle::Get()->PostTask(
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
           FROM_HERE, base::BindOnce(&VideoCaptureController::ReturnBuffer,
                                     base::Unretained(controller_), id, this,
                                     buffer.buffer_id, feedback_));
       for (const auto& scaled_buffer : scaled_buffers) {
-        base::ThreadTaskRunnerHandle::Get()->PostTask(
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(&VideoCaptureController::ReturnBuffer,
                                       base::Unretained(controller_), id, this,
                                       scaled_buffer.buffer_id, feedback_));
@@ -148,7 +152,7 @@ class MockVideoCaptureControllerEventHandler
   void OnEnded(const VideoCaptureControllerID& id) override {
     DoEnded(id);
     // OnEnded() must respond by (eventually) unregistering the client.
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(base::IgnoreResult(
                                       &VideoCaptureController::RemoveClient),
                                   base::Unretained(controller_), id, this));
@@ -699,7 +703,8 @@ TEST_P(VideoCaptureControllerTest, CaptureWithScaledFrames) {
 
   device_client_->OnIncomingCapturedExternalBuffer(
       std::move(external_buffer), std::move(scaled_external_buffers),
-      arbitrary_reference_time_, arbitrary_timestamp_);
+      arbitrary_reference_time_, arbitrary_timestamp_,
+      gfx::Rect(capture_format.frame_size));
 }
 
 #endif

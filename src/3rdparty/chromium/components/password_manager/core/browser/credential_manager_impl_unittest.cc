@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,21 +12,22 @@
 #include <string>
 #include <tuple>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "build/build_config.h"
-#include "components/password_manager/core/browser/android_affiliation/mock_affiliated_match_helper.h"
+#include "components/password_manager/core/browser/affiliation/mock_affiliated_match_helper.h"
+#include "components/password_manager/core/browser/affiliation/mock_affiliation_service.h"
 #include "components/password_manager/core/browser/credential_manager_pending_request_task.h"
 #include "components/password_manager/core/browser/credential_manager_utils.h"
 #include "components/password_manager/core/browser/leak_detection/leak_detection_check.h"
 #include "components/password_manager/core/browser/leak_detection/leak_detection_check_factory.h"
 #include "components/password_manager/core/browser/leak_detection/mock_leak_detection_check_factory.h"
 #include "components/password_manager/core/browser/password_manager.h"
-#include "components/password_manager/core/browser/site_affiliation/mock_affiliation_service.h"
 #include "components/password_manager/core/browser/stub_password_manager_client.h"
 #include "components/password_manager/core/browser/test_password_store.h"
 #include "components/password_manager/core/common/credential_manager_types.h"
@@ -63,22 +64,35 @@ class MockLeakDetectionCheck : public LeakDetectionCheck {
 
 class MockPasswordManagerClient : public StubPasswordManagerClient {
  public:
-  MOCK_CONST_METHOD1(IsSavingAndFillingEnabled, bool(const GURL&));
-  MOCK_CONST_METHOD1(IsFillingEnabled, bool(const GURL&));
-  MOCK_CONST_METHOD0(IsIncognito, bool());
-  MOCK_METHOD0(NotifyUserAutoSigninPtr, bool());
-  MOCK_METHOD1(NotifyUserCouldBeAutoSignedInPtr, bool(PasswordForm* form));
-  MOCK_METHOD0(NotifyStorePasswordCalled, void());
-  MOCK_METHOD1(PromptUserToSavePasswordPtr, void(PasswordFormManagerForUI*));
-  MOCK_METHOD3(PromptUserToChooseCredentialsPtr,
-               bool(const std::vector<PasswordForm*>& local_forms,
-                    const url::Origin& origin,
-                    CredentialsCallback callback));
-  MOCK_METHOD3(PasswordWasAutofilled,
-               void(const std::vector<const PasswordForm*>&,
-                    const url::Origin&,
-                    const std::vector<const PasswordForm*>*));
-  MOCK_CONST_METHOD0(IsAutofillAssistantUIVisible, bool());
+  MOCK_METHOD(bool,
+              IsSavingAndFillingEnabled,
+              (const GURL&),
+              (const, override));
+  MOCK_METHOD(bool, IsFillingEnabled, (const GURL&), (const, override));
+  MOCK_METHOD(bool, IsIncognito, (), (const, override));
+  MOCK_METHOD(bool, NotifyUserAutoSigninPtr, (), ());
+  MOCK_METHOD(bool,
+              NotifyUserCouldBeAutoSignedInPtr,
+              (PasswordForm * form),
+              ());
+  MOCK_METHOD(void, NotifyStorePasswordCalled, (), (override));
+  MOCK_METHOD(void,
+              PromptUserToSavePasswordPtr,
+              (PasswordFormManagerForUI*),
+              ());
+  MOCK_METHOD(bool,
+              PromptUserToChooseCredentialsPtr,
+              (const std::vector<PasswordForm*>& local_forms,
+               const url::Origin& origin,
+               CredentialsCallback callback),
+              ());
+  MOCK_METHOD(void,
+              PasswordWasAutofilled,
+              (const std::vector<const PasswordForm*>&,
+               const url::Origin&,
+               const std::vector<const PasswordForm*>*,
+               bool was_autofilled_on_pageload),
+              (override));
 
   explicit MockPasswordManagerClient(PasswordStoreInterface* profile_store,
                                      PasswordStoreInterface* account_store)
@@ -86,8 +100,6 @@ class MockPasswordManagerClient : public StubPasswordManagerClient {
         account_store_(account_store),
         password_manager_(this) {
     prefs_ = std::make_unique<TestingPrefServiceSimple>();
-    prefs_->registry()->RegisterBooleanPref(prefs::kCredentialsEnableAutosignin,
-                                            true);
     prefs_->registry()->RegisterBooleanPref(
         prefs::kWasAutoSignInFirstRunExperienceShown, true);
     prefs_->registry()->RegisterBooleanPref(
@@ -96,13 +108,13 @@ class MockPasswordManagerClient : public StubPasswordManagerClient {
                                             true);
     prefs_->registry()->RegisterBooleanPref(::prefs::kSafeBrowsingEnhanced,
                                             false);
-    ON_CALL(*this, IsAutofillAssistantUIVisible)
-        .WillByDefault(testing::Return(false));
   }
   MockPasswordManagerClient(const MockPasswordManagerClient&) = delete;
   MockPasswordManagerClient& operator=(const MockPasswordManagerClient&) =
       delete;
   ~MockPasswordManagerClient() override = default;
+
+  bool IsAutoSignInEnabled() const override { return auto_sign_in_enabled_; }
 
   bool PromptUserToSaveOrUpdatePassword(
       std::unique_ptr<PasswordFormManagerForUI> manager,
@@ -126,6 +138,8 @@ class MockPasswordManagerClient : public StubPasswordManagerClient {
 
   PrefService* GetPrefs() const override { return prefs_.get(); }
 
+  PrefService* GetLocalStatePrefs() const override { return prefs_.get(); }
+
   const PasswordManager* GetPasswordManager() const override {
     return &password_manager_;
   }
@@ -140,7 +154,7 @@ class MockPasswordManagerClient : public StubPasswordManagerClient {
       CredentialsCallback callback) override {
     EXPECT_FALSE(local_forms.empty());
     const PasswordForm* form = local_forms[0].get();
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback),
                                   base::Owned(new PasswordForm(*form))));
     std::vector<PasswordForm*> raw_forms(local_forms.size());
@@ -161,7 +175,7 @@ class MockPasswordManagerClient : public StubPasswordManagerClient {
   PasswordFormManagerForUI* pending_manager() const { return manager_.get(); }
 
   void set_zero_click_enabled(bool zero_click_enabled) {
-    prefs_->SetBoolean(prefs::kCredentialsEnableAutosignin, zero_click_enabled);
+    auto_sign_in_enabled_ = zero_click_enabled;
   }
 
   void set_first_run_seen(bool first_run_seen) {
@@ -180,6 +194,7 @@ class MockPasswordManagerClient : public StubPasswordManagerClient {
   std::unique_ptr<PasswordFormManagerForUI> manager_;
   PasswordManager password_manager_;
   GURL last_committed_url_{kTestWebOrigin};
+  bool auto_sign_in_enabled_ = true;
 };
 
 // Callbacks from CredentialManagerImpl methods
@@ -232,12 +247,15 @@ class CredentialManagerImplTest : public testing::Test,
     if (base::FeatureList::IsEnabled(
             features::kEnablePasswordsAccountStorage)) {
       account_store_ = new TestPasswordStore(IsAccountStore(true));
-      ASSERT_TRUE(account_store_->Init(/*prefs=*/nullptr,
-                                       /*affiliated_match_helper=*/nullptr));
+      account_store_->Init(/*prefs=*/nullptr,
+                           /*affiliated_match_helper=*/nullptr);
     }
     client_ = std::make_unique<testing::NiceMock<MockPasswordManagerClient>>(
         store_.get(), account_store_.get());
     cm_service_impl_ = std::make_unique<CredentialManagerImpl>(client_.get());
+    cm_service_impl_->set_leak_factory(
+        std::make_unique<NiceMock<MockLeakDetectionCheckFactory>>());
+
     ON_CALL(*client_, IsSavingAndFillingEnabled(_))
         .WillByDefault(testing::Return(true));
     ON_CALL(*client_, IsFillingEnabled(_)).WillByDefault(testing::Return(true));
@@ -1461,21 +1479,6 @@ TEST_P(CredentialManagerImplTest, IncognitoZeroClickRequestCredential) {
                        federations, CredentialType::CREDENTIAL_TYPE_EMPTY);
 }
 
-TEST_P(CredentialManagerImplTest, AutofillAssistantZeroClickRequestCredential) {
-  store_->AddLogin(form_);
-
-  std::vector<GURL> federations;
-  EXPECT_CALL(*client_, PromptUserToChooseCredentialsPtr)
-      .Times(testing::Exactly(0));
-  EXPECT_CALL(*client_, NotifyUserAutoSigninPtr()).Times(testing::Exactly(0));
-  EXPECT_CALL(*client_, IsIncognito()).WillRepeatedly(testing::Return(false));
-  EXPECT_CALL(*client_, IsAutofillAssistantUIVisible())
-      .WillRepeatedly(testing::Return(true));
-
-  ExpectCredentialType(CredentialMediationRequirement::kOptional, true,
-                       federations, CredentialType::CREDENTIAL_TYPE_EMPTY);
-}
-
 TEST_P(CredentialManagerImplTest, ZeroClickWithAffiliatedFormInPasswordStore) {
   // Insert the affiliated form into the store, and mock out the association
   // with the current origin. As it's the only form matching the origin, it
@@ -1628,24 +1631,6 @@ TEST_P(CredentialManagerImplTest, GetSynthesizedFormForOrigin) {
   EXPECT_EQ(PasswordForm::Scheme::kHtml, synthesized.scheme);
 }
 
-TEST_P(CredentialManagerImplTest, GetBlockedPasswordCredential) {
-  PasswordForm blocked_form;
-  blocked_form.blocked_by_user = true;
-  blocked_form.url = form_.url;
-  blocked_form.signon_realm = blocked_form.url.spec();
-  // Deliberately use a wrong format with a non-empty username to simulate a
-  // leak. See https://crbug.com/817754.
-  blocked_form.username_value = u"Username";
-  store_->AddLogin(blocked_form);
-
-  EXPECT_CALL(*client_, PromptUserToChooseCredentialsPtr(_, _, _)).Times(0);
-  EXPECT_CALL(*client_, NotifyUserAutoSigninPtr()).Times(0);
-
-  std::vector<GURL> federations;
-  ExpectCredentialType(CredentialMediationRequirement::kOptional, true,
-                       federations, CredentialType::CREDENTIAL_TYPE_EMPTY);
-}
-
 TEST_P(CredentialManagerImplTest, BlockedPasswordCredential) {
   EXPECT_CALL(*client_, PromptUserToSavePasswordPtr(_));
 
@@ -1756,7 +1741,7 @@ TEST_P(CredentialManagerImplTest,
       *client_,
       PasswordWasAutofilled(
           ElementsAre(Pointee(MatchesFormExceptStore(form_))), _,
-          Pointee(ElementsAre(Pointee(MatchesFormExceptStore(federated))))));
+          Pointee(ElementsAre(Pointee(MatchesFormExceptStore(federated)))), _));
 
   bool called = false;
   CredentialManagerError error;

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,23 +10,18 @@
 #include <memory>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_path_watcher.h"
+#include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/scoped_blocking_call.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "build/chromecast_buildflags.h"
 #include "build/chromeos_buildflags.h"
 #include "third_party/icu/source/i18n/unicode/timezone.h"
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/crosapi/mojom/timezone.mojom.h"
-#include "chromeos/lacros/lacros_service.h"
-#include "services/device/time_zone_monitor/time_zone_monitor_lacros.h"
-#endif
 
 namespace device {
 
@@ -45,8 +40,8 @@ class TimeZoneMonitorLinux : public TimeZoneMonitor {
   ~TimeZoneMonitorLinux() override;
 
   void NotifyClientsFromImpl() {
-#if BUILDFLAG(IS_CHROMECAST)
-    // On Chromecast, ICU's default time zone is already set to a new zone. No
+#if BUILDFLAG(IS_CASTOS)
+    // On CastOS, ICU's default time zone is already set to a new zone. No
     // need to redetect it with detectHostTimeZone() or to update ICU.
     // See http://b/112498903 and http://b/113344065.
     std::unique_ptr<icu::TimeZone> new_zone(icu::TimeZone::createDefault());
@@ -64,7 +59,7 @@ class TimeZoneMonitorLinux : public TimeZoneMonitor {
     }
 
     UpdateIcuAndNotifyClients(std::move(new_zone));
-#endif  // defined(IS_CHROMECAST)
+#endif  // defined(IS_CASTOS)
   }
 
  private:
@@ -110,7 +105,7 @@ class TimeZoneMonitorLinuxImpl
       TimeZoneMonitorLinux* owner,
       scoped_refptr<base::SequencedTaskRunner> file_task_runner)
       : base::RefCountedThreadSafe<TimeZoneMonitorLinuxImpl>(),
-        main_task_runner_(base::ThreadTaskRunnerHandle::Get()),
+        main_task_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()),
         file_task_runner_(file_task_runner),
         owner_(owner) {
     DCHECK(main_task_runner_->RunsTasksInCurrentSequence());
@@ -171,7 +166,7 @@ class TimeZoneMonitorLinuxImpl
 
   scoped_refptr<base::SequencedTaskRunner> main_task_runner_;
   scoped_refptr<base::SequencedTaskRunner> file_task_runner_;
-  TimeZoneMonitorLinux* owner_;
+  raw_ptr<TimeZoneMonitorLinux> owner_;
 };
 
 }  // namespace
@@ -206,17 +201,6 @@ TimeZoneMonitorLinux::~TimeZoneMonitorLinux() {
 // static
 std::unique_ptr<TimeZoneMonitor> TimeZoneMonitor::Create(
     scoped_refptr<base::SequencedTaskRunner> file_task_runner) {
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  // TODO(crbug.com/1288168): This is a temporary measure to allow Lacros
-  // to work with older versions of Ash by using there TimeZoneMonitorLinux.
-  auto* lacros_service = chromeos::LacrosService::Get();
-  if (lacros_service->IsAvailable<crosapi::mojom::TimeZoneService>())
-    return std::make_unique<TimeZoneMonitorLacros>();
-
-  LOG(WARNING) << "TimeZoneService crosapi is not available in ash-chrome now. "
-               << "Fallback to TimeZoneMonitorLinux.";
-#endif
-
   return std::make_unique<TimeZoneMonitorLinux>(file_task_runner);
 }
 

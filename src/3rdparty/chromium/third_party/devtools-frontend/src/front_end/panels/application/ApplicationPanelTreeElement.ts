@@ -6,7 +6,7 @@ import * as Common from '../../core/common/common.js';
 import type * as Platform from '../../core/platform/platform.js';
 import * as UI from '../../ui/legacy/legacy.js';
 
-import type {ResourcesPanel} from './ResourcesPanel.js';
+import {type ResourcesPanel} from './ResourcesPanel.js';
 
 export class ApplicationPanelTreeElement extends UI.TreeOutline.TreeElement {
   protected readonly resourcesPanel: ResourcesPanel;
@@ -15,6 +15,12 @@ export class ApplicationPanelTreeElement extends UI.TreeOutline.TreeElement {
     super(title, expandable);
     this.resourcesPanel = resourcesPanel;
     UI.ARIAUtils.setAccessibleName(this.listItemElement, title);
+    this.listItemElement.tabIndex = -1;
+  }
+
+  deselect(): void {
+    super.deselect();
+    this.listItemElement.tabIndex = -1;
   }
 
   get itemURL(): Platform.DevToolsPath.UrlString {
@@ -47,7 +53,7 @@ export class ApplicationPanelTreeElement extends UI.TreeOutline.TreeElement {
 export class ExpandableApplicationPanelTreeElement extends ApplicationPanelTreeElement {
   protected readonly expandedSetting: Common.Settings.Setting<boolean>;
   protected readonly categoryName: string;
-  protected categoryLink: string|null;
+  protected categoryLink: Platform.DevToolsPath.UrlString|null;
 
   constructor(resourcesPanel: ResourcesPanel, categoryName: string, settingsKey: string, settingsDefault = false) {
     super(resourcesPanel, categoryName, false);
@@ -61,7 +67,7 @@ export class ExpandableApplicationPanelTreeElement extends ApplicationPanelTreeE
     return 'category://' + this.categoryName as Platform.DevToolsPath.UrlString;
   }
 
-  setLink(link: string): void {
+  setLink(link: Platform.DevToolsPath.UrlString): void {
     this.categoryLink = link;
   }
 

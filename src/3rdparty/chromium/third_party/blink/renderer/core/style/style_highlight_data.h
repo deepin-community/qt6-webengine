@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -43,11 +43,12 @@ class CORE_EXPORT StyleHighlightData final
   const CustomHighlightsStyleMap& CustomHighlights() const {
     return custom_highlights_;
   }
-  void SetSelection(scoped_refptr<ComputedStyle>&&);
-  void SetTargetText(scoped_refptr<ComputedStyle>&&);
-  void SetSpellingError(scoped_refptr<ComputedStyle>&&);
-  void SetGrammarError(scoped_refptr<ComputedStyle>&&);
-  void SetCustomHighlight(const AtomicString&, scoped_refptr<ComputedStyle>&&);
+  void SetSelection(scoped_refptr<const ComputedStyle>&&);
+  void SetTargetText(scoped_refptr<const ComputedStyle>&&);
+  void SetSpellingError(scoped_refptr<const ComputedStyle>&&);
+  void SetGrammarError(scoped_refptr<const ComputedStyle>&&);
+  void SetCustomHighlight(const AtomicString&,
+                          scoped_refptr<const ComputedStyle>&&);
 
  private:
   StyleHighlightData();

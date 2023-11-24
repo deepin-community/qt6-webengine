@@ -1,4 +1,4 @@
-# Copyright 2021 The Chromium Authors. All rights reserved.
+# Copyright 2021 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -11,6 +11,10 @@ static_library("structured") {
   sources = [
     "chrome_structured_metrics_recorder.cc",
     "chrome_structured_metrics_recorder.h",
+    "cros_events_processor.cc",
+    "cros_events_processor.h",
+    "event_logging_features.cc",
+    "event_logging_features.h",
   ]
 
   deps = [
@@ -19,15 +23,22 @@ static_library("structured") {
     "//chromeos/crosapi/mojom",
     "//components/metrics/structured",
     "//components/metrics/structured:structured_events",
+    "//components/prefs",
   ]
 
   if (is_chromeos_ash) {
     sources += [
       "ash_structured_metrics_recorder.cc",
       "ash_structured_metrics_recorder.h",
+      "structured_metrics_user_session_observer.cc",
+      "structured_metrics_user_session_observer.h",
     ]
 
-    deps += [ "//chrome/browser/ash/crosapi" ]
+    deps += [
+      "//chrome/browser:browser_process",
+      "//chrome/browser/ash/crosapi",
+      "//components/user_manager:user_manager",
+    ]
   }
 
   if (is_chromeos_lacros) {
@@ -38,4 +49,16 @@ static_library("structured") {
 
     deps += [ "//chromeos/lacros" ]
   }
+}
+
+static_library("test_support") {
+  testonly = true
+  sources = [
+    "test/structured_metrics_mixin.cc",
+    "test/structured_metrics_mixin.h",
+  ]
+  deps = [
+    "//chrome/test:test_support",
+    "//components/metrics/structured:test_support",
+  ]
 }

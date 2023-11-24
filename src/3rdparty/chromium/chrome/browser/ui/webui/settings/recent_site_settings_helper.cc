@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -59,8 +59,7 @@ std::map<GURL, std::vector<TimestampedSetting>> GetAllSettingsForProfile(
     auto exceptions_for_type = site_settings::GetSiteExceptionsForContentType(
         content_settings_map, content_type);
     for (const auto& e : exceptions_for_type) {
-      auto last_modified = content_settings_map->GetSettingLastModifiedDate(
-          e.primary_pattern, e.secondary_pattern, content_type);
+      auto last_modified = e.metadata.last_modified;
       if (last_modified.is_null()) {
         continue;
       }
@@ -133,9 +132,13 @@ RecentSitePermissions::RecentSitePermissions(RecentSitePermissions&& other) =
     default;
 RecentSitePermissions::RecentSitePermissions(
     GURL origin,
+    absl::optional<std::string> isolated_web_app_name,
     bool incognito,
     std::vector<TimestampedSetting> settings)
-    : origin(origin), incognito(incognito), settings(settings) {}
+    : origin(origin),
+      isolated_web_app_name(std::move(isolated_web_app_name)),
+      incognito(incognito),
+      settings(settings) {}
 RecentSitePermissions::~RecentSitePermissions() = default;
 
 std::vector<RecentSitePermissions> GetRecentSitePermissions(
@@ -198,13 +201,16 @@ std::vector<RecentSitePermissions> GetRecentSitePermissions(
   // recent setting for each source.
   std::vector<RecentSitePermissions> all_site_permissions;
   for (auto& url_settings_pair : regular_settings) {
-    all_site_permissions.push_back({url_settings_pair.first,
-                                    false /*incognito*/,
-                                    std::move(url_settings_pair.second)});
+    all_site_permissions.emplace_back(
+        url_settings_pair.first,
+        GetIsolatedWebAppName(profile, url_settings_pair.first),
+        /*incognito=*/false, std::move(url_settings_pair.second));
   }
   for (auto& url_settings_pair : incognito_settings) {
-    all_site_permissions.push_back({url_settings_pair.first, true /*incognito*/,
-                                    std::move(url_settings_pair.second)});
+    all_site_permissions.emplace_back(url_settings_pair.first,
+                                      /*isolated_web_app_name=*/absl::nullopt,
+                                      /*incognito=*/true,
+                                      std::move(url_settings_pair.second));
   }
   std::sort(all_site_permissions.begin(), all_site_permissions.end(),
             [](const RecentSitePermissions& x, const RecentSitePermissions& y) {

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -71,12 +71,11 @@ class TestOverlayWindow : public VideoOverlayWindow {
     return std::unique_ptr<VideoOverlayWindow>(new TestOverlayWindow());
   }
 
-  bool IsActive() override { return false; }
+  bool IsActive() const override { return false; }
   void Close() override {}
   void ShowInactive() override {}
   void Hide() override {}
-  bool IsVisible() override { return false; }
-  bool IsAlwaysOnTop() override { return false; }
+  bool IsVisible() const override { return false; }
   gfx::Rect GetBounds() override { return gfx::Rect(size_); }
   void UpdateNaturalSize(const gfx::Size& natural_size) override {
     size_ = natural_size;
@@ -91,8 +90,9 @@ class TestOverlayWindow : public VideoOverlayWindow {
   void SetToggleMicrophoneButtonVisibility(bool is_visible) override {}
   void SetToggleCameraButtonVisibility(bool is_visible) override {}
   void SetHangUpButtonVisibility(bool is_visible) override {}
+  void SetNextSlideButtonVisibility(bool is_visible) override {}
+  void SetPreviousSlideButtonVisibility(bool is_visible) override {}
   void SetSurfaceId(const viz::SurfaceId& surface_id) override {}
-  cc::Layer* GetLayerForTesting() override { return nullptr; }
 
  private:
   gfx::Size size_;
@@ -139,6 +139,7 @@ class PictureInPictureMediaPlayerReceiver : public media::mojom::MediaPlayer {
   void SetPowerExperimentState(bool enabled) override {}
   void SetAudioSinkId(const std::string& sink_id) override {}
   void SuspendForFrameClosed() override {}
+  void RequestMediaRemoting() override {}
 
  private:
   mojo::AssociatedReceiver<media::mojom::MediaPlayer> receiver_{this};
@@ -151,7 +152,7 @@ class PictureInPictureServiceImplTest : public RenderViewHostImplTestHarness {
 
     SetBrowserClientForTesting(&browser_client_);
 
-    TestRenderFrameHost* render_frame_host = contents()->GetMainFrame();
+    TestRenderFrameHost* render_frame_host = contents()->GetPrimaryMainFrame();
     render_frame_host->InitializeRenderFrameIfNeeded();
 
     contents()->SetDelegate(&delegate_);
@@ -210,10 +211,10 @@ TEST_F(PictureInPictureServiceImplTest, MAYBE_EnterPictureInPicture) {
   // If Picture-in-Picture there shouldn't be an active session.
   EXPECT_FALSE(controller->active_session_for_testing());
 
-  viz::SurfaceId surface_id =
-      viz::SurfaceId(viz::FrameSinkId(1, 1),
-                     viz::LocalSurfaceId(
-                         11, base::UnguessableToken::Deserialize(0x111111, 0)));
+  viz::SurfaceId surface_id = viz::SurfaceId(
+      viz::FrameSinkId(1, 1),
+      viz::LocalSurfaceId(
+          11, base::UnguessableToken::CreateForTesting(0x111111, 0)));
 
   EXPECT_CALL(delegate(), EnterPictureInPicture(contents()))
       .WillRepeatedly(testing::Return(PictureInPictureResult::kSuccess));
@@ -221,10 +222,11 @@ TEST_F(PictureInPictureServiceImplTest, MAYBE_EnterPictureInPicture) {
   mojo::Remote<blink::mojom::PictureInPictureSession> session_remote;
   gfx::Size window_size;
 
+  const gfx::Rect source_bounds(1, 2, 3, 4);
   service().StartSession(
       kPlayerVideoOnlyId, BindMediaPlayerReceiverAndPassRemote(), surface_id,
       gfx::Size(42, 42), true /* show_play_pause_button */,
-      std::move(observer_remote),
+      std::move(observer_remote), source_bounds,
       base::BindLambdaForTesting(
           [&](mojo::PendingRemote<blink::mojom::PictureInPictureSession> remote,
               const gfx::Size& b) {
@@ -233,9 +235,9 @@ TEST_F(PictureInPictureServiceImplTest, MAYBE_EnterPictureInPicture) {
             window_size = b;
           }));
 
-  EXPECT_TRUE(controller->active_session_for_testing());
   EXPECT_TRUE(session_remote);
   EXPECT_EQ(gfx::Size(42, 42), window_size);
+  EXPECT_EQ(source_bounds, controller->GetSourceBounds());
 
   // Picture-in-Picture media player id should not be reset when the media is
   // destroyed (e.g. video stops playing). This allows the Picture-in-Picture
@@ -255,21 +257,22 @@ TEST_F(PictureInPictureServiceImplTest, EnterPictureInPicture_NotSupported) {
 
   mojo::PendingRemote<blink::mojom::PictureInPictureSessionObserver>
       observer_remote;
-  viz::SurfaceId surface_id =
-      viz::SurfaceId(viz::FrameSinkId(1, 1),
-                     viz::LocalSurfaceId(
-                         11, base::UnguessableToken::Deserialize(0x111111, 0)));
+  viz::SurfaceId surface_id = viz::SurfaceId(
+      viz::FrameSinkId(1, 1),
+      viz::LocalSurfaceId(
+          11, base::UnguessableToken::CreateForTesting(0x111111, 0)));
 
   EXPECT_CALL(delegate(), EnterPictureInPicture(contents()))
       .WillRepeatedly(testing::Return(PictureInPictureResult::kNotSupported));
 
   mojo::Remote<blink::mojom::PictureInPictureSession> session_remote;
   gfx::Size window_size;
+  const gfx::Rect source_bounds(1, 2, 3, 4);
 
   service().StartSession(
       kPlayerVideoOnlyId, BindMediaPlayerReceiverAndPassRemote(), surface_id,
       gfx::Size(42, 42), true /* show_play_pause_button */,
-      std::move(observer_remote),
+      std::move(observer_remote), source_bounds,
       base::BindLambdaForTesting(
           [&](mojo::PendingRemote<blink::mojom::PictureInPictureSession> remote,
               const gfx::Size& b) {

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -83,6 +83,9 @@ class CONTENT_EXPORT TouchSelectionControllerClientAura
   void ShowQuickMenu();
   void UpdateQuickMenu();
 
+  void ShowMagnifier(const gfx::PointF& position);
+  void CloseMagnifier();
+
   // ui::TouchSelectionControllerClient:
   bool SupportsAnimation() const override;
   void SetNeedsAnimate() override;
@@ -124,7 +127,7 @@ class CONTENT_EXPORT TouchSelectionControllerClientAura
     void DidScroll() override;
 
    private:
-    raw_ptr<RenderWidgetHostViewAura> rwhva_;
+    raw_ptr<RenderWidgetHostViewAura, DanglingUntriaged> rwhva_;
   } internal_client_;
 
   // Keep track of which client interface to use.

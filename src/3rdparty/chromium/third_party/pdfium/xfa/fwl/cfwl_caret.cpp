@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -61,9 +61,9 @@ void CFWL_Caret::DrawCaretBK(CFGAS_GEGraphics* pGraphics,
   if (!(m_Properties.m_dwStates & kStateHighlight))
     return;
 
-  CFWL_ThemeBackground param(this, pGraphics);
+  CFWL_ThemeBackground param(CFWL_ThemePart::Part::kBackground, this,
+                             pGraphics);
   param.m_PartRect = CFX_RectF(0, 0, GetWidgetRect().Size());
-  param.m_iPart = CFWL_ThemePart::Part::kBackground;
   param.m_dwStates = CFWL_PartState::kHightLight;
   param.m_matrix = mtMatrix;
   GetThemeProvider()->DrawBackground(param);

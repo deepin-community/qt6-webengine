@@ -1,15 +1,15 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "device/gamepad/nintendo_controller.h"
 
-#include <algorithm>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/cxx17_backports.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/functional/bind.h"
+#include "base/ranges/algorithm.h"
+#include "base/task/single_thread_task_runner.h"
 #include "device/gamepad/gamepad_data_fetcher.h"
 #include "device/gamepad/gamepad_id_list.h"
 
@@ -1565,8 +1565,7 @@ void NintendoController::SubCommand(uint8_t sub_command,
   report_bytes[8] = 0x40;
   report_bytes[9] = sub_command;
   DCHECK_LT(bytes.size() + kSubCommandDataOffset, output_report_size_bytes_);
-  std::copy(bytes.begin(), bytes.end(),
-            &report_bytes[kSubCommandDataOffset - 1]);
+  base::ranges::copy(bytes, &report_bytes[kSubCommandDataOffset - 1]);
   WriteOutputReport(kReportIdOutput01, report_bytes, true);
 }
 
@@ -1772,19 +1771,24 @@ void NintendoController::DoShutdown() {
   device_info_.reset();
 }
 
-void NintendoController::SetVibration(double strong_magnitude,
-                                      double weak_magnitude) {
+void NintendoController::SetVibration(
+    mojom::GamepadEffectParametersPtr params) {
   if (is_composite_) {
     // Split the vibration effect between the left and right subdevices.
     if (composite_left_ && composite_right_) {
-      composite_left_->SetVibration(strong_magnitude, 0);
-      composite_right_->SetVibration(0, weak_magnitude);
+      composite_left_->SetVibration(mojom::GamepadEffectParameters::New(
+          params->duration, params->start_delay, params->strong_magnitude,
+          /*weak_magnitude=*/0, /*left_trigger=*/0, /*right_trigger=*/0));
+      composite_right_->SetVibration(mojom::GamepadEffectParameters::New(
+          params->duration, params->start_delay, /*strong_magnitude=*/0,
+          params->weak_magnitude, /*left_trigger=*/0, /*right_trigger=*/0));
     }
   } else {
-    RequestVibration(kVibrationFrequencyStrongRumble,
-                     kVibrationAmplitudeStrongRumbleMax * strong_magnitude,
-                     kVibrationFrequencyWeakRumble,
-                     kVibrationAmplitudeWeakRumbleMax * weak_magnitude);
+    RequestVibration(
+        kVibrationFrequencyStrongRumble,
+        kVibrationAmplitudeStrongRumbleMax * params->strong_magnitude,
+        kVibrationFrequencyWeakRumble,
+        kVibrationAmplitudeWeakRumbleMax * params->weak_magnitude);
   }
 }
 
@@ -1796,7 +1800,7 @@ void NintendoController::ArmTimeout() {
   DCHECK(timeout_callback_.IsCancelled());
   timeout_callback_.Reset(base::BindOnce(&NintendoController::OnTimeout,
                                          weak_factory_.GetWeakPtr()));
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE, timeout_callback_.callback(), kTimeoutDuration);
 }
 

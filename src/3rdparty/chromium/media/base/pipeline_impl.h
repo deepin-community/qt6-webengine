@@ -1,4 +1,4 @@
-// Copyright (c) 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,9 @@
 #include <memory>
 
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "media/base/media_export.h"
@@ -83,7 +84,7 @@ class MEDIA_EXPORT PipelineImpl : public Pipeline {
  public:
   // Constructs a pipeline that will execute media tasks on |media_task_runner|.
   // |create_renderer_cb|: to create renderers when starting and resuming.
-  PipelineImpl(scoped_refptr<base::SingleThreadTaskRunner> media_task_runner,
+  PipelineImpl(scoped_refptr<base::SequencedTaskRunner> media_task_runner,
                scoped_refptr<base::SingleThreadTaskRunner> main_task_runner,
                CreateRendererCB create_renderer_cb,
                MediaLog* media_log);
@@ -130,6 +131,8 @@ class MEDIA_EXPORT PipelineImpl : public Pipeline {
       absl::optional<MediaTrack::Id> selected_track_id,
       base::OnceClosure change_completed_cb) override;
 
+  void OnExternalVideoFrameRequest() override;
+
  private:
   friend class MediaLog;
   class RendererWrapper;
@@ -157,6 +160,7 @@ class MEDIA_EXPORT PipelineImpl : public Pipeline {
 
   // Notifications from RendererWrapper.
   void OnError(PipelineStatus error);
+  void OnFallback(PipelineStatus fallback);
   void OnEnded();
   void OnMetadata(const PipelineMetadata& metadata);
   void OnBufferingStateChange(BufferingState state,
@@ -178,7 +182,7 @@ class MEDIA_EXPORT PipelineImpl : public Pipeline {
   void OnSuspendDone();
 
   // Parameters passed in the constructor.
-  const scoped_refptr<base::SingleThreadTaskRunner> media_task_runner_;
+  const scoped_refptr<base::SequencedTaskRunner> media_task_runner_;
   CreateRendererCB create_renderer_cb_;
   const raw_ptr<MediaLog> media_log_;
 
@@ -218,6 +222,13 @@ class MEDIA_EXPORT PipelineImpl : public Pipeline {
 
   // Cached suspension state for the RendererWrapper.
   bool is_suspended_;
+
+  // 'external_video_frame_request_signaled_' tracks whether we've called
+  // OnExternalVideoFrameRequest on the current renderer. Calls which may
+  // create a new renderer in the RendererWrapper (Start, Resume, SetCdm) will
+  // reset this member. There is no guarantee to the client that
+  // OnExternalVideoFrameRequest will be called only once.
+  bool external_video_frame_request_signaled_ = false;
 
   base::ThreadChecker thread_checker_;
   base::WeakPtrFactory<PipelineImpl> weak_factory_{this};

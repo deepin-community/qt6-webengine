@@ -12,6 +12,7 @@
 #include "quiche/quic/core/quic_connection_id.h"
 #include "quiche/quic/core/quic_connection_stats.h"
 #include "quiche/quic/core/quic_packets.h"
+#include "quiche/quic/core/quic_path_validator.h"
 #include "quiche/quic/core/quic_types.h"
 #include "quiche/quic/platform/api/quic_socket_address.h"
 
@@ -52,6 +53,10 @@ class QuicConnectionPeer {
   static QuicTime::Delta GetNetworkTimeout(QuicConnection* connection);
 
   static QuicTime::Delta GetHandshakeTimeout(QuicConnection* connection);
+
+  static QuicTime::Delta GetBandwidthUpdateTimeout(QuicConnection* connection);
+
+  static void DisableBandwidthUpdate(QuicConnection* connection);
 
   static void SetPerspective(QuicConnection* connection,
                              Perspective perspective);
@@ -128,8 +133,6 @@ class QuicConnectionPeer {
   static bool SupportsReleaseTime(QuicConnection* connection);
   static QuicConnection::PacketContent GetCurrentPacketContent(
       QuicConnection* connection);
-  static void SetLastHeaderFormat(QuicConnection* connection,
-                                  PacketHeaderFormat format);
   static void AddBytesReceived(QuicConnection* connection, size_t length);
   static void SetAddressValidated(QuicConnection* connection);
 
@@ -173,6 +176,8 @@ class QuicConnectionPeer {
 
   static QuicPathValidator* path_validator(QuicConnection* connection);
 
+  static QuicByteCount BytesReceivedOnDefaultPath(QuicConnection* connection);
+
   static QuicByteCount BytesSentOnAlternativePath(QuicConnection* connection);
 
   static QuicByteCount BytesReceivedOnAlternativePath(
@@ -197,6 +202,10 @@ class QuicConnectionPeer {
 
   static QuicConnection::PathState* GetDefaultPath(QuicConnection* connection);
 
+  static bool IsDefaultPath(QuicConnection* connection,
+                            const QuicSocketAddress& self_address,
+                            const QuicSocketAddress& peer_address);
+
   static QuicConnection::PathState* GetAlternativePath(
       QuicConnection* connection);
 
@@ -220,6 +229,21 @@ class QuicConnectionPeer {
   static QuicCoalescedPacket& GetCoalescedPacket(QuicConnection* connection);
 
   static void FlushCoalescedPacket(QuicConnection* connection);
+
+  static QuicAlarm* GetMultiPortProbingAlarm(QuicConnection* connection);
+
+  static void SetInProbeTimeOut(QuicConnection* connection, bool value);
+
+  static QuicSocketAddress GetReceivedServerPreferredAddress(
+      QuicConnection* connection);
+
+  static QuicSocketAddress GetSentServerPreferredAddress(
+      QuicConnection* connection);
+
+  static QuicEcnCounts* GetEcnCounts(QuicConnection* connection,
+                                     PacketNumberSpace packet_number_space);
+
+  static bool TestLastReceivedPacketInfoDefaults();
 };
 
 }  // namespace test

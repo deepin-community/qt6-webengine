@@ -1,4 +1,4 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -6,13 +6,13 @@ import six
 
 # Ignore the following files from SVG optimization checks.
 BLOCKLIST = [
-  # Ignore since it holds documentation comments.
-  "components/dom_distiller/core/images/dom_distiller_material_spinner.svg",
+    # Ignore since it holds documentation comments.
+    "components/dom_distiller/core/images/dom_distiller_material_spinner.svg",
 ]
 
 def CheckOptimized(input_api, output_api):
   file_filter = lambda f: f.LocalPath().endswith('.svg') and \
-      f.LocalPath() not in BLOCKLIST
+      f.LocalPath().replace('\\', '/') not in BLOCKLIST
   svgs = input_api.AffectedFiles(file_filter=file_filter, include_deletes=False)
 
   if not svgs:
@@ -31,7 +31,7 @@ def CheckOptimized(input_api, output_api):
     original = b'\n'.join(_ToBinary(line) for line in f.NewContents()).strip()
     output = _ToBinary(
         svgo.Run(input_api.os_path,
-                 ['-o', '-', f.AbsoluteLocalPath()]).strip())
+                 ['-o', '-', '-i', f.AbsoluteLocalPath()]).strip())
     if original != output:
       unoptimized.append(f.LocalPath())
 

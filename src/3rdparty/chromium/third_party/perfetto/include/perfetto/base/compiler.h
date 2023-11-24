@@ -21,6 +21,17 @@
 #include <type_traits>
 
 #include "perfetto/base/build_config.h"
+#include "perfetto/public/compiler.h"
+
+#if __cplusplus >= 201703
+#define PERFETTO_IS_AT_LEAST_CPP17() 1
+#elif defined(_MSVC_LANG) && _MSVC_LANG >= 201703L
+// Without additional flags, MSVC is not standard compliant and keeps
+// __cplusplus stuck at an old value, even with C++17
+#define PERFETTO_IS_AT_LEAST_CPP17() 1
+#else
+#define PERFETTO_IS_AT_LEAST_CPP17() 0
+#endif
 
 // __has_attribute is supported only by clang and recent versions of GCC.
 // Add a layer to wrap the __has_attribute macro.
@@ -31,17 +42,15 @@
 #endif
 
 #if defined(__GNUC__) || defined(__clang__)
-#define PERFETTO_LIKELY(_x) __builtin_expect(!!(_x), 1)
-#define PERFETTO_UNLIKELY(_x) __builtin_expect(!!(_x), 0)
-#else
-#define PERFETTO_LIKELY(_x) (_x)
-#define PERFETTO_UNLIKELY(_x) (_x)
-#endif
-
-#if defined(__GNUC__) || defined(__clang__)
 #define PERFETTO_WARN_UNUSED_RESULT __attribute__((warn_unused_result))
 #else
 #define PERFETTO_WARN_UNUSED_RESULT
+#endif
+
+#if defined(__GNUC__) || defined(__clang__)
+#define PERFETTO_UNUSED __attribute__((unused))
+#else
+#define PERFETTO_UNUSED
 #endif
 
 #if defined(__clang__)

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,15 +6,14 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/contains.h"
 #include "base/containers/cxx20_erase.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/observer_list.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
-#include "components/viz/common/features.h"
 #include "components/viz/common/surfaces/surface_info.h"
 #include "components/viz/host/renderer_settings_creation.h"
 #include "mojo/public/cpp/bindings/sync_call_restrictions.h"
@@ -24,9 +23,7 @@
 namespace viz {
 
 HostFrameSinkManager::HostFrameSinkManager()
-    : enable_sync_window_destruction_(
-          features::IsSyncWindowDestructionEnabled()),
-      debug_renderer_settings_(CreateDefaultDebugRendererSettings()) {}
+    : debug_renderer_settings_(CreateDefaultDebugRendererSettings()) {}
 
 HostFrameSinkManager::~HostFrameSinkManager() = default;
 
@@ -68,7 +65,7 @@ void HostFrameSinkManager::RegisterFrameSinkId(
   DCHECK(client);
 
   FrameSinkData& data = frame_sink_data_map_[frame_sink_id];
-  DCHECK(!data.IsFrameSinkRegistered());
+  CHECK(!data.IsFrameSinkRegistered());
   DCHECK(!data.has_created_compositor_frame_sink);
   data.client = client;
   data.report_activation = report_activation;
@@ -87,7 +84,7 @@ void HostFrameSinkManager::InvalidateFrameSinkId(
   DCHECK(frame_sink_id.is_valid());
 
   FrameSinkData& data = frame_sink_data_map_[frame_sink_id];
-  DCHECK(data.IsFrameSinkRegistered());
+  CHECK(data.IsFrameSinkRegistered());
 
   const bool destroy_synchronously =
       data.has_created_compositor_frame_sink && data.wait_on_destruction;
@@ -130,7 +127,8 @@ void HostFrameSinkManager::SetFrameSinkDebugLabel(
 }
 
 void HostFrameSinkManager::CreateRootCompositorFrameSink(
-    mojom::RootCompositorFrameSinkParamsPtr params) {
+    mojom::RootCompositorFrameSinkParamsPtr params,
+    bool maybe_wait_on_destruction /*=true*/) {
   // Should only be used with an out-of-process display compositor.
   DCHECK(frame_sink_manager_remote_ || !frame_sink_manager_);
 
@@ -147,7 +145,7 @@ void HostFrameSinkManager::CreateRootCompositorFrameSink(
 
   // Only wait on destruction if using GPU compositing for the window.
   data.wait_on_destruction =
-      enable_sync_window_destruction_ && params->gpu_compositing;
+      maybe_wait_on_destruction && params->gpu_compositing;
 
   if (frame_sink_manager_) {
     data.is_root = true;
@@ -230,13 +228,13 @@ bool HostFrameSinkManager::RegisterFrameSinkHierarchy(
     return false;
   }
 
+  FrameSinkData& parent_data = iter->second;
+  CHECK(!base::Contains(parent_data.children, child_frame_sink_id));
+  parent_data.children.push_back(child_frame_sink_id);
+
   // Register and store the parent.
   frame_sink_manager_->RegisterFrameSinkHierarchy(parent_frame_sink_id,
                                                   child_frame_sink_id);
-
-  FrameSinkData& parent_data = iter->second;
-  DCHECK(!base::Contains(parent_data.children, child_frame_sink_id));
-  parent_data.children.push_back(child_frame_sink_id);
 
   return true;
 }
@@ -246,8 +244,9 @@ void HostFrameSinkManager::UnregisterFrameSinkHierarchy(
     const FrameSinkId& child_frame_sink_id) {
   // Unregister and clear the stored parent.
   FrameSinkData& parent_data = frame_sink_data_map_[parent_frame_sink_id];
-  DCHECK(base::Contains(parent_data.children, child_frame_sink_id));
-  base::Erase(parent_data.children, child_frame_sink_id);
+  size_t num_erased = base::Erase(parent_data.children, child_frame_sink_id);
+  CHECK_EQ(num_erased, 1u);
+
   if (parent_data.IsEmpty())
     frame_sink_data_map_.erase(parent_frame_sink_id);
 
@@ -292,6 +291,15 @@ void HostFrameSinkManager::Throttle(const std::vector<FrameSinkId>& ids,
   frame_sink_manager_->Throttle(ids, interval);
 }
 
+void HostFrameSinkManager::StartThrottlingAllFrameSinks(
+    base::TimeDelta interval) {
+  frame_sink_manager_->StartThrottlingAllFrameSinks(interval);
+}
+
+void HostFrameSinkManager::StopThrottlingAllFrameSinks() {
+  frame_sink_manager_->StopThrottlingAllFrameSinks();
+}
+
 void HostFrameSinkManager::AddHitTestRegionObserver(
     HitTestRegionObserver* observer) {
   observers_.AddObserver(observer);
@@ -306,8 +314,11 @@ void HostFrameSinkManager::OnConnectionLost() {
   connection_was_lost_ = true;
 
   receiver_.reset();
-  frame_sink_manager_remote_.reset();
+  // frame_sink_manager_ points to |frame_sink_manager_remote_| if using mojo.
+  // Set frame_sink_manager_ to nullptr before
+  // frame_sink_manager_remote_.reset() to avoid dangling ptr.
   frame_sink_manager_ = nullptr;
+  frame_sink_manager_remote_.reset();
 
   // Any cached back buffers are invalid once the connection to the
   // FrameSinkManager is lost.
@@ -421,6 +432,19 @@ void HostFrameSinkManager::UpdateDebugRendererSettings(
     const DebugRendererSettings& debug_settings) {
   debug_renderer_settings_ = debug_settings;
   frame_sink_manager_->UpdateDebugRendererSettings(debug_settings);
+}
+
+void HostFrameSinkManager::StartFrameCountingForTest(
+    base::TimeTicks start_time,
+    base::TimeDelta bucket_size) {
+  frame_sink_manager_->StartFrameCountingForTest(start_time,  // IN-TEST
+                                                 bucket_size);
+}
+
+void HostFrameSinkManager::StopFrameCountingForTest(
+    mojom::FrameSinkManager::StopFrameCountingForTestCallback callback) {
+  frame_sink_manager_->StopFrameCountingForTest(  // IN-TEST
+      std::move(callback));
 }
 
 HostFrameSinkManager::FrameSinkData::FrameSinkData() = default;

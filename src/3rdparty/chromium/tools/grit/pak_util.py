@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2017 The Chromium Authors. All rights reserved.
+# Copyright 2017 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -9,7 +9,6 @@ For details on the pak file format, see:
 https://dev.chromium.org/developers/design-documents/linuxresourcesandlocalizedstrings
 """
 
-from __future__ import print_function
 
 import argparse
 import gzip
@@ -19,12 +18,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-
-_HERE_PATH = os.path.dirname(__file__)
-_SRC_PATH = os.path.normpath(os.path.join(_HERE_PATH, '..', '..'))
-sys.path.insert(0, os.path.join(_SRC_PATH, 'third_party', 'six', 'src'))
-
-import six
 
 from grit import constants
 from grit.format import data_pack
@@ -142,7 +135,7 @@ def _PrintMain(args):
     desc = '<data>'
     if try_decode:
       try:
-        desc = six.text_type(data, encoding)
+        desc = str(data, encoding)
         if len(desc) > 60:
           desc = desc[:60] + '...'
         desc = desc.replace('\n', '\\n')

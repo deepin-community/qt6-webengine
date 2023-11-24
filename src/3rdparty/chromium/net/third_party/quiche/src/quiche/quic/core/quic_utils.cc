@@ -170,10 +170,7 @@ const char* QuicUtils::SentPacketStateToString(SentPacketState state) {
     RETURN_STRING_LITERAL(NEUTERED);
     RETURN_STRING_LITERAL(HANDSHAKE_RETRANSMITTED);
     RETURN_STRING_LITERAL(LOST);
-    RETURN_STRING_LITERAL(TLP_RETRANSMITTED);
-    RETURN_STRING_LITERAL(RTO_RETRANSMITTED);
     RETURN_STRING_LITERAL(PTO_RETRANSMITTED);
-    RETURN_STRING_LITERAL(PROBE_RETRANSMITTED);
     RETURN_STRING_LITERAL(NOT_CONTRIBUTING_RTT);
   }
   return "INVALID_SENT_PACKET_STATE";
@@ -289,14 +286,8 @@ SentPacketState QuicUtils::RetransmissionTypeToPacketState(
       return HANDSHAKE_RETRANSMITTED;
     case LOSS_RETRANSMISSION:
       return LOST;
-    case TLP_RETRANSMISSION:
-      return TLP_RETRANSMITTED;
-    case RTO_RETRANSMISSION:
-      return RTO_RETRANSMITTED;
     case PTO_RETRANSMISSION:
       return PTO_RETRANSMITTED;
-    case PROBING_RETRANSMISSION:
-      return PROBE_RETRANSMITTED;
     case PATH_RETRANSMISSION:
       return NOT_CONTRIBUTING_RTT;
     case ALL_INITIAL_RETRANSMISSION:
@@ -453,41 +444,6 @@ QuicStreamId QuicUtils::GetMaxClientInitiatedBidirectionalStreamId(
 }
 
 // static
-QuicConnectionId QuicUtils::CreateReplacementConnectionId(
-    const QuicConnectionId& connection_id) {
-  return CreateReplacementConnectionId(connection_id,
-                                       kQuicDefaultConnectionIdLength);
-}
-
-// static
-QuicConnectionId QuicUtils::CreateReplacementConnectionId(
-    const QuicConnectionId& connection_id,
-    uint8_t expected_connection_id_length) {
-  if (expected_connection_id_length == 0) {
-    return EmptyQuicConnectionId();
-  }
-  const uint64_t connection_id_hash64 = FNV1a_64_Hash(
-      absl::string_view(connection_id.data(), connection_id.length()));
-  if (expected_connection_id_length <= sizeof(uint64_t)) {
-    return QuicConnectionId(
-        reinterpret_cast<const char*>(&connection_id_hash64),
-        expected_connection_id_length);
-  }
-  char new_connection_id_data[255] = {};
-  const absl::uint128 connection_id_hash128 = FNV1a_128_Hash(
-      absl::string_view(connection_id.data(), connection_id.length()));
-  static_assert(sizeof(connection_id_hash64) + sizeof(connection_id_hash128) <=
-                    sizeof(new_connection_id_data),
-                "bad size");
-  memcpy(new_connection_id_data, &connection_id_hash64,
-         sizeof(connection_id_hash64));
-  memcpy(new_connection_id_data + sizeof(connection_id_hash64),
-         &connection_id_hash128, sizeof(connection_id_hash128));
-  return QuicConnectionId(new_connection_id_data,
-                          expected_connection_id_length);
-}
-
-// static
 QuicConnectionId QuicUtils::CreateRandomConnectionId() {
   return CreateRandomConnectionId(kQuicDefaultConnectionIdLength,
                                   QuicRandom::GetInstance());
@@ -547,14 +503,6 @@ bool QuicUtils::IsConnectionIdLengthValidForVersion(
   if (!VersionAllowsVariableLengthConnectionIds(transport_version)) {
     return connection_id_length8 == kQuicDefaultConnectionIdLength;
   }
-  // Versions that do support variable length but do not have length-prefixed
-  // connection IDs use the 4-bit connection ID length encoding which can
-  // only encode values 0 and 4-18.
-  if (!VersionHasLengthPrefixedConnectionIds(transport_version)) {
-    return connection_id_length8 == 0 ||
-           (connection_id_length8 >= 4 &&
-            connection_id_length8 <= kQuicMaxConnectionId4BitLength);
-  }
   return connection_id_length8 <= kQuicMaxConnectionIdWithLengthPrefixLength;
 }
 
@@ -601,7 +549,7 @@ PacketNumberSpace QuicUtils::GetPacketNumberSpace(
 }
 
 // static
-EncryptionLevel QuicUtils::GetEncryptionLevel(
+EncryptionLevel QuicUtils::GetEncryptionLevelToSendAckofSpace(
     PacketNumberSpace packet_number_space) {
   switch (packet_number_space) {
     case INITIAL_DATA:

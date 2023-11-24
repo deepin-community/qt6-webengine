@@ -1,4 +1,4 @@
-# Copyright 2018 The Chromium Authors. All rights reserved.
+# Copyright 2018 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -19,6 +19,7 @@ component("public") {
     "auto_resumption_handler.cc",
     "auto_resumption_handler.h",
     "base_file.h",
+    "download_content.cc",
     "download_content.h",
     "download_create_info.h",
     "download_danger_type.cc",
@@ -38,16 +39,12 @@ component("public") {
     "download_item_factory.h",
     "download_item_impl.h",
     "download_item_impl_delegate.h",
-    "download_item_rename_handler.h",
-    "download_item_rename_progress_update.h",
     "download_job.h",
     "download_job_factory.h",
     "download_path_reservation_tracker.h",
     "download_response_handler.h",
     "download_save_info.cc",
     "download_save_info.h",
-    "download_schedule.cc",
-    "download_schedule.h",
     "download_source.h",
     "download_start_observer.h",
     "download_stats.h",
@@ -78,7 +75,6 @@ component("public") {
     "//base",
     "//components/download/network",
     "//components/download/public/background_service:public",
-    "//components/enterprise/common:download_item_reroute_info",
     "//components/services/quarantine/public/mojom",
     "//mojo/public/cpp/bindings",
     "//services/network/public/cpp",
@@ -90,6 +86,7 @@ component("public") {
     "//components/download/internal/common:internal",
     "//components/services/quarantine:quarantine",
     "//crypto",
+    "//mojo/public/c/system",
     "//net",
     "//services/metrics/public/cpp:metrics_cpp",
     "//services/network/public/cpp",
@@ -120,7 +117,6 @@ if (is_android) {
     srcjar_deps = [ ":jni_enums" ]
 
     deps = [
-      "//base:base_java",
       "//components/download/internal/common:internal_java",
       "//third_party/androidx:androidx_annotation_annotation_java",
     ]
@@ -176,10 +172,7 @@ source_set("test_support") {
 source_set("unit_tests") {
   testonly = true
 
-  sources = [
-    "auto_resumption_handler_unittest.cc",
-    "download_schedule_unittest.cc",
-  ]
+  sources = [ "auto_resumption_handler_unittest.cc" ]
 
   deps = [
     ":public",

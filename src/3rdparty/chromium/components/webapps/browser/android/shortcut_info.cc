@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -55,14 +55,15 @@ std::unique_ptr<ShortcutInfo> ShortcutInfo::CreateShortcutInfo(
     const GURL& manifest_url,
     const blink::mojom::Manifest& manifest,
     const GURL& primary_icon_url) {
-  auto shortcut_info = std::make_unique<ShortcutInfo>(GURL());
-  if (!blink::IsEmptyManifest(manifest)) {
-    shortcut_info->UpdateFromManifest(manifest);
-    shortcut_info->manifest_url = manifest_url;
-    shortcut_info->best_primary_icon_url = primary_icon_url;
-    shortcut_info->UpdateBestSplashIcon(manifest);
+  if (blink::IsEmptyManifest(manifest)) {
+    return nullptr;
   }
 
+  auto shortcut_info = std::make_unique<ShortcutInfo>(GURL());
+  shortcut_info->UpdateFromManifest(manifest);
+  shortcut_info->manifest_url = manifest_url;
+  shortcut_info->best_primary_icon_url = primary_icon_url;
+  shortcut_info->UpdateBestSplashIcon(manifest);
   return shortcut_info;
 }
 
@@ -103,12 +104,16 @@ void ShortcutInfo::UpdateFromManifest(const blink::mojom::Manifest& manifest) {
 
   scope = manifest.scope;
 
+  manifest_id = blink::GetIdFromManifest(manifest);
+
   // Set the display based on the manifest value, if any.
   if (manifest.display != DisplayMode::kUndefined)
     display = manifest.display;
 
   for (DisplayMode display_mode : manifest.display_override) {
-    if (display_mode == DisplayMode::kStandalone ||
+    if (display_mode == DisplayMode::kBrowser ||
+        display_mode == DisplayMode::kMinimalUi ||
+        display_mode == DisplayMode::kStandalone ||
         display_mode == DisplayMode::kFullscreen) {
       display = display_mode;
       break;
@@ -147,7 +152,7 @@ void ShortcutInfo::UpdateFromManifest(const blink::mojom::Manifest& manifest) {
   // Set the screenshots urls based on the screenshots in the manifest, if any.
   screenshot_urls.clear();
   for (const auto& screenshot : manifest.screenshots)
-    screenshot_urls.push_back(screenshot.src);
+    screenshot_urls.push_back(screenshot->image.src);
 
   if (manifest.share_target) {
     share_target = ShareTarget();

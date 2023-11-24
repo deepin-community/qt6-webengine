@@ -39,15 +39,15 @@
 #include "quiche/http2/decoder/payload_decoders/unknown_payload_decoder.h"
 #include "quiche/http2/decoder/payload_decoders/window_update_payload_decoder.h"
 #include "quiche/http2/http2_structures.h"
-#include "quiche/http2/platform/api/http2_logging.h"
 #include "quiche/common/platform/api/quiche_export.h"
+#include "quiche/common/platform/api/quiche_logging.h"
 
 namespace http2 {
 namespace test {
 class Http2FrameDecoderPeer;
 }  // namespace test
 
-class QUICHE_EXPORT_PRIVATE Http2FrameDecoder {
+class QUICHE_EXPORT Http2FrameDecoder {
  public:
   explicit Http2FrameDecoder(Http2FrameDecoderListener* listener);
 
@@ -126,8 +126,7 @@ class QUICHE_EXPORT_PRIVATE Http2FrameDecoder {
   };
 
   friend class test::Http2FrameDecoderPeer;
-  QUICHE_EXPORT_PRIVATE friend std::ostream& operator<<(std::ostream& out,
-                                                        State v);
+  QUICHE_EXPORT friend std::ostream& operator<<(std::ostream& out, State v);
 
   DecodeStatus StartDecodingPayload(DecodeBuffer* db);
   DecodeStatus ResumeDecodingPayload(DecodeBuffer* db);

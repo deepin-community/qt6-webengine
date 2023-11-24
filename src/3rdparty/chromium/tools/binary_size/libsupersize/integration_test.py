@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2017 The Chromium Authors. All rights reserved.
+# Copyright 2017 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -57,7 +57,7 @@ _TEST_SSARGS_PATH = os.path.join(_TEST_OUTPUT_DIR, 'test.ssargs')
 
 # Generated file paths relative to apk
 _TEST_APK_SO_PATH = 'lib/armeabi-v7a/test.so'
-_TEST_APK_SMALL_SO_PATH = 'lib/armeabi-v7a/smalltest.so'
+_TEST_APK_SMALL_SO_PATH = 'lib/x86/smalltest.so'
 _TEST_APK_DEX_PATH = 'classes.dex'
 _TEST_APK_OTHER_FILE_PATH = 'assets/icudtl.dat'
 _TEST_APK_RES_FILE_PATH = 'res/drawable-v13/test.xml'
@@ -66,6 +66,9 @@ _TEST_CONFIG_JSON = os.path.join(_TEST_DATA_DIR, 'supersize.json')
 _TEST_PATH_DEFAULTS = {
     'assets/icudtl.dat': '../../third_party/icu/android/icudtl.dat',
 }
+
+_TEST_DEX_AFTER_PATH = os.path.join(_TEST_DATA_DIR,
+                                    'mock_dex/after/classes.dex')
 
 
 def _CompareWithGolden(name=None):
@@ -90,6 +93,8 @@ def _CompareWithGolden(name=None):
 def _RunApp(name, args, debug_measures=False):
   argv = [os.path.join(_SCRIPT_DIR, 'main.py'), name]
   argv.extend(args)
+  if '-v' in sys.argv:
+    argv.append('-v')
   with test_util.AddMocksToPath():
     env = None
     if debug_measures:
@@ -145,9 +150,7 @@ class IntegrationTest(unittest.TestCase):
       apk_file.write(_TEST_APK_LOCALE_PAK_PATH, locale_pak_rel_path)
       pak_rel_path = os.path.relpath(_TEST_APK_PAK_PATH, _TEST_APK_ROOT_DIR)
       apk_file.write(_TEST_APK_PAK_PATH, pak_rel_path)
-      # Exactly 8MB of data (2^23).
-      apk_file.writestr(
-          _TEST_APK_DEX_PATH, IntegrationTest._CreateBlankData(23))
+      apk_file.write(_TEST_DEX_AFTER_PATH, _TEST_APK_DEX_PATH)
 
     with zipfile.ZipFile(_TEST_NOT_ON_DEMAND_SPLIT_APK_PATH, 'w') as z:
       z.write(_TEST_ALWAYS_INSTALLED_MANIFEST_PATH, 'AndroidManifest.xml')
@@ -222,31 +225,56 @@ class IntegrationTest(unittest.TestCase):
         apk_spec = None
         if use_apk or use_minimal_apks:
           apk_spec = archive.ApkSpec(apk_path=_TEST_APK_PATH)
-        if use_minimal_apks:
-          apk_spec.minimal_apks_path = _TEST_MINIMAL_APKS_PATH
-          apk_spec.split_name = 'base'
-
-        if use_apk or use_minimal_apks:
-          native_spec.apk_so_path = _TEST_APK_SO_PATH
           apk_spec.path_defaults = _TEST_PATH_DEFAULTS
+          apk_spec.ignore_apk_paths.update(
+              ['classes.dex', _TEST_APK_SO_PATH, _TEST_APK_SMALL_SO_PATH])
+          if pak_spec and pak_spec.apk_pak_paths:
+            apk_spec.ignore_apk_paths.update(pak_spec.apk_pak_paths)
           if output_directory:
-            if use_apk:
-              orig_path = _TEST_APK_PATH
-            else:
+            orig_path = _TEST_APK_PATH
+            if use_minimal_apks:
               orig_path = _TEST_MINIMAL_APKS_PATH.replace(
                   '.minimal.apks', '.aab')
             apk_spec.size_info_prefix = os.path.join(
                 output_directory, 'size-info', os.path.basename(orig_path))
 
+          native_spec.apk_so_path = _TEST_APK_SO_PATH
+          small_native_spec = archive.NativeSpec(
+              apk_so_path=_TEST_APK_SMALL_SO_PATH)
+
+        if use_minimal_apks:
+          apk_spec.minimal_apks_path = _TEST_MINIMAL_APKS_PATH
+          apk_spec.split_name = 'base'
+
         container_name = ''
+        if use_apk:
+          container_name = 'test.apk'
         if use_minimal_apks:
           container_name = 'Bundle.minimal.apks/base.apk'
-        yield archive.ContainerSpec(container_name=container_name,
-                                    apk_spec=apk_spec,
-                                    pak_spec=pak_spec,
-                                    native_specs=[native_spec],
-                                    source_directory=_TEST_SOURCE_DIR,
-                                    output_directory=output_directory)
+        container_spec = archive.ContainerSpec(
+            container_name=container_name,
+            apk_spec=apk_spec,
+            pak_spec=pak_spec,
+            native_spec=native_spec,
+            source_directory=_TEST_SOURCE_DIR,
+            output_directory=output_directory)
+        if not apk_spec:
+          yield container_spec
+          return
+
+        container_spec.native_spec = None
+        yield container_spec
+        container_spec = copy.copy(container_spec)
+        container_spec.container_name = (
+            f'{container_name}/test.so (armeabi-v7a)')
+        container_spec.pak_spec = None
+        container_spec.native_spec = native_spec
+        yield container_spec
+        container_spec = copy.copy(container_spec)
+        container_spec.container_name = f'{container_name}/smalltest.so (x86)'
+        container_spec.native_spec = small_native_spec
+        yield container_spec
+        container_spec = None
 
         if use_minimal_apks:
           for split_name, apk_path in [
@@ -266,7 +294,7 @@ class IntegrationTest(unittest.TestCase):
             yield archive.ContainerSpec(container_name=container_name,
                                         apk_spec=apk_spec,
                                         pak_spec=None,
-                                        native_specs=[],
+                                        native_spec=None,
                                         source_directory=_TEST_SOURCE_DIR,
                                         output_directory=output_directory)
 
@@ -301,6 +329,8 @@ class IntegrationTest(unittest.TestCase):
         _TEST_SOURCE_DIR,
         '--json-config',
         _TEST_CONFIG_JSON,
+        '--abi-filter',
+        'armeabi-v7a',
     ]
 
     if use_output_directory:
@@ -336,6 +366,21 @@ class IntegrationTest(unittest.TestCase):
 
     _RunApp('archive', args, debug_measures=debug_measures)
 
+  def _FixupExpectedSizeInfoForMinimalApks(self, expected_size_info):
+    # DEX string symbols "actual" size_info have object_path assigned to
+    # '$SYSTEM/base-master.apk', which is from the value written to minimal
+    # apks file. Meanwhile, the correpsonding symbols in "expected" are
+    # '$SYSTEM/test.apk' because that's the file passed.
+    # * Changing both to "test.apk" is bad because SuperSize has code to
+    #   handle '-master.apk' filename.
+    # * Changing both to "base-master.apk" is bad because the name "test.apk"
+    #   is engrained in the test.
+    # As a kludge, here we mutate "expected" values for the affected symbols.
+    for sym in expected_size_info.raw_symbols:
+      if (sym.section_name == models.SECTION_DEX
+          and sym.object_path == '$SYSTEM/test.apk'):
+        sym.object_path = '$SYSTEM/base-master.apk'
+
   def _DoArchiveTest(self,
                      *,
                      use_output_directory=True,
@@ -370,6 +415,8 @@ class IntegrationTest(unittest.TestCase):
         use_pak=use_pak,
         use_aux_elf=use_aux_elf,
         ignore_linker_map=ignore_linker_map)
+    if use_minimal_apks:
+      self._FixupExpectedSizeInfoForMinimalApks(expected_size_info)
     self.assertEqual(_AllMetadata(expected_size_info), _AllMetadata(size_info))
     # Don't cluster.
     expected_size_info.symbols = expected_size_info.raw_symbols
@@ -430,7 +477,9 @@ class IntegrationTest(unittest.TestCase):
   def test_SaveDeltaSizeInfo(self):
     # Check that saving & loading is the same as directly parsing.
     orig_info1 = self._CloneSizeInfo(use_apk=True, use_aux_elf=True)
-    orig_info2 = self._CloneSizeInfo(use_elf=True)
+    orig_info2 = copy.deepcopy(orig_info1)
+    # Remove the last 5 symbols to ensure a small but non-empty diff.
+    orig_info2.raw_symbols._symbols[-5:] = []
     orig_delta = diff.Diff(orig_info1, orig_info2)
 
     with tempfile.NamedTemporaryFile(suffix='.sizediff') as sizediff_file:
@@ -595,14 +644,12 @@ class IntegrationTest(unittest.TestCase):
     metadata = itertools.chain.from_iterable(
         itertools.chain([c.name], describe.DescribeDict(c.metadata))
         for c in size_info.containers)
-    return itertools.chain(
-        ['BuildConfig:'],
-        build_config,
-        ['Metadata:'],
-        metadata,
-        ['Symbols:'],
-        sym_strs,
-    )
+    metrics_by_file = itertools.chain.from_iterable(
+        itertools.chain([c.name], describe.DescribeDict(c.metrics_by_file))
+        for c in size_info.containers)
+    return itertools.chain(['BuildConfig:'], build_config, ['Metadata:'],
+                           metadata, ['Symbols:'], sym_strs, ['MetricsByFile:'],
+                           metrics_by_file)
 
 
 def main():
@@ -613,7 +660,7 @@ def main():
     for f in glob.glob(os.path.join(_TEST_DATA_DIR, '*.golden')):
       os.unlink(f)
 
-  unittest.main(argv=argv, verbosity=2)
+  unittest.main(argv=argv)
 
 
 if __name__ == '__main__':

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -36,6 +36,8 @@ bool StructTraits<
   out->page_scale_factor = data.page_scale_factor();
   out->compositing_scale_factor = data.compositing_scale_factor();
   out->is_pinch_gesture_active = data.is_pinch_gesture_active();
+  out->virtual_keyboard_resize_height_physical_px =
+      data.virtual_keyboard_resize_height_physical_px();
   return true;
 }
 

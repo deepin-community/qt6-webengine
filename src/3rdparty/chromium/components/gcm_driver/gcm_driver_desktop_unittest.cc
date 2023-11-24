@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,17 +8,17 @@
 
 #include <memory>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/task/current_thread.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/threading/thread.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "components/gcm_driver/crypto/gcm_encryption_provider.h"
 #include "components/gcm_driver/fake_gcm_app_handler.h"
@@ -245,14 +245,15 @@ void GCMDriverTest::CreateDriver() {
   chrome_build_info.product_category_for_subtypes = "com.chrome.macosx";
   driver_ = std::make_unique<GCMDriverDesktop>(
       std::unique_ptr<GCMClientFactory>(new FakeGCMClientFactory(
-          base::ThreadTaskRunnerHandle::Get(), io_thread_.task_runner())),
+          base::SingleThreadTaskRunner::GetCurrentDefault(),
+          io_thread_.task_runner())),
       chrome_build_info, &prefs_, temp_dir_.GetPath(),
       /*remove_account_mappings_with_email_key=*/true, base::DoNothing(),
       base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
           &test_url_loader_factory_),
       network::TestNetworkConnectionTracker::GetInstance(),
-      base::ThreadTaskRunnerHandle::Get(), io_thread_.task_runner(),
-      task_environment_.GetMainThreadTaskRunner());
+      base::SingleThreadTaskRunner::GetCurrentDefault(),
+      io_thread_.task_runner(), task_environment_.GetMainThreadTaskRunner());
 
   gcm_app_handler_ = std::make_unique<FakeGCMAppHandler>();
   gcm_connection_observer_ = std::make_unique<FakeGCMConnectionObserver>();

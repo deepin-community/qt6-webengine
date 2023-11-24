@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,9 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/compiler_specific.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -25,23 +26,32 @@
 #include "net/http/http_response_headers.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_response.h"
+#include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/url_loader_completion_status.h"
+#include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 #include "services/network/test/test_shared_url_loader_factory.h"
+#include "services/network/test/test_url_loader_factory.h"
+#include "services/network/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace network_time {
 
 namespace {
-const uint32_t kOneDayInSeconds = 86400;
-const char kFetchFailedHistogram[] = "NetworkTimeTracker.UpdateTimeFetchFailed";
-const char kFetchValidHistogram[] = "NetworkTimeTracker.UpdateTimeFetchValid";
-const char kClockDivergencePositiveHistogram[] =
-    "NetworkTimeTracker.ClockDivergence.Positive";
-const char kClockDivergenceNegativeHistogram[] =
-    "NetworkTimeTracker.ClockDivergence.Negative";
-const char kWallClockBackwardsHistogram[] =
-    "NetworkTimeTracker.WallClockRanBackwards";
-const char kTimeBetweenFetchesHistogram[] =
-    "NetworkTimeTracker.TimeBetweenFetches";
+
+// Latencies simulated by the fake network responses for the network times. This
+// array should have the same length as `kGoodTimeResponseBody`.
+const base::TimeDelta kGoodTimeResponseLatency[] = {
+    base::Milliseconds(500), base::Milliseconds(520), base::Milliseconds(450),
+    base::Milliseconds(550), base::Milliseconds(480),
+};
+
+struct MockedResponse {
+  network::mojom::URLResponseHeadPtr head;
+  std::string body;
+  network::URLLoaderCompletionStatus status;
+};
+
 }  // namespace
 
 class NetworkTimeTrackerTest : public ::testing::Test {
@@ -53,21 +63,22 @@ class NetworkTimeTrackerTest : public ::testing::Test {
             base::test::SingleThreadTaskEnvironment::MainThreadType::IO),
         field_trial_test_(new FieldTrialTest()),
         clock_(new base::SimpleTestClock),
-        tick_clock_(new base::SimpleTestTickClock),
-        test_server_(new net::EmbeddedTestServer) {
+        tick_clock_(new base::SimpleTestTickClock) {
     NetworkTimeTracker::RegisterPrefs(pref_service_.registry());
 
     field_trial_test_->SetFeatureParams(
         true, 0.0 /* query probability */,
-        NetworkTimeTracker::FETCHES_IN_BACKGROUND_AND_ON_DEMAND);
+        NetworkTimeTracker::FETCHES_IN_BACKGROUND_AND_ON_DEMAND,
+        NetworkTimeTracker::ClockDriftSamples::NO_SAMPLES);
 
-    shared_url_loader_factory_ =
-        base::MakeRefCounted<network::TestSharedURLLoaderFactory>();
+    url_loader_factory_.SetInterceptor(base::BindRepeating(
+        &NetworkTimeTrackerTest::Intercept, weak_ptr_factory_.GetWeakPtr()));
 
     tracker_ = std::make_unique<NetworkTimeTracker>(
         std::unique_ptr<base::Clock>(clock_),
         std::unique_ptr<const base::TickClock>(tick_clock_), &pref_service_,
-        shared_url_loader_factory_);
+        base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
+            &url_loader_factory_));
 
     // Do this to be sure that |is_null| returns false.
     clock_->Advance(base::Days(111));
@@ -77,6 +88,13 @@ class NetworkTimeTrackerTest : public ::testing::Test {
     resolution_ = base::Milliseconds(17);
     latency_ = base::Milliseconds(50);
     adjustment_ = 7 * base::Milliseconds(kTicksResolutionMs);
+  }
+
+  // Sets `response_handler` as handler for all requests made through
+  // `url_loader_factory_`.
+  void SetResponseHandler(
+      base::RepeatingCallback<MockedResponse()> response_handler) {
+    response_handler_ = std::move(response_handler);
   }
 
   // Replaces |tracker_| with a new object, while preserving the
@@ -91,53 +109,58 @@ class NetworkTimeTrackerTest : public ::testing::Test {
     tracker_ = std::make_unique<NetworkTimeTracker>(
         std::unique_ptr<base::Clock>(clock_),
         std::unique_ptr<const base::TickClock>(tick_clock_), &pref_service_,
-        shared_url_loader_factory_);
+        base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
+            &url_loader_factory_));
   }
 
   // Good signature over invalid data, though made with a non-production key.
-  static std::unique_ptr<net::test_server::HttpResponse> BadDataResponseHandler(
-      const net::test_server::HttpRequest& request) {
-    net::test_server::BasicHttpResponse* response =
-        new net::test_server::BasicHttpResponse();
-    response->set_code(net::HTTP_OK);
-    response->set_content(
+  static MockedResponse BadDataResponseHandler() {
+    network::mojom::URLResponseHeadPtr head =
+        network::CreateURLResponseHead(net::HTTP_OK);
+    std::string body =
         ")]}'\n"
-        "{\"current_time_millis\":NaN,\"server_nonce\":9.420921002039447E182}");
-    response->AddCustomHeader(
+        "{\"current_time_millis\":NaN,\"server_nonce\":9.420921002039447E182}";
+    head->headers->AddHeader(
         "x-cup-server-proof",
         "3046022100a07aa437b24f1f6bb7ff6f6d1e004dd4bcb717c93e21d6bae5ef8d6d984c"
         "86a7022100e423419ff49fae37b421ef6cdeab348b45c63b236ab365f36f4cd3b4d4d6"
         "d852:"
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b85"
         "5");
-    return std::unique_ptr<net::test_server::HttpResponse>(response);
+    return MockedResponse{std::move(head), std::move(body)};
   }
 
-  static std::unique_ptr<net::test_server::HttpResponse>
-  BadSignatureResponseHandler(const net::test_server::HttpRequest& request) {
-    net::test_server::BasicHttpResponse* response =
-        new net::test_server::BasicHttpResponse();
-    response->set_code(net::HTTP_OK);
-    response->set_content(
+  static MockedResponse GoodTimeResponseHandler() {
+    network::mojom::URLResponseHeadPtr head =
+        network::CreateURLResponseHead(net::HTTP_OK);
+    head->headers->AddHeader("x-cup-server-proof",
+                             kGoodTimeResponseServerProofHeader[0]);
+    return MockedResponse{std::move(head), kGoodTimeResponseBody[0]};
+  }
+
+  static MockedResponse BadSignatureResponseHandler() {
+    network::mojom::URLResponseHeadPtr head =
+        network::CreateURLResponseHead(net::HTTP_OK);
+    std::string body =
         ")]}'\n"
         "{\"current_time_millis\":1461621971825,\"server_nonce\":-6."
-        "006853099049523E85}");
-    response->AddCustomHeader("x-cup-server-proof", "dead:beef");
-    return std::unique_ptr<net::test_server::HttpResponse>(response);
+        "006853099049523E85}";
+    head->headers->AddHeader("x-cup-server-proof", "dead:beef");
+    return MockedResponse{std::move(head), std::move(body)};
   }
 
-  static std::unique_ptr<net::test_server::HttpResponse>
-  ServerErrorResponseHandler(const net::test_server::HttpRequest& request) {
-    net::test_server::BasicHttpResponse* response =
-        new net::test_server::BasicHttpResponse();
-    response->set_code(net::HTTP_INTERNAL_SERVER_ERROR);
-    return std::unique_ptr<net::test_server::HttpResponse>(response);
+  static MockedResponse ServerErrorResponseHandler() {
+    network::mojom::URLResponseHeadPtr head =
+        network::CreateURLResponseHead(net::HTTP_INTERNAL_SERVER_ERROR);
+    return MockedResponse{std::move(head), ""};
   }
 
-  static std::unique_ptr<net::test_server::HttpResponse>
-  NetworkErrorResponseHandler(const net::test_server::HttpRequest& request) {
-    return std::unique_ptr<net::test_server::HttpResponse>(
-        new net::test_server::RawHttpResponse("", ""));
+  static MockedResponse NetworkErrorResponseHandler() {
+    network::mojom::URLResponseHeadPtr head =
+        network::mojom::URLResponseHead::New();
+    return MockedResponse{
+        std::move(head), "",
+        network::URLLoaderCompletionStatus(net::ERR_EMPTY_RESPONSE)};
   }
 
   // Updates the notifier's time with the specified parameters.
@@ -166,8 +189,20 @@ class NetworkTimeTrackerTest : public ::testing::Test {
   raw_ptr<base::SimpleTestTickClock> tick_clock_;
   TestingPrefServiceSimple pref_service_;
   std::unique_ptr<NetworkTimeTracker> tracker_;
-  std::unique_ptr<net::EmbeddedTestServer> test_server_;
-  scoped_refptr<network::TestSharedURLLoaderFactory> shared_url_loader_factory_;
+  network::TestURLLoaderFactory url_loader_factory_;
+  base::RepeatingCallback<MockedResponse()> response_handler_;
+
+ private:
+  void Intercept(const network::ResourceRequest& request) {
+    CHECK(response_handler_);
+    MockedResponse response = response_handler_.Run();
+    // status.decoded_body_length = response.body.size();
+    url_loader_factory_.AddResponse(request.url, std::move(response.head),
+                                    std::move(response.body),
+                                    std::move(response.status));
+  }
+
+  base::WeakPtrFactory<NetworkTimeTrackerTest> weak_ptr_factory_{this};
 };
 
 TEST_F(NetworkTimeTrackerTest, Uninitialized) {
@@ -233,10 +268,6 @@ TEST_F(NetworkTimeTrackerTest, ClockIsWack) {
 
 TEST_F(NetworkTimeTrackerTest, ClocksDivergeSlightly) {
   // The two clocks are allowed to diverge a little bit.
-  base::HistogramTester histograms;
-  histograms.ExpectTotalCount(kClockDivergencePositiveHistogram, 0);
-  histograms.ExpectTotalCount(kClockDivergenceNegativeHistogram, 0);
-  histograms.ExpectTotalCount(kWallClockBackwardsHistogram, 0);
   base::Time in_network_time = clock_->Now();
   UpdateNetworkTime(in_network_time - latency_ / 2, resolution_, latency_,
                     tick_clock_->NowTicks());
@@ -250,9 +281,6 @@ TEST_F(NetworkTimeTrackerTest, ClocksDivergeSlightly) {
   EXPECT_EQ(in_network_time + small, out_network_time);
   // The clock divergence should show up in the uncertainty.
   EXPECT_EQ(resolution_ + latency_ + adjustment_ + small, out_uncertainty);
-  histograms.ExpectTotalCount(kClockDivergencePositiveHistogram, 0);
-  histograms.ExpectTotalCount(kClockDivergenceNegativeHistogram, 0);
-  histograms.ExpectTotalCount(kWallClockBackwardsHistogram, 0);
 }
 
 TEST_F(NetworkTimeTrackerTest, NetworkTimeUpdates) {
@@ -286,10 +314,6 @@ TEST_F(NetworkTimeTrackerTest, NetworkTimeUpdates) {
 }
 
 TEST_F(NetworkTimeTrackerTest, SpringForward) {
-  base::HistogramTester histograms;
-  histograms.ExpectTotalCount(kClockDivergencePositiveHistogram, 0);
-  histograms.ExpectTotalCount(kClockDivergenceNegativeHistogram, 0);
-  histograms.ExpectTotalCount(kWallClockBackwardsHistogram, 0);
   // Simulate the wall clock advancing faster than the tick clock.
   UpdateNetworkTime(clock_->Now(), resolution_, latency_,
                     tick_clock_->NowTicks());
@@ -298,20 +322,9 @@ TEST_F(NetworkTimeTrackerTest, SpringForward) {
   base::Time out_network_time;
   EXPECT_EQ(NetworkTimeTracker::NETWORK_TIME_SYNC_LOST,
             tracker_->GetNetworkTime(&out_network_time, nullptr));
-  histograms.ExpectTotalCount(kClockDivergencePositiveHistogram, 0);
-  histograms.ExpectTotalCount(kClockDivergenceNegativeHistogram, 1);
-  histograms.ExpectTotalCount(kWallClockBackwardsHistogram, 0);
-  // The recorded clock divergence should be 1 second - 1 day in seconds.
-  histograms.ExpectBucketCount(
-      kClockDivergenceNegativeHistogram,
-      base::Seconds(kOneDayInSeconds - 1).InMilliseconds(), 1);
 }
 
 TEST_F(NetworkTimeTrackerTest, TickClockSpringsForward) {
-  base::HistogramTester histograms;
-  histograms.ExpectTotalCount(kClockDivergencePositiveHistogram, 0);
-  histograms.ExpectTotalCount(kClockDivergenceNegativeHistogram, 0);
-  histograms.ExpectTotalCount(kWallClockBackwardsHistogram, 0);
   // Simulate the tick clock advancing faster than the wall clock.
   UpdateNetworkTime(clock_->Now(), resolution_, latency_,
                     tick_clock_->NowTicks());
@@ -320,20 +333,9 @@ TEST_F(NetworkTimeTrackerTest, TickClockSpringsForward) {
   base::Time out_network_time;
   EXPECT_EQ(NetworkTimeTracker::NETWORK_TIME_SYNC_LOST,
             tracker_->GetNetworkTime(&out_network_time, nullptr));
-  histograms.ExpectTotalCount(kClockDivergencePositiveHistogram, 1);
-  histograms.ExpectTotalCount(kClockDivergenceNegativeHistogram, 0);
-  histograms.ExpectTotalCount(kWallClockBackwardsHistogram, 0);
-  // The recorded clock divergence should be 1 day - 1 second.
-  histograms.ExpectBucketCount(
-      kClockDivergencePositiveHistogram,
-      base::Seconds(kOneDayInSeconds - 1).InMilliseconds(), 1);
 }
 
 TEST_F(NetworkTimeTrackerTest, FallBack) {
-  base::HistogramTester histograms;
-  histograms.ExpectTotalCount(kClockDivergencePositiveHistogram, 0);
-  histograms.ExpectTotalCount(kClockDivergenceNegativeHistogram, 0);
-  histograms.ExpectTotalCount(kWallClockBackwardsHistogram, 0);
   // Simulate the wall clock running backward.
   UpdateNetworkTime(clock_->Now(), resolution_, latency_,
                     tick_clock_->NowTicks());
@@ -342,12 +344,6 @@ TEST_F(NetworkTimeTrackerTest, FallBack) {
   base::Time out_network_time;
   EXPECT_EQ(NetworkTimeTracker::NETWORK_TIME_SYNC_LOST,
             tracker_->GetNetworkTime(&out_network_time, nullptr));
-  histograms.ExpectTotalCount(kClockDivergencePositiveHistogram, 0);
-  histograms.ExpectTotalCount(kClockDivergenceNegativeHistogram, 0);
-  histograms.ExpectTotalCount(kWallClockBackwardsHistogram, 1);
-  histograms.ExpectBucketCount(
-      kWallClockBackwardsHistogram,
-      base::Seconds(kOneDayInSeconds - 1).InMilliseconds(), 1);
 }
 
 TEST_F(NetworkTimeTrackerTest, SuspendAndResume) {
@@ -395,16 +391,16 @@ TEST_F(NetworkTimeTrackerTest, DeserializeOldFormat) {
   EXPECT_EQ(NetworkTimeTracker::NETWORK_TIME_AVAILABLE,
             tracker_->GetNetworkTime(&out_network_time, nullptr));
   absl::optional<double> local, network;
-  const base::Value* saved_prefs =
-      pref_service_.GetDictionary(prefs::kNetworkTimeMapping);
-  local = saved_prefs->FindDoubleKey("local");
-  network = saved_prefs->FindDoubleKey("network");
+  const base::Value::Dict& saved_prefs =
+      pref_service_.GetDict(prefs::kNetworkTimeMapping);
+  local = saved_prefs.FindDouble("local");
+  network = saved_prefs.FindDouble("network");
   ASSERT_TRUE(local);
   ASSERT_TRUE(network);
-  base::DictionaryValue prefs;
-  prefs.SetDouble("local", *local);
-  prefs.SetDouble("network", *network);
-  pref_service_.Set(prefs::kNetworkTimeMapping, prefs);
+  base::Value::Dict prefs;
+  prefs.Set("local", *local);
+  prefs.Set("network", *network);
+  pref_service_.Set(prefs::kNetworkTimeMapping, base::Value(std::move(prefs)));
   Reset();
   EXPECT_EQ(NetworkTimeTracker::NETWORK_TIME_NO_SYNC_ATTEMPT,
             tracker_->GetNetworkTime(&out_network_time, nullptr));
@@ -457,41 +453,31 @@ TEST_F(NetworkTimeTrackerTest, SerializeWithWallClockAdvance) {
 }
 
 TEST_F(NetworkTimeTrackerTest, UpdateFromNetwork) {
-  base::HistogramTester histograms;
-  histograms.ExpectTotalCount(kFetchFailedHistogram, 0);
-  histograms.ExpectTotalCount(kFetchValidHistogram, 0);
-
   base::Time out_network_time;
   EXPECT_EQ(NetworkTimeTracker::NETWORK_TIME_NO_SYNC_ATTEMPT,
             tracker_->GetNetworkTime(&out_network_time, nullptr));
   // First query should happen soon.
   EXPECT_EQ(base::Minutes(0), tracker_->GetTimerDelayForTesting());
 
-  test_server_->RegisterRequestHandler(
-      base::BindRepeating(&GoodTimeResponseHandler));
-  EXPECT_TRUE(test_server_->Start());
-  tracker_->SetTimeServerURLForTesting(test_server_->GetURL("/"));
+  SetResponseHandler(base::BindRepeating(&GoodTimeResponseHandler));
   EXPECT_TRUE(tracker_->QueryTimeServiceForTesting());
   tracker_->WaitForFetchForTesting(123123123);
 
   EXPECT_EQ(NetworkTimeTracker::NETWORK_TIME_AVAILABLE,
             tracker_->GetNetworkTime(&out_network_time, nullptr));
-  EXPECT_EQ(base::Time::UnixEpoch() +
-                base::Milliseconds((uint64_t)kGoodTimeResponseHandlerJsTime[0]),
-            out_network_time);
+
+  // Enabling load timing for the resource requests seems to increase accuracy
+  // beyond milliseconds. Accuracy of GoodTimeResponseHandler is
+  // milliseconds, any difference below 1 ms can therefore be ignored.
+  EXPECT_LT(base::Time::FromJsTime(kGoodTimeResponseHandlerJsTime[0]) -
+                out_network_time,
+            base::Milliseconds(1));
   // Should see no backoff in the success case.
   EXPECT_EQ(base::Minutes(60), tracker_->GetTimerDelayForTesting());
-
-  histograms.ExpectTotalCount(kFetchFailedHistogram, 0);
-  histograms.ExpectTotalCount(kFetchValidHistogram, 1);
-  histograms.ExpectBucketCount(kFetchValidHistogram, true, 1);
 }
 
 TEST_F(NetworkTimeTrackerTest, StartTimeFetch) {
-  test_server_->RegisterRequestHandler(
-      base::BindRepeating(&GoodTimeResponseHandler));
-  EXPECT_TRUE(test_server_->Start());
-  tracker_->SetTimeServerURLForTesting(test_server_->GetURL("/"));
+  SetResponseHandler(base::BindRepeating(&GoodTimeResponseHandler));
 
   base::Time out_network_time;
   EXPECT_EQ(NetworkTimeTracker::NETWORK_TIME_NO_SYNC_ATTEMPT,
@@ -504,9 +490,12 @@ TEST_F(NetworkTimeTrackerTest, StartTimeFetch) {
 
   EXPECT_EQ(NetworkTimeTracker::NETWORK_TIME_AVAILABLE,
             tracker_->GetNetworkTime(&out_network_time, nullptr));
-  EXPECT_EQ(base::Time::UnixEpoch() +
-                base::Milliseconds((uint64_t)kGoodTimeResponseHandlerJsTime[0]),
-            out_network_time);
+  // Enabling load timing for the resource requests seems to increase accuracy
+  // beyond milliseconds. Accuracy of GoodTimeResponseHandler is milliseconds,
+  // any difference below 1 ms can therefore be ignored.
+  EXPECT_LT(base::Time::FromJsTime(kGoodTimeResponseHandlerJsTime[0]) -
+                out_network_time,
+            base::Milliseconds(1));
   // Should see no backoff in the success case.
   EXPECT_EQ(base::Minutes(60), tracker_->GetTimerDelayForTesting());
 }
@@ -514,10 +503,7 @@ TEST_F(NetworkTimeTrackerTest, StartTimeFetch) {
 // Tests that when StartTimeFetch() is called with a query already in
 // progress, it calls the callback when that query completes.
 TEST_F(NetworkTimeTrackerTest, StartTimeFetchWithQueryInProgress) {
-  test_server_->RegisterRequestHandler(
-      base::BindRepeating(&GoodTimeResponseHandler));
-  EXPECT_TRUE(test_server_->Start());
-  tracker_->SetTimeServerURLForTesting(test_server_->GetURL("/"));
+  SetResponseHandler(base::BindRepeating(&GoodTimeResponseHandler));
 
   base::Time out_network_time;
   EXPECT_EQ(NetworkTimeTracker::NETWORK_TIME_NO_SYNC_ATTEMPT,
@@ -532,9 +518,12 @@ TEST_F(NetworkTimeTrackerTest, StartTimeFetchWithQueryInProgress) {
 
   EXPECT_EQ(NetworkTimeTracker::NETWORK_TIME_AVAILABLE,
             tracker_->GetNetworkTime(&out_network_time, nullptr));
-  EXPECT_EQ(base::Time::UnixEpoch() +
-                base::Milliseconds((uint64_t)kGoodTimeResponseHandlerJsTime[0]),
-            out_network_time);
+  // Enabling load timing for the resource requests seems to increase accuracy
+  // beyond milliseconds. Accuracy of GoodTimeResponseHandler is milliseconds,
+  // any difference below 1 ms can therefore be ignored.
+  EXPECT_LT(base::Time::FromJsTime(kGoodTimeResponseHandlerJsTime[0]) -
+                out_network_time,
+            base::Milliseconds(1));
   // Should see no backoff in the success case.
   EXPECT_EQ(base::Minutes(60), tracker_->GetTimerDelayForTesting());
 }
@@ -542,10 +531,7 @@ TEST_F(NetworkTimeTrackerTest, StartTimeFetchWithQueryInProgress) {
 // Tests that StartTimeFetch() returns false if called while network
 // time is available.
 TEST_F(NetworkTimeTrackerTest, StartTimeFetchWhileSynced) {
-  test_server_->RegisterRequestHandler(
-      base::BindRepeating(&GoodTimeResponseHandler));
-  EXPECT_TRUE(test_server_->Start());
-  tracker_->SetTimeServerURLForTesting(test_server_->GetURL("/"));
+  SetResponseHandler(base::BindRepeating(&GoodTimeResponseHandler));
 
   base::Time in_network_time = clock_->Now();
   UpdateNetworkTime(in_network_time, resolution_, latency_,
@@ -560,11 +546,9 @@ TEST_F(NetworkTimeTrackerTest, StartTimeFetchWhileSynced) {
 // is not configured to allow on-demand time fetches.
 TEST_F(NetworkTimeTrackerTest, StartTimeFetchWithoutVariationsParam) {
   field_trial_test_->SetFeatureParams(
-      true, 0.0, NetworkTimeTracker::FETCHES_IN_BACKGROUND_ONLY);
-  test_server_->RegisterRequestHandler(
-      base::BindRepeating(&GoodTimeResponseHandler));
-  EXPECT_TRUE(test_server_->Start());
-  tracker_->SetTimeServerURLForTesting(test_server_->GetURL("/"));
+      true, 0.0, NetworkTimeTracker::FETCHES_IN_BACKGROUND_ONLY,
+      NetworkTimeTracker::ClockDriftSamples::NO_SAMPLES);
+  SetResponseHandler(base::BindRepeating(&GoodTimeResponseHandler));
 
   base::Time out_network_time;
   EXPECT_EQ(NetworkTimeTracker::NETWORK_TIME_NO_SYNC_ATTEMPT,
@@ -575,13 +559,11 @@ TEST_F(NetworkTimeTrackerTest, StartTimeFetchWithoutVariationsParam) {
 }
 
 TEST_F(NetworkTimeTrackerTest, NoNetworkQueryWhileSynced) {
-  test_server_->RegisterRequestHandler(
-      base::BindRepeating(&GoodTimeResponseHandler));
-  EXPECT_TRUE(test_server_->Start());
-  tracker_->SetTimeServerURLForTesting(test_server_->GetURL("/"));
+  SetResponseHandler(base::BindRepeating(&GoodTimeResponseHandler));
 
   field_trial_test_->SetFeatureParams(
-      true, 0.0, NetworkTimeTracker::FETCHES_IN_BACKGROUND_AND_ON_DEMAND);
+      true, 0.0, NetworkTimeTracker::FETCHES_IN_BACKGROUND_AND_ON_DEMAND,
+      NetworkTimeTracker::ClockDriftSamples::NO_SAMPLES);
   base::Time in_network_time = clock_->Now();
   UpdateNetworkTime(in_network_time, resolution_, latency_,
                     tick_clock_->NowTicks());
@@ -592,7 +574,8 @@ TEST_F(NetworkTimeTrackerTest, NoNetworkQueryWhileSynced) {
   EXPECT_EQ(base::Minutes(6), tracker_->GetTimerDelayForTesting());
 
   field_trial_test_->SetFeatureParams(
-      true, 1.0, NetworkTimeTracker::FETCHES_IN_BACKGROUND_AND_ON_DEMAND);
+      true, 1.0, NetworkTimeTracker::FETCHES_IN_BACKGROUND_AND_ON_DEMAND,
+      NetworkTimeTracker::ClockDriftSamples::NO_SAMPLES);
   EXPECT_TRUE(tracker_->QueryTimeServiceForTesting());
   tracker_->WaitForFetchForTesting(123123123);
   EXPECT_EQ(base::Minutes(60), tracker_->GetTimerDelayForTesting());
@@ -601,27 +584,23 @@ TEST_F(NetworkTimeTrackerTest, NoNetworkQueryWhileSynced) {
 TEST_F(NetworkTimeTrackerTest, NoNetworkQueryWhileFeatureDisabled) {
   // Disable network time queries and check that a query is not sent.
   field_trial_test_->SetFeatureParams(
-      false, 0.0, NetworkTimeTracker::FETCHES_IN_BACKGROUND_AND_ON_DEMAND);
+      false, 0.0, NetworkTimeTracker::FETCHES_IN_BACKGROUND_AND_ON_DEMAND,
+      NetworkTimeTracker::ClockDriftSamples::NO_SAMPLES);
   EXPECT_FALSE(tracker_->QueryTimeServiceForTesting());
   // The timer is not started when the feature is disabled.
   EXPECT_EQ(base::Minutes(0), tracker_->GetTimerDelayForTesting());
 
   // Enable time queries and check that a query is sent.
   field_trial_test_->SetFeatureParams(
-      true, 0.0, NetworkTimeTracker::FETCHES_IN_BACKGROUND_AND_ON_DEMAND);
+      true, 0.0, NetworkTimeTracker::FETCHES_IN_BACKGROUND_AND_ON_DEMAND,
+      NetworkTimeTracker::ClockDriftSamples::NO_SAMPLES);
+  SetResponseHandler(base::BindRepeating(&GoodTimeResponseHandler));
   EXPECT_TRUE(tracker_->QueryTimeServiceForTesting());
   tracker_->WaitForFetchForTesting(123123123);
 }
 
 TEST_F(NetworkTimeTrackerTest, UpdateFromNetworkBadSignature) {
-  base::HistogramTester histograms;
-  histograms.ExpectTotalCount(kFetchFailedHistogram, 0);
-  histograms.ExpectTotalCount(kFetchValidHistogram, 0);
-
-  test_server_->RegisterRequestHandler(base::BindRepeating(
-      &NetworkTimeTrackerTest::BadSignatureResponseHandler));
-  EXPECT_TRUE(test_server_->Start());
-  tracker_->SetTimeServerURLForTesting(test_server_->GetURL("/"));
+  SetResponseHandler(base::BindRepeating(&BadSignatureResponseHandler));
   EXPECT_TRUE(tracker_->QueryTimeServiceForTesting());
   tracker_->WaitForFetchForTesting(123123123);
 
@@ -629,10 +608,6 @@ TEST_F(NetworkTimeTrackerTest, UpdateFromNetworkBadSignature) {
   EXPECT_EQ(NetworkTimeTracker::NETWORK_TIME_NO_SUCCESSFUL_SYNC,
             tracker_->GetNetworkTime(&out_network_time, nullptr));
   EXPECT_EQ(base::Minutes(120), tracker_->GetTimerDelayForTesting());
-
-  histograms.ExpectTotalCount(kFetchFailedHistogram, 0);
-  histograms.ExpectTotalCount(kFetchValidHistogram, 1);
-  histograms.ExpectBucketCount(kFetchValidHistogram, false, 1);
 }
 
 static const uint8_t kDevKeyPubBytes[] = {
@@ -646,38 +621,22 @@ static const uint8_t kDevKeyPubBytes[] = {
     0x04, 0x16, 0xe2, 0x3d, 0x21, 0x76, 0x2b};
 
 TEST_F(NetworkTimeTrackerTest, UpdateFromNetworkBadData) {
-  base::HistogramTester histograms;
-  histograms.ExpectTotalCount(kFetchFailedHistogram, 0);
-  histograms.ExpectTotalCount(kFetchValidHistogram, 0);
-
-  test_server_->RegisterRequestHandler(
+  SetResponseHandler(
       base::BindRepeating(&NetworkTimeTrackerTest::BadDataResponseHandler));
-  EXPECT_TRUE(test_server_->Start());
   base::StringPiece key = {reinterpret_cast<const char*>(kDevKeyPubBytes),
                            sizeof(kDevKeyPubBytes)};
   tracker_->SetPublicKeyForTesting(key);
-  tracker_->SetTimeServerURLForTesting(test_server_->GetURL("/"));
   EXPECT_TRUE(tracker_->QueryTimeServiceForTesting());
   tracker_->WaitForFetchForTesting(123123123);
   base::Time out_network_time;
   EXPECT_EQ(NetworkTimeTracker::NETWORK_TIME_NO_SUCCESSFUL_SYNC,
             tracker_->GetNetworkTime(&out_network_time, nullptr));
   EXPECT_EQ(base::Minutes(120), tracker_->GetTimerDelayForTesting());
-
-  histograms.ExpectTotalCount(kFetchFailedHistogram, 0);
-  histograms.ExpectTotalCount(kFetchValidHistogram, 1);
-  histograms.ExpectBucketCount(kFetchValidHistogram, false, 1);
 }
 
 TEST_F(NetworkTimeTrackerTest, UpdateFromNetworkServerError) {
-  base::HistogramTester histograms;
-  histograms.ExpectTotalCount(kFetchFailedHistogram, 0);
-  histograms.ExpectTotalCount(kFetchValidHistogram, 0);
-
-  test_server_->RegisterRequestHandler(
+  SetResponseHandler(
       base::BindRepeating(&NetworkTimeTrackerTest::ServerErrorResponseHandler));
-  EXPECT_TRUE(test_server_->Start());
-  tracker_->SetTimeServerURLForTesting(test_server_->GetURL("/"));
   EXPECT_TRUE(tracker_->QueryTimeServiceForTesting());
   tracker_->WaitForFetchForTesting(123123123);
 
@@ -686,13 +645,6 @@ TEST_F(NetworkTimeTrackerTest, UpdateFromNetworkServerError) {
             tracker_->GetNetworkTime(&out_network_time, nullptr));
   // Should see backoff in the error case.
   EXPECT_EQ(base::Minutes(120), tracker_->GetTimerDelayForTesting());
-
-  histograms.ExpectTotalCount(kFetchFailedHistogram, 1);
-  // There was no network error, so the histogram is recorded as
-  // net::OK, indicating that the connection succeeded but there was a
-  // non-200 HTTP status code.
-  histograms.ExpectBucketCount(kFetchFailedHistogram, net::OK, 1);
-  histograms.ExpectTotalCount(kFetchValidHistogram, 0);
 }
 
 #if BUILDFLAG(IS_IOS)
@@ -703,14 +655,8 @@ TEST_F(NetworkTimeTrackerTest, UpdateFromNetworkServerError) {
 #define MAYBE_UpdateFromNetworkNetworkError UpdateFromNetworkNetworkError
 #endif
 TEST_F(NetworkTimeTrackerTest, MAYBE_UpdateFromNetworkNetworkError) {
-  base::HistogramTester histograms;
-  histograms.ExpectTotalCount(kFetchFailedHistogram, 0);
-  histograms.ExpectTotalCount(kFetchValidHistogram, 0);
-
-  test_server_->RegisterRequestHandler(base::BindRepeating(
+  SetResponseHandler(base::BindRepeating(
       &NetworkTimeTrackerTest::NetworkErrorResponseHandler));
-  EXPECT_TRUE(test_server_->Start());
-  tracker_->SetTimeServerURLForTesting(test_server_->GetURL("/"));
   EXPECT_TRUE(tracker_->QueryTimeServiceForTesting());
   tracker_->WaitForFetchForTesting(123123123);
 
@@ -719,22 +665,10 @@ TEST_F(NetworkTimeTrackerTest, MAYBE_UpdateFromNetworkNetworkError) {
             tracker_->GetNetworkTime(&out_network_time, nullptr));
   // Should see backoff in the error case.
   EXPECT_EQ(base::Minutes(120), tracker_->GetTimerDelayForTesting());
-
-  histograms.ExpectTotalCount(kFetchFailedHistogram, 1);
-  histograms.ExpectBucketCount(kFetchFailedHistogram, -net::ERR_EMPTY_RESPONSE,
-                               1);
-  histograms.ExpectTotalCount(kFetchValidHistogram, 0);
 }
 
 TEST_F(NetworkTimeTrackerTest, UpdateFromNetworkLargeResponse) {
-  base::HistogramTester histograms;
-  histograms.ExpectTotalCount(kFetchFailedHistogram, 0);
-  histograms.ExpectTotalCount(kFetchValidHistogram, 0);
-
-  test_server_->RegisterRequestHandler(
-      base::BindRepeating(&GoodTimeResponseHandler));
-  EXPECT_TRUE(test_server_->Start());
-  tracker_->SetTimeServerURLForTesting(test_server_->GetURL("/"));
+  SetResponseHandler(base::BindRepeating(&GoodTimeResponseHandler));
 
   base::Time out_network_time;
 
@@ -744,32 +678,19 @@ TEST_F(NetworkTimeTrackerTest, UpdateFromNetworkLargeResponse) {
   EXPECT_EQ(NetworkTimeTracker::NETWORK_TIME_NO_SUCCESSFUL_SYNC,
             tracker_->GetNetworkTime(&out_network_time, nullptr));
 
-  histograms.ExpectTotalCount(kFetchFailedHistogram, 1);
-  histograms.ExpectTotalCount(kFetchValidHistogram, 0);
-
   tracker_->SetMaxResponseSizeForTesting(1024);
   EXPECT_TRUE(tracker_->QueryTimeServiceForTesting());
   tracker_->WaitForFetchForTesting(123123123);
   EXPECT_EQ(NetworkTimeTracker::NETWORK_TIME_AVAILABLE,
             tracker_->GetNetworkTime(&out_network_time, nullptr));
-
-  histograms.ExpectTotalCount(kFetchFailedHistogram, 1);
-  histograms.ExpectTotalCount(kFetchValidHistogram, 1);
-  histograms.ExpectBucketCount(kFetchValidHistogram, true, 1);
 }
 
 TEST_F(NetworkTimeTrackerTest, UpdateFromNetworkFirstSyncPending) {
-  base::HistogramTester histograms;
-  histograms.ExpectTotalCount(kFetchFailedHistogram, 0);
-  histograms.ExpectTotalCount(kFetchValidHistogram, 0);
-
-  test_server_->RegisterRequestHandler(
+  SetResponseHandler(
       base::BindRepeating(&NetworkTimeTrackerTest::BadDataResponseHandler));
-  EXPECT_TRUE(test_server_->Start());
   base::StringPiece key = {reinterpret_cast<const char*>(kDevKeyPubBytes),
                            sizeof(kDevKeyPubBytes)};
   tracker_->SetPublicKeyForTesting(key);
-  tracker_->SetTimeServerURLForTesting(test_server_->GetURL("/"));
   EXPECT_TRUE(tracker_->QueryTimeServiceForTesting());
 
   // Do not wait for the fetch to complete; ask for the network time
@@ -777,24 +698,16 @@ TEST_F(NetworkTimeTrackerTest, UpdateFromNetworkFirstSyncPending) {
   base::Time out_network_time;
   EXPECT_EQ(NetworkTimeTracker::NETWORK_TIME_FIRST_SYNC_PENDING,
             tracker_->GetNetworkTime(&out_network_time, nullptr));
-  histograms.ExpectTotalCount(kFetchFailedHistogram, 0);
-  histograms.ExpectTotalCount(kFetchValidHistogram, 0);
 
   tracker_->WaitForFetchForTesting(123123123);
 }
 
 TEST_F(NetworkTimeTrackerTest, UpdateFromNetworkSubseqeuntSyncPending) {
-  base::HistogramTester histograms;
-  histograms.ExpectTotalCount(kFetchFailedHistogram, 0);
-  histograms.ExpectTotalCount(kFetchValidHistogram, 0);
-
-  test_server_->RegisterRequestHandler(
+  SetResponseHandler(
       base::BindRepeating(&NetworkTimeTrackerTest::BadDataResponseHandler));
-  EXPECT_TRUE(test_server_->Start());
   base::StringPiece key = {reinterpret_cast<const char*>(kDevKeyPubBytes),
                            sizeof(kDevKeyPubBytes)};
   tracker_->SetPublicKeyForTesting(key);
-  tracker_->SetTimeServerURLForTesting(test_server_->GetURL("/"));
   EXPECT_TRUE(tracker_->QueryTimeServiceForTesting());
   tracker_->WaitForFetchForTesting(123123123);
 
@@ -807,9 +720,6 @@ TEST_F(NetworkTimeTrackerTest, UpdateFromNetworkSubseqeuntSyncPending) {
   EXPECT_TRUE(tracker_->QueryTimeServiceForTesting());
   EXPECT_EQ(NetworkTimeTracker::NETWORK_TIME_SUBSEQUENT_SYNC_PENDING,
             tracker_->GetNetworkTime(&out_network_time, nullptr));
-  histograms.ExpectTotalCount(kFetchFailedHistogram, 0);
-  histograms.ExpectTotalCount(kFetchValidHistogram, 1);
-  histograms.ExpectBucketCount(kFetchValidHistogram, false, 1);
 
   tracker_->WaitForFetchForTesting(123123123);
 }
@@ -817,7 +727,8 @@ TEST_F(NetworkTimeTrackerTest, UpdateFromNetworkSubseqeuntSyncPending) {
 namespace {
 
 // NetworkTimeTrackerTest.TimeBetweenFetchesHistogram needs to make several time
-// queries that return different times. MultipleGoodTimeResponseHandler is like
+// queries that return different times.
+// MultipleGoodTimeResponseHandler::ResponseHandler is like
 // GoodTimeResponseHandler, but returning different times on each of three
 // requests that happen in sequence.
 //
@@ -833,8 +744,7 @@ class MultipleGoodTimeResponseHandler {
 
   ~MultipleGoodTimeResponseHandler() {}
 
-  std::unique_ptr<net::test_server::HttpResponse> ResponseHandler(
-      const net::test_server::HttpRequest& request);
+  MockedResponse ResponseHandler();
 
   // Returns the time that is returned in the (i-1)'th response handled by
   // ResponseHandler(), or null base::Time() if too many responses have been
@@ -848,24 +758,26 @@ class MultipleGoodTimeResponseHandler {
   unsigned int next_time_index_ = 0;
 };
 
-std::unique_ptr<net::test_server::HttpResponse>
-MultipleGoodTimeResponseHandler::ResponseHandler(
-    const net::test_server::HttpRequest& request) {
-  net::test_server::BasicHttpResponse* response =
-      new net::test_server::BasicHttpResponse();
-
+MockedResponse MultipleGoodTimeResponseHandler::ResponseHandler() {
   if (next_time_index_ >= std::size(kGoodTimeResponseBody)) {
-    response->set_code(net::HTTP_BAD_REQUEST);
-    return std::unique_ptr<net::test_server::HttpResponse>(response);
+    return MockedResponse{network::CreateURLResponseHead(net::HTTP_BAD_REQUEST),
+                          ""};
   }
 
-  response->set_code(net::HTTP_OK);
-  response->set_content(kGoodTimeResponseBody[next_time_index_]);
-  response->AddCustomHeader(
+  network::mojom::URLResponseHeadPtr head =
+      network::CreateURLResponseHead(net::HTTP_OK);
+  head->headers->AddHeader(
       "x-cup-server-proof",
       kGoodTimeResponseServerProofHeader[next_time_index_]);
+
+  // Simulate response latency.
+  head->load_timing.send_end = base::TimeTicks::Now();
+  head->load_timing.receive_headers_start =
+      head->load_timing.send_end + kGoodTimeResponseLatency[next_time_index_];
+  MockedResponse response{std::move(head),
+                          kGoodTimeResponseBody[next_time_index_]};
   next_time_index_++;
-  return std::unique_ptr<net::test_server::HttpResponse>(response);
+  return response;
 }
 
 base::Time MultipleGoodTimeResponseHandler::GetTimeAtIndex(unsigned int i) {
@@ -876,137 +788,126 @@ base::Time MultipleGoodTimeResponseHandler::GetTimeAtIndex(unsigned int i) {
 
 }  // namespace
 
-TEST_F(NetworkTimeTrackerTest, TimeBetweenFetchesHistogram) {
-  MultipleGoodTimeResponseHandler response_handler;
-  base::HistogramTester histograms;
-  histograms.ExpectTotalCount(kTimeBetweenFetchesHistogram, 0);
-
-  test_server_->RegisterRequestHandler(
-      base::BindRepeating(&MultipleGoodTimeResponseHandler::ResponseHandler,
-                          base::Unretained(&response_handler)));
-  EXPECT_TRUE(test_server_->Start());
-  tracker_->SetTimeServerURLForTesting(test_server_->GetURL("/"));
-  EXPECT_TRUE(tracker_->QueryTimeServiceForTesting());
-  tracker_->WaitForFetchForTesting(123123123);
-
-  base::Time out_network_time;
-  EXPECT_EQ(NetworkTimeTracker::NETWORK_TIME_AVAILABLE,
-            tracker_->GetNetworkTime(&out_network_time, nullptr));
-  // After the first query, there should be no histogram value because
-  // there was no delta to record.
-  histograms.ExpectTotalCount(kTimeBetweenFetchesHistogram, 0);
-
-  // Trigger a second query, which should cause the delta from the first
-  // query to be recorded.
-  clock_->Advance(base::Hours(1));
-  EXPECT_TRUE(tracker_->QueryTimeServiceForTesting());
-  tracker_->WaitForFetchForTesting(123123123);
-  EXPECT_EQ(NetworkTimeTracker::NETWORK_TIME_AVAILABLE,
-            tracker_->GetNetworkTime(&out_network_time, nullptr));
-  histograms.ExpectTotalCount(kTimeBetweenFetchesHistogram, 1);
-  histograms.ExpectBucketCount(
-      kTimeBetweenFetchesHistogram,
-      (response_handler.GetTimeAtIndex(1) - response_handler.GetTimeAtIndex(0))
-          .InMilliseconds(),
-      1);
-}
-
 TEST_F(NetworkTimeTrackerTest, ClockSkewHistograms) {
-  MultipleGoodTimeResponseHandler response_handler;
-  base::HistogramTester histograms;
+  field_trial_test_->SetFeatureParams(
+      true, 1.0 /* query probability */,
+      NetworkTimeTracker::FETCHES_IN_BACKGROUND_AND_ON_DEMAND,
+      NetworkTimeTracker::ClockDriftSamples::NO_SAMPLES);
 
-  test_server_->RegisterRequestHandler(
+  MultipleGoodTimeResponseHandler response_handler;
+  base::HistogramTester histograms_first;
+  base::TimeDelta mean_latency = base::Seconds(0);
+
+  SetResponseHandler(
       base::BindRepeating(&MultipleGoodTimeResponseHandler::ResponseHandler,
                           base::Unretained(&response_handler)));
-  EXPECT_TRUE(test_server_->Start());
-  tracker_->SetTimeServerURLForTesting(test_server_->GetURL("/"));
-
-  // Disable noise for deterministic tests.
-  tracker_->OverrideUMANoiseFactorForTesting(0.0);
 
   clock_->SetNow(
       base::Time::FromJsTime(kGoodTimeResponseHandlerJsTime[0] + 3500));
   EXPECT_TRUE(tracker_->QueryTimeServiceForTesting(/*on_demand=*/false));
-  // Simulate 1s latency.
-  tick_clock_->Advance(base::Seconds(1));
   tracker_->WaitForFetchForTesting(123123123);
+  base::TimeDelta latency1 = kGoodTimeResponseLatency[0];
+  mean_latency += latency1;
 
-  histograms.ExpectUniqueTimeSample(
-      "PrivacyBudget.ClockSkew.Magnitude.Positive", base::Seconds(3), 1);
-  histograms.ExpectTotalCount("PrivacyBudget.ClockSkew.Magnitude.Negative", 0);
-  histograms.ExpectUniqueTimeSample("PrivacyBudget.ClockSkew.FetchLatency",
-                                    base::Seconds(1), 1);
-  histograms.ExpectTotalCount("PrivacyBudget.ClockSkew.FetchLatencyJitter", 0);
+  std::unique_ptr<base::HistogramSamples> samples_positive(
+      histograms_first.GetHistogramSamplesSinceCreation(
+          "PrivacyBudget.ClockSkew.Magnitude.Positive"));
+  EXPECT_EQ(1, samples_positive->GetCount(
+                   (base::Seconds(3.5) - latency1 / 2).InMilliseconds()));
+  EXPECT_EQ(1, samples_positive->TotalCount());
+
+  std::unique_ptr<base::HistogramSamples> samples_negative(
+      histograms_first.GetHistogramSamplesSinceCreation(
+          "PrivacyBudget.ClockSkew.Magnitude.Negative"));
+  EXPECT_EQ(0, samples_negative->TotalCount());
+
+  std::unique_ptr<base::HistogramSamples> samples_latency(
+      histograms_first.GetHistogramSamplesSinceCreation(
+          "PrivacyBudget.ClockSkew.FetchLatency"));
+  EXPECT_EQ(1, samples_latency->TotalCount());
+  EXPECT_EQ(1, samples_latency->GetCount(latency1.InMilliseconds()));
+
+  std::unique_ptr<base::HistogramSamples> samples_latency_jitter(
+      histograms_first.GetHistogramSamplesSinceCreation(
+          "PrivacyBudget.ClockSkew.FetchLatencyJitter"));
+  EXPECT_EQ(0, samples_latency_jitter->TotalCount());
+
+  base::HistogramTester histograms_second;
 
   clock_->SetNow(
       base::Time::FromJsTime(kGoodTimeResponseHandlerJsTime[1] + 3500));
   EXPECT_TRUE(tracker_->QueryTimeServiceForTesting(/*on_demand=*/false));
-  // Simulate 1s latency.
-  tick_clock_->Advance(base::Seconds(1));
   tracker_->WaitForFetchForTesting(123123123);
+  base::TimeDelta latency2 = kGoodTimeResponseLatency[1];
+  mean_latency += latency2;
 
-  histograms.ExpectUniqueTimeSample(
-      "PrivacyBudget.ClockSkew.Magnitude.Positive", base::Seconds(3), 2);
-  histograms.ExpectTotalCount("PrivacyBudget.ClockSkew.Magnitude.Negative", 0);
-  histograms.ExpectUniqueTimeSample("PrivacyBudget.ClockSkew.FetchLatency",
-                                    base::Seconds(1), 2);
-  histograms.ExpectTotalCount("PrivacyBudget.ClockSkew.FetchLatencyJitter", 0);
+  samples_positive = histograms_second.GetHistogramSamplesSinceCreation(
+      "PrivacyBudget.ClockSkew.Magnitude.Positive");
+  EXPECT_EQ(1, samples_positive->GetCount(
+                   (base::Seconds(3.5) - latency2 / 2).InMilliseconds()));
+  EXPECT_EQ(1, samples_positive->TotalCount());
 
+  samples_negative = histograms_second.GetHistogramSamplesSinceCreation(
+      "PrivacyBudget.ClockSkew.Magnitude.Negative");
+  EXPECT_EQ(0, samples_negative->TotalCount());
+
+  samples_latency = histograms_second.GetHistogramSamplesSinceCreation(
+      "PrivacyBudget.ClockSkew.FetchLatency");
+  EXPECT_EQ(1, samples_latency->TotalCount());
+  EXPECT_EQ(1, samples_latency->GetCount(latency2.InMilliseconds()));
+
+  samples_latency_jitter = histograms_second.GetHistogramSamplesSinceCreation(
+      "PrivacyBudget.ClockSkew.FetchLatencyJitter");
+  EXPECT_EQ(0, samples_latency_jitter->TotalCount());
+
+  base::HistogramTester histograms_third;
   clock_->SetNow(
       base::Time::FromJsTime(kGoodTimeResponseHandlerJsTime[2] - 2500));
   EXPECT_TRUE(tracker_->QueryTimeServiceForTesting(/*on_demand=*/false));
-  // Simulate 1s latency.
-  tick_clock_->Advance(base::Seconds(1));
   tracker_->WaitForFetchForTesting(123123123);
+  base::TimeDelta latency3 = kGoodTimeResponseLatency[2];
+  mean_latency += latency3;
 
-  histograms.ExpectUniqueTimeSample(
-      "PrivacyBudget.ClockSkew.Magnitude.Positive", base::Seconds(3), 2);
-  histograms.ExpectUniqueTimeSample(
-      "PrivacyBudget.ClockSkew.Magnitude.Negative", base::Seconds(3), 1);
-  histograms.ExpectUniqueTimeSample("PrivacyBudget.ClockSkew.FetchLatency",
-                                    base::Seconds(1), 3);
+  samples_positive = histograms_third.GetHistogramSamplesSinceCreation(
+      "PrivacyBudget.ClockSkew.Magnitude.Positive");
+  EXPECT_EQ(0, samples_positive->TotalCount());
+
+  samples_negative = histograms_third.GetHistogramSamplesSinceCreation(
+      "PrivacyBudget.ClockSkew.Magnitude.Negative");
+  EXPECT_EQ(1, samples_negative->TotalCount());
+  EXPECT_EQ(1, samples_negative->GetCount(
+                   (base::Seconds(2.5) + latency3 / 2).InMilliseconds()));
+  samples_latency = histograms_third.GetHistogramSamplesSinceCreation(
+      "PrivacyBudget.ClockSkew.FetchLatency");
+  EXPECT_EQ(1, samples_latency->TotalCount());
+  EXPECT_EQ(1, samples_latency->GetCount(latency3.InMilliseconds()));
   // After three fetches, the FetchLatencyJitter should be reported.
-  histograms.ExpectUniqueTimeSample(
-      "PrivacyBudget.ClockSkew.FetchLatencyJitter", base::Seconds(0), 1);
-}
-
-TEST_F(NetworkTimeTrackerTest, ClockSkewHistogramsNoise) {
-  MultipleGoodTimeResponseHandler response_handler;
-  base::HistogramTester histograms;
-
-  test_server_->RegisterRequestHandler(
-      base::BindRepeating(&MultipleGoodTimeResponseHandler::ResponseHandler,
-                          base::Unretained(&response_handler)));
-  EXPECT_TRUE(test_server_->Start());
-  tracker_->SetTimeServerURLForTesting(test_server_->GetURL("/"));
-
-  clock_->SetNow(
-      base::Time::FromJsTime(kGoodTimeResponseHandlerJsTime[0] + 3500));
-  EXPECT_TRUE(tracker_->QueryTimeServiceForTesting(/*on_demand=*/false));
-  // Simulate 1s latency.
-  tick_clock_->Advance(base::Seconds(1));
-  tracker_->WaitForFetchForTesting(123123123);
-
-  std::vector<base::Bucket> buckets =
-      histograms.GetAllSamples("PrivacyBudget.ClockSkew.Magnitude.Positive");
-
-  // The real clock skew is 3000ms. With 10% noise, this means that there should
-  // be exactly one sample between 2700 and 3300.
-  const int64_t sum =
-      histograms.GetTotalSum("PrivacyBudget.ClockSkew.Magnitude.Positive");
-  EXPECT_LE(2700, sum);
-  EXPECT_LE(sum, 3300);
+  samples_latency_jitter = histograms_third.GetHistogramSamplesSinceCreation(
+      "PrivacyBudget.ClockSkew.FetchLatencyJitter");
+  EXPECT_EQ(1, samples_latency_jitter->TotalCount());
+  mean_latency /= 3.0;
+  int64_t stddev = (mean_latency - latency1).InMicroseconds() *
+                       (mean_latency - latency1).InMicroseconds() +
+                   (mean_latency - latency2).InMicroseconds() *
+                       (mean_latency - latency2).InMicroseconds() +
+                   (mean_latency - latency3).InMicroseconds() *
+                       (mean_latency - latency3).InMicroseconds();
+  stddev = std::lround(std::sqrt(base::strict_cast<double>(stddev)));
+  EXPECT_EQ(1, samples_latency_jitter->GetCount(
+                   base::Microseconds(stddev).InMilliseconds()));
 }
 
 TEST_F(NetworkTimeTrackerTest, ClockSkewHistogramsEmptyForOnDemandChecks) {
+  field_trial_test_->SetFeatureParams(
+      true, 1.0 /* query probability */,
+      NetworkTimeTracker::FETCHES_IN_BACKGROUND_AND_ON_DEMAND,
+      NetworkTimeTracker::ClockDriftSamples::NO_SAMPLES);
   MultipleGoodTimeResponseHandler response_handler;
   base::HistogramTester histograms;
 
-  test_server_->RegisterRequestHandler(
+  SetResponseHandler(
       base::BindRepeating(&MultipleGoodTimeResponseHandler::ResponseHandler,
                           base::Unretained(&response_handler)));
-  EXPECT_TRUE(test_server_->Start());
-  tracker_->SetTimeServerURLForTesting(test_server_->GetURL("/"));
 
   EXPECT_TRUE(tracker_->QueryTimeServiceForTesting(/*on_demand=*/true));
   tracker_->WaitForFetchForTesting(123123123);
@@ -1015,6 +916,153 @@ TEST_F(NetworkTimeTrackerTest, ClockSkewHistogramsEmptyForOnDemandChecks) {
   histograms.ExpectTotalCount("PrivacyBudget.ClockSkew.Magnitude.Negative", 0);
   histograms.ExpectTotalCount("PrivacyBudget.ClockSkew.FetchLatency", 0);
   histograms.ExpectTotalCount("PrivacyBudget.ClockSkew.FetchLatencyJitter", 0);
+}
+
+TEST_F(NetworkTimeTrackerTest, ClockDriftHistogramsEmptyForOnDemandChecks) {
+  MultipleGoodTimeResponseHandler response_handler;
+  base::HistogramTester histograms;
+
+  field_trial_test_->SetFeatureParams(
+      true, 1.0 /* query probability */,
+      NetworkTimeTracker::FETCHES_IN_BACKGROUND_AND_ON_DEMAND,
+      NetworkTimeTracker::ClockDriftSamples::TWO_SAMPLES);
+
+  SetResponseHandler(
+      base::BindRepeating(&MultipleGoodTimeResponseHandler::ResponseHandler,
+                          base::Unretained(&response_handler)));
+  clock_->SetNow(base::Time::FromJsTime(kGoodTimeResponseHandlerJsTime[0]));
+  EXPECT_TRUE(tracker_->QueryTimeServiceForTesting(/*on_demand=*/true));
+  tracker_->WaitForFetchForTesting(123123123);
+  clock_->SetNow(base::Time::FromJsTime(kGoodTimeResponseHandlerJsTime[1]));
+  EXPECT_TRUE(tracker_->QueryTimeServiceForTesting(/*on_demand=*/true));
+  tracker_->WaitForFetchForTesting(123123123);
+  clock_->SetNow(base::Time::FromJsTime(kGoodTimeResponseHandlerJsTime[2]));
+  EXPECT_TRUE(tracker_->QueryTimeServiceForTesting(/*on_demand=*/true));
+  tracker_->WaitForFetchForTesting(123123123);
+  clock_->SetNow(base::Time::FromJsTime(kGoodTimeResponseHandlerJsTime[3]));
+  EXPECT_TRUE(tracker_->QueryTimeServiceForTesting(/*on_demand=*/true));
+  tracker_->WaitForFetchForTesting(123123123);
+
+  histograms.ExpectTotalCount("PrivacyBudget.ClockDrift.Magnitude.Positive", 0);
+  histograms.ExpectTotalCount("PrivacyBudget.ClockDrift.Magnitude.Negative", 0);
+  histograms.ExpectTotalCount("PrivacyBudget.ClockDrift.FetchLatencyVariance",
+                              0);
+}
+
+TEST_F(NetworkTimeTrackerTest, ClockDriftHistogramsPositive) {
+  MultipleGoodTimeResponseHandler response_handler;
+  base::HistogramTester histograms;
+
+  field_trial_test_->SetFeatureParams(
+      true, 1.0 /* query probability */,
+      NetworkTimeTracker::FETCHES_IN_BACKGROUND_AND_ON_DEMAND,
+      NetworkTimeTracker::ClockDriftSamples::TWO_SAMPLES);
+
+  SetResponseHandler(
+      base::BindRepeating(&MultipleGoodTimeResponseHandler::ResponseHandler,
+                          base::Unretained(&response_handler)));
+
+  // This part will trigger a skew measurement fetch first, followed by a drift
+  // measurement using two samples.
+  clock_->SetNow(base::Time::FromJsTime(kGoodTimeResponseHandlerJsTime[0]));
+  EXPECT_TRUE(tracker_->QueryTimeServiceForTesting(/*on_demand=*/false));
+  tracker_->WaitForFetchForTesting(123123123);
+
+  // The next measurements are used for computing drift.
+  clock_->SetNow(base::Time::FromJsTime(kGoodTimeResponseHandlerJsTime[1]));
+  EXPECT_TRUE(tracker_->QueryTimeServiceForTesting(/*on_demand=*/false));
+  tracker_->WaitForFetchForTesting(123123123);
+  base::TimeDelta latency1 = kGoodTimeResponseLatency[1];
+
+  // We add an on demand time query in the middle to check it does not interfere
+  // with our samples.
+  clock_->SetNow(base::Time::FromJsTime(kGoodTimeResponseHandlerJsTime[2]));
+  EXPECT_TRUE(tracker_->QueryTimeServiceForTesting(/*on_demand=*/true));
+  tracker_->WaitForFetchForTesting(123123123);
+
+  clock_->SetNow(base::Time::FromJsTime(kGoodTimeResponseHandlerJsTime[3]));
+  EXPECT_TRUE(tracker_->QueryTimeServiceForTesting(/*on_demand=*/false));
+  tracker_->WaitForFetchForTesting(123123123);
+
+  clock_->SetNow(
+      base::Time::FromJsTime(kGoodTimeResponseHandlerJsTime[4] + 150));
+  EXPECT_TRUE(tracker_->QueryTimeServiceForTesting(/*on_demand=*/false));
+  tracker_->WaitForFetchForTesting(123123123);
+  base::TimeDelta latency3 = kGoodTimeResponseLatency[4];
+
+  double expected_positive_drift =
+      (base::Milliseconds(150) - latency3 / 2 + latency1 / 2).InMicroseconds() /
+      2.0;
+  ASSERT_GT(expected_positive_drift, 0);
+  histograms.ExpectTotalCount("PrivacyBudget.ClockDrift.Magnitude.Positive", 1);
+  histograms.ExpectUniqueSample("PrivacyBudget.ClockDrift.Magnitude.Positive",
+                                expected_positive_drift, 1);
+
+  histograms.ExpectTotalCount("PrivacyBudget.ClockDrift.Magnitude.Negative", 0);
+
+  histograms.ExpectTotalCount("PrivacyBudget.ClockDrift.FetchLatencyVariance",
+                              1);
+
+  base::TimeDelta mean = (latency1 + latency3) / 2.0;
+  double variance =
+      (latency1 - mean).InMilliseconds() * (latency1 - mean).InMilliseconds() +
+      (latency3 - mean).InMilliseconds() * (latency3 - mean).InMilliseconds();
+  histograms.ExpectUniqueSample("PrivacyBudget.ClockDrift.FetchLatencyVariance",
+                                variance, 1);
+}
+
+TEST_F(NetworkTimeTrackerTest, ClockDriftHistogramsNegative) {
+  MultipleGoodTimeResponseHandler response_handler;
+  base::HistogramTester histograms;
+
+  field_trial_test_->SetFeatureParams(
+      true, 1.0 /* query probability */,
+      NetworkTimeTracker::FETCHES_IN_BACKGROUND_AND_ON_DEMAND,
+      NetworkTimeTracker::ClockDriftSamples::TWO_SAMPLES);
+
+  SetResponseHandler(
+      base::BindRepeating(&MultipleGoodTimeResponseHandler::ResponseHandler,
+                          base::Unretained(&response_handler)));
+
+  // This part will trigger a skew measurement fetch first, followed by a drift
+  // measurement using two samples.
+  clock_->SetNow(base::Time::FromJsTime(kGoodTimeResponseHandlerJsTime[0]));
+  EXPECT_TRUE(tracker_->QueryTimeServiceForTesting(/*on_demand=*/false));
+  tracker_->WaitForFetchForTesting(123123123);
+
+  // These are the two measurements used for computing drift.
+  clock_->SetNow(base::Time::FromJsTime(kGoodTimeResponseHandlerJsTime[1]));
+  EXPECT_TRUE(tracker_->QueryTimeServiceForTesting(/*on_demand=*/false));
+  tracker_->WaitForFetchForTesting(123123123);
+  base::TimeDelta latency1 = kGoodTimeResponseLatency[1];
+
+  clock_->SetNow(base::Time::FromJsTime(kGoodTimeResponseHandlerJsTime[2]));
+  EXPECT_TRUE(tracker_->QueryTimeServiceForTesting(/*on_demand=*/false));
+  tracker_->WaitForFetchForTesting(123123123);
+
+  clock_->SetNow(base::Time::FromJsTime(kGoodTimeResponseHandlerJsTime[3] - 1));
+  EXPECT_TRUE(tracker_->QueryTimeServiceForTesting(/*on_demand=*/false));
+  tracker_->WaitForFetchForTesting(123123123);
+  base::TimeDelta latency3 = kGoodTimeResponseLatency[3];
+
+  double expected_negative_drift =
+      (base::Milliseconds(1) - latency1 / 2 + latency3 / 2).InMicroseconds() /
+      2.0;
+  ASSERT_GT(expected_negative_drift, 0);
+  histograms.ExpectTotalCount("PrivacyBudget.ClockDrift.Magnitude.Positive", 0);
+  histograms.ExpectTotalCount("PrivacyBudget.ClockDrift.Magnitude.Negative", 1);
+  histograms.ExpectUniqueSample("PrivacyBudget.ClockDrift.Magnitude.Negative",
+                                expected_negative_drift, 1);
+
+  base::TimeDelta mean = (latency1 + latency3) / 2.0;
+  double variance =
+      (latency1 - mean).InMilliseconds() * (latency1 - mean).InMilliseconds() +
+      (latency3 - mean).InMilliseconds() * (latency3 - mean).InMilliseconds();
+
+  histograms.ExpectTotalCount("PrivacyBudget.ClockDrift.FetchLatencyVariance",
+                              1);
+  histograms.ExpectUniqueSample("PrivacyBudget.ClockDrift.FetchLatencyVariance",
+                                variance, 1);
 }
 
 }  // namespace network_time

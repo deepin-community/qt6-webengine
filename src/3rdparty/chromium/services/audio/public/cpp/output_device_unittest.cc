@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
@@ -22,6 +22,7 @@
 #include "services/audio/sync_reader.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/utility/utility.h"
 
 using testing::_;
 using testing::Invoke;
@@ -37,7 +38,6 @@ namespace {
 constexpr float kAudioData = 0.618;
 constexpr base::TimeDelta kDelay = base::Microseconds(123);
 constexpr char kDeviceId[] = "testdeviceid";
-constexpr int kFramesSkipped = 456;
 constexpr int kFrames = 789;
 constexpr char kNonDefaultDeviceId[] = "valid-nondefault-device-id";
 constexpr base::TimeDelta kAuthTimeout = base::Milliseconds(10000);
@@ -56,9 +56,9 @@ class MockRenderCallback : public media::AudioRendererSink::RenderCallback {
   MOCK_METHOD4(Render,
                int(base::TimeDelta delay,
                    base::TimeTicks timestamp,
-                   int prior_frames_skipped,
+                   const media::AudioGlitchInfo& glitch_info,
                    media::AudioBus* dest));
-  void OnRenderError() {}
+  void OnRenderError() override {}
 };
 
 class MockStream : public media::mojom::AudioOutputStream {
@@ -224,7 +224,7 @@ TEST_F(AudioServiceOutputDeviceTest, MAYBE_VerifyDataFlow) {
   task_env_.RunUntilIdle();
 
   std::move(stream_factory_->created_callback_)
-      .Run({base::in_place, env.reader->TakeSharedMemoryRegion(),
+      .Run({absl::in_place, env.reader->TakeSharedMemoryRegion(),
             mojo::PlatformHandle(env.client_socket.Take())});
   task_env_.RunUntilIdle();
 
@@ -234,8 +234,10 @@ TEST_F(AudioServiceOutputDeviceTest, MAYBE_VerifyDataFlow) {
   auto test_bus = media::AudioBus::Create(params);
   for (int i = 0; i < 10; ++i) {
     test_bus->Zero();
+    media::AudioGlitchInfo glitch_info{.duration = base::Milliseconds(100),
+                                       .count = 123};
     EXPECT_CALL(env.render_callback,
-                Render(kDelay, env.time_stamp, kFramesSkipped, NotNull()))
+                Render(kDelay, env.time_stamp, glitch_info, NotNull()))
         .WillOnce(WithArg<3>(Invoke([](media::AudioBus* client_bus) -> int {
           // Place some test data in the bus so that we can check that it was
           // copied to the audio service side.
@@ -243,8 +245,8 @@ TEST_F(AudioServiceOutputDeviceTest, MAYBE_VerifyDataFlow) {
           std::fill_n(client_bus->channel(1), client_bus->frames(), kAudioData);
           return client_bus->frames();
         })));
-    env.reader->RequestMoreData(kDelay, env.time_stamp, kFramesSkipped);
-    env.reader->Read(test_bus.get());
+    env.reader->RequestMoreData(kDelay, env.time_stamp, glitch_info);
+    env.reader->Read(test_bus.get(), false);
 
     Mock::VerifyAndClear(&env.render_callback);
     for (int frame = 0; frame < kFrames; ++frame) {
@@ -257,7 +259,7 @@ TEST_F(AudioServiceOutputDeviceTest, MAYBE_VerifyDataFlow) {
 TEST_F(AudioServiceOutputDeviceTest, CreateBitStreamStream) {
   const int kAudioParameterFrames = 4321;
   media::AudioParameters params(media::AudioParameters::AUDIO_BITSTREAM_EAC3,
-                                media::CHANNEL_LAYOUT_STEREO, 48000,
+                                media::ChannelLayoutConfig::Stereo(), 48000,
                                 kAudioParameterFrames);
 
   DataFlowTestEnvironment env(params);
@@ -290,8 +292,10 @@ TEST_F(AudioServiceOutputDeviceTest, CreateBitStreamStream) {
   auto test_bus = media::AudioBus::Create(params);
   for (int i = 0; i < 10; ++i) {
     test_bus->Zero();
+    media::AudioGlitchInfo glitch_info{.duration = base::Milliseconds(100),
+                                       .count = 123};
     EXPECT_CALL(env.render_callback,
-                Render(kDelay, env.time_stamp, kFramesSkipped, NotNull()))
+                Render(kDelay, env.time_stamp, glitch_info, NotNull()))
         .WillOnce(WithArg<3>(Invoke([](media::AudioBus* renderer_bus) -> int {
           EXPECT_TRUE(renderer_bus->is_bitstream_format());
           // Place some test data in the bus so that we can check that it was
@@ -302,8 +306,8 @@ TEST_F(AudioServiceOutputDeviceTest, CreateBitStreamStream) {
           renderer_bus->SetBitstreamDataSize(kBitstreamDataSize);
           return renderer_bus->frames();
         })));
-    env.reader->RequestMoreData(kDelay, env.time_stamp, kFramesSkipped);
-    env.reader->Read(test_bus.get());
+    env.reader->RequestMoreData(kDelay, env.time_stamp, glitch_info);
+    env.reader->Read(test_bus.get(), false);
 
     Mock::VerifyAndClear(&env.render_callback);
     EXPECT_TRUE(test_bus->is_bitstream_format());

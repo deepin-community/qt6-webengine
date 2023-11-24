@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -45,30 +45,43 @@ url::Origin MakeOrigin(
                                                 origin_proto.port());
 }
 
+blink::mojom::AncestorChainBit MakeAncestorChainBit(
+    const storage_key_proto::StorageKey::AncestorChainBit& bit_proto) {
+  using BitType = storage_key_proto::StorageKey::AncestorChainBit::BitType;
+
+  blink::mojom::AncestorChainBit final_bit;
+  switch (bit_proto.bit()) {
+    case BitType::StorageKey_AncestorChainBit_BitType_SAME_SITE:
+      final_bit = blink::mojom::AncestorChainBit::kSameSite;
+      break;
+    case BitType::StorageKey_AncestorChainBit_BitType_CROSS_SITE:
+      final_bit = blink::mojom::AncestorChainBit::kCrossSite;
+      break;
+  }
+  return final_bit;
+}
+
 blink::StorageKey Convert(const storage_key_proto::StorageKey& storage_key) {
   url::Origin origin = MakeOrigin(storage_key.origin());
 
   StorageKey::OneOfCase storage_key_type = storage_key.OneOf_case();
 
   if (storage_key_type == StorageKeyType::ONEOF_NOT_SET)
-    return blink::StorageKey(origin);
+    return blink::StorageKey::CreateFirstParty(origin);
 
   if (storage_key_type == StorageKeyType::kUnguessableToken) {
-    return blink::StorageKey::CreateWithNonce(origin,
-                                              base::UnguessableToken::Create());
+    auto nonce = base::UnguessableToken::Create();
+    return blink::StorageKey::CreateWithNonce(origin, nonce);
   }
 
   if (storage_key_type == StorageKey::OneOfCase::kTopLevelSite) {
     StorageKey::TopLevelSite top_level_site_proto =
         storage_key.top_level_site();
     url::Origin top_level_site = MakeOrigin(top_level_site_proto.origin());
-
-    switch (top_level_site_proto.url_type()) {
-      case UrlType::StorageKey_TopLevelSite_UrlType_ORIGIN:
-        return blink::StorageKey(origin, top_level_site);
-      case UrlType::StorageKey_TopLevelSite_UrlType_SCHEMEFUL_SITE:
-        return blink::StorageKey(origin, net::SchemefulSite(top_level_site));
-    }
+    blink::mojom::AncestorChainBit ancestor_chain_bit =
+        MakeAncestorChainBit(storage_key.ancestor_chain_bit());
+    return blink::StorageKey::Create(origin, net::SchemefulSite(top_level_site),
+                                     ancestor_chain_bit);
   }
 
   return blink::StorageKey();

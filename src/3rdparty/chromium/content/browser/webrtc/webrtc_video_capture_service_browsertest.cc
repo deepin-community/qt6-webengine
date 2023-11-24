@@ -1,11 +1,14 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/bind_post_task.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -20,10 +23,10 @@
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/shell/browser/shell.h"
+#include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
 #include "gpu/command_buffer/client/shared_image_interface.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
-#include "media/base/bind_to_current_loop.h"
 #include "media/base/media_switches.h"
 #include "media/base/video_frame.h"
 #include "media/base/video_frame_metadata.h"
@@ -33,13 +36,12 @@
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
-#include "mojo/public/cpp/system/platform_handle.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "services/video_capture/public/cpp/mock_video_frame_handler.h"
 #include "services/video_capture/public/mojom/constants.mojom.h"
-#include "services/video_capture/public/mojom/device_factory.mojom.h"
 #include "services/video_capture/public/mojom/producer.mojom.h"
 #include "services/video_capture/public/mojom/video_capture_service.mojom.h"
+#include "services/video_capture/public/mojom/video_source_provider.mojom.h"
 #include "services/video_capture/public/mojom/virtual_device.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/khronos/GLES2/gl2ext.h"
@@ -78,8 +80,8 @@ class VirtualDeviceExerciser {
  public:
   virtual ~VirtualDeviceExerciser() {}
   virtual void Initialize() = 0;
-  virtual void RegisterVirtualDeviceAtFactory(
-      mojo::Remote<video_capture::mojom::DeviceFactory>* factory,
+  virtual void RegisterVirtualDeviceAtVideoSourceProvider(
+      mojo::Remote<video_capture::mojom::VideoSourceProvider>* video_source,
       const media::VideoCaptureDeviceInfo& info) = 0;
   virtual gfx::Size GetVideoSize() = 0;
   virtual void PushNextFrame(base::TimeDelta timestamp) = 0;
@@ -113,12 +115,13 @@ class TextureDeviceExerciser : public VirtualDeviceExerciser {
                         &dummy_frame_1_mailbox_holder_);
   }
 
-  void RegisterVirtualDeviceAtFactory(
-      mojo::Remote<video_capture::mojom::DeviceFactory>* factory,
+  void RegisterVirtualDeviceAtVideoSourceProvider(
+      mojo::Remote<video_capture::mojom::VideoSourceProvider>* video_source,
       const media::VideoCaptureDeviceInfo& info) override {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-    (*factory)->AddTextureVirtualDevice(
-        info, virtual_device_.BindNewPipeAndPassReceiver());
+    (*video_source)
+        ->AddTextureVirtualDevice(info,
+                                  virtual_device_.BindNewPipeAndPassReceiver());
 
     virtual_device_->OnNewMailboxHolderBufferHandle(
         0, media::mojom::MailboxBufferHandleSet::New(
@@ -199,7 +202,7 @@ class TextureDeviceExerciser : public VirtualDeviceExerciser {
       }
 
       gpu::Mailbox mailbox = sii->CreateSharedImage(
-          viz::ResourceFormat::RGBA_8888,
+          viz::SinglePlaneFormat::kRGBA_8888,
           gfx::Size(kDummyFrameCodedSize.width(),
                     kDummyFrameCodedSize.height()),
           gfx::ColorSpace::CreateSRGB(), kTopLeft_GrSurfaceOrigin,
@@ -214,11 +217,14 @@ class TextureDeviceExerciser : public VirtualDeviceExerciser {
       gl->WaitSyncTokenCHROMIUM(sii_token.GetConstData());
       GLuint texture =
           gl->CreateAndTexStorage2DSharedImageCHROMIUM(mailbox.name);
+      gl->BeginSharedImageAccessDirectCHROMIUM(
+          texture, GL_SHARED_IMAGE_ACCESS_MODE_READ_CHROMIUM);
       gl->BindTexture(GL_TEXTURE_2D, texture);
       gl->TexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kDummyFrameCodedSize.width(),
                         kDummyFrameCodedSize.height(), GL_RGBA,
                         GL_UNSIGNED_BYTE, dummy_frame_data.get());
       gl->BindTexture(GL_TEXTURE_2D, 0);
+      gl->EndSharedImageAccessDirectCHROMIUM(texture);
       gl->DeleteTextures(1, &texture);
       gpu::SyncToken gl_token;
       gl->GenSyncTokenCHROMIUM(gl_token.GetData());
@@ -258,16 +264,15 @@ class SharedMemoryDeviceExerciser : public VirtualDeviceExerciser,
 
   // VirtualDeviceExerciser implementation.
   void Initialize() override {}
-  void RegisterVirtualDeviceAtFactory(
-      mojo::Remote<video_capture::mojom::DeviceFactory>* factory,
+  void RegisterVirtualDeviceAtVideoSourceProvider(
+      mojo::Remote<video_capture::mojom::VideoSourceProvider>* video_source,
       const media::VideoCaptureDeviceInfo& info) override {
     mojo::PendingRemote<video_capture::mojom::Producer> producer;
-    static const bool kSendBufferHandlesToProducerAsRawFileDescriptors = false;
     producer_receiver_.Bind(producer.InitWithNewPipeAndPassReceiver());
-    (*factory)->AddSharedMemoryVirtualDevice(
-        info, std::move(producer),
-        kSendBufferHandlesToProducerAsRawFileDescriptors,
-        virtual_device_.BindNewPipeAndPassReceiver());
+    (*video_source)
+        ->AddSharedMemoryVirtualDevice(
+            info, std::move(producer),
+            virtual_device_.BindNewPipeAndPassReceiver());
   }
   gfx::Size GetVideoSize() override {
     return gfx::Size(kDummyFrameVisibleRect.width(),
@@ -290,10 +295,9 @@ class SharedMemoryDeviceExerciser : public VirtualDeviceExerciser,
   void OnNewBuffer(int32_t buffer_id,
                    media::mojom::VideoBufferHandlePtr buffer_handle,
                    OnNewBufferCallback callback) override {
-    CHECK(buffer_handle->is_shared_buffer_handle());
+    CHECK(buffer_handle->is_unsafe_shmem_region());
     base::UnsafeSharedMemoryRegion region =
-        mojo::UnwrapUnsafeSharedMemoryRegion(
-            std::move(buffer_handle->get_shared_buffer_handle()));
+        std::move(buffer_handle->get_unsafe_shmem_region());
     CHECK(region.IsValid());
     base::WritableSharedMemoryMapping mapping = region.Map();
     CHECK(mapping.IsValid());
@@ -436,12 +440,12 @@ class WebRtcVideoCaptureServiceBrowserTest : public ContentBrowserTest {
     main_task_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(
-            [](mojo::PendingReceiver<video_capture::mojom::DeviceFactory>
+            [](mojo::PendingReceiver<video_capture::mojom::VideoSourceProvider>
                    receiver) {
-              GetVideoCaptureService().ConnectToDeviceFactory(
+              GetVideoCaptureService().ConnectToVideoSourceProvider(
                   std::move(receiver));
             },
-            factory_.BindNewPipeAndPassReceiver()));
+            video_source_provider_.BindNewPipeAndPassReceiver()));
 
     media::VideoCaptureDeviceInfo info;
     info.descriptor.device_id = kVirtualDeviceId;
@@ -449,14 +453,15 @@ class WebRtcVideoCaptureServiceBrowserTest : public ContentBrowserTest {
     info.descriptor.capture_api = media::VideoCaptureApi::VIRTUAL_DEVICE;
 
     video_size_ = device_exerciser->GetVideoSize();
-    device_exerciser->RegisterVirtualDeviceAtFactory(&factory_, info);
+    device_exerciser->RegisterVirtualDeviceAtVideoSourceProvider(
+        &video_source_provider_, info);
 
     main_task_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(&WebRtcVideoCaptureServiceBrowserTest::
                            OpenVirtualDeviceInRendererAndWaitForPlaying,
                        base::Unretained(this),
-                       media::BindToCurrentLoop(base::BindOnce(
+                       base::BindPostTaskToCurrentDefault(base::BindOnce(
                            &WebRtcVideoCaptureServiceBrowserTest::
                                ShutDownVirtualDeviceAndContinue,
                            base::Unretained(this), device_exerciser,
@@ -469,7 +474,7 @@ class WebRtcVideoCaptureServiceBrowserTest : public ContentBrowserTest {
       VirtualDeviceExerciser* device_exerciser) {
     DCHECK(virtual_device_thread_.task_runner()->RunsTasksInCurrentSequence());
     device_exerciser->PushNextFrame(CalculateTimeSinceFirstInvocation());
-    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE,
         base::BindOnce(&WebRtcVideoCaptureServiceBrowserTest::
                            PushDummyFrameAndScheduleNextPush,
@@ -483,7 +488,7 @@ class WebRtcVideoCaptureServiceBrowserTest : public ContentBrowserTest {
     DCHECK(virtual_device_thread_.task_runner()->RunsTasksInCurrentSequence());
     LOG(INFO) << "Shutting down virtual device";
     device_exerciser->ShutDown();
-    factory_.reset();
+    video_source_provider_.reset();
     weak_factory_.InvalidateWeakPtrs();
     std::move(continuation).Run();
   }
@@ -519,7 +524,7 @@ class WebRtcVideoCaptureServiceBrowserTest : public ContentBrowserTest {
 
   void Initialize() {
     DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-    main_task_runner_ = base::ThreadTaskRunnerHandle::Get();
+    main_task_runner_ = base::SingleThreadTaskRunner::GetCurrentDefault();
   }
 
   base::Thread virtual_device_thread_;
@@ -533,27 +538,37 @@ class WebRtcVideoCaptureServiceBrowserTest : public ContentBrowserTest {
   }
 
   base::test::ScopedFeatureList scoped_feature_list_;
-  mojo::Remote<video_capture::mojom::DeviceFactory> factory_;
+  mojo::Remote<video_capture::mojom::VideoSourceProvider>
+      video_source_provider_;
   gfx::Size video_size_;
   base::TimeTicks first_frame_time_;
   base::WeakPtrFactory<WebRtcVideoCaptureServiceBrowserTest> weak_factory_{
       this};
 };
 
+// TODO(https://crbug.com/1318247): Fix and enable on Fuchsia.
+// TODO(https://crbug.com/1235254): This test is flakey on macOS.
+#if BUILDFLAG(IS_FUCHSIA) || BUILDFLAG(IS_MAC)
+#define MAYBE_FramesSentThroughTextureVirtualDeviceGetDisplayedOnPage \
+  DISABLED_FramesSentThroughTextureVirtualDeviceGetDisplayedOnPage
+#else
+#define MAYBE_FramesSentThroughTextureVirtualDeviceGetDisplayedOnPage \
+  FramesSentThroughTextureVirtualDeviceGetDisplayedOnPage
+#endif
 IN_PROC_BROWSER_TEST_F(
     WebRtcVideoCaptureServiceBrowserTest,
-    FramesSentThroughTextureVirtualDeviceGetDisplayedOnPage) {
+    MAYBE_FramesSentThroughTextureVirtualDeviceGetDisplayedOnPage) {
   Initialize();
   auto device_exerciser = std::make_unique<TextureDeviceExerciser>();
   device_exerciser->Initialize();
 
   base::RunLoop run_loop;
   virtual_device_thread_.task_runner()->PostTask(
-      FROM_HERE,
-      base::BindOnce(&WebRtcVideoCaptureServiceBrowserTest::
-                         AddVirtualDeviceAndStartCapture,
-                     base::Unretained(this), device_exerciser.get(),
-                     media::BindToCurrentLoop(run_loop.QuitClosure())));
+      FROM_HERE, base::BindOnce(&WebRtcVideoCaptureServiceBrowserTest::
+                                    AddVirtualDeviceAndStartCapture,
+                                base::Unretained(this), device_exerciser.get(),
+                                base::BindPostTaskToCurrentDefault(
+                                    run_loop.QuitClosure())));
   run_loop.Run();
 }
 
@@ -574,11 +589,11 @@ IN_PROC_BROWSER_TEST_F(
 
   base::RunLoop run_loop;
   virtual_device_thread_.task_runner()->PostTask(
-      FROM_HERE,
-      base::BindOnce(&WebRtcVideoCaptureServiceBrowserTest::
-                         AddVirtualDeviceAndStartCapture,
-                     base::Unretained(this), device_exerciser.get(),
-                     media::BindToCurrentLoop(run_loop.QuitClosure())));
+      FROM_HERE, base::BindOnce(&WebRtcVideoCaptureServiceBrowserTest::
+                                    AddVirtualDeviceAndStartCapture,
+                                base::Unretained(this), device_exerciser.get(),
+                                base::BindPostTaskToCurrentDefault(
+                                    run_loop.QuitClosure())));
   run_loop.Run();
 }
 
@@ -601,11 +616,11 @@ IN_PROC_BROWSER_TEST_F(
 
   base::RunLoop run_loop;
   virtual_device_thread_.task_runner()->PostTask(
-      FROM_HERE,
-      base::BindOnce(&WebRtcVideoCaptureServiceBrowserTest::
-                         AddVirtualDeviceAndStartCapture,
-                     base::Unretained(this), device_exerciser.get(),
-                     media::BindToCurrentLoop(run_loop.QuitClosure())));
+      FROM_HERE, base::BindOnce(&WebRtcVideoCaptureServiceBrowserTest::
+                                    AddVirtualDeviceAndStartCapture,
+                                base::Unretained(this), device_exerciser.get(),
+                                base::BindPostTaskToCurrentDefault(
+                                    run_loop.QuitClosure())));
   run_loop.Run();
 }
 

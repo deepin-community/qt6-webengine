@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -36,9 +36,9 @@ struct CSPInfo : public Extension::ManifestData {
   // shouldn't be returned for those cases.
   static const std::string& GetExtensionPagesCSP(const Extension* extension);
 
-  // Returns the default CSP (if any) to append for the `extension`'s resource
+  // Returns the minimum CSP (if any) to append for the `extension`'s resource
   // at the given `relative_path`.
-  static const std::string* GetDefaultCSPToAppend(
+  static const std::string* GetMinimumCSPToAppend(
       const Extension& extension,
       const std::string& relative_path);
 
@@ -71,6 +71,10 @@ class CSPHandler : public ManifestHandler {
   // ManifestHandler override:
   bool Parse(Extension* extension, std::u16string* error) override;
 
+  // Returns the minimum CSP to use in MV3 extensions. Only exposed for testing.
+  static const char* GetMinimumMV3CSPForTesting();
+  static const char* GetMinimumUnpackedMV3CSPForTesting();
+
  private:
   // Parses the "content_security_policy" dictionary in the manifest.
   bool ParseCSPDictionary(Extension* extension, std::u16string* error);
@@ -83,11 +87,14 @@ class CSPHandler : public ManifestHandler {
                               const base::Value* content_security_policy);
 
   // Parses the content security policy specified in the manifest for sandboxed
-  // pages. This should be called after ParseExtensionPagesCSP.
+  // pages. This should be called after ParseExtensionPagesCSP. If
+  // `allow_remote_sources` is true, this allows the extension to specify remote
+  // sources in the sandbox CSP.
   bool ParseSandboxCSP(Extension* extension,
                        std::u16string* error,
                        base::StringPiece manifest_key,
-                       const base::Value* sandbox_csp);
+                       const base::Value* sandbox_csp,
+                       bool allow_remote_sources);
 
   // Helper to set the extension pages content security policy manifest data.
   bool SetExtensionPagesCSP(Extension* extension,

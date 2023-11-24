@@ -1,0 +1,3 @@
+# libqt6webenginequickdelegatesqml6 is a private library installed in a public path
+qml6-module-qtwebengine-controlsdelegates: package-name-doesnt-match-sonames libQt6WebEngineQuickDelegatesQml6
+qml6-module-qtwebengine-controlsdelegates: no-symbols-control-file usr/lib/*/libQt6WebEngineQuickDelegatesQml.so.6.*

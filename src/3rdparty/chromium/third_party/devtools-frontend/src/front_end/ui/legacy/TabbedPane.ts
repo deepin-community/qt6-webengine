@@ -40,40 +40,40 @@ import {Icon} from './Icon.js';
 import {Toolbar} from './Toolbar.js';
 import {Tooltip} from './Tooltip.js';
 import {installDragHandle, invokeOnceAfterBatchUpdate} from './UIUtils.js';
-import type {Widget} from './Widget.js';
-import {VBox} from './Widget.js';
+
+import {VBox, type Widget} from './Widget.js';
 import {Events as ZoomManagerEvents, ZoomManager} from './ZoomManager.js';
 import tabbedPaneStyles from './tabbedPane.css.legacy.js';
 
 const UIStrings = {
   /**
-  *@description The aria label for the button to open more tabs at the right tabbed pane in Elements tools
-  */
+   *@description The aria label for the button to open more tabs at the right tabbed pane in Elements tools
+   */
   moreTabs: 'More tabs',
   /**
-  *@description Text in Tabbed Pane
-  *@example {tab} PH1
-  */
+   *@description Text in Tabbed Pane
+   *@example {tab} PH1
+   */
   closeS: 'Close {PH1}',
   /**
-  *@description Text to close something
-  */
+   *@description Text to close something
+   */
   close: 'Close',
   /**
-  *@description Text on a menu option to close other drawers when right click on a drawer title
-  */
+   *@description Text on a menu option to close other drawers when right click on a drawer title
+   */
   closeOthers: 'Close others',
   /**
-  *@description Text on a menu option to close the drawer to the right when right click on a drawer title
-  */
+   *@description Text on a menu option to close the drawer to the right when right click on a drawer title
+   */
   closeTabsToTheRight: 'Close tabs to the right',
   /**
-  *@description Text on a menu option to close all the drawers except Console when right click on a drawer title
-  */
+   *@description Text on a menu option to close all the drawers except Console when right click on a drawer title
+   */
   closeAll: 'Close all',
   /**
-  *@description Indicates that a tab contains a preview feature (i.e., a beta / experimental feature).
-  */
+   *@description Indicates that a tab contains a preview feature (i.e., a beta / experimental feature).
+   */
   previewFeature: 'Preview feature',
 };
 const str_ = i18n.i18n.registerUIStrings('ui/legacy/TabbedPane.ts', UIStrings);
@@ -591,14 +591,16 @@ export class TabbedPane extends Common.ObjectWrapper.eventMixin<EventTypes, type
     const dropDownContainer = document.createElement('div');
     dropDownContainer.classList.add('tabbed-pane-header-tabs-drop-down-container');
     const chevronIcon = Icon.create('largeicon-chevron', 'chevron-icon');
+    const moreTabsString = i18nString(UIStrings.moreTabs);
+    dropDownContainer.title = moreTabsString;
     ARIAUtils.markAsMenuButton(dropDownContainer);
-    ARIAUtils.setAccessibleName(dropDownContainer, i18nString(UIStrings.moreTabs));
+    ARIAUtils.setAccessibleName(dropDownContainer, moreTabsString);
     dropDownContainer.tabIndex = 0;
     dropDownContainer.appendChild(chevronIcon);
     dropDownContainer.addEventListener('click', this.dropDownClicked.bind(this));
     dropDownContainer.addEventListener('keydown', this.dropDownKeydown.bind(this));
     dropDownContainer.addEventListener('mousedown', event => {
-      if (event.which !== 1 || this.triggerDropDownTimeout) {
+      if (event.button !== 0 || this.triggerDropDownTimeout) {
         return;
       }
       this.triggerDropDownTimeout = window.setTimeout(this.dropDownClicked.bind(this, event), 200);
@@ -608,7 +610,7 @@ export class TabbedPane extends Common.ObjectWrapper.eventMixin<EventTypes, type
 
   private dropDownClicked(ev: Event): void {
     const event = (ev as MouseEvent);
-    if (event.which !== 1) {
+    if (event.button !== 0) {
       return;
     }
     if (this.triggerDropDownTimeout) {
@@ -635,8 +637,8 @@ export class TabbedPane extends Common.ObjectWrapper.eventMixin<EventTypes, type
     void menu.show();
   }
 
-  private dropDownKeydown(event: Event): void {
-    if (isEnterOrSpaceKey(event)) {
+  private dropDownKeydown(event: KeyboardEvent): void {
+    if (Platform.KeyboardUtilities.isEnterOrSpaceKey(event)) {
       this.dropDownButton.click();
       event.consume(true);
     }

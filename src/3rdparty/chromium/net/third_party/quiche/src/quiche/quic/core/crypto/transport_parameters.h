@@ -17,7 +17,6 @@
 #include "quiche/quic/core/quic_tag.h"
 #include "quiche/quic/core/quic_types.h"
 #include "quiche/quic/core/quic_versions.h"
-#include "quiche/quic/platform/api/quic_containers.h"
 #include "quiche/quic/platform/api/quic_socket_address.h"
 
 namespace quic {
@@ -62,7 +61,7 @@ struct QUIC_EXPORT_PRIVATE TransportParameters {
     friend struct TransportParameters;
     // Constructors for initial setup used by TransportParameters only.
     // This constructor sets |default_value| and |min_value| to 0, and
-    // |max_value| to kVarInt62MaxValue.
+    // |max_value| to quiche::kVarInt62MaxValue.
     explicit IntegerParameter(TransportParameterId param_id);
     IntegerParameter(TransportParameterId param_id, uint64_t default_value,
                      uint64_t min_value, uint64_t max_value);
@@ -253,6 +252,9 @@ struct QUIC_EXPORT_PRIVATE TransportParameters {
   // initial round-trip time in microseconds.
   IntegerParameter initial_round_trip_time_us;
 
+  // Google internal handshake message.
+  absl::optional<std::string> google_handshake_message;
+
   // Google-specific connection options.
   absl::optional<QuicTagVector> google_connection_options;
 
@@ -274,8 +276,7 @@ struct QUIC_EXPORT_PRIVATE TransportParameters {
 // TLS extension. The serialized bytes are written to |*out|. Returns if the
 // parameters are valid and serialization succeeded.
 QUIC_EXPORT_PRIVATE bool SerializeTransportParameters(
-    ParsedQuicVersion version, const TransportParameters& in,
-    std::vector<uint8_t>* out);
+    const TransportParameters& in, std::vector<uint8_t>* out);
 
 // Parses bytes from the quic_transport_parameters TLS extension and writes the
 // parsed parameters into |*out|. Input is read from |in| for |in_len| bytes.
@@ -298,6 +299,12 @@ QUIC_EXPORT_PRIVATE bool ParseTransportParameters(
 QUIC_EXPORT_PRIVATE bool SerializeTransportParametersForTicket(
     const TransportParameters& in, const std::vector<uint8_t>& application_data,
     std::vector<uint8_t>* out);
+
+// Removes reserved values from custom_parameters and versions.
+// The resulting value can be reliably compared with an original or other
+// deserialized value.
+QUIC_EXPORT_PRIVATE void DegreaseTransportParameters(
+    TransportParameters& parameters);
 
 }  // namespace quic
 

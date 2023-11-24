@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,15 +18,13 @@
 #include "base/observer_list_types.h"
 #include "chrome/browser/ash/crostini/crostini_manager.h"
 #include "chrome/browser/browsing_data/site_data_size_collector.h"
-#include "chromeos/dbus/cryptohome/UserDataAuth.pb.h"
-#include "chromeos/dbus/cryptohome/rpc.pb.h"
+#include "chromeos/ash/components/dbus/cryptohome/UserDataAuth.pb.h"
+#include "chromeos/ash/components/dbus/cryptohome/rpc.pb.h"
 #include "components/user_manager/user.h"
 
 class Profile;
 
-namespace chromeos {
-namespace settings {
-namespace calculator {
+namespace ash::settings {
 
 // Base class for the calculation of a specific storage item. Instances of this
 // class rely on their observers calling StartCalculation, and are designed to
@@ -40,6 +38,7 @@ class SizeCalculator {
     kMyFiles,
     kBrowsingData,
     kAppsExtensions,
+    kDriveOfflineFiles,
     kCrostini,
     kOtherUsers,
     kLastCalculationItem = kOtherUsers,
@@ -135,6 +134,27 @@ class FreeDiskSpaceCalculator : public SizeCalculator {
   base::WeakPtrFactory<FreeDiskSpaceCalculator> weak_ptr_factory_{this};
 };
 
+class DriveOfflineSizeCalculator : public SizeCalculator {
+ public:
+  explicit DriveOfflineSizeCalculator(Profile* profile);
+
+  DriveOfflineSizeCalculator(const DriveOfflineSizeCalculator&) = delete;
+  DriveOfflineSizeCalculator& operator=(const DriveOfflineSizeCalculator&) =
+      delete;
+
+  ~DriveOfflineSizeCalculator() override;
+
+ private:
+  friend class DriveOfflineSizeTestAPI;
+
+  void PerformCalculation() override;
+
+  void OnGetOfflineItemsSize(int64_t offline_bytes);
+
+  Profile* profile_;
+  base::WeakPtrFactory<DriveOfflineSizeCalculator> weak_ptr_factory_{this};
+};
+
 // Class handling the calculation of the size of the user's personal files: My
 // files + Android Play files.
 class MyFilesSizeCalculator : public SizeCalculator {
@@ -151,10 +171,6 @@ class MyFilesSizeCalculator : public SizeCalculator {
 
   // SizeCalculator:
   void PerformCalculation() override;
-
-  // Computes the size of My Files and Play files.
-  int64_t ComputeLocalFilesSize(const base::FilePath& my_files_path,
-                                const base::FilePath& android_files_path);
 
   // Updates the size of My Files and Play files.
   void OnGetMyFilesSize(int64_t total_bytes);
@@ -248,6 +264,13 @@ class AppsSizeCalculator
   void OnGetAndroidAppsSize(bool succeeded,
                             arc::mojom::ApplicationsSizePtr size);
 
+  // Requests updating the size of Borealis apps.
+  void UpdateBorealisAppsSize();
+
+  // Callback to update Borealis apps and cache.
+  void OnGetBorealisAppsSize(
+      absl::optional<vm_tools::concierge::ListVmDisksResponse> response);
+
   // Updates apps and extensions size.
   void UpdateAppsAndExtensionsSize();
 
@@ -266,6 +289,12 @@ class AppsSizeCalculator
   // A flag for keeping track of the mojo connection status to the ARC
   // container.
   bool is_android_running_ = false;
+
+  // Total size of Borealis apps (bytes).
+  int64_t borealis_apps_size_ = 0;
+
+  // True if we have already received the size of Borealis apps.
+  bool has_borealis_apps_size_ = false;
 
   Profile* profile_;
   base::WeakPtrFactory<AppsSizeCalculator> weak_ptr_factory_{this};
@@ -288,7 +317,11 @@ class CrostiniSizeCalculator : public SizeCalculator {
   void PerformCalculation() override;
 
   // Callback to update the size of Crostini VMs.
-  void OnGetCrostiniSize(crostini::CrostiniResult result, int64_t size);
+  void OnGetCrostiniSize(
+      absl::optional<vm_tools::concierge::ListVmDisksResponse>);
+
+  // Helper function to simplify updating the reported size of Crostini.
+  void UpdateSize(int64_t total_bytes);
 
   Profile* profile_;
   base::WeakPtrFactory<CrostiniSizeCalculator> weak_ptr_factory_{this};
@@ -324,8 +357,6 @@ class OtherUsersSizeCalculator : public SizeCalculator {
   base::WeakPtrFactory<OtherUsersSizeCalculator> weak_ptr_factory_{this};
 };
 
-}  // namespace calculator
-}  // namespace settings
-}  // namespace chromeos
+}  // namespace ash::settings
 
 #endif  // CHROME_BROWSER_UI_WEBUI_SETTINGS_ASH_CALCULATOR_SIZE_CALCULATOR_H_

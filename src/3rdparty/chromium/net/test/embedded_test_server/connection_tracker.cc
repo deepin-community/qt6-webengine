@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include "base/containers/contains.h"
 #include "base/run_loop.h"
+#include "base/task/single_thread_task_runner.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -30,8 +31,7 @@ bool GetPort(const net::StreamSocket& connection, uint16_t* port) {
 
 }  // namespace
 
-namespace net {
-namespace test_server {
+namespace net::test_server {
 
 ConnectionTracker::ConnectionTracker(EmbeddedTestServer* test_server)
     : connection_listener_(this) {
@@ -117,7 +117,8 @@ void ConnectionTracker::ResetCounts() {
 
 ConnectionTracker::ConnectionListener::ConnectionListener(
     ConnectionTracker* tracker)
-    : task_runner_(base::ThreadTaskRunnerHandle::Get()), tracker_(tracker) {}
+    : task_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()),
+      tracker_(tracker) {}
 
 ConnectionTracker::ConnectionListener::~ConnectionListener() = default;
 
@@ -152,5 +153,4 @@ void ConnectionTracker::ConnectionListener::ReadFromSocket(
   }
 }
 
-}  // namespace test_server
-}  // namespace net
+}  // namespace net::test_server

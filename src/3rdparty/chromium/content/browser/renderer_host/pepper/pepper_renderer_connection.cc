@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "content/browser/bad_message.h"
@@ -353,8 +353,7 @@ void PepperRendererConnection::OpenChannelToPepperPlugin(
   }
 
   plugin_service_->OpenChannelToPpapiPlugin(
-      render_process_id_, embedder_origin, path, profile_data_directory_,
-      origin_lock,
+      render_process_id_, path, profile_data_directory_, origin_lock,
       new OpenChannelToPpapiPluginCallback(this, std::move(callback)));
 }
 

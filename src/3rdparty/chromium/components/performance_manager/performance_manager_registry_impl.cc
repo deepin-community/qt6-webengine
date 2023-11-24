@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,13 +8,16 @@
 #include <utility>
 
 #include "base/observer_list.h"
+#include "base/task/sequenced_task_runner.h"
 #include "components/performance_manager/embedder/binders.h"
+#include "components/performance_manager/graph/page_node_impl.h"
 #include "components/performance_manager/performance_manager_tab_helper.h"
 #include "components/performance_manager/public/mojom/coordination_unit.mojom.h"
 #include "components/performance_manager/public/performance_manager.h"
 #include "components/performance_manager/public/performance_manager_main_thread_mechanism.h"
 #include "components/performance_manager/public/performance_manager_main_thread_observer.h"
 #include "components/performance_manager/public/performance_manager_owned.h"
+#include "components/performance_manager/render_process_user_data.h"
 #include "components/performance_manager/service_worker_context_adapter.h"
 #include "components/performance_manager/worker_watcher.h"
 #include "content/public/browser/browser_context.h"
@@ -134,6 +137,22 @@ void PerformanceManagerRegistryImpl::CreatePageNodeForWebContents(
     observer.OnPageNodeCreatedForWebContents(web_contents);
 }
 
+void PerformanceManagerRegistryImpl::SetPageType(
+    content::WebContents* web_contents,
+    PageType type) {
+  PerformanceManagerTabHelper* tab_helper =
+      PerformanceManagerTabHelper::FromWebContents(web_contents);
+  DCHECK(tab_helper);
+
+  PerformanceManager::CallOnGraph(
+      FROM_HERE,
+      // Unretained() is safe because PerformanceManagerTabHelper owns the
+      // PageNodeImpl and deletes it by posting a task to the PerformanceManager
+      // sequence, which will be sequenced after the task posted here.
+      base::BindOnce(&PageNodeImpl::SetType,
+                     base::Unretained(tab_helper->primary_page_node()), type));
+}
+
 PerformanceManagerRegistryImpl::Throttles
 PerformanceManagerRegistryImpl::CreateThrottlesForNavigation(
     content::NavigationHandle* handle) {
@@ -182,7 +201,7 @@ void PerformanceManagerRegistryImpl::
         content::RenderProcessHost* render_process_host) {
   registry->AddInterface(base::BindRepeating(&BindProcessCoordinationUnit,
                                              render_process_host->GetID()),
-                         base::SequencedTaskRunnerHandle::Get());
+                         base::SequencedTaskRunner::GetCurrentDefault());
 
   // Ideally this would strictly be a "Create", but when a
   // RenderFrameHost is "resurrected" with a new process it will
@@ -293,6 +312,19 @@ void PerformanceManagerRegistryImpl::EnsureProcessNodeForRenderProcessHost(
         RenderProcessUserData::CreateForRenderProcessHost(render_process_host);
     user_data->SetDestructionObserver(this);
   }
+}
+
+void PerformanceManagerRegistryImpl::OnRenderProcessHostCreated(
+    content::RenderProcessHost* host) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  // Create the ProcessNode if it doesn't already exist. This is the case in
+  // web_tests and content_browsertests which do not invoke
+  // CreateProcessNodeAndExposeInterfacesToRendererProcess().
+  EnsureProcessNodeForRenderProcessHost(host);
+
+  // Notify the ProcessNode that its process was launched.
+  RenderProcessUserData::GetForRenderProcessHost(host)->OnProcessLaunched();
 }
 
 }  // namespace performance_manager

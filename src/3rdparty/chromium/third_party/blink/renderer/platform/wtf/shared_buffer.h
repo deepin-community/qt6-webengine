@@ -27,11 +27,13 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_SHARED_BUFFER_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_SHARED_BUFFER_H_
 
-#include <algorithm>
 #include <utility>
 #include <vector>
 
+#include "base/check_op.h"
 #include "base/containers/span.h"
+#include "base/numerics/safe_conversions.h"
+#include "base/ranges/algorithm.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/ref_counted.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
@@ -57,8 +59,7 @@ class WTF_EXPORT SharedBuffer : public RefCounted<SharedBuffer> {
       return temp;
     }
     bool operator==(const Iterator& that) const {
-      return std::equal(value_.begin(), value_.end(), that.value_.begin(),
-                        that.value_.end()) &&
+      return base::ranges::equal(value_, that.value_) &&
              buffer_ == that.buffer_;
     }
     bool operator!=(const Iterator& that) const { return !(*this == that); }
@@ -101,21 +102,24 @@ class WTF_EXPORT SharedBuffer : public RefCounted<SharedBuffer> {
   HAS_STRICTLY_TYPED_ARG
   static scoped_refptr<SharedBuffer> Create(STRICTLY_TYPED_ARG(size)) {
     ALLOW_NUMERIC_ARG_TYPES_PROMOTABLE_TO(size_t);
-    return base::AdoptRef(new SharedBuffer(SafeCast<wtf_size_t>(size)));
+    return base::AdoptRef(
+        new SharedBuffer(base::checked_cast<wtf_size_t>(size)));
   }
 
   HAS_STRICTLY_TYPED_ARG
   static scoped_refptr<SharedBuffer> Create(const char* data,
                                             STRICTLY_TYPED_ARG(size)) {
     ALLOW_NUMERIC_ARG_TYPES_PROMOTABLE_TO(size_t);
-    return base::AdoptRef(new SharedBuffer(data, SafeCast<wtf_size_t>(size)));
+    return base::AdoptRef(
+        new SharedBuffer(data, base::checked_cast<wtf_size_t>(size)));
   }
 
   HAS_STRICTLY_TYPED_ARG
   static scoped_refptr<SharedBuffer> Create(const unsigned char* data,
                                             STRICTLY_TYPED_ARG(size)) {
     ALLOW_NUMERIC_ARG_TYPES_PROMOTABLE_TO(size_t);
-    return base::AdoptRef(new SharedBuffer(data, SafeCast<wtf_size_t>(size)));
+    return base::AdoptRef(
+        new SharedBuffer(data, base::checked_cast<wtf_size_t>(size)));
   }
 
   static scoped_refptr<SharedBuffer> AdoptVector(Vector<char>&);
@@ -130,7 +134,7 @@ class WTF_EXPORT SharedBuffer : public RefCounted<SharedBuffer> {
 
   size_t size() const { return size_; }
 
-  bool IsEmpty() const { return !size(); }
+  bool empty() const { return !size(); }
 
   void Append(const SharedBuffer&);
 
@@ -214,7 +218,7 @@ class WTF_EXPORT SharedBuffer : public RefCounted<SharedBuffer> {
   bool GetBytesInternal(void* dest, size_t) const;
   Iterator GetIteratorAtInternal(size_t position) const;
   size_t GetLastSegmentSize() const {
-    DCHECK(!segments_.IsEmpty());
+    DCHECK(!segments_.empty());
     return (size_ - buffer_.size() + kSegmentSize - 1) % kSegmentSize + 1;
   }
 
@@ -227,7 +231,7 @@ class WTF_EXPORT SharedBuffer : public RefCounted<SharedBuffer> {
 template <>
 inline Vector<char> SharedBuffer::CopyAs() const {
   Vector<char> buffer;
-  buffer.ReserveInitialCapacity(SafeCast<wtf_size_t>(size_));
+  buffer.ReserveInitialCapacity(base::checked_cast<wtf_size_t>(size_));
 
   for (const auto& span : *this)
     buffer.Append(span.data(), static_cast<wtf_size_t>(span.size()));
@@ -239,7 +243,7 @@ inline Vector<char> SharedBuffer::CopyAs() const {
 template <>
 inline Vector<uint8_t> SharedBuffer::CopyAs() const {
   Vector<uint8_t> buffer;
-  buffer.ReserveInitialCapacity(SafeCast<wtf_size_t>(size_));
+  buffer.ReserveInitialCapacity(base::checked_cast<wtf_size_t>(size_));
 
   for (const auto& span : *this) {
     buffer.Append(reinterpret_cast<const uint8_t*>(span.data()),

@@ -34,8 +34,10 @@
 import * as Common from '../../core/common/common.js';
 import * as Host from '../../core/host/host.js';
 import * as i18n from '../../core/i18n/i18n.js';
+import * as Platform from '../../core/platform/platform.js';
 import * as Root from '../../core/root/root.js';
 import * as SDK from '../../core/sdk/sdk.js';
+
 import type * as Protocol from '../../generated/protocol.js';
 import * as Bindings from '../../models/bindings/bindings.js';
 import * as TextUtils from '../../models/text_utils/text_utils.js';
@@ -48,64 +50,63 @@ import {linkifyDeferredNodeReference} from './DOMLinkifier.js';
 import {ElementsPanel} from './ElementsPanel.js';
 import stylesSectionTreeStyles from './stylesSectionTree.css.js';
 
-import type {Context} from './StylePropertyTreeElement.js';
-import {StylePropertyTreeElement} from './StylePropertyTreeElement.js';
+import {StylePropertyTreeElement, type Context} from './StylePropertyTreeElement.js';
 import {StylesSidebarPane} from './StylesSidebarPane.js';
 
 const UIStrings = {
   /**
-  *@description Tooltip text that appears when hovering over the largeicon add button in the Styles Sidebar Pane of the Elements panel
-  */
+   *@description Tooltip text that appears when hovering over the largeicon add button in the Styles Sidebar Pane of the Elements panel
+   */
   insertStyleRuleBelow: 'Insert Style Rule Below',
   /**
-  *@description Text in Styles Sidebar Pane of the Elements panel
-  */
+   *@description Text in Styles Sidebar Pane of the Elements panel
+   */
   constructedStylesheet: 'constructed stylesheet',
   /**
-  *@description Text in Styles Sidebar Pane of the Elements panel
-  */
+   *@description Text in Styles Sidebar Pane of the Elements panel
+   */
   userAgentStylesheet: 'user agent stylesheet',
   /**
-  *@description Text in Styles Sidebar Pane of the Elements panel
-  */
+   *@description Text in Styles Sidebar Pane of the Elements panel
+   */
   injectedStylesheet: 'injected stylesheet',
   /**
-  *@description Text in Styles Sidebar Pane of the Elements panel
-  */
+   *@description Text in Styles Sidebar Pane of the Elements panel
+   */
   viaInspector: 'via inspector',
   /**
-  *@description Text in Styles Sidebar Pane of the Elements panel
-  */
+   *@description Text in Styles Sidebar Pane of the Elements panel
+   */
   styleAttribute: '`style` attribute',
   /**
-  *@description Text in Styles Sidebar Pane of the Elements panel
-  *@example {html} PH1
-  */
+   *@description Text in Styles Sidebar Pane of the Elements panel
+   *@example {html} PH1
+   */
   sattributesStyle: '{PH1}[Attributes Style]',
   /**
-  *@description Show all button text content in Styles Sidebar Pane of the Elements panel
-  *@example {3} PH1
-  */
+   *@description Show all button text content in Styles Sidebar Pane of the Elements panel
+   *@example {3} PH1
+   */
   showAllPropertiesSMore: 'Show All Properties ({PH1} more)',
   /**
-  *@description Text in Elements Tree Element of the Elements panel, copy should be used as a verb
-  */
+   *@description Text in Elements Tree Element of the Elements panel, copy should be used as a verb
+   */
   copySelector: 'Copy `selector`',
   /**
-  *@description A context menu item in Styles panel to copy CSS rule
-  */
+   *@description A context menu item in Styles panel to copy CSS rule
+   */
   copyRule: 'Copy rule',
   /**
-  *@description A context menu item in Styles panel to copy all CSS declarations
-  */
+   *@description A context menu item in Styles panel to copy all CSS declarations
+   */
   copyAllDeclarations: 'Copy all declarations',
   /**
-  *@description  A context menu item in Styles panel to copy all the CSS changes
-  */
+   *@description  A context menu item in Styles panel to copy all the CSS changes
+   */
   copyAllCSSChanges: 'Copy all CSS changes',
   /**
-  *@description Text that is announced by the screen reader when the user focuses on an input field for editing the name of a CSS selector in the Styles panel
-  */
+   *@description Text that is announced by the screen reader when the user focuses on an input field for editing the name of a CSS selector in the Styles panel
+   */
   cssSelector: '`CSS` selector',
 };
 
@@ -121,6 +122,8 @@ export class StylePropertiesSection {
   protected parentPane: StylesSidebarPane;
   styleInternal: SDK.CSSStyleDeclaration.CSSStyleDeclaration;
   readonly matchedStyles: SDK.CSSMatchedStyles.CSSMatchedStyles;
+  private computedStyles: Map<string, string>|null;
+  private parentsComputedStyles: Map<string, string>|null;
   editable: boolean;
   private hoverTimer: number|null;
   private willCauseCancelEditing: boolean;
@@ -152,11 +155,14 @@ export class StylePropertiesSection {
 
   constructor(
       parentPane: StylesSidebarPane, matchedStyles: SDK.CSSMatchedStyles.CSSMatchedStyles,
-      style: SDK.CSSStyleDeclaration.CSSStyleDeclaration, sectionIdx: number) {
+      style: SDK.CSSStyleDeclaration.CSSStyleDeclaration, sectionIdx: number, computedStyles: Map<string, string>|null,
+      parentsComputedStyles: Map<string, string>|null) {
     this.parentPane = parentPane;
     this.sectionIdx = sectionIdx;
     this.styleInternal = style;
     this.matchedStyles = matchedStyles;
+    this.computedStyles = computedStyles;
+    this.parentsComputedStyles = parentsComputedStyles;
     this.editable = Boolean(style.styleSheetId && style.range);
     this.hoverTimer = null;
     this.willCauseCancelEditing = false;
@@ -226,7 +232,7 @@ export class StylePropertiesSection {
         this.onFontEditorButtonClicked();
       }, this);
       this.fontEditorButton.element.addEventListener('keydown', event => {
-        if (isEnterOrSpaceKey(event)) {
+        if (Platform.KeyboardUtilities.isEnterOrSpaceKey(event)) {
           event.consume(true);
           this.onFontEditorButtonClicked();
         }
@@ -284,6 +290,26 @@ export class StylePropertiesSection {
     this.isHiddenInternal = false;
     this.markSelectorMatches();
     this.onpopulate();
+  }
+
+  setComputedStyles(computedStyles: Map<string, string>|null): void {
+    this.computedStyles = computedStyles;
+  }
+
+  setParentsComputedStyles(parentsComputedStyles: Map<string, string>|null): void {
+    this.parentsComputedStyles = parentsComputedStyles;
+  }
+
+  updateAuthoringHint(): void {
+    let child = this.propertiesTreeOutline.firstChild();
+    while (child) {
+      if (child instanceof StylePropertyTreeElement) {
+        child.setComputedStyles(this.computedStyles);
+        child.setParentsComputedStyles(this.parentsComputedStyles);
+        child.updateAuthoringHint();
+      }
+      child = child.nextSibling;
+    }
   }
 
   setSectionIdx(sectionIdx: number): void {
@@ -703,6 +729,7 @@ export class StylePropertiesSection {
   protected createAtRuleLists(rule: SDK.CSSRule.CSSStyleRule): void {
     this.createMediaList(rule.media);
     this.createContainerQueryList(rule.containerQueries);
+    this.createScopesList(rule.scopes);
     this.createSupportsList(rule.supports);
   }
 
@@ -770,6 +797,28 @@ export class StylePropertiesSection {
       this.queryListElement.append(containerQueryElement);
 
       void this.addContainerForContainerQuery(containerQuery);
+    }
+  }
+
+  protected createScopesList(scopesList: SDK.CSSScope.CSSScope[]): void {
+    for (let i = scopesList.length - 1; i >= 0; --i) {
+      const scope = scopesList[i];
+      if (!scope.text) {
+        continue;
+      }
+
+      let onQueryTextClick;
+      if (scope.styleSheetId) {
+        onQueryTextClick = this.handleQueryRuleClick.bind(this, scope);
+      }
+
+      const scopeElement = new ElementsComponents.CSSQuery.CSSQuery();
+      scopeElement.data = {
+        queryPrefix: '@scope',
+        queryText: scope.text,
+        onQueryTextClick,
+      };
+      this.queryListElement.append(scopeElement);
     }
   }
 
@@ -924,7 +973,7 @@ export class StylePropertiesSection {
         break;
       }
       count++;
-      const isShorthand = Boolean(style.longhandProperties(property.name).length);
+      const isShorthand = property.getLonghandProperties().length > 0;
       const inherited = this.isPropertyInherited(property.name);
       const overloaded = this.isPropertyOverloaded(property);
       if (style.parentRule && style.parentRule.isUserAgent() && inherited) {
@@ -932,6 +981,8 @@ export class StylePropertiesSection {
       }
       const item = new StylePropertyTreeElement(
           this.parentPane, this.matchedStyles, property, isShorthand, inherited, overloaded, false);
+      item.setComputedStyles(this.computedStyles);
+      item.setParentsComputedStyles(this.parentsComputedStyles);
       this.propertiesTreeOutline.appendChild(item);
     }
 
@@ -1178,6 +1229,8 @@ export class StylePropertiesSection {
         success = await cssModel.setContainerQueryText(query.styleSheetId, range, newContent);
       } else if (query instanceof SDK.CSSSupports.CSSSupports) {
         success = await cssModel.setSupportsText(query.styleSheetId, range, newContent);
+      } else if (query instanceof SDK.CSSScope.CSSScope) {
+        success = await cssModel.setScopeText(query.styleSheetId, range, newContent);
       } else {
         success = await cssModel.setMediaText(query.styleSheetId, range, newContent);
       }
@@ -1449,7 +1502,7 @@ export class BlankStylePropertiesSection extends StylePropertiesSection {
       insertAfterStyle: SDK.CSSStyleDeclaration.CSSStyleDeclaration, sectionIdx: number) {
     const cssModel = (stylesPane.cssModel() as SDK.CSSModel.CSSModel);
     const rule = SDK.CSSRule.CSSStyleRule.createDummyRule(cssModel, defaultSelectorText);
-    super(stylesPane, matchedStyles, rule.style, sectionIdx);
+    super(stylesPane, matchedStyles, rule.style, sectionIdx, null, null);
     this.normal = false;
     this.ruleLocation = ruleLocation;
     this.styleSheetId = styleSheetId;
@@ -1553,7 +1606,7 @@ export class KeyframePropertiesSection extends StylePropertiesSection {
   constructor(
       stylesPane: StylesSidebarPane, matchedStyles: SDK.CSSMatchedStyles.CSSMatchedStyles,
       style: SDK.CSSStyleDeclaration.CSSStyleDeclaration, sectionIdx: number) {
-    super(stylesPane, matchedStyles, style, sectionIdx);
+    super(stylesPane, matchedStyles, style, sectionIdx, null, null);
     this.selectorElement.className = 'keyframe-key';
   }
 
@@ -1600,5 +1653,15 @@ export class KeyframePropertiesSection extends StylePropertiesSection {
   }
 
   highlight(): void {
+  }
+}
+
+export class HighlightPseudoStylePropertiesSection extends StylePropertiesSection {
+  isPropertyInherited(_propertyName: string): boolean {
+    // For highlight pseudos, all valid properties are treated as inherited.
+    // Note that the meaning is reversed in this context; the result of
+    // returning false here is that properties of inherited pseudos will never
+    // be shown in the darker style of non-inherited properties.
+    return false;
   }
 }

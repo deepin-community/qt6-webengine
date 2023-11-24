@@ -41,7 +41,7 @@ group("gn_all") {
     deps += [
       "benchmarks/cpp:gn_all",
       "cctest:cctest",
-      "cctest:generate-bytecode-expectations",
+      "unittests:generate-bytecode-expectations",
       "unittests:unittests",
     ]
   }
@@ -69,6 +69,20 @@ group("v8_perf") {
     "../tools/whitespace.txt",
     "js-perf-test/",
     "memory/",
+  ]
+}
+
+group("d8_pgo") {
+  testonly = true
+
+  data_deps = [
+    "..:d8",
+    "..:v8_python_base",
+  ]
+
+  data = [
+    "../tools/builtins-pgo/profile_only.py",
+    "../tools/builtins-pgo/get_hints.py",
   ]
 }
 

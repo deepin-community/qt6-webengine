@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,13 +12,14 @@
 #include "base/bits.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "media/gpu/gpu_video_encode_accelerator_helpers.h"
 #include "media/gpu/macros.h"
 #include "media/gpu/vaapi/vaapi_common.h"
 #include "media/gpu/vaapi/vaapi_wrapper.h"
+#include "media/gpu/video_rate_control.h"
 #include "media/gpu/vp9_svc_layers.h"
-#include "media/gpu/vpx_rate_control.h"
 #include "third_party/libvpx/source/libvpx/vp9/ratectrl_rtc.h"
 
 namespace media {
@@ -28,25 +29,11 @@ namespace {
 constexpr size_t kKFPeriod = 3000;
 
 // Quantization parameter. They are vp9 ac/dc indices and their ranges are
-// 0-255. Based on WebRTC's defaults.
-constexpr uint8_t kMinQP = 4;
-constexpr uint8_t kMaxQP = 112;
-// The upper limitation of the quantization parameter for the software rate
-// controller. This is larger than |kMaxQP| because a driver might ignore the
-// specified maximum quantization parameter when the driver determines the
-// value, but it doesn't ignore the quantization parameter by the software rate
-// controller.
-constexpr uint8_t kMaxQPForSoftwareRateCtrl = 224;
-
-// This stands for 31 as a real ac value (see rfc 8.6.1 table
-// ac_qlookup[3][256]). Note: This needs to be revisited once we have 10&12 bit
-// encoder support.
-constexpr uint8_t kDefaultQP = 24;
-
-// filter level may affect on quality at lower bitrates; for now,
-// we set a constant value (== 10) which is what other VA-API
-// implementations like libyami and gstreamer-vaapi are using.
-constexpr uint8_t kDefaultLfLevel = 10;
+// 0-255. These are based on WebRTC's defaults.
+constexpr uint8_t kMinQP = 8;
+constexpr uint8_t kMaxQP = 208;
+constexpr uint8_t kScreenMinQP = 32;
+constexpr uint8_t kScreenMaxQP = kMaxQP;
 
 // Convert Qindex, whose range is 0-255, to the quantizer parameter used in
 // libvpx vp9 rate control, whose range is 0-63.
@@ -185,20 +172,21 @@ bool VP9VaapiVideoEncoderDelegate::Initialize(
     return false;
   }
 
-  // Even though VP9VaapiVideoEncoderDelegate might support other bitrate
-  // control modes, only the kConstantQuantizationParameter is used.
-  if (ave_config.bitrate_control != VaapiVideoEncoderDelegate::BitrateControl::
-                                        kConstantQuantizationParameter) {
-    DVLOGF(1) << "Only CQ bitrate control is supported";
+  if (config.bitrate.mode() == Bitrate::Mode::kVariable) {
+    DVLOGF(1) << "Invalid configuraiton. VBR is not supported for VP9.";
     return false;
   }
-
-  native_input_mode_ = ave_config.native_input_mode;
 
   visible_size_ = config.input_visible_size;
   coded_size_ = gfx::Size(base::bits::AlignUp(visible_size_.width(), 16),
                           base::bits::AlignUp(visible_size_.height(), 16));
   current_params_ = EncodeParams();
+  if (config.content_type ==
+      VideoEncodeAccelerator::Config::ContentType::kDisplay) {
+    current_params_.min_qp = kScreenMinQP;
+    current_params_.max_qp = kScreenMaxQP;
+  }
+
   reference_frames_.Clear();
   frame_num_ = 0;
 
@@ -243,7 +231,6 @@ bool VP9VaapiVideoEncoderDelegate::Initialize(
     }
     svc_layers_ = std::make_unique<VP9SVCLayers>(config.spatial_layers);
   }
-  current_params_.max_qp = kMaxQPForSoftwareRateCtrl;
 
   // Store layer size for vp9 simple stream.
   if (spatial_layer_resolutions.empty())
@@ -357,8 +344,8 @@ bool VP9VaapiVideoEncoderDelegate::ApplyPendingUpdateRates() {
   if (!pending_update_rates_)
     return true;
 
-  VLOGF(2) << "New bitrate: " << pending_update_rates_->first.ToString()
-           << ", New framerate: " << pending_update_rates_->second;
+  DVLOGF(2) << "New bitrate: " << pending_update_rates_->first.ToString()
+            << ", new framerate: " << pending_update_rates_->second;
 
   current_params_.bitrate_allocation = pending_update_rates_->first;
   current_params_.framerate = pending_update_rates_->second;
@@ -397,6 +384,11 @@ bool VP9VaapiVideoEncoderDelegate::UpdateRates(
     uint32_t framerate) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
+  if (bitrate_allocation.GetMode() != Bitrate::Mode::kConstant) {
+    DLOG(ERROR) << "VBR is not supported for VP9 but was requested.";
+    return false;
+  }
+
   if (bitrate_allocation.GetSumBps() == 0u || framerate == 0)
     return false;
 
@@ -418,8 +410,6 @@ Vp9FrameHeader VP9VaapiVideoEncoderDelegate::GetDefaultFrameHeader(
   hdr.frame_height = visible_size_.height();
   hdr.render_width = visible_size_.width();
   hdr.render_height = visible_size_.height();
-  hdr.quant_params.base_q_idx = kDefaultQP;
-  hdr.loop_filter.level = kDefaultLfLevel;
   hdr.show_frame = true;
   hdr.frame_type =
       keyframe ? Vp9FrameHeader::KEYFRAME : Vp9FrameHeader::INTERFRAME;
@@ -468,17 +458,20 @@ void VP9VaapiVideoEncoderDelegate::SetFrameHeader(
         picture->metadata_for_encoding->temporal_idx;
     frame_params.spatial_layer_id = picture->metadata_for_encoding->spatial_idx;
   }
-  rate_ctrl_->ComputeQP(frame_params);
-  picture->frame_hdr->quant_params.base_q_idx = rate_ctrl_->GetQP();
+  picture->frame_hdr->quant_params.base_q_idx =
+      rate_ctrl_->ComputeQP(frame_params);
   picture->frame_hdr->loop_filter.level = rate_ctrl_->GetLoopfilterLevel();
   DVLOGF(4) << "qp="
             << static_cast<int>(picture->frame_hdr->quant_params.base_q_idx)
             << ", filter_level="
             << static_cast<int>(picture->frame_hdr->loop_filter.level)
-            << ", frame_params.temporal_layer_id:"
-            << frame_params.temporal_layer_id
-            << ", frame_params.spatial_layer_id:"
-            << frame_params.spatial_layer_id;
+            << (keyframe ? " (keyframe)" : "")
+            << (picture->metadata_for_encoding
+                    ? (" spatial_id=" +
+                       base::NumberToString(frame_params.spatial_layer_id) +
+                       ", temporal_id=" +
+                       base::NumberToString(frame_params.temporal_layer_id))
+                    : "");
 }
 
 void VP9VaapiVideoEncoderDelegate::UpdateReferenceFrames(
@@ -577,10 +570,9 @@ bool VP9VaapiVideoEncoderDelegate::SubmitFrameParameters(
   pic_param.log2_tile_rows = frame_header->tile_rows_log2;
   pic_param.log2_tile_columns = frame_header->tile_cols_log2;
 
-  return vaapi_wrapper_->SubmitBuffer(VAEncSequenceParameterBufferType,
-                                      &seq_param) &&
-         vaapi_wrapper_->SubmitBuffer(VAEncPictureParameterBufferType,
-                                      &pic_param);
+  return vaapi_wrapper_->SubmitBuffers(
+      {{VAEncSequenceParameterBufferType, sizeof(seq_param), &seq_param},
+       {VAEncPictureParameterBufferType, sizeof(pic_param), &pic_param}});
 }
 
 }  // namespace media

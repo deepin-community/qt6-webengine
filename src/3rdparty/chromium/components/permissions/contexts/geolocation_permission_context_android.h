@@ -1,4 +1,4 @@
-// Copyright 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -72,8 +72,7 @@ class GeolocationPermissionContextAndroid
 
  private:
   // GeolocationPermissionContext:
-  void RequestPermission(content::WebContents* web_contents,
-                         const PermissionRequestID& id,
+  void RequestPermission(const PermissionRequestID& id,
                          const GURL& requesting_frame_origin,
                          bool user_gesture,
                          BrowserPermissionCallback callback) override;
@@ -87,7 +86,8 @@ class GeolocationPermissionContextAndroid
                            BrowserPermissionCallback callback,
                            bool persist,
                            ContentSetting content_setting,
-                           bool is_one_time) override;
+                           bool is_one_time,
+                           bool is_final_decision) override;
   PermissionResult UpdatePermissionStatusWithDeviceStatus(
       PermissionResult result,
       const GURL& requesting_origin,

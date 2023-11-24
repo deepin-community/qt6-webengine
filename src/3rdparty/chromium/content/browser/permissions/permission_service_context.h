@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,13 +11,16 @@
 #include "base/memory/raw_ptr.h"
 #include "content/public/browser/document_user_data.h"
 #include "content/public/browser/permission_controller.h"
-#include "content/public/browser/permission_type.h"
 #include "content/public/browser/render_process_host_observer.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/unique_receiver_set.h"
 #include "third_party/blink/public/mojom/permissions/permission.mojom.h"
 #include "url/gurl.h"
+
+namespace blink {
+enum class PermissionType;
+}
 
 namespace url {
 class Origin;
@@ -26,6 +29,7 @@ class Origin;
 namespace content {
 
 class BrowserContext;
+class PermissionServiceContextTest;
 class RenderFrameHost;
 class RenderProcessHost;
 
@@ -37,8 +41,9 @@ class RenderProcessHost;
 //
 // PermissionServiceContext instances associated with a RenderFrameHost must be
 // created via the DocumentUserData static factories, as these
-// instances are deleted when a new document is commited.
-class PermissionServiceContext : public RenderProcessHostObserver {
+// instances are deleted when a new document is committed.
+class CONTENT_EXPORT PermissionServiceContext
+    : public RenderProcessHostObserver {
  public:
   explicit PermissionServiceContext(RenderProcessHost* render_process_host);
   PermissionServiceContext(const PermissionServiceContext&) = delete;
@@ -46,7 +51,12 @@ class PermissionServiceContext : public RenderProcessHostObserver {
   ~PermissionServiceContext() override;
 
   // Return PermissionServiceContext associated with the current document in the
-  // given RenderFrameHost, lazily creatin gone, if needed.
+  // given RenderFrameHost, lazily creating one, if needed.
+  static PermissionServiceContext* GetOrCreateForCurrentDocument(
+      RenderFrameHost* render_frame_host);
+
+  // Return PermissionServiceContext associated with the current document.
+  // Return null if there's no associated one.
   static PermissionServiceContext* GetForCurrentDocument(
       RenderFrameHost* render_frame_host);
 
@@ -57,7 +67,7 @@ class PermissionServiceContext : public RenderProcessHostObserver {
       mojo::PendingReceiver<blink::mojom::PermissionService> receiver);
 
   void CreateSubscription(
-      PermissionType permission_type,
+      blink::PermissionType permission_type,
       const url::Origin& origin,
       blink::mojom::PermissionStatus current_status,
       blink::mojom::PermissionStatus last_known_status,
@@ -80,9 +90,17 @@ class PermissionServiceContext : public RenderProcessHostObserver {
   // RenderProcessHostObserver:
   void RenderProcessHostDestroyed(RenderProcessHost* host) override;
 
+  void StoreStatusAtBFCacheEntry();
+  void NotifyPermissionStatusChangedIfNeeded();
+
+  std::set<blink::PermissionType>& GetOnchangeEventListeners() {
+    return onchange_event_listeners_;
+  }
+
  private:
   class PermissionSubscription;
   struct DocumentPermissionServiceContextHolder;
+  friend class PermissionServiceContextTest;
 
   // Use DocumentUserData static methods to create instances attached
   // to a RenderFrameHost.
@@ -94,6 +112,8 @@ class PermissionServiceContext : public RenderProcessHostObserver {
   std::unordered_map<PermissionController::SubscriptionId,
                      std::unique_ptr<PermissionSubscription>>
       subscriptions_;
+
+  std::set<blink::PermissionType> onchange_event_listeners_;
 };
 
 }  // namespace content

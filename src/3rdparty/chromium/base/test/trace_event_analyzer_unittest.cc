@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,13 +7,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/stl_util.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/platform_thread.h"
 #include "base/trace_event/trace_buffer.h"
 #include "base/trace_event/traced_value.h"
+#include "base/types/optional_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -127,18 +127,7 @@ TEST_F(TraceEventAnalyzerTest, TraceEvent) {
 TEST_F(TraceEventAnalyzerTest, QueryEventMember) {
   ManualSetUp();
 
-  TraceEvent event;
-  event.thread.process_id = 3;
-  event.thread.thread_id = 4;
-  event.timestamp = 1.5;
-  event.phase = TRACE_EVENT_PHASE_BEGIN;
-  event.category = "category";
-  event.name = "name";
-  event.id = "1";
-  event.arg_numbers["num"] = 7.0;
-  event.arg_strings["str"] = "the string";
-
-  // Other event with all different members:
+  // Other event with all different members. Must outlive `event`.
   TraceEvent other;
   other.thread.process_id = 5;
   other.thread.thread_id = 6;
@@ -150,6 +139,16 @@ TEST_F(TraceEventAnalyzerTest, QueryEventMember) {
   other.arg_numbers["num2"] = 8.0;
   other.arg_strings["str2"] = "the string 2";
 
+  TraceEvent event;
+  event.thread.process_id = 3;
+  event.thread.thread_id = 4;
+  event.timestamp = 1.5;
+  event.phase = TRACE_EVENT_PHASE_BEGIN;
+  event.category = "category";
+  event.name = "name";
+  event.id = "1";
+  event.arg_numbers["num"] = 7.0;
+  event.arg_strings["str"] = "the string";
   event.other_event = &other;
   ASSERT_TRUE(event.has_other_event());
   double duration = event.GetAbsTimeToOtherEvent();

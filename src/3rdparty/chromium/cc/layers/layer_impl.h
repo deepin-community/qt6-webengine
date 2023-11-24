@@ -1,4 +1,4 @@
-// Copyright 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -164,13 +164,12 @@ class CC_EXPORT LayerImpl {
   void SetHitTestable(bool should_hit_test);
   bool HitTestable() const;
 
-  void SetBackgroundColor(SkColor background_color);
-  SkColor background_color() const { return background_color_; }
-  void SetSafeOpaqueBackgroundColor(SkColor background_color);
-  SkColor safe_opaque_background_color() const {
+  void SetBackgroundColor(SkColor4f background_color);
+  SkColor4f background_color() const { return background_color_; }
+  void SetSafeOpaqueBackgroundColor(SkColor4f background_color);
+  SkColor4f safe_opaque_background_color() const {
     // Layer::SafeOpaqueBackgroundColor() should ensure this.
-    DCHECK_EQ(contents_opaque(),
-              SkColorGetA(safe_opaque_background_color_) == SK_AlphaOPAQUE);
+    DCHECK_EQ(contents_opaque(), safe_opaque_background_color_.isOpaque());
     return safe_opaque_background_color_;
   }
 
@@ -379,9 +378,10 @@ class CC_EXPORT LayerImpl {
   // Mark a layer on pending tree that needs to push its properties to the
   // active tree. These properties should not be changed during pending tree
   // lifetime, and only changed by being pushed from the main thread. There are
-  // two cases where this function needs to be called: when main thread layer
-  // has properties that need to be pushed, or when a new LayerImpl is created
-  // on pending tree when syncing layers from main thread.
+  // three cases where this function needs to be called: when main thread layer
+  // has properties that need to be pushed, when a new LayerImpl is created
+  // on pending tree when syncing layers from main thread, or when we recompute
+  // visible layer properties on the pending tree.
   void SetNeedsPushProperties();
 
   virtual void RunMicroBenchmark(MicroBenchmarkImpl* benchmark);
@@ -460,7 +460,8 @@ class CC_EXPORT LayerImpl {
   virtual gfx::ContentColorUsage GetContentColorUsage() const;
 
   virtual void NotifyKnownResourceIdsBeforeAppendQuads(
-      const base::flat_set<viz::SharedElementResourceId>& known_resource_ids) {}
+      const base::flat_set<viz::ViewTransitionElementResourceId>&
+          known_resource_ids) {}
 
  protected:
   // When |will_always_push_properties| is true, the layer will not itself set
@@ -471,7 +472,7 @@ class CC_EXPORT LayerImpl {
             bool will_always_push_properties = false);
 
   // Get the color and size of the layer's debug border.
-  virtual void GetDebugBorderProperties(SkColor* color, float* width) const;
+  virtual void GetDebugBorderProperties(SkColor4f* color, float* width) const;
 
   void AppendDebugBorderQuad(viz::CompositorRenderPass* render_pass,
                              const gfx::Rect& quad_rect,
@@ -481,7 +482,7 @@ class CC_EXPORT LayerImpl {
                              const gfx::Rect& quad_rect,
                              const viz::SharedQuadState* shared_quad_state,
                              AppendQuadsData* append_quads_data,
-                             SkColor color,
+                             SkColor4f color,
                              float width) const;
 
   static float GetPreferredRasterScale(
@@ -538,8 +539,8 @@ class CC_EXPORT LayerImpl {
 
   TouchActionRegion touch_action_region_;
 
-  SkColor background_color_;
-  SkColor safe_opaque_background_color_;
+  SkColor4f background_color_;
+  SkColor4f safe_opaque_background_color_;
 
   int transform_tree_index_;
   int effect_tree_index_;

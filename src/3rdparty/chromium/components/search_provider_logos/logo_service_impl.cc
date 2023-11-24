@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,16 +8,15 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/task/task_runner_util.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_clock.h"
 #include "build/build_config.h"
 #include "components/image_fetcher/core/image_decoder.h"
@@ -62,7 +61,7 @@ class ImageDecodedHandlerWithTimeout {
       base::OnceCallback<void(const SkBitmap&)> image_decoded_callback) {
     auto* handler =
         new ImageDecodedHandlerWithTimeout(std::move(image_decoded_callback));
-    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE,
         base::BindOnce(&ImageDecodedHandlerWithTimeout::OnImageDecoded,
                        handler->weak_ptr_factory_.GetWeakPtr(), gfx::Image()),
@@ -321,8 +320,8 @@ void LogoServiceImpl::GetLogo(LogoCallbacks callbacks, bool for_webui_ntp) {
   if (is_idle_) {
     is_idle_ = false;
 
-    base::PostTaskAndReplyWithResult(
-        cache_task_runner_.get(), FROM_HERE,
+    cache_task_runner_->PostTaskAndReplyWithResult(
+        FROM_HERE,
         base::BindOnce(&GetLogoFromCacheOnFileThread,
                        base::Unretained(logo_cache_.get()), logo_url_,
                        clock_->Now()),
@@ -402,6 +401,7 @@ void LogoServiceImpl::OnCachedLogoRead(
         cached_logo->encoded_image;
     image_decoder_->DecodeImage(
         encoded_image->data(), gfx::Size(),  // No particular size desired.
+        /*data_decoder=*/nullptr,
         ImageDecodedHandlerWithTimeout::Wrap(base::BindOnce(
             &LogoServiceImpl::OnLightCachedImageDecoded,
             weak_ptr_factory_.GetWeakPtr(), std::move(cached_logo))));
@@ -441,6 +441,7 @@ void LogoServiceImpl::OnLightCachedImageDecoded(
 
   image_decoder_->DecodeImage(
       dark_encoded_image->data(), gfx::Size(),  // No particular size desired.
+      /*data_decoder=*/nullptr,
       ImageDecodedHandlerWithTimeout::Wrap(base::BindOnce(
           &LogoServiceImpl::OnCachedLogoAvailable,
           weak_ptr_factory_.GetWeakPtr(), std::move(cached_logo), image)));
@@ -535,6 +536,7 @@ void LogoServiceImpl::OnFreshLogoParsed(bool* parsing_failed,
 
     image_decoder_->DecodeImage(
         encoded_image->data(), gfx::Size(),  // No particular size desired.
+        /*data_decoder=*/nullptr,
         ImageDecodedHandlerWithTimeout::Wrap(base::BindOnce(
             &LogoServiceImpl::OnLightFreshImageDecoded,
             weak_ptr_factory_.GetWeakPtr(), std::move(logo),
@@ -562,6 +564,7 @@ void LogoServiceImpl::OnLightFreshImageDecoded(
 
   image_decoder_->DecodeImage(
       dark_encoded_image->data(), gfx::Size(),  // No particular size desired.
+      /*data_decoder=*/nullptr,
       ImageDecodedHandlerWithTimeout::Wrap(base::BindOnce(
           &LogoServiceImpl::OnFreshLogoAvailable,
           weak_ptr_factory_.GetWeakPtr(), std::move(logo), download_failed,

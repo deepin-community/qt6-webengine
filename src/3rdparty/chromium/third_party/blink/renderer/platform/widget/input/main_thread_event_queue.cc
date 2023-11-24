@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,12 +6,15 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/containers/circular_deque.h"
+#include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/task/single_thread_task_runner.h"
+#include "cc/base/features.h"
 #include "cc/metrics/event_metrics.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/input/web_coalesced_input_event.h"
+#include "third_party/blink/public/common/input/web_gesture_event.h"
 #include "third_party/blink/public/common/input/web_input_event_attribution.h"
 #include "third_party/blink/public/common/input/web_mouse_wheel_event.h"
 
@@ -43,6 +46,17 @@ class QueuedClosure : public MainThreadEventQueueTask {
 // Time interval at which touchmove events during scroll will be skipped
 // during rAF signal.
 constexpr base::TimeDelta kAsyncTouchMoveInterval = base::Milliseconds(200);
+
+bool IsGestureScroll(WebInputEvent::Type type) {
+  switch (type) {
+    case WebGestureEvent::Type::kGestureScrollBegin:
+    case WebGestureEvent::Type::kGestureScrollUpdate:
+    case WebGestureEvent::Type::kGestureScrollEnd:
+      return true;
+    default:
+      return false;
+  }
+}
 
 }  // namespace
 
@@ -167,11 +181,10 @@ class QueuedWebInputEvent : public MainThreadEventQueueTask {
                     const ui::LatencyInfo& latency_info,
                     mojom::blink::DidOverscrollParamsPtr overscroll,
                     absl::optional<cc::TouchAction> touch_action) {
+    // callback_ can be null in tests.
     if (callback_) {
       std::move(callback_).Run(ack_result, latency_info, std::move(overscroll),
                                touch_action);
-    } else {
-      DCHECK(!overscroll) << "Unexpected overscroll for un-acked event";
     }
 
     if (!blocking_coalesced_callbacks_.empty()) {
@@ -184,16 +197,14 @@ class QueuedWebInputEvent : public MainThreadEventQueueTask {
       }
     }
 
-    if (queue->main_thread_scheduler_) {
-      // TODO(dtapuska): Change the scheduler API to take into account number of
-      // events processed.
-      for (size_t i = 0; i < known_by_scheduler_count_; ++i) {
-        queue->main_thread_scheduler_->DidHandleInputEventOnMainThread(
-            event_->Event(),
-            ack_result == blink::mojom::InputEventResultState::kConsumed
-                ? WebInputEventResult::kHandledApplication
-                : WebInputEventResult::kNotHandled);
-      }
+    // TODO(dtapuska): Change the scheduler API to take into account number of
+    // events processed.
+    for (size_t i = 0; i < known_by_scheduler_count_; ++i) {
+      queue->widget_scheduler_->DidHandleInputEventOnMainThread(
+          event_->Event(),
+          ack_result == mojom::blink::InputEventResultState::kConsumed
+              ? WebInputEventResult::kHandledApplication
+              : WebInputEventResult::kNotHandled);
     }
   }
 
@@ -259,7 +270,7 @@ MainThreadEventQueue::SharedState::~SharedState() {}
 MainThreadEventQueue::MainThreadEventQueue(
     MainThreadEventQueueClient* client,
     const scoped_refptr<base::SingleThreadTaskRunner>& main_task_runner,
-    scheduler::WebThreadScheduler* main_thread_scheduler,
+    scoped_refptr<scheduler::WidgetScheduler> widget_scheduler,
     bool allow_raf_aligned_input)
     : client_(client),
       last_touch_start_forced_nonblocking_due_to_fling_(false),
@@ -267,7 +278,8 @@ MainThreadEventQueue::MainThreadEventQueue(
       needs_unbuffered_input_for_debugger_(false),
       allow_raf_aligned_input_(allow_raf_aligned_input),
       main_task_runner_(main_task_runner),
-      main_thread_scheduler_(main_thread_scheduler) {
+      widget_scheduler_(std::move(widget_scheduler)) {
+  DCHECK(widget_scheduler_);
   raf_fallback_timer_ = std::make_unique<base::OneShotTimer>();
   raf_fallback_timer_->SetTaskRunner(main_task_runner);
 
@@ -277,13 +289,48 @@ MainThreadEventQueue::MainThreadEventQueue(
 
 MainThreadEventQueue::~MainThreadEventQueue() {}
 
+bool MainThreadEventQueue::AllowedForUnification(const WebInputEvent& event,
+                                                 bool force_allow) {
+  if (force_allow) {
+    return true;
+  }
+
+  if (!base::FeatureList::IsEnabled(::features::kScrollUnification)) {
+    return true;
+  }
+
+  WebInputEvent::Type event_type = event.GetType();
+  if (!IsGestureScroll(event_type)) {
+    return true;
+  }
+
+  const WebGestureEvent& gesture_event =
+      static_cast<const WebGestureEvent&>(event);
+  if (event_type == WebInputEvent::Type::kGestureScrollBegin &&
+      gesture_event.data.scroll_begin.cursor_control) {
+    cursor_control_in_progress_ = true;
+  }
+
+  // Unification should not send gesture scroll events to the main thread,
+  // except for the Android swipe-to-move-cursor feature.
+  bool allowed = cursor_control_in_progress_;
+
+  if (event_type == WebInputEvent::Type::kGestureScrollEnd &&
+      cursor_control_in_progress_) {
+    cursor_control_in_progress_ = false;
+  }
+
+  return allowed;
+}
+
 void MainThreadEventQueue::HandleEvent(
     std::unique_ptr<WebCoalescedInputEvent> event,
     DispatchType original_dispatch_type,
     mojom::blink::InputEventResultState ack_result,
     const WebInputEventAttribution& attribution,
     std::unique_ptr<cc::EventMetrics> metrics,
-    HandledEventCallback callback) {
+    HandledEventCallback callback,
+    bool allow_main_gesture_scroll) {
   TRACE_EVENT2("input", "MainThreadEventQueue::HandleEvent", "dispatch_type",
                original_dispatch_type, "event_type", event->Event().GetType());
   DCHECK(original_dispatch_type == DispatchType::kBlocking ||
@@ -292,6 +339,9 @@ void MainThreadEventQueue::HandleEvent(
          ack_result ==
              mojom::blink::InputEventResultState::kSetNonBlockingDueToFling ||
          ack_result == mojom::blink::InputEventResultState::kNotConsumed);
+  if (!AllowedForUnification(event->Event(), allow_main_gesture_scroll)) {
+    DCHECK(!base::FeatureList::IsEnabled(::features::kScrollUnification));
+  }
 
   bool is_blocking =
       original_dispatch_type == DispatchType::kBlocking &&
@@ -613,9 +663,9 @@ void MainThreadEventQueue::QueueEvent(
       }
 
       // Notify the scheduler that we'll enqueue a task to the main thread.
-      if (is_input_event && main_thread_scheduler_) {
-        main_thread_scheduler_->WillPostInputEventToMainThread(input_event_type,
-                                                               attribution);
+      if (is_input_event) {
+        widget_scheduler_->WillPostInputEventToMainThread(input_event_type,
+                                                          attribution);
       }
     }
   }
@@ -675,10 +725,8 @@ bool MainThreadEventQueue::HandleEventOnMainThread(
     std::unique_ptr<cc::EventMetrics> metrics,
     HandledEventCallback handled_callback) {
   // Notify the scheduler that the main thread is about to execute handlers.
-  if (main_thread_scheduler_) {
-    main_thread_scheduler_->WillHandleInputEventOnMainThread(
-        event.Event().GetType(), attribution);
-  }
+  widget_scheduler_->WillHandleInputEventOnMainThread(event.Event().GetType(),
+                                                      attribution);
 
   bool handled = false;
   if (client_) {
@@ -712,8 +760,6 @@ void MainThreadEventQueue::SetNeedsMainFrame() {
     }
     if (client_)
       client_->SetNeedsMainFrame();
-    if (main_thread_scheduler_)
-      main_thread_scheduler_->OnMainFrameRequestedForInput();
     return;
   }
 

@@ -6,6 +6,7 @@
 <translation id="1127811143501539442">{DAYS,plural, =1{1 ਦਿਨ ਪਹਿਲਾਂ}one{# ਦਿਨ ਪਹਿਲਾਂ}other{# ਦਿਨ ਪਹਿਲਾਂ}}</translation>
 <translation id="1156623771253174079">{SECONDS,plural, =1{1 ਮਿੰਟ ਪਹਿਲਾਂ}one{# ਮਿੰਟ ਪਹਿਲਾਂ}other{# ਮਿੰਟ ਪਹਿਲਾਂ}}</translation>
 <translation id="1169783199079129864">{MINUTES,plural, =1{1 ਮਿੰਟ}one{# ਮਿੰਟ}other{# ਮਿੰਟ}}</translation>
+<translation id="1181037720776840403">ਹਟਾਓ</translation>
 <translation id="1243314992276662751">ਅਪਲੋਡ ਕਰੋ</translation>
 <translation id="1266864766717917324"><ph name="CONTENT_TYPE" /> ਨਾਲ ਸਾਂਝਾ ਨਹੀਂ ਕੀਤਾ ਜਾ ਸਕਿਆ</translation>
 <translation id="1269641567813814718">Win</translation>
@@ -25,6 +26,7 @@
 <translation id="1803208670097017349">{MONTHS,plural, =1{1 ਮਹੀਨਾ}one{# ਮਹੀਨਾ}other{# ਮਹੀਨੇ}}</translation>
 <translation id="1809410197924942083"><ph name="QUANTITY" /> MB/s</translation>
 <translation id="1830179671306812954">{HOURS,plural, =1{1 ਘੰਟਾ ਅਤੇ }one{# ਘੰਟੇ ਅਤੇ }other{# ਘੰਟੇ ਅਤੇ }}</translation>
+<translation id="185013357618350178">&amp;ਚੁਣੋ</translation>
 <translation id="1859234291848436338">ਦਿਸ਼ਾ ਲਿਖ ਰਿਹਾ ਹੈ</translation>
 <translation id="1860796786778352021">ਸੂਚਨਾ ਬੰਦ</translation>
 <translation id="186476001994626254">ਵੈੱਬ ਸਮਾਰਟ ਪੇਸਟ ਸਮੱਗਰੀ</translation>
@@ -52,7 +54,6 @@
 <translation id="2445449901874883781">ਉੱਚ ਘਣਤਾ ਵਰਤੋ</translation>
 <translation id="2482878487686419369">ਸੂਚਨਾਵਾਂ</translation>
 <translation id="2497284189126895209">ਸਾਰੀਆਂ ਫਾਈਲਾਂ</translation>
-<translation id="2498950423397131220">ਫ਼ਲੋਟ</translation>
 <translation id="2515586267016047495">Alt</translation>
 <translation id="2522350507219695259">ਕੈਲੀਬਰੇਸ਼ਨ ਪੂਰਾ ਹੋ ਗਿਆ ਹੈ</translation>
 <translation id="252373100621549798">ਅਗਿਆਤ ਡਿਸਪਲੇ</translation>
@@ -60,6 +61,7 @@
 <translation id="2573731672208488250">{HOURS,plural, =1{1 ਘੰ. ਵਿੱਚ}one{# ਘੰ. ਵਿੱਚ}other{# ਘੰ. ਵਿੱਚ}}</translation>
 <translation id="2583543531130364912">ਆਪਣੀ ਟੱਚਸਕ੍ਰੀਨ ਨੂੰ ਕੈਲੀਬਰੇਟ ਕਰੋ</translation>
 <translation id="2586657967955657006">ਕਲਿੱਪਬੋਰਡ</translation>
+<translation id="2653844658857826081">ਨਵਾਂ</translation>
 <translation id="2666092431469916601">ਟੌਪ</translation>
 <translation id="2701330563083355633"><ph name="DEVICE_NAME" /> ਤੋਂ ਸਾਂਝਾ ਕੀਤਾ ਗਿਆ</translation>
 <translation id="271033894570825754">ਨਵਾਂ</translation>

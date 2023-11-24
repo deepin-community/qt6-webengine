@@ -1,4 +1,4 @@
-# Copyright 2016 The Chromium Authors. All rights reserved.
+# Copyright 2016 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -29,13 +29,16 @@ ios_app_bundle("showcase") {
 group("features") {
   deps = [
     "//ios/chrome/app:enterprise_app_agent_ui",
+    "//ios/chrome/app:launch_screen_ui",
     "//ios/showcase/alert",
     "//ios/showcase/badges",
     "//ios/showcase/bubble",
     "//ios/showcase/credential_provider",
     "//ios/showcase/default_browser",
     "//ios/showcase/discover_feed_preview",
+    "//ios/showcase/feed_sign_in_promo",
     "//ios/showcase/first_run",
+    "//ios/showcase/follow",
     "//ios/showcase/incognito_reauth",
     "//ios/showcase/infobars",
     "//ios/showcase/omnibox_popup",
@@ -44,6 +47,7 @@ group("features") {
     "//ios/showcase/tab_grid",
     "//ios/showcase/text_badge_view",
     "//ios/showcase/uikit_table_view_cell",
+    "//ios/showcase/user_policy_prompt",
   ]
 }
 

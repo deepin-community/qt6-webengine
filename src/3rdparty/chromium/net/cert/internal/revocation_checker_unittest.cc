@@ -1,15 +1,15 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "net/cert/internal/revocation_checker.h"
 
 #include "base/time/time.h"
-#include "net/cert/internal/cert_errors.h"
-#include "net/cert/internal/common_cert_errors.h"
-#include "net/cert/internal/parse_certificate.h"
-#include "net/cert/internal/parsed_certificate.h"
 #include "net/cert/mock_cert_net_fetcher.h"
+#include "net/cert/pki/cert_errors.h"
+#include "net/cert/pki/common_cert_errors.h"
+#include "net/cert/pki/parse_certificate.h"
+#include "net/cert/pki/parsed_certificate.h"
 #include "net/test/cert_builder.h"
 #include "net/test/revocation_builder.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -38,8 +38,7 @@ bool AddCertsToList(std::vector<CertBuilder*> builders,
 }
 
 TEST(RevocationChecker, NoRevocationMechanism) {
-  std::unique_ptr<CertBuilder> leaf, root;
-  CertBuilder::CreateSimpleChain(&leaf, &root);
+  auto [leaf, root] = CertBuilder::CreateSimpleChain2();
 
   ParsedCertificateList chain;
   ASSERT_TRUE(AddCertsToList({leaf.get(), root.get()}, &chain));
@@ -47,6 +46,7 @@ TEST(RevocationChecker, NoRevocationMechanism) {
   RevocationPolicy policy;
   policy.check_revocation = true;
   policy.networking_allowed = true;
+  policy.crl_allowed = true;
   policy.allow_unable_to_check = false;
 
   {
@@ -103,8 +103,7 @@ TEST(RevocationChecker, NoRevocationMechanism) {
 }
 
 TEST(RevocationChecker, ValidCRL) {
-  std::unique_ptr<CertBuilder> leaf, root;
-  CertBuilder::CreateSimpleChain(&leaf, &root);
+  auto [leaf, root] = CertBuilder::CreateSimpleChain2();
 
   const GURL kTestCrlUrl("http://example.com/crl1");
   leaf->SetCrlDistributionPointUrl(kTestCrlUrl);
@@ -119,12 +118,13 @@ TEST(RevocationChecker, ValidCRL) {
 
   std::string crl_data_as_string_for_some_reason =
       BuildCrl(root->GetSubject(), root->GetKey(),
-               /*revoked_serials=*/{}, DigestAlgorithm::Sha256);
+               /*revoked_serials=*/{});
   std::vector<uint8_t> crl_data(crl_data_as_string_for_some_reason.begin(),
                                 crl_data_as_string_for_some_reason.end());
 
   {
     policy.networking_allowed = true;
+    policy.crl_allowed = true;
 
     auto mock_fetcher = base::MakeRefCounted<StrictMock<MockCertNetFetcher>>();
     EXPECT_CALL(*mock_fetcher, FetchCrl(kTestCrlUrl, _, _))
@@ -141,6 +141,7 @@ TEST(RevocationChecker, ValidCRL) {
 
   {
     policy.networking_allowed = false;
+    policy.crl_allowed = true;
 
     // No methods on |mock_fetcher| should be called.
     auto mock_fetcher = base::MakeRefCounted<StrictMock<MockCertNetFetcher>>();
@@ -154,11 +155,29 @@ TEST(RevocationChecker, ValidCRL) {
     EXPECT_TRUE(errors.ContainsHighSeverityErrors());
     EXPECT_TRUE(errors.ContainsError(cert_errors::kUnableToCheckRevocation));
   }
+
+  {
+    policy.networking_allowed = true;
+    policy.crl_allowed = false;
+
+    // No methods on |mock_fetcher| should be called.
+    auto mock_fetcher = base::MakeRefCounted<StrictMock<MockCertNetFetcher>>();
+
+    CertPathErrors errors;
+    CheckValidatedChainRevocation(
+        chain, policy, /*deadline=*/base::TimeTicks(),
+        /*stapled_leaf_ocsp_response=*/base::StringPiece(), mock_fetcher.get(),
+        &errors, /*stapled_ocsp_verify_result=*/nullptr);
+
+    EXPECT_TRUE(errors.ContainsHighSeverityErrors());
+    // Since CRLs were not considered, the error should be "no revocation
+    // mechanism".
+    EXPECT_TRUE(errors.ContainsError(cert_errors::kNoRevocationMechanism));
+  }
 }
 
 TEST(RevocationChecker, RevokedCRL) {
-  std::unique_ptr<CertBuilder> leaf, root;
-  CertBuilder::CreateSimpleChain(&leaf, &root);
+  auto [leaf, root] = CertBuilder::CreateSimpleChain2();
 
   const GURL kTestCrlUrl("http://example.com/crl1");
   leaf->SetCrlDistributionPointUrl(kTestCrlUrl);
@@ -169,10 +188,11 @@ TEST(RevocationChecker, RevokedCRL) {
   RevocationPolicy policy;
   policy.check_revocation = true;
   policy.networking_allowed = true;
+  policy.crl_allowed = true;
 
-  std::string crl_data_as_string_for_some_reason = BuildCrl(
-      root->GetSubject(), root->GetKey(),
-      /*revoked_serials=*/{leaf->GetSerialNumber()}, DigestAlgorithm::Sha256);
+  std::string crl_data_as_string_for_some_reason =
+      BuildCrl(root->GetSubject(), root->GetKey(),
+               /*revoked_serials=*/{leaf->GetSerialNumber()});
   std::vector<uint8_t> crl_data(crl_data_as_string_for_some_reason.begin(),
                                 crl_data_as_string_for_some_reason.end());
 
@@ -216,8 +236,7 @@ TEST(RevocationChecker, RevokedCRL) {
 }
 
 TEST(RevocationChecker, CRLRequestFails) {
-  std::unique_ptr<CertBuilder> leaf, root;
-  CertBuilder::CreateSimpleChain(&leaf, &root);
+  auto [leaf, root] = CertBuilder::CreateSimpleChain2();
 
   const GURL kTestCrlUrl("http://example.com/crl1");
   leaf->SetCrlDistributionPointUrl(kTestCrlUrl);
@@ -228,6 +247,7 @@ TEST(RevocationChecker, CRLRequestFails) {
   RevocationPolicy policy;
   policy.check_revocation = true;
   policy.networking_allowed = true;
+  policy.crl_allowed = true;
 
   {
     policy.allow_unable_to_check = false;
@@ -287,8 +307,7 @@ TEST(RevocationChecker, CRLRequestFails) {
 }
 
 TEST(RevocationChecker, CRLNonHttpUrl) {
-  std::unique_ptr<CertBuilder> leaf, root;
-  CertBuilder::CreateSimpleChain(&leaf, &root);
+  auto [leaf, root] = CertBuilder::CreateSimpleChain2();
 
   const GURL kTestCrlUrl("https://example.com/crl1");
   leaf->SetCrlDistributionPointUrl(kTestCrlUrl);
@@ -299,6 +318,7 @@ TEST(RevocationChecker, CRLNonHttpUrl) {
   RevocationPolicy policy;
   policy.check_revocation = true;
   policy.networking_allowed = true;
+  policy.crl_allowed = true;
   policy.allow_unable_to_check = false;
   policy.allow_missing_info = false;
 
@@ -316,8 +336,7 @@ TEST(RevocationChecker, CRLNonHttpUrl) {
 }
 
 TEST(RevocationChecker, SkipEntireInvalidCRLDistributionPoints) {
-  std::unique_ptr<CertBuilder> leaf, root;
-  CertBuilder::CreateSimpleChain(&leaf, &root);
+  auto [leaf, root] = CertBuilder::CreateSimpleChain2();
 
   const GURL kSecondCrlUrl("http://www.example.com/bar.crl");
 
@@ -359,12 +378,13 @@ TEST(RevocationChecker, SkipEntireInvalidCRLDistributionPoints) {
   RevocationPolicy policy;
   policy.check_revocation = true;
   policy.networking_allowed = true;
+  policy.crl_allowed = true;
   policy.allow_unable_to_check = false;
   policy.allow_missing_info = false;
 
   std::string crl_data_as_string_for_some_reason =
       BuildCrl(root->GetSubject(), root->GetKey(),
-               /*revoked_serials=*/{}, DigestAlgorithm::Sha256);
+               /*revoked_serials=*/{});
   std::vector<uint8_t> crl_data(crl_data_as_string_for_some_reason.begin(),
                                 crl_data_as_string_for_some_reason.end());
 
@@ -384,8 +404,7 @@ TEST(RevocationChecker, SkipEntireInvalidCRLDistributionPoints) {
 }
 
 TEST(RevocationChecker, SkipUnsupportedCRLDistPointWithNonUriFullname) {
-  std::unique_ptr<CertBuilder> leaf, root;
-  CertBuilder::CreateSimpleChain(&leaf, &root);
+  auto [leaf, root] = CertBuilder::CreateSimpleChain2();
 
   const GURL kSecondCrlUrl("http://www.example.com/bar.crl");
 
@@ -444,12 +463,13 @@ TEST(RevocationChecker, SkipUnsupportedCRLDistPointWithNonUriFullname) {
   RevocationPolicy policy;
   policy.check_revocation = true;
   policy.networking_allowed = true;
+  policy.crl_allowed = true;
   policy.allow_unable_to_check = false;
   policy.allow_missing_info = false;
 
   std::string crl_data_as_string_for_some_reason =
       BuildCrl(root->GetSubject(), root->GetKey(),
-               /*revoked_serials=*/{}, DigestAlgorithm::Sha256);
+               /*revoked_serials=*/{});
   std::vector<uint8_t> crl_data(crl_data_as_string_for_some_reason.begin(),
                                 crl_data_as_string_for_some_reason.end());
 
@@ -468,8 +488,7 @@ TEST(RevocationChecker, SkipUnsupportedCRLDistPointWithNonUriFullname) {
 }
 
 TEST(RevocationChecker, SkipUnsupportedCRLDistPointWithReasons) {
-  std::unique_ptr<CertBuilder> leaf, root;
-  CertBuilder::CreateSimpleChain(&leaf, &root);
+  auto [leaf, root] = CertBuilder::CreateSimpleChain2();
 
   const GURL kSecondCrlUrl("http://www.example.com/bar.crl");
 
@@ -513,12 +532,13 @@ TEST(RevocationChecker, SkipUnsupportedCRLDistPointWithReasons) {
   RevocationPolicy policy;
   policy.check_revocation = true;
   policy.networking_allowed = true;
+  policy.crl_allowed = true;
   policy.allow_unable_to_check = false;
   policy.allow_missing_info = false;
 
   std::string crl_data_as_string_for_some_reason =
       BuildCrl(root->GetSubject(), root->GetKey(),
-               /*revoked_serials=*/{}, DigestAlgorithm::Sha256);
+               /*revoked_serials=*/{});
   std::vector<uint8_t> crl_data(crl_data_as_string_for_some_reason.begin(),
                                 crl_data_as_string_for_some_reason.end());
 
@@ -537,8 +557,7 @@ TEST(RevocationChecker, SkipUnsupportedCRLDistPointWithReasons) {
 }
 
 TEST(RevocationChecker, SkipUnsupportedCRLDistPointWithCrlIssuer) {
-  std::unique_ptr<CertBuilder> leaf, root;
-  CertBuilder::CreateSimpleChain(&leaf, &root);
+  auto [leaf, root] = CertBuilder::CreateSimpleChain2();
 
   const GURL kSecondCrlUrl("http://www.example.com/bar.crl");
 
@@ -614,12 +633,13 @@ TEST(RevocationChecker, SkipUnsupportedCRLDistPointWithCrlIssuer) {
   RevocationPolicy policy;
   policy.check_revocation = true;
   policy.networking_allowed = true;
+  policy.crl_allowed = true;
   policy.allow_unable_to_check = false;
   policy.allow_missing_info = false;
 
   std::string crl_data_as_string_for_some_reason =
       BuildCrl(root->GetSubject(), root->GetKey(),
-               /*revoked_serials=*/{}, DigestAlgorithm::Sha256);
+               /*revoked_serials=*/{});
   std::vector<uint8_t> crl_data(crl_data_as_string_for_some_reason.begin(),
                                 crl_data_as_string_for_some_reason.end());
 

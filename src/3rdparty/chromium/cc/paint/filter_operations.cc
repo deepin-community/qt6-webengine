@@ -1,14 +1,16 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "cc/paint/filter_operations.h"
 
 #include <stddef.h>
+
 #include <cmath>
 #include <numeric>
 #include <utility>
 
+#include "base/containers/contains.h"
 #include "base/trace_event/traced_value.h"
 #include "base/values.h"
 #include "cc/paint/filter_operation.h"
@@ -82,7 +84,7 @@ bool FilterOperations::HasFilterThatMovesPixels() const {
       case FilterOperation::BLUR:
       case FilterOperation::DROP_SHADOW:
       case FilterOperation::ZOOM:
-      case FilterOperation::STRETCH:
+      case FilterOperation::OFFSET:
         return true;
       case FilterOperation::REFERENCE:
         // TODO(hendrikw): SkImageFilter needs a function that tells us if the
@@ -116,10 +118,9 @@ float FilterOperations::MaximumPixelMovement() const {
         continue;
       case FilterOperation::DROP_SHADOW:
         // |op.amount| here is the blur radius.
-        max_movement =
-            fmax(max_movement, fmax(std::abs(op.drop_shadow_offset().x()),
-                                    std::abs(op.drop_shadow_offset().y())) +
-                                   op.amount() * 3.f);
+        max_movement = fmax(max_movement, fmax(std::abs(op.offset().x()),
+                                               std::abs(op.offset().y())) +
+                                              op.amount() * 3.f);
         continue;
       case FilterOperation::ZOOM:
         max_movement = fmax(max_movement, op.zoom_inset());
@@ -129,9 +130,12 @@ float FilterOperations::MaximumPixelMovement() const {
         // the filter can move pixels. See crbug.com/523538 (sort of).
         max_movement = fmax(max_movement, 100);
         continue;
-      case FilterOperation::STRETCH:
+      case FilterOperation::OFFSET:
+        // TODO(crbug/1379125): Work out how to correctly set maximum pixel
+        // movement when an offset filter may be combined with other pixel
+        // moving filters.
         max_movement =
-            fmax(max_movement, fmax(op.amount(), op.outer_threshold()));
+            fmax(std::abs(op.offset().x()), std::abs(op.offset().y()));
         continue;
       case FilterOperation::OPACITY:
       case FilterOperation::COLOR_MATRIX:
@@ -164,7 +168,7 @@ bool FilterOperations::HasFilterThatAffectsOpacity() const {
       case FilterOperation::ALPHA_THRESHOLD:
         return true;
       case FilterOperation::COLOR_MATRIX: {
-        const SkScalar* matrix = op.matrix();
+        auto& matrix = op.matrix();
         if (matrix[15] || matrix[16] || matrix[17] || matrix[18] != 1 ||
             matrix[19])
           return true;
@@ -178,7 +182,7 @@ bool FilterOperations::HasFilterThatAffectsOpacity() const {
       case FilterOperation::BRIGHTNESS:
       case FilterOperation::CONTRAST:
       case FilterOperation::SATURATING_BRIGHTNESS:
-      case FilterOperation::STRETCH:
+      case FilterOperation::OFFSET:
         break;
     }
   }
@@ -190,10 +194,7 @@ bool FilterOperations::HasReferenceFilter() const {
 }
 
 bool FilterOperations::HasFilterOfType(FilterOperation::FilterType type) const {
-  return operations_.end() !=
-         std::find_if(
-             operations_.begin(), operations_.end(),
-             [type](const FilterOperation& op) { return op.type() == type; });
+  return base::Contains(operations_, type, &FilterOperation::type);
 }
 
 FilterOperations FilterOperations::Blend(const FilterOperations& from,

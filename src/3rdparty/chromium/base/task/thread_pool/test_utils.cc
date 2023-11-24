@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,8 @@
 
 #include <utility>
 
-#include "base/bind.h"
+#include "base/debug/leak_annotations.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/task/thread_pool/pooled_parallel_task_runner.h"
@@ -107,7 +108,9 @@ scoped_refptr<Sequence> CreateSequenceWithTask(
     TaskSourceExecutionMode execution_mode) {
   scoped_refptr<Sequence> sequence =
       MakeRefCounted<Sequence>(traits, task_runner.get(), execution_mode);
-  sequence->BeginTransaction().PushTask(std::move(task));
+  auto transaction = sequence->BeginTransaction();
+  transaction.WillPushImmediateTask();
+  transaction.PushImmediateTask(std::move(task));
   return sequence;
 }
 
@@ -162,8 +165,14 @@ bool MockPooledTaskRunnerDelegate::PostTaskWithSequence(
   DCHECK(task.task);
   DCHECK(sequence);
 
-  if (!task_tracker_->WillPostTask(&task, sequence->shutdown_behavior()))
+  if (!task_tracker_->WillPostTask(&task, sequence->shutdown_behavior())) {
+    // `task`'s destructor may run sequence-affine code, so it must be leaked
+    // when `WillPostTask` returns false.
+    auto leak = std::make_unique<Task>(std::move(task));
+    ANNOTATE_LEAKING_OBJECT_PTR(leak.get());
+    leak.release();
     return false;
+  }
 
   if (task.delayed_run_time.is_null()) {
     PostTaskWithSequenceNow(std::move(task), std::move(sequence));
@@ -190,7 +199,7 @@ void MockPooledTaskRunnerDelegate::PostTaskWithSequenceNow(
     Task task,
     scoped_refptr<Sequence> sequence) {
   auto transaction = sequence->BeginTransaction();
-  const bool sequence_should_be_queued = transaction.WillPushTask();
+  const bool sequence_should_be_queued = transaction.WillPushImmediateTask();
   RegisteredTaskSource task_source;
   if (sequence_should_be_queued) {
     task_source = task_tracker_->RegisterTaskSource(std::move(sequence));
@@ -198,7 +207,7 @@ void MockPooledTaskRunnerDelegate::PostTaskWithSequenceNow(
     if (!task_source)
       return;
   }
-  transaction.PushTask(std::move(task));
+  transaction.PushImmediateTask(std::move(task));
   if (task_source) {
     thread_group_->PushTaskSourceAndWakeUpWorkers(
         {std::move(task_source), std::move(transaction)});
@@ -206,7 +215,7 @@ void MockPooledTaskRunnerDelegate::PostTaskWithSequenceNow(
 }
 
 bool MockPooledTaskRunnerDelegate::ShouldYield(const TaskSource* task_source) {
-  return thread_group_->ShouldYield(task_source->GetSortKey(false));
+  return thread_group_->ShouldYield(task_source->GetSortKey());
 }
 
 bool MockPooledTaskRunnerDelegate::EnqueueJobTaskSource(

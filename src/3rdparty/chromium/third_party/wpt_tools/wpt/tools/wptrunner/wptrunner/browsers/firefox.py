@@ -1,3 +1,5 @@
+# mypy: allow-untyped-defs
+
 import json
 import os
 import platform
@@ -56,24 +58,34 @@ __wptrunner__ = {"product": "firefox",
 def get_timeout_multiplier(test_type, run_info_data, **kwargs):
     if kwargs["timeout_multiplier"] is not None:
         return kwargs["timeout_multiplier"]
+
+    multiplier = 1
+    if run_info_data["verify"]:
+        if kwargs.get("chaos_mode_flags", None) is not None:
+            multiplier = 2
+
     if test_type == "reftest":
-        if run_info_data["debug"] or run_info_data.get("asan") or run_info_data.get("tsan"):
-            return 4
+        if (run_info_data["debug"] or
+            run_info_data.get("asan") or
+            run_info_data.get("tsan")):
+            return 4 * multiplier
         else:
-            return 2
-    elif run_info_data["debug"] or run_info_data.get("asan") or run_info_data.get("tsan"):
+            return 2 * multiplier
+    elif (run_info_data["debug"] or
+          run_info_data.get("asan") or
+          run_info_data.get("tsan")):
         if run_info_data.get("ccov"):
-            return 4
+            return 4 * multiplier
         else:
-            return 3
+            return 3 * multiplier
     elif run_info_data["os"] == "android":
-        return 4
+        return 4 * multiplier
     # https://bugzilla.mozilla.org/show_bug.cgi?id=1538725
     elif run_info_data["os"] == "win" and run_info_data["processor"] == "aarch64":
-        return 4
+        return 4 * multiplier
     elif run_info_data.get("ccov"):
-        return 2
-    return 1
+        return 2 * multiplier
+    return 1 * multiplier
 
 
 def check_args(**kwargs):
@@ -93,8 +105,7 @@ def browser_kwargs(logger, test_type, run_info_data, config, **kwargs):
             "certutil_binary": kwargs["certutil_binary"],
             "ca_certificate_path": config.ssl_config["ca_cert_path"],
             "e10s": kwargs["gecko_e10s"],
-            "enable_webrender": kwargs["enable_webrender"],
-            "enable_fission": kwargs["enable_fission"],
+            "enable_fission": run_info_data["fission"],
             "stackfix_dir": kwargs["stackfix_dir"],
             "binary_args": kwargs["binary_args"],
             "timeout_multiplier": get_timeout_multiplier(test_type,
@@ -175,13 +186,18 @@ def run_info_extras(**kwargs):
         pref_value = get_bool_pref_if_exists(pref)
         return pref_value if pref_value is not None else False
 
+    # Default fission to on, unless we get --[no-]enable-fission or
+    # --set-pref fission.autostart=[true|false]
+    enable_fission = [item for item in [kwargs.get("enable_fission"),
+                                        get_bool_pref_if_exists("fission.autostart"),
+                                        True] if item is not None][0]
+
     rv = {"e10s": kwargs["gecko_e10s"],
           "wasm": kwargs.get("wasm", True),
           "verify": kwargs["verify"],
           "headless": kwargs.get("headless", False) or "MOZ_HEADLESS" in os.environ,
-          "fission": kwargs.get("enable_fission") or get_bool_pref("fission.autostart"),
-          "sessionHistoryInParent": (kwargs.get("enable_fission") or
-                                     get_bool_pref("fission.autostart") or
+          "fission": enable_fission,
+          "sessionHistoryInParent": (enable_fission or
                                      get_bool_pref("fission.sessionHistoryInParent")),
           "swgl": get_bool_pref("gfx.webrender.software")}
 
@@ -205,11 +221,26 @@ def run_info_browser_version(**kwargs):
 
 
 def update_properties():
-    return (["os", "debug", "fission", "e10s", "processor", "swgl", "domstreams"],
+    return (["os", "debug", "fission", "processor", "swgl", "domstreams"],
             {"os": ["version"], "processor": ["bits"]})
 
 
-def get_environ(logger, binary, debug_info, stylo_threads, headless, enable_webrender,
+def log_gecko_crashes(logger, process, test, profile_dir, symbols_path, stackwalk_binary):
+    dump_dir = os.path.join(profile_dir, "minidumps")
+
+    try:
+        return bool(mozcrash.log_crashes(logger,
+                                         dump_dir,
+                                         symbols_path=symbols_path,
+                                         stackwalk_binary=stackwalk_binary,
+                                         process=process,
+                                         test=test))
+    except OSError:
+        logger.warning("Looking for crash dump files failed")
+        return False
+
+
+def get_environ(logger, binary, debug_info, stylo_threads, headless,
                 chaos_mode_flags=None):
     env = test_environment(xrePath=os.path.abspath(os.path.dirname(binary)),
                            debugger=debug_info is not None,
@@ -220,14 +251,9 @@ def get_environ(logger, binary, debug_info, stylo_threads, headless, enable_webr
     # Disable window occlusion. Bug 1733955
     env["MOZ_WINDOW_OCCLUSION"] = "0"
     if chaos_mode_flags is not None:
-        env["MOZ_CHAOSMODE"] = str(chaos_mode_flags)
+        env["MOZ_CHAOSMODE"] = hex(chaos_mode_flags)
     if headless:
         env["MOZ_HEADLESS"] = "1"
-    if enable_webrender:
-        env["MOZ_WEBRENDER"] = "1"
-        env["MOZ_ACCELERATED"] = "1"
-    else:
-        env["MOZ_WEBRENDER"] = "0"
     return env
 
 
@@ -250,7 +276,7 @@ class FirefoxInstanceManager:
     __metaclass__ = ABCMeta
 
     def __init__(self, logger, binary, binary_args, profile_creator, debug_info,
-                 chaos_mode_flags, headless, enable_webrender, stylo_threads,
+                 chaos_mode_flags, headless, stylo_threads,
                  leak_check, stackfix_dir, symbols_path, asan):
         """Object that manages starting and stopping instances of Firefox."""
         self.logger = logger
@@ -260,7 +286,6 @@ class FirefoxInstanceManager:
         self.debug_info = debug_info
         self.chaos_mode_flags = chaos_mode_flags
         self.headless = headless
-        self.enable_webrender = enable_webrender
         self.stylo_threads = stylo_threads
         self.leak_check = leak_check
         self.stackfix_dir = stackfix_dir
@@ -302,7 +327,7 @@ class FirefoxInstanceManager:
         profile.set_preferences({"marionette.port": marionette_port})
 
         env = get_environ(self.logger, self.binary, self.debug_info, self.stylo_threads,
-                          self.headless, self.enable_webrender, self.chaos_mode_flags)
+                          self.headless, self.chaos_mode_flags)
 
         args = self.binary_args[:] if self.binary_args else []
         args += [cmd_arg("marionette"), "about:blank"]
@@ -638,6 +663,8 @@ class ProfileCreator:
 
         if self.enable_fission:
             profile.set_preferences({"fission.autostart": True})
+        else:
+            profile.set_preferences({"fission.autostart": False})
 
         if self.test_type in ("reftest", "print-reftest"):
             profile.set_preferences({"layout.interruptible-reflow.enabled": False})
@@ -710,7 +737,7 @@ class FirefoxBrowser(Browser):
 
     def __init__(self, logger, binary, prefs_root, test_type, extra_prefs=None, debug_info=None,
                  symbols_path=None, stackwalk_binary=None, certutil_binary=None,
-                 ca_certificate_path=None, e10s=False, enable_webrender=False, enable_fission=False,
+                 ca_certificate_path=None, e10s=False, enable_fission=True,
                  stackfix_dir=None, binary_args=None, timeout_multiplier=None, leak_check=False,
                  asan=False, stylo_threads=1, chaos_mode_flags=None, config=None,
                  browser_channel="nightly", headless=None, preload_browser=False,
@@ -758,7 +785,6 @@ class FirefoxBrowser(Browser):
                                                      debug_info,
                                                      chaos_mode_flags,
                                                      headless,
-                                                     enable_webrender,
                                                      stylo_threads,
                                                      leak_check,
                                                      stackfix_dir,
@@ -803,18 +829,12 @@ class FirefoxBrowser(Browser):
                                  "supports_devtools": True}
 
     def check_crash(self, process, test):
-        dump_dir = os.path.join(self.instance.runner.profile.profile, "minidumps")
-
-        try:
-            return bool(mozcrash.log_crashes(self.logger,
-                                             dump_dir,
-                                             symbols_path=self.symbols_path,
-                                             stackwalk_binary=self.stackwalk_binary,
-                                             process=process,
-                                             test=test))
-        except OSError:
-            self.logger.warning("Looking for crash dump files failed")
-            return False
+        return log_gecko_crashes(self.logger,
+                                 process,
+                                 test,
+                                 self.instance.runner.profile.profile,
+                                 self.symbols_path,
+                                 self.stackwalk_binary)
 
 
 class FirefoxWdSpecBrowser(WebDriverBrowser):
@@ -944,3 +964,11 @@ class FirefoxWdSpecBrowser(WebDriverBrowser):
         args["supports_devtools"] = False
         args["profile"] = self.profile.profile
         return cls, args
+
+    def check_crash(self, process, test):
+        return log_gecko_crashes(self.logger,
+                                 process,
+                                 test,
+                                 self.profile.profile,
+                                 self.symbols_path,
+                                 self.stackwalk_binary)

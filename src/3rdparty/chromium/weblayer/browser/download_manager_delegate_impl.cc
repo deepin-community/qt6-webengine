@@ -1,12 +1,12 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "weblayer/browser/download_manager_delegate_impl.h"
 
 #include "base/files/file_util.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "build/build_config.h"
 #include "components/download/public/common/download_item.h"
 #include "components/prefs/pref_service.h"
@@ -89,10 +89,9 @@ bool DownloadManagerDelegateImpl::DetermineDownloadTarget(
         item->GetForcedFilePath(),
         download::DownloadItem::TARGET_DISPOSITION_OVERWRITE,
         download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-        download::DownloadItem::MixedContentStatus::UNKNOWN,
+        download::DownloadItem::InsecureDownloadStatus::UNKNOWN,
         item->GetForcedFilePath(), base::FilePath(),
-        absl::nullopt /*download_schedule*/,
-        download::DOWNLOAD_INTERRUPT_REASON_NONE);
+        std::string() /*mime_type*/, download::DOWNLOAD_INTERRUPT_REASON_NONE);
     return true;
   }
 
@@ -243,7 +242,7 @@ void DownloadManagerDelegateImpl::OnDownloadUpdated(
       delegate->DownloadFailed(PersistentDownload::Get(item));
 
     // Needs to happen asynchronously to avoid nested observer calls.
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(&DownloadManagerDelegateImpl::RemoveItem,
                        weak_ptr_factory_.GetWeakPtr(), item->GetGuid()));
@@ -261,9 +260,9 @@ void DownloadManagerDelegateImpl::OnDownloadPathGenerated(
   std::move(callback).Run(
       suggested_path, download::DownloadItem::TARGET_DISPOSITION_OVERWRITE,
       download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      download::DownloadItem::MixedContentStatus::UNKNOWN,
+      download::DownloadItem::InsecureDownloadStatus::UNKNOWN,
       suggested_path.AddExtension(FILE_PATH_LITERAL(".crdownload")),
-      base::FilePath(), absl::nullopt /*download_schedule*/,
+      base::FilePath(), std::string() /*mime_type*/,
       download::DOWNLOAD_INTERRUPT_REASON_NONE);
 }
 

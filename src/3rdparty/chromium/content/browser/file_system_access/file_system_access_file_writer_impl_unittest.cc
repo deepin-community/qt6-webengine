@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,15 +9,18 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/contains.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/guid.h"
 #include "base/memory/raw_ptr.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
 #include "base/test/gmock_callback_support.h"
 #include "base/test/task_environment.h"
+#include "base/test/test_future.h"
 #include "content/browser/file_system_access/file_system_access_write_lock_manager.h"
 #include "content/browser/file_system_access/fixed_file_system_access_permission_grant.h"
 #include "content/browser/file_system_access/mock_file_system_access_permission_context.h"
@@ -109,14 +112,15 @@ class FileSystemAccessFileWriterImplTest : public testing::Test {
     std::vector<std::unique_ptr<storage::FileSystemBackend>>
         additional_providers;
     additional_providers.push_back(std::make_unique<TestFileSystemBackend>(
-        base::ThreadTaskRunnerHandle::Get().get(), dir_.GetPath()));
+        base::SingleThreadTaskRunner::GetCurrentDefault().get(),
+        dir_.GetPath()));
     test_file_system_backend_ =
         static_cast<TestFileSystemBackend*>(additional_providers[0].get());
 
     file_system_context_ =
         storage::CreateFileSystemContextWithAdditionalProvidersForTesting(
-            base::ThreadTaskRunnerHandle::Get(),
-            base::ThreadTaskRunnerHandle::Get(),
+            base::SingleThreadTaskRunner::GetCurrentDefault(),
+            base::SingleThreadTaskRunner::GetCurrentDefault(),
             /*quota_manager_proxy=*/nullptr, std::move(additional_providers),
             dir_.GetPath());
 
@@ -154,12 +158,12 @@ class FileSystemAccessFileWriterImplTest : public testing::Test {
     auto lock = manager_->TakeWriteLock(
         test_file_url_,
         FileSystemAccessWriteLockManager::WriteLockType::kShared);
-    ASSERT_TRUE(lock.has_value());
+    ASSERT_TRUE(lock);
 
     handle_ = manager_->CreateFileWriter(
         FileSystemAccessManagerImpl::BindingContext(kTestStorageKey, kTestURL,
                                                     kFrameId),
-        test_file_url_, test_swap_url_, std::move(lock.value()),
+        test_file_url_, test_swap_url_, std::move(lock),
         FileSystemAccessManagerImpl::SharedHandleState(permission_grant_,
                                                        permission_grant_),
         remote_.InitWithNewPipeAndPassReceiver(),
@@ -223,55 +227,30 @@ class FileSystemAccessFileWriterImplTest : public testing::Test {
       uint64_t position,
       mojo::ScopedDataPipeConsumerHandle data_pipe,
       uint64_t* bytes_written_out) {
-    base::RunLoop loop;
-    FileSystemAccessStatus result_out;
-    handle_->Write(position, std::move(data_pipe),
-                   base::BindLambdaForTesting(
-                       [&](blink::mojom::FileSystemAccessErrorPtr result,
-                           uint64_t bytes_written) {
-                         result_out = result->status;
-                         *bytes_written_out = bytes_written;
-                         loop.Quit();
-                       }));
-    loop.Run();
-    return result_out;
+    base::test::TestFuture<blink::mojom::FileSystemAccessErrorPtr, uint64_t>
+        future;
+    handle_->Write(position, std::move(data_pipe), future.GetCallback());
+    blink::mojom::FileSystemAccessErrorPtr result;
+    std::tie(result, *bytes_written_out) = future.Take();
+    return result->status;
   }
 
   FileSystemAccessStatus TruncateSync(uint64_t length) {
-    base::RunLoop loop;
-    FileSystemAccessStatus result_out;
-    handle_->Truncate(length,
-                      base::BindLambdaForTesting(
-                          [&](blink::mojom::FileSystemAccessErrorPtr result) {
-                            result_out = result->status;
-                            loop.Quit();
-                          }));
-    loop.Run();
-    return result_out;
+    base::test::TestFuture<blink::mojom::FileSystemAccessErrorPtr> future;
+    handle_->Truncate(length, future.GetCallback());
+    return future.Get()->status;
   }
 
   FileSystemAccessStatus CloseSync() {
-    base::RunLoop loop;
-    FileSystemAccessStatus result_out;
-    handle_->Close(base::BindLambdaForTesting(
-        [&](blink::mojom::FileSystemAccessErrorPtr result) {
-          result_out = result->status;
-          loop.Quit();
-        }));
-    loop.Run();
-    return result_out;
+    base::test::TestFuture<blink::mojom::FileSystemAccessErrorPtr> future;
+    handle_->Close(future.GetCallback());
+    return future.Get()->status;
   }
 
   FileSystemAccessStatus AbortSync() {
-    base::RunLoop loop;
-    FileSystemAccessStatus result_out;
-    handle_->Abort(base::BindLambdaForTesting(
-        [&](blink::mojom::FileSystemAccessErrorPtr result) {
-          result_out = result->status;
-          loop.Quit();
-        }));
-    loop.Run();
-    return result_out;
+    base::test::TestFuture<blink::mojom::FileSystemAccessErrorPtr> future;
+    handle_->Abort(future.GetCallback());
+    return future.Get()->status;
   }
 
   FileSystemAccessStatus WriteSync(uint64_t position,
@@ -614,13 +593,13 @@ TEST_F(FileSystemAccessFileWriterAfterWriteChecksTest,
 
   auto lock = manager_->TakeWriteLock(
       test_file_url_, FileSystemAccessWriteLockManager::WriteLockType::kShared);
-  ASSERT_TRUE(lock.has_value());
+  ASSERT_TRUE(lock);
 
   mojo::PendingRemote<blink::mojom::FileSystemAccessFileWriter> remote;
   handle_ = manager_->CreateFileWriter(
       FileSystemAccessManagerImpl::BindingContext(kTestStorageKey, kTestURL,
                                                   kFrameId),
-      test_file_url_, test_swap_url_, std::move(lock.value()),
+      test_file_url_, test_swap_url_, std::move(lock),
       FileSystemAccessManagerImpl::SharedHandleState(permission_grant_,
                                                      permission_grant_),
       remote.InitWithNewPipeAndPassReceiver(),
@@ -649,13 +628,11 @@ TEST_F(FileSystemAccessFileWriterAfterWriteChecksTest,
   std::move(sb_callback)
       .Run(FileSystemAccessPermissionContext::AfterWriteCheckResult::kAllow);
 
-  base::RunLoop move_loop;
+  base::test::TestFuture<storage::FileSystemURL> future;
   test_file_system_backend_->SetOperationCreatedCallback(
-      base::BindLambdaForTesting([&](const storage::FileSystemURL& url) {
-        EXPECT_EQ(url, test_file_url_);
-        move_loop.Quit();
-      }));
-  move_loop.Run();
+      future.GetCallback<const storage::FileSystemURL&>());
+  EXPECT_EQ(future.Get(), test_file_url_);
+
   // About to start the move operation. Now destroy the writer. The
   // move will still complete, but make sure that quarantine was also
   // applied to the resulting file.

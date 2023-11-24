@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 
 #include <stdint.h>
 
-#include "base/callback.h"
 #include "base/containers/circular_deque.h"
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
@@ -23,7 +23,6 @@
 
 namespace cc {
 class AnimationHost;
-class RasterDarkModeFilter;
 class LayerTreeFrameSink;
 class LayerTreeHost;
 class LayerTreeSettings;
@@ -34,8 +33,8 @@ class TaskGraphRunner;
 namespace blink {
 
 namespace scheduler {
-class WebThreadScheduler;
-}
+class WidgetScheduler;
+}  // namespace scheduler
 
 class PLATFORM_EXPORT LayerTreeView
     : public cc::LayerTreeHostClient,
@@ -43,7 +42,7 @@ class PLATFORM_EXPORT LayerTreeView
       public cc::LayerTreeHostSchedulingClient {
  public:
   LayerTreeView(LayerTreeViewDelegate* delegate,
-                scheduler::WebThreadScheduler* scheduler);
+                scoped_refptr<scheduler::WidgetScheduler> scheduler);
   LayerTreeView(const LayerTreeView&) = delete;
   LayerTreeView& operator=(const LayerTreeView&) = delete;
   ~LayerTreeView() override;
@@ -74,8 +73,12 @@ class PLATFORM_EXPORT LayerTreeView
   void DidUpdateLayers() override;
   void BeginMainFrame(const viz::BeginFrameArgs& args) override;
   void OnDeferMainFrameUpdatesChanged(bool) override;
-  void OnDeferCommitsChanged(bool defer_status,
-                             cc::PaintHoldingReason reason) override;
+  void OnDeferCommitsChanged(
+      bool defer_status,
+      cc::PaintHoldingReason reason,
+      absl::optional<cc::PaintHoldingCommitTrigger> trigger) override;
+  void OnPauseRenderingChanged(bool) override;
+  void OnCommitRequested() override;
   void BeginMainFrameNotExpectedSoon() override;
   void BeginMainFrameNotExpectedUntil(base::TimeTicks time) override;
   void UpdateLayerTreeHost() override;
@@ -115,7 +118,6 @@ class PLATFORM_EXPORT LayerTreeView
   void ScheduleAnimationForWebTests() override;
 
   // cc::LayerTreeHostSchedulingClient implementation.
-  void DidScheduleBeginMainFrame() override;
   void DidRunBeginMainFrame() override;
 
   // Registers a callback that will be run on the first successful presentation
@@ -124,7 +126,7 @@ class PLATFORM_EXPORT LayerTreeView
       uint32_t frame_token,
       base::OnceCallback<void(base::TimeTicks)> callback);
 
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_APPLE)
   void AddCoreAnimationErrorCodeCallback(
       uint32_t frame_token,
       base::OnceCallback<void(gfx::CALayerResult)> callback);
@@ -151,9 +153,8 @@ class PLATFORM_EXPORT LayerTreeView
       base::circular_deque<std::pair<uint32_t, std::vector<Callback>>>&
           callbacks);
 
-  scheduler::WebThreadScheduler* const web_main_thread_scheduler_;
+  scoped_refptr<scheduler::WidgetScheduler> widget_scheduler_;
   const std::unique_ptr<cc::AnimationHost> animation_host_;
-  std::unique_ptr<cc::RasterDarkModeFilter> dark_mode_filter_;
 
   // The delegate_ becomes null when Disconnect() is called. After that, the
   // class should do nothing in calls from the LayerTreeHost, and just wait to
@@ -172,7 +173,7 @@ class PLATFORM_EXPORT LayerTreeView
                 std::vector<base::OnceCallback<void(base::TimeTicks)>>>>
       presentation_callbacks_;
 
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_APPLE)
   base::circular_deque<std::pair<
       uint32_t,
       std::vector<base::OnceCallback<void(gfx::CALayerResult error_code)>>>>

@@ -1,12 +1,13 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_PAINT_RASTER_INVALIDATOR_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_PAINT_RASTER_INVALIDATOR_H_
 
-#include "base/callback.h"
+#include "base/check_op.h"
 #include "base/dcheck_is_on.h"
+#include "base/functional/callback.h"
 #include "third_party/blink/renderer/platform/graphics/compositing/chunk_to_layer_mapper.h"
 #include "third_party/blink/renderer/platform/graphics/paint/float_clip_rect.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_chunk.h"
@@ -15,6 +16,7 @@
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/transform.h"
 
 namespace blink {
 
@@ -62,6 +64,9 @@ class PLATFORM_EXPORT RasterInvalidator {
   friend class RasterInvalidatorTest;
 
   struct PaintChunkInfo {
+    DISALLOW_NEW();
+
+   public:
     PaintChunkInfo(const RasterInvalidator& invalidator,
                    const ChunkToLayerMapper& mapper,
                    const PaintChunkIterator& chunk_it)
@@ -100,12 +105,13 @@ class PLATFORM_EXPORT RasterInvalidator {
 
     gfx::Rect bounds_in_layer;
     FloatClipRect chunk_to_layer_clip;
-    SkMatrix chunk_to_layer_transform;
+    gfx::Transform chunk_to_layer_transform;
   };
 
   void GenerateRasterInvalidations(RasterInvalidationFunction,
                                    const PaintChunkSubset&,
                                    bool layer_offset_or_state_changed,
+                                   bool layer_effect_changed,
                                    Vector<PaintChunkInfo>& new_chunks_info);
 
   ALWAYS_INLINE const PaintChunk& GetOldChunk(wtf_size_t index) const;

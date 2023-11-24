@@ -63,7 +63,7 @@ Vector<String> CollectAcceptTypes(const HTMLInputElement& input) {
   Vector<String> extensions = input.AcceptFileExtensions();
 
   Vector<String> accept_types;
-  accept_types.ReserveCapacity(mime_types.size() + extensions.size());
+  accept_types.reserve(mime_types.size() + extensions.size());
   accept_types.AppendVector(mime_types);
   accept_types.AppendVector(extensions);
   return accept_types;
@@ -72,7 +72,7 @@ Vector<String> CollectAcceptTypes(const HTMLInputElement& input) {
 }  // namespace
 
 FileInputType::FileInputType(HTMLInputElement& element)
-    : InputType(element),
+    : InputType(Type::kFile, element),
       KeyboardClickableInputTypeView(element),
       file_list_(MakeGarbageCollected<FileList>()) {}
 
@@ -146,7 +146,7 @@ void FileInputType::AppendToFormData(FormData& form_data) const {
 }
 
 bool FileInputType::ValueMissing(const String& value) const {
-  return GetElement().IsRequired() && value.IsEmpty();
+  return GetElement().IsRequired() && value.empty();
 }
 
 String FileInputType::ValueMissingText() const {
@@ -172,7 +172,8 @@ void FileInputType::HandleDOMActivateEvent(Event& event) {
   }
 
   bool intercepted = false;
-  probe::FileChooserOpened(document.GetFrame(), &input, &intercepted);
+  probe::FileChooserOpened(document.GetFrame(), &input, input.Multiple(),
+                           &intercepted);
   if (intercepted) {
     event.SetDefaultHandled();
     return;
@@ -212,8 +213,8 @@ void FileInputType::OpenPopupView() {
   }
 }
 
-void FileInputType::CustomStyleForLayoutObject(ComputedStyle& style) {
-  style.SetShouldIgnoreOverflowPropertyForInlineBlockBaseline();
+void FileInputType::AdjustStyle(ComputedStyleBuilder& builder) {
+  builder.SetShouldIgnoreOverflowPropertyForInlineBlockBaseline();
 }
 
 LayoutObject* FileInputType::CreateLayoutObject(const ComputedStyle& style,
@@ -240,7 +241,7 @@ bool FileInputType::CanSetValue(const String& value) {
   // the value attribute isn't applicable to the file upload control at all, but
   // for now we are keeping this behavior to avoid breaking existing websites
   // that may be relying on this.
-  return value.IsEmpty();
+  return value.empty();
 }
 
 String FileInputType::ValueInFilenameValueMode() const {
@@ -341,7 +342,7 @@ void FileInputType::CreateShadowSubtree() {
       AtomicString(GetLocale().QueryString(
           GetElement().Multiple() ? IDS_FORM_MULTIPLE_FILES_BUTTON_LABEL
                                   : IDS_FORM_FILE_BUTTON_LABEL)));
-  button->SetShadowPseudoId(AtomicString("-webkit-file-upload-button"));
+  button->SetShadowPseudoId(shadow_element_names::kPseudoFileUploadButton);
   button->setAttribute(html_names::kIdAttr,
                        shadow_element_names::kIdFileUploadButton);
   button->SetActive(GetElement().CanReceiveDroppedFiles());
@@ -350,9 +351,13 @@ void FileInputType::CreateShadowSubtree() {
   // The following element is used only in LayoutNG.
   // See LayoutFileUploadControl::IsChildAllowed().
   auto* span = document.CreateRawElement(html_names::kSpanTag);
-  // This element is hidden from AX trees for a historical reason.
-  span->setAttribute(html_names::kAriaHiddenAttr, "true");
   GetElement().UserAgentShadowRoot()->AppendChild(span);
+
+  // The file input element is presented to AX as one node with the role button,
+  // instead of the individual button and text nodes. That's the reason we hide
+  // the shadow root elements of the file input in the AX tree.
+  button->setAttribute(html_names::kAriaHiddenAttr, "true");
+  span->setAttribute(html_names::kAriaHiddenAttr, "true");
 
   UpdateView();
 }
@@ -429,7 +434,7 @@ void FileInputType::FilesChosen(FileChooserFileInfoList files,
     // Drop files of which names can not be converted to WTF String. We
     // can't expose such files via File API.
     if (files[i]->is_native_file() &&
-        FilePathToString(files[i]->get_native_file()->file_path).IsEmpty()) {
+        FilePathToString(files[i]->get_native_file()->file_path).empty()) {
       files.EraseAt(i);
       // Do not increment |i|.
       continue;
@@ -459,7 +464,7 @@ void FileInputType::SetFilesFromDirectory(const String& path) {
 }
 
 void FileInputType::SetFilesFromPaths(const Vector<String>& paths) {
-  if (paths.IsEmpty())
+  if (paths.empty())
     return;
 
   HTMLInputElement& input = GetElement();
@@ -484,7 +489,7 @@ void FileInputType::SetFilesFromPaths(const Vector<String>& paths) {
 bool FileInputType::ReceiveDroppedFiles(const DragData* drag_data) {
   Vector<String> paths;
   drag_data->AsFilePaths(paths);
-  if (paths.IsEmpty())
+  if (paths.empty())
     return false;
 
   if (!GetElement().FastHasAttribute(html_names::kWebkitdirectoryAttr)) {

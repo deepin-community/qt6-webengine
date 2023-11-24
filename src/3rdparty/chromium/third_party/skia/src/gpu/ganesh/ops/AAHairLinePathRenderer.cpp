@@ -8,7 +8,7 @@
 #include "src/gpu/ganesh/ops/AAHairLinePathRenderer.h"
 
 #include "include/core/SkPoint3.h"
-#include "include/private/SkTemplates.h"
+#include "include/private/base/SkTemplates.h"
 #include "src/core/SkGeometry.h"
 #include "src/core/SkMatrixPriv.h"
 #include "src/core/SkPointPriv.h"
@@ -25,12 +25,12 @@
 #include "src/gpu/ganesh/GrResourceProvider.h"
 #include "src/gpu/ganesh/GrStyle.h"
 #include "src/gpu/ganesh/GrUtil.h"
+#include "src/gpu/ganesh/SurfaceDrawContext.h"
 #include "src/gpu/ganesh/effects/GrBezierEffect.h"
 #include "src/gpu/ganesh/geometry/GrPathUtils.h"
 #include "src/gpu/ganesh/geometry/GrStyledShape.h"
 #include "src/gpu/ganesh/ops/GrMeshDrawOp.h"
 #include "src/gpu/ganesh/ops/GrSimpleMeshDrawOpHelperWithStencil.h"
-#include "src/gpu/ganesh/v1/SurfaceDrawContext_v1.h"
 
 #define PREALLOC_PTARRAY(N) SkSTArray<(N),SkPoint, true>
 
@@ -72,7 +72,7 @@ static const uint16_t kQuadIdxBufPattern[] = {
     1, 4, 2
 };
 
-static const int kIdxsPerQuad = SK_ARRAY_COUNT(kQuadIdxBufPattern);
+static const int kIdxsPerQuad = std::size(kQuadIdxBufPattern);
 static const int kQuadNumVertices = 5;
 static const int kQuadsNumInIdxBuffer = 256;
 SKGPU_DECLARE_STATIC_UNIQUE_KEY(gQuadsIndexBufferKey);
@@ -105,7 +105,7 @@ static const uint16_t kLineSegIdxBufPattern[] = {
     1, 5, 3
 };
 
-static const int kIdxsPerLineSeg = SK_ARRAY_COUNT(kLineSegIdxBufPattern);
+static const int kIdxsPerLineSeg = std::size(kLineSegIdxBufPattern);
 static const int kLineSegNumVertices = 6;
 static const int kLineSegsNumInIdxBuffer = 256;
 
@@ -149,12 +149,11 @@ int get_float_exp(float x) {
 // and dst[1] are the two new conics.
 int split_conic(const SkPoint src[3], SkConic dst[2], const SkScalar weight) {
     SkScalar t = SkFindQuadMaxCurvature(src);
-    if (t == 0 || t == 1) {
-        if (dst) {
-            dst[0].set(src, weight);
-        }
-        return 1;
-    } else {
+    // SkFindQuadMaxCurvature() returns either a value in [0, 1) or NaN.
+    // However, passing NaN to conic.chopAt() will assert. Checking to see if
+    // t is in (0,1) will also cover the NaN case since NaN comparisons are always
+    // false, so we'll drop down into the else block in that case.
+    if (0 < t && t < 1) {
         if (dst) {
             SkConic conic;
             conic.set(src, weight);
@@ -164,6 +163,11 @@ int split_conic(const SkPoint src[3], SkConic dst[2], const SkScalar weight) {
             }
         }
         return 2;
+    } else {
+        if (dst) {
+            dst[0].set(src, weight);
+        }
+        return 1;
     }
 }
 
@@ -319,8 +323,8 @@ int gather_lines_and_quads(const SkPath& path,
         addChoppedQuad(srcSpaceQuadPts, devPts, isContourStart);
     };
 
+    SkPoint pathPts[4] = {{0, 0}, {0, 0}, {0, 0}, {0, 0}};
     for (;;) {
-        SkPoint pathPts[4];
         SkPath::Verb verb = iter.next(pathPts);
         switch (verb) {
             case SkPath::kConic_Verb:
@@ -430,7 +434,7 @@ int gather_lines_and_quads(const SkPath& path,
                     } else {
                         GrPathUtils::convertCubicToQuads(devPts, SK_Scalar1, &q);
                     }
-                    for (int i = 0; i < q.count(); i += 3) {
+                    for (int i = 0; i < q.size(); i += 3) {
                         if (persp) {
                             addSrcChoppedQuad(&q[i], !verbsInContour && 0 == i);
                         } else {
@@ -921,14 +925,14 @@ private:
             return CombineResult::kCannotCombine;
         }
 
-        fPaths.push_back_n(that->fPaths.count(), that->fPaths.begin());
+        fPaths.push_back_n(that->fPaths.size(), that->fPaths.begin());
         return CombineResult::kMerged;
     }
 
 #if GR_TEST_UTILS
     SkString onDumpInfo() const override {
         return SkStringPrintf("Color: 0x%08x Coverage: 0x%02x, Count: %d\n%s",
-                              fColor.toBytes_RGBA(), fCoverage, fPaths.count(),
+                              fColor.toBytes_RGBA(), fCoverage, fPaths.size(),
                               fHelper.dumpInfo().c_str());
     }
 #endif
@@ -1046,14 +1050,14 @@ void AAHairlineOp::makeConicProgramInfo(const GrCaps& caps, SkArenaAlloc* arena,
 }
 
 AAHairlineOp::Program AAHairlineOp::predictPrograms(const GrCaps* caps) const {
-    bool convertConicsToQuads = !caps->shaderCaps()->floatIs32Bits();
+    bool convertConicsToQuads = !caps->shaderCaps()->fFloatIs32Bits;
 
     // When predicting the programs we always include the lineProgram bc it is used as a fallback
     // for quads and conics. In non-DDL mode there are cases where it sometimes isn't needed for a
     // given path.
     Program neededPrograms = Program::kLine;
 
-    for (int i = 0; i < fPaths.count(); i++) {
+    for (int i = 0; i < fPaths.size(); i++) {
         uint32_t mask = fPaths[i].fPath.getSegmentMasks();
 
         if (mask & (SkPath::kQuad_SegmentMask | SkPath::kCubic_SegmentMask)) {
@@ -1167,8 +1171,8 @@ void AAHairlineOp::onPrepareDraws(GrMeshDrawTarget* target) {
     FloatArray cWeights;
     int quadCount = 0;
 
-    int instanceCount = fPaths.count();
-    bool convertConicsToQuads = !target->caps().shaderCaps()->floatIs32Bits();
+    int instanceCount = fPaths.size();
+    bool convertConicsToQuads = !target->caps().shaderCaps()->fFloatIs32Bits;
     for (int i = 0; i < instanceCount; i++) {
         const PathData& args = fPaths[i];
         quadCount += gather_lines_and_quads(args.fPath, args.fViewMatrix, args.fDevClipBounds,
@@ -1176,8 +1180,8 @@ void AAHairlineOp::onPrepareDraws(GrMeshDrawTarget* target) {
                                             &conics, &qSubdivs, &cWeights);
     }
 
-    int lineCount = lines.count() / 2;
-    int conicCount = conics.count() / 3;
+    int lineCount = lines.size() / 2;
+    int conicCount = conics.size() / 3;
     int quadAndConicCount = conicCount + quadCount;
 
     static constexpr int kMaxLines = SK_MaxS32 / kLineSegNumVertices;
@@ -1228,7 +1232,7 @@ void AAHairlineOp::onPrepareDraws(GrMeshDrawTarget* target) {
         // Setup vertices
         BezierVertex* bezVerts = reinterpret_cast<BezierVertex*>(vertices);
 
-        int unsubdivQuadCnt = quads.count() / 3;
+        int unsubdivQuadCnt = quads.size() / 3;
         for (int i = 0; i < unsubdivQuadCnt; ++i) {
             SkASSERT(qSubdivs[i] >= 0);
             if (!quads[3*i].isFinite() || !quads[3*i+1].isFinite() || !quads[3*i+2].isFinite()) {
@@ -1319,7 +1323,7 @@ PathRenderer::CanDrawPath AAHairLinePathRenderer::onCanDrawPath(const CanDrawPat
     }
 
     if (SkPath::kLine_SegmentMask == args.fShape->segmentMask() ||
-        args.fCaps->shaderCaps()->shaderDerivativeSupport()) {
+        args.fCaps->shaderCaps()->fShaderDerivativeSupport) {
         return CanDrawPath::kYes;
     }
 
@@ -1343,4 +1347,3 @@ bool AAHairLinePathRenderer::onDrawPath(const DrawPathArgs& args) {
 }
 
 } // namespace skgpu::v1
-

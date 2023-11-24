@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright 2017 The Chromium Authors. All rights reserved.
+# Copyright 2017 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -26,7 +26,8 @@ class ImportNotifierTest(unittest.TestCase):
         self.host.filesystem = MockFileSystem({
             MOCK_WEB_TESTS + 'VirtualTestSuites':
             b'[{"prefix": "gpu", "platforms": ["Linux", "Mac", "Win"], '
-            b'"bases": ["external/wpt/foo"], "args": ["--foo"]}]'
+            b'"bases": ["external/wpt/foo"], "args": ["--foo"], '
+            b'"expires": "never"}]'
         })
         self.git = self.host.git()
         self.local_wpt = MockLocalWPT()

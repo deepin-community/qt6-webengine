@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,10 @@
 #include <memory>
 #include <string>
 
-#include "base/callback.h"
 #include "base/files/scoped_file.h"
+#include "base/functional/callback.h"
 #include "base/gtest_prod_util.h"
+#include "base/memory/raw_ptr.h"
 #include "ui/ozone/platform/wayland/common/wayland_object.h"
 #include "ui/ozone/platform/wayland/host/wayland_data_device_base.h"
 #include "ui/ozone/platform/wayland/host/wayland_data_source.h"
@@ -46,6 +47,8 @@ class WaylandDataDevice : public WaylandDataDeviceBase {
     virtual void OnDragLeave() = 0;
     virtual void OnDragDrop() = 0;
 
+    virtual const WaylandWindow* GetDragTarget() const = 0;
+
    protected:
     virtual ~DragDelegate() = default;
   };
@@ -62,9 +65,13 @@ class WaylandDataDevice : public WaylandDataDeviceBase {
                  wl_surface* icon_surface,
                  DragDelegate* delegate);
 
-  // Reset the drag delegate, assuming there is one set. Any wl_data_device
+  // Resets the drag delegate, assuming there is one set. Any wl_data_device
   // event received after this will be ignored until a new delegate is set.
   void ResetDragDelegate();
+  // Resets the drag delegate, only under certain conditions, eg: if it is set
+  // and running an incoming dnd session.
+  // TODO(crbug.com/1401598): Drop once drag delegate improvements are done.
+  void ResetDragDelegateIfNotDragSource();
 
   // Requests data for an |offer| in a format specified by |mime_type|. The
   // transfer happens asynchronously and |callback| is called when it is done.
@@ -86,7 +93,6 @@ class WaylandDataDevice : public WaylandDataDeviceBase {
   FRIEND_TEST_ALL_PREFIXES(WaylandDataDragControllerTest, ReceiveDrag);
 
   void ReadDragDataFromFD(base::ScopedFD fd, RequestDataCallback callback);
-  void ResetDragDelegateIfNeeded();
 
   // wl_data_device_listener callbacks
   static void OnOffer(void* data,
@@ -122,7 +128,7 @@ class WaylandDataDevice : public WaylandDataDeviceBase {
   // The wl_data_device wrapped by this WaylandDataDevice.
   wl::Object<wl_data_device> data_device_;
 
-  DragDelegate* drag_delegate_ = nullptr;
+  raw_ptr<DragDelegate> drag_delegate_ = nullptr;
 
   // There are two separate data offers at a time, the drag offer and the
   // selection offer, each with independent lifetimes. When we receive a new

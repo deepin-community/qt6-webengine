@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,7 @@
 #include "ui/base/ime/ash/extension_ime_util.h"
 
 namespace ash {
+
 namespace {
 
 // Gets the input method category according to the given input method id.

@@ -1,12 +1,12 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/history/metrics/domain_diversity_reporter.h"
 
 #include "base/metrics/histogram_functions.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/task_traits.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
 
@@ -33,7 +33,7 @@ DomainDiversityReporter::DomainDiversityReporter(
 
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(&DomainDiversityReporter::MaybeComputeDomainMetrics,
                      weak_ptr_factory_.GetWeakPtr()));
@@ -120,7 +120,7 @@ void DomainDiversityReporter::ComputeDomainMetrics() {
   }
 
   // The next reporting task is scheduled to run 24 hours later.
-  base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE,
       base::BindOnce(&DomainDiversityReporter::ComputeDomainMetrics,
                      weak_ptr_factory_.GetWeakPtr()),

@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
 #include "base/no_destructor.h"
 #include "base/threading/thread_local.h"
 #include "gpu/command_buffer/common/sync_token.h"
@@ -61,7 +61,7 @@ bool SchedulerTaskRunner::PostNonNestableDelayedTask(
     return false;
 
   CHECK(delay.is_zero());
-  scheduler_.ScheduleTask(Scheduler::Task(
+  scheduler_->ScheduleTask(Scheduler::Task(
       sequence_id_,
       base::BindOnce(&SchedulerTaskRunner::RunTask, this, std::move(task)),
       std::vector<SyncToken>()));

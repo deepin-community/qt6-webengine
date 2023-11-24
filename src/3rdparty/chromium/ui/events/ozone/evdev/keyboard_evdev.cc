@@ -1,11 +1,10 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ui/events/ozone/evdev/keyboard_evdev.h"
 
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "ui/events/event.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/event_modifiers.h"
@@ -87,7 +86,8 @@ void KeyboardEvdev::FlushInput(base::OnceClosure closure) {
   // Post a task behind any pending key releases in the message loop
   // FIFO. This ensures there's no spurious repeats during periods of UI
   // thread jank.
-  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, std::move(closure));
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, std::move(closure));
 }
 
 void KeyboardEvdev::UpdateModifier(int modifier_flag, bool down) {

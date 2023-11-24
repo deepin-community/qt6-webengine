@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -76,23 +76,12 @@ struct FallbackListCompositeKey {
   unsigned auxiliary_bitmap_fields_;
 };
 
-struct FallbackListCompositeKeyHash {
-  STATIC_ONLY(FallbackListCompositeKeyHash);
+struct FallbackListCompositeKeyTraits
+    : WTF::SimpleClassHashTraits<FallbackListCompositeKey> {
   static unsigned GetHash(const FallbackListCompositeKey& key) {
     return key.GetHash();
   }
-
-  static bool Equal(const FallbackListCompositeKey& a,
-                    const FallbackListCompositeKey& b) {
-    return a == b;
-  }
-
-  static const bool safe_to_compare_to_empty_or_deleted = false;
-};
-
-struct FallbackListCompositeKeyTraits
-    : WTF::SimpleClassHashTraits<FallbackListCompositeKey> {
-  STATIC_ONLY(FallbackListCompositeKeyTraits);
+  static constexpr bool kSafeToCompareToEmptyOrDeleted = false;
 };
 
 }  // namespace blink

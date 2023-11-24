@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,7 +19,6 @@
 #include "third_party/blink/renderer/core/css/parser/css_tokenizer.h"
 #include "third_party/blink/renderer/core/css/parser/css_variable_parser.h"
 #include "third_party/blink/renderer/core/css/property_registry.h"
-#include "third_party/blink/renderer/core/css/resolver/style_builder_converter.h"
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
 #include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/css/style_rule.h"
@@ -33,31 +32,44 @@ const PropertyRegistration* PropertyRegistration::From(
     const ExecutionContext* execution_context,
     const AtomicString& property_name) {
   const auto* window = DynamicTo<LocalDOMWindow>(execution_context);
-  if (!window)
+  if (!window) {
     return nullptr;
+  }
   const PropertyRegistry* registry = window->document()->GetPropertyRegistry();
   return registry ? registry->Registration(property_name) : nullptr;
 }
 
-PropertyRegistration::PropertyRegistration(
-    const AtomicString& name,
-    const CSSSyntaxDefinition& syntax,
-    bool inherits,
-    const CSSValue* initial,
-    scoped_refptr<CSSVariableData> initial_variable_data)
+PropertyRegistration::PropertyRegistration(const AtomicString& name,
+                                           const CSSSyntaxDefinition& syntax,
+                                           bool inherits,
+                                           const CSSValue* initial)
     : syntax_(syntax),
       inherits_(inherits),
       initial_(initial),
-      initial_variable_data_(std::move(initial_variable_data)),
       interpolation_types_(
           CSSInterpolationTypesMap::CreateInterpolationTypesForCSSSyntax(
               name,
               syntax,
               *this)),
-      referenced_(false) {
-}
+      referenced_(false) {}
 
 PropertyRegistration::~PropertyRegistration() = default;
+
+unsigned PropertyRegistration::GetViewportUnitFlags() const {
+  unsigned flags = 0;
+  if (const auto* primitive_value =
+          DynamicTo<CSSPrimitiveValue>(initial_.Get())) {
+    CSSPrimitiveValue::LengthTypeFlags length_type_flags;
+    primitive_value->AccumulateLengthUnitTypes(length_type_flags);
+    if (CSSPrimitiveValue::HasStaticViewportUnits(length_type_flags)) {
+      flags |= static_cast<unsigned>(ViewportUnitFlag::kStatic);
+    }
+    if (CSSPrimitiveValue::HasDynamicViewportUnits(length_type_flags)) {
+      flags |= static_cast<unsigned>(ViewportUnitFlag::kDynamic);
+    }
+  }
+  return flags;
+}
 
 static bool ComputationallyIndependent(const CSSValue& value) {
   DCHECK(!value.IsCSSWideKeyword());
@@ -70,14 +82,16 @@ static bool ComputationallyIndependent(const CSSValue& value) {
 
   if (auto* value_list = DynamicTo<CSSValueList>(value)) {
     for (const CSSValue* inner_value : *value_list) {
-      if (!ComputationallyIndependent(*inner_value))
+      if (!ComputationallyIndependent(*inner_value)) {
         return false;
+      }
     }
     return true;
   }
 
-  if (const auto* primitive_value = DynamicTo<CSSPrimitiveValue>(value))
+  if (const auto* primitive_value = DynamicTo<CSSPrimitiveValue>(value)) {
     return primitive_value->IsComputationallyIndependent();
+  }
 
   // TODO(timloh): Images values can also contain lengths.
 
@@ -97,9 +111,10 @@ static bool ConvertInherts(const CSSValue& value) {
 
 static scoped_refptr<CSSVariableData> ConvertInitialVariableData(
     const CSSValue* value) {
-  if (!value)
+  if (!value) {
     return nullptr;
-  return To<CSSCustomPropertyDeclaration>(*value).Value();
+  }
+  return &To<CSSCustomPropertyDeclaration>(*value).Value();
 }
 
 PropertyRegistration* PropertyRegistration::MaybeCreateForDeclaredProperty(
@@ -108,16 +123,19 @@ PropertyRegistration* PropertyRegistration::MaybeCreateForDeclaredProperty(
     StyleRuleProperty& rule) {
   // https://drafts.css-houdini.org/css-properties-values-api-1/#the-syntax-descriptor
   const CSSValue* syntax_value = rule.GetSyntax();
-  if (!syntax_value)
+  if (!syntax_value) {
     return nullptr;
+  }
   absl::optional<CSSSyntaxDefinition> syntax = ConvertSyntax(*syntax_value);
-  if (!syntax)
+  if (!syntax) {
     return nullptr;
+  }
 
   // https://drafts.css-houdini.org/css-properties-values-api-1/#inherits-descriptor
   const CSSValue* inherits_value = rule.Inherits();
-  if (!inherits_value)
+  if (!inherits_value) {
     return nullptr;
+  }
   bool inherits = ConvertInherts(*inherits_value);
 
   // https://drafts.css-houdini.org/css-properties-values-api-1/#initial-value-descriptor
@@ -133,24 +151,22 @@ PropertyRegistration* PropertyRegistration::MaybeCreateForDeclaredProperty(
     const bool is_animation_tainted = false;
     initial = syntax->Parse(initial_variable_data->TokenRange(),
                             *parser_context, is_animation_tainted);
-    if (!initial)
+    if (!initial) {
       return nullptr;
-    if (!ComputationallyIndependent(*initial))
+    }
+    if (!ComputationallyIndependent(*initial)) {
       return nullptr;
-    initial = &StyleBuilderConverter::ConvertRegisteredPropertyInitialValue(
-        document, *initial);
-    initial_variable_data =
-        StyleBuilderConverter::ConvertRegisteredPropertyVariableData(
-            *initial, is_animation_tainted);
+    }
   }
 
   // For non-universal @property rules, the initial value is required for the
   // the rule to be valid.
-  if (!initial && !syntax->IsUniversal())
+  if (!initial && !syntax->IsUniversal()) {
     return nullptr;
+  }
 
-  return MakeGarbageCollected<PropertyRegistration>(
-      name, *syntax, inherits, initial, initial_variable_data);
+  return MakeGarbageCollected<PropertyRegistration>(name, *syntax, inherits,
+                                                    initial);
 }
 
 void PropertyRegistration::registerProperty(
@@ -192,7 +208,6 @@ void PropertyRegistration::registerProperty(
       document->ElementSheet().Contents()->ParserContext();
 
   const CSSValue* initial = nullptr;
-  scoped_refptr<CSSVariableData> initial_variable_data;
   if (property_definition->hasInitialValue()) {
     CSSTokenizer tokenizer(property_definition->initialValue());
     const auto tokens = tokenizer.TokenizeToEOF();
@@ -211,11 +226,6 @@ void PropertyRegistration::registerProperty(
           "The initial value provided is not computationally independent.");
       return;
     }
-    initial = &StyleBuilderConverter::ConvertRegisteredPropertyInitialValue(
-        *document, *initial);
-    initial_variable_data =
-        StyleBuilderConverter::ConvertRegisteredPropertyVariableData(
-            *initial, is_animation_tainted);
   } else {
     if (!syntax_definition->IsUniversal()) {
       exception_state.ThrowDOMException(
@@ -224,18 +234,18 @@ void PropertyRegistration::registerProperty(
       return;
     }
   }
-  registry.RegisterProperty(
-      atomic_name,
-      *MakeGarbageCollected<PropertyRegistration>(
-          atomic_name, *syntax_definition, property_definition->inherits(),
-          initial, std::move(initial_variable_data)));
+  registry.RegisterProperty(atomic_name,
+                            *MakeGarbageCollected<PropertyRegistration>(
+                                atomic_name, *syntax_definition,
+                                property_definition->inherits(), initial));
 
   document->GetStyleEngine().PropertyRegistryChanged();
 }
 
 void PropertyRegistration::RemoveDeclaredProperties(Document& document) {
-  if (!document.GetPropertyRegistry())
+  if (!document.GetPropertyRegistry()) {
     return;
+  }
 
   PropertyRegistry& registry = document.EnsurePropertyRegistry();
 
@@ -243,8 +253,9 @@ void PropertyRegistration::RemoveDeclaredProperties(Document& document) {
   registry.RemoveDeclaredProperties();
   size_t version_after = registry.Version();
 
-  if (version_before != version_after)
+  if (version_before != version_after) {
     document.GetStyleEngine().PropertyRegistryChanged();
+  }
 }
 
 }  // namespace blink

@@ -1,4 +1,4 @@
-// Copyright 2020 PDFium Authors. All rights reserved.
+// Copyright 2020 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,7 +23,7 @@ CFFL_PerWindowData::CFFL_PerWindowData(const CFFL_PerWindowData& that) =
 
 CFFL_PerWindowData::~CFFL_PerWindowData() = default;
 
-std::unique_ptr<IPWL_SystemHandler::PerWindowData> CFFL_PerWindowData::Clone()
+std::unique_ptr<IPWL_FillerNotify::PerWindowData> CFFL_PerWindowData::Clone()
     const {
   // Private constructor.
   return pdfium::WrapUnique(new CFFL_PerWindowData(*this));

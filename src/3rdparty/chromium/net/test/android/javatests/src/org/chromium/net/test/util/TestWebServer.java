@@ -1,4 +1,4 @@
-// Copyright 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -287,7 +287,21 @@ public class TestWebServer extends WebServer {
      *         response.
      */
     public String setRedirect(String requestPath, String targetLocation) {
-        List<Pair<String, String>> responseHeaders = new ArrayList<Pair<String, String>>();
+        return setRedirect(requestPath, targetLocation, new ArrayList<>());
+    }
+
+    /**
+     * Sets a redirect with optional headers.
+     *
+     * @param requestPath The path to respond to.
+     * @param targetLocation The path (or absolute URL) to redirect to.
+     * @param responseHeaders Any additional headers that should be returned along with the
+     *                        response (null is acceptable).
+     * @return The full URL including the path that should be requested to get the expected
+     *         response.
+     */
+    public String setRedirect(
+            String requestPath, String targetLocation, List<Pair<String, String>> responseHeaders) {
         responseHeaders.add(Pair.create("Location", targetLocation));
 
         return setResponseInternal(requestPath, ApiCompatibilityUtils.getBytesUtf8(targetLocation),

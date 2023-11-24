@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,8 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/platform_thread.h"
@@ -19,11 +19,11 @@
 #include "extensions/common/extension_features.h"
 #include "extensions/common/extension_messages.h"
 #include "extensions/common/mojom/event_dispatcher.mojom.h"
+#include "extensions/renderer/api/messaging/native_renderer_messaging_service.h"
 #include "extensions/renderer/dispatcher.h"
 #include "extensions/renderer/extension_interaction_provider.h"
 #include "extensions/renderer/extensions_renderer_client.h"
 #include "extensions/renderer/native_extension_bindings_system.h"
-#include "extensions/renderer/native_renderer_messaging_service.h"
 #include "extensions/renderer/service_worker_data.h"
 #include "extensions/renderer/worker_script_context_set.h"
 #include "extensions/renderer/worker_thread_util.h"
@@ -94,7 +94,7 @@ void AddEventFilteredListenerOnIO(const std::string& extension_id,
                                   const std::string& event_name,
                                   int64_t service_worker_version_id,
                                   int worker_thread_id,
-                                  base::Value filter,
+                                  base::Value::Dict filter,
                                   bool add_lazy_listener) {
   auto* dispatcher = WorkerThreadDispatcher::Get();
   dispatcher->GetEventRouterOnIO()->AddFilteredListenerForServiceWorker(
@@ -109,7 +109,7 @@ void RemoveEventFilteredListenerOnIO(const std::string& extension_id,
                                      const std::string& event_name,
                                      int64_t service_worker_version_id,
                                      int worker_thread_id,
-                                     base::Value filter,
+                                     base::Value::Dict filter,
                                      bool remove_lazy_listener) {
   auto* dispatcher = WorkerThreadDispatcher::Get();
   dispatcher->GetEventRouterOnIO()->RemoveFilteredListenerForServiceWorker(
@@ -178,9 +178,14 @@ void WorkerThreadDispatcher::UpdateBindingsOnWorkerThread(
     const ExtensionId& extension_id) {
   DCHECK(worker_thread_util::IsWorkerThread());
   DCHECK(!extension_id.empty());
-  GetBindingsSystem()->UpdateBindings(extension_id,
-                                      true /* permissions_changed */,
-                                      Dispatcher::GetWorkerScriptContextSet());
+
+  ServiceWorkerData* data = WorkerThreadDispatcher::GetServiceWorkerData();
+  // Bail out if the worker was destroyed.
+  if (!data)
+    return;
+  data->bindings_system()->UpdateBindings(
+      extension_id, true /* permissions_changed */,
+      Dispatcher::GetWorkerScriptContextSet());
 }
 
 // static
@@ -251,7 +256,7 @@ void WorkerThreadDispatcher::SendAddEventFilteredListener(
     const std::string& event_name,
     int64_t service_worker_version_id,
     int worker_thread_id,
-    base::Value filter,
+    base::Value::Dict filter,
     bool add_lazy_listener) {
   io_task_runner_->PostTask(
       FROM_HERE,
@@ -287,7 +292,7 @@ void WorkerThreadDispatcher::SendRemoveEventFilteredListener(
     const std::string& event_name,
     int64_t service_worker_version_id,
     int worker_thread_id,
-    base::Value filter,
+    base::Value::Dict filter,
     bool remove_lazy_listener) {
   io_task_runner_->PostTask(
       FROM_HERE,
@@ -347,14 +352,16 @@ mojom::EventRouter* WorkerThreadDispatcher::GetEventRouterOnIO() {
   return event_router_remote_.get();
 }
 
-void WorkerThreadDispatcher::OnResponseWorker(int worker_thread_id,
-                                              int request_id,
-                                              bool succeeded,
-                                              const base::Value::List& response,
-                                              const std::string& error) {
+void WorkerThreadDispatcher::OnResponseWorker(
+    int worker_thread_id,
+    int request_id,
+    bool succeeded,
+    ExtensionMsg_ResponseWorkerData response,
+    const std::string& error) {
   ServiceWorkerData* data = g_data_tls.Pointer()->Get();
-  data->bindings_system()->HandleResponse(request_id, succeeded, response,
-                                          error);
+  data->bindings_system()->HandleResponse(request_id, succeeded,
+                                          response.results, error,
+                                          std::move(response.extra_data));
 }
 
 void WorkerThreadDispatcher::DispatchEventHelper(
@@ -463,7 +470,7 @@ void WorkerThreadDispatcher::AddWorkerData(
   int worker_thread_id = content::WorkerThread::GetCurrentId();
   {
     base::AutoLock lock(task_runner_map_lock_);
-    auto* task_runner = base::ThreadTaskRunnerHandle::Get().get();
+    auto* task_runner = base::SingleThreadTaskRunner::GetCurrentDefault().get();
     CHECK(task_runner);
     task_runner_map_[worker_thread_id] = task_runner;
   }

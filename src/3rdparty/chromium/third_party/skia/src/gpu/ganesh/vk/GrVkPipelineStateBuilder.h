@@ -15,6 +15,7 @@
 #include "src/gpu/ganesh/vk/GrVkUniformHandler.h"
 #include "src/gpu/ganesh/vk/GrVkVaryingHandler.h"
 #include "src/sksl/SkSLCompiler.h"
+#include "src/sksl/ir/SkSLProgram.h"
 
 class GrProgramDesc;
 class GrVkGpu;
@@ -41,7 +42,6 @@ public:
 
     SkSL::Compiler* shaderCompiler() const override;
 
-    void finalizeFragmentOutputColor(GrShaderVar& outputColor) override;
     void finalizeFragmentSecondaryColor(GrShaderVar& outputColor) override;
 
 private:
@@ -61,7 +61,7 @@ private:
                               const std::string& sksl,
                               VkShaderModule* shaderModule,
                               VkPipelineShaderStageCreateInfo* stageInfo,
-                              const SkSL::Program::Settings& settings,
+                              const SkSL::ProgramSettings& settings,
                               std::string* outSPIRV,
                               SkSL::Program::Inputs* outInputs);
 

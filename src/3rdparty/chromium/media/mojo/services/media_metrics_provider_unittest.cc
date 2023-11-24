@@ -1,16 +1,17 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <stddef.h>
 #include <memory>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/test_message_loop.h"
 #include "components/ukm/test_ukm_recorder.h"
+#include "media/cdm/clear_key_cdm_common.h"
 #include "media/mojo/services/media_metrics_provider.h"
 #include "media/mojo/services/watch_time_recorder.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -123,7 +124,6 @@ TEST_F(MediaMetricsProviderTest, TestUkm) {
 
   // Now try one with different values and optional parameters set.
   const std::string kTestOrigin2 = "https://test2.google.com/";
-  const std::string kClearKeyKeySystem = "org.w3.clearkey";
   const base::TimeDelta kMetadataTime = base::Seconds(1);
   const base::TimeDelta kFirstFrameTime = base::Seconds(2);
   const base::TimeDelta kPlayReadyTime = base::Seconds(3);

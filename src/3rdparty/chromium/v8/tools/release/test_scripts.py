@@ -534,6 +534,7 @@ https://v8-roll.appspot.com/
 This only works with a Google account.
 
 CQ_INCLUDE_TRYBOTS=luci.chromium.try:linux-blink-rel
+CQ_INCLUDE_TRYBOTS=luci.chromium.try:linux_chromium_chromeos_msan_rel_ng
 CQ_INCLUDE_TRYBOTS=luci.chromium.try:linux_optional_gpu_tests_rel
 CQ_INCLUDE_TRYBOTS=luci.chromium.try:mac_optional_gpu_tests_rel
 CQ_INCLUDE_TRYBOTS=luci.chromium.try:win_optional_gpu_tests_rel
@@ -578,8 +579,6 @@ deps = {
           "-c", TEST_CONFIG["CHROMIUM"],
           "--json-output", json_output_file])
     self.assertEquals(0, result)
-    json_output = json.loads(FileToText(json_output_file))
-    self.assertEquals("up_to_date", json_output["monitoring_state"])
 
 
   def testChromiumRoll(self):
@@ -636,9 +635,6 @@ deps = {
 
     deps = FileToText(os.path.join(chrome_dir, "DEPS"))
     self.assertTrue(re.search("\"v8_revision\": \"22624\"", deps))
-
-    json_output = json.loads(FileToText(json_output_file))
-    self.assertEquals("success", json_output["monitoring_state"])
 
   def testCheckLastPushRecently(self):
     self.Expect([

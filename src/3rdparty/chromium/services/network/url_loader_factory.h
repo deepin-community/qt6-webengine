@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 #define SERVICES_NETWORK_URL_LOADER_FACTORY_H_
 
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -15,6 +15,7 @@
 #include "services/network/public/mojom/cookie_access_observer.mojom.h"
 #include "services/network/public/mojom/devtools_observer.mojom.h"
 #include "services/network/public/mojom/network_context.mojom.h"
+#include "services/network/public/mojom/trust_token_access_observer.mojom.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "services/network/public/mojom/url_loader_network_service_observer.mojom.h"
 #include "services/network/url_loader_context.h"
@@ -60,7 +61,7 @@ class URLLoaderFactory : public mojom::URLLoaderFactory,
   void CreateLoaderAndStart(mojo::PendingReceiver<mojom::URLLoader> receiver,
                             int32_t request_id,
                             uint32_t options,
-                            const ResourceRequest& url_request,
+                            const ResourceRequest& resource_request,
                             mojo::PendingRemote<mojom::URLLoaderClient> client,
                             const net::MutableNetworkTrafficAnnotationTag&
                                 traffic_annotation) override;
@@ -71,10 +72,10 @@ class URLLoaderFactory : public mojom::URLLoaderFactory,
   const cors::OriginAccessList& GetOriginAccessList() const override;
   const mojom::URLLoaderFactoryParams& GetFactoryParams() const override;
   mojom::CookieAccessObserver* GetCookieAccessObserver() const override;
+  mojom::TrustTokenAccessObserver* GetTrustTokenAccessObserver() const override;
   mojom::CrossOriginEmbedderPolicyReporter* GetCoepReporter() const override;
   mojom::DevToolsObserver* GetDevToolsObserver() const override;
   mojom::NetworkContextClient* GetNetworkContextClient() const override;
-  mojom::OriginPolicyManager* GetOriginPolicyManager() const override;
   mojom::TrustedURLLoaderHeaderClient* GetUrlLoaderHeaderClient()
       const override;
   mojom::URLLoaderNetworkServiceObserver* GetURLLoaderNetworkServiceObserver()
@@ -90,7 +91,7 @@ class URLLoaderFactory : public mojom::URLLoaderFactory,
       mojo::PendingReceiver<mojom::URLLoader> receiver,
       int32_t request_id,
       uint32_t options,
-      const ResourceRequest& url_request,
+      const ResourceRequest& resource_request,
       mojo::PendingRemote<mojom::URLLoaderClient> client,
       base::WeakPtr<mojom::URLLoaderClient> sync_client,
       const net::MutableNetworkTrafficAnnotationTag& traffic_annotation);
@@ -121,7 +122,7 @@ class URLLoaderFactory : public mojom::URLLoaderFactory,
   mojo::Remote<mojom::TrustedURLLoaderHeaderClient> header_client_;
 
   // |cors_url_loader_factory_| owns this.
-  raw_ptr<cors::CorsURLLoaderFactory> cors_url_loader_factory_;
+  raw_ptr<cors::CorsURLLoaderFactory> const cors_url_loader_factory_;
 
   // To allow subsequent range requests, ORB stores URLs of non-range-request
   // responses that sniffed as an audio or video resource.  The lifetime of that
@@ -134,6 +135,7 @@ class URLLoaderFactory : public mojom::URLLoaderFactory,
   corb::PerFactoryState corb_state_;
 
   mojo::Remote<mojom::CookieAccessObserver> cookie_observer_;
+  mojo::Remote<mojom::TrustTokenAccessObserver> trust_token_observer_;
   mojo::Remote<mojom::URLLoaderNetworkServiceObserver>
       url_loader_network_service_observer_;
   mojo::Remote<mojom::DevToolsObserver> devtools_observer_;

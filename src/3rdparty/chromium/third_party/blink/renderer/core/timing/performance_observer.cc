@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,6 +23,7 @@
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/bindings/v8_throw_exception.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
@@ -60,6 +61,10 @@ Vector<AtomicString> PerformanceObserver::supportedEntryTypes(
   Vector<AtomicString> supportedEntryTypes;
   auto* execution_context = ExecutionContext::From(script_state);
   if (execution_context->IsWindow()) {
+    if (RuntimeEnabledFeatures::NavigationIdEnabled(execution_context)) {
+      supportedEntryTypes.push_back(
+          performance_entry_names::kBackForwardCacheRestoration);
+    }
     supportedEntryTypes.push_back(performance_entry_names::kElement);
     supportedEntryTypes.push_back(performance_entry_names::kEvent);
     supportedEntryTypes.push_back(performance_entry_names::kFirstInput);
@@ -75,6 +80,11 @@ Vector<AtomicString> PerformanceObserver::supportedEntryTypes(
     supportedEntryTypes.push_back(performance_entry_names::kPaint);
   }
   supportedEntryTypes.push_back(performance_entry_names::kResource);
+  if (RuntimeEnabledFeatures::SoftNavigationHeuristicsEnabled(
+          execution_context) &&
+      execution_context->IsWindow()) {
+    supportedEntryTypes.push_back(performance_entry_names::kSoftNavigation);
+  }
   if (RuntimeEnabledFeatures::VisibilityStateEntryEnabled() &&
       execution_context->IsWindow()) {
     supportedEntryTypes.push_back(performance_entry_names::kVisibilityState);
@@ -131,10 +141,12 @@ void PerformanceObserver::observe(const PerformanceObserverInit* observer_init,
       if (entry_type == PerformanceEntry::kInvalid) {
         String message = "The entry type '" + entry_type_string +
                          "' does not exist or isn't supported.";
-        GetExecutionContext()->AddConsoleMessage(
-            MakeGarbageCollected<ConsoleMessage>(
-                mojom::ConsoleMessageSource::kJavaScript,
-                mojom::ConsoleMessageLevel::kWarning, message));
+        if (GetExecutionContext()) {
+          GetExecutionContext()->AddConsoleMessage(
+              MakeGarbageCollected<ConsoleMessage>(
+                  mojom::ConsoleMessageSource::kJavaScript,
+                  mojom::ConsoleMessageLevel::kWarning, message));
+        }
       }
       entry_types |= entry_type;
     }
@@ -147,10 +159,12 @@ void PerformanceObserver::observe(const PerformanceObserverInit* observer_init,
       String message =
           "The PerformanceObserver does not support buffered flag with "
           "the entryTypes argument.";
-      GetExecutionContext()->AddConsoleMessage(
-          MakeGarbageCollected<ConsoleMessage>(
-              mojom::ConsoleMessageSource::kJavaScript,
-              mojom::ConsoleMessageLevel::kWarning, message));
+      if (GetExecutionContext()) {
+        GetExecutionContext()->AddConsoleMessage(
+            MakeGarbageCollected<ConsoleMessage>(
+                mojom::ConsoleMessageSource::kJavaScript,
+                mojom::ConsoleMessageLevel::kWarning, message));
+      }
     }
     filter_options_ = entry_types;
   } else {
@@ -175,17 +189,22 @@ void PerformanceObserver::observe(const PerformanceObserverInit* observer_init,
     if (entry_type == PerformanceEntry::kInvalid) {
       String message = "The entry type '" + observer_init->type() +
                        "' does not exist or isn't supported.";
-      GetExecutionContext()->AddConsoleMessage(
-          MakeGarbageCollected<ConsoleMessage>(
-              mojom::ConsoleMessageSource::kJavaScript,
-              mojom::ConsoleMessageLevel::kWarning, message));
+      if (GetExecutionContext()) {
+        GetExecutionContext()->AddConsoleMessage(
+            MakeGarbageCollected<ConsoleMessage>(
+                mojom::ConsoleMessageSource::kJavaScript,
+                mojom::ConsoleMessageLevel::kWarning, message));
+      }
       return;
     }
+    include_soft_navigation_observations_ =
+        observer_init->includeSoftNavigationObservations();
     if (observer_init->buffered()) {
       // Append all entries of this type to the current performance_entries_
       // to be returned on the next callback.
       performance_entries_.AppendVector(performance_->getBufferedEntriesByType(
-          AtomicString(observer_init->type())));
+          AtomicString(observer_init->type()),
+          include_soft_navigation_observations_));
       std::sort(performance_entries_.begin(), performance_entries_.end(),
                 PerformanceEntry::StartTimeCompareLessThan);
       is_buffered = true;
@@ -263,7 +282,7 @@ void PerformanceObserver::Deliver(absl::optional<int> dropped_entries_count) {
     return;
   DCHECK(!GetExecutionContext()->IsContextPaused());
 
-  if (performance_entries_.IsEmpty())
+  if (performance_entries_.empty())
     return;
 
   PerformanceEntryVector performance_entries;

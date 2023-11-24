@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -21,13 +21,13 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/check.h"
 #include "base/compiler_specific.h"
 #include "base/containers/queue.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
@@ -35,11 +35,8 @@
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "crypto/nss_util.h"
 #include "crypto/rsa_private_key.h"
-#include "crypto/signature_creator.h"
 #include "net/base/address_list.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/host_port_pair.h"
@@ -87,10 +84,28 @@ namespace net {
 
 namespace {
 
+// Client certificates are disabled on iOS.
+#if !BUILDFLAG(IS_IOS)
 const char kClientCertFileName[] = "client_1.pem";
 const char kClientPrivateKeyFileName[] = "client_1.pk8";
 const char kWrongClientCertFileName[] = "client_2.pem";
 const char kWrongClientPrivateKeyFileName[] = "client_2.pk8";
+#endif  // !IS_IOS
+
+const uint16_t kEcdheCiphers[] = {
+    0xc007,  // ECDHE_ECDSA_WITH_RC4_128_SHA
+    0xc009,  // ECDHE_ECDSA_WITH_AES_128_CBC_SHA
+    0xc00a,  // ECDHE_ECDSA_WITH_AES_256_CBC_SHA
+    0xc011,  // ECDHE_RSA_WITH_RC4_128_SHA
+    0xc013,  // ECDHE_RSA_WITH_AES_128_CBC_SHA
+    0xc014,  // ECDHE_RSA_WITH_AES_256_CBC_SHA
+    0xc02b,  // ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+    0xc02c,  // ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+    0xc02f,  // ECDHE_RSA_WITH_AES_128_GCM_SHA256
+    0xc030,  // ECDHE_RSA_WITH_AES_256_GCM_SHA384
+    0xcca8,  // ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+    0xcca9,  // ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
+};
 
 class MockCTPolicyEnforcer : public CTPolicyEnforcer {
  public:
@@ -106,8 +121,7 @@ class MockCTPolicyEnforcer : public CTPolicyEnforcer {
 
 class FakeDataChannel {
  public:
-  FakeDataChannel()
-      : read_buf_len_(0), closed_(false), write_called_after_close_(false) {}
+  FakeDataChannel() = default;
 
   FakeDataChannel(const FakeDataChannel&) = delete;
   FakeDataChannel& operator=(const FakeDataChannel&) = delete;
@@ -136,7 +150,7 @@ class FakeDataChannel {
         return ERR_CONNECTION_RESET;
       write_called_after_close_ = true;
       write_callback_ = std::move(callback);
-      base::ThreadTaskRunnerHandle::Get()->PostTask(
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
           FROM_HERE, base::BindOnce(&FakeDataChannel::DoWriteCallback,
                                     weak_factory_.GetWeakPtr()));
       return ERR_IO_PENDING;
@@ -145,7 +159,7 @@ class FakeDataChannel {
     data_.push(base::MakeRefCounted<DrainableIOBuffer>(
         base::MakeRefCounted<StringIOBuffer>(std::string(buf->data(), buf_len)),
         buf_len));
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&FakeDataChannel::DoReadCallback,
                                   weak_factory_.GetWeakPtr()));
     return buf_len;
@@ -158,7 +172,7 @@ class FakeDataChannel {
   void Close() {
     closed_ = true;
     if (!read_callback_.is_null()) {
-      base::ThreadTaskRunnerHandle::Get()->PostTask(
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
           FROM_HERE, base::BindOnce(&FakeDataChannel::DoReadCallback,
                                     weak_factory_.GetWeakPtr()));
     }
@@ -203,19 +217,19 @@ class FakeDataChannel {
 
   CompletionOnceCallback read_callback_;
   scoped_refptr<IOBuffer> read_buf_;
-  int read_buf_len_;
+  int read_buf_len_ = 0;
 
   CompletionOnceCallback write_callback_;
 
   base::queue<scoped_refptr<DrainableIOBuffer>> data_;
 
   // True if Close() has been called.
-  bool closed_;
+  bool closed_ = false;
 
   // Controls the completion of Write() after the FakeDataChannel is closed.
   // After the FakeDataChannel is closed, the first Write() call completes
   // asynchronously.
-  bool write_called_after_close_;
+  bool write_called_after_close_ = false;
 
   base::WeakPtrFactory<FakeDataChannel> weak_factory_{this};
 };
@@ -284,14 +298,6 @@ class FakeSocket : public StreamSocket {
 
   bool GetSSLInfo(SSLInfo* ssl_info) override { return false; }
 
-  void GetConnectionAttempts(ConnectionAttempts* out) const override {
-    out->clear();
-  }
-
-  void ClearConnectionAttempts() override {}
-
-  void AddConnectionAttempts(const ConnectionAttempts& attempts) override {}
-
   int64_t GetTotalReceivedBytes() const override {
     NOTIMPLEMENTED();
     return 0;
@@ -358,13 +364,14 @@ TEST(FakeSocketTest, DataTransfer) {
 class SSLServerSocketTest : public PlatformTest, public WithTaskEnvironment {
  public:
   SSLServerSocketTest()
-      : ssl_config_service_(new TestSSLConfigService(SSLContextConfig())),
-        cert_verifier_(new MockCertVerifier()),
-        client_cert_verifier_(new MockClientCertVerifier()),
-        transport_security_state_(new TransportSecurityState),
-        ct_policy_enforcer_(new MockCTPolicyEnforcer),
-        ssl_client_session_cache_(
-            new SSLClientSessionCache(SSLClientSessionCache::Config())) {}
+      : ssl_config_service_(
+            std::make_unique<TestSSLConfigService>(SSLContextConfig())),
+        cert_verifier_(std::make_unique<MockCertVerifier>()),
+        client_cert_verifier_(std::make_unique<MockClientCertVerifier>()),
+        transport_security_state_(std::make_unique<TransportSecurityState>()),
+        ct_policy_enforcer_(std::make_unique<MockCTPolicyEnforcer>()),
+        ssl_client_session_cache_(std::make_unique<SSLClientSessionCache>(
+            SSLClientSessionCache::Config())) {}
 
   void SetUp() override {
     PlatformTest::SetUp();
@@ -434,6 +441,8 @@ class SSLServerSocketTest : public PlatformTest, public WithTaskEnvironment {
     ASSERT_TRUE(server_socket_);
   }
 
+// Client certificates are disabled on iOS.
+#if !BUILDFLAG(IS_IOS)
   void ConfigureClientCertsForClient(const char* cert_file_name,
                                      const char* private_key_file_name) {
     scoped_refptr<X509Certificate> client_cert =
@@ -457,8 +466,8 @@ class SSLServerSocketTest : public PlatformTest, public WithTaskEnvironment {
     static const uint8_t kClientCertCAName[] = {
         0x30, 0x0f, 0x31, 0x0d, 0x30, 0x0b, 0x06, 0x03, 0x55,
         0x04, 0x03, 0x0c, 0x04, 0x42, 0x20, 0x43, 0x41};
-    server_ssl_config_.cert_authorities.push_back(std::string(
-        std::begin(kClientCertCAName), std::end(kClientCertCAName)));
+    server_ssl_config_.cert_authorities.emplace_back(
+        std::begin(kClientCertCAName), std::end(kClientCertCAName));
 
     scoped_refptr<X509Certificate> expected_client_cert(
         ImportCertFromFile(GetTestCertsDirectory(), kClientCertFileName));
@@ -468,9 +477,9 @@ class SSLServerSocketTest : public PlatformTest, public WithTaskEnvironment {
 
     server_ssl_config_.client_cert_verifier = client_cert_verifier_.get();
   }
+#endif  // !IS_IOS
 
-  std::unique_ptr<crypto::RSAPrivateKey> ReadTestKey(
-      const base::StringPiece& name) {
+  std::unique_ptr<crypto::RSAPrivateKey> ReadTestKey(base::StringPiece name) {
     base::FilePath certs_dir(GetTestCertsDirectory());
     base::FilePath key_path = certs_dir.AppendASCII(name);
     std::string key_string;
@@ -698,6 +707,8 @@ TEST_F(SSLServerSocketTest, HandshakeCachedContextSwitch) {
   EXPECT_EQ(ssl_server_info2.handshake_type, SSLInfo::HANDSHAKE_FULL);
 }
 
+// Client certificates are disabled on iOS.
+#if !BUILDFLAG(IS_IOS)
 // This test executes Connect() on SSLClientSocket and Handshake() on
 // SSLServerSocket to make sure handshaking between the two sockets is
 // completed successfully, using client certificate.
@@ -999,6 +1010,7 @@ TEST_F(SSLServerSocketTest, HandshakeWithWrongClientCertSuppliedCached) {
   client_ret = read_callback.GetResult(client_ret);
   EXPECT_EQ(ERR_BAD_SSL_CLIENT_AUTH_CERT, client_ret);
 }
+#endif  // !IS_IOS
 
 TEST_P(SSLServerSocketReadTest, DataTransfer) {
   ASSERT_NO_FATAL_FAILURE(CreateContext());
@@ -1139,7 +1151,7 @@ TEST_F(SSLServerSocketTest, ClientWriteAfterServerClose) {
   EXPECT_GT(client_ret, 0);
 
   base::RunLoop run_loop;
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE, run_loop.QuitClosure(), base::Milliseconds(10));
   run_loop.Run();
 }
@@ -1191,18 +1203,6 @@ TEST_F(SSLServerSocketTest, ExportKeyingMaterial) {
 // Verifies that SSLConfig::require_ecdhe flags works properly.
 TEST_F(SSLServerSocketTest, RequireEcdheFlag) {
   // Disable all ECDHE suites on the client side.
-  uint16_t kEcdheCiphers[] = {
-      0xc007,  // ECDHE_ECDSA_WITH_RC4_128_SHA
-      0xc009,  // ECDHE_ECDSA_WITH_AES_128_CBC_SHA
-      0xc00a,  // ECDHE_ECDSA_WITH_AES_256_CBC_SHA
-      0xc011,  // ECDHE_RSA_WITH_RC4_128_SHA
-      0xc013,  // ECDHE_RSA_WITH_AES_128_CBC_SHA
-      0xc014,  // ECDHE_RSA_WITH_AES_256_CBC_SHA
-      0xc02b,  // ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
-      0xc02f,  // ECDHE_RSA_WITH_AES_128_GCM_SHA256
-      0xcca8,  // ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
-      0xcca9,  // ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
-  };
   SSLContextConfig config;
   config.disabled_cipher_suites.assign(
       kEcdheCiphers, kEcdheCiphers + std::size(kEcdheCiphers));
@@ -1271,18 +1271,6 @@ TEST_F(SSLServerSocketTest, HandshakeServerSSLPrivateKey) {
 // server key.
 TEST_F(SSLServerSocketTest, HandshakeServerSSLPrivateKeyRequireEcdhe) {
   // Disable all ECDHE suites on the client side.
-  uint16_t kEcdheCiphers[] = {
-      0xc007,  // ECDHE_ECDSA_WITH_RC4_128_SHA
-      0xc009,  // ECDHE_ECDSA_WITH_AES_128_CBC_SHA
-      0xc00a,  // ECDHE_ECDSA_WITH_AES_256_CBC_SHA
-      0xc011,  // ECDHE_RSA_WITH_RC4_128_SHA
-      0xc013,  // ECDHE_RSA_WITH_AES_128_CBC_SHA
-      0xc014,  // ECDHE_RSA_WITH_AES_256_CBC_SHA
-      0xc02b,  // ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
-      0xc02f,  // ECDHE_RSA_WITH_AES_128_GCM_SHA256
-      0xcca8,  // ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
-      0xcca9,  // ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
-  };
   SSLContextConfig config;
   config.disabled_cipher_suites.assign(
       kEcdheCiphers, kEcdheCiphers + std::size(kEcdheCiphers));

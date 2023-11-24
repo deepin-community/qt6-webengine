@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,6 +19,7 @@ import org.chromium.weblayer_private.interfaces.IMediaCaptureCallbackClient;
 import org.chromium.weblayer_private.interfaces.INavigationController;
 import org.chromium.weblayer_private.interfaces.INavigationControllerClient;
 import org.chromium.weblayer_private.interfaces.IObjectWrapper;
+import org.chromium.weblayer_private.interfaces.IStringCallback;
 import org.chromium.weblayer_private.interfaces.ITabClient;
 import org.chromium.weblayer_private.interfaces.IWebMessageCallbackClient;
 
@@ -33,7 +34,7 @@ interface ITab {
 
   void setFullscreenCallbackClient(in IFullscreenCallbackClient client) = 4;
 
-  void executeScript(in String script, boolean useSeparateIsolate, in IObjectWrapper callback) = 5;
+  void executeScript(in String script, boolean useSeparateIsolate, in IStringCallback callback) = 5;
 
   void setNewTabsEnabled(in boolean enabled) = 6;
 
@@ -85,4 +86,8 @@ interface ITab {
 
   // Added in 93
   void setExternalIntentInIncognitoCallbackClient(IExternalIntentInIncognitoCallbackClient client) = 33;
+
+  String getUri() = 34;
+
+  void postMessage(in String message, in String targetOrigin) = 35;
 }

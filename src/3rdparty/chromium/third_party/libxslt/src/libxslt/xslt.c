@@ -91,13 +91,7 @@ const xmlChar *xsltXSLTAttrMarker = (const xmlChar *) "LRE XSLT Attr";
 #ifdef XSLT_LOCALE_WINAPI
 extern xmlRMutexPtr xsltLocaleMutex;
 #endif
-/*
- * Harmless but avoiding a problem when compiling against a
- * libxml <= 2.3.11 without LIBXML_DEBUG_ENABLED
- */
-#ifndef LIBXML_DEBUG_ENABLED
-double xmlXPathStringEvalNumber(const xmlChar *str);
-#endif
+
 /*
  * Useful macros
  */
@@ -6687,6 +6681,9 @@ xsltParseStylesheetUser(xsltStylesheetPtr style, xmlDocPtr doc) {
     }
 #endif /* else of XSLT_REFACTORED */
 
+    if (style->parent == NULL)
+        xsltResolveStylesheetAttributeSet(style);
+
     if (style->errors != 0) {
         /*
         * Detach the doc from the stylesheet; otherwise the doc
@@ -6701,15 +6698,12 @@ xsltParseStylesheetUser(xsltStylesheetPtr style, xmlDocPtr doc) {
         return(-1);
     }
 
-    if (style->parent == NULL)
-        xsltResolveStylesheetAttributeSet(style);
-
     return(0);
 }
 
 /**
  * xsltParseStylesheetDoc:
- * @doc:  and xmlDoc parsed XML
+ * @doc:  an xmlDoc parsed XML
  *
  * parse an XSLT stylesheet, building the associated structures.  doc
  * is kept as a reference within the returned stylesheet, so changes

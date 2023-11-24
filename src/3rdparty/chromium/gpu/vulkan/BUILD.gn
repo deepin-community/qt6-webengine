@@ -1,4 +1,4 @@
-# Copyright 2016 The Chromium Authors. All rights reserved.
+# Copyright 2016 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -6,12 +6,9 @@ import("//build/buildflag_header.gni")
 import("//build/config/dcheck_always_on.gni")
 import("//build/config/ozone.gni")
 import("//build/config/ui.gni")
+import("//build_overrides/wayland.gni")
 import("//testing/test.gni")
 import("features.gni")
-
-if (ozone_platform_wayland) {
-  import("//third_party/wayland/features.gni")
-}
 
 # Generate a buildflag header for compile-time checking of Vulkan support.
 buildflag_header("buildflags") {
@@ -26,7 +23,7 @@ if (enable_vulkan) {
     if (use_vulkan_xcb) {
       defines += [ "USE_VULKAN_XCB" ]
     }
-    if (ozone_platform_wayland && !use_system_libwayland) {
+    if (ozone_platform_wayland) {
       configs = [ "//third_party/wayland:wayland_config" ]
     }
   }
@@ -73,6 +70,7 @@ if (enable_vulkan) {
       ":vulkan_function_pointers",
       "//base",
       "//third_party/vulkan_memory_allocator",
+      "//ui/gfx:gfx",
     ]
   }
 
@@ -99,6 +97,8 @@ if (enable_vulkan) {
       "vulkan_implementation.h",
       "vulkan_instance.cc",
       "vulkan_instance.h",
+      "vulkan_memory.cc",
+      "vulkan_memory.h",
       "vulkan_surface.cc",
       "vulkan_surface.h",
       "vulkan_swap_chain.cc",
@@ -108,6 +108,10 @@ if (enable_vulkan) {
     ]
 
     defines = [ "IS_VULKAN_IMPL" ]
+
+    if (ozone_platform == "x11") {
+      defines += [ "OZONE_PLATFORM_IS_X11" ]
+    }
 
     deps = [
       ":buildflags",
@@ -137,6 +141,10 @@ if (enable_vulkan) {
 
     if (is_android) {
       sources += [ "vulkan_image_android.cc" ]
+    }
+
+    if (is_fuchsia) {
+      sources += [ "vulkan_util_fuchsia.cc" ]
     }
 
     if (is_win) {

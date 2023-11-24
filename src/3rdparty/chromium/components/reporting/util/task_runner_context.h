@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,10 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
+#include "base/check.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/sequence_checker.h"
@@ -65,7 +66,7 @@ namespace reporting {
 //   Start<SeriesOfActionsContext>(
 //       ...,
 //       returning_callback,
-//       base::SequencedTaskRunnerHandle::Get());
+//       base::SequencedTaskRunner::GetCurrentDefault());
 //
 template <typename ResponseType>
 class TaskRunnerContext {
@@ -94,7 +95,7 @@ class TaskRunnerContext {
   // (can only be called by action scheduled to the sequenced task runner).
   void Response(ResponseType result) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-    OnCompletion();
+    OnCompletion(result);
 
     // Respond to the caller.
     DCHECK(!callback_.is_null()) << "Already responded";
@@ -137,7 +138,7 @@ class TaskRunnerContext {
 
   // Finalization action before responding and deleting the context.
   // May be overridden, if necessary.
-  virtual void OnCompletion() {}
+  virtual void OnCompletion(const ResponseType& result) {}
 
   // Wrapper for OnStart to mandate sequence checker.
   void OnStartWrap() {

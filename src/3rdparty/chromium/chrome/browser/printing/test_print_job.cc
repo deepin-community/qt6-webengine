@@ -1,10 +1,10 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <memory>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/ref_counted_memory.h"
 #include "build/build_config.h"
 #include "chrome/browser/printing/print_job_worker.h"
@@ -24,7 +24,8 @@ void TestPrintJob::Initialize(std::unique_ptr<PrinterQuery> query,
                               uint32_t page_count) {
   // Since we do not actually print in these tests, just let this get destroyed
   // when this function exits.
-  std::unique_ptr<PrintJobWorker> worker = query->DetachWorker();
+  std::unique_ptr<PrintJobWorker> worker =
+      query->TransferContextToNewWorker(nullptr);
 
   scoped_refptr<PrintedDocument> new_doc =
       base::MakeRefCounted<PrintedDocument>(query->ExtractSettings(), name,

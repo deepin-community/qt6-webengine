@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 #define UI_COMPOSITOR_PRESENTATION_TIME_RECORDER_H_
 
 #include "base/gtest_prod_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
@@ -33,14 +34,10 @@ class COMPOSITOR_EXPORT PresentationTimeRecorder {
     void OnCompositingDidCommit(ui::Compositor* compositor);
     void OnPresented(int count,
                      base::TimeTicks requested_time,
-                     const gfx::PresentationFeedback& feedback);
-
-    int GetMaxLatencyMs() const;
-    int GetSuccessCount() const;
-    int GetFailureRatio() const;
+                     base::TimeTicks presentation_timestamp);
 
    private:
-    PresentationTimeRecorder* recorder_;
+    raw_ptr<PresentationTimeRecorder> recorder_;
   };
 
   explicit PresentationTimeRecorder(

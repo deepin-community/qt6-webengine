@@ -1,16 +1,16 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ipc/ipc_sync_message_filter.h"
 
-#include "base/bind.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
 #include "ipc/ipc_channel.h"
 #include "ipc/ipc_sync_message.h"
@@ -56,9 +56,11 @@ bool SyncMessageFilter::Send(Message* message) {
     base::AutoLock auto_lock(lock_);
     // Can't use this class on the main thread or else it can lead to deadlocks.
     // Also by definition, can't use this on IO thread since we're blocking it.
-    if (base::ThreadTaskRunnerHandle::IsSet()) {
-      DCHECK(base::ThreadTaskRunnerHandle::Get() != listener_task_runner_);
-      DCHECK(base::ThreadTaskRunnerHandle::Get() != io_task_runner_);
+    if (base::SingleThreadTaskRunner::HasCurrentDefault()) {
+      DCHECK(base::SingleThreadTaskRunner::GetCurrentDefault() !=
+             listener_task_runner_);
+      DCHECK(base::SingleThreadTaskRunner::GetCurrentDefault() !=
+             io_task_runner_);
     }
     pending_sync_messages_.insert(&pending_message);
 
@@ -106,7 +108,7 @@ void SyncMessageFilter::OnFilterAdded(Channel* channel) {
     base::AutoLock auto_lock(lock_);
     channel_ = channel;
 
-    io_task_runner_ = base::ThreadTaskRunnerHandle::Get();
+    io_task_runner_ = base::SingleThreadTaskRunner::GetCurrentDefault();
     std::swap(pending_messages_, pending_messages);
   }
   for (auto& msg : pending_messages)
@@ -147,7 +149,7 @@ bool SyncMessageFilter::OnMessageReceived(const Message& message) {
 
 SyncMessageFilter::SyncMessageFilter(base::WaitableEvent* shutdown_event)
     : channel_(nullptr),
-      listener_task_runner_(base::ThreadTaskRunnerHandle::Get()),
+      listener_task_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()),
       shutdown_event_(shutdown_event) {}
 
 SyncMessageFilter::~SyncMessageFilter() = default;

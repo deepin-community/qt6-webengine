@@ -18,13 +18,13 @@
 #include <fstream>
 #include <memory>
 #include <ostream>
+#include <string>
 
 #include "file/util/temp_path.h"
 #include "gtest/gtest.h"
 #include "absl/strings/string_view.h"
 #include "internal/platform/byte_array.h"
 
-namespace location {
 namespace nearby {
 namespace shared {
 
@@ -133,7 +133,8 @@ TEST_F(FileTest, IOFile_Write) {
   ByteArray bytes2("bc");
   EXPECT_EQ(io_file_output->Write(bytes1), Exception{Exception::kSuccess});
   EXPECT_EQ(io_file_output->Write(bytes2), Exception{Exception::kSuccess});
-  auto io_file_input = shared::IOFile::CreateInputFile(path_, GetSize());
+  auto io_file_input =
+      shared::IOFile::CreateInputFile(io_file_output->GetFilePath(), GetSize());
   AssertEquals(io_file_input->Read(kMaxSize), "abc");
 }
 
@@ -146,4 +147,3 @@ TEST_F(FileTest, IOFile_CloseOutput) {
 
 }  // namespace shared
 }  // namespace nearby
-}  // namespace location

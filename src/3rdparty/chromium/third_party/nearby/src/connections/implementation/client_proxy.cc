@@ -17,23 +17,30 @@
 #include <cstdlib>
 #include <functional>
 #include <limits>
+#include <memory>
+#include <optional>
+#include <sstream>
 #include <string>
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/escaping.h"
-#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
+#include "internal/analytics/event_logger.h"
 #include "internal/platform/error_code_recorder.h"
 #include "internal/platform/feature_flags.h"
-#include "internal/platform/prng.h"
+#include "internal/platform/implementation/platform.h"
 #include "internal/platform/logging.h"
 #include "internal/platform/mutex_lock.h"
+#include "internal/platform/os_name.h"
+#include "internal/platform/prng.h"
 #include "proto/connections_enums.pb.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
+
+using ::location::nearby::connections::OsInfo;
 
 // The definition is necessary before C++17.
 constexpr absl::Duration
@@ -44,7 +51,7 @@ constexpr char kEndpointIdChars[] = {
     'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
     'Y', 'Z', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0'};
 
-ClientProxy::ClientProxy(analytics::EventLogger* event_logger)
+ClientProxy::ClientProxy(::nearby::analytics::EventLogger* event_logger)
     : client_id_(Prng().NextInt64()) {
   NEARBY_LOGS(INFO) << "ClientProxy ctor event_logger=" << event_logger;
   analytics_recorder_ =
@@ -53,6 +60,8 @@ ClientProxy::ClientProxy(analytics::EventLogger* event_logger)
       [this](const ErrorCodeParams& params) {
         analytics_recorder_->OnErrorCode(params);
       });
+  local_os_info_.set_type(
+      OSNameToOsInfoType(api::ImplementationPlatform::GetCurrentOS()));
 }
 
 ClientProxy::~ClientProxy() { Reset(); }
@@ -89,8 +98,9 @@ std::string ClientProxy::GenerateLocalEndpointId() {
     }
   }
   std::string id;
+  Prng prng;
   for (int i = 0; i < kEndpointIdLength; i++) {
-    id += kEndpointIdChars[prng_.NextUint32() % sizeof(kEndpointIdChars)];
+    id += kEndpointIdChars[prng.NextUint32() % sizeof(kEndpointIdChars)];
   }
   return id;
 }
@@ -102,13 +112,12 @@ void ClientProxy::Reset() {
   StoppedDiscovery();
   RemoveAllEndpoints();
   ExitHighVisibilityMode();
-  analytics_recorder_->LogSession();
 }
 
 void ClientProxy::StartedAdvertising(
     const std::string& service_id, Strategy strategy,
     const ConnectionListener& listener,
-    absl::Span<proto::connections::Medium> mediums,
+    absl::Span<location::nearby::proto::connections::Medium> mediums,
     const AdvertisingOptions& advertising_options) {
   MutexLock lock(&mutex_);
   NEARBY_LOGS(INFO) << "ClientProxy [StartedAdvertising]: client="
@@ -126,8 +135,8 @@ void ClientProxy::StartedAdvertising(
   advertising_info_ = {service_id, listener};
   advertising_options_ = advertising_options;
 
-  const std::vector<proto::connections::Medium> medium_vector(mediums.begin(),
-                                                              mediums.end());
+  const std::vector<location::nearby::proto::connections::Medium> medium_vector(
+      mediums.begin(), mediums.end());
   analytics_recorder_->OnStartAdvertising(strategy, medium_vector, false, 0);
 }
 
@@ -141,7 +150,7 @@ void ClientProxy::StoppedAdvertising() {
     analytics_recorder_->OnStopAdvertising();
   }
   // advertising_options_ is purposefully not cleared here.
-  ResetLocalEndpointIdIfNeeded();
+  OnSessionComplete();
 
   ExitHighVisibilityMode();
 }
@@ -157,24 +166,17 @@ std::string ClientProxy::GetAdvertisingServiceId() const {
   return advertising_info_.service_id;
 }
 
-std::string ClientProxy::GetServiceId() const {
-  MutexLock lock(&mutex_);
-  if (IsAdvertising()) return advertising_info_.service_id;
-  if (IsDiscovering()) return discovery_info_.service_id;
-  return "idle_service_id";
-}
-
 void ClientProxy::StartedDiscovery(
     const std::string& service_id, Strategy strategy,
     const DiscoveryListener& listener,
-    absl::Span<proto::connections::Medium> mediums,
+    absl::Span<location::nearby::proto::connections::Medium> mediums,
     const DiscoveryOptions& discovery_options) {
   MutexLock lock(&mutex_);
   discovery_info_ = DiscoveryInfo{service_id, listener};
   discovery_options_ = discovery_options;
 
-  const std::vector<proto::connections::Medium> medium_vector(mediums.begin(),
-                                                              mediums.end());
+  const std::vector<location::nearby::proto::connections::Medium> medium_vector(
+      mediums.begin(), mediums.end());
   analytics_recorder_->OnStartDiscovery(strategy, medium_vector, false, 0);
 }
 
@@ -187,7 +189,7 @@ void ClientProxy::StoppedDiscovery() {
     analytics_recorder_->OnStopDiscovery();
   }
   // discovery_options_ is purposefully not cleared here.
-  ResetLocalEndpointIdIfNeeded();
+  OnSessionComplete();
 }
 
 bool ClientProxy::IsDiscoveringServiceId(const std::string& service_id) const {
@@ -208,10 +210,10 @@ std::string ClientProxy::GetDiscoveryServiceId() const {
   return discovery_info_.service_id;
 }
 
-void ClientProxy::OnEndpointFound(const std::string& service_id,
-                                  const std::string& endpoint_id,
-                                  const ByteArray& endpoint_info,
-                                  proto::connections::Medium medium) {
+void ClientProxy::OnEndpointFound(
+    const std::string& service_id, const std::string& endpoint_id,
+    const ByteArray& endpoint_info,
+    location::nearby::proto::connections::Medium medium) {
   MutexLock lock(&mutex_);
 
   NEARBY_LOGS(INFO) << "ClientProxy [Endpoint Found]: [enter] id="
@@ -362,7 +364,7 @@ void ClientProxy::OnDisconnected(const std::string& endpoint_id, bool notify) {
       item->connection_listener.disconnected_cb({endpoint_id});
     }
     connections_.erase(endpoint_id);
-    ResetLocalEndpointIdIfNeeded();
+    OnSessionComplete();
   }
 
   CancelEndpoint(endpoint_id);
@@ -386,6 +388,46 @@ BooleanMediumSelector ClientProxy::GetUpgradeMediums(
   const Connection* item = LookupConnection(endpoint_id);
   if (item != nullptr) {
     return item->connection_options.allowed;
+  }
+  return {};
+}
+
+bool ClientProxy::Is5GHzSupported(const std::string& endpoint_id) const {
+  MutexLock lock(&mutex_);
+
+  const Connection* item = LookupConnection(endpoint_id);
+  if (item != nullptr) {
+    return item->connection_options.connection_info.supports_5_ghz;
+  }
+  return false;
+}
+
+std::string ClientProxy::GetBssid(const std::string& endpoint_id) const {
+  MutexLock lock(&mutex_);
+
+  const Connection* item = LookupConnection(endpoint_id);
+  if (item != nullptr) {
+    return item->connection_options.connection_info.bssid;
+  }
+  return {};
+}
+
+std::int32_t ClientProxy::GetApFrequency(const std::string& endpoint_id) const {
+  MutexLock lock(&mutex_);
+
+  const Connection* item = LookupConnection(endpoint_id);
+  if (item != nullptr) {
+    return item->connection_options.connection_info.ap_frequency;
+  }
+  return -1;
+}
+
+std::string ClientProxy::GetIPAddress(const std::string& endpoint_id) const {
+  MutexLock lock(&mutex_);
+
+  const Connection* item = LookupConnection(endpoint_id);
+  if (item != nullptr) {
+    return item->connection_options.connection_info.ip_address;
   }
   return {};
 }
@@ -591,6 +633,26 @@ void ClientProxy::CancelEndpoint(const std::string& endpoint_id) {
   cancellation_flags_.erase(item);
 }
 
+const OsInfo& ClientProxy::GetLocalOsInfo() const {
+  return local_os_info_;
+}
+
+std::optional<OsInfo> ClientProxy::GetRemoteOsInfo(
+    absl::string_view endpoint_id) const {
+  const Connection* item = LookupConnection(endpoint_id);
+  if (item != nullptr) {
+    return item->os_info;
+  }
+  return std::nullopt;
+}
+
+void ClientProxy::SetRemoteOsInfo(absl::string_view endpoint_id,
+                                  const OsInfo& remote_os_info) {
+  Connection* item = LookupConnection(endpoint_id);
+  if (item != nullptr) {
+    item->os_info.emplace(remote_os_info);
+  }
+}
 void ClientProxy::CancelAllEndpoints() {
   for (const auto& item : cancellation_flags_) {
     CancellationFlag* cancellation_flag = item.second.get();
@@ -617,13 +679,13 @@ void ClientProxy::OnPayload(const std::string& endpoint_id, Payload payload) {
 }
 
 const ClientProxy::Connection* ClientProxy::LookupConnection(
-    const std::string& endpoint_id) const {
+    absl::string_view endpoint_id) const {
   auto item = connections_.find(endpoint_id);
   return item != connections_.end() ? &item->second : nullptr;
 }
 
 ClientProxy::Connection* ClientProxy::LookupConnection(
-    const std::string& endpoint_id) {
+    absl::string_view endpoint_id) {
   auto item = connections_.find(endpoint_id);
   return item != connections_.end() ? &item->second : nullptr;
 }
@@ -662,13 +724,16 @@ void ClientProxy::RemoveAllEndpoints() {
   // just remove without notifying.
   connections_.clear();
   cancellation_flags_.clear();
-  local_endpoint_id_.clear();
+  OnSessionComplete();
 }
 
-void ClientProxy::ResetLocalEndpointIdIfNeeded() {
+void ClientProxy::OnSessionComplete() {
   MutexLock lock(&mutex_);
   if (connections_.empty() && !IsAdvertising() && !IsDiscovering()) {
     local_endpoint_id_.clear();
+
+    analytics_recorder_->LogSession();
+    analytics_recorder_->LogStartSession();
   }
 }
 
@@ -733,7 +798,7 @@ void ClientProxy::ScheduleClearLocalHighVisModeCacheEndpointIdAlarm() {
                     << "; local_high_vis_mode_cache_endpoint_id_="
                     << local_high_vis_mode_cache_endpoint_id_;
   clear_local_high_vis_mode_cache_endpoint_id_alarm_ =
-      CancelableAlarm(
+      std::make_unique<CancelableAlarm>(
           "clear_high_power_endpoint_id_cache",
           [this]() {
             MutexLock lock(&mutex_);
@@ -749,9 +814,25 @@ void ClientProxy::ScheduleClearLocalHighVisModeCacheEndpointIdAlarm() {
 }
 
 void ClientProxy::CancelClearLocalHighVisModeCacheEndpointIdAlarm() {
-  if (clear_local_high_vis_mode_cache_endpoint_id_alarm_.IsValid()) {
-    clear_local_high_vis_mode_cache_endpoint_id_alarm_.Cancel();
-    clear_local_high_vis_mode_cache_endpoint_id_alarm_ = CancelableAlarm();
+  if (clear_local_high_vis_mode_cache_endpoint_id_alarm_ &&
+      clear_local_high_vis_mode_cache_endpoint_id_alarm_->IsValid()) {
+    clear_local_high_vis_mode_cache_endpoint_id_alarm_->Cancel();
+    clear_local_high_vis_mode_cache_endpoint_id_alarm_.reset();
+  }
+}
+
+OsInfo::OsType ClientProxy::OSNameToOsInfoType(api::OSName osName) {
+  switch (osName) {
+    case api::OSName::kLinux:
+      return OsInfo::LINUX;
+    case api::OSName::kWindows:
+      return OsInfo::WINDOWS;
+    case api::OSName::kApple:
+      return OsInfo::APPLE;
+    case api::OSName::kChromeOS:
+      return OsInfo::CHROME_OS;
+    case api::OSName::kAndroid:
+      return OsInfo::ANDROID;
   }
 }
 
@@ -768,6 +849,40 @@ std::string ClientProxy::ToString(PayloadProgressInfo::Status status) const {
   }
 }
 
+std::string ClientProxy::Dump() {
+  std::stringstream sstream;
+  sstream << "Nearby Connections State" << std::endl;
+  sstream << "  Client ID: " << GetClientId() << std::endl;
+  sstream << "  Local Endpoint ID: " << GetLocalEndpointId() << std::endl;
+  sstream << "  High Visibility Mode: " << high_vis_mode_ << std::endl;
+  sstream << "  Is Advertising: " << IsAdvertising() << std::endl;
+  sstream << "  Advertising Service ID: " << GetAdvertisingServiceId()
+          << std::endl;
+  // TODO(deling): AdvertisingOptions
+  sstream << "  Is Discovering: " << IsDiscovering() << std::endl;
+  sstream << "  Discovery Service ID: " << GetDiscoveryServiceId() << std::endl;
+  // TODO(deling): DiscoveryOptions
+
+  sstream << "  Connections: " << std::endl;
+  for (auto it = connections_.begin(); it != connections_.end(); ++it) {
+    // TODO(deling): write Connection.ToString()
+    sstream << "    " << it->first << " :(connection token) "
+            << it->second.connection_token << ", (remote os type) "
+            << (it->second.os_info.has_value()
+                    ? location::nearby::connections::OsInfo::OsType_Name(
+                          it->second.os_info->type())
+                    : "unknown")
+            << std::endl;
+  }
+
+  sstream << "  Discovered endpoint IDs: " << std::endl;
+  for (auto it = discovered_endpoint_ids_.begin();
+       it != discovered_endpoint_ids_.end(); ++it) {
+    sstream << "    " << *it << std::endl;
+  }
+
+  return sstream.str();
+}
+
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location

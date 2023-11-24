@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,9 @@
 
 #include <memory>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
@@ -304,6 +304,10 @@ void NetErrorHelperCore::ExecuteButtonPress(Button button) {
     case DIAGNOSE_ERROR:
       RecordEvent(error_page::NETWORK_ERROR_DIAGNOSE_BUTTON_CLICKED);
       delegate_->DiagnoseError(committed_error_page_info_->error.url());
+      return;
+    case PORTAL_SIGNIN:
+      RecordEvent(error_page::NETWORK_ERROR_PORTAL_SIGNIN_BUTTON_CLICKED);
+      delegate_->PortalSignin();
       return;
     case DOWNLOAD_BUTTON:
       RecordEvent(error_page::NETWORK_ERROR_PAGE_DOWNLOAD_BUTTON_CLICKED);

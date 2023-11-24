@@ -1,4 +1,4 @@
-// Copyright 2018 PDFium Authors. All rights reserved.
+// Copyright 2018 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -156,5 +156,5 @@ void CPDF_CrossRefTable::UpdateTrailer(RetainPtr<CPDF_Dictionary> new_trailer) {
   new_trailer->SetFor("Prev", trailer_->RemoveFor("Prev"));
 
   for (const auto& key : new_trailer->GetKeys())
-    trailer_->SetFor(key, new_trailer->RemoveFor(key));
+    trailer_->SetFor(key, new_trailer->RemoveFor(key.AsStringView()));
 }

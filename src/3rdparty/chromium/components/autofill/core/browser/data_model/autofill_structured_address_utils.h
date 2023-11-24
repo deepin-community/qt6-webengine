@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -21,7 +21,6 @@
 #include "third_party/re2/src/re2/re2.h"
 
 namespace autofill {
-namespace structured_address {
 
 struct AddressToken {
   // The original value.
@@ -93,12 +92,6 @@ struct CaptureOptions {
   // Indicates if the group is required, optional or even lazy optional.
   MatchQuantifier quantifier = MATCH_REQUIRED;
 };
-
-// Returns true if the structured names feature is enabled.
-bool StructuredNamesEnabled();
-
-// Returns true if the structured address feature is enabled.
-bool StructuredAddressesEnabled();
 
 // Returns true if honorific prefixes are enabled.
 bool HonorificPrefixEnabled();
@@ -309,8 +302,6 @@ SortedTokenComparisonResult CompareSortedTokens(
 // Convenience wrapper to supply untokenized strings.
 SortedTokenComparisonResult CompareSortedTokens(const std::u16string& first,
                                                 const std::u16string& second);
-
-}  // namespace structured_address
 
 }  // namespace autofill
 #endif  // COMPONENTS_AUTOFILL_CORE_BROWSER_DATA_MODEL_AUTOFILL_STRUCTURED_ADDRESS_UTILS_H_

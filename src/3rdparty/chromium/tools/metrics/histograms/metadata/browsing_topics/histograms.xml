@@ -1,5 +1,5 @@
 <!--
-Copyright 2022 The Chromium Authors. All rights reserved.
+Copyright 2022 The Chromium Authors
 Use of this source code is governed by a BSD-style license that can be
 found in the LICENSE file.
 -->
@@ -22,8 +22,19 @@ chromium-metrics-reviews@google.com.
 
 <histograms>
 
+<histogram name="BrowsingTopics.ApiActionType"
+    enum="BrowsingTopicsApiActionType" expires_after="2024-01-14">
+  <owner>yaoxia@chromium.org</owner>
+  <owner>jkarlin@chromium.org</owner>
+  <summary>
+    Records the action type of the request. Recorded when a topics request is
+    handled in `BrowsingTopicsService`. Redirects (for fetch and xhr) will be
+    counted as separate histogram entries.
+  </summary>
+</histogram>
+
 <histogram name="BrowsingTopics.BrowsingTopicsState.LoadFinishStatus"
-    enum="BooleanSuccess" expires_after="2023-03-14">
+    enum="BooleanSuccess" expires_after="2023-07-16">
   <owner>yaoxia@chromium.org</owner>
   <owner>jkarlin@chromium.org</owner>
   <summary>
@@ -33,7 +44,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="BrowsingTopics.EpochTopicsCalculation.CalculatorResultStatus"
-    enum="BrowsingTopicsCalculatorResultStatus" expires_after="2023-03-14">
+    enum="BrowsingTopicsCalculatorResultStatus" expires_after="2023-07-16">
   <owner>yaoxia@chromium.org</owner>
   <owner>jkarlin@chromium.org</owner>
   <summary>
@@ -44,7 +55,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="BrowsingTopics.EpochTopicsCalculation.EligibleDistinctHistoryHostsCount"
-    units="hosts" expires_after="2023-03-14">
+    units="hosts" expires_after="2023-07-16">
   <owner>yaoxia@chromium.org</owner>
   <owner>jkarlin@chromium.org</owner>
   <summary>
@@ -55,9 +66,21 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
+<histogram name="BrowsingTopics.EpochTopicsCalculation.HistoryTopicsCount"
+    units="topics" expires_after="2023-10-10">
+  <owner>yaoxia@chromium.org</owner>
+  <owner>jkarlin@chromium.org</owner>
+  <summary>
+    Records the count of topics derived from history hosts in the past epoch
+    (week). Recorded during each (weekly) topics calculation after the top
+    topics are derived. In case of a calculation failure (e.g. permission
+    denied, etc.), this metric won't be recorded.
+  </summary>
+</histogram>
+
 <histogram
     name="BrowsingTopics.EpochTopicsCalculation.ObservationContextDomainsCountPerTopTopic"
-    units="context domains" expires_after="2023-03-14">
+    units="context domains" expires_after="2023-07-16">
   <owner>yaoxia@chromium.org</owner>
   <owner>jkarlin@chromium.org</owner>
   <summary>
@@ -73,7 +96,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="BrowsingTopics.EpochTopicsCalculation.TopTopicsCountBeforePadding"
-    units="topics" expires_after="2023-03-14">
+    units="topics" expires_after="2023-05-14">
   <owner>yaoxia@chromium.org</owner>
   <owner>jkarlin@chromium.org</owner>
   <summary>
@@ -84,8 +107,18 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
+<histogram name="BrowsingTopics.JavaScriptAPI.TimeToResolve" units="ms"
+    expires_after="2023-09-08">
+  <owner>yaoxia@chromium.org</owner>
+  <owner>jkarlin@chromium.org</owner>
+  <summary>
+    Records the time it takes for document.browsingTopics() to resolve. Recorded
+    each time the promise is resolved.
+  </summary>
+</histogram>
+
 <histogram name="BrowsingTopics.SiteDataStorage.InitStatus"
-    enum="BooleanSuccess" expires_after="2023-03-14">
+    enum="BooleanSuccess" expires_after="2023-07-16">
   <owner>yaoxia@chromium.org</owner>
   <owner>jkarlin@chromium.org</owner>
   <summary>

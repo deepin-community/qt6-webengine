@@ -72,8 +72,6 @@ class GURL;
 
 namespace blink {
 
-struct KURLHash;
-
 class PLATFORM_EXPORT KURL {
   USING_FAST_MALLOC(KURL);
 
@@ -94,9 +92,6 @@ class PLATFORM_EXPORT KURL {
   // It is usually best to avoid repeatedly parsing a String, unless memory
   // saving outweigh the possible slow-downs.
   explicit KURL(const String&);
-
-  // Creates an isolated URL object suitable for sending to another thread.
-  static KURL CreateIsolated(const String&);
 
   // Resolves the relative URL with the given base URL. If provided, the
   // TextEncoding is used to encode non-ASCII characters. The base URL can be
@@ -122,11 +117,6 @@ class PLATFORM_EXPORT KURL {
   // FIXME: The above functions should be harmonized so that passing a
   // base of null or the empty string gives the same result as the
   // standard String constructor.
-
-  // Makes a deep copy. Helpful only if you need to use a KURL on another
-  // thread. Since the underlying StringImpl objects are immutable, there's
-  // no other reason to ever prefer copy() over plain old assignment.
-  KURL Copy() const;
 
   bool IsNull() const;
   bool IsEmpty() const;
@@ -182,8 +172,9 @@ class PLATFORM_EXPORT KURL {
   bool ProtocolIsJavaScript() const;
   bool ProtocolIsInHTTPFamily() const;
   bool IsLocalFile() const;
-  bool IsAboutBlankURL() const;   // Is exactly about:blank.
-  bool IsAboutSrcdocURL() const;  // Is exactly about:srcdoc.
+  bool IsAboutBlankURL() const;   // Is about:blank, ignoring query/ref strings.
+  bool IsAboutSrcdocURL() const;  // Is about:srcdoc, ignoring query/ref
+                                  // strings..
 
   bool SetProtocol(const String&);
   void SetHost(const String&);
@@ -234,10 +225,11 @@ class PLATFORM_EXPORT KURL {
   // Returns a GURL with the same properties. This can be used in platform/ and
   // web/. However, in core/ and modules/, this should only be used to pass
   // a GURL to a layer that is expecting one instead of a KURL or a WebURL.
-  // TODO(crbug.com/862940): Make this conversion explicit.
-  operator GURL() const;
+  explicit operator GURL() const;
 
   void WriteIntoTrace(perfetto::TracedValue context) const;
+
+  bool HasIDNA2008DeviationCharacter() const;
 
  private:
   friend struct WTF::HashTraits<blink::KURL>;
@@ -263,10 +255,14 @@ class PLATFORM_EXPORT KURL {
 
   bool is_valid_;
   bool protocol_is_in_http_family_;
+  // Set to true if any part of the URL string contains an IDNA 2008 deviation
+  // character. Only used for logging. The hostname is decoded to IDN and
+  // checked for deviation characters again before logging.
+  // TODO(crbug.com/1396475): Remove once Non-Transitional mode is shipped.
+  bool has_idna2008_deviation_character_;
 
   // Keep a separate string for the protocol to avoid copious copies for
-  // protocol(). Normally this will be Atomic, except when constructed via
-  // KURL::copy(), which is deep.
+  // protocol().
   String protocol_;
 
   url::Parsed parsed_;
@@ -322,17 +318,14 @@ PLATFORM_EXPORT String EncodeWithURLEscapeSequences(const String&);
 
 namespace WTF {
 
-// KURLHash is the default hash for String
+// Defined in kurl_hash.h.
 template <>
-struct DefaultHash<blink::KURL> {
-  typedef blink::KURLHash Hash;
-};
+struct HashTraits<blink::KURL>;
 
 template <>
-struct CrossThreadCopier<blink::KURL> {
+struct CrossThreadCopier<blink::KURL>
+    : public CrossThreadCopierPassThrough<blink::KURL> {
   STATIC_ONLY(CrossThreadCopier);
-  typedef blink::KURL Type;
-  static Type Copy(const blink::KURL& url) { return url.Copy(); }
 };
 
 }  // namespace WTF

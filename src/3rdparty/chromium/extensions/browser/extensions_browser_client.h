@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,11 +9,13 @@
 #include <string>
 #include <vector>
 
+#include "base/functional/callback_forward.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/ref_counted_memory.h"
+#include "base/values.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "content/public/browser/bluetooth_chooser.h"
-#include "content/public/browser/storage_partition_config.h"
 #include "extensions/browser/extension_event_histogram_value.h"
 #include "extensions/browser/extension_prefs_observer.h"
 #include "extensions/browser/extensions_browser_api_provider.h"
@@ -33,12 +35,13 @@ class PrefService;
 namespace base {
 class CommandLine;
 class FilePath;
-class ListValue;
 }  // namespace base
 
 namespace content {
 class BrowserContext;
 class RenderFrameHost;
+class SiteInstance;
+class StoragePartitionConfig;
 class WebContents;
 }  // namespace content
 
@@ -55,11 +58,15 @@ class NetworkContext;
 
 namespace update_client {
 class UpdateClient;
-}
+}  // namespace update_client
 
 namespace url {
 class Origin;
-}
+}  // namespace url
+
+namespace base {
+class CancelableTaskTracker;
+}  // namespace base
 
 namespace extensions {
 
@@ -73,6 +80,7 @@ class ExtensionSystem;
 class ExtensionSystemProvider;
 class ExtensionWebContentsObserver;
 class KioskDelegate;
+class PermissionSet;
 class ProcessManagerDelegate;
 class ProcessMap;
 class RuntimeAPIDelegate;
@@ -138,11 +146,44 @@ class ExtensionsBrowserClient {
   virtual content::BrowserContext* GetOriginalContext(
       content::BrowserContext* context) = 0;
 
+  // The below methods include a test for the experiment
+  // `kSystemProfileSelectionDefaultNone` and will include a similar experiment
+  // for Guest Profile, these two experiment can be bypassed by setting the
+  // force_* to true. The naming of the functions follows the logic of
+  // `ProfileSelections` predefined experimental builders.
+  // - `force_guest_profile`: to force Guest Profile selection in experiment.
+  // - `force_system_profile`: to force System Profile selection in experiment.
+  //
+  // Returns the Original Profile for Regular Profile and redirects Incognito
+  // to the Original Profile.
+  // Force values to have the same behavior for Guest and System Profile.
+  virtual content::BrowserContext* GetRedirectedContextInIncognito(
+      content::BrowserContext* context,
+      bool force_guest_profile,
+      bool force_system_profile) = 0;
+  // Returns Profile for Regular and Incognito.
+  // Force values to have the same behavior for Guest and System Profile.
+  virtual content::BrowserContext* GetContextForRegularAndIncognito(
+      content::BrowserContext* context,
+      bool force_guest_profile,
+      bool force_system_profile) = 0;
+  // Returns Profile only for Original Regular profile.
+  // Force values to have the same behavior for Guest and System Profile.
+  virtual content::BrowserContext* GetRegularProfile(
+      content::BrowserContext* context,
+      bool force_guest_profile,
+      bool force_system_profile) = 0;
+
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   // Returns a user id hash from |context| or an empty string if no hash could
   // be extracted.
   virtual std::string GetUserIdHashFromContext(
       content::BrowserContext* context) = 0;
+#endif
+
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  // Returns if a browser |context| belongs to the main profile or not.
+  virtual bool IsFromMainProfile(content::BrowserContext* context) = 0;
 #endif
 
   // Returns true if |context| corresponds to a guest session.
@@ -262,7 +303,7 @@ class ExtensionsBrowserClient {
   virtual void BroadcastEventToRenderers(
       events::HistogramValue histogram_value,
       const std::string& event_name,
-      std::unique_ptr<base::ListValue> args,
+      base::Value::List args,
       bool dispatch_to_off_the_record_profiles) = 0;
 
   // Gets the single ExtensionCache instance shared across the browser process.
@@ -386,11 +427,6 @@ class ExtensionsBrowserClient {
   virtual bool IsExtensionTelemetryServiceEnabled(
       content::BrowserContext* context) const;
 
-  // Returns true if remote host contacted signal feature is enabled.
-  // TODO(zackhan): This function is for measuring the impacts in finch
-  // experiments, will remove afterwards.
-  virtual bool IsExtensionTelemetryRemoteHostContactedSignalEnabled() const;
-
   // TODO(anunoy): This is a temporary implementation of notifying the
   // extension telemetry service of the tabs.executeScript API invocation
   // while its usefulness is evaluated.
@@ -412,6 +448,60 @@ class ExtensionsBrowserClient {
                                           const ExtensionId& extension_id,
                                           int vendor_id,
                                           int product_id) const;
+
+  // Populate callback with the asynchronously retrieved cached favicon image.
+  virtual void GetFavicon(
+      content::BrowserContext* browser_context,
+      const Extension* extension,
+      const GURL& url,
+      base::CancelableTaskTracker* tracker,
+      base::OnceCallback<void(
+          scoped_refptr<base::RefCountedMemory> bitmap_data)> callback) const;
+
+  // Returns all BrowserContexts related to the given extension. For an
+  // extension limited to a signal context, this will be a vector of the single
+  // passed-in context. For extensions allowed to run in incognito contexts
+  // associated with `browser_context`, this will include all those contexts.
+  // Note: It may not be appropriate to treat these the same depending on
+  // whether the extension runs in "split" or "spanning" mode.
+  virtual std::vector<content::BrowserContext*> GetRelatedContextsForExtension(
+      content::BrowserContext* browser_context,
+      const Extension& extension) const;
+
+  // Adds any hosts that should be automatically considered "granted" if
+  // requested to `granted_permissions`.
+  virtual void AddAdditionalAllowedHosts(
+      const PermissionSet& desired_permissions,
+      PermissionSet* granted_permissions) const;
+
+  virtual void AddAPIActionToActivityLog(
+      content::BrowserContext* browser_context,
+      const ExtensionId& extension_id,
+      const std::string& call_name,
+      base::Value::List args,
+      const std::string& extra);
+  virtual void AddEventToActivityLog(content::BrowserContext* context,
+                                     const ExtensionId& extension_id,
+                                     const std::string& call_name,
+                                     base::Value::List args,
+                                     const std::string& extra);
+  virtual void AddDOMActionToActivityLog(
+      content::BrowserContext* browser_context,
+      const ExtensionId& extension_id,
+      const std::string& call_name,
+      base::Value::List args,
+      const GURL& url,
+      const std::u16string& url_title,
+      int call_type);
+
+  // Returns the StoragePartitionConfig that should be used for a <webview> or
+  // <controlledframe> with the given |partition_name| that is owned by a frame
+  // within |owner_site_instance|.
+  virtual content::StoragePartitionConfig GetWebViewStoragePartitionConfig(
+      content::BrowserContext* browser_context,
+      content::SiteInstance* owner_site_instance,
+      const std::string& partition_name,
+      bool in_memory);
 
  private:
   std::vector<std::unique_ptr<ExtensionsBrowserAPIProvider>> providers_;

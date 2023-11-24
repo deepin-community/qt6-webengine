@@ -1,4 +1,4 @@
-// Copyright (c) 2006-2008 The Chromium Authors. All rights reserved.
+// Copyright 2006-2008 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -157,7 +157,7 @@ PolicyRule::PolicyRule(const PolicyRule& other) {
 // to zero.
 bool PolicyRule::GenStringOpcode(RuleType rule_type,
                                  StringMatchOptions match_opts,
-                                 uint16_t parameter,
+                                 uint8_t parameter,
                                  int state,
                                  bool last_call,
                                  int* skip_count,
@@ -221,7 +221,7 @@ bool PolicyRule::GenStringOpcode(RuleType rule_type,
 }
 
 bool PolicyRule::AddStringMatch(RuleType rule_type,
-                                int16_t parameter,
+                                uint8_t parameter,
                                 const wchar_t* string,
                                 StringMatchOptions match_opts) {
   if (done_) {
@@ -283,7 +283,7 @@ bool PolicyRule::AddStringMatch(RuleType rule_type,
 }
 
 bool PolicyRule::AddNumberMatch(RuleType rule_type,
-                                int16_t parameter,
+                                uint8_t parameter,
                                 uint32_t number,
                                 RuleOp comparison_op) {
   if (done_) {
@@ -350,8 +350,8 @@ bool PolicyRule::RebindCopy(PolicyOpcode* opcode_start,
 }
 
 PolicyRule::~PolicyRule() {
-  delete[] reinterpret_cast<char*>(buffer_.get());
-  delete opcode_factory_;
+  opcode_factory_.ClearAndDelete();
+  delete[] reinterpret_cast<char*>(buffer_.ExtractAsDangling().get());
 }
 
 }  // namespace sandbox

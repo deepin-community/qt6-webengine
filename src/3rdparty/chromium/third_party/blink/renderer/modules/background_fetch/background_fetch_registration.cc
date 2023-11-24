@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,7 @@
 #include "third_party/blink/public/common/privacy_budget/identifiability_metric_builder.h"
 #include "third_party/blink/public/common/privacy_budget/identifiable_surface.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
-#include "third_party/blink/public/mojom/web_feature/web_feature.mojom-blink.h"
+#include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_request_usvstring.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_cache_query_options.h"
@@ -128,16 +128,19 @@ ExecutionContext* BackgroundFetchRegistration::GetExecutionContext() const {
   return registration_->GetExecutionContext();
 }
 
-ScriptPromise BackgroundFetchRegistration::abort(ScriptState* script_state) {
-  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
+ScriptPromise BackgroundFetchRegistration::abort(
+    ScriptState* script_state,
+    ExceptionState& exception_state) {
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(
+      script_state, exception_state.GetContext());
   ScriptPromise promise = resolver->Promise();
 
   DCHECK(registration_);
   DCHECK(registration_service_);
 
-  registration_service_->Abort(WTF::Bind(&BackgroundFetchRegistration::DidAbort,
-                                         WrapPersistent(this),
-                                         WrapPersistent(resolver)));
+  registration_service_->Abort(
+      resolver->WrapCallbackInScriptScope(WTF::BindOnce(
+          &BackgroundFetchRegistration::DidAbort, WrapPersistent(this))));
 
   return promise;
 }
@@ -218,8 +221,8 @@ ScriptPromise BackgroundFetchRegistration::MatchImpl(
 
   registration_service_->MatchRequests(
       std::move(request_to_match), std::move(cache_query_options), match_all,
-      WTF::Bind(&BackgroundFetchRegistration::DidGetMatchingRequests,
-                WrapPersistent(this), WrapPersistent(resolver), match_all));
+      WTF::BindOnce(&BackgroundFetchRegistration::DidGetMatchingRequests,
+                    WrapPersistent(this), WrapPersistent(resolver), match_all));
 
   return promise;
 }
@@ -253,7 +256,7 @@ void BackgroundFetchRegistration::DidGetMatchingRequests(
   }
 
   if (!return_all) {
-    if (settled_fetches.IsEmpty()) {
+    if (settled_fetches.empty()) {
       // Nothing was matched. Resolve with `undefined`.
       resolver->Resolve();
       return;
@@ -310,9 +313,9 @@ void BackgroundFetchRegistration::DidAbort(
       resolver->Resolve(/* success = */ false);
       return;
     case mojom::blink::BackgroundFetchError::STORAGE_ERROR:
-      resolver->Reject(MakeGarbageCollected<DOMException>(
+      resolver->RejectWithDOMException(
           DOMExceptionCode::kAbortError,
-          "Failed to abort registration due to I/O error."));
+          "Failed to abort registration due to I/O error.");
       return;
     case mojom::blink::BackgroundFetchError::SERVICE_WORKER_UNAVAILABLE:
     case mojom::blink::BackgroundFetchError::DUPLICATED_DEVELOPER_ID:
@@ -374,7 +377,7 @@ bool BackgroundFetchRegistration::HasPendingActivity() const {
   if (GetExecutionContext()->IsContextDestroyed())
     return false;
 
-  return !observers_.IsEmpty();
+  return !observers_.empty();
 }
 
 void BackgroundFetchRegistration::UpdateUI(

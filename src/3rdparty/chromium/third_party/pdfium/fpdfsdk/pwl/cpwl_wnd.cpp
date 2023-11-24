@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -33,8 +33,14 @@ const CFX_Color CPWL_Wnd::kDefaultBlackColor =
 const CFX_Color CPWL_Wnd::kDefaultWhiteColor =
     CFX_Color(CFX_Color::Type::kGray, 1);
 
-CPWL_Wnd::CreateParams::CreateParams()
-    : fFontSize(kDefaultFontSize), sDash(3, 0, 0) {}
+CPWL_Wnd::CreateParams::CreateParams(CFX_Timer::HandlerIface* timer_handler,
+                                     IPWL_FillerNotify* filler_notify,
+                                     ProviderIface* provider)
+    : pTimerHandler(timer_handler),
+      pFillerNotify(filler_notify),
+      pProvider(provider),
+      fFontSize(kDefaultFontSize),
+      sDash(3, 0, 0) {}
 
 CPWL_Wnd::CreateParams::CreateParams(const CreateParams& other) = default;
 
@@ -62,13 +68,9 @@ class CPWL_MsgControl final : public Observable {
   }
 
   void SetFocus(CPWL_Wnd* pWnd) {
-    m_KeyboardPaths.clear();
+    m_KeyboardPaths = pWnd->GetAncestors();
     m_pMainKeyboardWnd = pWnd;
-    CPWL_Wnd* pParent = pWnd;
-    while (pParent) {
-      m_KeyboardPaths.emplace_back(pParent);
-      pParent = pParent->GetParentWindow();
-    }
+
     // Note, pWnd may get destroyed in the OnSetFocus call.
     pWnd->OnSetFocus();
   }
@@ -76,7 +78,7 @@ class CPWL_MsgControl final : public Observable {
   void KillFocus() {
     ObservedPtr<CPWL_MsgControl> observed_ptr(this);
     if (!m_KeyboardPaths.empty()) {
-      CPWL_Wnd* pWnd = m_KeyboardPaths.front().Get();
+      CPWL_Wnd* pWnd = m_KeyboardPaths.front();
       if (pWnd)
         pWnd->OnKillFocus();
     }
@@ -87,13 +89,7 @@ class CPWL_MsgControl final : public Observable {
     m_KeyboardPaths.clear();
   }
 
-  void SetCapture(CPWL_Wnd* pWnd) {
-    m_MousePaths.clear();
-    while (pWnd) {
-      m_MousePaths.emplace_back(pWnd);
-      pWnd = pWnd->GetParentWindow();
-    }
-  }
+  void SetCapture(CPWL_Wnd* pWnd) { m_MousePaths = pWnd->GetAncestors(); }
 
   void ReleaseCapture() { m_MousePaths.clear(); }
 
@@ -135,7 +131,7 @@ bool CPWL_Wnd::IsPlatformShortcutKey(Mask<FWL_EVENTFLAG> nFlag) {
 
 CPWL_Wnd::CPWL_Wnd(
     const CreateParams& cp,
-    std::unique_ptr<IPWL_SystemHandler::PerWindowData> pAttachedData)
+    std::unique_ptr<IPWL_FillerNotify::PerWindowData> pAttachedData)
     : m_CreationParams(cp), m_pAttachedData(std::move(pAttachedData)) {}
 
 CPWL_Wnd::~CPWL_Wnd() {
@@ -169,11 +165,6 @@ void CPWL_Wnd::Realize() {
 void CPWL_Wnd::OnCreated() {}
 
 void CPWL_Wnd::OnDestroy() {}
-
-void CPWL_Wnd::InvalidateFocusHandler(FocusHandlerIface* handler) {
-  if (m_CreationParams.pFocusHandler == handler)
-    m_CreationParams.pFocusHandler = nullptr;
-}
 
 void CPWL_Wnd::InvalidateProvider(ProviderIface* provider) {
   if (m_CreationParams.pProvider.Get() == provider)
@@ -278,7 +269,7 @@ bool CPWL_Wnd::InvalidateRect(const CFX_FloatRect* pRect) {
   CFX_FloatRect rcWin = PWLtoWnd(rcRefresh);
   rcWin.Inflate(1, 1);
   rcWin.Normalize();
-  GetSystemHandler()->InvalidateRect(m_pAttachedData.get(), rcWin);
+  GetFillerNotify()->InvalidateRect(m_pAttachedData.get(), rcWin);
   return !!thisObserved;
 }
 
@@ -354,6 +345,8 @@ WideString CPWL_Wnd::GetSelectedText() {
   return WideString();
 }
 
+void CPWL_Wnd::ReplaceAndKeepSelection(const WideString& text) {}
+
 void CPWL_Wnd::ReplaceSelection(const WideString& text) {}
 
 bool CPWL_Wnd::SelectAllText() {
@@ -401,8 +394,8 @@ void CPWL_Wnd::AddChild(std::unique_ptr<CPWL_Wnd> pWnd) {
 
 void CPWL_Wnd::RemoveChild(CPWL_Wnd* pWnd) {
   DCHECK_EQ(pWnd->m_pParent, this);
-  auto it = std::find(m_Children.begin(), m_Children.end(),
-                      fxcrt::FakeUniquePtr<CPWL_Wnd>(pWnd));
+  auto it =
+      std::find(m_Children.begin(), m_Children.end(), MakeFakeUniquePtr(pWnd));
   if (it == m_Children.end())
     return;
 
@@ -453,10 +446,6 @@ void CPWL_Wnd::RemoveFlag(uint32_t dwFlags) {
   m_CreationParams.dwFlags &= ~dwFlags;
 }
 
-void CPWL_Wnd::AddFlag(uint32_t dwFlags) {
-  m_CreationParams.dwFlags |= dwFlags;
-}
-
 CFX_Color CPWL_Wnd::GetBackgroundColor() const {
   return m_CreationParams.sBackgroundColor;
 }
@@ -486,7 +475,7 @@ const CPWL_Dash& CPWL_Wnd::GetBorderDash() const {
 }
 
 CPWL_ScrollBar* CPWL_Wnd::GetVScrollBar() const {
-  return HasFlag(PWS_VSCROLL) ? m_pVScrollBar.Get() : nullptr;
+  return HasFlag(PWS_VSCROLL) ? m_pVScrollBar : nullptr;
 }
 
 void CPWL_Wnd::CreateScrollBar(const CreateParams& cp) {
@@ -500,7 +489,7 @@ void CPWL_Wnd::CreateVScrollBar(const CreateParams& cp) {
   CreateParams scp = cp;
   scp.dwFlags = PWS_BACKGROUND | PWS_AUTOTRANSPARENT | PWS_NOREFRESHCLIP;
   scp.sBackgroundColor = kDefaultWhiteColor;
-  scp.eCursorType = IPWL_SystemHandler::CursorStyle::kArrow;
+  scp.eCursorType = IPWL_FillerNotify::CursorStyle::kArrow;
   scp.nTransparency = CPWL_ScrollBar::kTransparency;
 
   auto pBar = std::make_unique<CPWL_ScrollBar>(scp, CloneAttachedData());
@@ -541,9 +530,17 @@ void CPWL_Wnd::OnSetFocus() {}
 
 void CPWL_Wnd::OnKillFocus() {}
 
-std::unique_ptr<IPWL_SystemHandler::PerWindowData> CPWL_Wnd::CloneAttachedData()
+std::unique_ptr<IPWL_FillerNotify::PerWindowData> CPWL_Wnd::CloneAttachedData()
     const {
   return m_pAttachedData ? m_pAttachedData->Clone() : nullptr;
+}
+
+std::vector<UnownedPtr<CPWL_Wnd>> CPWL_Wnd::GetAncestors() {
+  std::vector<UnownedPtr<CPWL_Wnd>> results;
+  for (CPWL_Wnd* pWnd = this; pWnd; pWnd = pWnd->GetParentWindow()) {
+    results.emplace_back(pWnd);
+  }
+  return results;
 }
 
 bool CPWL_Wnd::WndHitTest(const CFX_PointF& point) const {
@@ -616,7 +613,7 @@ void CPWL_Wnd::CreateChildWnd(const CreateParams& cp) {}
 
 void CPWL_Wnd::SetCursor() {
   if (IsValid())
-    GetSystemHandler()->SetCursor(GetCreationParams()->eCursorType);
+    GetFillerNotify()->SetCursor(GetCreationParams()->eCursorType);
 }
 
 void CPWL_Wnd::CreateMsgControl() {

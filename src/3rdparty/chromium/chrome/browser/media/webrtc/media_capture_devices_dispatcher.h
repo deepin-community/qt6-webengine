@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/singleton.h"
 #include "base/observer_list.h"
 #include "components/webrtc/media_stream_device_enumerator_impl.h"
@@ -18,6 +18,7 @@
 #include "content/public/browser/media_stream_request.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "third_party/blink/public/common/mediastream/media_stream_request.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
 
 class MediaAccessHandler;
 class MediaStreamCaptureIndicator;
@@ -121,7 +122,7 @@ class MediaCaptureDevicesDispatcher
       content::BrowserContext* context,
       bool audio,
       bool video,
-      blink::MediaStreamDevices* devices) override;
+      blink::mojom::StreamDevices& devices) override;
 
   // content::MediaObserver:
   void OnAudioCaptureDevicesChanged() override;

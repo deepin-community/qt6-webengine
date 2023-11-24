@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,16 +34,9 @@ class PhoneNumber : public FormGroup {
                         const std::string& app_locale,
                         ServerFieldTypeSet* matching_types) const override;
   std::u16string GetRawInfo(ServerFieldType type) const override;
-  void SetRawInfoWithVerificationStatus(
-      ServerFieldType type,
-      const std::u16string& value,
-      structured_address::VerificationStatus status) override;
-
-  // Size and offset of the prefix and suffix portions of phone numbers.
-  static const size_t kPrefixOffset = 0;
-  static const size_t kPrefixLength = 3;
-  static const size_t kSuffixOffset = 3;
-  static const size_t kSuffixLength = 4;
+  void SetRawInfoWithVerificationStatus(ServerFieldType type,
+                                        const std::u16string& value,
+                                        VerificationStatus status) override;
 
   // The class used to combine home phone parts into a whole number.
   class PhoneCombineHelper {
@@ -61,7 +54,7 @@ class PhoneNumber : public FormGroup {
     // true if parsing was successful, false otherwise.
     bool ParseNumber(const AutofillProfile& profile,
                      const std::string& app_locale,
-                     std::u16string* value);
+                     std::u16string* value) const;
 
     // Returns true if both |phone_| and |whole_number_| are empty.
     bool IsEmpty() const;
@@ -78,11 +71,10 @@ class PhoneNumber : public FormGroup {
   void GetSupportedTypes(ServerFieldTypeSet* supported_types) const override;
   std::u16string GetInfoImpl(const AutofillType& type,
                              const std::string& app_locale) const override;
-  bool SetInfoWithVerificationStatusImpl(
-      const AutofillType& type,
-      const std::u16string& value,
-      const std::string& app_locale,
-      structured_address::VerificationStatus status) override;
+  bool SetInfoWithVerificationStatusImpl(const AutofillType& type,
+                                         const std::u16string& value,
+                                         const std::string& app_locale,
+                                         VerificationStatus status) override;
 
   // Updates the cached parsed number if the profile's region has changed
   // since the last time the cache was updated.

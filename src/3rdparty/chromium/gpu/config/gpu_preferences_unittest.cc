@@ -1,4 +1,4 @@
-// Copyright (c) 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -89,7 +89,7 @@ void CheckGpuPreferencesEqual(GpuPreferences left, GpuPreferences right) {
             right.enable_gpu_blocked_time_metric);
   EXPECT_EQ(left.enable_perf_data_collection,
             right.enable_perf_data_collection);
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
   EXPECT_EQ(left.message_pump_type, right.message_pump_type);
 #endif
   EXPECT_EQ(left.enable_native_gpu_memory_buffers,
@@ -98,6 +98,8 @@ void CheckGpuPreferencesEqual(GpuPreferences left, GpuPreferences right) {
   EXPECT_EQ(left.enable_chromeos_direct_video_decoder,
             right.enable_chromeos_direct_video_decoder);
 #endif
+  EXPECT_EQ(left.force_separate_egl_display_for_webgl_testing,
+            right.force_separate_egl_display_for_webgl_testing);
 }
 
 }  // namespace
@@ -180,7 +182,7 @@ TEST(GpuPreferencesTest, EncodeDecode) {
                                mojom::DawnBackendValidationLevel::kPartial)
     GPU_PREFERENCES_FIELD(enable_gpu_blocked_time_metric, true)
     GPU_PREFERENCES_FIELD(enable_perf_data_collection, true)
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
     GPU_PREFERENCES_FIELD_ENUM(message_pump_type, base::MessagePumpType::UI,
                                base::MessagePumpType::UI)
 #endif
@@ -188,6 +190,7 @@ TEST(GpuPreferencesTest, EncodeDecode) {
 #if BUILDFLAG(IS_CHROMEOS)
     GPU_PREFERENCES_FIELD(enable_chromeos_direct_video_decoder, true);
 #endif
+    GPU_PREFERENCES_FIELD(force_separate_egl_display_for_webgl_testing, true);
 
     input_prefs.texture_target_exception_list.emplace_back(
         gfx::BufferUsage::SCANOUT, gfx::BufferFormat::RGBA_8888);
@@ -273,13 +276,14 @@ TEST(GpuPreferencesTest, DISABLED_DecodePreferences) {
   PRINT_INT(enable_dawn_backend_validation);
   PRINT_BOOL(enable_gpu_blocked_time_metric);
   PRINT_BOOL(enable_perf_data_collection);
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
   PRINT_INT(message_pump_type);
 #endif
   PRINT_BOOL(enable_native_gpu_memory_buffers);
 #if BUILDFLAG(IS_CHROMEOS)
   PRINT_BOOL(enable_chromeos_direct_video_decoder);
 #endif
+  PRINT_BOOL(force_separate_egl_display_for_webgl_testing);
   printf("}\n");
 }
 

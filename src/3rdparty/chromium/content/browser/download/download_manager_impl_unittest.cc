@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,9 +14,9 @@
 #include <tuple>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/guid.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
@@ -162,8 +162,8 @@ class MockDownloadItemFactory
       bool opened,
       base::Time last_access_time,
       bool transient,
-      const std::vector<download::DownloadItem::ReceivedSlice>& received_slices,
-      const download::DownloadItemRerouteInfo& reroute_info) override;
+      const std::vector<download::DownloadItem::ReceivedSlice>& received_slices)
+      override;
   download::DownloadItemImpl* CreateActiveItem(
       download::DownloadItemImplDelegate* delegate,
       uint32_t download_id,
@@ -240,8 +240,7 @@ download::DownloadItemImpl* MockDownloadItemFactory::CreatePersistedItem(
     bool opened,
     base::Time last_access_time,
     bool transient,
-    const std::vector<download::DownloadItem::ReceivedSlice>& received_slices,
-    const download::DownloadItemRerouteInfo& reroute_info) {
+    const std::vector<download::DownloadItem::ReceivedSlice>& received_slices) {
   DCHECK(items_.find(download_id) == items_.end());
   download::MockDownloadItemImpl* result =
       new StrictMock<download::MockDownloadItemImpl>(&item_delegate_);
@@ -507,8 +506,7 @@ class DownloadManagerTest : public testing::Test {
             download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
             download::DOWNLOAD_INTERRUPT_REASON_SERVER_FAILED, false,
             base::Time::Now(), true,
-            std::vector<download::DownloadItem::ReceivedSlice>(),
-            download::DownloadItemRerouteInfo());
+            std::vector<download::DownloadItem::ReceivedSlice>());
     return download_item;
   }
 
@@ -537,17 +535,17 @@ class DownloadManagerTest : public testing::Test {
       const base::FilePath& target_path,
       download::DownloadItem::TargetDisposition disposition,
       download::DownloadDangerType danger_type,
-      download::DownloadItem::MixedContentStatus mixed_content_status,
+      download::DownloadItem::InsecureDownloadStatus insecure_download_status,
       const base::FilePath& intermediate_path,
       const base::FilePath& display_name,
-      absl::optional<download::DownloadSchedule> download_schedule,
+      const std::string& mime_type,
       download::DownloadInterruptReason interrupt_reason) {
     callback_called_ = true;
     target_path_ = target_path;
     target_disposition_ = disposition;
     danger_type_ = danger_type;
     intermediate_path_ = intermediate_path;
-    download_schedule_ = std::move(download_schedule);
+    mime_type_ = mime_type;
     interrupt_reason_ = interrupt_reason;
   }
 
@@ -583,8 +581,8 @@ class DownloadManagerTest : public testing::Test {
   base::FilePath target_path_;
   download::DownloadItem::TargetDisposition target_disposition_;
   download::DownloadDangerType danger_type_;
+  std::string mime_type_;
   base::FilePath intermediate_path_;
-  absl::optional<download::DownloadSchedule> download_schedule_;
   download::DownloadInterruptReason interrupt_reason_;
 
   std::vector<GURL> download_urls_;
@@ -614,16 +612,7 @@ TEST_F(DownloadManagerTest, StartDownload) {
   EXPECT_CALL(GetMockDownloadManagerDelegate(), GetNextId_(_))
       .WillOnce(RunOnceCallback<0>(local_id));
 
-  // TODO(thomasanderson,crbug.com/784010): Remove this when all Linux
-  // distros with versions of GTK lower than 3.14.7 are no longer
-  // supported.  This should happen when support for Ubuntu Trusty and
-  // Debian Jessie are removed.
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-  // Doing nothing will set the default download directory to null.
-  EXPECT_CALL(GetMockDownloadManagerDelegate(), GetSaveDir(_, _, _)).Times(0);
-#else
   EXPECT_CALL(GetMockDownloadManagerDelegate(), GetSaveDir(_, _, _));
-#endif
 
   EXPECT_CALL(GetMockDownloadManagerDelegate(),
               ApplicationClientIdForFileScanning())
@@ -657,16 +646,7 @@ TEST_F(DownloadManagerTest, StartDownloadWithoutHistoryDB) {
   EXPECT_CALL(GetMockDownloadManagerDelegate(), GetNextId_(_))
       .WillOnce(RunOnceCallback<0>(download::DownloadItem::kInvalidId));
 
-  // TODO(thomasanderson,crbug.com/784010): Remove this when all Linux
-  // distros with versions of GTK lower than 3.14.7 are no longer
-  // supported.  This should happen when support for Ubuntu Trusty and
-  // Debian Jessie are removed.
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-  // Doing nothing will set the default download directory to null.
-  EXPECT_CALL(GetMockDownloadManagerDelegate(), GetSaveDir(_, _, _)).Times(0);
-#else
   EXPECT_CALL(GetMockDownloadManagerDelegate(), GetSaveDir(_, _, _));
-#endif
 
   EXPECT_CALL(GetMockDownloadManagerDelegate(),
               ApplicationClientIdForFileScanning())
@@ -794,7 +774,6 @@ TEST_F(DownloadManagerTest, OnInProgressDownloadsLoaded) {
       download::DOWNLOAD_INTERRUPT_REASON_SERVER_FAILED, false, false, false,
       base::Time::Now(), true,
       std::vector<download::DownloadItem::ReceivedSlice>(),
-      download::DownloadItemRerouteInfo(), absl::nullopt /*download_schedule*/,
       download::kInvalidRange, download::kInvalidRange,
       nullptr /* download_entry */);
   in_progress_manager->AddDownloadItem(std::move(in_progress_item));

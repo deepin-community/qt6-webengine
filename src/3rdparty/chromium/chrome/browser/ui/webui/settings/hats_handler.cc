@@ -1,11 +1,10 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/webui/settings/hats_handler.h"
 
-#include "base/bind.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/functional/bind.h"
 #include "chrome/browser/privacy_sandbox/privacy_sandbox_settings_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/hats/hats_service.h"
@@ -139,6 +138,10 @@ void HatsHandler::InformSentimentService(TrustSafetyInteraction interaction) {
     sentiment_service->RanSafetyCheck();
   } else if (interaction == TrustSafetyInteraction::OPENED_PASSWORD_MANAGER) {
     sentiment_service->OpenedPasswordManager(web_ui()->GetWebContents());
+  } else if (interaction == TrustSafetyInteraction::RAN_PASSWORD_CHECK) {
+    sentiment_service->RanPasswordCheck();
+  } else if (interaction == TrustSafetyInteraction::COMPLETED_PRIVACY_GUIDE) {
+    sentiment_service->FinishedPrivacyGuide();
   }
 }
 

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,17 +9,19 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/check_op.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/guid.h"
 #include "base/location.h"
 #include "base/strings/strcat.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "components/prefs/pref_service.h"
+#include "components/update_client/buildflags.h"
 #include "components/update_client/component.h"
 #include "components/update_client/configurator.h"
+#include "components/update_client/crx_cache.h"
 #include "components/update_client/crx_update_item.h"
 #include "components/update_client/persisted_data.h"
 #include "components/update_client/protocol_parser.h"
@@ -30,6 +32,36 @@
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace update_client {
+
+#if BUILDFLAG(ENABLE_PUFFIN_PATCHES)
+// TODO(crbug.com/1349060) once Puffin patches are fully implemented,
+// we should remove this #if.
+UpdateContext::UpdateContext(
+    scoped_refptr<Configurator> config,
+    absl::optional<scoped_refptr<CrxCache>> crx_cache,
+    bool is_foreground,
+    bool is_install,
+    const std::vector<std::string>& ids,
+    UpdateClient::CrxStateChangeCallback crx_state_change_callback,
+    const UpdateEngine::NotifyObserversCallback& notify_observers_callback,
+    UpdateEngine::Callback callback,
+    PersistedData* persisted_data)
+    : config(config),
+      crx_cache_(crx_cache),
+      is_foreground(is_foreground),
+      is_install(is_install),
+      ids(ids),
+      crx_state_change_callback(crx_state_change_callback),
+      notify_observers_callback(notify_observers_callback),
+      callback(std::move(callback)),
+      session_id(base::StrCat({"{", base::GenerateGUID(), "}"})),
+      persisted_data(persisted_data) {
+  for (const auto& id : ids) {
+    components.insert(
+        std::make_pair(id, std::make_unique<Component>(*this, id)));
+  }
+}
+#else
 
 UpdateContext::UpdateContext(
     scoped_refptr<Configurator> config,
@@ -54,6 +86,7 @@ UpdateContext::UpdateContext(
         std::make_pair(id, std::make_unique<Component>(*this, id)));
   }
 }
+#endif
 
 UpdateContext::~UpdateContext() = default;
 
@@ -63,51 +96,69 @@ UpdateEngine::UpdateEngine(
     scoped_refptr<PingManager> ping_manager,
     const NotifyObserversCallback& notify_observers_callback)
     : config_(config),
+
       update_checker_factory_(update_checker_factory),
       ping_manager_(ping_manager),
       metadata_(
           std::make_unique<PersistedData>(config->GetPrefService(),
                                           config->GetActivityDataService())),
-      notify_observers_callback_(notify_observers_callback) {}
-
-UpdateEngine::~UpdateEngine() {
-  DCHECK(thread_checker_.CalledOnValidThread());
+      notify_observers_callback_(notify_observers_callback) {
+#if BUILDFLAG(ENABLE_PUFFIN_PATCHES)
+  // TODO(crbug.com/1349060) once Puffin patches are fully implemented,
+  // we should remove this #if.
+  absl::optional<base::FilePath> crx_cache_path = config->GetCrxCachePath();
+  if (!crx_cache_path.has_value()) {
+    crx_cache_ = absl::nullopt;
+  } else {
+    CrxCache::Options options(crx_cache_path.value());
+    crx_cache_ = absl::optional<scoped_refptr<CrxCache>>(
+        base::MakeRefCounted<CrxCache>(options));
+  }
+#endif
 }
 
-void UpdateEngine::Update(
+UpdateEngine::~UpdateEngine() = default;
+
+base::RepeatingClosure UpdateEngine::Update(
     bool is_foreground,
     bool is_install,
     const std::vector<std::string>& ids,
     UpdateClient::CrxDataCallback crx_data_callback,
     UpdateClient::CrxStateChangeCallback crx_state_change_callback,
     Callback callback) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (ids.empty()) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(std::move(callback), Error::INVALID_ARGUMENT));
-    return;
+    return base::DoNothing();
   }
 
   if (IsThrottled(is_foreground)) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback), Error::RETRY_LATER));
-    return;
+    return base::DoNothing();
   }
 
   // Calls out to get the corresponding CrxComponent data for the components.
   const std::vector<absl::optional<CrxComponent>> crx_components =
       std::move(crx_data_callback).Run(ids);
   if (crx_components.size() < ids.size()) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(std::move(callback), Error::BAD_CRX_DATA_CALLBACK));
-    return;
+    return base::DoNothing();
   }
 
   const auto update_context = base::MakeRefCounted<UpdateContext>(
-      config_, is_foreground, is_install, ids, crx_state_change_callback,
+      config_,
+#if BUILDFLAG(ENABLE_PUFFIN_PATCHES)
+      // TODO(crbug.com/1349060) once Puffin patches are fully implemented,
+      // we should remove this #if.
+      crx_cache_,
+#endif
+      is_foreground, is_install, ids, crx_state_change_callback,
       notify_observers_callback_, std::move(callback), metadata_.get());
   DCHECK(!update_context->session_id.empty());
 
@@ -138,20 +189,21 @@ void UpdateEngine::Update(
     }
   }
 
-  if (update_context->components_to_check_for_updates.empty()) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE,
-        base::BindOnce(&UpdateEngine::HandleComponent, this, update_context));
-    return;
-  }
-
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
-      base::BindOnce(&UpdateEngine::DoUpdateCheck, this, update_context));
+      base::BindOnce(update_context->components_to_check_for_updates.empty()
+                         ? &UpdateEngine::HandleComponent
+                         : &UpdateEngine::DoUpdateCheck,
+                     this, update_context));
+  return base::BindRepeating(
+      [](scoped_refptr<UpdateContext> context) {
+        context->is_cancelled = true;
+      },
+      update_context);
 }
 
 void UpdateEngine::DoUpdateCheck(scoped_refptr<UpdateContext> update_context) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(update_context);
 
   // Make the components transition from |kNew| to |kChecking| state.
@@ -162,9 +214,7 @@ void UpdateEngine::DoUpdateCheck(scoped_refptr<UpdateContext> update_context) {
       update_checker_factory_(config_, metadata_.get());
 
   update_context->update_checker->CheckForUpdates(
-      update_context->session_id,
-      update_context->components_to_check_for_updates,
-      update_context->components, config_->ExtraRequestParams(),
+      update_context, config_->ExtraRequestParams(),
       base::BindOnce(&UpdateEngine::UpdateCheckResultsAvailable, this,
                      update_context));
 }
@@ -175,7 +225,7 @@ void UpdateEngine::UpdateCheckResultsAvailable(
     ErrorCategory error_category,
     int error,
     int retry_after_sec) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(update_context);
 
   update_context->retry_after_sec = retry_after_sec;
@@ -202,7 +252,7 @@ void UpdateEngine::UpdateCheckResultsAvailable(
       component->SetUpdateCheckResult(absl::nullopt,
                                       ErrorCategory::kUpdateCheck, error);
     }
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&UpdateEngine::UpdateCheckComplete, this,
                                   update_context));
     return;
@@ -246,14 +296,14 @@ void UpdateEngine::UpdateCheckResultsAvailable(
     }
   }
 
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(&UpdateEngine::UpdateCheckComplete, this, update_context));
 }
 
 void UpdateEngine::UpdateCheckComplete(
     scoped_refptr<UpdateContext> update_context) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(update_context);
 
   for (const auto& id : update_context->components_to_check_for_updates) {
@@ -267,14 +317,14 @@ void UpdateEngine::UpdateCheckComplete(
     component->Handle(base::DoNothing());
   }
 
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(&UpdateEngine::HandleComponent, this, update_context));
 }
 
 void UpdateEngine::HandleComponent(
     scoped_refptr<UpdateContext> update_context) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(update_context);
 
   auto& queue = update_context->component_queue;
@@ -284,7 +334,7 @@ void UpdateEngine::HandleComponent(
                             ? Error::UPDATE_CHECK_ERROR
                             : Error::NONE;
 
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&UpdateEngine::UpdateComplete, this,
                                   update_context, error));
     return;
@@ -297,7 +347,7 @@ void UpdateEngine::HandleComponent(
 
   auto& next_update_delay = update_context->next_update_delay;
   if (!next_update_delay.is_zero() && component->IsUpdateAvailable()) {
-    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE,
         base::BindOnce(&UpdateEngine::HandleComponent, this, update_context),
         next_update_delay);
@@ -312,7 +362,7 @@ void UpdateEngine::HandleComponent(
 
 void UpdateEngine::HandleComponentComplete(
     scoped_refptr<UpdateContext> update_context) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(update_context);
 
   auto& queue = update_context->component_queue;
@@ -338,24 +388,25 @@ void UpdateEngine::HandleComponentComplete(
     }
   }
 
-  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, std::move(callback));
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+                                                           std::move(callback));
 }
 
 void UpdateEngine::UpdateComplete(scoped_refptr<UpdateContext> update_context,
                                   Error error) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(update_context);
 
   const auto num_erased = update_contexts_.erase(update_context->session_id);
   DCHECK_EQ(1u, num_erased);
 
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(std::move(update_context->callback), error));
 }
 
 bool UpdateEngine::GetUpdateState(const std::string& id,
                                   CrxUpdateItem* update_item) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   for (const auto& context : update_contexts_) {
     const auto& components = context.second->components;
     const auto it = components.find(id);
@@ -368,7 +419,7 @@ bool UpdateEngine::GetUpdateState(const std::string& id,
 }
 
 bool UpdateEngine::IsThrottled(bool is_foreground) const {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (is_foreground || throttle_updates_until_.is_null())
     return false;
@@ -384,12 +435,18 @@ bool UpdateEngine::IsThrottled(bool is_foreground) const {
 void UpdateEngine::SendUninstallPing(const CrxComponent& crx_component,
                                      int reason,
                                      Callback callback) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   const std::string& id = crx_component.app_id;
 
   const auto update_context = base::MakeRefCounted<UpdateContext>(
-      config_, false, false, std::vector<std::string>{id},
+      config_,
+#if BUILDFLAG(ENABLE_PUFFIN_PATCHES)
+      // TODO(crbug.com/1349060) once Puffin patches are fully implemented,
+      // we should remove this #if.
+      crx_cache_,
+#endif
+      false, false, std::vector<std::string>{id},
       UpdateClient::CrxStateChangeCallback(),
       UpdateEngine::NotifyObserversCallback(), std::move(callback),
       metadata_.get());
@@ -408,7 +465,7 @@ void UpdateEngine::SendUninstallPing(const CrxComponent& crx_component,
 
   update_context->component_queue.push(id);
 
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(&UpdateEngine::HandleComponent, this, update_context));
 }

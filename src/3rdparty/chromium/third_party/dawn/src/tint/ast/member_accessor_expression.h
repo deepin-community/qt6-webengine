@@ -15,38 +15,38 @@
 #ifndef SRC_TINT_AST_MEMBER_ACCESSOR_EXPRESSION_H_
 #define SRC_TINT_AST_MEMBER_ACCESSOR_EXPRESSION_H_
 
+#include "src/tint/ast/accessor_expression.h"
 #include "src/tint/ast/identifier_expression.h"
 
 namespace tint::ast {
 
 /// A member accessor expression
 class MemberAccessorExpression final
-    : public Castable<MemberAccessorExpression, Expression> {
- public:
-  /// Constructor
-  /// @param program_id the identifier of the program that owns this node
-  /// @param source the member accessor expression source
-  /// @param structure the structure
-  /// @param member the member
-  MemberAccessorExpression(ProgramID program_id,
-                           const Source& source,
-                           const Expression* structure,
-                           const IdentifierExpression* member);
-  /// Move constructor
-  MemberAccessorExpression(MemberAccessorExpression&&);
-  ~MemberAccessorExpression() override;
+    : public Castable<MemberAccessorExpression, AccessorExpression> {
+  public:
+    /// Constructor
+    /// @param pid the identifier of the program that owns this node
+    /// @param nid the unique node identifier
+    /// @param source the member accessor expression source
+    /// @param object the object
+    /// @param member the member
+    MemberAccessorExpression(ProgramID pid,
+                             NodeID nid,
+                             const Source& source,
+                             const Expression* object,
+                             const Identifier* member);
+    /// Move constructor
+    MemberAccessorExpression(MemberAccessorExpression&&);
+    ~MemberAccessorExpression() override;
 
-  /// Clones this node and all transitive child nodes using the `CloneContext`
-  /// `ctx`.
-  /// @param ctx the clone context
-  /// @return the newly cloned node
-  const MemberAccessorExpression* Clone(CloneContext* ctx) const override;
+    /// Clones this node and all transitive child nodes using the `CloneContext`
+    /// `ctx`.
+    /// @param ctx the clone context
+    /// @return the newly cloned node
+    const MemberAccessorExpression* Clone(CloneContext* ctx) const override;
 
-  /// The structure
-  const Expression* const structure;
-
-  /// The member expression
-  const IdentifierExpression* const member;
+    /// The member expression
+    const Identifier* const member;
 };
 
 }  // namespace tint::ast

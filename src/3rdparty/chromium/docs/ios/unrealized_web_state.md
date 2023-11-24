@@ -1,6 +1,6 @@
 # Unrealized `WebState`
 
-> **Status**: implementation in progress.
+> **Status**: launched.
 
 On iOS, each tab is implemented by a `WebState` and some TabHelpers. As users
 can have many tabs open at the same time, but only few of them visible, an
@@ -31,7 +31,6 @@ An "unrealized" `WebState` supports the following features:
 
 -   registering and removing Observers
 -   registering and removing WebStatePolicyDecider
--   registering ScriptCommandCallback
 -   `const` property getters (*)
 -   retrieving saved state (**)
 -   attaching tab helpers

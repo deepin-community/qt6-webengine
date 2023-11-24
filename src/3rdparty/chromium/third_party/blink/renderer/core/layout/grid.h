@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,20 +19,8 @@
 
 namespace blink {
 
-struct OrderedTrackIndexSetHashTraits : public HashTraits<wtf_size_t> {
-  static const bool kEmptyValueIsZero = false;
-  static wtf_size_t EmptyValue() { return UINT_MAX; }
-
-  static void ConstructDeletedValue(wtf_size_t& slot, bool) {
-    slot = UINT_MAX - 1;
-  }
-  static bool IsDeletedValue(const wtf_size_t& value) {
-    return value == UINT_MAX - 1;
-  }
-};
-
 typedef HeapVector<Member<LayoutBox>, 1> GridItemList;
-typedef LinkedHashSet<wtf_size_t, OrderedTrackIndexSetHashTraits>
+typedef LinkedHashSet<wtf_size_t, IntWithZeroKeyHashTraits<wtf_size_t>>
     OrderedTrackIndexSet;
 
 class LayoutGrid;
@@ -58,12 +46,13 @@ class CORE_EXPORT Grid : public GarbageCollected<Grid> {
   virtual ~Grid() {}
 
   virtual void Trace(Visitor* visitor) const {
+    visitor->Trace(order_iterator_);
     visitor->Trace(grid_item_area_);
     visitor->Trace(grid_items_indexes_map_);
   }
 
   // Note that out of flow children are not grid items.
-  bool HasGridItems() const { return !grid_item_area_.IsEmpty(); }
+  bool HasGridItems() const { return !grid_item_area_.empty(); }
 
   GridArea GridItemArea(const LayoutBox&) const;
   void SetGridItemArea(const LayoutBox&, GridArea);

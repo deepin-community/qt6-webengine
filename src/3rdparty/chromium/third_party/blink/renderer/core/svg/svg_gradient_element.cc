@@ -184,9 +184,7 @@ void SVGGradientElement::CollectCommonAttributes(
   }
 
   if (!attributes.HasStops()) {
-    const Vector<Gradient::ColorStop>& stops(BuildStops());
-    if (!stops.IsEmpty())
-      attributes.SetStops(stops);
+    attributes.SetStops(BuildStops());
   }
 }
 

@@ -1,11 +1,12 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/service_worker/service_worker_event_queue.h"
 
-#include "base/bind.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_event_status.mojom-blink.h"
@@ -144,7 +145,7 @@ void ServiceWorkerEventQueue::EnqueueEvent(std::unique_ptr<Event> event) {
       std::make_unique<EventInfo>(
           tick_clock_->NowTicks() +
               event->custom_timeout.value_or(kEventTimeout),
-          WTF::Bind(std::move(event->abort_callback), event->event_id)));
+          WTF::BindOnce(std::move(event->abort_callback), event->event_id)));
 
   auto& queue = event->type == Event::Type::Offline ? queued_offline_events_
                                                     : queued_online_events_;
@@ -247,6 +248,12 @@ void ServiceWorkerEventQueue::SetIdleDelay(base::TimeDelta idle_delay) {
   ScheduleIdleCallback(delta_until_idle);
 }
 
+void ServiceWorkerEventQueue::CheckEventQueue() {
+  if (!HasInflightEvent()) {
+    OnNoInflightEvent();
+  }
+}
+
 void ServiceWorkerEventQueue::UpdateStatus() {
   base::TimeTicks now = tick_clock_->NowTicks();
 
@@ -300,8 +307,8 @@ void ServiceWorkerEventQueue::ScheduleIdleCallback(base::TimeDelta delay) {
   // before |this| is destroyed at ServiceWorkerGlobalScope::Dispose().
   idle_callback_handle_ = PostDelayedCancellableTask(
       *task_runner_, FROM_HERE,
-      WTF::Bind(&ServiceWorkerEventQueue::TriggerIdleCallback,
-                WTF::Unretained(this)),
+      WTF::BindOnce(&ServiceWorkerEventQueue::TriggerIdleCallback,
+                    WTF::Unretained(this)),
       delay);
 }
 

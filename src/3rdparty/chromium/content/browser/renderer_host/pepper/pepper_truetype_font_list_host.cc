@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include <algorithm>
 
 #include "base/numerics/safe_conversions.h"
+#include "base/task/sequenced_task_runner.h"
 #include "content/browser/renderer_host/pepper/pepper_truetype_font_list.h"
 #include "content/common/font_list.h"
 #include "content/public/browser/browser_ppapi_host.h"

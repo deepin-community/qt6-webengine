@@ -1,27 +1,41 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/devtools/protocol/page_handler.h"
 
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/custom_handlers/protocol_handler_registry_factory.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
+#include "components/custom_handlers/protocol_handler_registry.h"
 #include "components/payments/content/payment_request_web_contents_manager.h"
 #include "components/subresource_filter/content/browser/devtools_interaction_tracker.h"
-#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/manifest/manifest_util.h"
 #include "ui/gfx/image/image.h"
 
 #if BUILDFLAG(ENABLE_PRINTING)
 #include "components/printing/browser/print_to_pdf/pdf_print_utils.h"
-#endif
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
+#include "chrome/browser/printing/print_view_manager.h"
+#else
+#include "chrome/browser/printing/print_view_manager_basic.h"
+#endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW)
+#endif  // BUILDFLAG(ENABLE_PRINTING)
 
 #if BUILDFLAG(ENABLE_PRINTING)
+
 template <typename T>
 absl::optional<T> OptionalFromMaybe(const protocol::Maybe<T>& maybe) {
   return maybe.isJust() ? absl::optional<T>(maybe.fromJust()) : absl::nullopt;
 }
+
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
+using ActivePrintManager = printing::PrintViewManager;
+#else
+using ActivePrintManager = printing::PrintViewManagerBasic;
 #endif
+
+#endif  // BUILDFLAG(ENABLE_PRINTING)
 
 PageHandler::PageHandler(scoped_refptr<content::DevToolsAgentHost> agent_host,
                          content::WebContents* web_contents,
@@ -57,11 +71,8 @@ protocol::Response PageHandler::Enable() {
 
 protocol::Response PageHandler::Disable() {
   enabled_ = false;
-  // TODO(bokan): This is inadvertently called from a FencedFrame as it has a
-  // PageHandler that gets destroyed when the main frame is refreshed.
-  // ToggleAdBlocking should be a no-op for non-primary pages.
   ToggleAdBlocking(false /* enable */);
-  SetSPCTransactionMode(protocol::Page::SetSPCTransactionMode::ModeEnum::None);
+  SetSPCTransactionMode(protocol::Page::AutoResponseModeEnum::None);
   // Do not mark the command as handled. Let it fall through instead, so that
   // the handler in content gets a chance to process the command.
   return protocol::Response::FallThrough();
@@ -80,12 +91,13 @@ protocol::Response PageHandler::SetSPCTransactionMode(
     return protocol::Response::ServerError("No web contents to host a dialog.");
 
   payments::SPCTransactionMode spc_mode = payments::SPCTransactionMode::NONE;
-  if (mode == protocol::Page::SetSPCTransactionMode::ModeEnum::Autoaccept) {
+  if (mode == protocol::Page::AutoResponseModeEnum::AutoAccept) {
     spc_mode = payments::SPCTransactionMode::AUTOACCEPT;
-  } else if (mode ==
-             protocol::Page::SetSPCTransactionMode::ModeEnum::Autoreject) {
+  } else if (mode == protocol::Page::AutoResponseModeEnum::AutoReject) {
     spc_mode = payments::SPCTransactionMode::AUTOREJECT;
-  } else if (mode != protocol::Page::SetSPCTransactionMode::ModeEnum::None) {
+  } else if (mode == protocol::Page::AutoResponseModeEnum::AutoOptOut) {
+    spc_mode = payments::SPCTransactionMode::AUTOOPTOUT;
+  } else if (mode != protocol::Page::AutoResponseModeEnum::None) {
     return protocol::Response::ServerError("Unrecognized mode value");
   }
 
@@ -93,6 +105,29 @@ protocol::Response PageHandler::SetSPCTransactionMode(
       payments::PaymentRequestWebContentsManager::GetOrCreateForWebContents(
           *web_contents_);
   payment_request_manager->SetSPCTransactionMode(spc_mode);
+  return protocol::Response::Success();
+}
+
+protocol::Response PageHandler::SetRPHRegistrationMode(
+    const protocol::String& mode) {
+  if (!web_contents_) {
+    return protocol::Response::ServerError("No web contents to host a dialog.");
+  }
+
+  custom_handlers::RphRegistrationMode rph_mode =
+      custom_handlers::RphRegistrationMode::kNone;
+  if (mode == protocol::Page::AutoResponseModeEnum::AutoAccept) {
+    rph_mode = custom_handlers::RphRegistrationMode::kAutoAccept;
+  } else if (mode == protocol::Page::AutoResponseModeEnum::AutoReject) {
+    rph_mode = custom_handlers::RphRegistrationMode::kAutoReject;
+  } else if (mode != protocol::Page::AutoResponseModeEnum::None) {
+    return protocol::Response::ServerError("Unrecognized mode value");
+  }
+
+  custom_handlers::ProtocolHandlerRegistry* registry =
+      ProtocolHandlerRegistryFactory::GetForBrowserContext(
+          web_contents_->GetBrowserContext());
+  registry->SetRphRegistrationMode(rph_mode);
   return protocol::Response::Success();
 }
 
@@ -179,7 +214,6 @@ void PageHandler::PrintToPDF(protocol::Maybe<bool> landscape,
                              protocol::Maybe<double> margin_left,
                              protocol::Maybe<double> margin_right,
                              protocol::Maybe<protocol::String> page_ranges,
-                             protocol::Maybe<bool> ignore_invalid_page_ranges,
                              protocol::Maybe<protocol::String> header_template,
                              protocol::Maybe<protocol::String> footer_template,
                              protocol::Maybe<bool> prefer_css_page_size,
@@ -196,7 +230,7 @@ void PageHandler::PrintToPDF(protocol::Maybe<bool> landscape,
 
   absl::variant<printing::mojom::PrintPagesParamsPtr, std::string>
       print_pages_params = print_to_pdf::GetPrintPagesParams(
-          web_contents_->GetMainFrame()->GetLastCommittedURL(),
+          web_contents_->GetPrimaryMainFrame()->GetLastCommittedURL(),
           OptionalFromMaybe<bool>(landscape),
           OptionalFromMaybe<bool>(display_header_footer),
           OptionalFromMaybe<bool>(print_background),
@@ -223,24 +257,39 @@ void PageHandler::PrintToPDF(protocol::Maybe<bool> landscape,
       transfer_mode.fromMaybe("") ==
       protocol::Page::PrintToPDF::TransferModeEnum::ReturnAsStream;
 
-  if (auto* print_manager =
-          print_to_pdf::PdfPrintManager::FromWebContents(web_contents_.get())) {
+  // First check if headless printer manager is active and use it if so.
+  // Note that headless mode uses alternate print manager that shortcuts
+  // most of the regular print manager calls providing only the PrintToPDF
+  // functionality.
+  if (auto* print_manager = headless::HeadlessPrintManager::FromWebContents(
+          web_contents_.get())) {
     print_manager->PrintToPdf(
-        web_contents_->GetMainFrame(), page_ranges.fromMaybe(""),
-        ignore_invalid_page_ranges.fromMaybe(false),
+        web_contents_->GetPrimaryMainFrame(), page_ranges.fromMaybe(""),
         std::move(absl::get<printing::mojom::PrintPagesParamsPtr>(
             print_pages_params)),
         base::BindOnce(&PageHandler::OnPDFCreated,
                        weak_ptr_factory_.GetWeakPtr(), return_as_stream,
                        std::move(callback)));
-  } else {
-    callback->sendFailure(
-        protocol::Response::ServerError("Printing is not available"));
+    return;
   }
-#else
-  callback->sendFailure(
-      protocol::Response::ServerError("Printing is not enabled"));
+
+  // Try the regular print manager. See printing::InitializePrinting()
+  // for details.
+  if (auto* print_manager =
+          ActivePrintManager::FromWebContents(web_contents_.get())) {
+    print_manager->PrintToPdf(
+        web_contents_->GetPrimaryMainFrame(), page_ranges.fromMaybe(""),
+        std::move(absl::get<printing::mojom::PrintPagesParamsPtr>(
+            print_pages_params)),
+        base::BindOnce(&PageHandler::OnPDFCreated,
+                       weak_ptr_factory_.GetWeakPtr(), return_as_stream,
+                       std::move(callback)));
+    return;
+  }
 #endif  // BUILDFLAG(ENABLE_PRINTING)
+
+  callback->sendFailure(
+      protocol::Response::ServerError("Printing is not available"));
 }
 
 void PageHandler::GetAppId(std::unique_ptr<GetAppIdCallback> callback) {
@@ -263,30 +312,28 @@ void PageHandler::GetAppId(std::unique_ptr<GetAppIdCallback> callback) {
 
 void PageHandler::OnDidGetManifest(std::unique_ptr<GetAppIdCallback> callback,
                                    const webapps::InstallableData& data) {
-  if (blink::IsEmptyManifest(data.manifest) ||
-      !base::FeatureList::IsEnabled(blink::features::kWebAppEnableManifestId)) {
+  if (blink::IsEmptyManifest(*data.manifest)) {
     callback->sendSuccess(protocol::Maybe<protocol::String>(),
                           protocol::Maybe<protocol::String>());
     return;
   }
   absl::optional<std::string> id;
-  if (data.manifest.id.has_value()) {
-    id = base::UTF16ToUTF8(data.manifest.id.value());
+  if (data.manifest->id.has_value()) {
+    id = base::UTF16ToUTF8(data.manifest->id.value());
   }
   callback->sendSuccess(
-      web_app::GenerateAppIdUnhashed(id, data.manifest.start_url),
-      web_app::GenerateRecommendedId(data.manifest.start_url));
+      web_app::GenerateAppIdUnhashed(id, data.manifest->start_url),
+      web_app::GenerateRecommendedId(data.manifest->start_url));
 }
 
 #if BUILDFLAG(ENABLE_PRINTING)
-void PageHandler::OnPDFCreated(
-    bool return_as_stream,
-    std::unique_ptr<PrintToPDFCallback> callback,
-    print_to_pdf::PdfPrintManager::PrintResult print_result,
-    scoped_refptr<base::RefCountedMemory> data) {
-  if (print_result != print_to_pdf::PdfPrintManager::PRINT_SUCCESS) {
+void PageHandler::OnPDFCreated(bool return_as_stream,
+                               std::unique_ptr<PrintToPDFCallback> callback,
+                               print_to_pdf::PdfPrintResult print_result,
+                               scoped_refptr<base::RefCountedMemory> data) {
+  if (print_result != print_to_pdf::PdfPrintResult::kPrintSuccess) {
     callback->sendFailure(protocol::Response::ServerError(
-        print_to_pdf::PdfPrintManager::PrintResultToString(print_result)));
+        print_to_pdf::PdfPrintResultToString(print_result)));
     return;
   }
 

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,15 +7,16 @@
 #include <tuple>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/check_op.h"
+#include "base/functional/bind.h"
+#include "base/task/sequenced_task_runner.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/child_process_host.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/child_process_host.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/common/constants.h"
 
@@ -80,7 +81,7 @@ ExtensionApiFrameIdMap* ExtensionApiFrameIdMap::Get() {
 int ExtensionApiFrameIdMap::GetFrameId(content::RenderFrameHost* rfh) {
   if (!rfh)
     return kInvalidFrameId;
-  if (rfh->GetParentOrOuterDocument())
+  if (!rfh->IsInPrimaryMainFrame())
     return rfh->GetFrameTreeNodeId();
   return kTopFrameId;
 }
@@ -88,7 +89,7 @@ int ExtensionApiFrameIdMap::GetFrameId(content::RenderFrameHost* rfh) {
 // static
 int ExtensionApiFrameIdMap::GetFrameId(
     content::NavigationHandle* navigation_handle) {
-  return !navigation_handle->GetParentFrameOrOuterDocument()
+  return navigation_handle->IsInPrimaryMainFrame()
              ? kTopFrameId
              : navigation_handle->GetFrameTreeNodeId();
 }
@@ -118,7 +119,7 @@ content::RenderFrameHost* ExtensionApiFrameIdMap::GetRenderFrameHostById(
     return nullptr;
 
   if (frame_id == kTopFrameId)
-    return web_contents->GetMainFrame();
+    return web_contents->GetPrimaryMainFrame();
 
   DCHECK_GE(frame_id, 1);
 
@@ -129,10 +130,13 @@ content::RenderFrameHost* ExtensionApiFrameIdMap::GetRenderFrameHostById(
   content::RenderFrameHost* rfh =
       web_contents->UnsafeFindFrameByFrameTreeNodeId(frame_id);
 
-  // Fail if the frame is not active (e.g. in prerendering or in the
+  // Fail if the frame is not active or in prerendering (e.g. in the
   // back/forward cache).
-  if (!rfh || !rfh->IsActive())
+  if (!rfh || (!rfh->IsActive() &&
+               !rfh->IsInLifecycleState(
+                   content::RenderFrameHost::LifecycleState::kPrerendering))) {
     return nullptr;
+  }
 
   return rfh;
 }
@@ -159,7 +163,12 @@ ExtensionApiFrameIdMap::DocumentId ExtensionApiFrameIdMap::DocumentIdFromString(
     return DocumentId();
   }
 
-  return base::UnguessableToken::Deserialize(high, low);
+  absl::optional<base::UnguessableToken> token =
+      base::UnguessableToken::Deserialize(high, low);
+  if (!token.has_value()) {
+    return DocumentId();
+  }
+  return token.value();
 }
 
 ExtensionApiFrameIdMap::FrameData ExtensionApiFrameIdMap::KeyToValue(
@@ -299,7 +308,7 @@ void ExtensionApiFrameIdMap::OnRenderFrameDeleted(
   // cached when the beacon request comes in.
   deleted_frame_data_map_.insert(
       {key, KeyToValue(rfh, false /* require_live_frame */)});
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(
                      [](ExtensionApiFrameIdMap* self,
                         content::GlobalRenderFrameHostId key) {

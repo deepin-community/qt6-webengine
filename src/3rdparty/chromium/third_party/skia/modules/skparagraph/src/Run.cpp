@@ -1,15 +1,15 @@
 // Copyright 2019 Google LLC.
 #include "include/core/SkFontMetrics.h"
 #include "include/core/SkTextBlob.h"
-#include "include/private/SkFloatingPoint.h"
-#include "include/private/SkMalloc.h"
-#include "include/private/SkTo.h"
+#include "include/private/base/SkFloatingPoint.h"
+#include "include/private/base/SkMalloc.h"
+#include "include/private/base/SkTo.h"
 #include "modules/skparagraph/include/DartTypes.h"
 #include "modules/skparagraph/include/TextStyle.h"
 #include "modules/skparagraph/src/ParagraphImpl.h"
 #include "modules/skparagraph/src/Run.h"
 #include "modules/skshaper/include/SkShaper.h"
-#include "src/utils/SkUTF.h"
+#include "src/base/SkUTF.h"
 
 namespace skia {
 namespace textlayout {
@@ -30,6 +30,7 @@ Run::Run(ParagraphImpl* owner,
     , fGlyphData(std::make_shared<GlyphData>())
     , fGlyphs(fGlyphData->glyphs)
     , fPositions(fGlyphData->positions)
+    , fOffsets(fGlyphData->offsets)
     , fClusterIndexes(fGlyphData->clusterIndexes)
     , fHeightMultiplier(heightMultiplier)
     , fUseHalfLeading(useHalfLeading)
@@ -43,6 +44,7 @@ Run::Run(ParagraphImpl* owner,
 
     fGlyphs.push_back_n(info.glyphCount);
     fPositions.push_back_n(info.glyphCount + 1);
+    fOffsets.push_back_n(info.glyphCount + 1);
     fClusterIndexes.push_back_n(info.glyphCount + 1);
     info.fFont.getMetrics(&fFontMetrics);
 
@@ -50,6 +52,7 @@ Run::Run(ParagraphImpl* owner,
 
     // To make edge cases easier:
     fPositions[info.glyphCount] = fOffset + fAdvance;
+    fOffsets[info.glyphCount] = {0, 0};
     fClusterIndexes[info.glyphCount] = this->leftToRight() ? info.utf8Range.end() : info.utf8Range.begin();
     fEllipsis = false;
     fPlaceholderIndex = std::numeric_limits<size_t>::max();
@@ -79,7 +82,7 @@ void Run::calculateMetrics() {
 }
 
 SkShaper::RunHandler::Buffer Run::newRunBuffer() {
-    return {fGlyphs.data(), fPositions.data(), nullptr, fClusterIndexes.data(), fOffset};
+    return {fGlyphs.data(), fPositions.data(), fOffsets.data(), fClusterIndexes.data(), fOffset};
 }
 
 void Run::copyTo(SkTextBlobBuilder& builder, size_t pos, size_t size) const {
@@ -87,14 +90,13 @@ void Run::copyTo(SkTextBlobBuilder& builder, size_t pos, size_t size) const {
     const auto& blobBuffer = builder.allocRunPos(fFont, SkToInt(size));
     sk_careful_memcpy(blobBuffer.glyphs, fGlyphs.data() + pos, size * sizeof(SkGlyphID));
 
-    if (fJustificationShifts.empty()) {
-        sk_careful_memcpy(blobBuffer.points(), fPositions.data() + pos, size * sizeof(SkPoint));
-    } else {
-        for (size_t i = 0; i < size; ++i) {
-            auto point = fPositions[i + pos];
+    for (size_t i = 0; i < size; ++i) {
+        auto point = fPositions[i + pos];
+        if (!fJustificationShifts.empty()) {
             point.fX += fJustificationShifts[i + pos].fX;
-            blobBuffer.points()[i] = point;
         }
+        point += fOffsets[i + pos];
+        blobBuffer.points()[i] = point;
     }
 }
 
@@ -112,18 +114,40 @@ std::tuple<bool, ClusterIndex, ClusterIndex> Run::findLimitingClusters(TextRange
         }
     }
 
-    ClusterIndex startIndex = fOwner->clusterIndex(text.start);
-    ClusterIndex endIndex = fOwner->clusterIndex(text.end - 1);
-    if (!leftToRight()) {
-        std::swap(startIndex, endIndex);
+    ClusterRange clusterRange;
+    bool found = true;
+    // Deal with the case when either start or end are not align with glyph cluster edge
+    // In such case we shift the text range to the right
+    // (cutting from the left and adding to the right)
+    if (leftToRight()) {
+        // LTR: [start:end)
+        found = clusterRange.start != fClusterRange.end;
+        clusterRange.start = fOwner->clusterIndex(text.start);
+        clusterRange.end = fOwner->clusterIndex(text.end - 1);
+    } else {
+        // RTL: (start:end]
+        clusterRange.start = fOwner->clusterIndex(text.end);
+        clusterRange.end = fOwner->clusterIndex(text.start + 1);
+        found = clusterRange.end != fClusterRange.start;
     }
-    return std::make_tuple(startIndex != fClusterRange.end && endIndex != fClusterRange.end, startIndex, endIndex);
+
+    return std::make_tuple(
+            found,
+            clusterRange.start,
+            clusterRange.end);
+}
+
+std::tuple<bool, TextIndex, TextIndex> Run::findLimitingGlyphClusters(TextRange text) const {
+    TextIndex start = fOwner->findPreviousGlyphClusterBoundary(text.start);
+    TextIndex end = fOwner->findNextGlyphClusterBoundary(text.end);
+    return std::make_tuple(true, start, end);
 }
 
 // Adjust the text to grapheme edges so the first grapheme start is in the text and the last grapheme start is in the text
 // It actually means that the first grapheme is entirely in the text and the last grapheme does not have to be
+// 12345 234 2:2 -> 2,5 4:4
 std::tuple<bool, TextIndex, TextIndex> Run::findLimitingGraphemes(TextRange text) const {
-    TextIndex start = fOwner->findNextGraphemeBoundary(text.start);
+    TextIndex start = fOwner->findPreviousGraphemeBoundary(text.start);
     TextIndex end = fOwner->findNextGraphemeBoundary(text.end);
     return std::make_tuple(true, start, end);
 }
@@ -137,18 +161,11 @@ void Run::iterateThroughClusters(const ClusterVisitor& visitor) {
     }
 }
 
-SkScalar Run::addSpacesAtTheEnd(SkScalar space, Cluster* cluster) {
-    if (cluster->endPos() == cluster->startPos()) {
-        return 0;
-    }
-
-    fPositions[cluster->endPos() - 1].fX += space;
+void Run::addSpacesAtTheEnd(SkScalar space, Cluster* cluster) {
     // Increment the run width
     fAdvance.fX += space;
     // Increment the cluster width
-    cluster->space(space, space);
-
-    return space;
+    cluster->space(space);
 }
 
 SkScalar Run::addSpacesEvenly(SkScalar space) {
@@ -176,7 +193,7 @@ SkScalar Run::addSpacesEvenly(SkScalar space, Cluster* cluster) {
     // Increment the run width
     fAdvance.fX += shift;
     // Increment the cluster width
-    cluster->space(shift, space);
+    cluster->space(shift);
     cluster->setHalfLetterSpacing(space / 2);
 
     return shift;
@@ -296,6 +313,15 @@ PlaceholderStyle* Run::placeholderStyle() const {
     }
 }
 
+bool Run::isResolved() const {
+    for (auto& glyph :fGlyphs) {
+        if (glyph == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
 Run* Cluster::runOrNull() const {
     if (fRunIndex >= fOwner->runs().size()) {
         return nullptr;
@@ -314,11 +340,12 @@ SkFont Cluster::font() const {
 }
 
 bool Cluster::isSoftBreak() const {
-    return fOwner->codeUnitHasProperty(fTextRange.end, CodeUnitFlags::kSoftLineBreakBefore);
+    return fOwner->codeUnitHasProperty(fTextRange.end,
+                                       SkUnicode::CodeUnitFlags::kSoftLineBreakBefore);
 }
 
 bool Cluster::isGraphemeBreak() const {
-    return fOwner->codeUnitHasProperty(fTextRange.end, CodeUnitFlags::kGraphemeStart);
+    return fOwner->codeUnitHasProperty(fTextRange.end, SkUnicode::CodeUnitFlags::kGraphemeStart);
 }
 }  // namespace textlayout
 }  // namespace skia

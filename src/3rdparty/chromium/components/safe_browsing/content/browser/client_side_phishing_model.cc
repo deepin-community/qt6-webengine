@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -31,19 +31,46 @@ namespace {
 // provided with an absolute path.
 const char kOverrideCsdModelFlag[] = "csd-model-override-path";
 
-std::string ReadFileIntoString(base::FilePath path) {
-  if (path.empty())
-    return std::string();
+void ReturnModelOverrideFailure(
+    base::OnceCallback<void(std::pair<std::string, base::File>)> callback) {
+  content::GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE, base::BindOnce(std::move(callback),
+                                std::make_pair(std::string(), base::File())));
+}
 
-  base::File file(path, base::File::FLAG_OPEN | base::File::FLAG_READ);
-  if (!file.IsValid())
-    return std::string();
+void ReadOverridenModel(
+    base::FilePath path,
+    base::OnceCallback<void(std::pair<std::string, base::File>)> callback) {
+  if (path.empty()) {
+    VLOG(2) << "Failed to override model. Path is empty.";
+    ReturnModelOverrideFailure(std::move(callback));
+    return;
+  }
 
-  std::vector<char> model_data(file.GetLength());
-  if (file.ReadAtCurrentPos(model_data.data(), model_data.size()) == -1)
-    return std::string();
+  base::File model(path.AppendASCII("client_model.pb"),
+                   base::File::FLAG_OPEN | base::File::FLAG_READ);
+  base::File tflite_model(path.AppendASCII("visual_model.tflite"),
+                          base::File::FLAG_OPEN | base::File::FLAG_READ);
+  // `tflite_model` is allowed to be invalid, when testing a DOM-only model.
+  if (!model.IsValid()) {
+    VLOG(2) << "Failed to override model. Could not open: "
+            << path.AppendASCII("client_model.pb");
+    ReturnModelOverrideFailure(std::move(callback));
+    return;
+  }
 
-  return std::string(model_data.begin(), model_data.end());
+  std::vector<char> model_data(model.GetLength());
+  if (model.ReadAtCurrentPos(model_data.data(), model_data.size()) == -1) {
+    VLOG(2) << "Failed to override model. Could not read model data.";
+    ReturnModelOverrideFailure(std::move(callback));
+    return;
+  }
+
+  content::GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE, base::BindOnce(std::move(callback),
+                                std::make_pair(std::string(model_data.begin(),
+                                                           model_data.end()),
+                                               std::move(tflite_model))));
 }
 
 }  // namespace
@@ -111,7 +138,7 @@ void ClientSidePhishingModel::PopulateFromDynamicUpdate(
   AutoLock lock(lock_);
 
   bool model_valid = false;
-  int model_version_field = 0;
+  bool tflite_valid = visual_tflite_model.IsValid();
 
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
           kOverrideCsdModelFlag) &&
@@ -127,8 +154,6 @@ void ClientSidePhishingModel::PopulateFromDynamicUpdate(
             base::ReadOnlySharedMemoryRegion::Create(model_str.length());
         if (mapped_region_.IsValid()) {
           model_type_ = CSDModelType::kFlatbuffer;
-          model_version_field =
-              flat::GetClientSideModel(model_str.data())->version();
           memcpy(mapped_region_.mapping.memory(), model_str.data(),
                  model_str.length());
         } else {
@@ -143,7 +168,6 @@ void ClientSidePhishingModel::PopulateFromDynamicUpdate(
       model_valid = model_proto.ParseFromString(model_str);
       if (model_valid) {
         model_type_ = CSDModelType::kProtobuf;
-        model_version_field = model_proto.version();
         model_str_ = model_str;
       }
     }
@@ -151,19 +175,9 @@ void ClientSidePhishingModel::PopulateFromDynamicUpdate(
     base::UmaHistogramBoolean("SBClientPhishing.ModelDynamicUpdateSuccess",
                               model_valid);
 
-    if (model_valid) {
-      // At time of writing, versions go up to 25. We set a max version of 100
-      // to give some room.
-      const int kMaxVersion = 100;
-      base::UmaHistogramExactLinear(
-          "SBClientPhishing.ModelDynamicUpdateVersion", model_version_field,
-          kMaxVersion + 1);
+    if (tflite_valid) {
+      visual_tflite_model_ = std::move(visual_tflite_model);
     }
-  }
-
-  bool tflite_valid = visual_tflite_model.IsValid();
-  if (tflite_valid) {
-    visual_tflite_model_ = std::move(visual_tflite_model);
   }
 
   if (model_valid || tflite_valid) {
@@ -205,28 +219,38 @@ void* ClientSidePhishingModel::GetFlatBufferMemoryAddressForTesting() {
   return mapped_region_.mapping.memory();
 }
 
+void ClientSidePhishingModel::NotifyCallbacksOfUpdateForTesting() {
+  // base::Unretained is safe because this is a singleton.
+  content::GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE, base::BindOnce(&ClientSidePhishingModel::NotifyCallbacksOnUI,
+                                base::Unretained(this)));
+}
+
 void ClientSidePhishingModel::MaybeOverrideModel() {
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           kOverrideCsdModelFlag)) {
-    base::FilePath overriden_model_path =
+    base::FilePath overriden_model_directory =
         base::CommandLine::ForCurrentProcess()->GetSwitchValuePath(
             kOverrideCsdModelFlag);
     CSDModelType model_type =
         base::FeatureList::IsEnabled(kClientSideDetectionModelIsFlatBuffer)
             ? CSDModelType::kFlatbuffer
             : CSDModelType::kProtobuf;
-    base::ThreadPool::PostTaskAndReplyWithResult(
+    base::ThreadPool::PostTask(
         FROM_HERE, {base::MayBlock()},
-        base::BindOnce(&ReadFileIntoString, overriden_model_path),
-        // base::Unretained is safe because this is a singleton.
-        base::BindOnce(&ClientSidePhishingModel::OnGetOverridenModelData,
-                       base::Unretained(this), model_type));
+        base::BindOnce(
+            &ReadOverridenModel, overriden_model_directory,
+            // base::Unretained is safe because this is a singleton.
+            base::BindOnce(&ClientSidePhishingModel::OnGetOverridenModelData,
+                           base::Unretained(this), model_type)));
   }
 }
 
 void ClientSidePhishingModel::OnGetOverridenModelData(
     CSDModelType model_type,
-    const std::string& model_data) {
+    std::pair<std::string, base::File> model_and_tflite) {
+  const std::string& model_data = model_and_tflite.first;
+  base::File tflite_model = std::move(model_and_tflite.second);
   if (model_data.empty()) {
     VLOG(2) << "Overriden model data is empty";
     return;
@@ -267,6 +291,10 @@ void ClientSidePhishingModel::OnGetOverridenModelData(
     case CSDModelType::kNone:
       VLOG(2) << "Model type should have been either proto or flatbuffer";
       return;
+  }
+
+  if (tflite_model.IsValid()) {
+    visual_tflite_model_ = std::move(tflite_model);
   }
 
   VLOG(2) << "Model overriden successfully";

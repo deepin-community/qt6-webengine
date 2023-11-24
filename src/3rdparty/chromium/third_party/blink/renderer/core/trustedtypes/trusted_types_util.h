@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,6 +14,9 @@ namespace blink {
 
 class ExceptionState;
 class ExecutionContext;
+class QualifiedName;
+class ScriptValue;
+class ScriptState;
 class V8UnionStringOrTrustedScript;
 class V8UnionStringTreatNullAsEmptyStringOrTrustedScript;
 
@@ -86,6 +89,25 @@ TrustedTypesCheckForExecCommand(const String&,
 // Example: To determine whether 'eval' may pass, one needs to also take CSP
 // into account.
 CORE_EXPORT bool RequireTrustedTypesCheck(const ExecutionContext*);
+
+// Determine whether an attribute is considered an event handler by Trusted
+// Types.
+//
+// Note: This is different from Element::IsEventHandlerAttribute, because
+// Element only needs this distinction for built-in attributes, but not for
+// user-defined property names. But Trusted Types needs this for any built-in or
+// user-defined attribute/property, and thus must check against a list of known
+// event handlers.
+bool IsTrustedTypesEventHandlerAttribute(const QualifiedName&);
+
+// Return a string, if the passed-in script value is a literal. With "literal"
+// meaning it passes the checks for TrustedType's fromLiteral definition.
+//
+// If an error occurs, this will return a null-String.
+//
+// Spec:
+// https://w3c.github.io/webappsec-trusted-types/dist/spec/#check-templatedness-algorithm
+String GetTrustedTypesLiteral(const ScriptValue&, ScriptState*);
 
 }  // namespace blink
 

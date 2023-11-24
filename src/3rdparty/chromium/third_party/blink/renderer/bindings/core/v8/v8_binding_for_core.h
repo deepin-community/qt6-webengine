@@ -32,6 +32,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_BINDINGS_CORE_V8_V8_BINDING_FOR_CORE_H_
 #define THIRD_PARTY_BLINK_RENDERER_BINDINGS_CORE_V8_V8_BINDING_FOR_CORE_H_
 
+#include "base/check_op.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/bindings/core/v8/native_value_traits.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
@@ -41,7 +42,6 @@
 #include "third_party/blink/renderer/platform/bindings/dom_data_store.h"
 #include "third_party/blink/renderer/platform/bindings/dom_wrapper_world.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
-#include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/bindings/v8_binding.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
@@ -53,6 +53,10 @@
 
 namespace blink {
 
+namespace scheduler {
+class EventLoop;
+}  // namespace scheduler
+
 // This file contains core-specific bindings utility functions. For functions
 // that are core independent, see platform/bindings/V8Binding.h. When adding a
 // new utility function, consider adding it to V8Binding.h instead unless it has
@@ -61,11 +65,11 @@ namespace blink {
 class DOMWindow;
 class ExceptionState;
 class ExecutionContext;
-class FlexibleArrayBufferView;
 class Frame;
 class LocalDOMWindow;
 class LocalFrame;
 class XPathNSResolver;
+class ScriptState;
 
 // Determines how a V8 -> C++ union conversion should be performed: when the
 // JavaScript value being converted is either undefined or null, kNullable will
@@ -261,8 +265,9 @@ inline uint64_t ToUInt64(v8::Isolate* isolate,
 // NaNs and +/-Infinity should be 0, otherwise modulo 2^64.
 // Step 8 - 12 of https://webidl.spec.whatwg.org/#abstract-opdef-converttoint
 inline uint64_t DoubleToInteger(double d) {
-  if (std::isnan(d) || std::isinf(d))
+  if (!std::isfinite(d)) {
     return 0;
+  }
   constexpr uint64_t kMaxULL = std::numeric_limits<uint64_t>::max();
 
   // -2^{64} < fmod_value < 2^{64}.
@@ -377,7 +382,7 @@ VectorOf<typename NativeValueTraits<IDLType>::ImplType> ToImplArguments(
     ExceptionState& exception_state,
     ExecutionContext* execution_context) {
   using TraitsType = NativeValueTraits<IDLType>;
-  using VectorType = VectorOf<typename TraitsType::ImplType>;
+  using VectorType = VectorOf<typename NativeValueTraits<IDLType>::ImplType>;
 
   int length = info.Length();
   VectorType result;
@@ -465,10 +470,6 @@ CORE_EXPORT ScriptState* ToScriptStateForMainWorld(LocalFrame*);
 // a context, if the window is currently being displayed in a Frame.
 CORE_EXPORT LocalFrame* ToLocalFrameIfNotDetached(v8::Local<v8::Context>);
 
-CORE_EXPORT void ToFlexibleArrayBufferView(v8::Isolate*,
-                                           v8::Local<v8::Value>,
-                                           FlexibleArrayBufferView&);
-
 CORE_EXPORT bool IsValidEnum(const String& value,
                              const char* const* valid_values,
                              size_t length,
@@ -519,8 +520,10 @@ CORE_EXPORT Vector<String> GetOwnPropertyNames(v8::Isolate*,
                                                const v8::Local<v8::Object>&,
                                                ExceptionState&);
 
-v8::MicrotaskQueue* ToMicrotaskQueue(ExecutionContext*);
-v8::MicrotaskQueue* ToMicrotaskQueue(ScriptState*);
+CORE_EXPORT v8::MicrotaskQueue* ToMicrotaskQueue(ExecutionContext*);
+CORE_EXPORT v8::MicrotaskQueue* ToMicrotaskQueue(ScriptState*);
+CORE_EXPORT scheduler::EventLoop& ToEventLoop(ExecutionContext*);
+CORE_EXPORT scheduler::EventLoop& ToEventLoop(ScriptState*);
 
 // Helper finction used in the callback functions to validate context.
 // Returns true if the given execution context and V8 context are capable to run

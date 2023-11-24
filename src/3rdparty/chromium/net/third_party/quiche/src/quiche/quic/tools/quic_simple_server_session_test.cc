@@ -19,7 +19,6 @@
 #include "quiche/quic/core/quic_utils.h"
 #include "quiche/quic/core/quic_versions.h"
 #include "quiche/quic/core/tls_server_handshaker.h"
-#include "quiche/quic/platform/api/quic_containers.h"
 #include "quiche/quic/platform/api/quic_expect_bug.h"
 #include "quiche/quic/platform/api/quic_flags.h"
 #include "quiche/quic/platform/api/quic_socket_address.h"
@@ -180,7 +179,7 @@ class MockQuicSimpleServerSession : public QuicSimpleServerSession {
                const spdy::Http2HeaderBlock& headers),
               ());
 
-  MOCK_METHOD(void, SendBlocked, (QuicStreamId), (override));
+  MOCK_METHOD(void, SendBlocked, (QuicStreamId, QuicStreamOffset), (override));
   MOCK_METHOD(bool, WriteControlFrame,
               (const QuicFrame& frame, TransmissionType type), (override));
 };
@@ -492,8 +491,7 @@ TEST_P(QuicSimpleServerSessionTest, CreateOutgoingDynamicStreamUptoLimit) {
 
   if (!VersionUsesHttp3(transport_version())) {
     session_->UnregisterStreamPriority(
-        QuicUtils::GetHeadersStreamId(transport_version()),
-        /*is_static=*/true);
+        QuicUtils::GetHeadersStreamId(transport_version()));
   }
   // Assume encryption already established.
   QuicSimpleServerSessionPeer::SetCryptoStream(session_.get(), nullptr);
@@ -504,8 +502,7 @@ TEST_P(QuicSimpleServerSessionTest, CreateOutgoingDynamicStreamUptoLimit) {
   if (!VersionUsesHttp3(transport_version())) {
     session_->RegisterStreamPriority(
         QuicUtils::GetHeadersStreamId(transport_version()),
-        /*is_static=*/true,
-        spdy::SpdyStreamPrecedence(QuicStream::kDefaultPriority));
+        /*is_static=*/true, QuicStreamPriority());
   }
 
   // Create push streams till reaching the upper limit of allowed open streams.

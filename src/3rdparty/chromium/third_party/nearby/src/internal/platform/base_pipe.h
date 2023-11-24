@@ -27,10 +27,9 @@
 #include "internal/platform/input_stream.h"
 #include "internal/platform/output_stream.h"
 
-namespace location {
 namespace nearby {
 
-// Common Pipe implenentation.
+// Common Pipe implementation.
 // It does not depend on platform implementation, and this allows it to
 // be used in the platform implementation itself.
 // Concrete class must be derived from it, as follows:
@@ -133,6 +132,5 @@ class BasePipe {
 };
 
 }  // namespace nearby
-}  // namespace location
 
 #endif  // PLATFORM_BASE_BASE_PIPE_H_

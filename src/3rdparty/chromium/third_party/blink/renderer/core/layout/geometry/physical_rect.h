@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -41,8 +41,14 @@ struct CORE_EXPORT PhysicalRect {
                          LayoutUnit height)
       : offset(left, top), size(width, height) {}
 
+  // This is deleted to avoid unwanted lossy conversion from float or double to
+  // LayoutUnit or int. Use explicit LayoutUnit constructor for each parameter,
+  // or use EnclosingRect() or FastAndLossyFromRectF() instead.
+  PhysicalRect(double, double, double, double) = delete;
+
   // For testing only. It's defined in core/testing/core_unit_test_helper.h.
-  inline PhysicalRect(int left, int top, int width, int height);
+  // 'constexpr' is to let compiler detect usage from production code.
+  constexpr PhysicalRect(int left, int top, int width, int height);
 
   PhysicalOffset offset;
   PhysicalSize size;
@@ -77,6 +83,10 @@ struct CORE_EXPORT PhysicalRect {
   }
   bool operator!=(const PhysicalRect& other) const { return !(*this == other); }
 
+  PhysicalRect operator+(const PhysicalOffset& other) const {
+    return {offset + other, size};
+  }
+
   // Returns the distance to |target| in horizontal and vertical directions.
   // Each distance is zero if |this| contains |target| in that direction.
   PhysicalSize DistanceAsSize(PhysicalOffset target) const;
@@ -92,6 +102,11 @@ struct CORE_EXPORT PhysicalRect {
   }
   bool Contains(const PhysicalOffset& point) const {
     return Contains(point.left, point.top);
+  }
+  // Variant of Contains() that also returns true if |point| falls on the right
+  // or bottom edge.
+  bool ContainsInclusive(const PhysicalOffset& point) const {
+    return Contains(PhysicalRect(point, PhysicalSize()));
   }
 
   [[nodiscard]] bool Intersects(const PhysicalRect&) const;
@@ -205,8 +220,18 @@ struct CORE_EXPORT PhysicalRect {
   explicit PhysicalRect(const gfx::Rect& r)
       : offset(r.origin()), size(r.size()) {}
 
+  // Returns a big enough rect that can contain all reasonable rendered results.
+  // The rect can be used as a "non-clipping" clip rect. The rect can be
+  // modified to clip at one or more sides, e.g.
+  //   gfx::Rect r = LayoutRect::InfiniteRect();
+  //   r.set_width(clip_right - r.x());
   static constexpr gfx::Rect InfiniteIntRect() {
     return LayoutRect::InfiniteIntRect();
+  }
+
+  void Scale(float s) {
+    offset.Scale(s);
+    size.Scale(s);
   }
 
   String ToString() const;

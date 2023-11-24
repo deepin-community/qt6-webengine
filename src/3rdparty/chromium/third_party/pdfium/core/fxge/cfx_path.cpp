@@ -1,10 +1,12 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 // Original code copyright 2014 Foxit Software Inc. http://www.foxitsoftware.com
 
 #include "core/fxge/cfx_path.h"
+
+#include <math.h>
 
 #include <algorithm>
 #include <iterator>
@@ -174,15 +176,14 @@ void UpdateLineJoinPoints(CFX_FloatRect* rect,
     start_k = (mid_pos.y - start_pos.y) / (mid_pos.x - start_pos.x);
     start_c = mid_pos.y - (start_k * mid_pos.x);
     start_len = FXSYS_sqrt2(start_to_mid.x, start_to_mid.y);
-    start_dc =
-        static_cast<float>(fabs(half_width * start_len / start_to_mid.x));
+    start_dc = fabsf(half_width * start_len / start_to_mid.x);
   }
   if (!bEndVert) {
     CFX_PointF end_to_mid = end_pos - mid_pos;
     end_k = end_to_mid.y / end_to_mid.x;
     end_c = mid_pos.y - (end_k * mid_pos.x);
     end_len = FXSYS_sqrt2(end_to_mid.x, end_to_mid.y);
-    end_dc = static_cast<float>(fabs(half_width * end_len / end_to_mid.x));
+    end_dc = fabs(half_width * end_len / end_to_mid.x);
   }
   if (bStartVert) {
     CFX_PointF outside(start_pos.x, 0);
@@ -339,9 +340,14 @@ CFX_FloatRect CFX_Path::GetBoundingBoxForStrokePath(float line_width,
   size_t iMiddlePoint = 0;
   bool bJoin;
   while (iPoint < m_Points.size()) {
-    if (m_Points[iPoint].IsTypeAndOpen(CFX_Path::Point::Type::kMove)) {
-      if (iPoint + 1 == m_Points.size())
+    if (m_Points[iPoint].m_Type == CFX_Path::Point::Type::kMove) {
+      if (iPoint + 1 == m_Points.size()) {
+        if (m_Points[iPoint].m_CloseFigure) {
+          // Update `rect` right away since this is the final point to be drawn.
+          rect.UpdateRect(m_Points[iPoint].m_Point);
+        }
         break;
+      }
 
       iStartPoint = iPoint + 1;
       iEndPoint = iPoint;
@@ -357,7 +363,7 @@ CFX_FloatRect CFX_Path::GetBoundingBoxForStrokePath(float line_width,
         iPoint += 2;
       }
       if (iPoint == m_Points.size() - 1 ||
-          m_Points[iPoint + 1].IsTypeAndOpen(CFX_Path::Point::Type::kMove)) {
+          m_Points[iPoint + 1].m_Type == CFX_Path::Point::Type::kMove) {
         iStartPoint = iPoint - 1;
         iEndPoint = iPoint;
         bJoin = false;
@@ -379,7 +385,7 @@ CFX_FloatRect CFX_Path::GetBoundingBoxForStrokePath(float line_width,
       UpdateLineEndPoints(&rect, m_Points[iStartPoint].m_Point,
                           m_Points[iEndPoint].m_Point, half_width);
     }
-    iPoint++;
+    ++iPoint;
   }
   return rect;
 }

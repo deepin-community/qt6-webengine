@@ -1,15 +1,17 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_EXO_SURFACE_DELEGATE_H_
 #define COMPONENTS_EXO_SURFACE_DELEGATE_H_
 
+#include "chromeos/ui/frame/caption_buttons/snap_controller.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/size_f.h"
 
 namespace exo {
+class SecurityDelegate;
 class Surface;
 
 // Frame types that can be used to decorate a surface.
@@ -67,8 +69,8 @@ class SurfaceDelegate {
 
   // Called when the client was snapped to primary or secondary position, and
   // reset.
-  virtual void SetSnappedToPrimary() = 0;
-  virtual void SetSnappedToSecondary() = 0;
+  virtual void SetSnapPrimary(float snap_ratio) = 0;
+  virtual void SetSnapSecondary(float snap_ratio) = 0;
   virtual void UnsetSnap() = 0;
 
   // Whether the current client window can go back, as per its navigation list.
@@ -78,6 +80,9 @@ class SurfaceDelegate {
   // Called when surface was requested to enter pip.
   virtual void SetPip() = 0;
   virtual void UnsetPip() = 0;
+
+  // Called when surface was requested to enter float.
+  virtual void SetFloat() = 0;
 
   // Called when surface was requested to maintain an aspect ratio.
   virtual void SetAspectRatio(const gfx::SizeF& aspect_ratio) = 0;
@@ -100,6 +105,13 @@ class SurfaceDelegate {
 
   // Releases the pinned mode and allows the user to do other things again.
   virtual void Unpin() = 0;
+
+  // Sets the system modality.
+  virtual void SetSystemModal(bool modal) = 0;
+
+  // Returns the SecurityDelegate which this surface should use to perform
+  // security-sensitive operations. See go/secure-exo-ids for more information.
+  virtual SecurityDelegate* GetSecurityDelegate() = 0;
 
  protected:
   virtual ~SurfaceDelegate() {}

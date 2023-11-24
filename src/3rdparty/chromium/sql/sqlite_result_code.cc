@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -161,7 +161,8 @@ constexpr SqliteResultCodeMappingEntry kResultCodeMapping[] = {
     {SQLITE_BUSY_TIMEOUT,
      static_cast<int>(SqliteLoggedResultCode::kUnusedChrome)},
 #ifdef SQLITE_ENABLE_SETLK_TIMEOUT
-#error "This code assumes that Chrome does not use
+#error "This code assumes that Chrome does not use blocking Posix advisory \
+file lock requests"
 #endif
 
     {SQLITE_READONLY_ROLLBACK,

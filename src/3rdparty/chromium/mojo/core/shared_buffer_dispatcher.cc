@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -163,8 +163,13 @@ scoped_refptr<SharedBufferDispatcher> SharedBufferDispatcher::Deserialize(
 #endif
   handles[0] = std::move(platform_handles[0]);
 
-  base::UnguessableToken guid = base::UnguessableToken::Deserialize(
-      serialized_state->guid_high, serialized_state->guid_low);
+  absl::optional<base::UnguessableToken> guid =
+      base::UnguessableToken::Deserialize(serialized_state->guid_high,
+                                          serialized_state->guid_low);
+  if (!guid.has_value()) {
+    AssertNotExtractingHandlesFromMessage();
+    return nullptr;
+  }
 
   base::subtle::PlatformSharedMemoryRegion::Mode mode;
   switch (serialized_state->access_mode) {
@@ -186,7 +191,7 @@ scoped_refptr<SharedBufferDispatcher> SharedBufferDispatcher::Deserialize(
   auto region = base::subtle::PlatformSharedMemoryRegion::Take(
       CreateSharedMemoryRegionHandleFromPlatformHandles(std::move(handles[0]),
                                                         std::move(handles[1])),
-      mode, static_cast<size_t>(serialized_state->num_bytes), guid);
+      mode, static_cast<size_t>(serialized_state->num_bytes), guid.value());
   if (!region.IsValid()) {
     AssertNotExtractingHandlesFromMessage();
     LOG(ERROR)
@@ -258,10 +263,10 @@ MojoResult SharedBufferDispatcher::DuplicateBufferHandle(
     } else if (region_.GetMode() ==
                base::subtle::PlatformSharedMemoryRegion::Mode::kWritable) {
       auto handle = region_.PassPlatformHandle();
-#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_MAC)
-      // On POSIX systems excluding Android, Fuchsia, and OSX, we explicitly
-      // wipe out the secondary (read-only) FD from the platform handle to
-      // repurpose it for exclusive unsafe usage.
+#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_APPLE)
+      // On POSIX systems excluding Android, Fuchsia, iOS, and macOS, we
+      // explicitly wipe out the secondary (read-only) FD from the platform
+      // handle to repurpose it for exclusive unsafe usage.
       handle.readonly_fd.reset();
 #endif
       region_ = base::subtle::PlatformSharedMemoryRegion::Take(

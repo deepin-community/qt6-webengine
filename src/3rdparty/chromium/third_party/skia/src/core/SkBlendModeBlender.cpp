@@ -14,8 +14,9 @@
 #include "src/gpu/ganesh/effects/GrBlendFragmentProcessor.h"
 #endif
 
-#ifdef SK_ENABLE_SKSL
-#include "src/core/SkKeyHelpers.h"
+#ifdef SK_GRAPHITE_ENABLED
+#include "src/gpu/graphite/KeyHelpers.h"
+#include "src/gpu/graphite/PaintParamsKey.h"
 #endif
 
 sk_sp<SkBlender> SkBlender::Mode(SkBlendMode mode) {
@@ -63,15 +64,21 @@ sk_sp<SkBlender> SkBlender::Mode(SkBlendMode mode) {
 #undef RETURN_SINGLETON_BLENDER
 }
 
-#ifdef SK_ENABLE_SKSL
-void SkBlenderBase::addToKey(const SkKeyContext& keyContext,
-                             SkPaintParamsKeyBuilder* builder,
-                             SkPipelineDataGatherer* gatherer) const {
+#ifdef SK_GRAPHITE_ENABLED
+void SkBlenderBase::addToKey(const skgpu::graphite::KeyContext& keyContext,
+                             skgpu::graphite::PaintParamsKeyBuilder* builder,
+                             skgpu::graphite::PipelineDataGatherer* gatherer,
+                             bool primitiveColorBlender) const {
+    using namespace skgpu::graphite;
 
-    if (std::optional<SkBlendMode> bm = as_BB(this)->asBlendMode(); bm.has_value()) {
-        BlendModeBlock::AddToKey(keyContext, builder, gatherer, bm.value());
-    } else {
-        BlendModeBlock::AddToKey(keyContext, builder, gatherer, SkBlendMode::kSrcOver);
+    std::optional<SkBlendMode> bm = as_BB(this)->asBlendMode();
+    if (primitiveColorBlender && bm.has_value()) {
+        PrimitiveBlendModeBlock::BeginBlock(keyContext, builder, gatherer, bm.value());
+        builder->endBlock();
+    } else if (!primitiveColorBlender) {
+        BlendModeBlock::BeginBlock(keyContext, builder, gatherer,
+                                   bm.value_or(SkBlendMode::kSrcOver));
+        builder->endBlock();
     }
 }
 #endif

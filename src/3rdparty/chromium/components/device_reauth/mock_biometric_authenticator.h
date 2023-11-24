@@ -1,11 +1,11 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_DEVICE_REAUTH_MOCK_BIOMETRIC_AUTHENTICATOR_H_
 #define COMPONENTS_DEVICE_REAUTH_MOCK_BIOMETRIC_AUTHENTICATOR_H_
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "components/device_reauth/biometric_authenticator.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
@@ -16,13 +16,16 @@ class MockBiometricAuthenticator : public BiometricAuthenticator {
  public:
   MockBiometricAuthenticator();
 
-  MOCK_METHOD(BiometricsAvailability,
-              CanAuthenticate,
-              (BiometricAuthRequester),
-              (override));
+  MOCK_METHOD(bool, CanAuthenticate, (BiometricAuthRequester), (override));
   MOCK_METHOD(void,
               Authenticate,
-              (BiometricAuthRequester, AuthenticateCallback),
+              (BiometricAuthRequester, AuthenticateCallback, bool),
+              (override));
+  MOCK_METHOD(void,
+              AuthenticateWithMessage,
+              (BiometricAuthRequester,
+               const std::u16string&,
+               AuthenticateCallback),
               (override));
   MOCK_METHOD(void, Cancel, (BiometricAuthRequester), (override));
 

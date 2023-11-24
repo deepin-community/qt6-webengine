@@ -1,10 +1,11 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/sync_load_context.h"
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
 #include "base/threading/thread.h"
 #include "base/time/time.h"
@@ -16,9 +17,9 @@
 #include "services/network/test/test_url_loader_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/platform/resource_load_info_notifier_wrapper.h"
-#include "third_party/blink/public/platform/web_back_forward_cache_loader_helper.h"
-#include "third_party/blink/public/platform/web_resource_request_sender.h"
+#include "third_party/blink/renderer/platform/loader/fetch/url_loader/resource_request_sender.h"
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/sync_load_response.h"
+#include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 
 namespace blink {
 
@@ -71,7 +72,7 @@ class MockPendingSharedURLLoaderFactory
   scoped_refptr<TestSharedURLLoaderFactory> factory_;
 };
 
-class MockResourceRequestSender : public WebResourceRequestSender {
+class MockResourceRequestSender : public ResourceRequestSender {
  public:
   void CreatePendingRequest(scoped_refptr<WebRequestPeer> peer) {
     peer_ = std::move(peer);
@@ -113,7 +114,7 @@ class SyncLoadContextTest : public testing::Test {
             nullptr /* terminate_sync_load_event */,
             base::Seconds(60) /* timeout */,
             mojo::NullRemote() /* download_to_blob_registry */,
-            WebVector<WebString>() /* cors_exempt_header_list */,
+            Vector<String>() /* cors_exempt_header_list */,
             std::make_unique<ResourceLoadInfoNotifierWrapper>(
                 /*resource_load_info_notifier=*/nullptr,
                 task_environment_.GetMainThreadTaskRunner())));
@@ -141,7 +142,8 @@ class SyncLoadContextTest : public testing::Test {
     context->resource_request_sender_ = std::move(mock_resource_request_sender);
 
     // Simulate the response.
-    context->OnReceivedResponse(network::mojom::URLResponseHead::New());
+    context->OnReceivedResponse(network::mojom::URLResponseHead::New(),
+                                base::TimeTicks());
     mojo::ScopedDataPipeProducerHandle producer_handle;
     mojo::ScopedDataPipeConsumerHandle consumer_handle;
     EXPECT_EQ(MOJO_RESULT_OK,
@@ -181,9 +183,9 @@ TEST_F(SyncLoadContextTest, StartAsyncWithWaitableEvent) {
 
   // Check if |response| is set properly after the WaitableEvent fires.
   EXPECT_EQ(net::OK, response.error_code);
-  const char* response_data = nullptr;
-  size_t size = response.data.GetSomeData(response_data, 0);
-  EXPECT_EQ(expected_data, std::string(response_data, size));
+  ASSERT_TRUE(response.data);
+  EXPECT_EQ(expected_data,
+            std::string(response.data->begin()->data(), response.data->size()));
 }
 
 TEST_F(SyncLoadContextTest, ResponseBodyViaDataPipe) {
@@ -210,9 +212,9 @@ TEST_F(SyncLoadContextTest, ResponseBodyViaDataPipe) {
 
   // Check if |response| is set properly after the WaitableEvent fires.
   EXPECT_EQ(net::OK, response.error_code);
-  const char* response_data = nullptr;
-  size_t size = response.data.GetSomeData(response_data, 0);
-  EXPECT_EQ(expected_data, std::string(response_data, size));
+  ASSERT_TRUE(response.data);
+  EXPECT_EQ(expected_data,
+            std::string(response.data->begin()->data(), response.data->size()));
 }
 
 }  // namespace blink

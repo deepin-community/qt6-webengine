@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,10 +6,10 @@
 
 #include "base/check.h"
 #include "base/debug/stack_trace.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_checker.h"
 #include "base/threading/thread_local.h"
-#include "base/threading/thread_task_runner_handle.h"
 
 namespace {
 bool g_log_thread_and_sequence_checker_binding = false;
@@ -86,11 +86,12 @@ bool ThreadCheckerImpl::CalledOnValidThread(
 
     // If this ThreadCheckerImpl is bound to a valid SequenceToken, it must be
     // equal to the current SequenceToken and there must be a registered
-    // ThreadTaskRunnerHandle. Otherwise, the fact that the current task runs on
-    // the thread to which this ThreadCheckerImpl is bound is fortuitous.
+    // SingleThreadTaskRunner::CurrentDefaultHandle. Otherwise, the fact that
+    // the current task runs on the thread to which this ThreadCheckerImpl is
+    // bound is fortuitous.
     if (sequence_token_.IsValid() &&
         (sequence_token_ != SequenceToken::GetForCurrentThread() ||
-         !ThreadTaskRunnerHandle::IsSet())) {
+         !SingleThreadTaskRunner::HasCurrentDefault())) {
       if (out_bound_at && bound_at_) {
         *out_bound_at = std::make_unique<debug::StackTrace>(*bound_at_);
       }

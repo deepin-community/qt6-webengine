@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,10 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/numerics/safe_conversions.h"
@@ -565,11 +565,11 @@ DownloadInterruptReason QuarantineFileResultToReason(
   return DOWNLOAD_INTERRUPT_REASON_FILE_FAILED;
 }
 
-// Given a source and a referrer, determines the "safest" URL that can be used
-// to determine the authority of the download source. Returns an empty URL if no
-// HTTP/S URL can be determined for the <|source_url|, |referrer_url|> pair.
-GURL GetEffectiveAuthorityURL(const GURL& source_url,
-                              const GURL& referrer_url) {
+}  // namespace
+
+// static
+GURL BaseFile::GetEffectiveAuthorityURL(const GURL& source_url,
+                                        const GURL& referrer_url) {
   if (source_url.is_valid()) {
     // http{,s} has an authority and are supported.
     if (source_url.SchemeIsHTTPOrHTTPS())
@@ -596,8 +596,6 @@ GURL GetEffectiveAuthorityURL(const GURL& source_url,
 
   return GURL();
 }
-
-}  // namespace
 
 void BaseFile::OnFileQuarantined(
     bool connection_error,

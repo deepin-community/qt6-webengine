@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,11 +12,15 @@
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/command_buffer_id.h"
 #include "gpu/command_buffer/common/constants.h"
@@ -141,7 +145,9 @@ class GPU_IPC_SERVICE_EXPORT CommandBufferStub
 
   // DecoderClient implementation:
   void OnConsoleMessage(int32_t id, const std::string& message) override;
-  void CacheShader(const std::string& key, const std::string& shader) override;
+  void CacheBlob(gpu::GpuDiskCacheType type,
+                 const std::string& key,
+                 const std::string& blob) override;
   void OnFenceSyncRelease(uint64_t release) override;
   void OnDescheduleUntilFinished() override;
   void OnRescheduleAfterFinished() override;
@@ -201,7 +207,7 @@ class GPU_IPC_SERVICE_EXPORT CommandBufferStub
     bool is_context_current() const { return cache_use_.has_value(); }
 
    private:
-    CommandBufferStub& stub_;
+    const raw_ref<CommandBufferStub> stub_;
     bool have_context_ = false;
     absl::optional<gles2::ProgramCache::ScopedCacheUse> cache_use_;
   };
@@ -217,8 +223,6 @@ class GPU_IPC_SERVICE_EXPORT CommandBufferStub
                                 gfx::GpuFenceHandle handle) override;
   void GetGpuFenceHandle(uint32_t id,
                          GetGpuFenceHandleCallback callback) override;
-  void CreateImage(mojom::CreateImageParamsPtr params) override;
-  void DestroyImage(int32_t id) override;
   void SignalSyncToken(const SyncToken& sync_token, uint32_t id) override;
   void SignalQuery(uint32_t query, uint32_t id) override;
   void BindMediaReceiver(mojo::GenericPendingAssociatedReceiver receiver,
@@ -226,6 +230,11 @@ class GPU_IPC_SERVICE_EXPORT CommandBufferStub
 
   virtual void OnTakeFrontBuffer(const Mailbox& mailbox) {}
   virtual void OnReturnFrontBuffer(const Mailbox& mailbox, bool is_lost) {}
+  virtual void OnSetDefaultFramebufferSharedImage(const Mailbox& mailbox,
+                                                  int samples_count,
+                                                  bool preserve,
+                                                  bool needs_depth,
+                                                  bool needs_stencil) {}
 
   std::unique_ptr<MemoryTracker> CreateMemoryTracker() const;
 
@@ -318,7 +327,7 @@ class GPU_IPC_SERVICE_EXPORT CommandBufferStub
 
   base::ObserverList<DestructionObserver>::Unchecked destruction_observers_;
 
-  base::TimeTicks process_delayed_work_time_;
+  base::DeadlineTimer process_delayed_work_timer_;
   uint32_t previous_processed_num_;
   base::TimeTicks last_idle_time_;
 

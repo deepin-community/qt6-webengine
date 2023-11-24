@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,6 +12,7 @@
 #include "base/threading/thread_checker.h"
 #include "base/timer/timer.h"
 #include "cc/metrics/frame_sequence_tracker_collection.h"
+#include "cc/metrics/frame_sorter.h"
 #include "cc/metrics/video_playback_roughness_reporter.h"
 #include "components/power_scheduler/power_mode_voter.h"
 #include "components/viz/client/shared_bitmap_reporter.h"
@@ -73,9 +74,10 @@ class PLATFORM_EXPORT VideoFrameSubmitter
   // cc::mojom::CompositorFrameSinkClient implementation.
   void DidReceiveCompositorFrameAck(
       WTF::Vector<viz::ReturnedResource> resources) override;
-  void OnBeginFrame(
-      const viz::BeginFrameArgs&,
-      const WTF::HashMap<uint32_t, viz::FrameTimingDetails>&) override;
+  void OnBeginFrame(const viz::BeginFrameArgs&,
+                    const WTF::HashMap<uint32_t, viz::FrameTimingDetails>&,
+                    bool frame_ack,
+                    WTF::Vector<viz::ReturnedResource> resources) override;
   void OnBeginFramePausedChanged(bool paused) override {}
   void ReclaimResources(WTF::Vector<viz::ReturnedResource> resources) override;
   void OnCompositorFrameTransitionDirectiveProcessed(
@@ -203,9 +205,17 @@ class PLATFORM_EXPORT VideoFrameSubmitter
 
   base::OneShotTimer empty_frame_timer_;
 
-  absl::optional<int> last_frame_id_;
+  absl::optional<media::VideoFrame::ID> last_frame_id_;
 
+  // We use cc::FrameSorter directly, rather than via
+  // cc::CompositorFrameReportingController because video frames do not progress
+  // through all of the pipeline stages that traditional CompositorFrames do.
+  // Instead they are a specialized variant of compositor-only frames, submitted
+  // via a batch. So track the mapping of FrameToken to viz::BeginFrameArgs in
+  // `pending_frames_`, and denote their completion directly to `frame_sorter_`.
+  base::flat_map<uint32_t, viz::BeginFrameArgs> pending_frames_;
   cc::FrameSequenceTrackerCollection frame_trackers_;
+  cc::FrameSorter frame_sorter_;
 
   // The BeginFrameArgs passed to the most recent call of OnBeginFrame().
   // Required for FrameSequenceTrackerCollection::NotifySubmitFrame

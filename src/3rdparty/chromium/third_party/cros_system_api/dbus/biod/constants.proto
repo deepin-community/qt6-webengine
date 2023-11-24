@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -47,4 +47,10 @@ enum ScanResult {
   // Chrome OS specific error codes.
   SCAN_RESULT_NO_MATCH = 10000;  // Scan was success, but no template matched.
   SCAN_RESULT_MAX = 10001;
+}
+
+// Included in biod's BiometricsManagerStatusChanged.
+enum BiometricsManagerStatus {
+  INITIALIZED = 1;
+  // In the future, other values such as ERROR and UNINITIALIZED may be added.
 }

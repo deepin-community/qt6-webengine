@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,9 +13,11 @@
 #include <vector>
 
 #include "base/auto_reset.h"
-#include "base/bind.h"
+#include "base/debug/crash_logging.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
 #include "cc/base/devtools_instrumentation.h"
@@ -48,6 +50,9 @@ namespace {
 constexpr auto kSmoothnessTakesPriorityExpirationDelay =
     base::Milliseconds(250);
 
+// Make this less than kHungRendererDelay (15 sec).
+constexpr base::TimeDelta kHungCommitTimeout = base::Seconds(14);
+
 }  // namespace
 
 // Ensures that a CompletionEvent for commit is always signaled.
@@ -64,7 +69,7 @@ class ScopedCommitCompletionEvent {
         proxy_main_weak_ptr_(proxy_main_weak_ptr) {}
   ScopedCommitCompletionEvent(const ScopedCommitCompletionEvent&) = delete;
   ~ScopedCommitCompletionEvent() {
-    event_->Signal();
+    event_.ExtractAsDangling()->Signal();
     main_thread_task_runner_->PostTask(
         FROM_HERE, base::BindOnce(&ProxyMain::DidCompleteCommit,
                                   proxy_main_weak_ptr_, commit_timestamps_));
@@ -77,9 +82,9 @@ class ScopedCommitCompletionEvent {
   }
 
  private:
-  CompletionEvent* const event_;
+  raw_ptr<CompletionEvent> event_;
   CommitTimestamps commit_timestamps_;
-  base::SingleThreadTaskRunner* main_thread_task_runner_;
+  raw_ptr<base::SingleThreadTaskRunner> main_thread_task_runner_;
   base::WeakPtr<ProxyMain> proxy_main_weak_ptr_;
 };
 
@@ -109,6 +114,8 @@ ProxyImpl::ProxyImpl(
   last_raster_priority_ = SAME_PRIORITY_FOR_BOTH_TREES;
 
   SchedulerSettings scheduler_settings(settings->ToSchedulerSettings());
+  scheduler_settings.main_frame_before_commit_enabled =
+      base::FeatureList::IsEnabled(features::kNonBlockingCommit);
 
   std::unique_ptr<CompositorTimingHistory> compositor_timing_history(
       new CompositorTimingHistory(
@@ -188,10 +195,39 @@ void ProxyImpl::InitializeLayerTreeFrameSinkOnImpl(
     scheduler_->DidCreateAndInitializeLayerTreeFrameSink();
 }
 
-void ProxyImpl::SetDeferBeginMainFrameOnImpl(
-    bool defer_begin_main_frame) const {
+bool ProxyImpl::ShouldDeferBeginMainFrame() const {
+  return main_wants_defer_begin_main_frame_ ||
+         impl_wants_defer_begin_main_frame_;
+}
+
+void ProxyImpl::SetDeferBeginMainFrameFromMain(bool defer_begin_main_frame) {
+  // This is the impl-side update of a main-thread request (that is, through
+  // ProxyMain::SetDeferMainFrameUpdate) to defer BeginMainFrame.
   DCHECK(IsImplThread());
-  scheduler_->SetDeferBeginMainFrame(defer_begin_main_frame);
+  bool was_deferring = ShouldDeferBeginMainFrame();
+
+  main_wants_defer_begin_main_frame_ = defer_begin_main_frame;
+
+  bool should_defer = ShouldDeferBeginMainFrame();
+  if (was_deferring != should_defer)
+    scheduler_->SetDeferBeginMainFrame(ShouldDeferBeginMainFrame());
+}
+
+void ProxyImpl::SetPauseRendering(bool pause_rendering) {
+  DCHECK(IsImplThread());
+  scheduler_->SetPauseRendering(pause_rendering);
+}
+
+void ProxyImpl::SetDeferBeginMainFrameFromImpl(bool defer_begin_main_frame) {
+  // This is a request from the impl thread to defer BeginMainFrame.
+  DCHECK(IsImplThread());
+  bool was_deferring = ShouldDeferBeginMainFrame();
+
+  impl_wants_defer_begin_main_frame_ = defer_begin_main_frame;
+
+  bool should_defer = ShouldDeferBeginMainFrame();
+  if (was_deferring != should_defer)
+    scheduler_->SetDeferBeginMainFrame(ShouldDeferBeginMainFrame());
 }
 
 void ProxyImpl::SetNeedsRedrawOnImpl(const gfx::Rect& damage_rect) {
@@ -201,7 +237,6 @@ void ProxyImpl::SetNeedsRedrawOnImpl(const gfx::Rect& damage_rect) {
 }
 
 void ProxyImpl::SetNeedsCommitOnImpl() {
-  DCHECK(IsImplThread());
   SetNeedsCommitOnImplThread();
 }
 
@@ -224,6 +259,7 @@ void ProxyImpl::BeginMainFrameAbortedOnImpl(
   host_impl_->BeginMainFrameAborted(
       reason, std::move(swap_promises),
       scheduler_->last_dispatched_begin_main_frame_args(),
+      static_cast<bool>(data_for_commit_.get()),
       scroll_and_viewport_changes_synced);
   scheduler_->NotifyBeginMainFrameStarted(main_thread_start_time);
   scheduler_->BeginMainFrameAborted(reason);
@@ -293,9 +329,15 @@ void ProxyImpl::NotifyReadyToCommitOnImpl(
     const ThreadUnsafeCommitState* unsafe_state,
     base::TimeTicks main_thread_start_time,
     const viz::BeginFrameArgs& commit_args,
+    bool scroll_and_viewport_changes_synced,
     CommitTimestamps* commit_timestamps,
     bool commit_timeout) {
-  TRACE_EVENT0("cc", "ProxyImpl::NotifyReadyToCommitOnImpl");
+  {
+    TRACE_EVENT_WITH_FLOW0(
+        "viz,benchmark", "MainFrame.NotifyReadyToCommitOnImpl",
+        TRACE_ID_LOCAL(commit_state->trace_id),
+        TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
+  }
   DCHECK(!data_for_commit_.get());
   DCHECK(IsImplThread());
   DCHECK(base::FeatureList::IsEnabled(features::kNonBlockingCommit) ||
@@ -329,18 +371,36 @@ void ProxyImpl::NotifyReadyToCommitOnImpl(
 
   auto& begin_main_frame_metrics = commit_state->begin_main_frame_metrics;
 
-  host_impl_->ReadyToCommit(commit_args, begin_main_frame_metrics.get(),
-                            commit_timeout);
+  host_impl_->ReadyToCommit(commit_args, scroll_and_viewport_changes_synced,
+                            begin_main_frame_metrics.get(), commit_timeout);
 
   data_for_commit_ = std::make_unique<DataForCommit>(
       std::make_unique<ScopedCommitCompletionEvent>(
           completion_event, start_time, MainThreadTaskRunner(),
           proxy_main_weak_ptr_),
       std::move(commit_state), unsafe_state, commit_timestamps);
+  hung_commit_timer_.Start(
+      FROM_HERE, kHungCommitTimeout,
+      base::BindOnce(&ProxyImpl::OnHungCommit, base::Unretained(this)));
 
   // Extract metrics data from the layer tree host and send them to the
   // scheduler to pass them to the compositor_timing_history object.
   scheduler_->NotifyReadyToCommit(std::move(begin_main_frame_metrics));
+
+  // If scroll offsets were not synchronized by this commit we need another main
+  // frame to sync them.
+  if (!scroll_and_viewport_changes_synced)
+    scheduler_->SetNeedsBeginMainFrame();
+}
+
+void ProxyImpl::OnHungCommit() {
+  UMA_HISTOGRAM_BOOLEAN("Compositing.Renderer.CommitHung", true);
+  static auto* hung_commit_data = base::debug::AllocateCrashKeyString(
+      "hung_commit", base::debug::CrashKeySize::Size256);
+  std::string debug_info = scheduler_->GetHungCommitDebugInfo();
+  LOG(ERROR) << "commit hung: " << debug_info;
+  base::debug::SetCrashKeyString(hung_commit_data, debug_info);
+  scheduler_->TraceHungCommitDebugInfo();
 }
 
 void ProxyImpl::DidLoseLayerTreeFrameSinkOnImplThread() {
@@ -381,9 +441,20 @@ void ProxyImpl::OnCanDrawStateChanged(bool can_draw) {
 }
 
 void ProxyImpl::NotifyReadyToActivate() {
-  TRACE_EVENT0("cc", "ProxyImpl::NotifyReadyToActivate");
+  if (host_impl_->sync_tree() &&
+      !scheduler_->pending_tree_is_ready_for_activation()) {
+    TRACE_EVENT_WITH_FLOW0(
+        "viz,benchmark", "MainFrame.NotifyReadyToActivate",
+        TRACE_ID_LOCAL(host_impl_->sync_tree()->trace_id()),
+        TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
+  }
   DCHECK(IsImplThread());
   scheduler_->NotifyReadyToActivate();
+}
+
+bool ProxyImpl::IsReadyToActivate() {
+  DCHECK(IsImplThread());
+  return scheduler_->IsReadyToActivate();
 }
 
 void ProxyImpl::NotifyReadyToDraw() {
@@ -458,14 +529,13 @@ void ProxyImpl::RenewTreePriority() {
   bool user_interaction_in_progress =
       non_scroll_interaction_in_progress || scroll_type_considered_interaction;
 
-  if (host_impl_->ukm_manager()) {
-    host_impl_->ukm_manager()->SetUserInteractionInProgress(
-        user_interaction_in_progress);
-  }
-
   if (host_impl_->CurrentScrollCheckerboardsDueToNoRecording() &&
       base::FeatureList::IsEnabled(
           features::kPreferNewContentForCheckerboardedScrolls)) {
+    prefer_new_content = true;
+  }
+  if (scroll_type_considered_interaction &&
+      host_impl_->IsCurrentScrollMainRepainted()) {
     prefer_new_content = true;
   }
 
@@ -564,18 +634,26 @@ void ProxyImpl::NotifyImageDecodeRequestFinished() {
   SetNeedsCommitOnImplThread();
 }
 
+void ProxyImpl::NotifyTransitionRequestFinished(uint32_t sequence_id) {
+  DCHECK(IsImplThread());
+  MainThreadTaskRunner()->PostTask(
+      FROM_HERE, base::BindOnce(&ProxyMain::NotifyTransitionRequestFinished,
+                                proxy_main_weak_ptr_, sequence_id));
+}
+
 void ProxyImpl::DidPresentCompositorFrameOnImplThread(
     uint32_t frame_token,
     PresentationTimeCallbackBuffer::PendingCallbacks activated,
     const viz::FrameTimingDetails& details) {
-  auto main_thread_callbacks = std::move(activated.main_thread_callbacks);
   host_impl_->NotifyDidPresentCompositorFrameOnImplThread(
-      frame_token, std::move(activated.compositor_thread_callbacks), details);
+      frame_token, std::move(activated.compositor_successful_callbacks),
+      details);
 
   MainThreadTaskRunner()->PostTask(
       FROM_HERE, base::BindOnce(&ProxyMain::DidPresentCompositorFrame,
                                 proxy_main_weak_ptr_, frame_token,
-                                std::move(main_thread_callbacks),
+                                std::move(activated.main_callbacks),
+                                std::move(activated.main_successful_callbacks),
                                 details.presentation_feedback));
   if (scheduler_)
     scheduler_->DidPresentCompositorFrame(frame_token, details);
@@ -655,17 +733,31 @@ void ProxyImpl::ScheduledActionSendBeginMainFrame(
   std::unique_ptr<BeginMainFrameAndCommitState> begin_main_frame_state(
       new BeginMainFrameAndCommitState);
   begin_main_frame_state->begin_frame_args = args;
-  begin_main_frame_state->commit_data = host_impl_->ProcessCompositorDeltas();
+  DCHECK(!data_for_commit_ || data_for_commit_->unsafe_state->mutator_host);
+  begin_main_frame_state->commit_data = host_impl_->ProcessCompositorDeltas(
+      data_for_commit_ ? data_for_commit_->unsafe_state->mutator_host
+                       : nullptr);
   begin_main_frame_state->completed_image_decode_requests =
       host_impl_->TakeCompletedImageDecodeRequests();
-  begin_main_frame_state->finished_transition_request_sequence_ids =
-      host_impl_->TakeFinishedTransitionRequestSequenceIds();
   begin_main_frame_state->mutator_events = host_impl_->TakeMutatorEvents();
   begin_main_frame_state->active_sequence_trackers =
       host_impl_->FrameSequenceTrackerActiveTypes();
   begin_main_frame_state->evicted_ui_resources =
       host_impl_->EvictedUIResourcesExist();
+  begin_main_frame_state->trace_id =
+      (0x1llu << 51) |  // Signature bit chosen at random to avoid collisions
+      (args.frame_id.source_id << 32) |
+      (args.frame_id.sequence_number & 0xffffffff);
   host_impl_->WillSendBeginMainFrame();
+  {
+    TRACE_EVENT_WITH_FLOW1(
+        "viz,benchmark", "Graphics.Pipeline", TRACE_ID_GLOBAL(args.trace_id),
+        TRACE_EVENT_FLAG_FLOW_IN, "step", "SendBeginMainFrame");
+    TRACE_EVENT_WITH_FLOW0("viz,benchmark",
+                           "MainFrame.SendBeginMainFrameOnImpl",
+                           TRACE_ID_LOCAL(begin_main_frame_state->trace_id),
+                           TRACE_EVENT_FLAG_FLOW_OUT);
+  }
   MainThreadTaskRunner()->PostTask(
       FROM_HERE,
       base::BindOnce(&ProxyMain::BeginMainFrame, proxy_main_weak_ptr_,
@@ -693,22 +785,22 @@ DrawResult ProxyImpl::ScheduledActionDrawForced() {
 }
 
 void ProxyImpl::ScheduledActionCommit() {
-  TRACE_EVENT0("cc", "ProxyImpl::ScheduledActionCommit");
+  {
+    TRACE_EVENT_WITH_FLOW0(
+        "viz,benchmark", "MainFrame.BeginCommit",
+        TRACE_ID_LOCAL(data_for_commit_->commit_state->trace_id),
+        TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
+  }
   DCHECK(IsImplThread());
   DCHECK(base::FeatureList::IsEnabled(features::kNonBlockingCommit) ||
          IsMainThreadBlocked());
   DCHECK(data_for_commit_.get());
   DCHECK(data_for_commit_->IsValid());
 
-  // Relax the cross-thread access restriction to non-thread-safe RefCount.
-  // It's safe since the main thread is blocked while a main-thread-bound
-  // compositor stuff are accessed from the impl thread.
-  base::ScopedAllowCrossThreadRefCountAccess
-      allow_cross_thread_ref_count_access;
-
   auto* commit_state = data_for_commit_->commit_state.get();
-  auto* unsafe_state = data_for_commit_->unsafe_state;
-  host_impl_->BeginCommit(commit_state->source_frame_number);
+  auto* unsafe_state = data_for_commit_->unsafe_state.get();
+  host_impl_->BeginCommit(commit_state->source_frame_number,
+                          commit_state->trace_id);
   host_impl_->FinishCommit(*commit_state, *unsafe_state);
   base::TimeTicks finish_time = base::TimeTicks::Now();
   if (data_for_commit_->commit_timestamps)
@@ -725,16 +817,30 @@ void ProxyImpl::ScheduledActionCommit() {
   }
 
   data_for_commit_.reset();
-  scheduler_->DidCommit();
-  // Delay this step until afer the main thread has been released as it's
-  // often a good bit of work to update the tree and prepare the new frame.
-  host_impl_->CommitComplete();
+  hung_commit_timer_.Stop();
+}
 
-  next_frame_is_newly_committed_frame_ = true;
+void ProxyImpl::ScheduledActionPostCommit() {
+  DCHECK(IsImplThread());
+  TRACE_EVENT_WITH_FLOW0("viz,benchmark", "MainFrame.CommitComplete",
+                         TRACE_ID_LOCAL(host_impl_->sync_tree()->trace_id()),
+                         TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
+
+  // This is run as a separate step from commit because it can be time-consuming
+  // and ought not delay sending the next BeginMainFrame.
+  host_impl_->CommitComplete();
 }
 
 void ProxyImpl::ScheduledActionActivateSyncTree() {
-  TRACE_EVENT0("cc", "ProxyImpl::ScheduledActionActivateSyncTree");
+  if (host_impl_->sync_tree() &&
+      host_impl_->sync_tree()->source_frame_number() !=
+          host_impl_->active_tree()->source_frame_number()) {
+    TRACE_EVENT_WITH_FLOW0(
+        "viz,benchmark", "MainFrame.Activate",
+        TRACE_ID_LOCAL(host_impl_->sync_tree()->trace_id()),
+        TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
+    next_frame_is_newly_committed_frame_ = true;
+  }
   DCHECK(IsImplThread());
   host_impl_->ActivateSyncTree();
 }
@@ -785,6 +891,10 @@ DrawResult ProxyImpl::DrawInternal(bool forced_draw) {
   DCHECK(IsImplThread());
   DCHECK(host_impl_.get());
 
+  TRACE_EVENT_WITH_FLOW0("viz,benchmark", "MainFrame.Draw",
+                         TRACE_ID_LOCAL(host_impl_->active_tree()->trace_id()),
+                         TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
+
   base::AutoReset<bool> mark_inside(&inside_draw_, true);
 
   // This method is called on a forced draw, regardless of whether we are able
@@ -831,12 +941,13 @@ DrawResult ProxyImpl::DrawInternal(bool forced_draw) {
   bool start_ready_animations = draw_frame;
   host_impl_->UpdateAnimationState(start_ready_animations);
 
-  // Tell the main thread that the newly-commited frame was drawn.
+  // Tell the main thread that the frame was drawn.
   if (next_frame_is_newly_committed_frame_) {
     next_frame_is_newly_committed_frame_ = false;
     MainThreadTaskRunner()->PostTask(
-        FROM_HERE, base::BindOnce(&ProxyMain::DidCommitAndDrawFrame,
-                                  proxy_main_weak_ptr_));
+        FROM_HERE,
+        base::BindOnce(&ProxyMain::DidCommitAndDrawFrame, proxy_main_weak_ptr_,
+                       host_impl_->active_tree()->source_frame_number()));
   }
 
   // The tile visibility/priority of the pending tree needs to be updated so
@@ -885,11 +996,6 @@ size_t ProxyImpl::CommitDurationSampleCountForTesting() const {
 void ProxyImpl::SetRenderFrameObserver(
     std::unique_ptr<RenderFrameMetadataObserver> observer) {
   host_impl_->SetRenderFrameObserver(std::move(observer));
-}
-
-void ProxyImpl::SetEnableFrameRateThrottling(
-    bool enable_frame_rate_throttling) {
-  host_impl_->SetEnableFrameRateThrottling(enable_frame_rate_throttling);
 }
 
 ProxyImpl::DataForCommit::DataForCommit(

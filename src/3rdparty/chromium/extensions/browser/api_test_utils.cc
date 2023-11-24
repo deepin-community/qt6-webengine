@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/json/json_reader.h"
 #include "base/values.h"
 #include "components/crx_file/id_util.h"
@@ -17,17 +17,17 @@
 #include "extensions/browser/extension_function.h"
 #include "extensions/browser/extension_function_dispatcher.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 using extensions::ExtensionFunctionDispatcher;
 
 namespace {
 
-std::unique_ptr<base::Value> ParseJSON(const std::string& data) {
-  return base::JSONReader::ReadDeprecated(data);
-}
-
-std::unique_ptr<base::ListValue> ParseList(const std::string& data) {
-  return base::ListValue::From(ParseJSON(data));
+absl::optional<base::Value::List> ParseList(const std::string& data) {
+  absl::optional<base::Value> result = base::JSONReader::Read(data);
+  if (!result || !result->is_list())
+    return absl::nullopt;
+  return std::move(*result).TakeList();
 }
 
 }  // namespace
@@ -42,7 +42,7 @@ SendResponseHelper::SendResponseHelper(ExtensionFunction* function) {
       base::BindOnce(&SendResponseHelper::OnResponse, base::Unretained(this)));
 }
 
-SendResponseHelper::~SendResponseHelper() {}
+SendResponseHelper::~SendResponseHelper() = default;
 
 bool SendResponseHelper::GetResponse() {
   EXPECT_TRUE(has_response());
@@ -50,8 +50,9 @@ bool SendResponseHelper::GetResponse() {
 }
 
 void SendResponseHelper::OnResponse(ExtensionFunction::ResponseType response,
-                                    base::Value results,
-                                    const std::string& error) {
+                                    base::Value::List results,
+                                    const std::string& error,
+                                    mojom::ExtraResponseDataPtr) {
   ASSERT_NE(ExtensionFunction::BAD_MESSAGE, response);
   response_ = std::make_unique<bool>(response == ExtensionFunction::SUCCEEDED);
   run_loop_.Quit();
@@ -61,98 +62,95 @@ void SendResponseHelper::WaitForResponse() {
   run_loop_.Run();
 }
 
-std::unique_ptr<base::DictionaryValue> ParseDictionary(
-    const std::string& data) {
-  return base::DictionaryValue::From(ParseJSON(data));
+absl::optional<base::Value::Dict> ParseDictionary(const std::string& data) {
+  absl::optional<base::Value> value = base::JSONReader::Read(data);
+  if (!value || !value->is_dict())
+    return absl::nullopt;
+  return std::move(*value).TakeDict();
 }
 
-bool GetBoolean(const base::Value::DictStorage& dict, const std::string& key) {
-  auto iter = dict.find(key);
-  if (iter == dict.end() || !iter->second.is_bool()) {
+bool GetBoolean(const base::Value::Dict& dict, const std::string& key) {
+  absl::optional<bool> value = dict.FindBool(key);
+  if (!value.has_value()) {
     ADD_FAILURE() << key << " does not exist or is not a boolean.";
     return false;
   }
-  return iter->second.GetBool();
+  return *value;
 }
 
-int GetInteger(const base::Value::DictStorage& dict, const std::string& key) {
-  auto iter = dict.find(key);
-  if (iter == dict.end() || !iter->second.is_int()) {
+int GetInteger(const base::Value::Dict& dict, const std::string& key) {
+  absl::optional<int> value = dict.FindInt(key);
+  if (!value.has_value()) {
     ADD_FAILURE() << key << " does not exist or is not an integer.";
     return 0;
   }
-  return iter->second.GetInt();
+  return *value;
 }
 
-std::string GetString(const base::Value::DictStorage& dict,
-                      const std::string& key) {
-  auto iter = dict.find(key);
-  if (iter == dict.end() || !iter->second.is_string()) {
+std::string GetString(const base::Value::Dict& dict, const std::string& key) {
+  const std::string* value = dict.FindString(key);
+  if (!value) {
     ADD_FAILURE() << key << " does not exist or is not a string.";
     return "";
   }
-  return iter->second.GetString();
+  return *value;
 }
 
-std::unique_ptr<base::ListValue> GetList(const base::Value::DictStorage& dict,
-                                         const std::string& key) {
-  auto iter = dict.find(key);
-  if (iter == dict.end() || !iter->second.is_list()) {
+base::Value::List GetList(const base::Value::Dict& dict,
+                          const std::string& key) {
+  const base::Value::List* value = dict.FindList(key);
+  if (!value) {
     ADD_FAILURE() << key << " does not exist or is not a list.";
-    return std::make_unique<base::ListValue>();
+    return base::Value::List();
   }
-  return base::ListValue::From(
-      base::Value::ToUniquePtrValue(iter->second.Clone()));
+  return value->Clone();
 }
 
-base::Value::DictStorage GetDict(const base::Value::DictStorage& dict,
-                                 const std::string& key) {
-  auto iter = dict.find(key);
-  if (iter == dict.end() || !iter->second.is_dict()) {
+base::Value::Dict GetDict(const base::Value::Dict& dict,
+                          const std::string& key) {
+  const base::Value::Dict* value = dict.FindDict(key);
+  if (!value) {
     ADD_FAILURE() << key << " does not exist or is not a dict.";
-    return base::Value::DictStorage();
+    return base::Value::Dict();
   }
-  return iter->second.Clone().TakeDictDeprecated();
+  return value->Clone();
 }
 
-std::unique_ptr<base::Value> RunFunctionWithDelegateAndReturnSingleResult(
+absl::optional<base::Value> RunFunctionWithDelegateAndReturnSingleResult(
     scoped_refptr<ExtensionFunction> function,
     const std::string& args,
     std::unique_ptr<extensions::ExtensionFunctionDispatcher> dispatcher,
     RunFunctionFlags flags) {
-  std::unique_ptr<base::ListValue> parsed_args = ParseList(args);
-  EXPECT_TRUE(parsed_args.get())
-      << "Could not parse extension function arguments: " << args;
+  absl::optional<base::Value::List> parsed_args = ParseList(args);
+  CHECK(parsed_args) << "Could not parse extension function arguments: "
+                     << args;
 
   return RunFunctionWithDelegateAndReturnSingleResult(
-      function, std::move(parsed_args), std::move(dispatcher), flags);
+      function, std::move(*parsed_args), std::move(dispatcher), flags);
 }
 
-std::unique_ptr<base::Value> RunFunctionWithDelegateAndReturnSingleResult(
+absl::optional<base::Value> RunFunctionWithDelegateAndReturnSingleResult(
     scoped_refptr<ExtensionFunction> function,
-    std::unique_ptr<base::ListValue> args,
-    std::unique_ptr<extensions::ExtensionFunctionDispatcher> dispatcher,
+    base::Value::List args,
+    std::unique_ptr<ExtensionFunctionDispatcher> dispatcher,
     RunFunctionFlags flags) {
   RunFunction(function.get(), std::move(args), std::move(dispatcher), flags);
-  EXPECT_TRUE(function->GetError().empty()) << "Unexpected error: "
-                                            << function->GetError();
-  if (function->GetResultList() &&
-      !function->GetResultList()->GetListDeprecated().empty()) {
-    const base::Value& single_result =
-        function->GetResultList()->GetListDeprecated()[0];
-    return std::make_unique<base::Value>(single_result.Clone());
-  }
-  return nullptr;
+  EXPECT_TRUE(function->GetError().empty())
+      << "Unexpected error: " << function->GetError();
+  const base::Value::List* results = function->GetResultListForTest();
+  if (!results || results->empty())
+    return absl::nullopt;
+  return (*results)[0].Clone();
 }
 
-std::unique_ptr<base::Value> RunFunctionAndReturnSingleResult(
+absl::optional<base::Value> RunFunctionAndReturnSingleResult(
     ExtensionFunction* function,
     const std::string& args,
     content::BrowserContext* context) {
   return RunFunctionAndReturnSingleResult(function, args, context, NONE);
 }
 
-std::unique_ptr<base::Value> RunFunctionAndReturnSingleResult(
+absl::optional<base::Value> RunFunctionAndReturnSingleResult(
     ExtensionFunction* function,
     const std::string& args,
     content::BrowserContext* context,
@@ -181,10 +179,9 @@ std::string RunFunctionAndReturnError(ExtensionFunction* function,
   RunFunction(function, args, std::move(dispatcher), flags);
   // When sending a response, the function will set an empty list value if there
   // is no specified result.
-  const base::ListValue* results = function->GetResultList();
+  const base::Value::List* results = function->GetResultListForTest();
   CHECK(results);
-  EXPECT_TRUE(results->GetListDeprecated().empty())
-      << "Did not expect a result";
+  EXPECT_TRUE(results->empty()) << "Did not expect a result";
   CHECK(function->response_type());
   EXPECT_EQ(ExtensionFunction::FAILED, *function->response_type());
   return function->GetError();
@@ -203,27 +200,26 @@ bool RunFunction(
     const std::string& args,
     std::unique_ptr<extensions::ExtensionFunctionDispatcher> dispatcher,
     RunFunctionFlags flags) {
-  std::unique_ptr<base::ListValue> parsed_args = ParseList(args);
-  EXPECT_TRUE(parsed_args.get())
-      << "Could not parse extension function arguments: " << args;
-  return RunFunction(function, std::move(parsed_args), std::move(dispatcher),
+  absl::optional<base::Value::List> parsed_args = ParseList(args);
+  CHECK(parsed_args) << "Could not parse extension function arguments: "
+                     << args;
+  return RunFunction(function, std::move(*parsed_args), std::move(dispatcher),
                      flags);
 }
 
-bool RunFunction(
-    ExtensionFunction* function,
-    std::unique_ptr<base::ListValue> args,
-    std::unique_ptr<extensions::ExtensionFunctionDispatcher> dispatcher,
-    RunFunctionFlags flags) {
+bool RunFunction(ExtensionFunction* function,
+                 base::Value::List args,
+                 std::unique_ptr<ExtensionFunctionDispatcher> dispatcher,
+                 RunFunctionFlags flags) {
   SendResponseHelper response_helper(function);
-  function->SetArgs(base::Value::FromUniquePtrValue(std::move(args)));
+  function->SetArgs(std::move(args));
 
   CHECK(dispatcher);
   function->SetDispatcher(dispatcher->AsWeakPtr());
 
   function->set_include_incognito_information(flags & INCLUDE_INCOGNITO);
   function->preserve_results_for_testing();
-  function->RunWithValidation()->Execute();
+  function->RunWithValidation().Execute();
   response_helper.WaitForResponse();
 
   EXPECT_TRUE(response_helper.has_response());

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,6 @@
 #include <string>
 #include <vector>
 
-#include "base/memory/ref_counted.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/string_util.h"
@@ -96,11 +95,11 @@ class NET_EXPORT HttpUtil {
   // RFC 7231).
   static bool IsMethodIdempotent(base::StringPiece method);
 
-  // Returns true if it is safe to allow users and scripts to specify the header
-  // named |name|. Returns true for headers not in the list at
-  // https://fetch.spec.whatwg.org/#forbidden-header-name. Does not check header
-  // validity.
-  static bool IsSafeHeader(base::StringPiece name);
+  // Returns true if it is safe to allow users and scripts to specify a header
+  // with a given |name| and |value|.
+  // See https://fetch.spec.whatwg.org/#forbidden-request-header.
+  // Does not check header validity.
+  static bool IsSafeHeader(base::StringPiece name, base::StringPiece value);
 
   // Returns true if |name| is a valid HTTP header name.
   static bool IsValidHeaderName(base::StringPiece name);
@@ -122,7 +121,7 @@ class NET_EXPORT HttpUtil {
   // Trim HTTP_LWS chars from the beginning and end of the string.
   static void TrimLWS(std::string::const_iterator* begin,
                       std::string::const_iterator* end);
-  static base::StringPiece TrimLWS(const base::StringPiece& string);
+  static base::StringPiece TrimLWS(base::StringPiece string);
 
   // Whether the character is a valid |tchar| as defined in RFC 7230 Sec 3.2.6.
   static bool IsTokenChar(char c);
@@ -450,7 +449,7 @@ class NET_EXPORT HttpUtil {
 
    private:
     HttpUtil::ValuesIterator props_;
-    bool valid_;
+    bool valid_ = true;
 
     std::string::const_iterator name_begin_;
     std::string::const_iterator name_end_;
@@ -463,7 +462,7 @@ class NET_EXPORT HttpUtil {
     // into the original's unquoted_value_ member.
     std::string unquoted_value_;
 
-    bool value_is_quoted_;
+    bool value_is_quoted_ = false;
 
     // True if values are required for each name/value pair; false if a
     // name is permitted to appear without a corresponding value.

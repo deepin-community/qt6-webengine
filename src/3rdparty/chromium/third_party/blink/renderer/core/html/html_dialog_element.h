@@ -45,7 +45,7 @@ class CORE_EXPORT HTMLDialogElement final : public HTMLElement {
   void Trace(Visitor*) const override;
 
   void close(const String& return_value = String());
-  void show();
+  void show(ExceptionState&);
   void showModal(ExceptionState&);
   void RemovedFrom(ContainerNode&) override;
 
@@ -56,8 +56,12 @@ class CORE_EXPORT HTMLDialogElement final : public HTMLElement {
     return_value_ = return_value;
   }
 
-  void CloseWatcherFiredCancel();
+  void CloseWatcherFiredCancel(Event*);
   void CloseWatcherFiredClose();
+
+  bool IsMouseFocusable() const override {
+    return isConnected() && IsFocusableStyleAfterUpdate();
+  }
 
  private:
   void DefaultEventHandler(Event&) override;
@@ -65,12 +69,21 @@ class CORE_EXPORT HTMLDialogElement final : public HTMLElement {
   void SetIsModal(bool is_modal);
   void ScheduleCloseEvent();
 
+  // https://html.spec.whatwg.org/C/#the-dialog-element
+  // Chooses the focused element when show() or showModal() is invoked.
+  void SetFocusForDialog();
+
+  // This is the old dialog initial focus behavior which is currently being
+  // replaced by SetFocusForDialog.
+  // TODO(http://crbug.com/383230): Remove this when DialogNewFocusBehavior gets
+  // to stable with no issues.
+  static void SetFocusForDialogLegacy(HTMLDialogElement* dialog);
+
   bool is_modal_;
   String return_value_;
   WeakMember<Element> previously_focused_element_;
 
   Member<CloseWatcher> close_watcher_;
-  bool cancel_fired_since_last_close_ = false;
 };
 
 }  // namespace blink

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,12 +7,14 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/gfx/linux/gbm_wrapper.h"
 #include "ui/ozone/platform/drm/gpu/drm_device.h"
 #include "ui/ozone/platform/drm/gpu/drm_device_generator.h"
+#include "ui/ozone/platform/drm/gpu/drm_thread.h"
 #include "ui/ozone/platform/drm/gpu/drm_window_proxy.h"
 #include "ui/ozone/platform/drm/gpu/gbm_pixmap.h"
 #include "ui/ozone/platform/drm/gpu/proxy_helpers.h"
@@ -33,25 +35,25 @@ void OnBufferCreatedOnDrmThread(
 
 class GbmDeviceGenerator : public DrmDeviceGenerator {
  public:
-  GbmDeviceGenerator() {}
+  GbmDeviceGenerator() = default;
 
   GbmDeviceGenerator(const GbmDeviceGenerator&) = delete;
   GbmDeviceGenerator& operator=(const GbmDeviceGenerator&) = delete;
 
-  ~GbmDeviceGenerator() override {}
+  ~GbmDeviceGenerator() override = default;
 
   // DrmDeviceGenerator:
   scoped_refptr<DrmDevice> CreateDevice(const base::FilePath& path,
-                                        base::File file,
+                                        base::ScopedFD fd,
                                         bool is_primary_device) override {
-    auto gbm = CreateGbmDevice(file.GetPlatformFile());
+    auto gbm = CreateGbmDevice(fd.get());
     if (!gbm) {
       PLOG(ERROR) << "Unable to initialize GBM for " << path.value();
       return nullptr;
     }
 
     auto drm = base::MakeRefCounted<DrmDevice>(
-        path, std::move(file), is_primary_device, std::move(gbm));
+        path, std::move(fd), is_primary_device, std::move(gbm));
     if (!drm->Initialize())
       return nullptr;
     return drm;
@@ -106,7 +108,8 @@ void DrmThreadProxy::CreateBufferAsync(gfx::AcceleratedWidget widget,
       &DrmThread::CreateBufferAsync, base::Unretained(&drm_thread_), widget,
       size, format, usage, flags,
       base::BindOnce(OnBufferCreatedOnDrmThread,
-                     base::ThreadTaskRunnerHandle::Get(), std::move(callback)));
+                     base::SingleThreadTaskRunner::GetCurrentDefault(),
+                     std::move(callback)));
   drm_thread_.task_runner()->PostTask(
       FROM_HERE,
       base::BindOnce(&DrmThread::RunTaskAfterDeviceReady,

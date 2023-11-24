@@ -1,10 +1,10 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/paint/svg_shape_painter.h"
 
-#include "base/stl_util.h"
+#include "base/types/optional_util.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_resource_marker.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_shape.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_layout_support.h"
@@ -12,11 +12,11 @@
 #include "third_party/blink/renderer/core/layout/svg/svg_resources.h"
 #include "third_party/blink/renderer/core/paint/paint_auto_dark_mode.h"
 #include "third_party/blink/renderer/core/paint/paint_info.h"
-#include "third_party/blink/renderer/core/paint/paint_timing.h"
 #include "third_party/blink/renderer/core/paint/scoped_svg_paint_state.h"
 #include "third_party/blink/renderer/core/paint/svg_container_painter.h"
 #include "third_party/blink/renderer/core/paint/svg_model_object_painter.h"
 #include "third_party/blink/renderer/core/paint/svg_object_painter.h"
+#include "third_party/blink/renderer/core/paint/timing/paint_timing.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context_state_saver.h"
 #include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_record.h"
@@ -79,8 +79,7 @@ void SVGShapePainter::Paint(const PaintInfo& paint_info) {
           case PT_FILL: {
             cc::PaintFlags fill_flags;
             if (!SVGObjectPainter(layout_svg_shape_)
-                     .PreparePaint(paint_info.context,
-                                   paint_info.IsRenderingClipPathAsMaskImage(),
+                     .PreparePaint(paint_info.IsRenderingClipPathAsMaskImage(),
                                    style, kApplyToFillMode, fill_flags)) {
               break;
             }
@@ -106,10 +105,9 @@ void SVGShapePainter::Paint(const PaintInfo& paint_info) {
               cc::PaintFlags stroke_flags;
               if (!SVGObjectPainter(layout_svg_shape_)
                        .PreparePaint(
-                           paint_info.context,
                            paint_info.IsRenderingClipPathAsMaskImage(), style,
                            kApplyToStrokeMode, stroke_flags,
-                           base::OptionalOrNullptr(non_scaling_transform))) {
+                           base::OptionalToPtr(non_scaling_transform))) {
                 break;
               }
               stroke_flags.setAntiAlias(should_anti_alias);
@@ -138,6 +136,8 @@ void SVGShapePainter::Paint(const PaintInfo& paint_info) {
 }
 
 class PathWithTemporaryWindingRule {
+  STACK_ALLOCATED();
+
  public:
   PathWithTemporaryWindingRule(Path& path, SkPathFillType fill_type)
       : path_(const_cast<SkPath&>(path.GetSkPath())) {
@@ -211,7 +211,7 @@ void SVGShapePainter::StrokeShape(GraphicsContext& context,
 void SVGShapePainter::PaintMarkers(const PaintInfo& paint_info) {
   const Vector<MarkerPosition>* marker_positions =
       layout_svg_shape_.MarkerPositions();
-  if (!marker_positions || marker_positions->IsEmpty())
+  if (!marker_positions || marker_positions->empty())
     return;
   SVGResourceClient* client = SVGResources::GetClient(layout_svg_shape_);
   const ComputedStyle& style = layout_svg_shape_.StyleRef();
@@ -249,16 +249,16 @@ void SVGShapePainter::PaintMarker(const PaintInfo& paint_info,
   cc::PaintCanvas* canvas = paint_info.context.Canvas();
 
   canvas->save();
-  canvas->concat(AffineTransformToSkMatrix(transform));
+  canvas->concat(AffineTransformToSkM44(transform));
   if (SVGLayoutSupport::IsOverflowHidden(marker))
     canvas->clipRect(gfx::RectFToSkRect(marker.Viewport()));
   auto* builder = MakeGarbageCollected<PaintRecordBuilder>(paint_info.context);
-  PaintInfo marker_paint_info(builder->Context(), paint_info);
   // It's expensive to track the transformed paint cull rect for each
   // marker so just disable culling. The shape paint call will already
   // be culled if it is outside the paint info cull rect.
-  marker_paint_info.ApplyInfiniteCullRect();
-
+  const PaintInfo marker_paint_info(builder->Context(), CullRect::Infinite(),
+                                    paint_info.phase,
+                                    paint_info.GetPaintFlags());
   SVGContainerPainter(marker).Paint(marker_paint_info);
   builder->EndRecording(*canvas);
 

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,15 +7,14 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_gpu_command_buffer_descriptor.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_gpu_command_encoder_descriptor.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_gpu_compute_pass_descriptor.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_gpu_compute_pass_timestamp_write.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_gpu_image_copy_buffer.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_gpu_image_copy_texture.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_gpu_render_pass_color_attachment.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_gpu_render_pass_depth_stencil_attachment.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_gpu_render_pass_descriptor.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_gpu_render_pass_timestamp_write.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_union_doublesequence_gpucolordict.h"
-#include "third_party/blink/renderer/bindings/modules/v8/v8_union_doublesequence_gpucolordict_gpuloadop.h"
-#include "third_party/blink/renderer/bindings/modules/v8/v8_union_float_gpuloadop.h"
-#include "third_party/blink/renderer/bindings/modules/v8/v8_union_gpuloadop_unsignedlongenforcerange.h"
 #include "third_party/blink/renderer/modules/webgpu/dawn_conversions.h"
 #include "third_party/blink/renderer/modules/webgpu/gpu_buffer.h"
 #include "third_party/blink/renderer/modules/webgpu/gpu_command_buffer.h"
@@ -23,6 +22,7 @@
 #include "third_party/blink/renderer/modules/webgpu/gpu_device.h"
 #include "third_party/blink/renderer/modules/webgpu/gpu_query_set.h"
 #include "third_party/blink/renderer/modules/webgpu/gpu_render_pass_encoder.h"
+#include "third_party/blink/renderer/modules/webgpu/gpu_supported_features.h"
 #include "third_party/blink/renderer/modules/webgpu/gpu_texture.h"
 #include "third_party/blink/renderer/modules/webgpu/gpu_texture_view.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -40,39 +40,38 @@ WGPURenderPassColorAttachment AsDawnType(
                                 : nullptr;
 
   if (webgpu_desc->hasClearValue()) {
-    dawn_desc.clearColor = AsDawnType(webgpu_desc->clearValue());
+    dawn_desc.clearValue = AsDawnType(webgpu_desc->clearValue());
   } else {
-    dawn_desc.clearColor = {};
+    dawn_desc.clearValue = {};
   }
+  dawn_desc.loadOp = AsDawnEnum(webgpu_desc->loadOp());
+  dawn_desc.storeOp = AsDawnEnum(webgpu_desc->storeOp());
 
-  if (webgpu_desc->hasLoadOp()) {
-    dawn_desc.loadOp = AsDawnEnum<WGPULoadOp>(webgpu_desc->loadOp());
-  } else if (webgpu_desc->hasLoadValue()) {
-    // TODO(dawn:1269): Remove this branch after the deprecation period.
-    switch (webgpu_desc->loadValue()->GetContentType()) {
-      case V8UnionGPUColorOrGPULoadOp::ContentType::kGPULoadOp:
-        dawn_desc.loadOp =
-            AsDawnEnum<WGPULoadOp>(webgpu_desc->loadValue()->GetAsGPULoadOp());
-        break;
-      case V8UnionGPUColorOrGPULoadOp::ContentType::kGPUColorDict:
-        dawn_desc.loadOp = WGPULoadOp_Clear;
-        dawn_desc.clearColor =
-            AsDawnType(webgpu_desc->loadValue()->GetAsGPUColorDict());
-        break;
-      case V8UnionGPUColorOrGPULoadOp::ContentType::kDoubleSequence:
-        dawn_desc.loadOp = WGPULoadOp_Clear;
-        dawn_desc.clearColor =
-            AsDawnColor(webgpu_desc->loadValue()->GetAsDoubleSequence());
-        break;
-    }
-  }
+  return dawn_desc;
+}
 
-  if (webgpu_desc->hasStoreOp()) {
-    dawn_desc.storeOp = AsDawnEnum<WGPUStoreOp>(webgpu_desc->storeOp());
-  } else {
-    // TODO(dawn:1269): Remove when deprecation period is complete.
-    dawn_desc.storeOp = WGPUStoreOp_Store;
-  }
+WGPUComputePassTimestampWrite AsDawnType(
+    const GPUComputePassTimestampWrite* webgpu_desc) {
+  DCHECK(webgpu_desc);
+  DCHECK(webgpu_desc->querySet());
+
+  WGPUComputePassTimestampWrite dawn_desc = {};
+  dawn_desc.querySet = webgpu_desc->querySet()->GetHandle();
+  dawn_desc.queryIndex = webgpu_desc->queryIndex();
+  dawn_desc.location = AsDawnEnum(webgpu_desc->location());
+
+  return dawn_desc;
+}
+
+WGPURenderPassTimestampWrite AsDawnType(
+    const GPURenderPassTimestampWrite* webgpu_desc) {
+  DCHECK(webgpu_desc);
+  DCHECK(webgpu_desc->querySet());
+
+  WGPURenderPassTimestampWrite dawn_desc = {};
+  dawn_desc.querySet = webgpu_desc->querySet()->GetHandle();
+  dawn_desc.queryIndex = webgpu_desc->queryIndex();
+  dawn_desc.location = AsDawnEnum(webgpu_desc->location());
 
   return dawn_desc;
 }
@@ -85,66 +84,27 @@ WGPURenderPassDepthStencilAttachment AsDawnType(
   DCHECK(webgpu_desc);
 
   WGPURenderPassDepthStencilAttachment dawn_desc = {};
-    dawn_desc.view = webgpu_desc->view()->GetHandle();
+  dawn_desc.view = webgpu_desc->view()->GetHandle();
 
-    if (webgpu_desc->hasDepthLoadOp()) {
-      dawn_desc.depthLoadOp =
-          AsDawnEnum<WGPULoadOp>(webgpu_desc->depthLoadOp());
-      dawn_desc.clearDepth = webgpu_desc->depthClearValue();
-    } else if (webgpu_desc->hasDepthLoadValue()) {
-      // TODO(dawn:1269): Remove this branch after the deprecation period.
-      device->AddConsoleWarning(
-          "depthLoadValue has been deprecated and will soon be removed. Use "
-          "depthLoadOp and depthClearValue instead.");
+  if (webgpu_desc->hasDepthLoadOp()) {
+    dawn_desc.depthLoadOp = AsDawnEnum(webgpu_desc->depthLoadOp());
+    dawn_desc.depthClearValue = webgpu_desc->depthClearValue();
+  }
 
-      switch (webgpu_desc->depthLoadValue()->GetContentType()) {
-        case V8UnionFloatOrGPULoadOp::ContentType::kGPULoadOp:
-          dawn_desc.depthLoadOp = AsDawnEnum<WGPULoadOp>(
-              webgpu_desc->depthLoadValue()->GetAsGPULoadOp());
-          dawn_desc.clearDepth = 1.0f;
-          break;
-        case V8UnionFloatOrGPULoadOp::ContentType::kFloat:
-          dawn_desc.depthLoadOp = WGPULoadOp_Clear;
-          dawn_desc.clearDepth = webgpu_desc->depthLoadValue()->GetAsFloat();
-          break;
-      }
-    }
+  if (webgpu_desc->hasDepthStoreOp()) {
+    dawn_desc.depthStoreOp = AsDawnEnum(webgpu_desc->depthStoreOp());
+  }
 
-    if (webgpu_desc->hasDepthStoreOp()) {
-      dawn_desc.depthStoreOp =
-          AsDawnEnum<WGPUStoreOp>(webgpu_desc->depthStoreOp());
-    }
+  dawn_desc.depthReadOnly = webgpu_desc->depthReadOnly();
 
-    dawn_desc.depthReadOnly = webgpu_desc->depthReadOnly();
+  if (webgpu_desc->hasStencilLoadOp()) {
+    dawn_desc.stencilLoadOp = AsDawnEnum(webgpu_desc->stencilLoadOp());
+    dawn_desc.stencilClearValue = webgpu_desc->stencilClearValue();
+  }
 
-    if (webgpu_desc->hasStencilLoadOp()) {
-      dawn_desc.stencilLoadOp =
-          AsDawnEnum<WGPULoadOp>(webgpu_desc->stencilLoadOp());
-      dawn_desc.clearStencil = webgpu_desc->stencilClearValue();
-    } else if (webgpu_desc->hasStencilLoadValue()) {
-      // TODO(dawn:1269): Remove this branch after the deprecation period.
-      device->AddConsoleWarning(
-          "stencilLoadValue has been deprecated and will soon be removed. Use "
-          "stencilLoadOp and stencilClearValue instead.");
-
-      switch (webgpu_desc->stencilLoadValue()->GetContentType()) {
-        case V8UnionGPULoadOpOrGPUStencilValue::ContentType::kGPULoadOp:
-          dawn_desc.stencilLoadOp = AsDawnEnum<WGPULoadOp>(
-              webgpu_desc->stencilLoadValue()->GetAsGPULoadOp());
-          dawn_desc.clearStencil = 0;
-          break;
-        case V8UnionGPULoadOpOrGPUStencilValue::ContentType::kV8GPUStencilValue:
-          dawn_desc.stencilLoadOp = WGPULoadOp_Clear;
-          dawn_desc.clearStencil =
-              webgpu_desc->stencilLoadValue()->GetAsV8GPUStencilValue();
-          break;
-      }
-    }
-
-    if (webgpu_desc->hasStencilStoreOp()) {
-      dawn_desc.stencilStoreOp =
-          AsDawnEnum<WGPUStoreOp>(webgpu_desc->stencilStoreOp());
-    }
+  if (webgpu_desc->hasStencilStoreOp()) {
+    dawn_desc.stencilStoreOp = AsDawnEnum(webgpu_desc->stencilStoreOp());
+  }
 
   dawn_desc.stencilReadOnly = webgpu_desc->stencilReadOnly();
 
@@ -210,45 +170,24 @@ GPURenderPassEncoder* GPUCommandEncoder::beginRenderPass(
     ExceptionState& exception_state) {
   DCHECK(descriptor);
 
-  // Until the .attachment property is removed manual validation needs to be
-  // done for every attachment point
-
   uint32_t color_attachment_count =
       static_cast<uint32_t>(descriptor->colorAttachments().size());
 
-  // Check loadValue color is correctly formatted before further processing.
+  // Check clearValue is correctly formatted before further processing.
   for (wtf_size_t i = 0; i < color_attachment_count; ++i) {
     const auto& maybe_color_attachment = descriptor->colorAttachments()[i];
     // Check if the color attachment is null since it is a sparse array
     if (!maybe_color_attachment) {
       continue;
     }
-
     const GPURenderPassColorAttachment* color_attachment =
         maybe_color_attachment.Get();
 
-    if (color_attachment->hasLoadOp()) {
-      if (color_attachment->hasClearValue() &&
-          color_attachment->clearValue()->IsDoubleSequence() &&
-          color_attachment->clearValue()->GetAsDoubleSequence().size() != 4) {
-        exception_state.ThrowRangeError("clearValue color size must be 4");
-        return nullptr;
-      }
-    } else if (color_attachment->hasLoadValue()) {
-      if (color_attachment->loadValue()->IsDoubleSequence() &&
-          color_attachment->loadValue()->GetAsDoubleSequence().size() != 4) {
-        exception_state.ThrowRangeError("loadValue color size must be 4");
-        return nullptr;
-      }
-
-      device_->AddConsoleWarning(
-          "loadValue has been deprecated and will soon be removed. Use loadOp "
-          "and clearValue instead.");
-    }
-
-    if (!color_attachment->hasStoreOp()) {
-      device_->AddConsoleWarning(
-          "storeOp will soon be required and no longer default to 'store'.");
+    if (color_attachment->hasClearValue() &&
+        color_attachment->clearValue()->IsDoubleSequence() &&
+        color_attachment->clearValue()->GetAsDoubleSequence().size() != 4) {
+      exception_state.ThrowRangeError("clearValue color size must be 4");
+      return nullptr;
     }
   }
 
@@ -283,6 +222,39 @@ GPURenderPassEncoder* GPUCommandEncoder::beginRenderPass(
     dawn_desc.occlusionQuerySet = nullptr;
   }
 
+  uint32_t timestamp_writes_count =
+      static_cast<uint32_t>(descriptor->timestampWrites().size());
+  dawn_desc.timestampWriteCount = timestamp_writes_count;
+  std::unique_ptr<WGPURenderPassTimestampWrite[]> timestamp_writes;
+  if (timestamp_writes_count > 0) {
+    V8GPUFeatureName::Enum requiredFeatureEnum =
+        V8GPUFeatureName::Enum::kTimestampQuery;
+    if (!device_->features()->has(requiredFeatureEnum)) {
+      exception_state.ThrowTypeError(
+          String::Format("Use of the timestampWrites member in render pass "
+                         "descriptor requires the '%s' "
+                         "feature to be enabled on %s.",
+                         V8GPUFeatureName(requiredFeatureEnum).AsCStr(),
+                         device_->formattedLabel().c_str()));
+      return nullptr;
+    }
+
+    timestamp_writes = AsDawnType(descriptor->timestampWrites());
+    dawn_desc.timestampWrites = timestamp_writes.get();
+  } else {
+    dawn_desc.timestampWrites = nullptr;
+  }
+
+  WGPURenderPassDescriptorMaxDrawCount max_draw_count = {};
+  if (descriptor->hasMaxDrawCount()) {
+    max_draw_count.chain.sType = WGPUSType_RenderPassDescriptorMaxDrawCount;
+    max_draw_count.maxDrawCount = descriptor->maxDrawCount();
+    dawn_desc.nextInChain =
+        reinterpret_cast<WGPUChainedStruct*>(&max_draw_count);
+  } else {
+    dawn_desc.nextInChain = nullptr;
+  }
+
   GPURenderPassEncoder* encoder = MakeGarbageCollected<GPURenderPassEncoder>(
       device_,
       GetProcs().commandEncoderBeginRenderPass(GetHandle(), &dawn_desc));
@@ -292,12 +264,36 @@ GPURenderPassEncoder* GPUCommandEncoder::beginRenderPass(
 }
 
 GPUComputePassEncoder* GPUCommandEncoder::beginComputePass(
-    const GPUComputePassDescriptor* descriptor) {
+    const GPUComputePassDescriptor* descriptor,
+    ExceptionState& exception_state) {
   std::string label;
   WGPUComputePassDescriptor dawn_desc = {};
   if (descriptor->hasLabel()) {
     label = descriptor->label().Utf8();
     dawn_desc.label = label.c_str();
+  }
+
+  uint32_t timestamp_writes_count =
+      static_cast<uint32_t>(descriptor->timestampWrites().size());
+  dawn_desc.timestampWriteCount = timestamp_writes_count;
+  std::unique_ptr<WGPUComputePassTimestampWrite[]> timestamp_writes;
+  if (timestamp_writes_count > 0) {
+    V8GPUFeatureName::Enum requiredFeatureEnum =
+        V8GPUFeatureName::Enum::kTimestampQuery;
+    if (!device_->features()->has(requiredFeatureEnum)) {
+      exception_state.ThrowTypeError(
+          String::Format("Use of the timestampWrites member in compute pass "
+                         "descriptor requires the '%s' "
+                         "feature to be enabled on %s.",
+                         V8GPUFeatureName(requiredFeatureEnum).AsCStr(),
+                         device_->formattedLabel().c_str()));
+      return nullptr;
+    }
+
+    timestamp_writes = AsDawnType(descriptor->timestampWrites());
+    dawn_desc.timestampWrites = timestamp_writes.get();
+  } else {
+    dawn_desc.timestampWrites = nullptr;
   }
 
   GPUComputePassEncoder* encoder = MakeGarbageCollected<GPUComputePassEncoder>(
@@ -355,6 +351,23 @@ void GPUCommandEncoder::copyTextureToTexture(GPUImageCopyTexture* source,
       GetHandle(), &dawn_source, &dawn_destination, &dawn_copy_size);
 }
 
+void GPUCommandEncoder::writeTimestamp(DawnObject<WGPUQuerySet>* querySet,
+                                       uint32_t queryIndex,
+                                       ExceptionState& exception_state) {
+  V8GPUFeatureName::Enum requiredFeatureEnum =
+      V8GPUFeatureName::Enum::kTimestampQuery;
+  if (!device_->features()->has(requiredFeatureEnum)) {
+    exception_state.ThrowTypeError(
+        String::Format("Use of the writeTimestamp() method requires the '%s' "
+                       "feature to be enabled on %s.",
+                       V8GPUFeatureName(requiredFeatureEnum).AsCStr(),
+                       device_->formattedLabel().c_str()));
+    return;
+  }
+  GetProcs().commandEncoderWriteTimestamp(GetHandle(), querySet->GetHandle(),
+                                          queryIndex);
+}
+
 GPUCommandBuffer* GPUCommandEncoder::finish(
     const GPUCommandBufferDescriptor* descriptor) {
   std::string label;
@@ -364,8 +377,13 @@ GPUCommandBuffer* GPUCommandEncoder::finish(
     dawn_desc.label = label.c_str();
   }
 
-  return MakeGarbageCollected<GPUCommandBuffer>(
+  GPUCommandBuffer* command_buffer = MakeGarbageCollected<GPUCommandBuffer>(
       device_, GetProcs().commandEncoderFinish(GetHandle(), &dawn_desc));
+  if (descriptor->hasLabel()) {
+    command_buffer->setLabel(descriptor->label());
+  }
+
+  return command_buffer;
 }
 
 }  // namespace blink

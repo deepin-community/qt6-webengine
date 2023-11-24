@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,8 @@
 
 #include <memory>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/guid.h"
 #include "content/browser/background_fetch/background_fetch_context.h"
 #include "content/browser/background_fetch/background_fetch_metrics.h"
@@ -39,6 +39,8 @@ void BackgroundFetchServiceImpl::CreateForWorker(
     const net::NetworkIsolationKey& network_isolation_key,
     const ServiceWorkerVersionBaseInfo& info,
     mojo::PendingReceiver<blink::mojom::BackgroundFetchService> receiver) {
+  // TODO(rayankans): Remove `network_isolation_key` parameter since it's no
+  // longer used.
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   RenderProcessHost* render_process_host =
       RenderProcessHost::FromID(info.process_id);
@@ -46,15 +48,36 @@ void BackgroundFetchServiceImpl::CreateForWorker(
   if (!render_process_host)
     return;
 
+  auto* partition = static_cast<StoragePartitionImpl*>(
+      render_process_host->GetStoragePartition());
   scoped_refptr<BackgroundFetchContext> context =
-      WrapRefCounted(static_cast<StoragePartitionImpl*>(
-                         render_process_host->GetStoragePartition())
-                         ->GetBackgroundFetchContext());
+      WrapRefCounted(partition->GetBackgroundFetchContext());
+
+  // The renderer should have checked and disallowed the request for fenced
+  // frames and thrown an exception in blink::BackgroundFetchManager. Ignore the
+  // request and mark it as bad if the renderer side check didn't happen for
+  // some reason.
+  scoped_refptr<ServiceWorkerRegistration> registration =
+      partition->GetServiceWorkerContext()->GetLiveRegistration(
+          info.registration_id);
+  if (registration && registration->ancestor_frame_type() ==
+                          blink::mojom::AncestorFrameType::kFencedFrame) {
+    bad_message::ReceivedBadMessage(
+        render_process_host, bad_message::BFSI_CREATE_FOR_WORKER_FENCED_FRAME);
+    return;
+  }
+
   mojo::MakeSelfOwnedReceiver(
       std::make_unique<BackgroundFetchServiceImpl>(
           std::move(context), info.storage_key,
-          net::IsolationInfo::CreatePartial(
-              net::IsolationInfo::RequestType::kOther, network_isolation_key),
+          net::IsolationInfo::Create(
+              net::IsolationInfo::RequestType::kOther,
+              url::Origin::Create(info.storage_key.top_level_site().GetURL()),
+              info.storage_key.origin(), info.storage_key.ToNetSiteForCookies(),
+              /*party_context=*/absl::nullopt,
+              info.storage_key.nonce().has_value()
+                  ? &info.storage_key.nonce().value()
+                  : nullptr),
           render_process_host, /*rfh=*/nullptr),
       std::move(receiver));
 }

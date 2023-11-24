@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,9 +19,9 @@
 
 namespace {
 
-content::WebUIDataSource* CreateSyncInternalsHTMLSource() {
-  content::WebUIDataSource* source =
-      content::WebUIDataSource::Create(chrome::kChromeUISyncInternalsHost);
+void CreateAndAddSyncInternalsHTMLSource(Profile* profile) {
+  content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
+      profile, chrome::kChromeUISyncInternalsHost);
   source->OverrideContentSecurityPolicy(
       network::mojom::CSPDirectiveName::ScriptSrc,
       "script-src chrome://resources 'self' 'unsafe-eval';");
@@ -35,17 +35,15 @@ content::WebUIDataSource* CreateSyncInternalsHTMLSource() {
                       kSyncDriverSyncInternalsResourcesSize));
 
   source->SetDefaultResource(IDR_SYNC_DRIVER_SYNC_INTERNALS_INDEX_HTML);
-  return source;
 }
 
 }  // namespace
 
 SyncInternalsUI::SyncInternalsUI(content::WebUI* web_ui)
     : WebUIController(web_ui) {
-  Profile* profile = Profile::FromWebUI(web_ui);
-  content::WebUIDataSource::Add(profile, CreateSyncInternalsHTMLSource());
+  CreateAndAddSyncInternalsHTMLSource(Profile::FromWebUI(web_ui));
 
   web_ui->AddMessageHandler(std::make_unique<SyncInternalsMessageHandler>());
 }
 
-SyncInternalsUI::~SyncInternalsUI() {}
+SyncInternalsUI::~SyncInternalsUI() = default;

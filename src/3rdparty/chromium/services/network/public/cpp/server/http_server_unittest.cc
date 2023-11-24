@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,13 +10,12 @@
 #include <vector>
 
 #include "base/auto_reset.h"
-#include "base/bind.h"
 #include "base/format_macros.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/system/data_pipe_utils.h"
@@ -163,9 +162,7 @@ class TestHttpClient {
 
 }  // namespace
 
-namespace network {
-
-namespace server {
+namespace network::server {
 
 class HttpServerTest : public testing::Test, public HttpServer::Delegate {
  public:
@@ -211,7 +208,7 @@ class HttpServerTest : public testing::Test, public HttpServer::Delegate {
 
   void OnHttpRequest(int connection_id,
                      const HttpServerRequestInfo& info) override {
-    requests_.push_back(std::make_pair(info, connection_id));
+    requests_.emplace_back(info, connection_id);
     if (requests_.size() == quit_after_request_count_) {
       run_loop_quit_func_.Run();
     }
@@ -874,6 +871,4 @@ TEST_F(CloseOnConnectHttpServerTest, ServerImmediatelyClosesConnection) {
   EXPECT_EQ(0ul, requests_.size());
 }
 
-}  // namespace server
-
-}  // namespace network
+}  // namespace network::server

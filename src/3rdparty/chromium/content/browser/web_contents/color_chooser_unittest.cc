@@ -1,4 +1,4 @@
-// Copyright (c) 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -107,14 +107,11 @@ class ColorChooserTestWithBackForwardCache : public ColorChooserUnitTest {
  public:
   ColorChooserTestWithBackForwardCache() {
     scoped_feature_list_.InitWithFeaturesAndParameters(
-        {{features::kBackForwardCache, {GetFeatureParams()}}},
+        {{features::kBackForwardCache, {{}}},
+         {features::kBackForwardCacheTimeToLiveControl,
+          {{"time_to_live_seconds", "3600"}}}},
         // Allow BackForwardCache for all devices regardless of their memory.
         /*disabled_features=*/{features::kBackForwardCacheMemoryControls});
-  }
-
- protected:
-  base::FieldTrialParams GetFeatureParams() {
-    return {{"TimeToLiveInBackForwardCacheInSeconds", "3600"}};
   }
 
  private:
@@ -141,7 +138,7 @@ TEST_F(ColorChooserTestWithBackForwardCache,
 
   // Navigate to A.
   NavigationSimulator::NavigateAndCommitFromBrowser(contents(), kUrl1);
-  RenderFrameHostImpl* rfh_a = contents()->GetMainFrame();
+  RenderFrameHostImpl* rfh_a = contents()->GetPrimaryMainFrame();
 
   mojo::PendingRemote<blink::mojom::ColorChooserClient> pending_client;
   mojo::Remote<blink::mojom::ColorChooser> pending_remote;

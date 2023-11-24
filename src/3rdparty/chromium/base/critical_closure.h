@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,13 +7,13 @@
 
 #include <utility>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/location.h"
 #include "base/strings/string_piece.h"
 #include "build/build_config.h"
 
 #if BUILDFLAG(IS_IOS)
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/ios/scoped_critical_action.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #endif
@@ -75,6 +75,9 @@ class PendingCriticalClosure {
 // background running time, |MakeCriticalClosure| should be applied on them
 // before posting. |task_name| is used by the platform to identify any tasks
 // that do not complete in time for suspension.
+//
+// This function is used automatically for tasks posted to a sequence runner
+// using TaskShutdownBehavior::BLOCK_SHUTDOWN.
 #if BUILDFLAG(IS_IOS)
 inline OnceClosure MakeCriticalClosure(StringPiece task_name,
                                        OnceClosure closure,

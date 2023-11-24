@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,33 +22,51 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/time/time.h"
+#include "base/trace_event/typed_macros.h"
 #include "components/ukm/scheme_constants.h"
 #include "components/ukm/ukm_recorder_observer.h"
 #include "components/variations/variations_associated_data.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_decode.h"
+#include "services/metrics/public/cpp/ukm_recorder.h"
 #include "services/metrics/public/cpp/ukm_source.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "services/metrics/public/mojom/ukm_interface.mojom.h"
 #include "third_party/metrics_proto/ukm/entry.pb.h"
 #include "third_party/metrics_proto/ukm/report.pb.h"
 #include "third_party/metrics_proto/ukm/source.pb.h"
+#include "ukm_consent_state.h"
+#include "ukm_recorder_impl.h"
 #include "url/gurl.h"
 
 namespace ukm {
 
-COMPONENT_EXPORT(UKM_RECORDER)
-const base::Feature kUkmSamplingRateFeature{"UkmSamplingRate",
-                                            base::FEATURE_DISABLED_BY_DEFAULT};
+BASE_FEATURE(kUkmSamplingRateFeature,
+             "UkmSamplingRate",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 namespace {
 
-bool IsWhitelistedSourceId(SourceId source_id) {
+bool IsAllowlistedSourceId(SourceId source_id) {
   SourceIdType type = GetSourceIdType(source_id);
-  return type == SourceIdType::NAVIGATION_ID || type == SourceIdType::APP_ID ||
-         type == SourceIdType::HISTORY_ID || type == SourceIdType::WEBAPK_ID ||
-         type == SourceIdType::PAYMENT_APP_ID ||
-         type == SourceIdType::NO_URL_ID;
+  switch (type) {
+    case ukm::SourceIdObj::Type::NAVIGATION_ID:
+    case ukm::SourceIdObj::Type::APP_ID:
+    case ukm::SourceIdObj::Type::HISTORY_ID:
+    case ukm::SourceIdObj::Type::WEBAPK_ID:
+    case ukm::SourceIdObj::Type::PAYMENT_APP_ID:
+    case ukm::SourceIdObj::Type::NO_URL_ID:
+    case ukm::SourceIdObj::Type::REDIRECT_ID:
+    case ukm::SourceIdObj::Type::WEB_IDENTITY_ID:
+    case ukm::SourceIdObj::Type::CHROMEOS_WEBSITE_ID:
+    case ukm::SourceIdObj::Type::EXTENSION_ID: {
+      return true;
+    }
+    case ukm::SourceIdObj::Type::DEFAULT:
+    case ukm::SourceIdObj::Type::DESKTOP_WEB_APP_ID:
+    case ukm::SourceIdObj::Type::WORKER_ID:
+      return false;
+  }
 }
 
 bool IsAppIdType(SourceId source_id) {
@@ -64,21 +82,14 @@ bool HasSupportedScheme(const GURL& url) {
          url.SchemeIs(kAppScheme);
 }
 
-void LogEventHashAsUmaHistogram(const std::string& histogram_name,
-                                uint64_t event_hash) {
-  // The enum for this histogram gets populated by the PopulateEnumWithUkmEvents
-  // function in populate_enums.py when producing the merged XML.
-  base::UmaHistogramSparse(histogram_name,
-                           // Truncate the unsigned 64-bit hash to 31 bits, to
-                           // make it a suitable histogram sample.
-                           event_hash & 0x7fffffff);
-}
-
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+// Update tools/metrics/histograms/enums.xml when new entries are added.
 enum class DroppedDataReason {
   NOT_DROPPED = 0,
   RECORDING_DISABLED = 1,
   MAX_HIT = 2,
-  NOT_WHITELISTED = 3,
+  DEPRECATED_NOT_WHITELISTED = 3,
   UNSUPPORTED_URL_SCHEME = 4,
   SAMPLED_OUT = 5,
   EXTENSION_URLS_DISABLED = 6,
@@ -87,6 +98,9 @@ enum class DroppedDataReason {
   EMPTY_URL = 9,
   REJECTED_BY_FILTER = 10,
   SAMPLING_UNCONFIGURED = 11,
+  MSBB_CONSENT_DISABLED = 12,
+  APPS_CONSENT_DISABLED = 13,
+  EXTENSION_URL_INVALID = 14,
   NUM_DROPPED_DATA_REASONS
 };
 
@@ -103,7 +117,34 @@ void RecordDroppedSource(bool already_recorded_another_reason,
 }
 
 void RecordDroppedEntry(uint64_t event_hash, DroppedDataReason reason) {
-  LogEventHashAsUmaHistogram("UKM.Entries.Dropped.ByEntryHash", event_hash);
+  // Truncate the unsigned 64-bit hash to 31 bits, to
+  // make it a suitable histogram sample.
+  uint32_t value = event_hash & 0x7fffffff;
+  // The enum for these histograms gets populated by the
+  // PopulateEnumWithUkmEvents
+  // function in populate_enums.py when producing the merged XML.
+
+  UMA_HISTOGRAM_SPARSE("UKM.Entries.Dropped.ByEntryHash", value);
+
+  // Because the "UKM.Entries.Dropped.ByEntryHash" histogram will be emitted to
+  // every single time an entry is dropped, it will be dominated by the
+  // RECORDING_DISABLED reason (which is not very insightful). We also emit
+  // histograms split by selected reasons that are deemed interesting or helpful
+  // for data quality investigations.
+  switch (reason) {
+    case DroppedDataReason::MAX_HIT:
+      UMA_HISTOGRAM_SPARSE("UKM.Entries.Dropped.MaxHit.ByEntryHash", value);
+      break;
+    case DroppedDataReason::SAMPLED_OUT:
+      UMA_HISTOGRAM_SPARSE("UKM.Entries.Dropped.SampledOut.ByEntryHash", value);
+      break;
+    case DroppedDataReason::REJECTED_BY_FILTER:
+      UMA_HISTOGRAM_SPARSE("UKM.Entries.Dropped.RejectedByFilter.ByEntryHash",
+                           value);
+      break;
+    default:
+      break;
+  }
 
   UMA_HISTOGRAM_ENUMERATION(
       "UKM.Entries.Dropped", static_cast<int>(reason),
@@ -140,11 +181,11 @@ GURL SanitizeURL(const GURL& url) {
   return url.ReplaceComponents(remove_params);
 }
 
-void AppendWhitelistedUrls(
+void AppendAllowlistedUrls(
     const std::map<SourceId, std::unique_ptr<UkmSource>>& sources,
     std::unordered_set<std::string>* urls) {
   for (const auto& kv : sources) {
-    if (IsWhitelistedSourceId(kv.first)) {
+    if (IsAllowlistedSourceId(kv.first)) {
       urls->insert(kv.second->url().spec());
       // Some non-navigation sources only record origin as a URL.
       // Add the origin from the navigation source to match those too.
@@ -188,45 +229,6 @@ UkmRecorderImpl::UkmRecorderImpl()
 
 UkmRecorderImpl::~UkmRecorderImpl() = default;
 
-// static
-void UkmRecorderImpl::CreateFallbackSamplingTrial(
-    bool is_stable_channel,
-    base::FeatureList* feature_list) {
-  static const char kSampledGroup_Stable[] = "Sampled_NoSeed_Stable";
-  static const char kSampledGroup_Other[] = "Sampled_NoSeed_Other";
-  const char* sampled_group = kSampledGroup_Other;
-  int default_sampling = 1;  // Sampling is 1-in-N; this is N.
-
-  // Nothing is sampled out except for "stable" which omits almost everything
-  // in this configuration. This is done so that clients that fail to receive
-  // a configuration from the server do not bias aggregated results because
-  // of a relatively large number of records from them.
-  if (is_stable_channel) {
-    sampled_group = kSampledGroup_Stable;
-    default_sampling = 1000000;
-  }
-
-  scoped_refptr<base::FieldTrial> trial(
-      base::FieldTrialList::FactoryGetFieldTrial(
-          kUkmSamplingRateFeature.name, 100, sampled_group,
-          base::FieldTrial::ONE_TIME_RANDOMIZED, nullptr));
-
-  // Everybody (100%) should have a sampling configuration.
-  std::map<std::string, std::string> params = {
-      {"_default_sampling", base::NumberToString(default_sampling)}};
-  variations::AssociateVariationParams(trial->trial_name(), sampled_group,
-                                       params);
-  trial->AppendGroup(sampled_group, 100);
-
-  // Setup the feature.
-  feature_list->RegisterFieldTrialOverride(
-      kUkmSamplingRateFeature.name, base::FeatureList::OVERRIDE_ENABLE_FEATURE,
-      trial.get());
-}
-
-UkmRecorderImpl::EventAggregate::EventAggregate() = default;
-UkmRecorderImpl::EventAggregate::~EventAggregate() = default;
-
 UkmRecorderImpl::Recordings::Recordings() = default;
 UkmRecorderImpl::Recordings& UkmRecorderImpl::Recordings::operator=(
     Recordings&&) = default;
@@ -240,24 +242,31 @@ void UkmRecorderImpl::Recordings::SourceCounts::Reset() {
   *this = SourceCounts();
 }
 
-void UkmRecorderImpl::EnableRecording(bool extensions) {
-  DVLOG(1) << "UkmRecorderImpl::EnableRecording, extensions=" << extensions;
+void UkmRecorderImpl::UpdateRecording(ukm::UkmConsentState state) {
+  DVLOG(1) << "UkmRecorderImpl::UpdateRecording: " << state.ToEnumBitmask();
+  recording_state_ = state;
+  EnableRecording();
+}
+
+void UkmRecorderImpl::EnableRecording() {
   recording_enabled_ = true;
-  extensions_enabled_ = extensions;
 }
 
 void UkmRecorderImpl::DisableRecording() {
   DVLOG(1) << "UkmRecorderImpl::DisableRecording";
-  if (recording_enabled_)
+  if (recording_enabled())
     recording_is_continuous_ = false;
   recording_enabled_ = false;
-  extensions_enabled_ = false;
 }
 
 void UkmRecorderImpl::SetSamplingForTesting(int rate) {
   sampling_forced_for_testing_ = true;
   default_sampling_rate_ = rate;
   event_sampling_rates_.clear();
+}
+
+bool UkmRecorderImpl::ShouldDropEntryForTesting(mojom::UkmEntry* entry) {
+  return ShouldDropEntry(entry);
 }
 
 bool UkmRecorderImpl::IsSamplingConfigured() const {
@@ -300,6 +309,20 @@ void UkmRecorderImpl::PurgeRecordingsWithSourceIdType(
 
   for (const auto& kv : recordings_.sources) {
     if (GetSourceIdType(kv.first) == source_id_type) {
+      relevant_source_ids.insert(kv.first);
+    }
+  }
+
+  PurgeSourcesAndEventsBySourceIds(relevant_source_ids);
+  recording_is_continuous_ = false;
+}
+
+void UkmRecorderImpl::PurgeRecordingsWithMsbbSources() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  std::unordered_set<SourceId> relevant_source_ids;
+
+  for (const auto& kv : recordings_.sources) {
+    if (GetConsentType(GetSourceIdType(kv.first)) == MSBB) {
       relevant_source_ids.insert(kv.first);
     }
   }
@@ -366,11 +389,10 @@ void UkmRecorderImpl::RemoveUkmRecorderObserver(UkmRecorderObserver* observer) {
   }
 }
 
-void UkmRecorderImpl::OnUkmAllowedStateChanged(bool allowed) {
-  NotifyAllObservers(&UkmRecorderObserver::OnUkmAllowedStateChanged, allowed);
+void UkmRecorderImpl::OnUkmAllowedStateChanged(UkmConsentState state) {
+  NotifyAllObservers(&UkmRecorderObserver::OnUkmAllowedStateChanged, state);
 }
 
-// TODO(rkaplow): This should be refactored.
 void UkmRecorderImpl::StoreRecordingsInReport(Report* report) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
@@ -387,11 +409,11 @@ void UkmRecorderImpl::StoreRecordingsInReport(Report* report) {
   const int num_sources_unsent =
       recordings_.sources.size() - source_ids_seen.size();
 
-  // Construct set of whitelisted URLs by merging those carried over from the
+  // Construct set of allowlisted URLs by merging those carried over from the
   // previous report cycle and those from sources recorded in this cycle.
-  std::unordered_set<std::string> url_whitelist;
-  recordings_.carryover_urls_whitelist.swap(url_whitelist);
-  AppendWhitelistedUrls(recordings_.sources, &url_whitelist);
+  std::unordered_set<std::string> url_allowlist;
+  recordings_.carryover_urls_allowlist.swap(url_allowlist);
+  AppendAllowlistedUrls(recordings_.sources, &url_allowlist);
 
   // Number of sources discarded due to not matching a navigation URL.
   int num_sources_unmatched = 0;
@@ -399,24 +421,13 @@ void UkmRecorderImpl::StoreRecordingsInReport(Report* report) {
   std::unordered_map<SourceIdType, int> serialized_source_type_counts;
 
   for (const auto& kv : recordings_.sources) {
-    // Don't keep sources of these types after current report because their
-    // entries are logged only at source creation time.
-    SourceIdType type = GetSourceIdType(kv.first);
-    if (type == ukm::SourceIdObj::Type::HISTORY_ID ||
-        type == ukm::SourceIdObj::Type::WEBAPK_ID ||
-        type == SourceIdType::PAYMENT_APP_ID ||
-        type == SourceIdType::NO_URL_ID) {
-      MarkSourceForDeletion(kv.first);
-    }
-    // If the source id is not whitelisted, don't send it unless it has
-    // associated entries and the URL matches that of a whitelisted source.
-    // Note: If ShouldRestrictToWhitelistedSourceIds() is true, this logic will
-    // not be hit as the source would have already been filtered in
-    // UpdateSourceURL().
-    if (!IsWhitelistedSourceId(kv.first)) {
+    MaybeMarkForDeletion(kv.first);
+    // If the source id is not allowlisted, don't send it unless it has
+    // associated entries and the URL matches that of an allowlisted source.
+    if (!IsAllowlistedSourceId(kv.first)) {
       // UkmSource should not keep initial_url for non-navigation source IDs.
       DCHECK_EQ(1u, kv.second->urls().size());
-      if (!url_whitelist.count(kv.second->url().spec())) {
+      if (!url_allowlist.count(kv.second->url().spec())) {
         RecordDroppedSource(DroppedDataReason::NOT_MATCHED);
         MarkSourceForDeletion(kv.first);
         num_sources_unmatched++;
@@ -427,7 +438,11 @@ void UkmRecorderImpl::StoreRecordingsInReport(Report* report) {
         continue;
       }
 
-      // Non-whitelisted Source types will not be kept after entries are logged.
+      // Non-allowlisted Source types will not be kept after entries are
+      // logged.
+      // We experimented with this in early 2023 and we found keeping sources
+      // longer didn't decrease the percentage of sources with null url. See
+      // crbug/1358334.
       MarkSourceForDeletion(kv.first);
     }
     // Minimal validations before serializing into a proto message.
@@ -441,49 +456,11 @@ void UkmRecorderImpl::StoreRecordingsInReport(Report* report) {
   }
 
   for (const auto& event_and_aggregate : recordings_.event_aggregations) {
-    const EventAggregate& event_aggregate = event_and_aggregate.second;
     Aggregate* proto_aggregate = report->add_aggregates();
-    proto_aggregate->set_source_id(0);  // Across all sources.
     proto_aggregate->set_event_hash(event_and_aggregate.first);
-    proto_aggregate->set_total_count(event_aggregate.total_count);
-    proto_aggregate->set_dropped_due_to_limits(
-        event_aggregate.dropped_due_to_limits);
-    proto_aggregate->set_dropped_due_to_sampling(
-        event_aggregate.dropped_due_to_sampling);
-    proto_aggregate->set_dropped_due_to_filter(
-        event_aggregate.dropped_due_to_filter);
-    proto_aggregate->set_dropped_due_to_unconfigured(
-        event_aggregate.dropped_due_to_unconfigured);
-    for (const auto& metric_and_aggregate : event_aggregate.metrics) {
-      const MetricAggregate& aggregate = metric_and_aggregate.second;
-      Aggregate::Metric* proto_metric = proto_aggregate->add_metrics();
-      proto_metric->set_metric_hash(metric_and_aggregate.first);
-      proto_metric->set_value_sum(aggregate.value_sum);
-      proto_metric->set_value_square_sum(aggregate.value_square_sum);
-      if (aggregate.total_count != event_aggregate.total_count) {
-        proto_metric->set_total_count(aggregate.total_count);
-      }
-      if (aggregate.dropped_due_to_limits !=
-          event_aggregate.dropped_due_to_limits) {
-        proto_metric->set_dropped_due_to_limits(
-            aggregate.dropped_due_to_limits);
-      }
-      if (aggregate.dropped_due_to_sampling !=
-          event_aggregate.dropped_due_to_sampling) {
-        proto_metric->set_dropped_due_to_sampling(
-            aggregate.dropped_due_to_sampling);
-      }
-      if (aggregate.dropped_due_to_filter !=
-          event_aggregate.dropped_due_to_filter) {
-        proto_metric->set_dropped_due_to_filter(
-            aggregate.dropped_due_to_filter);
-      }
-      if (aggregate.dropped_due_to_unconfigured !=
-          event_aggregate.dropped_due_to_unconfigured) {
-        proto_metric->set_dropped_due_to_unconfigured(
-            aggregate.dropped_due_to_unconfigured);
-      }
-    }
+
+    const EventAggregate& event_aggregate = event_and_aggregate.second;
+    event_aggregate.FillProto(proto_aggregate);
   }
   int num_serialized_sources = 0;
   for (const auto& source_type_and_count : serialized_source_type_counts) {
@@ -551,6 +528,43 @@ void UkmRecorderImpl::StoreRecordingsInReport(Report* report) {
   report->set_is_continuous(recording_is_continuous_);
   recording_is_continuous_ = true;
 
+  int pruned_sources_age_sec = PruneData(source_ids_seen);
+
+  // Record how old the newest truncated source is.
+  source_counts_proto->set_pruned_sources_age_seconds(pruned_sources_age_sec);
+
+  // Set deferred sources count after pruning.
+  source_counts_proto->set_deferred_sources(recordings_.sources.size());
+  // Same value as the deferred source count, for setting the carryover count
+  // in the next reporting cycle.
+  recordings_.source_counts.carryover_sources = recordings_.sources.size();
+
+  // We already matched these deferred sources against the URL allowlist.
+  // Re-allowlist them for the next report.
+  for (const auto& kv : recordings_.sources) {
+    recordings_.carryover_urls_allowlist.insert(kv.second->url().spec());
+  }
+
+  UMA_HISTOGRAM_COUNTS_1000("UKM.Sources.KeptSourcesCount",
+                            recordings_.sources.size());
+
+  // Record number of sources after pruning that were carried over due to not
+  // having any events in this reporting cycle.
+  int num_sources_entryless = 0;
+  for (const auto& kv : recordings_.sources) {
+    if (!base::Contains(source_ids_seen, kv.first)) {
+      num_sources_entryless++;
+    }
+  }
+  source_counts_proto->set_entryless_sources(num_sources_entryless);
+
+  // Notify observers that a report was generated.
+  if (entry_filter_) {
+    entry_filter_->OnStoreRecordingsInReport();
+  }
+}
+
+int UkmRecorderImpl::PruneData(std::set<SourceId>& source_ids_seen) {
   // Modify the set source_ids_seen by removing sources that aren't in
   // recordings_. We do this here as there is a few places for
   // recordings_.sources to be modified. The resulting set will be currently
@@ -688,44 +702,38 @@ void UkmRecorderImpl::StoreRecordingsInReport(Report* report) {
                                  num_sources - recordings_.sources.size());
     }
   }
-
-  // Record how old the newest truncated source is.
-  source_counts_proto->set_pruned_sources_age_seconds(pruned_sources_age_sec);
-
-  // Set deferred sources count after pruning.
-  source_counts_proto->set_deferred_sources(recordings_.sources.size());
-  // Same value as the deferred source count, for setting the carryover count
-  // in the next reporting cycle.
-  recordings_.source_counts.carryover_sources = recordings_.sources.size();
-
-  // We already matched these deferred sources against the URL whitelist.
-  // Re-whitelist them for the next report.
-  for (const auto& kv : recordings_.sources) {
-    recordings_.carryover_urls_whitelist.insert(kv.second->url().spec());
-  }
-
-  UMA_HISTOGRAM_COUNTS_1000("UKM.Sources.KeptSourcesCount",
-                            recordings_.sources.size());
-
-  // Record number of sources after pruning that were carried over due to not
-  // having any events in this reporting cycle.
-  int num_sources_entryless = 0;
-  for (const auto& kv : recordings_.sources) {
-    if (!base::Contains(source_ids_seen, kv.first)) {
-      num_sources_entryless++;
-    }
-  }
-  source_counts_proto->set_entryless_sources(num_sources_entryless);
-
-  // Notify observers that a report was generated.
-  if (entry_filter_) {
-    entry_filter_->OnStoreRecordingsInReport();
-  }
+  return pruned_sources_age_sec;
 }
 
-bool UkmRecorderImpl::ShouldRestrictToWhitelistedSourceIds() const {
-  return base::GetFieldTrialParamByFeatureAsBool(
-      kUkmFeature, "RestrictToWhitelistedSourceIds", false);
+bool UkmRecorderImpl::ShouldDropEntry(mojom::UkmEntry* entry) {
+  if (!recording_enabled()) {
+    RecordDroppedEntry(entry->event_hash,
+                       DroppedDataReason::RECORDING_DISABLED);
+    return true;
+  }
+
+  const auto required_consent =
+      GetConsentType(GetSourceIdType(entry->source_id));
+
+  if (!recording_enabled(required_consent)) {
+    if (required_consent == UkmConsentType::MSBB) {
+      RecordDroppedEntry(entry->event_hash,
+                         DroppedDataReason::MSBB_CONSENT_DISABLED);
+
+    } else {
+      RecordDroppedEntry(entry->event_hash,
+                         DroppedDataReason::APPS_CONSENT_DISABLED);
+    }
+    return true;
+  }
+
+  if (!ApplyEntryFilter(entry)) {
+    RecordDroppedEntry(entry->event_hash,
+                       DroppedDataReason::REJECTED_BY_FILTER);
+    return true;
+  }
+
+  return false;
 }
 
 bool UkmRecorderImpl::ApplyEntryFilter(mojom::UkmEntry* entry) {
@@ -827,7 +835,7 @@ void UkmRecorderImpl::UpdateSourceURL(SourceId source_id,
 void UkmRecorderImpl::UpdateAppURL(SourceId source_id,
                                    const GURL& url,
                                    const AppType app_type) {
-  if (app_type != AppType::kPWA && !extensions_enabled_) {
+  if (app_type != AppType::kPWA && !recording_enabled(ukm::EXTENSIONS)) {
     RecordDroppedSource(DroppedDataReason::EXTENSION_URLS_DISABLED);
     return;
   }
@@ -862,12 +870,130 @@ void UkmRecorderImpl::RecordNavigation(
       std::make_unique<UkmSource>(source_id, sanitized_navigation_data));
 }
 
+// static:
+UkmConsentType UkmRecorderImpl::GetConsentType(SourceIdType type) {
+  switch (type) {
+    case SourceIdType::APP_ID:
+      return UkmConsentType::APPS;
+    case SourceIdType::DEFAULT:
+    case SourceIdType::NAVIGATION_ID:
+    case SourceIdType::HISTORY_ID:
+    case SourceIdType::WEBAPK_ID:
+    case SourceIdType::PAYMENT_APP_ID:
+    case SourceIdType::DESKTOP_WEB_APP_ID:
+    case SourceIdType::WORKER_ID:
+    case SourceIdType::NO_URL_ID:
+    case SourceIdType::REDIRECT_ID:
+    case SourceIdType::WEB_IDENTITY_ID:
+    case SourceIdType::CHROMEOS_WEBSITE_ID:
+    case SourceIdType::EXTENSION_ID:
+      return UkmConsentType::MSBB;
+  }
+  return UkmConsentType::MSBB;
+}
+
+UkmRecorderImpl::EventAggregate::EventAggregate() = default;
+UkmRecorderImpl::EventAggregate::~EventAggregate() = default;
+
+void UkmRecorderImpl::EventAggregate::FillProto(
+    Aggregate* proto_aggregate) const {
+  proto_aggregate->set_source_id(0);  // Across all sources.
+  proto_aggregate->set_total_count(total_count);
+  proto_aggregate->set_dropped_due_to_limits(dropped_due_to_limits);
+  proto_aggregate->set_dropped_due_to_sampling(dropped_due_to_sampling);
+  proto_aggregate->set_dropped_due_to_filter(dropped_due_to_filter);
+  proto_aggregate->set_dropped_due_to_unconfigured(dropped_due_to_unconfigured);
+  for (const auto& metric_and_aggregate : metrics) {
+    const MetricAggregate& aggregate = metric_and_aggregate.second;
+    Aggregate::Metric* proto_metric = proto_aggregate->add_metrics();
+    proto_metric->set_metric_hash(metric_and_aggregate.first);
+    proto_metric->set_value_sum(aggregate.value_sum);
+    proto_metric->set_value_square_sum(aggregate.value_square_sum);
+    if (aggregate.total_count != total_count) {
+      proto_metric->set_total_count(aggregate.total_count);
+    }
+    if (aggregate.dropped_due_to_limits != dropped_due_to_limits) {
+      proto_metric->set_dropped_due_to_limits(aggregate.dropped_due_to_limits);
+    }
+    if (aggregate.dropped_due_to_sampling != dropped_due_to_sampling) {
+      proto_metric->set_dropped_due_to_sampling(
+          aggregate.dropped_due_to_sampling);
+    }
+    if (aggregate.dropped_due_to_filter != dropped_due_to_filter) {
+      proto_metric->set_dropped_due_to_filter(aggregate.dropped_due_to_filter);
+    }
+    if (aggregate.dropped_due_to_unconfigured != dropped_due_to_unconfigured) {
+      proto_metric->set_dropped_due_to_unconfigured(
+          aggregate.dropped_due_to_unconfigured);
+    }
+  }
+}
+
+void UkmRecorderImpl::MaybeMarkForDeletion(SourceId source_id) {
+  SourceIdType type = GetSourceIdType(source_id);
+  switch (type) {
+    case ukm::SourceIdObj::Type::HISTORY_ID:
+    case ukm::SourceIdObj::Type::WEBAPK_ID:
+    case ukm::SourceIdObj::Type::PAYMENT_APP_ID:
+    case ukm::SourceIdObj::Type::NO_URL_ID:
+    case ukm::SourceIdObj::Type::WEB_IDENTITY_ID:
+    case ukm::SourceIdObj::Type::CHROMEOS_WEBSITE_ID:
+    case ukm::SourceIdObj::Type::EXTENSION_ID: {
+      // Don't keep sources of these types after current report because their
+      // entries are logged only at source creation time.
+      MarkSourceForDeletion(source_id);
+      break;
+    }
+    case ukm::SourceIdObj::Type::DEFAULT:
+    case ukm::SourceIdObj::Type::APP_ID:
+    case ukm::SourceIdObj::Type::DESKTOP_WEB_APP_ID:
+    case ukm::SourceIdObj::Type::NAVIGATION_ID:
+    case ukm::SourceIdObj::Type::WORKER_ID:
+    case ukm::SourceIdObj::Type::REDIRECT_ID:
+      break;
+  }
+}
+
+// Extension URLs need to be specifically enabled and the extension synced.
+bool UkmRecorderImpl::ShouldDropExtensionUrl(
+    const GURL& sanitized_extension_url,
+    bool has_recorded_reason) const {
+  DCHECK_EQ(sanitized_extension_url.GetWithEmptyPath(),
+            sanitized_extension_url);
+
+  // If the URL scheme is not extension scheme, drop the record with
+  // `EXTENSION_URL_INVALID`.
+  if (!sanitized_extension_url.SchemeIs(kExtensionScheme)) {
+    RecordDroppedSource(has_recorded_reason,
+                        DroppedDataReason::EXTENSION_URL_INVALID);
+    return true;
+  }
+  // If the recording is not enabled for extensions, drop the record with
+  // `EXTENSION_URLS_DISABLED`.
+  if (!recording_enabled(ukm::EXTENSIONS)) {
+    RecordDroppedSource(has_recorded_reason,
+                        DroppedDataReason::EXTENSION_URLS_DISABLED);
+    return true;
+  }
+  // If the extension is not a webstore extension, drop the record with
+  // `EXTENSION_NOT_SYNCED`.
+  if (!is_webstore_extension_callback_ ||
+      !is_webstore_extension_callback_.Run(
+          sanitized_extension_url.host_piece())) {
+    RecordDroppedSource(has_recorded_reason,
+                        DroppedDataReason::EXTENSION_NOT_SYNCED);
+    return true;
+  }
+
+  return false;
+}
+
 UkmRecorderImpl::ShouldRecordUrlResult UkmRecorderImpl::ShouldRecordUrl(
     SourceId source_id,
     const GURL& sanitized_url) const {
   ShouldRecordUrlResult result = ShouldRecordUrlResult::kOk;
   bool has_recorded_reason = false;
-  if (!recording_enabled_) {
+  if (!recording_enabled()) {
     RecordDroppedSource(DroppedDataReason::RECORDING_DISABLED);
     // Don't return the result yet. Check if the we are allowed to notify
     // observers, as they may rely on the not uploaded metrics to determine
@@ -876,15 +1002,22 @@ UkmRecorderImpl::ShouldRecordUrlResult UkmRecorderImpl::ShouldRecordUrl(
     has_recorded_reason = true;
   }
 
-  if (recordings_.sources.size() >= max_sources_) {
-    RecordDroppedSource(has_recorded_reason, DroppedDataReason::MAX_HIT);
+  const auto required_consent = GetConsentType(GetSourceIdType(source_id));
+
+  if (!recording_enabled(required_consent)) {
+    if (required_consent == UkmConsentType::MSBB) {
+      RecordDroppedSource(has_recorded_reason,
+                          DroppedDataReason::MSBB_CONSENT_DISABLED);
+
+    } else {
+      RecordDroppedSource(has_recorded_reason,
+                          DroppedDataReason::APPS_CONSENT_DISABLED);
+    }
     return ShouldRecordUrlResult::kDropped;
   }
 
-  if (ShouldRestrictToWhitelistedSourceIds() &&
-      !IsWhitelistedSourceId(source_id)) {
-    RecordDroppedSource(has_recorded_reason,
-                        DroppedDataReason::NOT_WHITELISTED);
+  if (recordings_.sources.size() >= max_sources_) {
+    RecordDroppedSource(has_recorded_reason, DroppedDataReason::MAX_HIT);
     return ShouldRecordUrlResult::kDropped;
   }
 
@@ -901,18 +1034,19 @@ UkmRecorderImpl::ShouldRecordUrlResult UkmRecorderImpl::ShouldRecordUrl(
     return ShouldRecordUrlResult::kDropped;
   }
 
-  // Extension URLs need to be specifically enabled and the extension synced.
-  if (sanitized_url.SchemeIs(kExtensionScheme)) {
-    DCHECK_EQ(sanitized_url.GetWithEmptyPath(), sanitized_url);
-    if (!extensions_enabled_) {
-      RecordDroppedSource(has_recorded_reason,
-                          DroppedDataReason::EXTENSION_URLS_DISABLED);
+  if (GetSourceIdType(source_id) == SourceIdType::EXTENSION_ID) {
+    if (ShouldDropExtensionUrl(sanitized_url, has_recorded_reason)) {
       return ShouldRecordUrlResult::kDropped;
     }
-    if (!is_webstore_extension_callback_ ||
-        !is_webstore_extension_callback_.Run(sanitized_url.host_piece())) {
-      RecordDroppedSource(has_recorded_reason,
-                          DroppedDataReason::EXTENSION_NOT_SYNCED);
+  }
+
+  // Ideally, this check should be covered by the above block for
+  // `EXTENSION_ID` type. For backward compatibility we still keep it here so
+  // the UKMs recorded without `EXTENSION_ID` type are also properly checked.
+  // TODO(https://crbug.com/1393445): clean up all the UKM metrics with
+  // extension URL to use the dedicated source ID type, and remove this check.
+  if (sanitized_url.SchemeIs(kExtensionScheme)) {
+    if (ShouldDropExtensionUrl(sanitized_url, has_recorded_reason)) {
       return ShouldRecordUrlResult::kDropped;
     }
   }
@@ -921,11 +1055,18 @@ UkmRecorderImpl::ShouldRecordUrlResult UkmRecorderImpl::ShouldRecordUrl(
 
 void UkmRecorderImpl::RecordSource(std::unique_ptr<UkmSource> source) {
   SourceId source_id = source->id();
-  // If UKM recording is disabled due to |recording_enabled_|, still notify
-  // observers as they might be interested in it.
+  // If UKM recording is disabled due to |recording_enabled|,
+  // still notify observers as they might be interested in it.
   NotifyAllObservers(&UkmRecorderObserver::OnUpdateSourceURL, source_id,
                      source->urls());
-  if (!recording_enabled_) {
+
+  if (!recording_enabled()) {
+    return;
+  }
+
+  const auto required_consent = GetConsentType(GetSourceIdType(source_id));
+
+  if (!recording_enabled(required_consent)) {
     return;
   }
 
@@ -941,17 +1082,8 @@ void UkmRecorderImpl::AddEntry(mojom::UkmEntryPtr entry) {
 
   NotifyObserversWithNewEntry(*entry);
 
-  if (!recording_enabled_) {
-    RecordDroppedEntry(entry->event_hash,
-                       DroppedDataReason::RECORDING_DISABLED);
+  if (ShouldDropEntry(entry.get()))
     return;
-  }
-
-  if (!ApplyEntryFilter(entry.get())) {
-    RecordDroppedEntry(entry->event_hash,
-                       DroppedDataReason::REJECTED_BY_FILTER);
-    return;
-  }
 
   EventAggregate& event_aggregate =
       recordings_.event_aggregations[entry->event_hash];
@@ -997,8 +1129,10 @@ void UkmRecorderImpl::AddEntry(mojom::UkmEntryPtr entry) {
 
   // Log a corresponding entry to UMA so we get a per-metric breakdown of UKM
   // entry counts.
-  LogEventHashAsUmaHistogram("UKM.Entries.Recorded.ByEntryHash",
-                             entry->event_hash);
+  // Truncate the unsigned 64-bit hash to 31 bits, to
+  // make it a suitable histogram sample.
+  UMA_HISTOGRAM_SPARSE("UKM.Entries.Recorded.ByEntryHash",
+                       entry->event_hash & 0x7fffffff);
 
   recordings_.entries.push_back(std::move(entry));
 }
@@ -1107,10 +1241,15 @@ void UkmRecorderImpl::InitDecodeMap() {
 
 void UkmRecorderImpl::NotifyObserversWithNewEntry(
     const mojom::UkmEntry& entry) {
+  TRACE_EVENT("toplevel", "UkmRecorderImpl::NotifyObserversWithNewEntry");
+
   base::AutoLock auto_lock(lock_);
 
   for (const auto& observer : observers_) {
     if (observer.first.contains(entry.event_hash)) {
+      TRACE_EVENT(
+          "toplevel",
+          "UkmRecorderImpl::NotifyObserversWithNewEntry NotifyObserver");
       mojom::UkmEntryPtr cloned = entry.Clone();
       observer.second->Notify(FROM_HERE, &UkmRecorderObserver::OnEntryAdded,
                               base::Passed(&cloned));

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,8 +11,8 @@
 #include "components/subresource_filter/content/browser/subresource_filter_profile_context.h"
 #include "weblayer/browser/cookie_settings_factory.h"
 #include "weblayer/browser/host_content_settings_map_factory.h"
+#include "weblayer/browser/permissions/origin_keyed_permission_action_service_factory.h"
 #include "weblayer/browser/permissions/permission_decision_auto_blocker_factory.h"
-#include "weblayer/browser/permissions/permission_manager_factory.h"
 #include "weblayer/browser/subresource_filter_profile_context_factory.h"
 
 #if BUILDFLAG(IS_ANDROID)
@@ -48,6 +48,13 @@ bool WebLayerPermissionsClient::IsSubresourceFilterActivated(
       ->GetSiteActivationFromMetadata(url);
 }
 
+permissions::OriginKeyedPermissionActionService*
+WebLayerPermissionsClient::GetOriginKeyedPermissionActionService(
+    content::BrowserContext* browser_context) {
+  return OriginKeyedPermissionActionServiceFactory::GetForBrowserContext(
+      browser_context);
+}
+
 permissions::PermissionDecisionAutoBlocker*
 WebLayerPermissionsClient::GetPermissionDecisionAutoBlocker(
     content::BrowserContext* browser_context) {
@@ -63,11 +70,6 @@ WebLayerPermissionsClient::GetPermissionActionsHistory(
   return nullptr;
 }
 
-permissions::PermissionManager* WebLayerPermissionsClient::GetPermissionManager(
-    content::BrowserContext* browser_context) {
-  return PermissionManagerFactory::GetForBrowserContext(browser_context);
-}
-
 permissions::ObjectPermissionContextBase*
 WebLayerPermissionsClient::GetChooserContext(
     content::BrowserContext* browser_context,
@@ -79,6 +81,9 @@ WebLayerPermissionsClient::GetChooserContext(
 void WebLayerPermissionsClient::RepromptForAndroidPermissions(
     content::WebContents* web_contents,
     const std::vector<ContentSettingsType>& content_settings_types,
+    const std::vector<ContentSettingsType>& filtered_content_settings_types,
+    const std::vector<std::string>& required_permissions,
+    const std::vector<std::string>& optional_permissions,
     PermissionsUpdatedCallback callback) {
   RequestAndroidPermissions(web_contents, content_settings_types,
                             std::move(callback));

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,6 @@
 #include "base/system/sys_info.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/test/bind.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "components/services/storage/indexed_db/leveldb/leveldb_factory.h"
 #include "third_party/leveldatabase/env_chromium.h"
 #include "third_party/leveldatabase/leveldb_chrome.h"
@@ -76,7 +75,7 @@ void LevelDBScopesTestBase::CloseScopesAndDestroyLevelDBState() {
     event_watcher.StartWatching(
         leveldb_close_event_ptr,
         base::BindLambdaForTesting([&](base::WaitableEvent*) { loop.Quit(); }),
-        base::SequencedTaskRunnerHandle::Get());
+        base::SequencedTaskRunner::GetCurrentDefault());
     leveldb_.reset();
     loop.Run();
     // There is a possible race in |leveldb_close_event| where the signaling
@@ -226,34 +225,27 @@ bool LevelDBScopesTestBase::ScopeDataExistsOnDisk() {
              scopes_encoder_.TasksKeyPrefix(metadata_prefix_));
 }
 
-LeveledLockManager::LeveledLockRequest
+PartitionedLockManager::PartitionedLockRequest
 LevelDBScopesTestBase::CreateSimpleSharedLock() {
-  return {0,
-          {simple_lock_begin_, simple_lock_end_},
-          LeveledLockManager::LockType::kShared};
+  return {{0, simple_lock_begin_}, PartitionedLockManager::LockType::kShared};
 }
 
-LeveledLockManager::LeveledLockRequest
+PartitionedLockManager::PartitionedLockRequest
 LevelDBScopesTestBase::CreateSimpleExclusiveLock() {
-  return {0,
-          {simple_lock_begin_, simple_lock_end_},
-          LeveledLockManager::LockType::kExclusive};
+  return {{0, simple_lock_begin_},
+          PartitionedLockManager::LockType::kExclusive};
 }
 
-LeveledLockManager::LeveledLockRequest LevelDBScopesTestBase::CreateSharedLock(
-    int i) {
-  return {0,
-          {base::StringPrintf("%010d", i * 2),
-           base::StringPrintf("%010d", i * 2 + 1)},
-          LeveledLockManager::LockType::kShared};
+PartitionedLockManager::PartitionedLockRequest
+LevelDBScopesTestBase::CreateSharedLock(int i) {
+  return {{0, base::StringPrintf("%010d", i * 2)},
+          PartitionedLockManager::LockType::kShared};
 }
 
-LeveledLockManager::LeveledLockRequest
+PartitionedLockManager::PartitionedLockRequest
 LevelDBScopesTestBase::CreateExclusiveLock(int i) {
-  return {0,
-          {base::StringPrintf("%010d", i * 2),
-           base::StringPrintf("%010d", i * 2 + 1)},
-          LeveledLockManager::LockType::kExclusive};
+  return {{0, base::StringPrintf("%010d", i * 2)},
+          PartitionedLockManager::LockType::kExclusive};
 }
 
 const base::FilePath& LevelDBScopesTestBase::DatabaseDirFilePath() {

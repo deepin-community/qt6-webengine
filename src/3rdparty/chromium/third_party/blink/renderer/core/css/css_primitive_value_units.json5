@@ -84,7 +84,7 @@
     },
     {
       name: "x",
-      unit_type: "kDotsPerPixel",
+      unit_type: "kX",
     },
     {
       name: "vw",
@@ -211,6 +211,18 @@
       unit_type: "kRems",
     },
     {
+      name: "rex",
+      unit_type: "kRexs",
+    },
+    {
+      name: "rch",
+      unit_type: "kRchs",
+    },
+    {
+      name: "ric",
+      unit_type: "kRics",
+    },
+    {
       name: "fr",
       unit_type: "kFraction",
     },
@@ -221,6 +233,18 @@
     {
       name: "ch",
       unit_type: "kChs",
+    },
+    {
+      name: "ic",
+      unit_type: "kIcs",
+    },
+    {
+      name: "lh",
+      unit_type: "kLhs",
+    },
+    {
+      name: "rlh",
+      unit_type: "kRlhs",
     },
     {
       name: "__qem",

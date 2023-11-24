@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,13 +6,12 @@
 
 #include <stddef.h>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/metrics/histogram.h"
 #include "base/strings/stringprintf.h"
-#include "base/task/task_runner_util.h"
 #include "dbus/bus.h"
 #include "dbus/dbus_statistics.h"
 #include "dbus/message.h"
@@ -40,8 +39,8 @@ scoped_refptr<ObjectManager> ObjectManager::Create(
   // signals from the service. This is important to avoid any race conditions
   // that might cause us to miss PropertiesChanged signals once all objects are
   // initialized via GetManagedObjects.
-  base::PostTaskAndReplyWithResult(
-      bus->GetDBusTaskRunner(), FROM_HERE,
+  bus->GetDBusTaskRunner()->PostTaskAndReplyWithResult(
+      FROM_HERE,
       base::BindOnce(&ObjectManager::SetupMatchRuleAndFilter, object_manager),
       base::BindOnce(&ObjectManager::OnSetupMatchRuleAndFilterComplete,
                      object_manager));

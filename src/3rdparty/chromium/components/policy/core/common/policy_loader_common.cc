@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -42,10 +42,9 @@ const char kBlockedExtensionPrefix[] = "[BLOCKED]";
 // Please keep the list in alphabetical order!
 const char* kSensitivePolicies[] = {
     key::kAutoOpenFileTypes,
-    key::kChromeCleanupEnabled,
-    key::kChromeCleanupReportingEnabled,
     key::kCommandLineFlagSecurityWarningsEnabled,
     key::kDefaultSearchProviderEnabled,
+    key::kFirstPartySetsOverrides,
     key::kHomepageIsNewTabPage,
     key::kHomepageLocation,
     key::kMetricsReportingEnabled,
@@ -54,9 +53,13 @@ const char* kSensitivePolicies[] = {
     key::kPasswordProtectionLoginURLs,
     key::kRestoreOnStartup,
     key::kRestoreOnStartupURLs,
-    key::kSafeBrowsingForTrustedSourcesEnabled,
     key::kSafeBrowsingEnabled,
     key::kSafeBrowsingAllowlistDomains,
+#if BUILDFLAG(IS_WIN)
+    key::kChromeCleanupEnabled,
+    key::kChromeCleanupReportingEnabled,
+    key::kSafeBrowsingForTrustedSourcesEnabled,
+#endif
 };
 
 void RecordInvalidPolicies(const std::string& policy_name) {
@@ -76,8 +79,8 @@ bool FilterSensitiveExtensionsInstallForcelist(PolicyMap::Entry* map_entry) {
     return false;
 
   // Using index for loop to update the list in place.
-  for (size_t i = 0; i < policy_list_value->GetListDeprecated().size(); i++) {
-    const auto& list_entry = policy_list_value->GetListDeprecated()[i];
+  for (size_t i = 0; i < policy_list_value->GetList().size(); i++) {
+    const auto& list_entry = policy_list_value->GetList()[i];
     if (!list_entry.is_string())
       continue;
 
@@ -87,9 +90,9 @@ bool FilterSensitiveExtensionsInstallForcelist(PolicyMap::Entry* map_entry) {
       continue;
 
     // Only allow custom update urls in enterprise environments.
-    if (!base::LowerCaseEqualsASCII(entry.substr(pos + 1),
-                                    kChromeWebstoreUpdateURL)) {
-      policy_list_value->GetListDeprecated()[i] =
+    if (!base::EqualsCaseInsensitiveASCII(entry.substr(pos + 1),
+                                          kChromeWebstoreUpdateURL)) {
+      policy_list_value->GetList()[i] =
           base::Value(kBlockedExtensionPrefix + entry);
       has_invalid_policies = true;
     }
@@ -115,23 +118,24 @@ bool FilterSensitiveExtensionSettings(PolicyMap::Entry* map_entry) {
     return false;
   }
 
+  base::Value::Dict& policy_dict = policy_dict_value->GetDict();
   // Note that we only search for sensitive entries, all other validations will
   // be handled by ExtensionSettingsPolicyHandler.
   std::vector<std::string> filtered_extensions;
-  for (auto entry : policy_dict_value->DictItems()) {
+  for (auto entry : policy_dict) {
     if (entry.first == kWildcard)
       continue;
     if (!entry.second.is_dict())
       continue;
-    std::string* installation_mode =
-        entry.second.FindStringKey(kInstallationMode);
+    base::Value::Dict& entry_dict = entry.second.GetDict();
+    std::string* installation_mode = entry_dict.FindString(kInstallationMode);
     if (!installation_mode || (*installation_mode != kForceInstalled &&
                                *installation_mode != kNormalInstalled)) {
       continue;
     }
-    std::string* update_url = entry.second.FindStringKey(kUpdateUrl);
-    if (!update_url ||
-        base::LowerCaseEqualsASCII(*update_url, kChromeWebstoreUpdateURL)) {
+    std::string* update_url = entry_dict.FindString(kUpdateUrl);
+    if (!update_url || base::EqualsCaseInsensitiveASCII(
+                           *update_url, kChromeWebstoreUpdateURL)) {
       continue;
     }
 
@@ -142,11 +146,11 @@ bool FilterSensitiveExtensionSettings(PolicyMap::Entry* map_entry) {
   // invalid extension id and will be removed by PolicyHandler later.
   if (!filtered_extensions.empty()) {
     for (const auto& extension : filtered_extensions) {
-      auto setting = policy_dict_value->ExtractKey(extension);
+      auto setting = policy_dict.Extract(extension);
       if (!setting)
         continue;
-      policy_dict_value->SetKey(kBlockedExtensionPrefix + extension,
-                                std::move(setting.value()));
+      policy_dict.Set(kBlockedExtensionPrefix + extension,
+                      std::move(setting.value()));
     }
     map_entry->AddMessage(PolicyMap::MessageType::kWarning,
                           IDS_POLICY_OFF_CWS_URL_ERROR,

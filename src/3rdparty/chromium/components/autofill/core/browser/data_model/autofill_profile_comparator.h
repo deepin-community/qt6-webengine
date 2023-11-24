@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,9 +13,7 @@
 #include "base/strings/string_piece.h"
 #include "components/autofill/core/browser/data_model/address.h"
 #include "components/autofill/core/browser/data_model/autofill_profile.h"
-#include "components/autofill/core/browser/data_model/borrowed_transliterator.h"
 #include "components/autofill/core/browser/data_model/contact_info.h"
-#include "components/autofill/core/common/autofill_l10n_util.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace autofill {
@@ -82,7 +80,8 @@ class AutofillProfileComparator {
   // settings-visible value that is different.
   static bool ProfilesHaveDifferentSettingsVisibleValues(
       const AutofillProfile& p1,
-      const AutofillProfile& p2);
+      const AutofillProfile& p2,
+      const std::string& app_locale);
 
   // Returns true if |text| is empty or contains only skippable characters. A
   // character is skippable if it is punctuation or white space.
@@ -336,7 +335,6 @@ class AutofillProfileComparator {
                      NameInfo& info) const;
 
  private:
-  l10n::CaseInsensitiveCompare case_insensitive_compare_;
   const std::string app_locale_;
 };
 

@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,12 +7,13 @@
 #include <cstdint>
 
 #include "base/allocator/partition_allocator/partition_alloc_constants.h"
-#include "base/bind.h"
-#include "base/callback_forward.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_forward.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/numerics/safe_math.h"
+#include "base/task/sequenced_task_runner.h"
 #include "components/services/storage/public/cpp/big_io_buffer.h"
 #include "content/browser/file_system_access/file_system_access_manager_impl.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -31,7 +32,7 @@ namespace {
 
 void ReadOnIOThread(scoped_refptr<storage::FileSystemContext> context,
                     storage::FileSystemURL url,
-                    uint64_t offset,
+                    int64_t offset,
                     scoped_refptr<storage::BigIOBuffer> buffer,
                     scoped_refptr<base::SequencedTaskRunner> reply_runner,
                     base::OnceCallback<void(int)> callback) {
@@ -83,19 +84,29 @@ FileSystemAccessFileDelegateHostImpl::~FileSystemAccessFileDelegateHostImpl() =
 
 struct FileSystemAccessFileDelegateHostImpl::WriteState {
   WriteCallback callback;
-  uint64_t bytes_written = 0;
+  int64_t bytes_written = 0;
 };
 
-void FileSystemAccessFileDelegateHostImpl::Read(uint64_t offset,
-                                                uint64_t bytes_to_read,
+void FileSystemAccessFileDelegateHostImpl::Read(int64_t offset,
+                                                int bytes_to_read,
                                                 ReadCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  if (offset < 0) {
+    receiver_.ReportBadMessage("SyncAccesHandle with a negative read offset.");
+    return;
+  }
+  if (bytes_to_read < 0) {
+    receiver_.ReportBadMessage(
+        "SyncAccesHandle trying to read a negative number of bytes.");
+    return;
+  }
 
   // FileStreamReader::Read takes an int. Do not allocate more memory than
   // Chrome will be allowed to contiguously allocate at once.
   int max_bytes_to_read =
-      std::min(base::saturated_cast<int>(bytes_to_read),
-               base::saturated_cast<int>(base::MaxDirectMapped()));
+      std::min(bytes_to_read,
+               base::saturated_cast<int>(partition_alloc::MaxDirectMapped()));
 
   auto buffer = base::MakeRefCounted<storage::BigIOBuffer>(max_bytes_to_read);
 
@@ -103,7 +114,7 @@ void FileSystemAccessFileDelegateHostImpl::Read(uint64_t offset,
       FROM_HERE,
       base::BindOnce(
           &ReadOnIOThread, base::WrapRefCounted(file_system_context()), url(),
-          offset, buffer, base::SequencedTaskRunnerHandle::Get(),
+          offset, buffer, base::SequencedTaskRunner::GetCurrentDefault(),
           base::BindOnce(&FileSystemAccessFileDelegateHostImpl::DidRead,
                          weak_factory_.GetWeakPtr(), buffer,
                          std::move(callback))));
@@ -136,10 +147,15 @@ void FileSystemAccessFileDelegateHostImpl::DidRead(
 }
 
 void FileSystemAccessFileDelegateHostImpl::Write(
-    uint64_t offset,
+    int64_t offset,
     mojo::ScopedDataPipeConsumerHandle data,
     WriteCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  if (offset < 0) {
+    receiver_.ReportBadMessage("SyncAccesHandle with a negative write offset.");
+    return;
+  }
 
   manager()->DoFileSystemOperation(
       FROM_HERE, &storage::FileSystemOperationRunner::WriteStream,
@@ -185,9 +201,15 @@ void FileSystemAccessFileDelegateHostImpl::GetLength(
 }
 
 void FileSystemAccessFileDelegateHostImpl::SetLength(
-    uint64_t length,
+    int64_t length,
     SetLengthCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  if (length < 0) {
+    receiver_.ReportBadMessage(
+        "SyncAccesHandle with a negative truncate length.");
+    return;
+  }
 
   manager()->DoFileSystemOperation(
       FROM_HERE, &storage::FileSystemOperationRunner::Truncate,

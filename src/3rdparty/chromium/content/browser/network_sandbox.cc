@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -224,16 +224,12 @@ bool MaybeGrantAccessToDataPath(const SandboxParameters& sandbox_params,
     return true;
   DCHECK(!sandbox_params.lpac_capability_name.empty());
   auto ac_sids = base::win::Sid::FromNamedCapabilityVector(
-      {sandbox_params.lpac_capability_name.c_str()});
-  if (!ac_sids.has_value()) {
-    NOTREACHED();
-    return false;
-  }
+      {sandbox_params.lpac_capability_name});
 
   // Grant recursive access to directory. This also means new files in the
   // directory will inherit the ACE.
   return base::win::GrantAccessToPath(
-      directory->path(), *ac_sids,
+      directory->path(), ac_sids,
       GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | DELETE,
       CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE, /*recursive=*/true);
 #else
@@ -286,11 +282,8 @@ SandboxGrantResult MaybeGrantSandboxAccessToNetworkContextData(
   // granted access. Continue attempting to grant access to the other files if
   // this part fails.
   if (params->http_cache_directory && params->http_cache_enabled) {
-    SandboxGrantResult cache_result = SandboxGrantResult::kSuccess;
     // The path must exist for the cache ACL to be set. Create if needed.
-    if (!base::CreateDirectory(params->http_cache_directory->path()))
-      cache_result = SandboxGrantResult::kFailedToCreateCacheDirectory;
-    if (cache_result == SandboxGrantResult::kSuccess) {
+    if (base::CreateDirectory(params->http_cache_directory->path())) {
       // Note, this code always grants access to the cache directory even when
       // the sandbox is not enabled. This is a optimization (on Windows) because
       // by setting the ACL on the directory earlier rather than later, it
@@ -301,14 +294,8 @@ SandboxGrantResult MaybeGrantSandboxAccessToNetworkContextData(
                                       &*params->http_cache_directory)) {
         PLOG(ERROR) << "Failed to grant sandbox access to cache directory "
                     << params->http_cache_directory->path();
-        cache_result = SandboxGrantResult::kFailedToGrantSandboxAccessToCache;
       }
     }
-
-    // Log a separate histogram entry for failures related to the disk cache
-    // here.
-    base::UmaHistogramEnumeration("NetworkService.GrantSandboxToCacheResult",
-                                  cache_result);
   }
 
   // No file paths (e.g. in-memory context) so nothing to do.

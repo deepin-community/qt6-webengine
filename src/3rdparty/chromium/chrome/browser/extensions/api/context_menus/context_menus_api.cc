@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -36,7 +36,7 @@ ExtensionFunction::ResponseAction ContextMenusCreateFunction::Run() {
       api::context_menus::Create::Params::Create(args()));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
-  if (params->create_properties.id.get()) {
+  if (params->create_properties.id) {
     id.string_uid = *params->create_properties.id;
   } else {
     if (BackgroundInfo::HasLazyContext(extension()))
@@ -47,7 +47,7 @@ ExtensionFunction::ResponseAction ContextMenusCreateFunction::Run() {
     EXTENSION_FUNCTION_VALIDATE(args()[0].is_dict());
 
     const base::Value& properties = args()[0];
-    absl::optional<int> result = properties.FindIntKey(
+    absl::optional<int> result = properties.GetDict().FindInt(
         extensions::context_menus_api_helpers::kGeneratedIdKey);
     EXTENSION_FUNCTION_VALIDATE(result);
     id.uid = *result;

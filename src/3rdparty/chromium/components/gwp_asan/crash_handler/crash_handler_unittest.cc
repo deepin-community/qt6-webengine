@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,10 +9,10 @@
 #include <string>
 #include <vector>
 
-#include "base/callback_helpers.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/page_size.h"
 #include "base/no_destructor.h"
 #include "base/path_service.h"
@@ -45,7 +45,7 @@ namespace {
 
 constexpr size_t kAllocationSize = 902;
 constexpr int kSuccess = 0;
-constexpr size_t kTotalPages = AllocatorState::kMaxSlots;
+constexpr size_t kTotalPages = AllocatorState::kMaxRequestedSlots;
 
 #if !BUILDFLAG(IS_ANDROID)
 int HandlerMainAdaptor(int argc, char* argv[]) {
@@ -382,9 +382,13 @@ class CrashHandlerTest : public base::MultiProcessTest,
     EXPECT_TRUE(proto_.has_region_start());
     EXPECT_TRUE(proto_.has_region_size());
     EXPECT_EQ(proto_.region_start() & (base::GetPageSize() - 1), 0U);
-    EXPECT_EQ(proto_.region_size(),
+    // We can't have a more precise check of the region size because it depends
+    // on the PartitionAlloc metadata layout.
+    EXPECT_GE(proto_.region_size(),
               base::GetPageSize() * (2 * kTotalPages + 1));
-
+    EXPECT_LE(
+        proto_.region_size(),
+        base::GetPageSize() * (2 * AllocatorState::kMaxReservedSlots + 1));
     EXPECT_TRUE(proto_.has_missing_metadata());
     EXPECT_FALSE(proto_.missing_metadata());
 

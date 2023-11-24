@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -44,7 +44,7 @@ class CPDF_Type3Font final : public CPDF_SimpleFont {
 
  private:
   CPDF_Type3Font(CPDF_Document* pDocument,
-                 CPDF_Dictionary* pFontDict,
+                 RetainPtr<CPDF_Dictionary> pFontDict,
                  FormFactoryIface* pFormFactory);
 
   // CPDF_Font:

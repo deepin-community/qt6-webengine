@@ -5,7 +5,12 @@
 
 #include "content/public/gpu/content_gpu_client.h"
 
+namespace gl {
+class GLShareGroup;
+}
+
 namespace QtWebEngineCore {
+class ShareGroupQt;
 
 class ContentGpuClientQt : public content::ContentGpuClient {
 public:
@@ -13,7 +18,10 @@ public:
     ~ContentGpuClientQt() override;
 
     // content::ContentGpuClient implementation.
-    gpu::SyncPointManager *GetSyncPointManager() override;
+    gl::GLShareGroup *GetInProcessGpuShareGroup() override;
+
+private:
+    scoped_refptr<ShareGroupQt> m_shareGroupQt;
 };
 
 }

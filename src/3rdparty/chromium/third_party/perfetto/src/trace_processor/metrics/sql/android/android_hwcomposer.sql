@@ -49,56 +49,58 @@ SELECT RUN_METRIC(
 );
 
 
-SELECT RUN_METRIC('android/thread_counter_span_view.sql',
+SELECT RUN_METRIC('android/process_counter_span_view.sql',
   'table_name', 'dpu_vote_clock',
   'counter_name', 'dpu_vote_clock'
 );
 
-SELECT RUN_METRIC('android/thread_counter_span_view.sql',
+SELECT RUN_METRIC('android/process_counter_span_view.sql',
   'table_name', 'dpu_vote_avg_bw',
   'counter_name', 'dpu_vote_avg_bw'
 );
 
-SELECT RUN_METRIC('android/thread_counter_span_view.sql',
+SELECT RUN_METRIC('android/process_counter_span_view.sql',
   'table_name', 'dpu_vote_peak_bw',
   'counter_name', 'dpu_vote_peak_bw'
 );
 
-SELECT RUN_METRIC('android/thread_counter_span_view.sql',
+SELECT RUN_METRIC('android/process_counter_span_view.sql',
   'table_name', 'dpu_vote_rt_bw',
   'counter_name', 'dpu_vote_rt_bw'
 );
 
-DROP VIEW IF EXISTS dpu_vote_thread;
-CREATE VIEW dpu_vote_thread AS
-SELECT DISTINCT s.utid, t.tid
+DROP VIEW IF EXISTS dpu_vote_process;
+CREATE VIEW dpu_vote_process AS
+SELECT DISTINCT p.upid, p.pid
 FROM (
-  SELECT utid FROM dpu_vote_clock_span
+  SELECT upid FROM dpu_vote_clock_span
   UNION
-  SELECT utid FROM dpu_vote_avg_bw_span
+  SELECT upid FROM dpu_vote_avg_bw_span
   UNION
-  SELECT utid FROM dpu_vote_peak_bw_span
-) s JOIN thread t ON s.utid = t.utid;
+  SELECT upid FROM dpu_vote_peak_bw_span
+) s JOIN process p USING (upid);
 
+-- These systrace counters are coming from dedicated kernel threads, so we can
+-- assume pid = tid.
 DROP VIEW IF EXISTS dpu_vote_metrics;
 CREATE VIEW dpu_vote_metrics AS
 SELECT AndroidHwcomposerMetrics_DpuVoteMetrics(
-  'tid', tid,
+  'tid', pid,
   'avg_dpu_vote_clock',
-      (SELECT SUM(dpu_vote_clock_val * dur) / SUM(dur)
-      FROM dpu_vote_clock_span s WHERE s.utid = t.utid),
+  (SELECT SUM(dpu_vote_clock_val * dur) / SUM(dur)
+    FROM dpu_vote_clock_span s WHERE s.upid = p.upid),
   'avg_dpu_vote_avg_bw',
-      (SELECT SUM(dpu_vote_avg_bw_val * dur) / SUM(dur)
-      FROM dpu_vote_avg_bw_span s WHERE s.utid = t.utid),
+  (SELECT SUM(dpu_vote_avg_bw_val * dur) / SUM(dur)
+    FROM dpu_vote_avg_bw_span s WHERE s.upid = p.upid),
   'avg_dpu_vote_peak_bw',
-      (SELECT SUM(dpu_vote_peak_bw_val * dur) / SUM(dur)
-      FROM dpu_vote_peak_bw_span s WHERE s.utid = t.utid),
+  (SELECT SUM(dpu_vote_peak_bw_val * dur) / SUM(dur)
+    FROM dpu_vote_peak_bw_span s WHERE s.upid = p.upid),
   'avg_dpu_vote_rt_bw',
-      (SELECT SUM(dpu_vote_rt_bw_val * dur) / SUM(dur)
-      FROM dpu_vote_rt_bw_span s WHERE s.utid = t.utid)
+  (SELECT SUM(dpu_vote_rt_bw_val * dur) / SUM(dur)
+    FROM dpu_vote_rt_bw_span s WHERE s.upid = p.upid)
 ) AS proto
-FROM dpu_vote_thread t
-ORDER BY tid;
+FROM dpu_vote_process p
+ORDER BY pid;
 
 DROP VIEW IF EXISTS android_hwcomposer_output;
 CREATE VIEW android_hwcomposer_output AS
@@ -109,28 +111,28 @@ SELECT AndroidHwcomposerMetrics(
   'composition_dpu_cached_layers', (SELECT AVG(value) FROM dpu_cached_layers),
   'composition_sf_cached_layers', (SELECT AVG(value) FROM sf_cached_layers),
   'skipped_validation_count',
-      (SELECT COUNT(*) FROM hwc_execution_spans
-      WHERE validation_type = 'skipped_validation'),
+  (SELECT COUNT(*) FROM hwc_execution_spans
+    WHERE validation_type = 'skipped_validation'),
   'unskipped_validation_count',
-      (SELECT COUNT(*) FROM hwc_execution_spans
-      WHERE validation_type = 'unskipped_validation'),
+  (SELECT COUNT(*) FROM hwc_execution_spans
+    WHERE validation_type = 'unskipped_validation'),
   'separated_validation_count',
-      (SELECT COUNT(*) FROM hwc_execution_spans
-      WHERE validation_type = 'separated_validation'),
+  (SELECT COUNT(*) FROM hwc_execution_spans
+    WHERE validation_type = 'separated_validation'),
   'unknown_validation_count',
-      (SELECT COUNT(*) FROM hwc_execution_spans
-      WHERE validation_type = 'unknown'),
+  (SELECT COUNT(*) FROM hwc_execution_spans
+    WHERE validation_type = 'unknown'),
   'avg_all_execution_time_ms',
-      (SELECT AVG(execution_time_ns) / 1e6 FROM hwc_execution_spans
-      WHERE validation_type != 'unknown'),
+  (SELECT AVG(execution_time_ns) / 1e6 FROM hwc_execution_spans
+    WHERE validation_type != 'unknown'),
   'avg_skipped_execution_time_ms',
-      (SELECT AVG(execution_time_ns) / 1e6 FROM hwc_execution_spans
-      WHERE validation_type = 'skipped_validation'),
+  (SELECT AVG(execution_time_ns) / 1e6 FROM hwc_execution_spans
+    WHERE validation_type = 'skipped_validation'),
   'avg_unskipped_execution_time_ms',
-      (SELECT AVG(execution_time_ns) / 1e6 FROM hwc_execution_spans
-      WHERE validation_type = 'unskipped_validation'),
+  (SELECT AVG(execution_time_ns) / 1e6 FROM hwc_execution_spans
+    WHERE validation_type = 'unskipped_validation'),
   'avg_separated_execution_time_ms',
-      (SELECT AVG(execution_time_ns) / 1e6 FROM hwc_execution_spans
-      WHERE validation_type = 'separated_validation'),
+  (SELECT AVG(execution_time_ns) / 1e6 FROM hwc_execution_spans
+    WHERE validation_type = 'separated_validation'),
   'dpu_vote_metrics', (SELECT RepeatedField(proto) FROM dpu_vote_metrics)
 );

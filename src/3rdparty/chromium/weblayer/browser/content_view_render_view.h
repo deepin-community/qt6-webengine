@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,13 +8,13 @@
 #include <memory>
 
 #include "base/android/jni_weak_ref.h"
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "content/public/browser/android/compositor_client.h"
 #include "ui/gfx/native_widget_types.h"
 
-namespace cc {
+namespace cc::slim {
 class Layer;
 }
 
@@ -36,13 +36,13 @@ class ContentViewRenderView : public content::CompositorClient {
 
   content::Compositor* compositor() { return compositor_.get(); }
 
-  scoped_refptr<cc::Layer> root_container_layer() {
+  scoped_refptr<cc::slim::Layer> root_container_layer() {
     return root_container_layer_;
   }
 
-  // Height, in pixels.
-  int height() const { return height_; }
-  void SetHeightChangedListener(base::RepeatingClosure callback);
+  // Content Height, in pixels.
+  int content_height() const { return content_height_; }
+  void SetContentHeightChangedListener(base::RepeatingClosure callback);
 
   // Methods called from Java via JNI -----------------------------------------
   void Destroy(JNIEnv* env);
@@ -55,6 +55,7 @@ class ContentViewRenderView : public content::CompositorClient {
       jint width,
       jint height,
       jboolean for_config_change);
+  void OnViewportSizeChanged(JNIEnv* env, jint width, jint height);
   void SurfaceCreated(JNIEnv* env);
   void SurfaceDestroyed(JNIEnv* env, jboolean cache_back_buffer);
   void SurfaceChanged(JNIEnv* env,
@@ -91,11 +92,11 @@ class ContentViewRenderView : public content::CompositorClient {
   gfx::NativeWindow root_window_;
 
   // Set as the root-layer of the compositor. Contains |web_contents_layer_|.
-  scoped_refptr<cc::Layer> root_container_layer_;
-  scoped_refptr<cc::Layer> web_contents_layer_;
+  scoped_refptr<cc::slim::Layer> root_container_layer_;
+  scoped_refptr<cc::slim::Layer> web_contents_layer_;
 
-  base::RepeatingClosure height_changed_listener_;
-  int height_ = 0;
+  base::RepeatingClosure content_height_changed_listener_;
+  int content_height_ = 0;
 };
 
 }  // namespace weblayer

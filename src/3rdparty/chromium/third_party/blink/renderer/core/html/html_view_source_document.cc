@@ -61,7 +61,7 @@ class ViewSourceEventListener : public NativeEventListener {
   void Invoke(ExecutionContext*, Event* event) override {
     DCHECK_EQ(event->type(), event_type_names::kChange);
     table_->setAttribute(html_names::kClassAttr,
-                         checkbox_->checked() ? "line-wrap" : "");
+                         checkbox_->Checked() ? "line-wrap" : "");
   }
 
   void Trace(Visitor* visitor) const override {
@@ -137,7 +137,11 @@ void HTMLViewSourceDocument::CreateContainingTable() {
   body->ParserAppendChild(table);
 }
 
-void HTMLViewSourceDocument::AddSource(const String& source, HTMLToken& token) {
+void HTMLViewSourceDocument::AddSource(
+    const String& source,
+    HTMLToken& token,
+    const HTMLAttributesRanges& attributes_ranges,
+    int token_start) {
   if (!current_)
     CreateContainingTable();
 
@@ -153,7 +157,7 @@ void HTMLViewSourceDocument::AddSource(const String& source, HTMLToken& token) {
       break;
     case HTMLToken::kStartTag:
     case HTMLToken::kEndTag:
-      ProcessTagToken(source, token);
+      ProcessTagToken(source, token, attributes_ranges, token_start);
       break;
     case HTMLToken::kComment:
       ProcessCommentToken(source, token);
@@ -178,51 +182,60 @@ void HTMLViewSourceDocument::ProcessEndOfFileToken(const String& source,
   current_ = td_;
 }
 
-void HTMLViewSourceDocument::ProcessTagToken(const String& source,
-                                             HTMLToken& token) {
+void HTMLViewSourceDocument::ProcessTagToken(
+    const String& source,
+    const HTMLToken& token,
+    const HTMLAttributesRanges& attributes_ranges,
+    int token_start) {
   current_ = AddSpanWithClassName("html-tag");
 
   AtomicString tag_name = token.GetName().AsAtomicString();
 
   unsigned index = 0;
-  HTMLToken::AttributeList::const_iterator iter = token.Attributes().begin();
+  wtf_size_t attribute_index = 0;
+  DCHECK_EQ(token.Attributes().size(), attributes_ranges.attributes().size());
   while (index < source.length()) {
-    if (iter == token.Attributes().end()) {
+    if (attribute_index == attributes_ranges.attributes().size()) {
       // We want to show the remaining characters in the token.
       index = AddRange(source, index, source.length(), g_empty_atom);
       DCHECK_EQ(index, source.length());
       break;
     }
 
-    AtomicString name(iter->GetName());
-    AtomicString value(iter->Value8BitIfNecessary());
+    const HTMLToken::Attribute& attribute = token.Attributes()[attribute_index];
+    const AtomicString name(attribute.GetName());
+    const AtomicString value(attribute.GetValue());
+
+    const HTMLAttributesRanges::Attribute& attribute_range =
+        attributes_ranges.attributes()[attribute_index];
 
     index =
-        AddRange(source, index, iter->NameRange().start - token.StartIndex(),
+        AddRange(source, index, attribute_range.name_range.start - token_start,
                  g_empty_atom);
-    index = AddRange(source, index, iter->NameRange().end - token.StartIndex(),
-                     "html-attribute-name");
+    index =
+        AddRange(source, index, attribute_range.name_range.end - token_start,
+                 "html-attribute-name");
 
     if (tag_name == html_names::kBaseTag && name == html_names::kHrefAttr)
       AddBase(value);
 
     index =
-        AddRange(source, index, iter->ValueRange().start - token.StartIndex(),
+        AddRange(source, index, attribute_range.value_range.start - token_start,
                  g_empty_atom);
 
     if (name == html_names::kSrcsetAttr) {
-      index =
-          AddSrcset(source, index, iter->ValueRange().end - token.StartIndex());
+      index = AddSrcset(source, index,
+                        attribute_range.value_range.end - token_start);
     } else {
       bool is_link =
           name == html_names::kSrcAttr || name == html_names::kHrefAttr;
       index =
-          AddRange(source, index, iter->ValueRange().end - token.StartIndex(),
+          AddRange(source, index, attribute_range.value_range.end - token_start,
                    "html-attribute-value", is_link,
                    tag_name == html_names::kATag, value);
     }
 
-    ++iter;
+    ++attribute_index;
   }
   current_ = td_;
 }
@@ -272,7 +285,7 @@ void HTMLViewSourceDocument::AddLine(const AtomicString& class_name) {
   current_ = td_ = td;
 
   // Open up the needed spans.
-  if (!class_name.IsEmpty()) {
+  if (!class_name.empty()) {
     if (class_name == "html-attribute-name" ||
         class_name == "html-attribute-value")
       current_ = AddSpanWithClassName("html-tag");
@@ -290,7 +303,7 @@ void HTMLViewSourceDocument::FinishLine() {
 
 void HTMLViewSourceDocument::AddText(const String& text,
                                      const AtomicString& class_name) {
-  if (text.IsEmpty())
+  if (text.empty())
     return;
 
   // Add in the content, splitting on newlines.
@@ -301,7 +314,7 @@ void HTMLViewSourceDocument::AddText(const String& text,
     String substring = lines[i];
     if (current_ == tbody_)
       AddLine(class_name);
-    if (substring.IsEmpty()) {
+    if (substring.empty()) {
       if (i == size - 1)
         break;
       FinishLine();
@@ -327,14 +340,14 @@ int HTMLViewSourceDocument::AddRange(const String& source,
     return start;
 
   String text = source.Substring(start, end - start);
-  if (!class_name.IsEmpty()) {
+  if (!class_name.empty()) {
     if (is_link)
       current_ = AddLink(link, is_anchor);
     else
       current_ = AddSpanWithClassName(class_name);
   }
   AddText(text, class_name);
-  if (!class_name.IsEmpty() && current_ != tbody_)
+  if (!class_name.empty() && current_ != tbody_)
     current_ = To<Element>(current_->parentNode());
   return end;
 }

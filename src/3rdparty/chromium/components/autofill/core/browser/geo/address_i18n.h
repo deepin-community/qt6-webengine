@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <memory>
 #include <string>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "third_party/libaddressinput/src/cpp/include/libaddressinput/address_field.h"
 
@@ -37,8 +37,7 @@ CreateAddressDataFromAutofillProfile(const AutofillProfile& profile,
                                      const std::string& app_locale);
 
 // Returns the corresponding Autofill server type for |field|.
-ServerFieldType TypeForField(::i18n::addressinput::AddressField field,
-                             bool billing);
+ServerFieldType TypeForField(::i18n::addressinput::AddressField field);
 
 // Sets |field| to the corresponding address field for the Autofill
 // |server_type|. Returns |true| if |server_type| can be represented as an

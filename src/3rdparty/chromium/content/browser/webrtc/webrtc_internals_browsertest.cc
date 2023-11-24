@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,8 @@
 #include <stdint.h>
 
 #include "base/command_line.h"
-#include "base/json/json_reader.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/values_test_util.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -195,24 +195,24 @@ class MAYBE_WebRtcInternalsBrowserTest: public ContentBrowserTest {
         ");"));
   }
 
-  // Execute the javascript of addGetUserMedia.
-  void ExecuteAddGetUserMediaJs(const UserMediaRequestEntry& request) {
+  // Execute the javascript of addMedia.
+  void ExecuteAddMediaJs(const UserMediaRequestEntry& request) {
     std::stringstream ss;
     ss << "{rid:" << request.rid << ", pid:" << request.pid << ", origin:'"
        << request.origin << "', audio:'" << request.audio_constraints
        << "', video:'" << request.video_constraints << "'}";
 
-    ASSERT_TRUE(ExecuteJavascript(
-        "cr.webUIListenerCallback('add-get-user-media', " + ss.str() + ");"));
+    ASSERT_TRUE(ExecuteJavascript("cr.webUIListenerCallback('add-media', " +
+                                  ss.str() + ");"));
   }
 
-  // Execute the javascript of removeGetUserMediaForRenderer.
-  void ExecuteRemoveGetUserMediaForRendererJs(int rid) {
+  // Execute the javascript of removeMediaForRenderer.
+  void ExecuteRemoveMediaForRendererJs(int rid) {
     std::stringstream ss;
     ss << "{rid:" << rid << "}";
     ASSERT_TRUE(ExecuteJavascript(
-        "cr.webUIListenerCallback('remove-get-user-media-for-renderer', " +
-        ss.str() + ");"));
+        "cr.webUIListenerCallback('remove-media-for-renderer', " + ss.str() +
+        ");"));
   }
 
   // Verifies that the DOM element with id |id| exists.
@@ -238,40 +238,36 @@ class MAYBE_WebRtcInternalsBrowserTest: public ContentBrowserTest {
   }
 
   // Verifies the JS Array of userMediaRequests matches |requests|.
-  void VerifyUserMediaRequest(
-      const std::vector<UserMediaRequestEntry>& requests) {
+  void VerifyMediaRequest(const std::vector<UserMediaRequestEntry>& requests) {
     string json_requests;
     ASSERT_TRUE(
         ExecuteScriptAndExtractString(shell(),
                                       "window.domAutomationController.send("
                                       "    JSON.stringify(userMediaRequests));",
                                       &json_requests));
-    std::unique_ptr<base::Value> value_requests =
-        base::JSONReader::ReadDeprecated(json_requests);
+    base::Value::List list_request = base::test::ParseJsonList(json_requests);
 
-    EXPECT_EQ(base::Value::Type::LIST, value_requests->type());
-
-    base::ListValue* list_request =
-        static_cast<base::ListValue*>(value_requests.get());
-    EXPECT_EQ(requests.size(), list_request->GetListDeprecated().size());
+    EXPECT_EQ(requests.size(), list_request.size());
 
     for (size_t i = 0; i < requests.size(); ++i) {
-      const base::Value& value = list_request->GetListDeprecated()[i];
+      const base::Value& value = list_request[i];
       ASSERT_TRUE(value.is_dict());
-      absl::optional<int> rid = value.FindIntKey("rid");
-      absl::optional<int> pid = value.FindIntKey("pid");
-      std::string origin, audio, video;
+      const base::Value::Dict& dict = value.GetDict();
+      absl::optional<int> rid = dict.FindInt("rid");
+      absl::optional<int> pid = dict.FindInt("pid");
       ASSERT_TRUE(rid);
       ASSERT_TRUE(pid);
-      const base::DictionaryValue& dict = base::Value::AsDictionaryValue(value);
-      ASSERT_TRUE(dict.GetString("origin", &origin));
-      ASSERT_TRUE(dict.GetString("audio", &audio));
-      ASSERT_TRUE(dict.GetString("video", &video));
+      const std::string* origin = dict.FindString("origin");
+      const std::string* audio = dict.FindString("audio");
+      const std::string* video = dict.FindString("video");
+      ASSERT_TRUE(origin);
+      ASSERT_TRUE(audio);
+      ASSERT_TRUE(video);
       EXPECT_EQ(requests[i].rid, *rid);
       EXPECT_EQ(requests[i].pid, *pid);
-      EXPECT_EQ(requests[i].origin, origin);
-      EXPECT_EQ(requests[i].audio_constraints, audio);
-      EXPECT_EQ(requests[i].video_constraints, video);
+      EXPECT_EQ(requests[i].origin, *origin);
+      EXPECT_EQ(requests[i].audio_constraints, *audio);
+      EXPECT_EQ(requests[i].video_constraints, *video);
     }
 
     bool user_media_tab_existed = false;
@@ -291,7 +287,9 @@ class MAYBE_WebRtcInternalsBrowserTest: public ContentBrowserTest {
           "    document.querySelector('#user-media-tab-id')"
           "        .childNodes.length);",
           &user_media_request_count));
-      ASSERT_EQ(requests.size(), static_cast<size_t>(user_media_request_count));
+      // The list of childnodes includes the input field and its label.
+      ASSERT_EQ(requests.size(),
+                static_cast<size_t>(user_media_request_count) - 2);
     }
   }
 
@@ -455,54 +453,41 @@ class MAYBE_WebRtcInternalsBrowserTest: public ContentBrowserTest {
 
   // Verifies |dump| contains |peer_connection_number| peer connection dumps,
   // each containing |update_number| updates and |stats_number| stats tables.
-  void VerifyPageDumpStructure(base::Value* dump,
+  void VerifyPageDumpStructure(const base::Value::Dict& dump,
                                int peer_connection_number,
                                int update_number,
                                int stats_number) {
-    EXPECT_NE((base::Value*)nullptr, dump);
-    ASSERT_EQ(base::Value::Type::DICTIONARY, dump->type());
-
-    EXPECT_EQ((size_t)peer_connection_number, dump->DictSize());
-    for (auto kv : dump->DictItems()) {
-      const base::Value& pc_dump = kv.second;
-      ASSERT_EQ(base::Value::Type::DICTIONARY, pc_dump.type());
+    EXPECT_EQ(static_cast<size_t>(peer_connection_number), dump.size());
+    for (auto kv : dump) {
+      ASSERT_TRUE(kv.second.is_dict());
+      const base::Value::Dict& pc_dump = kv.second.GetDict();
 
       // Verifies the number of updates.
-      const base::Value* value = pc_dump.FindListKey("updateLog");
-      ASSERT_TRUE(value);
-      EXPECT_EQ((size_t)update_number, value->GetListDeprecated().size());
+      const base::Value::List* updates = pc_dump.FindList("updateLog");
+      ASSERT_TRUE(updates);
+      EXPECT_EQ(static_cast<size_t>(update_number), updates->size());
 
       // Verifies the number of stats tables.
-      value = pc_dump.FindDictKey("stats");
-      ASSERT_TRUE(value);
-      EXPECT_EQ((size_t)stats_number, value->DictSize());
+      const base::Value::Dict* stats = pc_dump.FindDict("stats");
+      ASSERT_TRUE(stats);
+      EXPECT_EQ(static_cast<size_t>(stats_number), stats->size());
     }
   }
 
   // Verifies |dump| contains the correct statsTable and statsDataSeries for
   // |pc|.
-  void VerifyStatsDump(base::Value* dump,
+  void VerifyStatsDump(const base::Value::Dict& dump,
                        const PeerConnectionEntry& pc,
                        const string& report_type,
                        const string& report_id,
                        const StatsUnit& stats) {
-    EXPECT_NE((base::Value*)nullptr, dump);
-    EXPECT_EQ(base::Value::Type::DICTIONARY, dump->type());
-
-    base::DictionaryValue* dict_dump =
-        static_cast<base::DictionaryValue*>(dump);
-    base::Value* value = nullptr;
-    dict_dump->Get(pc.getIdString(), &value);
-    base::DictionaryValue* pc_dump = static_cast<base::DictionaryValue*>(value);
+    const base::Value::Dict* pc_dump = dump.FindDict(pc.getIdString());
+    ASSERT_TRUE(pc_dump);
 
     // Verifies there is one data series per stats name.
-    value = nullptr;
-    pc_dump->Get("stats", &value);
-    EXPECT_EQ(base::Value::Type::DICTIONARY, value->type());
-
-    base::DictionaryValue* dataSeries =
-        static_cast<base::DictionaryValue*>(value);
-    EXPECT_EQ(stats.values.size(), dataSeries->DictSize());
+    const base::Value::Dict* data_series_dump = pc_dump->FindDict("stats");
+    ASSERT_TRUE(data_series_dump);
+    EXPECT_EQ(stats.values.size(), data_series_dump->size());
   }
 };
 
@@ -806,11 +791,8 @@ IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcInternalsBrowserTest, CreatePageDump) {
       "window.domAutomationController.send("
       "    JSON.stringify(peerConnectionDataStore));",
       &dump_json));
-  std::unique_ptr<base::Value> dump =
-      base::JSONReader::ReadDeprecated(dump_json);
-  VerifyPageDumpStructure(dump.get(),
-                          2 /*peer_connection_number*/,
-                          2 /*update_number*/,
+  VerifyPageDumpStructure(base::test::ParseJsonDict(dump_json),
+                          2 /*peer_connection_number*/, 2 /*update_number*/,
                           0 /*stats_number*/);
 
   // Adds a stats report.
@@ -826,80 +808,30 @@ IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcInternalsBrowserTest, CreatePageDump) {
       "window.domAutomationController.send("
       "    JSON.stringify(peerConnectionDataStore));",
       &dump_json));
-  dump = base::JSONReader::ReadDeprecated(dump_json);
-  VerifyStatsDump(dump.get(), pc_0, type, id, stats);
+  VerifyStatsDump(base::test::ParseJsonDict(dump_json), pc_0, type, id, stats);
 }
 
-IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcInternalsBrowserTest, UpdateGetUserMedia) {
+IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcInternalsBrowserTest, UpdateMedia) {
   GURL url("chrome://webrtc-internals");
   EXPECT_TRUE(NavigateToURL(shell(), url));
 
   UserMediaRequestEntry request1(1, 1, "origin", "ac", "vc");
   UserMediaRequestEntry request2(2, 2, "origin2", "ac2", "vc2");
-  ExecuteAddGetUserMediaJs(request1);
-  ExecuteAddGetUserMediaJs(request2);
+  ExecuteAddMediaJs(request1);
+  ExecuteAddMediaJs(request2);
 
   std::vector<UserMediaRequestEntry> list;
   list.push_back(request1);
   list.push_back(request2);
-  VerifyUserMediaRequest(list);
+  VerifyMediaRequest(list);
 
-  ExecuteRemoveGetUserMediaForRendererJs(1);
+  ExecuteRemoveMediaForRendererJs(1);
   list.erase(list.begin());
-  VerifyUserMediaRequest(list);
+  VerifyMediaRequest(list);
 
-  ExecuteRemoveGetUserMediaForRendererJs(2);
+  ExecuteRemoveMediaForRendererJs(2);
   list.erase(list.begin());
-  VerifyUserMediaRequest(list);
-}
-
-// Tests that the received propagation delta values are converted and drawn
-// correctly.
-IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcInternalsBrowserTest,
-                       ReceivedPropagationDelta) {
-  GURL url("chrome://webrtc-internals");
-  EXPECT_TRUE(NavigateToURL(shell(), url));
-
-  PeerConnectionEntry pc(1, 0);
-  ExecuteAddPeerConnectionJs(pc);
-
-  StatsUnit stats = {FAKE_TIME_STAMP};
-  stats.values["googReceivedPacketGroupArrivalTimeDebug"] =
-      "[1000, 1100, 1200]";
-  stats.values["googReceivedPacketGroupPropagationDeltaDebug"] =
-      "[10, 20, 30]";
-  const string stats_type = "bwe";
-  const string stats_id = "videobwe";
-  ExecuteAndVerifyAddStats(pc, stats_type, stats_id, stats);
-
-  string graph_id = pc.getIdString() + "-" + stats_id +
-      "-googReceivedPacketGroupPropagationDeltaDebug";
-  string data_series_id =
-      stats_id + "-googReceivedPacketGroupPropagationDeltaDebug";
-  bool result = false;
-  // Verify that the graph exists.
-  ASSERT_TRUE(ExecuteScriptAndExtractBool(
-      shell(),
-      "window.domAutomationController.send("
-      "   graphViews['" + graph_id + "'] != null)",
-      &result));
-  EXPECT_TRUE(result);
-
-  // Verify that the graph contains multiple data points.
-  int count = 0;
-  ASSERT_TRUE(ExecuteScriptAndExtractInt(
-      shell(),
-      "window.domAutomationController.send("
-      "   graphViews['" + graph_id + "'].getDataSeriesCount())",
-      &count));
-  EXPECT_EQ(1, count);
-  ASSERT_TRUE(ExecuteScriptAndExtractInt(
-      shell(),
-      "window.domAutomationController.send("
-      "   peerConnectionDataStore['" + pc.getIdString() + "']" +
-      "       .getDataSeries('" + data_series_id + "').getCount())",
-      &count));
-  EXPECT_EQ(3, count);
+  VerifyMediaRequest(list);
 }
 
 }  // namespace content

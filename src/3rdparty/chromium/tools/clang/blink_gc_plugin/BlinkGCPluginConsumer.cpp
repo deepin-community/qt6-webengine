@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,7 @@
 #include "CheckDispatchVisitor.h"
 #include "CheckFieldsVisitor.h"
 #include "CheckFinalizerVisitor.h"
+#include "CheckForbiddenFieldsVisitor.h"
 #include "CheckGCRootsVisitor.h"
 #include "CheckTraceVisitor.h"
 #include "CollectVisitor.h"
@@ -253,15 +254,27 @@ void BlinkGCPluginConsumer::CheckClass(RecordInfo* info) {
     if (!info->IsGCMixin()) {
       CheckLeftMostDerived(info);
       CheckDispatch(info);
-      if (CXXMethodDecl* newop = info->DeclaresNewOperator())
-        if (!Config::IsIgnoreAnnotated(newop))
+      if (CXXMethodDecl* newop = info->DeclaresNewOperator()) {
+        if (!info->IsStackAllocated() &&
+            !Config::IsGCBase(newop->getParent()->getName()) &&
+            !Config::IsIgnoreAnnotated(newop)) {
           reporter_.ClassOverridesNew(info, newop);
+        }
+      }
     }
 
     {
       CheckGCRootsVisitor visitor(options_);
       if (visitor.ContainsGCRoots(info))
         reporter_.ClassContainsGCRoots(info, visitor.gc_roots());
+    }
+
+    if (options_.enable_forbidden_fields_check) {
+      CheckForbiddenFieldsVisitor visitor(options_);
+      if (visitor.ContainsForbiddenFields(info)) {
+        reporter_.ClassContainsForbiddenFields(info,
+                                               visitor.forbidden_fields());
+      }
     }
 
     if (info->NeedsFinalization())

@@ -1,16 +1,16 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "extensions/browser/renderer_startup_helper.h"
 
+#include <string>
 #include <utility>
 #include <vector>
 
-#include "base/callback_helpers.h"
 #include "base/containers/contains.h"
 #include "base/debug/dump_without_crashing.h"
-#include "base/feature_list.h"
+#include "base/functional/callback_helpers.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
@@ -23,9 +23,9 @@
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/guest_view/web_view/web_view_guest.h"
+#include "extensions/browser/network_permissions_updater.h"
 #include "extensions/browser/service_worker_task_queue.h"
 #include "extensions/common/activation_sequence.h"
-#include "extensions/common/cors_util.h"
 #include "extensions/common/extension_messages.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/extensions_client.h"
@@ -38,11 +38,11 @@
 #include "ui/base/webui/web_ui_util.h"
 #include "url/origin.h"
 
-using content::BrowserContext;
-
 namespace extensions {
 
 namespace {
+
+using ::content::BrowserContext;
 
 // Returns the current ActivationSequence of |extension| if the extension is
 // Service Worker-based, otherwise returns absl::nullopt.
@@ -76,9 +76,8 @@ mojom::ExtensionLoadedParamsPtr CreateExtensionLoadedParams(
   }
 
   return mojom::ExtensionLoadedParams::New(
-      static_cast<base::DictionaryValue&&>(
-          extension.manifest()->value()->Clone()),
-      extension.location(), extension.path(),
+      extension.manifest()->value()->Clone(), extension.location(),
+      extension.path(),
       CreatePermissionSet(permissions_data->active_permissions()),
       CreatePermissionSet(permissions_data->withheld_permissions()),
       std::move(tab_specific_permissions),
@@ -88,6 +87,7 @@ mojom::ExtensionLoadedParamsPtr CreateExtensionLoadedParams(
       GetWorkerActivationSequence(browser_context, extension),
       extension.creation_flags(), extension.guid());
 }
+
 }  // namespace
 
 RendererStartupHelper::RendererStartupHelper(BrowserContext* browser_context)
@@ -171,6 +171,10 @@ void RendererStartupHelper::InitializeProcess(
       PermissionsData::GetDefaultPolicyBlockedHosts(context_id),
       PermissionsData::GetDefaultPolicyAllowedHosts(context_id));
 
+  renderer->UpdateUserHostRestrictions(
+      PermissionsData::GetUserBlockedHosts(context_id),
+      PermissionsData::GetUserAllowedHosts(context_id));
+
   // Loaded extensions.
   std::vector<mojom::ExtensionLoadedParamsPtr> loaded_extensions;
   const ExtensionSet& extensions =
@@ -252,10 +256,13 @@ void RendererStartupHelper::ActivateExtensionInProcess(
   // always be called before creating URLLoaderFactory for any extension frames
   // that might be eventually hosted inside the renderer `process` (this
   // Browser-side ordering will be replicated within the NetworkService because
-  // SetCorsOriginAccessListsForOrigin and CreateURLLoaderFactory are 2 methods
+  // `SetCorsOriginAccessListsForOrigin()`, which is used in
+  // NetworkPermissionsUpdater, and `CreateURLLoaderFactory()` are 2 methods
   // of the same mojom::NetworkContext interface).
-  util::SetCorsOriginAccessListForExtension({process->GetBrowserContext()},
-                                            extension, base::DoNothing());
+  NetworkPermissionsUpdater::UpdateExtension(
+      *process->GetBrowserContext(), extension,
+      NetworkPermissionsUpdater::ContextSet::kCurrentContextOnly,
+      base::DoNothing());
 
   auto remote = process_mojo_map_.find(process);
   if (remote != process_mojo_map_.end()) {
@@ -312,7 +319,8 @@ void RendererStartupHelper::OnExtensionUnloaded(const Extension& extension) {
   }
 
   // Resets registered origin access lists in the BrowserContext asynchronously.
-  util::ResetCorsOriginAccessListForExtension(browser_context_, extension);
+  NetworkPermissionsUpdater::ResetOriginAccessForExtension(*browser_context_,
+                                                           extension);
 
   for (auto& process_extensions_pair : pending_active_extensions_)
     process_extensions_pair.second.erase(extension.id());
@@ -349,6 +357,79 @@ mojom::Renderer* RendererStartupHelper::GetRenderer(
     return nullptr;
   return it->second.get();
 }
+
+BrowserContext* RendererStartupHelper::GetRendererBrowserContext() {
+  // `browser_context_` is redirected to remove incognito mode. This method
+  // returns the original browser context associated with the renderer.
+  auto* host = content::RenderProcessHost::FromID(receivers_.current_context());
+  if (!host) {
+    return nullptr;
+  }
+
+  return host->GetBrowserContext();
+}
+
+void RendererStartupHelper::AddAPIActionToActivityLog(
+    const ExtensionId& extension_id,
+    const std::string& call_name,
+    base::Value::List args,
+    const std::string& extra) {
+  auto* browser_context = GetRendererBrowserContext();
+  if (!browser_context) {
+    return;
+  }
+
+  ExtensionsBrowserClient::Get()->AddAPIActionToActivityLog(
+      browser_context, extension_id, call_name, std::move(args), extra);
+}
+
+void RendererStartupHelper::AddEventToActivityLog(
+    const ExtensionId& extension_id,
+    const std::string& call_name,
+    base::Value::List args,
+    const std::string& extra) {
+  auto* browser_context = GetRendererBrowserContext();
+  if (!browser_context) {
+    return;
+  }
+
+  ExtensionsBrowserClient::Get()->AddEventToActivityLog(
+      browser_context, extension_id, call_name, std::move(args), extra);
+}
+
+void RendererStartupHelper::AddDOMActionToActivityLog(
+    const ExtensionId& extension_id,
+    const std::string& call_name,
+    base::Value::List args,
+    const GURL& url,
+    const std::u16string& url_title,
+    int32_t call_type) {
+  auto* browser_context = GetRendererBrowserContext();
+  if (!browser_context) {
+    return;
+  }
+
+  ExtensionsBrowserClient::Get()->AddDOMActionToActivityLog(
+      browser_context, extension_id, call_name, std::move(args), url, url_title,
+      call_type);
+}
+
+// static
+void RendererStartupHelper::BindForRenderer(
+    int process_id,
+    mojo::PendingAssociatedReceiver<mojom::RendererHost> receiver) {
+  auto* host = content::RenderProcessHost::FromID(process_id);
+  if (!host) {
+    return;
+  }
+
+  auto* renderer_startup_helper =
+      RendererStartupHelperFactory::GetForBrowserContext(
+          host->GetBrowserContext());
+  renderer_startup_helper->receivers_.Add(renderer_startup_helper,
+                                          std::move(receiver), process_id);
+}
+
 //////////////////////////////////////////////////////////////////////////////
 
 // static
@@ -370,17 +451,18 @@ RendererStartupHelperFactory::RendererStartupHelperFactory()
   // No dependencies on other services.
 }
 
-RendererStartupHelperFactory::~RendererStartupHelperFactory() {}
+RendererStartupHelperFactory::~RendererStartupHelperFactory() = default;
 
 KeyedService* RendererStartupHelperFactory::BuildServiceInstanceFor(
-    content::BrowserContext* context) const {
+    BrowserContext* context) const {
   return new RendererStartupHelper(context);
 }
 
 BrowserContext* RendererStartupHelperFactory::GetBrowserContextToUse(
     BrowserContext* context) const {
   // Redirected in incognito.
-  return ExtensionsBrowserClient::Get()->GetOriginalContext(context);
+  return ExtensionsBrowserClient::Get()->GetRedirectedContextInIncognito(
+      context, /*force_guest_profile=*/true, /*force_system_profile=*/false);
 }
 
 bool RendererStartupHelperFactory::ServiceIsCreatedWithBrowserContext() const {

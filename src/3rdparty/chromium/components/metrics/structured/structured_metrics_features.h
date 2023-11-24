@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,14 +11,15 @@ namespace metrics {
 namespace structured {
 
 // This can be used to disable structured metrics as a whole.
-extern const base::Feature kStructuredMetrics;
+BASE_DECLARE_FEATURE(kStructuredMetrics);
 
-extern const base::Feature kBluetoothSessionizedMetrics;
+// Controls whether event sequence logging is enabled or not.
+BASE_DECLARE_FEATURE(kEventSequenceLogging);
 
-// Enabling this feature will have structured metrics use the crosapi interface
-// to record structured metrics rather than direct writes. This enables
-// processes not in Chrome Ash (ie Lacros) to use Structured metrics.
-extern const base::Feature kUseCrosApiInterface;
+BASE_DECLARE_FEATURE(kBluetoothSessionizedMetrics);
+
+// Delays appending structured metrics events until HWID has been loaded.
+BASE_DECLARE_FEATURE(kDelayUploadUntilHwid);
 
 // TODO(crbug.com/1148168): This is a temporary switch to revert structured
 // metrics upload to its old behaviour. Old behaviour:
@@ -30,6 +31,17 @@ extern const base::Feature kUseCrosApiInterface;
 //
 // Once we are comfortable with this change, this parameter can be removed.
 bool IsIndependentMetricsUploadEnabled();
+
+// Returns the parameter used to control how many files will be read into memory
+// before events start being discarded.
+//
+// This is to prevent too many files to be read into memory, causing Chrome to
+// OOM.
+int GetFileLimitPerScan();
+
+// Returns the parameter used to control the max size of an event. Any event
+// exceeding this memory limit will be discarded. Defaults to 50KB.
+int GetFileSizeByteLimit();
 
 }  // namespace structured
 }  // namespace metrics

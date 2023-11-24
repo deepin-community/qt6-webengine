@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,7 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/statistics_recorder.h"
 #include "base/values.h"
@@ -38,6 +38,7 @@ const char kHistogramsUIFetchDiff[] = "fetchDiff";
 struct JsParams {
   std::string callback_id;
   std::string query;
+  bool include_subprocesses;
 };
 
 WebUIDataSource* CreateHistogramsHTMLSource() {
@@ -65,12 +66,16 @@ class HistogramsMessageHandler : public WebUIMessageHandler {
   void RegisterMessages() override;
 
  private:
-  void HandleRequestHistograms(const base::ListValue* args);
-  void HandleStartMoninoring(const base::ListValue* args);
-  void HandleFetchDiff(const base::ListValue* args);
+  void HandleRequestHistograms(const base::Value::List& args);
+  void HandleStartMoninoring(const base::Value::List& args);
+  void HandleFetchDiff(const base::Value::List& args);
 
   // Calls AllowJavascript() and unpacks the passed params.
-  JsParams AllowJavascriptAndUnpackParams(const base::ListValue& args);
+  JsParams AllowJavascriptAndUnpackParams(const base::Value::List& args);
+
+  // Import histograms, and those from subprocesses if |include_subprocesses| is
+  // true.
+  void ImportHistograms(bool include_subprocesses);
 
   HistogramsMonitor histogram_monitor_;
 };
@@ -80,46 +85,54 @@ HistogramsMessageHandler::HistogramsMessageHandler() {}
 HistogramsMessageHandler::~HistogramsMessageHandler() {}
 
 JsParams HistogramsMessageHandler::AllowJavascriptAndUnpackParams(
-    const base::ListValue& args) {
-  base::Value::ConstListView args_list = args.GetListDeprecated();
+    const base::Value::List& args_list) {
   AllowJavascript();
   JsParams params;
   if (args_list.size() > 0u && args_list[0].is_string())
     params.callback_id = args_list[0].GetString();
   if (args_list.size() > 1u && args_list[1].is_string())
     params.query = args_list[1].GetString();
+  if (args_list.size() > 2u && args_list[2].is_bool())
+    params.include_subprocesses = args_list[2].GetBool();
   return params;
 }
 
-void HistogramsMessageHandler::HandleRequestHistograms(
-    const base::ListValue* args) {
+void HistogramsMessageHandler::ImportHistograms(bool include_subprocesses) {
   base::StatisticsRecorder::ImportProvidedHistograms();
-  HistogramSynchronizer::FetchHistograms();
-  JsParams params = AllowJavascriptAndUnpackParams(*args);
-  base::ListValue histograms_list;
+  if (include_subprocesses)
+    HistogramSynchronizer::FetchHistograms();
+}
+
+void HistogramsMessageHandler::HandleRequestHistograms(
+    const base::Value::List& args) {
+  JsParams params = AllowJavascriptAndUnpackParams(args);
+  ImportHistograms(params.include_subprocesses);
+  base::Value::List histograms_list;
   for (base::HistogramBase* histogram :
        base::StatisticsRecorder::Sort(base::StatisticsRecorder::WithName(
-           base::StatisticsRecorder::GetHistograms(), params.query))) {
-    base::Value histogram_dict = histogram->ToGraphDict();
-    if (!histogram_dict.DictEmpty())
+           base::StatisticsRecorder::GetHistograms(), params.query,
+           /*case_sensitive=*/false))) {
+    base::Value::Dict histogram_dict = histogram->ToGraphDict();
+    if (!histogram_dict.empty())
       histograms_list.Append(std::move(histogram_dict));
   }
 
-  ResolveJavascriptCallback(base::Value(params.callback_id),
-                            std::move(histograms_list));
+  ResolveJavascriptCallback(base::Value(params.callback_id), histograms_list);
 }
 
 void HistogramsMessageHandler::HandleStartMoninoring(
-    const base::ListValue* args) {
-  JsParams params = AllowJavascriptAndUnpackParams(*args);
+    const base::Value::List& args) {
+  JsParams params = AllowJavascriptAndUnpackParams(args);
+  ImportHistograms(params.include_subprocesses);
   histogram_monitor_.StartMonitoring(params.query);
   ResolveJavascriptCallback(base::Value(params.callback_id),
                             base::Value("Success"));
 }
 
-void HistogramsMessageHandler::HandleFetchDiff(const base::ListValue* args) {
-  JsParams params = AllowJavascriptAndUnpackParams(*args);
-  base::ListValue histograms_list = histogram_monitor_.GetDiff();
+void HistogramsMessageHandler::HandleFetchDiff(const base::Value::List& args) {
+  JsParams params = AllowJavascriptAndUnpackParams(args);
+  ImportHistograms(params.include_subprocesses);
+  base::Value::List histograms_list = histogram_monitor_.GetDiff();
   ResolveJavascriptCallback(base::Value(params.callback_id),
                             std::move(histograms_list));
 }
@@ -129,17 +142,17 @@ void HistogramsMessageHandler::RegisterMessages() {
 
   // We can use base::Unretained() here, as both the callback and this class are
   // owned by HistogramsInternalsUI.
-  web_ui()->RegisterDeprecatedMessageCallback(
+  web_ui()->RegisterMessageCallback(
       kHistogramsUIRequestHistograms,
       base::BindRepeating(&HistogramsMessageHandler::HandleRequestHistograms,
                           base::Unretained(this)));
 
-  web_ui()->RegisterDeprecatedMessageCallback(
+  web_ui()->RegisterMessageCallback(
       kHistogramsUIStartMonitoring,
       base::BindRepeating(&HistogramsMessageHandler::HandleStartMoninoring,
                           base::Unretained(this)));
 
-  web_ui()->RegisterDeprecatedMessageCallback(
+  web_ui()->RegisterMessageCallback(
       kHistogramsUIFetchDiff,
       base::BindRepeating(&HistogramsMessageHandler::HandleFetchDiff,
                           base::Unretained(this)));

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include "base/cxx17_backports.h"
 #include "base/no_destructor.h"
+#include "services/metrics/public/cpp/ukm_recorder.h"
 #include "services/network/public/cpp/client_hints.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -72,10 +73,10 @@ ClientHintToWebFeatureMap MakeClientHintToWebFeatureMap() {
        WebFeature::kClientHintsUAFull},
       {network::mojom::WebClientHintsType::kUAWoW64,
        WebFeature::kClientHintsUAWoW64},
-      {network::mojom::WebClientHintsType::kPartitionedCookies,
-       WebFeature::kClientHintsPartitionedCookies},
       {network::mojom::WebClientHintsType::kSaveData,
        WebFeature::kClientHintsSaveData},
+      {network::mojom::WebClientHintsType::kPrefersReducedMotion,
+       WebFeature::kClientHintsPrefersReducedMotion},
   };
 }
 
@@ -92,6 +93,14 @@ const ClientHintToWebFeatureMap& GetClientHintToWebFeatureMap() {
 FrameClientHintsPreferencesContext::FrameClientHintsPreferencesContext(
     LocalFrame* frame)
     : frame_(frame) {}
+
+ukm::SourceId FrameClientHintsPreferencesContext::GetUkmSourceId() {
+  return frame_->GetDocument()->UkmSourceID();
+}
+
+ukm::UkmRecorder* FrameClientHintsPreferencesContext::GetUkmRecorder() {
+  return frame_->GetDocument()->UkmRecorder();
+}
 
 void FrameClientHintsPreferencesContext::CountClientHints(
     network::mojom::WebClientHintsType type) {

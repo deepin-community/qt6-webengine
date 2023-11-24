@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,6 @@
 #include <memory>
 
 #include "base/base_export.h"
-#include "base/check_op.h"
 #include "base/compiler_specific.h"
 #include "base/dcheck_is_on.h"
 #include "base/gtest_prod_util.h"
@@ -25,16 +24,24 @@
 // scoped_blocking_call.h instead.
 //
 // Specific allowances that can be controlled in this file are:
+//
 // - Blocking call: Refers to any call that causes the calling thread to wait
 //   off-CPU. It includes but is not limited to calls that wait on synchronous
 //   file I/O operations: read or write a file from disk, interact with a pipe
 //   or a socket, rename or delete a file, enumerate files in a directory, etc.
 //   Acquiring a low contention lock is not considered a blocking call.
 //
+//   Prefer to allow a blocking call by posting a task to
+//   base::ThreadPoolInstance with base::MayBlock().
+//
 // - Waiting on a //base sync primitive: Refers to calling one of these methods:
 //   - base::WaitableEvent::*Wait*
 //   - base::ConditionVariable::*Wait*
 //   - base::Process::WaitForExit*
+//
+//   Prefer not to wait on //base sync primitives (see below for alternatives).
+//   When it is unavoidable, use ScopedAllowBaseSyncPrimitives in a task posted
+//   to base::ThreadPoolInstance with base::MayBlock().
 //
 // - Accessing singletons: Accessing global state (Singleton / LazyInstance) is
 //   problematic on threads whom aren't joined on shutdown as they can be using
@@ -51,18 +58,27 @@
 //  - DisallowBaseSyncPrimitives(): Disallows waiting on a //base sync primitive
 //    on the current thread.
 //  - DisallowSingleton(): Disallows using singletons on the current thread.
-//  - DisallowUnresponsiveTasks() Disallows blocking calls, waiting on a //base
+//  - DisallowUnresponsiveTasks(): Disallows blocking calls, waiting on a //base
 //    sync primitive, and long CPU work on the current thread.
 //
 // In addition, scoped-allowance mechanisms are offered to make an exception
 // within a scope for a behavior that is normally disallowed.
-//  - ScopedAllowBlocking(ForTesting): Allows blocking calls.
-//  - ScopedAllowBaseSyncPrimitives(ForTesting)(OutsideBlockingScope): Allow
-//    waiting on a //base sync primitive. The OutsideBlockingScope suffix allows
-//    uses in a scope where blocking is also disallowed.
+//  - ScopedAllowBlocking: Allows blocking calls. Prefer to use base::MayBlock()
+//    instead.
+//  - ScopedAllowBaseSyncPrimitives: Allows waiting on a //base sync primitive.
+//    Must also be in a scope where blocking calls are allowed.
+//  - ScopedAllowBaseSyncPrimitivesOutsideBlockingScope: Allow waiting on a
+//    //base sync primitive, even in a scope where blocking calls are
+//    disallowed. Prefer to use a combination of base::MayBlock() and
+//    ScopedAllowBaseSyncPrimitives.
 //
 // Avoid using allowances outside of unit tests. In unit tests, use allowances
-// with the suffix "ForTesting".
+// with the suffix "ForTesting":
+//  - ScopedAllowBlockingForTesting: Allows blocking calls in unit tests.
+//  - ScopedAllowBaseSyncPrimitivesForTesting: Allows waiting on a //base sync
+//    primitive in unit tests. For convenience this can be used in a scope
+//    where blocking calls are disallowed. Note that base::TestWaitableEvent can
+//    be used without this, also for convenience.
 //
 // Prefer making blocking calls from tasks posted to base::ThreadPoolInstance
 // with base::MayBlock().
@@ -106,54 +122,83 @@
 // that's okay.
 
 class BrowserProcessImpl;
+class BrowserThemePack;
 class ChromeNSSCryptoModuleDelegate;
+class DesktopNotificationBalloon;
+class FirefoxProfileLock;
 class KeyStorageLinux;
 class NativeBackendKWallet;
 class NativeDesktopMediaList;
 class Profile;
+class ProfileImpl;
 class StartupTabProviderImpl;
 class GaiaConfig;
 class WebEngineBrowserMainParts;
+class ScopedAllowBlockingForProfile;
+
+namespace base {
+class File;
+class FilePath;
+}  // namespace base
 
 Profile* GetLastProfileMac();
+bool EnsureBrowserStateDirectoriesCreated(const base::FilePath&,
+                                          const base::FilePath&,
+                                          const base::FilePath&);
 
 namespace android_webview {
 class AwFormDatabaseService;
 class CookieManager;
+class JsSandboxIsolate;
 class ScopedAllowInitGLBindings;
 class VizCompositorThreadRunnerWebView;
 }  // namespace android_webview
 namespace ash {
 class MojoUtils;
-class BrowserDataMigrator;
+class BrowserDataBackMigrator;
+class LoginEventRecorder;
+class StartupCustomizationDocument;
+class StartupUtils;
+bool CameraAppUIShouldEnableLocalOverride(const std::string&);
+namespace system {
+class StatisticsProviderImpl;
+}  // namespace system
 }  // namespace ash
 namespace audio {
 class OutputDevice;
 }
 namespace blink {
+class CategorizedWorkerPoolImpl;
+class CategorizedWorkerPoolJob;
+class CategorizedWorkerPool;
 class DiskDataAllocator;
+class IdentifiabilityActiveSampler;
 class RTCVideoDecoderAdapter;
 class RTCVideoEncoder;
 class SourceStream;
 class VideoFrameResourceProvider;
 class WebRtcVideoFrameAdapter;
 class LegacyWebRtcVideoFrameAdapter;
+class VideoTrackRecorderImplContextProvider;
 class WorkerThread;
 namespace scheduler {
-class WorkerThread;
+class NonMainThreadImpl;
 }
 }  // namespace blink
 namespace cc {
 class CompletionEvent;
 class TileTaskManagerImpl;
 }  // namespace cc
+namespace chrome {
+bool PathProvider(int, base::FilePath*);
+void SessionEnding();
+}  // namespace chrome
 namespace chromecast {
 class CrashUtil;
 }
 namespace chromeos {
 class BlockingMethodCaller;
 namespace system {
-class StatisticsProviderImpl;
 bool IsCoreSchedulingAvailable();
 int NumberOfPhysicalCores();
 }  // namespace system
@@ -167,7 +212,6 @@ class BrowserGpuChannelHostFactory;
 class BrowserMainLoop;
 class BrowserProcessIOThread;
 class BrowserTestBase;
-class CategorizedWorkerPool;
 class DesktopCaptureDevice;
 class DWriteFontCollectionProxy;
 class DWriteFontProxyImpl;
@@ -188,59 +232,84 @@ class ShellPathProvider;
 class SynchronousCompositor;
 class SynchronousCompositorHost;
 class SynchronousCompositorSyncCallBridge;
+class ScopedAllowBlockingForViewAura;
 class TextInputClientMac;
 class WebContentsImpl;
 class WebContentsViewMac;
+base::File CreateFileForDrop(base::FilePath*);
 }  // namespace content
 namespace cronet {
 class CronetPrefsManager;
 class CronetContext;
 }  // namespace cronet
 namespace crosapi {
-class LacrosThreadPriorityDelegate;
+class LacrosThreadTypeDelegate;
 }  // namespace crosapi
+namespace crypto {
+class ScopedAllowBlockingForNSS;
+}
 namespace dbus {
 class Bus;
+}
+namespace drive {
+class FakeDriveService;
 }
 namespace device {
 class UsbContext;
 }
+namespace discardable_memory {
+class ClientDiscardableSharedMemoryManager;
+}
 namespace disk_cache {
 class BackendImpl;
 class InFlightIO;
+bool CleanupDirectorySync(const base::FilePath&);
 }  // namespace disk_cache
 namespace enterprise_connectors {
 class LinuxKeyRotationCommand;
 }  // namespace enterprise_connectors
+namespace extensions {
+class InstalledLoader;
+class UnpackedInstaller;
+}  // namespace extensions
+namespace font_service::internal {
+class MappedFontFile;
+}
 namespace functions {
 class ExecScriptScopedAllowBaseSyncPrimitives;
 }
+namespace gl {
+struct GLImplementationParts;
+namespace init {
+bool InitializeStaticGLBindings(GLImplementationParts);
+}
+}  // namespace gl
 namespace history_report {
 class HistoryReportJniBridge;
 }
 namespace ios_web_view {
 class WebViewBrowserState;
 }
-namespace leveldb_env {
-class DBTracker;
-}
-namespace location {
-namespace nearby {
-namespace chrome {
+namespace leveldb::port {
+class CondVar;
+}  // namespace leveldb::port
+namespace nearby::chrome {
 class ScheduledExecutor;
 class SubmittableExecutor;
-}  // namespace chrome
-}  // namespace nearby
-}  // namespace location
+}  // namespace nearby::chrome
 namespace media {
 class AudioInputDevice;
 class AudioOutputDevice;
 class BlockingUrlProtocol;
 class FileVideoCaptureDeviceFactory;
+class MojoVideoEncodeAccelerator;
 class PaintCanvasVideoRenderer;
 }  // namespace media
 namespace memory_instrumentation {
 class OSMetrics;
+}
+namespace memory_pressure {
+class UserLevelMemoryPressureSignalGenerator;
 }
 namespace metrics {
 class AndroidMetricsServiceClient;
@@ -257,23 +326,24 @@ class CoreLibraryInitializer;
 class SyncCallRestrictions;
 namespace core {
 class ScopedIPCSupport;
+namespace ipcz_driver {
+class MojoTrap;
+}
 }
 }  // namespace mojo
-namespace optimization_guide {
-template <class OutputType, class... InputTypes>
-class TFLiteModelExecutor;
-}
 namespace printing {
 class LocalPrinterHandlerDefault;
 #if BUILDFLAG(IS_MAC)
 class PrintBackendServiceImpl;
 #endif
 class PrintBackendServiceManager;
-class PrintJobWorker;
 class PrinterQuery;
 }  // namespace printing
 namespace rlz_lib {
 class FinancialPing;
+}
+namespace storage {
+class ObfuscatedFileUtil;
 }
 namespace syncer {
 class GetLocalChangesRequest;
@@ -281,7 +351,10 @@ class HttpBridge;
 }  // namespace syncer
 namespace ui {
 class DrmThreadProxy;
-}
+class DrmDisplayHostManager;
+class SelectFileDialogLinux;
+class ScopedAllowBlockingForGbmSurface;
+}  // namespace ui
 namespace weblayer {
 class BrowserContextImpl;
 class ContentBrowserClientImpl;
@@ -289,10 +362,13 @@ class ProfileImpl;
 class WebLayerPathProvider;
 }  // namespace weblayer
 namespace net {
+class GSSAPISharedLibrary;
 class MultiThreadedCertVerifierScopedAllowBaseSyncPrimitives;
 class MultiThreadedProxyResolverScopedAllowJoinOnIO;
 class NetworkChangeNotifierMac;
 class NetworkConfigWatcherMacThread;
+class ProxyConfigServiceWin;
+class ScopedAllowBlockingForSettingGetter;
 namespace internal {
 class AddressTrackerLinux;
 }
@@ -304,6 +380,7 @@ class ScopedAllowThreadJoinForProxyResolverV8Tracing;
 
 namespace remote_cocoa {
 class DroppedScreenShotCopierMac;
+class SelectFileDialogBridge;
 }  // namespace remote_cocoa
 
 namespace remoting {
@@ -323,12 +400,21 @@ namespace shell_integration_linux {
 class LaunchXdgUtilityScopedAllowBaseSyncPrimitives;
 }
 
+namespace tracing {
+class FuchsiaPerfettoProducerConnector;
+}
+
 namespace ui {
 class WindowResizeHelperMac;
 }
 
+namespace updater {
+class SystemctlLauncherScopedAllowBaseSyncPrimitives;
+}
+
 namespace viz {
 class HostGpuMemoryBufferManager;
+class ClientGpuMemoryBufferManager;
 }
 
 namespace vr {
@@ -358,34 +444,51 @@ bool HasWaylandDisplay(base::Environment* env);
 
 namespace base {
 
-namespace sequence_manager {
-namespace internal {
+namespace sequence_manager::internal {
 class TaskQueueImpl;
-}
-}  // namespace sequence_manager
+}  // namespace sequence_manager::internal
 
 namespace android {
 class JavaHandlerThread;
+class ScopedAllowBlockingForImportantFileWriter;
 }
 
 namespace internal {
 class GetAppOutputScopedAllowBaseSyncPrimitives;
 class JobTaskSource;
 class TaskTracker;
+bool ReadProcFile(const FilePath& file, std::string* buffer);
 }  // namespace internal
 
+namespace subtle {
+class PlatformSharedMemoryRegion;
+}
+
+namespace debug {
+class StackTrace;
+}
+
+namespace win {
+class OSInfo;
+class ScopedAllowBlockingForUserAccountControl;
+}
+
 class AdjustOOMScoreHelper;
+class ChromeOSVersionInfo;
 class FileDescriptorWatcher;
 class FilePath;
+class Process;
+class ScopedAllowBlockingForProc;
+class ScopedAllowBlockingForProcessMetrics;
 class ScopedAllowThreadRecallForStackSamplingProfiler;
+class SimpleThread;
 class StackSamplingProfiler;
 class TestCustomDisallow;
-class SimpleThread;
 class Thread;
 
 class BooleanWithStack;
 
-bool PathProviderWin(int, FilePath*);
+void GetNSExecutablePath(base::FilePath* path);
 
 #if DCHECK_IS_ON()
 // NOT_TAIL_CALLED if dcheck-is-on so it's always evident who irrevocably
@@ -421,7 +524,7 @@ INLINE_OR_NOT_TAIL_CALLED void AssertBlockingDisallowedForTesting()
 INLINE_OR_NOT_TAIL_CALLED void DisallowBlocking() EMPTY_BODY_IF_DCHECK_IS_OFF;
 
 // Disallows blocking calls within its scope.
-class BASE_EXPORT ScopedDisallowBlocking {
+class BASE_EXPORT [[nodiscard]] ScopedDisallowBlocking {
  public:
   ScopedDisallowBlocking() EMPTY_BODY_IF_DCHECK_IS_OFF;
 
@@ -436,7 +539,7 @@ class BASE_EXPORT ScopedDisallowBlocking {
 #endif
 };
 
-class BASE_EXPORT ScopedAllowBlocking {
+class BASE_EXPORT [[nodiscard]] ScopedAllowBlocking {
  public:
   ScopedAllowBlocking(const ScopedAllowBlocking&) = delete;
   ScopedAllowBlocking& operator=(const ScopedAllowBlocking&) = delete;
@@ -449,15 +552,31 @@ class BASE_EXPORT ScopedAllowBlocking {
 
   // This can only be instantiated by friends. Use ScopedAllowBlockingForTesting
   // in unit tests to avoid the friend requirement.
+  friend class ::BrowserThemePack;  // http://crbug.com/80206
+  friend class ::DesktopNotificationBalloon;
+  friend class ::FirefoxProfileLock;
   friend class ::GaiaConfig;
+  friend class ::ProfileImpl;
+  friend class ::ScopedAllowBlockingForProfile;
   friend class ::StartupTabProviderImpl;
   friend class android_webview::ScopedAllowInitGLBindings;
-  friend class ash::MojoUtils;  // http://crbug.com/1055467
-  friend class ash::BrowserDataMigrator;
+  friend class ash::BrowserDataBackMigrator;
+  friend class ash::MojoUtils;                     // http://crbug.com/1055467
+  friend class ash::StartupCustomizationDocument;  // http://crosbug.com/11103
+  friend class ash::StartupUtils;
   friend class base::AdjustOOMScoreHelper;
+  friend class base::ChromeOSVersionInfo;
+  friend class base::Process;
+  friend class base::ScopedAllowBlockingForProc;
+  friend class base::ScopedAllowBlockingForProcessMetrics;
   friend class base::StackSamplingProfiler;
+  friend class base::android::ScopedAllowBlockingForImportantFileWriter;
+  friend class base::debug::StackTrace;
+  friend class base::subtle::PlatformSharedMemoryRegion;
+  friend class base::win::ScopedAllowBlockingForUserAccountControl;
   friend class blink::DiskDataAllocator;
   friend class chromecast::CrashUtil;
+  friend class ash::LoginEventRecorder;
   friend class content::BrowserProcessIOThread;
   friend class content::DWriteFontProxyImpl;
   friend class content::NetworkServiceInstancePrivate;
@@ -465,31 +584,48 @@ class BASE_EXPORT ScopedAllowBlocking {
   friend class content::RenderProcessHostImpl;
   friend class content::RenderWidgetHostViewMac;  // http://crbug.com/121917
   friend class content::ShellPathProvider;
+  friend class content::
+      ScopedAllowBlockingForViewAura;  // http://crbug.com/332579
 #if BUILDFLAG(IS_WIN)
+  friend class base::win::OSInfo;
   friend class content::WebContentsImpl;  // http://crbug.com/1262162
 #endif
   friend class content::WebContentsViewMac;
-  friend class cronet::CronetPrefsManager;
   friend class cronet::CronetContext;
-  friend class crosapi::LacrosThreadPriorityDelegate;
+  friend class cronet::CronetPrefsManager;
+  friend class crosapi::LacrosThreadTypeDelegate;
+  friend class crypto::ScopedAllowBlockingForNSS;  // http://crbug.com/59847
+  friend class drive::FakeDriveService;
+  friend class extensions::InstalledLoader;
+  friend class extensions::UnpackedInstaller;
+  friend class font_service::internal::MappedFontFile;
   friend class ios_web_view::WebViewBrowserState;
   friend class media::FileVideoCaptureDeviceFactory;
   friend class memory_instrumentation::OSMetrics;
+  friend class memory_pressure::UserLevelMemoryPressureSignalGenerator;
   friend class metrics::AndroidMetricsServiceClient;
   friend class metrics::CleanExitBeacon;
   friend class module_installer::ScopedAllowModulePakLoad;
   friend class mojo::CoreLibraryInitializer;
+  friend class net::GSSAPISharedLibrary;    // http://crbug.com/66702
+  friend class net::ProxyConfigServiceWin;  // http://crbug.com/61453
+  friend class net::
+      ScopedAllowBlockingForSettingGetter;  // http://crbug.com/69057
   friend class printing::LocalPrinterHandlerDefault;
 #if BUILDFLAG(IS_MAC)
   friend class printing::PrintBackendServiceImpl;
 #endif
   friend class printing::PrintBackendServiceManager;
-  friend class printing::PrintJobWorker;
+  friend class printing::PrinterQuery;
   friend class remote_cocoa::
       DroppedScreenShotCopierMac;  // https://crbug.com/1148078
-  friend class remoting::ScopedBypassIOThreadRestrictions;  // crbug.com/1144161
-  friend class web::WebSubThread;
   friend class ::WebEngineBrowserMainParts;
+  friend class remote_cocoa::SelectFileDialogBridge;
+  friend class remoting::ScopedBypassIOThreadRestrictions;  // crbug.com/1144161
+  friend class ui::DrmDisplayHostManager;
+  friend class ui::ScopedAllowBlockingForGbmSurface;
+  friend class ui::SelectFileDialogLinux;
+  friend class web::WebSubThread;
   friend class weblayer::BrowserContextImpl;
   friend class weblayer::ContentBrowserClientImpl;
   friend class weblayer::ProfileImpl;
@@ -499,11 +635,25 @@ class BASE_EXPORT ScopedAllowBlocking {
   friend class QtWebEngineCore::PrefServiceAdapter;
   friend class QtWebEngineCore::ProfileAdapter;
 
+  // Sorting with function name (with namespace), ignoring the return type.
+  friend void base::GetNSExecutablePath(base::FilePath*);
+  friend base::File content::CreateFileForDrop(
+      base::FilePath* file_path);         // http://crbug.com/110709
+  friend bool ::EnsureBrowserStateDirectoriesCreated(const base::FilePath&,
+                                                     const base::FilePath&,
+                                                     const base::FilePath&);
   friend Profile* ::GetLastProfileMac();  // crbug.com/1176734
-  friend bool PathProviderWin(int, FilePath*);
+  friend bool gl::init::InitializeStaticGLBindings(gl::GLImplementationParts);
+  friend bool ::HasWaylandDisplay(base::Environment* env);  // crbug.com/1246928
+  friend bool chrome::PathProvider(int,
+                                   base::FilePath*);  // http://crbug.com/259796
+  friend void chrome::SessionEnding();
+  friend bool ash::CameraAppUIShouldEnableLocalOverride(const std::string&);
+  friend bool base::internal::ReadProcFile(const FilePath& file,
+                                           std::string* buffer);
   friend bool chromeos::system::IsCoreSchedulingAvailable();
   friend int chromeos::system::NumberOfPhysicalCores();
-  friend bool ::HasWaylandDisplay(base::Environment* env);  // crbug.com/1246928
+  friend bool disk_cache::CleanupDirectorySync(const base::FilePath&);
 
   ScopedAllowBlocking(const Location& from_here = Location::Current());
   ~ScopedAllowBlocking();
@@ -513,9 +663,9 @@ class BASE_EXPORT ScopedAllowBlocking {
 #endif
 };
 
-class ScopedAllowBlockingForTesting {
+class [[nodiscard]] ScopedAllowBlockingForTesting {
  public:
-  ScopedAllowBlockingForTesting() {}
+  ScopedAllowBlockingForTesting() = default;
 
   ScopedAllowBlockingForTesting(const ScopedAllowBlockingForTesting&) = delete;
   ScopedAllowBlockingForTesting& operator=(
@@ -533,7 +683,7 @@ INLINE_OR_NOT_TAIL_CALLED void DisallowBaseSyncPrimitives()
     EMPTY_BODY_IF_DCHECK_IS_OFF;
 
 // Disallows singletons within its scope.
-class BASE_EXPORT ScopedDisallowBaseSyncPrimitives {
+class BASE_EXPORT [[nodiscard]] ScopedDisallowBaseSyncPrimitives {
  public:
   ScopedDisallowBaseSyncPrimitives() EMPTY_BODY_IF_DCHECK_IS_OFF;
 
@@ -550,7 +700,7 @@ class BASE_EXPORT ScopedDisallowBaseSyncPrimitives {
 #endif
 };
 
-class BASE_EXPORT ScopedAllowBaseSyncPrimitives {
+class BASE_EXPORT [[nodiscard]] ScopedAllowBaseSyncPrimitives {
  public:
   ScopedAllowBaseSyncPrimitives(const ScopedAllowBaseSyncPrimitives&) = delete;
   ScopedAllowBaseSyncPrimitives& operator=(
@@ -569,11 +719,16 @@ class BASE_EXPORT ScopedAllowBaseSyncPrimitives {
 
   // Allowed usage:
   friend class ::ChromeNSSCryptoModuleDelegate;
+  friend class android_webview::JsSandboxIsolate;
   friend class base::internal::GetAppOutputScopedAllowBaseSyncPrimitives;
   friend class base::SimpleThread;
+  friend class blink::CategorizedWorkerPoolImpl;
+  friend class blink::CategorizedWorkerPoolJob;
+  friend class blink::IdentifiabilityActiveSampler;
   friend class blink::SourceStream;
+  friend class blink::VideoTrackRecorderImplContextProvider;
   friend class blink::WorkerThread;
-  friend class blink::scheduler::WorkerThread;
+  friend class blink::scheduler::NonMainThreadImpl;
   friend class chrome_cleaner::ResetShortcutsComponent;
   friend class chrome_cleaner::SystemReportComponent;
   friend class content::BrowserMainLoop;
@@ -586,24 +741,28 @@ class BASE_EXPORT ScopedAllowBaseSyncPrimitives {
   friend class functions::ExecScriptScopedAllowBaseSyncPrimitives;
   friend class history_report::HistoryReportJniBridge;
   friend class internal::TaskTracker;
-  friend class leveldb_env::DBTracker;
-  friend class location::nearby::chrome::ScheduledExecutor;
-  friend class location::nearby::chrome::SubmittableExecutor;
+  friend class leveldb::port::CondVar;
+  friend class nearby::chrome::ScheduledExecutor;
+  friend class nearby::chrome::SubmittableExecutor;
+  friend class media::AudioOutputDevice;
   friend class media::BlockingUrlProtocol;
+  friend class media::MojoVideoEncodeAccelerator;
   friend class mojo::core::ScopedIPCSupport;
   friend class net::MultiThreadedCertVerifierScopedAllowBaseSyncPrimitives;
-  template <class OutputType, class... InputTypes>
-  friend class optimization_guide::TFLiteModelExecutor;
   friend class rlz_lib::FinancialPing;
   friend class shell_integration_linux::
       LaunchXdgUtilityScopedAllowBaseSyncPrimitives;
+  friend class storage::ObfuscatedFileUtil;
   friend class syncer::HttpBridge;
   friend class syncer::GetLocalChangesRequest;
+  friend class updater::SystemctlLauncherScopedAllowBaseSyncPrimitives;
+  friend class viz::ClientGpuMemoryBufferManager;
   friend class webrtc::DesktopConfigurationMonitor;
+  friend class ::tracing::FuchsiaPerfettoProducerConnector;
 
   // Usage that should be fixed:
   friend class ::NativeBackendKWallet;  // http://crbug.com/125331
-  friend class ::chromeos::system::
+  friend class ::ash::system::
       StatisticsProviderImpl;                      // http://crbug.com/125385
   friend class blink::VideoFrameResourceProvider;  // http://crbug.com/878070
 
@@ -615,7 +774,8 @@ class BASE_EXPORT ScopedAllowBaseSyncPrimitives {
 #endif
 };
 
-class BASE_EXPORT ScopedAllowBaseSyncPrimitivesOutsideBlockingScope {
+class BASE_EXPORT
+    [[nodiscard]] ScopedAllowBaseSyncPrimitivesOutsideBlockingScope {
  public:
   ScopedAllowBaseSyncPrimitivesOutsideBlockingScope(
       const ScopedAllowBaseSyncPrimitivesOutsideBlockingScope&) = delete;
@@ -647,12 +807,14 @@ class BASE_EXPORT ScopedAllowBaseSyncPrimitivesOutsideBlockingScope {
   friend class base::internal::JobTaskSource;
   friend class base::ScopedAllowThreadRecallForStackSamplingProfiler;
   friend class base::StackSamplingProfiler;
+  friend class blink::CategorizedWorkerPoolImpl;
+  friend class blink::CategorizedWorkerPoolJob;
+  friend class blink::CategorizedWorkerPool;
   friend class blink::RTCVideoDecoderAdapter;
   friend class blink::RTCVideoEncoder;
   friend class blink::WebRtcVideoFrameAdapter;
   friend class blink::LegacyWebRtcVideoFrameAdapter;
   friend class cc::TileTaskManagerImpl;
-  friend class content::CategorizedWorkerPool;
   friend class content::DesktopCaptureDevice;
   friend class content::EmergencyTraceFinalisationCoordinator;
   friend class content::InProcessUtilityThread;
@@ -667,6 +829,7 @@ class BASE_EXPORT ScopedAllowBaseSyncPrimitivesOutsideBlockingScope {
   friend class media::AudioOutputDevice;
   friend class media::PaintCanvasVideoRenderer;
   friend class mojo::SyncCallRestrictions;
+  friend class mojo::core::ipcz_driver::MojoTrap;
   friend class net::NetworkConfigWatcherMacThread;
   friend class ui::DrmThreadProxy;
   friend class viz::HostGpuMemoryBufferManager;
@@ -679,6 +842,8 @@ class BASE_EXPORT ScopedAllowBaseSyncPrimitivesOutsideBlockingScope {
   friend class content::
       BrowserGpuChannelHostFactory;                 // http://crbug.com/125248
   friend class dbus::Bus;                           // http://crbug.com/125222
+  friend class discardable_memory::
+      ClientDiscardableSharedMemoryManager;         // http://crbug.com/1396355
   friend class disk_cache::BackendImpl;             // http://crbug.com/74623
   friend class disk_cache::InFlightIO;              // http://crbug.com/74623
   friend class midi::TaskService;                   // https://crbug.com/796830
@@ -686,7 +851,6 @@ class BASE_EXPORT ScopedAllowBaseSyncPrimitivesOutsideBlockingScope {
   friend class net::
       MultiThreadedProxyResolverScopedAllowJoinOnIO;  // http://crbug.com/69710
   friend class net::NetworkChangeNotifierMac;         // http://crbug.com/125097
-  friend class printing::PrinterQuery;                // http://crbug.com/66082
   friend class proxy_resolver::
       ScopedAllowThreadJoinForProxyResolverV8Tracing;  // http://crbug.com/69710
   friend class remoting::AutoThread;  // https://crbug.com/944316
@@ -714,7 +878,7 @@ class BASE_EXPORT ScopedAllowBaseSyncPrimitivesOutsideBlockingScope {
 // Note: For WaitableEvents in the test logic, base::TestWaitableEvent is
 // exposed as a convenience to avoid the need for
 // ScopedAllowBaseSyncPrimitivesForTesting.
-class BASE_EXPORT ScopedAllowBaseSyncPrimitivesForTesting {
+class BASE_EXPORT [[nodiscard]] ScopedAllowBaseSyncPrimitivesForTesting {
  public:
   ScopedAllowBaseSyncPrimitivesForTesting() EMPTY_BODY_IF_DCHECK_IS_OFF;
 
@@ -733,7 +897,7 @@ class BASE_EXPORT ScopedAllowBaseSyncPrimitivesForTesting {
 
 // Counterpart to base::DisallowUnresponsiveTasks() for tests to allow them to
 // block their thread after it was banned.
-class BASE_EXPORT ScopedAllowUnresponsiveTasksForTesting {
+class BASE_EXPORT [[nodiscard]] ScopedAllowUnresponsiveTasksForTesting {
  public:
   ScopedAllowUnresponsiveTasksForTesting() EMPTY_BODY_IF_DCHECK_IS_OFF;
 
@@ -774,7 +938,7 @@ INLINE_OR_NOT_TAIL_CALLED void AssertSingletonAllowed()
 INLINE_OR_NOT_TAIL_CALLED void DisallowSingleton() EMPTY_BODY_IF_DCHECK_IS_OFF;
 
 // Disallows singletons within its scope.
-class BASE_EXPORT ScopedDisallowSingleton {
+class BASE_EXPORT [[nodiscard]] ScopedDisallowSingleton {
  public:
   ScopedDisallowSingleton() EMPTY_BODY_IF_DCHECK_IS_OFF;
 
@@ -795,31 +959,6 @@ INLINE_OR_NOT_TAIL_CALLED void AssertLongCPUWorkAllowed()
 
 INLINE_OR_NOT_TAIL_CALLED void DisallowUnresponsiveTasks()
     EMPTY_BODY_IF_DCHECK_IS_OFF;
-
-class BASE_EXPORT ThreadRestrictions {
- public:
-  ThreadRestrictions() = delete;
-
-  // Constructing a ScopedAllowIO temporarily allows IO for the current
-  // thread.  Doing this is almost certainly always incorrect.
-  //
-  // DEPRECATED. Use ScopedAllowBlocking(ForTesting).
-  // TODO(crbug.com/766678): Migrate remaining users.
-  class BASE_EXPORT ScopedAllowIO {
-   public:
-    ScopedAllowIO(const Location& from_here = Location::Current());
-
-    ScopedAllowIO(const ScopedAllowIO&) = delete;
-    ScopedAllowIO& operator=(const ScopedAllowIO&) = delete;
-
-    ~ScopedAllowIO();
-
-   private:
-#if DCHECK_IS_ON()
-    std::unique_ptr<BooleanWithStack> was_disallowed_;
-#endif
-  };
-};
 
 // Friend-only methods to permanently allow the current thread to use
 // blocking/sync-primitives calls. Threads start out in the *allowed* state but

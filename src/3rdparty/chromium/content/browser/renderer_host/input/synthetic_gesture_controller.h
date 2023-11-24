@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,8 +9,8 @@
 #include <utility>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/containers/queue.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
@@ -57,6 +57,8 @@ class CONTENT_EXPORT SyntheticGestureController {
   void QueueSyntheticGestureCompleteImmediately(
       std::unique_ptr<SyntheticGesture> synthetic_gesture);
 
+  // Returns true if there are more gestures in the queue after processing the
+  // current one.
   bool DispatchNextEvent(base::TimeTicks = base::TimeTicks::Now());
 
   void EnsureRendererInitialized(base::OnceClosure on_completed);
@@ -64,6 +66,10 @@ class CONTENT_EXPORT SyntheticGestureController {
   void UpdateSyntheticGestureTarget(
       std::unique_ptr<SyntheticGestureTarget> gesture_target,
       Delegate* delegate);
+
+  base::WeakPtr<SyntheticGestureController> GetWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
 
  private:
   friend class SyntheticGestureControllerTestBase;
@@ -155,7 +161,7 @@ class CONTENT_EXPORT SyntheticGestureController {
   // truly robust. https://crbug.com/985374.
   bool renderer_known_to_be_initialized_ = false;
 
-  base::RepeatingTimer dispatch_timer_;
+  base::MetronomeTimer dispatch_timer_;
   base::WeakPtrFactory<SyntheticGestureController> weak_ptr_factory_{this};
 };
 

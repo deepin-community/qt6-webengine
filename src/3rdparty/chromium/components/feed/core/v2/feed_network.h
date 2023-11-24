@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 
 #include <memory>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "components/feed/core/proto/v2/wire/consistency_token.pb.h"
 #include "components/feed/core/proto/v2/wire/feed_query.pb.h"
 #include "components/feed/core/proto/v2/wire/request.pb.h"
@@ -134,6 +134,28 @@ struct WebFeedListContentsDiscoverApi {
   static base::StringPiece Method() { return "POST"; }
   static base::StringPiece RequestPath(const Request&) { return "v1/contents"; }
   static bool SendRequestMetadata() { return false; }
+};
+
+struct SingleWebFeedListContentsDiscoverApi {
+  using Request = feedwire::Request;
+  using Response = feedwire::Response;
+  static constexpr NetworkRequestType kRequestType =
+      NetworkRequestType::kSingleWebFeedListContents;
+  static base::StringPiece Method() { return "POST"; }
+  static base::StringPiece RequestPath(const Request&) { return "v1/contents"; }
+  static bool SendRequestMetadata() { return false; }
+};
+
+struct QueryWebFeedDiscoverApi {
+  using Request = feedwire::webfeed::QueryWebFeedRequest;
+  using Response = feedwire::webfeed::QueryWebFeedResponse;
+  static constexpr NetworkRequestType kRequestType =
+      NetworkRequestType::kQueryWebFeed;
+  static base::StringPiece Method() { return "POST"; }
+  static base::StringPiece RequestPath(const Request&) {
+    return "v1:queryWebFeed";
+  }
+  static bool SendRequestMetadata() { return true; }
 };
 
 class FeedNetwork {

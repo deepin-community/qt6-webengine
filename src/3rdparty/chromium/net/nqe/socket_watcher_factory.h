@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,9 @@
 
 #include <memory>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
 #include "base/task/single_thread_task_runner.h"
@@ -38,9 +38,7 @@ typedef base::RepeatingCallback<bool(base::TimeTicks)> ShouldNotifyRTTCallback;
 
 }  // namespace
 
-namespace nqe {
-
-namespace internal {
+namespace nqe::internal {
 
 // SocketWatcherFactory implements SocketPerformanceWatcherFactory.
 // SocketWatcherFactory is thread safe.
@@ -69,7 +67,7 @@ class SocketWatcherFactory : public SocketPerformanceWatcherFactory {
   // SocketPerformanceWatcherFactory implementation:
   std::unique_ptr<SocketPerformanceWatcher> CreateSocketPerformanceWatcher(
       const Protocol protocol,
-      const AddressList& address_list) override;
+      const IPAddress& address) override;
 
   void SetUseLocalHostRequestsForTesting(bool use_localhost_requests) {
     allow_rtt_private_address_ = use_localhost_requests;
@@ -87,7 +85,7 @@ class SocketWatcherFactory : public SocketPerformanceWatcherFactory {
 
   // True if socket watchers constructed by this factory can use the RTT from
   // the sockets that are connected to the private addresses.
-  bool allow_rtt_private_address_;
+  bool allow_rtt_private_address_ = false;
 
   // Called every time a new RTT observation is available.
   OnUpdatedRTTAvailableCallback updated_rtt_observation_callback_;
@@ -99,9 +97,7 @@ class SocketWatcherFactory : public SocketPerformanceWatcherFactory {
   raw_ptr<const base::TickClock> tick_clock_;
 };
 
-}  // namespace internal
-
-}  // namespace nqe
+}  // namespace nqe::internal
 
 }  // namespace net
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,8 +11,8 @@
 #include <string>
 #include <vector>
 
-#include "base/callback_forward.h"
 #include "base/files/file_path.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
@@ -24,7 +24,6 @@
 #include "components/download/public/common/download_destination_observer.h"
 #include "components/download/public/common/download_interrupt_reasons.h"
 #include "components/download/public/common/download_item.h"
-#include "components/download/public/common/download_item_rename_progress_update.h"
 #include "components/download/public/common/download_job.h"
 #include "components/download/public/common/download_url_parameters.h"
 #include "components/download/public/common/resume_mode.h"
@@ -217,8 +216,6 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
       base::Time last_access_time,
       bool transient,
       const std::vector<DownloadItem::ReceivedSlice>& received_slices,
-      const DownloadItemRerouteInfo& reroute_info,
-      absl::optional<DownloadSchedule> download_schedule,
       int64_t range_request_from,
       int64_t range_request_to,
       std::unique_ptr<DownloadEntry> download_entry);
@@ -248,8 +245,7 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   void RemoveObserver(DownloadItem::Observer* observer) override;
   void UpdateObservers() override;
   void ValidateDangerousDownload() override;
-  void ValidateMixedContentDownload() override;
-  void AcceptIncognitoWarning() override;
+  void ValidateInsecureDownload() override;
   void StealDangerousDownload(bool need_removal,
                               AcquireFileCallback callback) override;
   void Pause() override;
@@ -271,6 +267,7 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   bool IsDone() const override;
   int64_t GetBytesWasted() const override;
   int32_t GetAutoResumeCount() const override;
+  bool IsOffTheRecord() const override;
   const GURL& GetURL() const override;
   const std::vector<GURL>& GetUrlChain() const override;
   const GURL& GetOriginalUrl() const override;
@@ -302,13 +299,10 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   bool GetFileExternallyRemoved() const override;
   void DeleteFile(base::OnceCallback<void(bool)> callback) override;
   DownloadFile* GetDownloadFile() override;
-  DownloadItemRenameHandler* GetRenameHandler() override;
-  const DownloadItemRerouteInfo& GetRerouteInfo() const override;
   bool IsDangerous() const override;
-  bool IsMixedContent() const override;
-  bool ShouldShowIncognitoWarning() const override;
+  bool IsInsecure() const override;
   DownloadDangerType GetDangerType() const override;
-  MixedContentStatus GetMixedContentStatus() const override;
+  InsecureDownloadStatus GetInsecureDownloadStatus() const override;
   bool TimeRemaining(base::TimeDelta* remaining) const override;
   int64_t CurrentSpeed() const override;
   int PercentComplete() const override;
@@ -331,14 +325,11 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   bool RequireSafetyChecks() const override;
   bool IsParallelDownload() const override;
   DownloadCreationType GetDownloadCreationType() const override;
-  const absl::optional<DownloadSchedule>& GetDownloadSchedule() const override;
   ::network::mojom::CredentialsMode GetCredentialsMode() const override;
   const absl::optional<net::IsolationInfo>& GetIsolationInfo() const override;
   void OnContentCheckCompleted(DownloadDangerType danger_type,
                                DownloadInterruptReason reason) override;
   void OnAsyncScanningCompleted(DownloadDangerType danger_type) override;
-  void OnDownloadScheduleChanged(
-      absl::optional<DownloadSchedule> schedule) override;
   void SetOpenWhenComplete(bool open) override;
   void SetOpened(bool opened) override;
   void SetLastAccessTime(base::Time last_access_time) override;
@@ -602,28 +593,16 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
       const base::FilePath& target_path,
       TargetDisposition disposition,
       DownloadDangerType danger_type,
-      MixedContentStatus mixed_content_status,
+      InsecureDownloadStatus insecure_download_status,
       const base::FilePath& intermediate_path,
       const base::FilePath& display_name,
-      absl::optional<DownloadSchedule> download_schedule,
+      const std::string& mime_type,
       DownloadInterruptReason interrupt_reason);
 
   void OnDownloadRenamedToIntermediateName(DownloadInterruptReason reason,
                                            const base::FilePath& full_path);
 
   void OnTargetResolved();
-
-  // If |download_schedule_| presents, maybe interrupt the download and start
-  // later. Returns whether the download should be started later.
-  bool MaybeDownloadLater();
-
-  // Returns whether the download should proceed later based on network
-  // condition and user scheduled start time defined in |download_schedule_|.
-  bool ShouldDownloadLater() const;
-
-  // Swap the |download_schedule_| with new data, may pass in absl::nullopt to
-  // remove the schedule.
-  void SwapDownloadSchedule(absl::optional<DownloadSchedule> download_schedule);
 
   // If all pre-requisites have been met, complete download processing, i.e. do
   // internal cleanup, file rename, and potentially auto-open.  (Dangerous
@@ -634,15 +613,6 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   // This may perform final rename if necessary and will eventually call
   // DownloadItem::Completed().
   void OnDownloadCompleting();
-
-  // Called by |rename_handler_| to update state variables when necessary.
-  // This may update |destination_info_.target_file_path| as confirmed by
-  // rerouted location to be reflected in the UI/UX, and attach other reroute
-  // specific metadata into |reroute_info_| to be persisted into the databases.
-  // However, this will not transition the internal |state_|, because the
-  // |rename_handler_| will eventually run OnDownloadRenamedToFinalName() on
-  // completion.
-  void OnRenameHandlerUpdate(const DownloadItemRenameProgressUpdate& update);
 
   void OnDownloadRenamedToFinalName(DownloadInterruptReason reason,
                                     const base::FilePath& full_path);
@@ -793,9 +763,6 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   // The current state of this download.
   DownloadInternalState state_ = INITIAL_INTERNAL;
 
-  // A flag for indicating whether user has accepted incognito warning or not
-  bool incognito_warning_accepted_ = false;
-
   // Current danger type for the download.
   DownloadDangerType danger_type_ = DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS;
 
@@ -910,16 +877,9 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   // UKM ID for reporting, default to 0 if uninitialized.
   uint64_t ukm_download_id_ = 0;
 
-  // The MixedContentStatus if determined.
-  MixedContentStatus mixed_content_status_ = MixedContentStatus::UNKNOWN;
-
-  // Defines when to start the download. Used by download later feature.
-  absl::optional<DownloadSchedule> download_schedule_;
-
-  // A handler for renaming and helping with display the item.
-  std::unique_ptr<DownloadItemRenameHandler> rename_handler_;
-  // Metadata specific to the rename handler.
-  DownloadItemRerouteInfo reroute_info_;
+  // The InsecureDownloadStatus if determined.
+  InsecureDownloadStatus insecure_download_status_ =
+      InsecureDownloadStatus::UNKNOWN;
 
   THREAD_CHECKER(thread_checker_);
 

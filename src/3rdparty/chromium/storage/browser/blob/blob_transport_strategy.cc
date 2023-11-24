@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,10 @@
 
 #include <memory>
 
-#include "base/bind.h"
 #include "base/containers/circular_deque.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
+#include "base/task/sequenced_task_runner.h"
 #include "mojo/public/cpp/system/data_pipe.h"
 #include "storage/browser/blob/blob_data_builder.h"
 #include "third_party/blink/public/mojom/blob/data_element.mojom.h"
@@ -105,7 +106,7 @@ class DataPipeTransportStrategy : public BlobTransportStrategy {
         limits_(limits),
         watcher_(FROM_HERE,
                  mojo::SimpleWatcher::ArmingPolicy::AUTOMATIC,
-                 base::SequencedTaskRunnerHandle::Get()) {}
+                 base::SequencedTaskRunner::GetCurrentDefault()) {}
 
   void AddBytesElement(
       blink::mojom::DataElementBytes* bytes,

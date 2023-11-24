@@ -2,7 +2,11 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+visibility = [ "./*" ]
+
 source_set("impl") {
+  visibility += [ "..:*" ]
+  public = []
   sources = [
     "dns_sd_publisher_client.cc",
     "dns_sd_publisher_client.h",
@@ -37,4 +41,5 @@ source_set("impl") {
     "../../util",
     "quic",
   ]
+  friend = [ "..:unittests" ]
 }

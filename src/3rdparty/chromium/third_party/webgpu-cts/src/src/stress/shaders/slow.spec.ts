@@ -9,15 +9,15 @@ export const g = makeTestGroup(GPUTest);
 
 g.test('compute')
   .desc(`Tests execution of compute passes with very long-running dispatch operations.`)
-  .fn(async t => {
+  .fn(t => {
     const kDispatchSize = 1000;
     const data = new Uint32Array(kDispatchSize);
     const buffer = t.makeBufferWithContents(data, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
     const module = t.device.createShaderModule({
       code: `
-        struct Buffer { data: array<u32>; };
+        struct Buffer { data: array<u32>, };
         @group(0) @binding(0) var<storage, read_write> buffer: Buffer;
-        @stage(compute) @workgroup_size(1) fn main(
+        @compute @workgroup_size(1) fn main(
             @builtin(global_invocation_id) id: vec3<u32>) {
           loop {
             if (buffer.data[id.x] == 1000000u) {
@@ -28,7 +28,10 @@ g.test('compute')
         }
       `,
     });
-    const pipeline = t.device.createComputePipeline({ compute: { module, entryPoint: 'main' } });
+    const pipeline = t.device.createComputePipeline({
+      layout: 'auto',
+      compute: { module, entryPoint: 'main' },
+    });
     const encoder = t.device.createCommandEncoder();
     const pass = encoder.beginComputePass();
     pass.setPipeline(pipeline);
@@ -37,7 +40,7 @@ g.test('compute')
       entries: [{ binding: 0, resource: { buffer } }],
     });
     pass.setBindGroup(0, bindGroup);
-    pass.dispatch(kDispatchSize);
+    pass.dispatchWorkgroups(kDispatchSize);
     pass.end();
     t.device.queue.submit([encoder.finish()]);
     t.expectGPUBufferValuesEqual(buffer, new Uint32Array(new Array(kDispatchSize).fill(1000000)));
@@ -45,12 +48,12 @@ g.test('compute')
 
 g.test('vertex')
   .desc(`Tests execution of render passes with a very long-running vertex stage.`)
-  .fn(async t => {
+  .fn(t => {
     const module = t.device.createShaderModule({
       code: `
-        struct Data { counter: u32; increment: u32; };
+        struct Data { counter: u32, increment: u32, };
         @group(0) @binding(0) var<uniform> data: Data;
-        @stage(vertex) fn vmain() -> @builtin(position) vec4<f32> {
+        @vertex fn vmain() -> @builtin(position) vec4<f32> {
           var counter: u32 = data.counter;
           loop {
             counter = counter + data.increment;
@@ -60,13 +63,14 @@ g.test('vertex')
           }
           return vec4<f32>(1.0, 1.0, 0.0, f32(counter));
         }
-        @stage(fragment) fn fmain() -> @location(0) vec4<f32> {
+        @fragment fn fmain() -> @location(0) vec4<f32> {
           return vec4<f32>(1.0, 1.0, 0.0, 1.0);
         }
       `,
     });
 
     const pipeline = t.device.createRenderPipeline({
+      layout: 'auto',
       vertex: { module, entryPoint: 'vmain', buffers: [] },
       primitive: { topology: 'point-list' },
       fragment: {
@@ -118,15 +122,15 @@ g.test('vertex')
 
 g.test('fragment')
   .desc(`Tests execution of render passes with a very long-running fragment stage.`)
-  .fn(async t => {
+  .fn(t => {
     const module = t.device.createShaderModule({
       code: `
-        struct Data { counter: u32; increment: u32; };
+        struct Data { counter: u32, increment: u32, };
         @group(0) @binding(0) var<uniform> data: Data;
-        @stage(vertex) fn vmain() -> @builtin(position) vec4<f32> {
+        @vertex fn vmain() -> @builtin(position) vec4<f32> {
           return vec4<f32>(0.0, 0.0, 0.0, 1.0);
         }
-        @stage(fragment) fn fmain() -> @location(0) vec4<f32> {
+        @fragment fn fmain() -> @location(0) vec4<f32> {
           var counter: u32 = data.counter;
           loop {
             counter = counter + data.increment;
@@ -140,6 +144,7 @@ g.test('fragment')
     });
 
     const pipeline = t.device.createRenderPipeline({
+      layout: 'auto',
       vertex: { module, entryPoint: 'vmain', buffers: [] },
       primitive: { topology: 'point-list' },
       fragment: {

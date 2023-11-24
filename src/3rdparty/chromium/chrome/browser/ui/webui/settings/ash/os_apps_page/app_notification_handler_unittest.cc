@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,24 +9,26 @@
 #include <vector>
 
 #include "ash/public/cpp/message_center_ash.h"
+#include "ash/public/cpp/test/test_new_window_delegate.h"
 #include "base/logging.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/ui/webui/settings/ash/os_apps_page/mojom/app_notification_handler.mojom.h"
+#include "chrome/common/url_constants.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/services/app_service/public/cpp/app_registry_cache.h"
 #include "components/services/app_service/public/cpp/app_types.h"
-#include "components/services/app_service/public/cpp/features.h"
 #include "components/services/app_service/public/cpp/permission.h"
 #include "content/public/test/browser_task_environment.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/variant.h"
 
-namespace chromeos {
-namespace settings {
+namespace ash::settings {
 
 namespace {
 
-class FakeMessageCenterAsh : public ash::MessageCenterAsh {
+class FakeMessageCenterAsh : public MessageCenterAsh {
  public:
   FakeMessageCenterAsh() = default;
   ~FakeMessageCenterAsh() override = default;
@@ -88,6 +90,15 @@ class AppNotificationHandlerTestObserver
       this};
 };
 
+class MockNewWindowDelegate : public testing::NiceMock<TestNewWindowDelegate> {
+ public:
+  // TestNewWindowDelegate:
+  MOCK_METHOD(void,
+              OpenUrl,
+              (const GURL& url, OpenUrlFrom from, Disposition disposition),
+              (override));
+};
+
 }  // namespace
 
 class AppNotificationHandlerTest : public testing::Test {
@@ -98,7 +109,7 @@ class AppNotificationHandlerTest : public testing::Test {
   ~AppNotificationHandlerTest() override = default;
 
   void SetUp() override {
-    ash::MessageCenterAsh::SetForTesting(&message_center_ash_);
+    MessageCenterAsh::SetForTesting(&message_center_ash_);
     app_service_proxy_ =
         std::make_unique<apps::AppServiceProxy>(profile_.get());
     handler_ =
@@ -106,19 +117,32 @@ class AppNotificationHandlerTest : public testing::Test {
 
     observer_ = std::make_unique<AppNotificationHandlerTestObserver>();
     handler_->AddObserver(observer_->GenerateRemote());
+
+    auto instance = std::make_unique<MockNewWindowDelegate>();
+    auto primary = std::make_unique<MockNewWindowDelegate>();
+    new_window_delegate_primary_ = primary.get();
+    new_window_provider_ = std::make_unique<TestNewWindowDelegateProvider>(
+        std::move(instance), std::move(primary));
   }
 
   void TearDown() override {
+    new_window_provider_.reset();
     handler_.reset();
     app_service_proxy_.reset();
-    ash::MessageCenterAsh::SetForTesting(nullptr);
+    MessageCenterAsh::SetForTesting(nullptr);
   }
 
  protected:
+  MockNewWindowDelegate* new_window_delegate_primary_;
+
   AppNotificationHandlerTestObserver* observer() { return observer_.get(); }
 
   void SetQuietModeState(bool quiet_mode_enabled) {
     handler_->SetQuietMode(quiet_mode_enabled);
+  }
+
+  void OpenBrowserNotificationSettings() {
+    handler_->OpenBrowserNotificationSettings();
   }
 
   void CreateAndStoreFakeApp(std::string fake_id,
@@ -146,17 +170,8 @@ class AppNotificationHandlerTest : public testing::Test {
 
   void UpdateAppRegistryCache(std::vector<apps::AppPtr>& fake_apps,
                               apps::AppType app_type) {
-    if (base::FeatureList::IsEnabled(
-            apps::kAppServiceOnAppUpdateWithoutMojom)) {
-      app_service_proxy_->AppRegistryCache().OnApps(std::move(fake_apps),
-                                                    app_type, false);
-    } else {
-      std::vector<apps::mojom::AppPtr> mojom_apps;
-      mojom_apps.push_back(apps::ConvertAppToMojomApp(fake_apps[0]));
-      app_service_proxy_->AppRegistryCache().OnApps(
-          std::move(mojom_apps), apps::mojom::AppType::kUnknown,
-          /*should_notify_initialized=*/false);
-    }
+    app_service_proxy_->AppRegistryCache().OnApps(std::move(fake_apps),
+                                                  app_type, false);
   }
 
   bool CheckIfFakeAppInList(std::string fake_id) {
@@ -174,17 +189,18 @@ class AppNotificationHandlerTest : public testing::Test {
   std::unique_ptr<apps::AppServiceProxy> app_service_proxy_;
   FakeMessageCenterAsh message_center_ash_;
   std::unique_ptr<AppNotificationHandlerTestObserver> observer_;
+  std::unique_ptr<TestNewWindowDelegateProvider> new_window_provider_;
 };
 
 // Tests for update of in_quiet_mode_ variable by MessageCenterAsh observer
 // OnQuietModeChange() after quiet mode state change between true and false.
 TEST_F(AppNotificationHandlerTest, TestOnQuietModeChanged) {
-  ash::MessageCenterAsh::Get()->SetQuietMode(true);
+  MessageCenterAsh::Get()->SetQuietMode(true);
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(observer()->is_quiet_mode());
   EXPECT_EQ(observer()->quiet_mode_changed(), 1);
 
-  ash::MessageCenterAsh::Get()->SetQuietMode(false);
+  MessageCenterAsh::Get()->SetQuietMode(false);
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(observer()->is_quiet_mode());
   EXPECT_EQ(observer()->quiet_mode_changed(), 2);
@@ -214,9 +230,9 @@ TEST_F(AppNotificationHandlerTest, TestAppListUpdated) {
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(observer()->app_list_changed(), 1);
   EXPECT_EQ("arcAppWithNotifications", observer()->recently_updated_app()->id);
-  EXPECT_TRUE(observer()
-                  ->recently_updated_app()
-                  ->notification_permission->value->bool_value.value());
+  EXPECT_TRUE(absl::get<bool>(observer()
+                                  ->recently_updated_app()
+                                  ->notification_permission->value->value));
 
   CreateAndStoreFakeApp("webAppWithNotifications", apps::AppType::kWeb,
                         apps::PermissionType::kNotifications,
@@ -225,9 +241,10 @@ TEST_F(AppNotificationHandlerTest, TestAppListUpdated) {
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(observer()->app_list_changed(), 2);
   EXPECT_EQ("webAppWithNotifications", observer()->recently_updated_app()->id);
-  EXPECT_TRUE(observer()
-                  ->recently_updated_app()
-                  ->notification_permission->value->bool_value.value());
+  EXPECT_TRUE(absl::holds_alternative<bool>(
+      observer()
+          ->recently_updated_app()
+          ->notification_permission->value->value));
 
   CreateAndStoreFakeApp("arcAppWithCamera", apps::AppType::kArc,
                         apps::PermissionType::kCamera);
@@ -254,9 +271,9 @@ TEST_F(AppNotificationHandlerTest, TestAppListUpdated) {
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(observer()->app_list_changed(), 3);
   EXPECT_EQ("arcAppWithNotifications", observer()->recently_updated_app()->id);
-  EXPECT_FALSE(observer()
-                   ->recently_updated_app()
-                   ->notification_permission->value->bool_value.value());
+  EXPECT_FALSE(absl::get<bool>(observer()
+                                   ->recently_updated_app()
+                                   ->notification_permission->value->value));
 
   CreateAndStoreFakeApp("webAppWithNotifications", apps::AppType::kWeb,
                         apps::PermissionType::kNotifications,
@@ -265,10 +282,18 @@ TEST_F(AppNotificationHandlerTest, TestAppListUpdated) {
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(observer()->app_list_changed(), 4);
   EXPECT_EQ("webAppWithNotifications", observer()->recently_updated_app()->id);
-  EXPECT_FALSE(observer()
-                   ->recently_updated_app()
-                   ->notification_permission->value->bool_value.value());
+  EXPECT_FALSE(absl::get<bool>(observer()
+                                   ->recently_updated_app()
+                                   ->notification_permission->value->value));
 }
 
-}  // namespace settings
-}  // namespace chromeos
+TEST_F(AppNotificationHandlerTest, TestOpenBrowserNotificationSettings) {
+  EXPECT_CALL(*new_window_delegate_primary_,
+              OpenUrl(GURL(chrome::kAppNotificationsBrowserSettingsURL),
+                      ash::NewWindowDelegate::OpenUrlFrom::kUserInteraction,
+                      ash::NewWindowDelegate::Disposition::kSwitchToTab));
+  base::Value::List empty_args;
+  OpenBrowserNotificationSettings();
+}
+
+}  // namespace ash::settings

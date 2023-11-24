@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -301,8 +301,8 @@ extern const char kTextControlChanged[];
 extern const char kSvgChanged[];
 extern const char kScrollbarChanged[];
 extern const char kDisplayLock[];
-extern CORE_EXPORT const char kCanvasFormattedTextRunChange[];
 extern const char kDevtools[];
+extern const char kAnchorPositioning[];
 }  // namespace layout_invalidation_reason
 
 // LayoutInvalidationReasonForTracing is strictly for tracing. Blink logic must
@@ -463,6 +463,10 @@ void Data(perfetto::TracedValue context,
 }  // namespace inspector_paint_image_event
 
 namespace inspector_commit_load_event {
+void Data(perfetto::TracedValue context, LocalFrame*);
+}
+
+namespace inspector_layerize_event {
 void Data(perfetto::TracedValue context, LocalFrame*);
 }
 

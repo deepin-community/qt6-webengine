@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -63,16 +63,6 @@ PasswordForm PendingCredentialsForNewCredentials(
   return pending_credentials;
 }
 
-// Helper to get the platform specific identifier by which autofill and password
-// manager refer to a field. See http://crbug.com/896594
-std::u16string GetPlatformSpecificIdentifier(const FormFieldData& field) {
-#if BUILDFLAG(IS_IOS)
-  return field.unique_id;
-#else
-  return field.name;
-#endif
-}
-
 // Copies field properties masks from the form |from| to the form |to|.
 void CopyFieldPropertiesMasks(const FormData& from, FormData* to) {
   // Skip copying if the number of fields is different.
@@ -81,8 +71,7 @@ void CopyFieldPropertiesMasks(const FormData& from, FormData* to) {
 
   for (size_t i = 0; i < from.fields.size(); ++i) {
     to->fields[i].properties_mask =
-        GetPlatformSpecificIdentifier(to->fields[i]) ==
-                GetPlatformSpecificIdentifier(from.fields[i])
+        to->fields[i].name == from.fields[i].name
             ? from.fields[i].properties_mask
             : autofill::FieldPropertiesFlags::kErrorOccurred;
   }
@@ -133,10 +122,10 @@ bool AccountStoreMatchesContainForm(
     const std::vector<const PasswordForm*>& matches,
     const PasswordForm& form) {
   DCHECK(base::ranges::all_of(matches, &PasswordForm::IsUsingAccountStore));
-  return base::ranges::find_if(matches, [&form](const PasswordForm* match) {
-           return ArePasswordFormUniqueKeysEqual(*match, form) &&
-                  match->password_value == form.password_value;
-         }) != matches.end();
+  return base::ranges::any_of(matches, [&form](const PasswordForm* match) {
+    return ArePasswordFormUniqueKeysEqual(*match, form) &&
+           match->password_value == form.password_value;
+  });
 }
 
 PendingCredentialsState ResolvePendingCredentialsStates(
@@ -180,14 +169,14 @@ PendingCredentialsState ResolvePendingCredentialsStates(
 }
 
 // Returns a PasswordForm that has all fields taken from |update| except
-// date_created, times_used and moving_blocked_for_list that are
+// date_created, times_used_in_html_form and moving_blocked_for_list that are
 // taken from |original_form|.
 PasswordForm UpdateFormPreservingDifferentFieldsAcrossStores(
     const PasswordForm& original_form,
     const PasswordForm& update) {
   PasswordForm result(update);
   result.date_created = original_form.date_created;
-  result.times_used = original_form.times_used;
+  result.times_used_in_html_form = original_form.times_used_in_html_form;
   result.moving_blocked_for_list = original_form.moving_blocked_for_list;
   return result;
 }
@@ -310,7 +299,7 @@ void PasswordSaveManagerImpl::Save(const FormData* observed_form,
 
   SavePendingToStore(observed_form, parsed_submitted_form);
 
-  if (pending_credentials_.times_used == 1 &&
+  if (pending_credentials_.times_used_in_html_form == 1 &&
       pending_credentials_.type == PasswordForm::Type::kGenerated) {
     // This also includes PSL matched credentials.
     metrics_util::LogPasswordGenerationSubmissionEvent(
@@ -495,11 +484,6 @@ bool PasswordSaveManagerImpl::IsNewLogin() const {
 
 bool PasswordSaveManagerImpl::IsPasswordUpdate() const {
   return pending_credentials_state_ == PendingCredentialsState::UPDATE;
-}
-
-bool PasswordSaveManagerImpl::IsSamePassword() const {
-  return pending_credentials_state_ ==
-         PendingCredentialsState::EQUAL_TO_SAVED_MATCH;
 }
 
 bool PasswordSaveManagerImpl::HasGeneratedPassword() const {
@@ -706,11 +690,15 @@ void PasswordSaveManagerImpl::SavePendingToStoreImpl(
           UpdateFormPreservingDifferentFieldsAcrossStores(
               *states.similar_saved_form_from_profile_store,
               pending_credentials_);
-      // For other cases, |pending_credentials_.times_used| is updated in
-      // UpdateMetadataForUsage() invoked from UploadVotesAndMetrics().
+      // For other cases, |pending_credentials_.times_used_in_html_form| is
+      // updated in UpdateMetadataForUsage() invoked from
+      // UploadVotesAndMetrics().
       // UpdateFormPreservingDifferentFieldsAcrossStores() preserved the
-      // original times_used, and hence we should increment it here.
-      form_to_update.times_used++;
+      // original times_used_in_html_form, and hence we should increment it
+      // here.
+      if (form_to_update.scheme == PasswordForm::Scheme::kHtml) {
+        form_to_update.times_used_in_html_form++;
+      }
       profile_store_form_saver_->Update(form_to_update, profile_matches,
                                         old_profile_password);
     } break;
@@ -740,11 +728,15 @@ void PasswordSaveManagerImpl::SavePendingToStoreImpl(
             UpdateFormPreservingDifferentFieldsAcrossStores(
                 *states.similar_saved_form_from_account_store,
                 pending_credentials_);
-        // For other cases, |pending_credentials_.times_used| is updated in
-        // UpdateMetadataForUsage() invoked from UploadVotesAndMetrics().
+        // For other cases, |pending_credentials_.times_used_in_html_form| is
+        // updated in UpdateMetadataForUsage() invoked from
+        // UploadVotesAndMetrics().
         // UpdateFormPreservingDifferentFieldsAcrossStores() preserved the
-        // original times_used, and hence we should increment it here.
-        form_to_update.times_used++;
+        // original times_used_in_html_form, and hence we should increment it
+        // here.
+        if (form_to_update.scheme == PasswordForm::Scheme::kHtml) {
+          form_to_update.times_used_in_html_form++;
+        }
         account_store_form_saver_->Update(form_to_update, account_matches,
                                           old_account_password);
       } break;
@@ -780,8 +772,9 @@ void PasswordSaveManagerImpl::UploadVotesAndMetrics(
 #endif  // !BUILDFLAG(IS_ANDROID)
 
   if (IsNewLogin()) {
-    metrics_util::LogNewlySavedPasswordIsGenerated(
+    metrics_util::LogNewlySavedPasswordMetrics(
         pending_credentials_.type == PasswordForm::Type::kGenerated,
+        pending_credentials_.username_value.empty(),
         client_->GetPasswordFeatureManager()
             ->ComputePasswordAccountStorageUsageLevel());
     // Don't send votes if there was no observed form.
@@ -821,7 +814,7 @@ void PasswordSaveManagerImpl::UploadVotesAndMetrics(
         FormStructure(pending_credentials_.form_data).FormSignatureAsStr());
   }
 
-  if (pending_credentials_.times_used == 1) {
+  if (pending_credentials_.times_used_in_html_form == 1) {
     votes_uploader_->UploadFirstLoginVotes(form_fetcher_->GetBestMatches(),
                                            pending_credentials_,
                                            parsed_submitted_form);

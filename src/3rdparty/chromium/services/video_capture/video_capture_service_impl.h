@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,17 +8,20 @@
 #include <memory>
 
 #include "base/memory/scoped_refptr.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread.h"
+#include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
-#include "services/video_capture/public/mojom/device_factory.mojom.h"
 #include "services/video_capture/public/mojom/video_capture_service.mojom.h"
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
+#include "chromeos/crosapi/mojom/video_capture.mojom.h"
 #include "media/capture/video/chromeos/mojom/camera_app.mojom.h"
+#include "services/video_capture/ash/video_capture_device_factory_ash.h"
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 namespace video_capture {
@@ -44,15 +47,17 @@ class VideoCaptureServiceImpl : public mojom::VideoCaptureService {
   void ConnectToCameraAppDeviceBridge(
       mojo::PendingReceiver<cros::mojom::CameraAppDeviceBridge> receiver)
       override;
+  void BindVideoCaptureDeviceFactory(
+      mojo::PendingReceiver<crosapi::mojom::VideoCaptureDeviceFactory> receiver)
+      override;
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-  void ConnectToDeviceFactory(
-      mojo::PendingReceiver<mojom::DeviceFactory> receiver) override;
   void ConnectToVideoSourceProvider(
       mojo::PendingReceiver<mojom::VideoSourceProvider> receiver) override;
-  void SetRetryCount(int32_t count) override;
   void BindControlsForTesting(
       mojo::PendingReceiver<mojom::TestingControls> receiver) override;
-
+#if BUILDFLAG(IS_WIN)
+  void OnGpuInfoUpdate(const CHROME_LUID& luid) override;
+#endif
  private:
   class GpuDependenciesContext;
 
@@ -62,10 +67,18 @@ class VideoCaptureServiceImpl : public mojom::VideoCaptureService {
   void OnLastSourceProviderClientDisconnected();
 
   mojo::Receiver<mojom::VideoCaptureService> receiver_;
-  mojo::ReceiverSet<mojom::DeviceFactory> factory_receivers_;
   std::unique_ptr<VirtualDeviceEnabledDeviceFactory> device_factory_;
   std::unique_ptr<VideoSourceProviderImpl> video_source_provider_;
   std::unique_ptr<GpuDependenciesContext> gpu_dependencies_context_;
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  // Must be destroyed before |device_factory_|.
+  std::unique_ptr<crosapi::VideoCaptureDeviceFactoryAsh>
+      device_factory_ash_adapter_;
+  // Must be destroyed before |device_factory_ash_adapter_|.
+  mojo::ReceiverSet<crosapi::mojom::VideoCaptureDeviceFactory>
+      factory_receivers_ash_;
+#endif
 
   scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner_;
 };

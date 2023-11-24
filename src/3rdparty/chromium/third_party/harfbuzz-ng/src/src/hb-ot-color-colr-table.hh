@@ -145,7 +145,7 @@ struct BaseGlyphRecord
   bool sanitize (hb_sanitize_context_t *c) const
   {
     TRACE_SANITIZE (this);
-    return_trace (likely (c->check_struct (this)));
+    return_trace (c->check_struct (this));
   }
 
   public:
@@ -358,14 +358,14 @@ struct Affine2x3
     return_trace (c->check_struct (this));
   }
 
-  HBFixed xx;
-  HBFixed yx;
-  HBFixed xy;
-  HBFixed yy;
-  HBFixed dx;
-  HBFixed dy;
+  F16DOT16 xx;
+  F16DOT16 yx;
+  F16DOT16 xy;
+  F16DOT16 yy;
+  F16DOT16 dx;
+  F16DOT16 dy;
   public:
-  DEFINE_SIZE_STATIC (6 * HBFixed::static_size);
+  DEFINE_SIZE_STATIC (6 * F16DOT16::static_size);
 };
 
 struct PaintColrLayers
@@ -524,6 +524,7 @@ struct PaintSweepGradient
 };
 
 struct Paint;
+
 // Paint a non-COLR glyph, filled as indicated by paint.
 struct PaintGlyph
 {
@@ -1152,6 +1153,8 @@ struct Paint
   Variable<PaintSkewAroundCenter>		paintformat31;
   PaintComposite				paintformat32;
   } u;
+  public:
+  DEFINE_SIZE_MIN (2);
 };
 
 struct BaseGlyphPaintRecord

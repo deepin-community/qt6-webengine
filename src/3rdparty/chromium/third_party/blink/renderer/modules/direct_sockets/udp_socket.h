@@ -1,27 +1,25 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_DIRECT_SOCKETS_UDP_SOCKET_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_DIRECT_SOCKETS_UDP_SOCKET_H_
 
+#include "third_party/blink/renderer/modules/direct_sockets/socket.h"
+
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
-#include "services/network/public/mojom/udp_socket.mojom-blink.h"
+#include "services/network/public/mojom/restricted_udp_socket.mojom-blink.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
-#include "third_party/blink/public/mojom/direct_sockets/direct_sockets.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
-#include "third_party/blink/renderer/modules/direct_sockets/direct_sockets_service_mojo_remote.h"
-#include "third_party/blink/renderer/modules/direct_sockets/socket.h"
 #include "third_party/blink/renderer/modules/direct_sockets/udp_readable_stream_wrapper.h"
 #include "third_party/blink/renderer/modules/direct_sockets/udp_socket_mojo_remote.h"
 #include "third_party/blink/renderer/modules/direct_sockets/udp_writable_stream_wrapper.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
-#include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/bindings/trace_wrapper_v8_reference.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -37,56 +35,39 @@ class IPEndPoint;
 namespace blink {
 
 class UDPSocketOptions;
+class ScriptState;
 class SocketCloseOptions;
 
 // UDPSocket interface from udp_socket.idl
-class MODULES_EXPORT UDPSocket final
-    : public ScriptWrappable,
-      public Socket,
-      public ActiveScriptWrappable<UDPSocket>,
-      public network::mojom::blink::UDPSocketListener {
+class MODULES_EXPORT UDPSocket final : public ScriptWrappable,
+                                       public Socket,
+                                       public ActiveScriptWrappable<UDPSocket> {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
   // IDL definitions
   static UDPSocket* Create(ScriptState*,
-                           const String& address,
-                           const uint16_t port,
                            const UDPSocketOptions*,
                            ExceptionState&);
 
   // Socket:
-  ScriptPromise connection(ScriptState* script_state) const override {
-    return Socket::connection(script_state);
-  }
-  ScriptPromise closed(ScriptState* script_state) const override {
-    return Socket::closed(script_state);
-  }
-  ScriptPromise close(ScriptState* script_state,
-                      const SocketCloseOptions* options,
-                      ExceptionState& exception_state) override {
-    return Socket::close(script_state, options, exception_state);
-  }
+  ScriptPromise close(ScriptState*, ExceptionState&) override;
 
  public:
   explicit UDPSocket(ScriptState*);
   ~UDPSocket() override;
 
-  UDPSocket(const UDPSocket&) = delete;
-  UDPSocket& operator=(const UDPSocket&) = delete;
-
   // Validates options and calls
-  // DirectSocketsServiceMojoRemote::OpenUdpSocket(...) with Init(...) passed as
+  // DirectSocketsServiceMojoRemote::OpenUDPSocket(...) with Init(...) passed as
   // callback.
-  bool Open(const String& address,
-            const uint16_t port,
-            const UDPSocketOptions*,
-            ExceptionState&);
+  bool Open(const UDPSocketOptions*, ExceptionState&);
 
-  // On net::OK initializes readable/writable streams and resolves connection
-  // promise. Otherwise rejects the connection promise. Serves as callback for
+  // On net::OK initializes readable/writable streams and resolves opened
+  // promise. Otherwise rejects the opened promise. Serves as callback for
   // Open(...).
-  void Init(int32_t result,
+  void Init(mojo::PendingReceiver<network::mojom::blink::UDPSocketListener>
+                socket_listener,
+            int32_t result,
             const absl::optional<net::IPEndPoint>& local_addr,
             const absl::optional<net::IPEndPoint>& peer_addr);
 
@@ -95,30 +76,28 @@ class MODULES_EXPORT UDPSocket final
   // ActiveScriptWrappable:
   bool HasPendingActivity() const override;
 
+  // ExecutionContextLifecycleStateObserver:
+  void ContextDestroyed() override;
+
  private:
-  mojo::PendingReceiver<blink::mojom::blink::DirectUDPSocket>
+  mojo::PendingReceiver<network::mojom::blink::RestrictedUDPSocket>
   GetUDPSocketReceiver();
 
-  mojo::PendingRemote<network::mojom::blink::UDPSocketListener>
-  GetUDPSocketListener();
-
-  // network::mojom::blink::UDPSocketListener:
-  void OnReceived(int32_t result,
-                  const absl::optional<::net::IPEndPoint>& src_addr,
-                  absl::optional<::base::span<const ::uint8_t>> data) override;
-
+  // Invoked if mojo pipe for |service_| breaks.
   void OnServiceConnectionError() override;
-  void OnSocketConnectionError();
 
+  // Invoked if mojo pipe for |udp_socket_| breaks.
   void CloseOnError();
-  void Close(const SocketCloseOptions*, ExceptionState&) override;
-  void CloseInternal(bool error);
 
-  const Member<UDPSocketMojoRemote> udp_socket_;
-  HeapMojoReceiver<network::mojom::blink::UDPSocketListener, UDPSocket>
-      socket_listener_;
+  // Resets mojo resources held by this class.
+  void ReleaseResources();
 
-  absl::optional<uint32_t> readable_stream_buffer_size_;
+  void OnBothStreamsClosed(std::vector<ScriptValue> args);
+
+  Member<UDPSocketMojoRemote> udp_socket_;
+
+  Member<UDPReadableStreamWrapper> readable_stream_wrapper_;
+  Member<UDPWritableStreamWrapper> writable_stream_wrapper_;
 };
 
 }  // namespace blink

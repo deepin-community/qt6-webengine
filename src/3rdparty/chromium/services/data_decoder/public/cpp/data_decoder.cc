@@ -1,26 +1,30 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "services/data_decoder/public/cpp/data_decoder.h"
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/json/json_reader.h"
 #include "base/memory/ref_counted.h"
 #include "base/no_destructor.h"
 #include "base/parsing_buildflags.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
+#include "build/blink_buildflags.h"
 #include "build/build_config.h"
+#include "net/http/structured_headers.h"
 #include "services/data_decoder/public/mojom/gzipper.mojom.h"
 #include "services/data_decoder/public/mojom/json_parser.mojom.h"
+#include "services/data_decoder/public/mojom/structured_headers_parser.mojom.h"
 #include "services/data_decoder/public/mojom/xml_parser.mojom.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "services/data_decoder/public/cpp/json_sanitizer.h"
 #endif
 
-#if BUILDFLAG(IS_IOS)
+#if !BUILDFLAG(USE_BLINK)
 #include "services/data_decoder/data_decoder_service.h"  // nogncheck
 #endif
 
@@ -37,14 +41,15 @@ constexpr base::TimeDelta kServiceProcessIdleTimeoutDefault{base::Seconds(5)};
 
 // Encapsulates an in-process data decoder parsing request. This provides shared
 // ownership of the caller's callback so that it may be invoked exactly once by
-// *either* the successful response handler *or* the parsers's disconnection
+// *either* the successful response handler *or* the parser's disconnection
 // handler. This also owns a Remote<T> which is kept alive for the duration of
 // the request.
 template <typename T, typename V>
 class ValueParseRequest : public base::RefCounted<ValueParseRequest<T, V>> {
  public:
-  explicit ValueParseRequest(DataDecoder::ResultCallback<V> callback)
-      : callback_(std::move(callback)) {}
+  ValueParseRequest(DataDecoder::ResultCallback<V> callback,
+                    scoped_refptr<DataDecoder::CancellationFlag> is_cancelled)
+      : callback_(std::move(callback)), is_cancelled_(is_cancelled) {}
 
   ValueParseRequest(const ValueParseRequest&) = delete;
   ValueParseRequest& operator=(const ValueParseRequest&) = delete;
@@ -68,14 +73,14 @@ class ValueParseRequest : public base::RefCounted<ValueParseRequest<T, V>> {
   // Handles a successful parse from the service.
   void OnServiceValueOrError(absl::optional<V> value,
                              const absl::optional<std::string>& error) {
-    if (!callback())
+    if (!callback() || is_cancelled_->data)
       return;
 
-    DataDecoder::ResultOrError<V> result;
+    base::expected<V, std::string> result;
     if (value)
-      result.value = std::move(value);
+      result = std::move(*value);
     else
-      result.error = error.value_or("unknown error");
+      result = base::unexpected(error.value_or("unknown error"));
 
     // Copy the callback onto the stack before resetting the Remote, as that may
     // delete |this|.
@@ -96,18 +101,21 @@ class ValueParseRequest : public base::RefCounted<ValueParseRequest<T, V>> {
   ~ValueParseRequest() = default;
 
   void OnRemoteDisconnected() {
+    if (is_cancelled_->data)
+      return;
+
     if (callback()) {
       std::move(callback())
-          .Run(DataDecoder::ResultOrError<V>::Error(
-              "Data Decoder terminated unexpectedly"));
+          .Run(base::unexpected("Data Decoder terminated unexpectedly"));
     }
   }
 
   mojo::Remote<T> remote_;
   DataDecoder::ResultCallback<V> callback_;
+  scoped_refptr<DataDecoder::CancellationFlag> is_cancelled_;
 };
 
-#if BUILDFLAG(IS_IOS)
+#if !BUILDFLAG(USE_BLINK)
 void BindInProcessService(
     mojo::PendingReceiver<mojom::DataDecoderService> receiver) {
   static base::NoDestructor<scoped_refptr<base::SequencedTaskRunner>>
@@ -124,16 +132,18 @@ void BindInProcessService(
 }
 #endif
 
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(BUILD_RUST_JSON_PARSER)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(BUILD_RUST_JSON_READER)
 
-void ParsingComplete(DataDecoder::ValueParseCallback callback,
-                     base::JSONReader::ValueWithError value_with_error) {
-  if (!value_with_error.value) {
-    std::move(callback).Run(
-        DataDecoder::ValueOrError::Error(value_with_error.error_message));
+void ParsingComplete(scoped_refptr<DataDecoder::CancellationFlag> is_cancelled,
+                     DataDecoder::ValueParseCallback callback,
+                     base::JSONReader::Result value_with_error) {
+  if (is_cancelled->data)
+    return;
+
+  if (!value_with_error.has_value()) {
+    std::move(callback).Run(base::unexpected(value_with_error.error().message));
   } else {
-    std::move(callback).Run(
-        DataDecoder::ValueOrError::Value(std::move(*value_with_error.value)));
+    std::move(callback).Run(std::move(*value_with_error));
   }
 }
 
@@ -141,12 +151,15 @@ void ParsingComplete(DataDecoder::ValueParseCallback callback,
 
 }  // namespace
 
-DataDecoder::DataDecoder() : idle_timeout_(kServiceProcessIdleTimeoutDefault) {}
+DataDecoder::DataDecoder() : DataDecoder(kServiceProcessIdleTimeoutDefault) {}
 
 DataDecoder::DataDecoder(base::TimeDelta idle_timeout)
-    : idle_timeout_(idle_timeout) {}
+    : idle_timeout_(idle_timeout),
+      cancel_requests_(new CancellationFlag(false)) {}
 
-DataDecoder::~DataDecoder() = default;
+DataDecoder::~DataDecoder() {
+  cancel_requests_->data = true;
+}
 
 mojom::DataDecoderService* DataDecoder::GetService() {
   // Lazily start an instance of the service if possible and necessary.
@@ -155,7 +168,7 @@ mojom::DataDecoderService* DataDecoder::GetService() {
     if (provider) {
       provider->BindDataDecoderService(service_.BindNewPipeAndPassReceiver());
     } else {
-#if BUILDFLAG(IS_IOS)
+#if !BUILDFLAG(USE_BLINK)
       BindInProcessService(service_.BindNewPipeAndPassReceiver());
 #else
       LOG(FATAL) << "data_decoder::ServiceProvider::Set() must be called "
@@ -173,7 +186,7 @@ mojom::DataDecoderService* DataDecoder::GetService() {
 
 void DataDecoder::ParseJson(const std::string& json,
                             ValueParseCallback callback) {
-#if BUILDFLAG(BUILD_RUST_JSON_PARSER)
+#if BUILDFLAG(BUILD_RUST_JSON_READER)
   // Parses JSON directly in the calling process using the memory-safe
   // Rust parser.
   base::ThreadPool::PostTaskAndReplyWithResult(
@@ -184,30 +197,35 @@ void DataDecoder::ParseJson(const std::string& json,
                 json, base::JSON_PARSE_RFC);
           },
           json),
-      base::BindOnce(&ParsingComplete, std::move(callback)));
+      base::BindOnce(&ParsingComplete, cancel_requests_, std::move(callback)));
 #elif BUILDFLAG(IS_ANDROID)
   // For Android, if the full Rust parser is not available, we use the
   // in-process sanitizer and then parse in-process.
   JsonSanitizer::Sanitize(
       json, base::BindOnce(
-                [](ValueParseCallback callback, JsonSanitizer::Result result) {
+                [](ValueParseCallback callback,
+                   scoped_refptr<CancellationFlag> is_cancelled,
+                   JsonSanitizer::Result result) {
+                  if (is_cancelled->data)
+                    return;
+
                   if (!result.value) {
-                    std::move(callback).Run(ValueOrError::Error(*result.error));
+                    std::move(callback).Run(base::unexpected(*result.error));
                     return;
                   }
 
-                  base::JSONReader::ValueWithError value_with_error =
+                  auto value_with_error =
                       base::JSONReader::ReadAndReturnValueWithError(
                           *result.value, base::JSON_PARSE_RFC);
-                  ParsingComplete(std::move(callback),
+                  ParsingComplete(is_cancelled, std::move(callback),
                                   std::move(value_with_error));
                 },
-                std::move(callback)));
+                std::move(callback), cancel_requests_));
 #else
   // Parse JSON out-of-process.
   auto request =
       base::MakeRefCounted<ValueParseRequest<mojom::JsonParser, base::Value>>(
-          std::move(callback));
+          std::move(callback), cancel_requests_);
   GetService()->BindJsonParser(request->BindRemote());
   request->remote()->Parse(
       json, base::JSON_PARSE_RFC,
@@ -234,13 +252,50 @@ void DataDecoder::ParseJsonIsolated(const std::string& json,
                 std::move(decoder), std::move(callback)));
 }
 
+void DataDecoder::ParseStructuredHeaderItem(
+    const std::string& header,
+    StructuredHeaderParseItemCallback callback) {
+  auto request = base::MakeRefCounted<
+      ValueParseRequest<mojom::StructuredHeadersParser,
+                        net::structured_headers::ParameterizedItem>>(
+      std::move(callback), cancel_requests_);
+  GetService()->BindStructuredHeadersParser(request->BindRemote());
+  request->remote()->ParseItem(
+      header,
+      base::BindOnce(
+          &ValueParseRequest<
+              mojom::StructuredHeadersParser,
+              net::structured_headers::ParameterizedItem>::OnServiceValue,
+          request));
+}
+
+// static
+void DataDecoder::ParseStructuredHeaderItemIsolated(
+    const std::string& header,
+    StructuredHeaderParseItemCallback callback) {
+  auto decoder = std::make_unique<DataDecoder>();
+  auto* raw_decoder = decoder.get();
+
+  // We bind the DataDecoder's ownership into the result callback to ensure that
+  // it stays alive until the operation is complete.
+  raw_decoder->ParseStructuredHeaderItem(
+      header, base::BindOnce(
+                  [](std::unique_ptr<DataDecoder>,
+                     StructuredHeaderParseItemCallback callback,
+                     base::expected<net::structured_headers::ParameterizedItem,
+                                    std::string> result) {
+                    std::move(callback).Run(std::move(result));
+                  },
+                  std::move(decoder), std::move(callback)));
+}
+
 void DataDecoder::ParseXml(
     const std::string& xml,
     mojom::XmlParser::WhitespaceBehavior whitespace_behavior,
     ValueParseCallback callback) {
   auto request =
       base::MakeRefCounted<ValueParseRequest<mojom::XmlParser, base::Value>>(
-          std::move(callback));
+          std::move(callback), cancel_requests_);
   GetService()->BindXmlParser(request->BindRemote());
   request->remote()->Parse(
       xml, whitespace_behavior,
@@ -269,11 +324,38 @@ void DataDecoder::ParseXmlIsolated(
           std::move(decoder), std::move(callback)));
 }
 
+void DataDecoder::Deflate(base::span<const uint8_t> data,
+                          GzipperCallback callback) {
+  auto request = base::MakeRefCounted<
+      ValueParseRequest<mojom::Gzipper, mojo_base::BigBuffer>>(
+      std::move(callback), cancel_requests_);
+  GetService()->BindGzipper(request->BindRemote());
+  request->remote()->Deflate(
+      data,
+      base::BindOnce(&ValueParseRequest<mojom::Gzipper,
+                                        mojo_base::BigBuffer>::OnServiceValue,
+                     request));
+}
+
+void DataDecoder::Inflate(base::span<const uint8_t> data,
+                          uint64_t max_uncompressed_size,
+                          GzipperCallback callback) {
+  auto request = base::MakeRefCounted<
+      ValueParseRequest<mojom::Gzipper, mojo_base::BigBuffer>>(
+      std::move(callback), cancel_requests_);
+  GetService()->BindGzipper(request->BindRemote());
+  request->remote()->Inflate(
+      data, max_uncompressed_size,
+      base::BindOnce(&ValueParseRequest<mojom::Gzipper,
+                                        mojo_base::BigBuffer>::OnServiceValue,
+                     request));
+}
+
 void DataDecoder::GzipCompress(base::span<const uint8_t> data,
                                GzipperCallback callback) {
   auto request = base::MakeRefCounted<
       ValueParseRequest<mojom::Gzipper, mojo_base::BigBuffer>>(
-      std::move(callback));
+      std::move(callback), cancel_requests_);
   GetService()->BindGzipper(request->BindRemote());
   request->remote()->Compress(
       data,
@@ -286,7 +368,7 @@ void DataDecoder::GzipUncompress(base::span<const uint8_t> data,
                                  GzipperCallback callback) {
   auto request = base::MakeRefCounted<
       ValueParseRequest<mojom::Gzipper, mojo_base::BigBuffer>>(
-      std::move(callback));
+      std::move(callback), cancel_requests_);
   GetService()->BindGzipper(request->BindRemote());
   request->remote()->Uncompress(
       data,

@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 #define GIN_PUBLIC_V8_SNAPSHOT_FILE_TYPE_H_
 
 #if !defined(V8_USE_EXTERNAL_STARTUP_DATA)
-#error Don't include this header unless v8_external_startup_data is true.
+#error Do not include this header unless v8_external_startup_data is true.
 #endif
 
 #include "gin/gin_export.h"

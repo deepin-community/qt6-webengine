@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -132,6 +132,17 @@
         }
       },
       {
+        "name": "sendScriptResult",
+        "type": "function",
+        "description": "Sends a result back to the browser as a result of script executing; this is handy for communicating results from browser-driven script execution.",
+        "parameters": [{"type": "any", "name": "result"}],
+        "returns_async": {
+          "name": "callback",
+          "optional": true,
+          "parameters": []
+        }
+      },
+      {
         "name": "callbackAdded",
         "type": "function",
         "nocompile": true,
@@ -221,6 +232,23 @@
           {"type": "any", "name": "expected", "optional": true},
           {"type": "any", "name": "actual", "optional": true},
           {"type": "string", "name": "message", "optional": true}
+        ]
+      },
+      {
+        "name": "assertNe",
+        "type": "function",
+        "nocompile": true,
+        "allowAmbiguousOptionalArguments": true,
+        "parameters": [
+          // These need to be optional because they can be null.
+          {"type": "any", "name": "expected", "optional": true},
+          {"type": "any", "name": "actual", "optional": true},
+          {
+            "type": "string",
+            "name": "message",
+            "optional": true,
+            "description": "A custom error message to print out with the test failure, if any."
+          }
         ]
       },
       {

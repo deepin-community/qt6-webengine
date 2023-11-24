@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,8 @@
 #define COMPONENTS_FEED_CORE_V2_PUBLIC_TYPES_H_
 
 #include <iosfwd>
-#include <map>
 #include <string>
+#include <vector>
 
 #include "base/strings/string_piece.h"
 #include "base/time/time.h"
@@ -72,10 +72,6 @@ using EphemeralChangeId = base::IdTypeU32<class EphemeralChangeIdClass>;
 using SurfaceId = base::IdTypeU32<class SurfaceIdClass>;
 using ImageFetchId = base::IdTypeU32<class ImageFetchIdClass>;
 
-// A map of trial names (key) to group names (value) that is
-// sent from the server.
-typedef std::map<std::string, std::string> Experiments;
-
 struct NetworkResponseInfo {
   NetworkResponseInfo();
   ~NetworkResponseInfo();
@@ -106,10 +102,6 @@ struct NetworkResponse {
   std::string response_bytes;
   // HTTP status code if available, or net::Error otherwise.
   int status_code;
-
-  NetworkResponse() = default;
-  NetworkResponse(NetworkResponse&& other) = default;
-  NetworkResponse& operator=(NetworkResponse&& other) = default;
 };
 
 // For the snippets-internals page.
@@ -223,6 +215,21 @@ enum class WebFeedSubscriptionRequestStatus {
 std::ostream& operator<<(std::ostream& out,
                          WebFeedSubscriptionRequestStatus value);
 
+// This must be kept in sync with WebFeedQueryRequestStatus in
+// enums.xml. These values are persisted to logs. Entries should not be
+// renumbered and numeric values should never be reused.
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.feed.webfeed
+enum class WebFeedQueryRequestStatus {
+  kUnknown = 0,
+  kSuccess = 1,
+  kFailedOffline = 2,
+  kFailedUnknownError = 3,
+  kAbortWebFeedQueryPendingClearAll = 4,
+  kFailedInvalidUrl = 5,
+  kMaxValue = kFailedInvalidUrl,
+};
+std::ostream& operator<<(std::ostream& out, WebFeedQueryRequestStatus value);
+
 using NetworkRequestId = base::IdTypeU32<class NetworkRequestIdClass>;
 
 // Values for the UMA
@@ -251,13 +258,53 @@ enum class StreamKind : int {
   kForYou = 1,
   // Following stream.
   kFollowing = 2,
+  // Single Web Feed (Cormorant) stream.
+  kSingleWebFeed = 3,
 
-  kMaxValue = kFollowing,
+  kMaxValue = kSingleWebFeed,
 };
+
+// Singe Web entry points
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.feed
+enum class SingleWebFeedEntryPoint : int {
+  // Three dot menu
+  kMenu = 0,
+  // Feed Atteribution
+  kAttribution = 1,
+  // Feed Recomentation
+  kRecommendation = 2,
+  // Other
+  kOther = 3,
+
+  kMaxValue = kOther,
+};
+std::ostream& operator<<(std::ostream& out, SingleWebFeedEntryPoint value);
 
 // For testing and debugging only.
 std::ostream& operator<<(std::ostream& out,
                          WebFeedPageInformationRequestReason value);
+
+// Used to tell how to open an URL.
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.feed
+enum class OpenActionType : int {
+  // The default open action.
+  kDefault = 0,
+  // "Open in new tab" action.
+  kNewTab = 1,
+  // "Open in new tab in group" action.
+  kNewTabInGroup = 2,
+};
+
+// Describes how tab group feature is enabled.
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.feed
+enum class TabGroupEnabledState : int {
+  // No tab group is enabled.
+  kNone = 0,
+  // "Open in new tab in group" replaces "Open in new tab".
+  kReplaced = 1,
+  // Both "Open in new tab in group" and "Open in new tab" are shown.
+  kBoth = 2,
+};
 
 }  // namespace feed
 

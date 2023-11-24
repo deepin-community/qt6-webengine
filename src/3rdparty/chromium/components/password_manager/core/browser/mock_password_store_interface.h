@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,11 +16,17 @@ class MockPasswordStoreInterface : public PasswordStoreInterface {
   MockPasswordStoreInterface();
 
   MOCK_METHOD(bool, IsAbleToSavePasswords, (), (const, override));
-  MOCK_METHOD(void, AddLogin, (const PasswordForm&), (override));
-  MOCK_METHOD(void, UpdateLogin, (const PasswordForm&), (override));
+  MOCK_METHOD(void,
+              AddLogin,
+              (const PasswordForm&, base::OnceClosure),
+              (override));
+  MOCK_METHOD(void,
+              UpdateLogin,
+              (const PasswordForm&, base::OnceClosure),
+              (override));
   MOCK_METHOD(void,
               UpdateLoginWithPrimaryKey,
-              (const PasswordForm&, const PasswordForm&),
+              (const PasswordForm&, const PasswordForm&, base::OnceClosure),
               (override));
   MOCK_METHOD(void, RemoveLogin, (const PasswordForm&), (override));
   MOCK_METHOD(void,
@@ -67,6 +73,10 @@ class MockPasswordStoreInterface : public PasswordStoreInterface {
   MOCK_METHOD(std::unique_ptr<syncer::ProxyModelTypeControllerDelegate>,
               CreateSyncControllerDelegate,
               (),
+              (override));
+  MOCK_METHOD(base::CallbackListSubscription,
+              AddSyncEnabledOrDisabledCallback,
+              (base::RepeatingClosure),
               (override));
   MOCK_METHOD(PasswordStoreBackend*, GetBackendForTesting, (), (override));
   MOCK_METHOD(void,

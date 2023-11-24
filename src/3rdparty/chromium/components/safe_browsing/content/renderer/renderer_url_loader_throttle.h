@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -38,6 +38,14 @@ class RendererURLLoaderThrottle : public blink::URLLoaderThrottle,
   FRIEND_TEST_ALL_PREFIXES(SBRendererUrlLoaderThrottleTest, DefersHttpsUrl);
   FRIEND_TEST_ALL_PREFIXES(SBRendererUrlLoaderThrottleTest,
                            DoesNotDeferChromeUrl);
+  FRIEND_TEST_ALL_PREFIXES(SBRendererUrlLoaderThrottleTest,
+                           VerifyTotalDelayHistograms_DoesNotDefer);
+  FRIEND_TEST_ALL_PREFIXES(SBRendererUrlLoaderThrottleTest,
+                           VerifyTotalDelayHistograms_DoesNotDeferFromCache);
+  FRIEND_TEST_ALL_PREFIXES(SBRendererUrlLoaderThrottleTest,
+                           VerifyTotalDelayHistograms_Defer);
+  FRIEND_TEST_ALL_PREFIXES(SBRendererUrlLoaderThrottleTest,
+                           VerifyTotalDelayHistograms_DeferFromCache);
 
   // blink::URLLoaderThrottle implementation.
   void DetachFromCurrentSequence() override;
@@ -56,12 +64,17 @@ class RendererURLLoaderThrottle : public blink::URLLoaderThrottle,
   const char* NameForLoggingWillProcessResponse() override;
 
   // mojom::UrlCheckNotifier implementation.
-  void OnCompleteCheck(bool proceed, bool showed_interstitial) override;
+  void OnCompleteCheck(bool proceed,
+                       bool showed_interstitial,
+                       bool did_perform_real_time_check,
+                       bool did_check_allowlist) override;
 
   void OnCheckUrlResult(
       mojo::PendingReceiver<mojom::UrlCheckNotifier> slow_check_notifier,
       bool proceed,
-      bool showed_interstitial);
+      bool showed_interstitial,
+      bool did_perform_real_time_check,
+      bool did_check_allowlist);
 
   // Called by the two methods above.
   // |slow_check| indicates whether it reports the result of a slow check.
@@ -86,9 +99,15 @@ class RendererURLLoaderThrottle : public blink::URLLoaderThrottle,
   size_t pending_slow_checks_ = 0;
   bool blocked_ = false;
 
+  // The time when |WillStartRequest| is called.
+  base::TimeTicks start_request_time_;
+  bool is_start_request_called_ = false;
+
   // The time when we started deferring the request.
   base::TimeTicks defer_start_time_;
   bool deferred_ = false;
+  // Whether the response loaded is from cache.
+  bool is_response_from_cache_ = false;
 
   // The total delay caused by SafeBrowsing deferring the resource load.
   base::TimeDelta total_delay_;

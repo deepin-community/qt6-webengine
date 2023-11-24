@@ -1,9 +1,10 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <utility>
 
+#include "build/build_config.h"
 #include "mojo/public/cpp/base/time_mojom_traits.h"
 #include "mojo/public/cpp/test_support/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -16,7 +17,7 @@
 #include "ui/gfx/geometry/mojom/geometry_mojom_traits.h"
 #include "ui/latency/mojom/latency_info_mojom_traits.h"
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
 #include "ui/events/ozone/layout/scoped_keyboard_layout_engine.h"  // nogncheck
 #include "ui/events/ozone/layout/stub/stub_keyboard_layout_engine.h"  // nogncheck
 #endif
@@ -111,7 +112,7 @@ TEST(StructTraitsTest, KeyEvent) {
   };
 
   for (size_t i = 0; i < std::size(kTestData); i++) {
-    std::unique_ptr<Event> expected_copy = Event::Clone(kTestData[i]);
+    std::unique_ptr<Event> expected_copy = kTestData[i].Clone();
     std::unique_ptr<Event> output;
     ASSERT_TRUE(mojo::test::SerializeAndDeserialize<mojom::Event>(expected_copy,
                                                                   output));
@@ -150,7 +151,7 @@ TEST(StructTraitsTest, MouseEvent) {
   };
 
   for (size_t i = 0; i < std::size(kTestData); i++) {
-    std::unique_ptr<Event> expected_copy = Event::Clone(kTestData[i]);
+    std::unique_ptr<Event> expected_copy = kTestData[i].Clone();
     std::unique_ptr<Event> output;
     ASSERT_TRUE(mojo::test::SerializeAndDeserialize<mojom::Event>(expected_copy,
                                                                   output));
@@ -176,7 +177,7 @@ TEST(StructTraitsTest, MouseWheelEvent) {
   };
 
   for (size_t i = 0; i < std::size(kTestData); i++) {
-    std::unique_ptr<Event> expected_copy = Event::Clone(kTestData[i]);
+    std::unique_ptr<Event> expected_copy = kTestData[i].Clone();
     std::unique_ptr<Event> output;
     ASSERT_TRUE(mojo::test::SerializeAndDeserialize<mojom::Event>(expected_copy,
                                                                   output));
@@ -206,7 +207,7 @@ TEST(StructTraitsTest, FloatingPointLocations) {
 
   // Serialize and deserialize does not round or truncate the locations.
   for (Event* event : test_data) {
-    std::unique_ptr<Event> event_copy = Event::Clone(*event);
+    std::unique_ptr<Event> event_copy = event->Clone();
     std::unique_ptr<Event> output;
     ASSERT_TRUE(
         mojo::test::SerializeAndDeserialize<mojom::Event>(event_copy, output));
@@ -225,7 +226,7 @@ TEST(StructTraitsTest, KeyEventPropertiesSerialized) {
   properties[key] = value;
   key_event.SetProperties(properties);
 
-  std::unique_ptr<Event> event_ptr = Event::Clone(key_event);
+  std::unique_ptr<Event> event_ptr = key_event.Clone();
   std::unique_ptr<Event> deserialized;
   ASSERT_TRUE(mojom::Event::Deserialize(mojom::Event::Serialize(&event_ptr),
                                         &deserialized));
@@ -257,7 +258,7 @@ TEST(StructTraitsTest, GestureEvent) {
   };
 
   for (size_t i = 0; i < std::size(kTestData); i++) {
-    std::unique_ptr<Event> expected_copy = Event::Clone(kTestData[i]);
+    std::unique_ptr<Event> expected_copy = kTestData[i].Clone();
     std::unique_ptr<Event> output;
     ASSERT_TRUE(mojo::test::SerializeAndDeserialize<mojom::Event>(expected_copy,
                                                                   output));
@@ -303,7 +304,7 @@ TEST(StructTraitsTest, ScrollEvent) {
   };
 
   for (size_t i = 0; i < std::size(kTestData); i++) {
-    std::unique_ptr<Event> expected_copy = Event::Clone(kTestData[i]);
+    std::unique_ptr<Event> expected_copy = kTestData[i].Clone();
     std::unique_ptr<Event> output;
     ASSERT_TRUE(mojo::test::SerializeAndDeserialize<mojom::Event>(expected_copy,
                                                                   output));
@@ -356,7 +357,7 @@ TEST(StructTraitsTest, TouchEvent) {
       {ET_TOUCH_CANCELLED, {1, 2}, base::TimeTicks::Now(), {}, EF_NONE},
   };
   for (size_t i = 0; i < std::size(kTestData); i++) {
-    std::unique_ptr<Event> expected_copy = Event::Clone(kTestData[i]);
+    std::unique_ptr<Event> expected_copy = kTestData[i].Clone();
     std::unique_ptr<Event> output;
     ASSERT_TRUE(mojo::test::SerializeAndDeserialize<mojom::Event>(expected_copy,
                                                                   output));
@@ -389,7 +390,7 @@ TEST(StructTraitsTest, UnserializedTouchEventFields) {
             output->AsTouchEvent()->unique_event_id());
 }
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
 
 // Test KeyboardLayoutEngine implementation that always returns 'x'.
 class FixedKeyboardLayoutEngine : public StubKeyboardLayoutEngine {

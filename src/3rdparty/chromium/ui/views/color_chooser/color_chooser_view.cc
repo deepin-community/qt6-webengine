@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -115,7 +115,9 @@ void DrawGradientRect(const gfx::Rect& rect,
                       SkColor end_color,
                       bool is_horizontal,
                       gfx::Canvas* canvas) {
-  SkColor colors[2] = {start_color, end_color};
+  // TODO(crbug/1308932): Remove FromColor and make all SkColor4f.
+  SkColor4f colors[2] = {SkColor4f::FromColor(start_color),
+                         SkColor4f::FromColor(end_color)};
   SkPoint points[2];
   points[0].iset(0, 0);
   if (is_horizontal)
@@ -161,13 +163,13 @@ class HueView : public LocatedEventHandlerView {
   void OnPaint(gfx::Canvas* canvas) override;
 
   HueChangedCallback changed_callback_;
-  int level_;
+  int level_ = 0;
   SkColor background_color_;
   SkColor indicator_color_;
 };
 
 HueView::HueView(const HueChangedCallback& changed_callback)
-    : changed_callback_(changed_callback), level_(0) {}
+    : changed_callback_(changed_callback) {}
 
 void HueView::OnThemeChanged() {
   LocatedEventHandlerView::OnThemeChanged();
@@ -284,9 +286,9 @@ class SaturationValueView : public LocatedEventHandlerView {
   void UpdateMarkerColor();
 
   SaturationValueChangedCallback changed_callback_;
-  SkScalar hue_;
-  SkScalar saturation_;
-  SkScalar value_;
+  SkScalar hue_ = 0;
+  SkScalar saturation_ = 0;
+  SkScalar value_ = 0;
   gfx::Point marker_position_;
   SkColor marker_color_;
 };
@@ -294,9 +296,7 @@ class SaturationValueView : public LocatedEventHandlerView {
 SaturationValueView::SaturationValueView(
     const SaturationValueChangedCallback& changed_callback)
     : changed_callback_(changed_callback),
-      hue_(0),
-      saturation_(0),
-      value_(0),
+
       marker_color_(gfx::kPlaceholderColor) {
   SetBorder(CreateSolidBorder(kBorderWidth, gfx::kPlaceholderColor));
 }

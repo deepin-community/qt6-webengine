@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,10 @@
 
 #include <va/va.h>
 
-#include "base/callback_forward.h"
-#include "base/callback_helpers.h"
+#include "base/functional/callback_forward.h"
+#include "base/functional/callback_helpers.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/thread_annotations.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -52,13 +54,15 @@ class ScopedVABufferMapping {
   VAStatus Unmap();
 
  private:
-  const base::Lock* lock_;  // Only for AssertAcquired() calls.
+  raw_ptr<const base::Lock> lock_;  // Only for AssertAcquired() calls.
   const VADisplay va_display_;
   const VABufferID buffer_id_;
 
   base::SequenceCheckerImpl sequence_checker_;
 
-  void* va_buffer_data_ = nullptr;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #addr-of
+  RAW_PTR_EXCLUSION void* va_buffer_data_ = nullptr;
 };
 
 // This class tracks the VABuffer life cycle from vaCreateBuffer() to
@@ -100,7 +104,7 @@ class ScopedVABuffer {
                  VABufferType va_buffer_type,
                  size_t size);
 
-  base::Lock* const lock_;
+  const raw_ptr<base::Lock> lock_;
   const VADisplay va_display_ GUARDED_BY(lock_);
 
   base::SequenceCheckerImpl sequence_checker_;
@@ -142,7 +146,7 @@ class ScopedVAImage {
   }
 
  private:
-  base::Lock* lock_;
+  raw_ptr<base::Lock> lock_;
   const VADisplay va_display_ GUARDED_BY(lock_);
   std::unique_ptr<VAImage> image_;
   std::unique_ptr<ScopedVABufferMapping> va_buffer_;

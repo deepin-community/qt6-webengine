@@ -33,53 +33,49 @@ CSSMediaRule::CSSMediaRule(StyleRuleMedia* media_rule, CSSStyleSheet* parent)
 
 CSSMediaRule::~CSSMediaRule() = default;
 
-scoped_refptr<MediaQuerySet> CSSMediaRule::MediaQueries() const {
+const MediaQuerySet* CSSMediaRule::MediaQueries() const {
   return To<StyleRuleMedia>(group_rule_.Get())->MediaQueries();
+}
+
+void CSSMediaRule::SetMediaQueries(const MediaQuerySet* media_queries) {
+  To<StyleRuleMedia>(group_rule_.Get())->SetMediaQueries(media_queries);
 }
 
 String CSSMediaRule::cssText() const {
   StringBuilder result;
-  result.Append("@media ");
+  result.Append("@media");
   if (MediaQueries()) {
-    result.Append(MediaQueries()->MediaText());
     result.Append(' ');
+    result.Append(MediaQueries()->MediaText());
   }
-  result.Append("{\n");
   AppendCSSTextForItems(result);
-  result.Append('}');
   return result.ReleaseString();
 }
 
 String CSSMediaRule::conditionText() const {
-  if (MediaQueries() && MediaQueries()->HasUnknown())
-    CountUse(WebFeature::kCSSOMMediaConditionUnknown);
   return ConditionTextInternal();
 }
 
 String CSSMediaRule::ConditionTextInternal() const {
-  if (!MediaQueries())
+  if (!MediaQueries()) {
     return String();
+  }
   return MediaQueries()->MediaText();
 }
 
-MediaList* CSSMediaRule::media() const {
-  if (!MediaQueries())
+MediaList* CSSMediaRule::media() {
+  if (!MediaQueries()) {
     return nullptr;
+  }
   if (!media_cssom_wrapper_) {
-    media_cssom_wrapper_ = MakeGarbageCollected<MediaList>(
-        MediaQueries(), const_cast<CSSMediaRule*>(this));
+    media_cssom_wrapper_ = MakeGarbageCollected<MediaList>(this);
   }
   return media_cssom_wrapper_.Get();
-}
-
-void CSSMediaRule::Reattach(StyleRuleBase* rule) {
-  CSSConditionRule::Reattach(rule);
-  if (media_cssom_wrapper_ && MediaQueries())
-    media_cssom_wrapper_->Reattach(MediaQueries());
 }
 
 void CSSMediaRule::Trace(Visitor* visitor) const {
   visitor->Trace(media_cssom_wrapper_);
   CSSConditionRule::Trace(visitor);
 }
+
 }  // namespace blink

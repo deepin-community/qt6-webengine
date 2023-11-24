@@ -4,16 +4,15 @@
 
 #include "quiche/common/test_tools/quiche_test_utils.h"
 
+#include <string>
+
+#include "url/gurl.h"
 #include "quiche/common/platform/api/quiche_logging.h"
 #include "quiche/common/platform/api/quiche_test.h"
 
-#include <string>
-
 namespace {
 
-std::string HexDumpWithMarks(const char* data,
-                             int length,
-                             const bool* marks,
+std::string HexDumpWithMarks(const char* data, int length, const bool* marks,
                              int mark_length) {
   static const char kHexChars[] = "0123456789abcdef";
   static const int kColumns = 4;
@@ -57,8 +56,7 @@ namespace quiche {
 namespace test {
 
 void CompareCharArraysWithHexError(const std::string& description,
-                                   const char* actual,
-                                   const int actual_len,
+                                   const char* actual, const int actual_len,
                                    const char* expected,
                                    const int expected_len) {
   EXPECT_EQ(actual_len, expected_len);
@@ -77,8 +75,7 @@ void CompareCharArraysWithHexError(const std::string& description,
   for (int i = min_len; i < max_len; ++i) {
     marks[i] = true;
   }
-  if (identical)
-    return;
+  if (identical) return;
   ADD_FAILURE() << "Description:\n"
                 << description << "\n\nExpected:\n"
                 << HexDumpWithMarks(expected, expected_len, marks.get(),
@@ -89,6 +86,16 @@ void CompareCharArraysWithHexError(const std::string& description,
 
 iovec MakeIOVector(absl::string_view str) {
   return iovec{const_cast<char*>(str.data()), static_cast<size_t>(str.size())};
+}
+
+bool GoogleUrlSupportsIdnaForTest() {
+  const std::string kTestInput = "https://\xe5\x85\x89.example.org/";
+  const std::string kExpectedOutput = "https://xn--54q.example.org/";
+
+  GURL url(kTestInput);
+  bool valid = url.is_valid() && url.spec() == kExpectedOutput;
+  QUICHE_CHECK(valid || !url.is_valid()) << url.spec();
+  return valid;
 }
 
 }  // namespace test

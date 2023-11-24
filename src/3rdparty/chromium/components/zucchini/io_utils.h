@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,6 +12,8 @@
 #include <ostream>
 #include <sstream>
 #include <string>
+
+#include "base/memory/raw_ref.h"
 
 namespace zucchini {
 
@@ -35,7 +37,7 @@ class LimitedOutputStream : public std::ostream {
     bool full() const { return counter_ >= limit_; }
 
    private:
-    std::ostream& os_;
+    const raw_ref<std::ostream> os_;
     const int limit_;
     int counter_ = 0;
   };
@@ -128,11 +130,11 @@ class StrictUInt {
       istr.setstate(std::ios_base::failbit);
       return istr;
     }
-    return istr >> obj.var_;
+    return istr >> *obj.var_;
   }
 
  private:
-  T& var_;
+  const raw_ref<T> var_;
 };
 
 // Stub out uint8_t: istream treats it as char, and value won't be read as int!

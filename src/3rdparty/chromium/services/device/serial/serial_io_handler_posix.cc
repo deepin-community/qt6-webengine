@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,11 +10,11 @@
 #include <algorithm>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/posix/eintr_wrapper.h"
+#include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/device_event_log/device_event_log.h"
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
@@ -287,7 +287,15 @@ bool SerialIoHandlerPosix::ConfigurePortImpl() {
 }
 
 bool SerialIoHandlerPosix::PostOpen() {
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+  // The base::File::FLAG_WIN_EXCLUSIVE_READ and
+  // base::File::FLAG_WIN_EXCLUSIVE_WRITE flags do nothing on POSIX-based
+  // systems. Request exclusive access to the terminal device here.
+  if (HANDLE_EINTR(ioctl(file().GetPlatformFile(), TIOCEXCL)) == -1) {
+    SERIAL_PLOG(DEBUG) << "Failed to put terminal in exclusive mode";
+    return false;
+  }
+
+#if BUILDFLAG(IS_CHROMEOS)
   // The Chrome OS permission broker does not open devices in async mode.
   return base::SetNonBlocking(file().GetPlatformFile());
 #else
@@ -330,7 +338,7 @@ void SerialIoHandlerPosix::AttemptRead() {
     } else {
       bool break_detected = false;
       bool parity_error_detected = false;
-      int new_bytes_read =
+      size_t new_bytes_read =
           CheckReceiveError(pending_read_buffer(), bytes_read, break_detected,
                             parity_error_detected);
 
@@ -564,14 +572,14 @@ mojom::SerialConnectionInfoPtr SerialIoHandlerPosix::GetPortInfo() const {
 //
 // break/parity error sequences are removed from the byte stream
 // '\377' '\377' sequence is replaced with '\377'
-int SerialIoHandlerPosix::CheckReceiveError(base::span<uint8_t> buffer,
-                                            int bytes_read,
-                                            bool& break_detected,
-                                            bool& parity_error_detected) {
-  int new_bytes_read = num_chars_stashed_;
-  DCHECK_LE(new_bytes_read, 2);
+size_t SerialIoHandlerPosix::CheckReceiveError(base::span<uint8_t> buffer,
+                                               size_t bytes_read,
+                                               bool& break_detected,
+                                               bool& parity_error_detected) {
+  size_t new_bytes_read = num_chars_stashed_;
+  DCHECK_LE(new_bytes_read, 2u);
 
-  for (int i = 0; i < bytes_read; ++i) {
+  for (size_t i = 0; i < bytes_read; ++i) {
     uint8_t ch = buffer[i];
     if (new_bytes_read == 0) {
       chars_stashed_[0] = ch;
@@ -588,7 +596,7 @@ int SerialIoHandlerPosix::CheckReceiveError(base::span<uint8_t> buffer,
         }
         break;
       case ErrorDetectState::MARK_377_SEEN:
-        DCHECK_GE(new_bytes_read, 2);
+        DCHECK_GE(new_bytes_read, 2u);
         if (ch == 0) {
           error_detect_state_ = ErrorDetectState::MARK_0_SEEN;
         } else {
@@ -604,7 +612,7 @@ int SerialIoHandlerPosix::CheckReceiveError(base::span<uint8_t> buffer,
         }
         break;
       case ErrorDetectState::MARK_0_SEEN:
-        DCHECK_GE(new_bytes_read, 3);
+        DCHECK_GE(new_bytes_read, 3u);
         if (ch == 0) {
           break_detected = true;
           new_bytes_read -= 3;
@@ -662,7 +670,7 @@ int SerialIoHandlerPosix::CheckReceiveError(base::span<uint8_t> buffer,
     // right shift two bytes to store bytes from chars_stashed_[]
     memmove(&buffer[2], &buffer[0], new_bytes_read - 2);
   }
-  memcpy(&buffer[0], chars_stashed_, std::min(new_bytes_read, 2));
+  memcpy(&buffer[0], chars_stashed_, std::min<size_t>(new_bytes_read, 2));
   memcpy(chars_stashed_, tmp, num_chars_stashed_);
   return new_bytes_read;
 }

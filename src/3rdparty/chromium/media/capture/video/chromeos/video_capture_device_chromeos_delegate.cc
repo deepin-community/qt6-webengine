@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,20 +8,15 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/threading/platform_thread.h"
-#include "base/trace_event/typed_macros.h"
+#include "base/task/single_thread_task_runner.h"
 #include "chromeos/dbus/power/power_manager_client.h"
-#include "media/base/bind_to_current_loop.h"
 #include "media/capture/video/chromeos/camera_app_device_bridge_impl.h"
 #include "media/capture/video/chromeos/camera_device_delegate.h"
 #include "media/capture/video/chromeos/camera_hal_delegate.h"
 #include "ui/display/display.h"
-#include "ui/display/display_observer.h"
-#include "ui/display/screen.h"
 
 namespace media {
 
@@ -106,11 +101,11 @@ class VideoCaptureDeviceChromeOSDelegate::PowerManagerClientProxy
 VideoCaptureDeviceChromeOSDelegate::VideoCaptureDeviceChromeOSDelegate(
     scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
     const VideoCaptureDeviceDescriptor& device_descriptor,
-    scoped_refptr<CameraHalDelegate> camera_hal_delegate,
+    CameraHalDelegate* camera_hal_delegate,
     base::OnceClosure cleanup_callback)
     : device_descriptor_(device_descriptor),
-      camera_hal_delegate_(std::move(camera_hal_delegate)),
-      capture_task_runner_(base::ThreadTaskRunnerHandle::Get()),
+      camera_hal_delegate_(camera_hal_delegate),
+      capture_task_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()),
       camera_device_ipc_thread_(std::string("CameraDeviceIpcThread") +
                                 device_descriptor.device_id),
       screen_observer_delegate_(
@@ -131,7 +126,8 @@ VideoCaptureDeviceChromeOSDelegate::VideoCaptureDeviceChromeOSDelegate(
                                     std::move(ui_task_runner));
 }
 
-VideoCaptureDeviceChromeOSDelegate::~VideoCaptureDeviceChromeOSDelegate() {}
+VideoCaptureDeviceChromeOSDelegate::~VideoCaptureDeviceChromeOSDelegate() =
+    default;
 
 void VideoCaptureDeviceChromeOSDelegate::Shutdown() {
   DCHECK(capture_task_runner_->BelongsToCurrentThread());
@@ -288,8 +284,11 @@ void VideoCaptureDeviceChromeOSDelegate::CloseDevice(
                                       device_closed->Signal();
                                     },
                                     base::Unretained(&device_closed_))));
-  base::TimeDelta kWaitTimeoutSecs = base::Seconds(3);
+  // TODO(kamesan): Reduce the timeout back to 1 second when we have a solution
+  // in platform level (b/258048698).
+  const base::TimeDelta kWaitTimeoutSecs = base::Seconds(2);
   device_closed_.TimedWait(kWaitTimeoutSecs);
+
   if (!unblock_suspend_token.is_empty())
     power_manager_client_proxy_->UnblockSuspend(unblock_suspend_token);
 }

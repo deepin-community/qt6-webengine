@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -40,7 +40,7 @@ CPDF_BAFontMap* CFFL_TextObject::GetOrCreateFontMap() {
   if (!m_pFontMap) {
     m_pFontMap = std::make_unique<CPDF_BAFontMap>(
         m_pWidget->GetPDFPage()->GetDocument(),
-        m_pWidget->GetPDFAnnot()->GetAnnotDict(), "N");
+        m_pWidget->GetPDFAnnot()->GetMutableAnnotDict(), "N");
   }
   return m_pFontMap.get();
 }

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,11 +10,12 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_clock.h"
 #include "base/time/time.h"
+#include "base/values.h"
 #include "build/chromeos_buildflags.h"
 #include "components/metrics/demographics/user_demographics.h"
 #include "components/metrics/metrics_log_uploader.h"
 #include "components/sync/base/sync_prefs.h"
-#include "components/sync/driver/test_sync_service.h"
+#include "components/sync/test/test_sync_service.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -48,6 +49,7 @@ class TestProfileClient : public DemographicMetricsProvider::ProfileClient {
   TestProfileClient(int number_of_profiles,
                     TestSyncServiceState sync_service_state)
       : number_of_profiles_(number_of_profiles) {
+    RegisterDemographicsLocalStatePrefs(pref_service_.registry());
     RegisterDemographicsProfilePrefs(pref_service_.registry());
 
     switch (sync_service_state) {
@@ -75,12 +77,7 @@ class TestProfileClient : public DemographicMetricsProvider::ProfileClient {
       case SYNC_FEATURE_ENABLED_BUT_PAUSED:
         sync_service_ = std::make_unique<syncer::TestSyncService>();
         // Mimic the user signing out from content are (sync paused).
-        sync_service_->SetAuthError(
-            GoogleServiceAuthError::FromInvalidGaiaCredentialsReason(
-                GoogleServiceAuthError::InvalidGaiaCredentialsReason::
-                    CREDENTIALS_REJECTED_BY_CLIENT));
-        sync_service_->SetTransportState(
-            syncer::SyncService::TransportState::PAUSED);
+        sync_service_->SetPersistentAuthErrorWithWebSignout();
 
         CHECK(sync_service_->GetUserSettings()->IsSyncRequested());
         CHECK(sync_service_->GetDisableReasons().Empty());
@@ -105,7 +102,9 @@ class TestProfileClient : public DemographicMetricsProvider::ProfileClient {
 
   syncer::SyncService* GetSyncService() override { return sync_service_.get(); }
 
-  PrefService* GetPrefService() override { return &pref_service_; }
+  PrefService* GetLocalState() override { return &pref_service_; }
+
+  PrefService* GetProfilePrefs() override { return &pref_service_; }
 
   base::Time GetNetworkTime() const override {
     base::Time time;
@@ -116,10 +115,10 @@ class TestProfileClient : public DemographicMetricsProvider::ProfileClient {
 
   void SetDemographicsInPrefs(int birth_year,
                               metrics::UserDemographicsProto_Gender gender) {
-    base::DictionaryValue dict;
-    dict.SetIntPath(kSyncDemographicsBirthYearPath, birth_year);
-    dict.SetIntPath(kSyncDemographicsGenderPath, static_cast<int>(gender));
-    pref_service_.Set(kSyncDemographicsPrefName, dict);
+    base::Value::Dict dict;
+    dict.Set(kSyncDemographicsBirthYearPath, birth_year);
+    dict.Set(kSyncDemographicsGenderPath, static_cast<int>(gender));
+    pref_service_.SetDict(kSyncDemographicsPrefName, std::move(dict));
   }
 
  private:
@@ -139,8 +138,8 @@ TEST(DemographicMetricsProviderTest,
 
   // Set birth year noise offset to not have it randomized.
   const int kBirthYearOffset = 3;
-  client->GetPrefService()->SetInteger(kSyncDemographicsBirthYearOffsetPrefName,
-                                       kBirthYearOffset);
+  client->GetLocalState()->SetInteger(kUserDemographicsBirthYearOffsetPrefName,
+                                      kBirthYearOffset);
 
   // Run demographics provider.
   DemographicMetricsProvider provider(
@@ -250,8 +249,7 @@ TEST(DemographicMetricsProviderTest,
      ProvideSyncedUserNoisedBirthYearAndGender_FeatureDisabled) {
   // Disable demographics reporting feature.
   base::test::ScopedFeatureList local_feature;
-  local_feature.InitAndDisableFeature(
-      DemographicMetricsProvider::kDemographicMetricsReporting);
+  local_feature.InitAndDisableFeature(kDemographicMetricsReporting);
 
   base::HistogramTester histogram;
 
@@ -344,8 +342,8 @@ TEST(DemographicMetricsProviderTest,
 
   // Set birth year noise offset to not have it randomized.
   const int kBirthYearOffset = 3;
-  client->GetPrefService()->SetInteger(kSyncDemographicsBirthYearOffsetPrefName,
-                                       kBirthYearOffset);
+  client->GetLocalState()->SetInteger(kUserDemographicsBirthYearOffsetPrefName,
+                                      kBirthYearOffset);
 
   // Run demographics provider.
   DemographicMetricsProvider provider(

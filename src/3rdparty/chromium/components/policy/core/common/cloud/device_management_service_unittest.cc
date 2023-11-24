@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,20 +9,22 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/metrics/statistics_recorder.h"
 #include "base/run_loop.h"
+#include "base/strings/escape.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "build/build_config.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/core/common/cloud/dm_auth.h"
 #include "components/policy/core/common/cloud/mock_device_management_service.h"
-#include "net/base/escape.h"
+#include "components/policy/core/common/features.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_request_headers.h"
@@ -62,12 +64,23 @@ const char kEnrollmentToken[] = "enrollment_token";
 const char kOAuthAuthorizationHeaderPrefix[] = "OAuth ";
 #endif
 
+// Helper function which generates a DMServer response and populates the
+// `error_detail` field.
+std::string GenerateResponseWithErrorDetail(
+    em::DeviceManagementErrorDetail error_detail) {
+  em::DeviceManagementResponse response;
+  response.add_error_detail(error_detail);
+  return response.SerializeAsString();
+}
+
 // Unit tests for the device management policy service. The tests are run
 // against a TestURLLoaderFactory that is used to short-circuit the request
 // without calling into the actual network stack.
 class DeviceManagementServiceTestBase : public testing::Test {
  protected:
-  DeviceManagementServiceTestBase() {
+  explicit DeviceManagementServiceTestBase(
+      base::test::TaskEnvironment::TimeSource time_source)
+      : task_environment_(time_source) {
     // Set retry delay to prevent timeouts.
     policy::DeviceManagementService::SetRetryDelayForTesting(0);
 
@@ -77,6 +90,10 @@ class DeviceManagementServiceTestBase : public testing::Test {
     ResetService();
     InitializeService();
   }
+
+  DeviceManagementServiceTestBase()
+      : DeviceManagementServiceTestBase(
+            base::test::TaskEnvironment::TimeSource::DEFAULT) {}
 
   ~DeviceManagementServiceTestBase() override {
     service_.reset();
@@ -126,7 +143,8 @@ class DeviceManagementServiceTestBase : public testing::Test {
       absl::optional<std::string> oauth_token,
       const std::string& payload = std::string(),
       DeviceManagementService::Job::RetryMethod method =
-          DeviceManagementService::Job::NO_RETRY) {
+          DeviceManagementService::Job::NO_RETRY,
+      base::TimeDelta timeout = base::Seconds(0)) {
     last_job_type_ =
         DeviceManagementService::JobConfiguration::GetJobTypeAsString(type);
     std::unique_ptr<FakeJobConfiguration> config =
@@ -142,6 +160,7 @@ class DeviceManagementServiceTestBase : public testing::Test {
                 base::Unretained(this)));
     config->SetRequestPayload(payload);
     config->SetShouldRetryResponse(method);
+    config->SetTimeoutDuration(timeout);
     return service_->CreateJob(std::move(config));
   }
 
@@ -166,11 +185,12 @@ class DeviceManagementServiceTestBase : public testing::Test {
   std::unique_ptr<DeviceManagementService::Job> StartTokenEnrollmentJob(
       const std::string& payload = std::string(),
       DeviceManagementService::Job::RetryMethod method =
-          DeviceManagementService::Job::NO_RETRY) {
+          DeviceManagementService::Job::NO_RETRY,
+      base::TimeDelta timeout = base::Seconds(0)) {
     return StartJob(
         DeviceManagementService::JobConfiguration::TYPE_TOKEN_ENROLLMENT,
         /*critical=*/false, DMAuth::FromEnrollmentToken(kEnrollmentToken),
-        std::string(), payload, method);
+        std::string(), payload, method, timeout);
   }
 
   std::unique_ptr<DeviceManagementService::Job> StartApiAuthCodeFetchJob(
@@ -287,7 +307,7 @@ class DeviceManagementServiceTestBase : public testing::Test {
   MOCK_METHOD4(OnJobDone,
                void(DeviceManagementService::Job*,
                     DeviceManagementStatus,
-                    int,
+                    int /*net_error*/,
                     const std::string&));
 
   MOCK_METHOD2(OnJobRetry,
@@ -336,7 +356,15 @@ void PrintTo(const FailedRequestParams& params, std::ostream* os) {
 // the same for all kinds of requests.
 class DeviceManagementServiceFailedRequestTest
     : public DeviceManagementServiceTestBase,
-      public testing::WithParamInterface<FailedRequestParams> {};
+      public testing::WithParamInterface<FailedRequestParams> {
+ protected:
+  DeviceManagementServiceFailedRequestTest() {
+    feature_list_.InitAndEnableFeature(features::kDmTokenDeletion);
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
 
 TEST_P(DeviceManagementServiceFailedRequestTest, RegisterRequest) {
   EXPECT_CALL(*this, OnJobDone(_, GetParam().expected_status_, _, _));
@@ -394,20 +422,6 @@ TEST_P(DeviceManagementServiceFailedRequestTest, ApiAuthCodeFetchRequest) {
                GetParam().response_);
 }
 
-TEST_P(DeviceManagementServiceFailedRequestTest, UnregisterRequest) {
-  EXPECT_CALL(*this, OnJobDone(_, GetParam().expected_status_, _, _));
-  EXPECT_CALL(*this, OnJobRetry(_, _)).Times(0);
-  EXPECT_CALL(*this,
-              OnShouldJobRetry(GetParam().http_status_, GetParam().response_));
-  std::unique_ptr<DeviceManagementService::Job> request_job(
-      StartUnregistrationJob());
-  auto* request = GetPendingRequest();
-  ASSERT_TRUE(request);
-
-  SendResponse(GetParam().error_, GetParam().http_status_,
-               GetParam().response_);
-}
-
 TEST_P(DeviceManagementServiceFailedRequestTest, PolicyRequest) {
   EXPECT_CALL(*this, OnJobDone(_, GetParam().expected_status_, _, _));
   EXPECT_CALL(*this, OnJobRetry(_, _)).Times(0);
@@ -441,6 +455,10 @@ INSTANTIATE_TEST_SUITE_P(
     DeviceManagementServiceFailedRequestTest,
     testing::Values(
         FailedRequestParams(DM_STATUS_REQUEST_FAILED, net::ERR_FAILED, 0, ""),
+        FailedRequestParams(DM_STATUS_REQUEST_FAILED,
+                            net::ERR_TIMED_OUT,
+                            0,
+                            ""),
         FailedRequestParams(DM_STATUS_HTTP_STATUS_ERROR,
                             net::OK,
                             666,
@@ -461,6 +479,22 @@ INSTANTIATE_TEST_SUITE_P(
                             net::OK,
                             410,
                             PROTO_STRING(kResponseEmpty)),
+        FailedRequestParams(
+            DM_STATUS_SERVICE_DEVICE_NOT_FOUND,
+            net::OK,
+            410,
+            GenerateResponseWithErrorDetail(
+                em::CBCM_DELETION_POLICY_PREFERENCE_INVALIDATE_TOKEN)),
+        FailedRequestParams(
+#if BUILDFLAG(IS_CHROMEOS)
+            DM_STATUS_SERVICE_DEVICE_NOT_FOUND,
+#else   // BUILDFLAG(IS_CHROMEOS)
+            DM_STATUS_SERVICE_DEVICE_NEEDS_RESET,
+#endif  // BUILDFLAG(IS_CHROMEOS)
+            net::OK,
+            410,
+            GenerateResponseWithErrorDetail(
+                em::CBCM_DELETION_POLICY_PREFERENCE_DELETE_TOKEN)),
         FailedRequestParams(DM_STATUS_SERVICE_MANAGEMENT_TOKEN_INVALID,
                             net::OK,
                             401,
@@ -505,6 +539,10 @@ INSTANTIATE_TEST_SUITE_P(
                             net::OK,
                             413,
                             PROTO_STRING(kResponseEmpty)),
+        FailedRequestParams(DM_STATUS_SERVICE_INVALID_PACKAGED_DEVICE_FOR_KIOSK,
+                            net::OK,
+                            418,
+                            PROTO_STRING(kResponseEmpty)),
         FailedRequestParams(DM_STATUS_SERVICE_TOO_MANY_REQUESTS,
                             net::OK,
                             429,
@@ -528,11 +566,11 @@ class QueryParams {
   std::vector<std::string> GetParams(const std::string& name) {
     std::vector<std::string> results;
     for (const auto& param : params_) {
-      std::string unescaped_name = net::UnescapeBinaryURLComponent(
-          param.first, net::UnescapeRule::REPLACE_PLUS_WITH_SPACE);
+      std::string unescaped_name = base::UnescapeBinaryURLComponent(
+          param.first, base::UnescapeRule::REPLACE_PLUS_WITH_SPACE);
       if (unescaped_name == name) {
-        std::string value = net::UnescapeBinaryURLComponent(
-            param.second, net::UnescapeRule::REPLACE_PLUS_WITH_SPACE);
+        std::string value = base::UnescapeBinaryURLComponent(
+            param.second, base::UnescapeRule::REPLACE_PLUS_WITH_SPACE);
         results.push_back(value);
       }
     }
@@ -689,37 +727,6 @@ TEST_F(DeviceManagementServiceTest, ApiAuthCodeFetchRequest) {
   SendResponse(net::OK, 200, expected_data);
 }
 
-TEST_F(DeviceManagementServiceTest, UnregisterRequest) {
-  em::DeviceManagementResponse expected_response;
-  expected_response.mutable_unregister_response();
-  std::string expected_data;
-  ASSERT_TRUE(expected_response.SerializeToString(&expected_data));
-
-  EXPECT_CALL(*this, OnJobDone(_, DM_STATUS_SUCCESS, _, expected_data));
-  EXPECT_CALL(*this, OnJobRetry(_, _)).Times(0);
-  EXPECT_CALL(*this, OnShouldJobRetry(200, expected_data));
-  std::unique_ptr<DeviceManagementService::Job> request_job(
-      StartUnregistrationJob(expected_data));
-  auto* request = GetPendingRequest();
-  ASSERT_TRUE(request);
-
-  // Check the data the fetcher received.
-  const GURL& request_url(request->request.url);
-  const GURL service_url(kServiceUrl);
-  EXPECT_EQ(service_url.scheme(), request_url.scheme());
-  EXPECT_EQ(service_url.host(), request_url.host());
-  EXPECT_EQ(service_url.port(), request_url.port());
-  EXPECT_EQ(service_url.path(), request_url.path());
-
-  CheckURLAndQueryParams(request, dm_protocol::kValueRequestUnregister,
-                         kClientID, "");
-
-  EXPECT_EQ(expected_data, network::GetUploadData(request->request));
-
-  // Generate the response.
-  SendResponse(net::OK, 200, expected_data);
-}
-
 TEST_F(DeviceManagementServiceTest, CancelRegisterRequest) {
   EXPECT_CALL(*this, OnJobDone(_, _, _, _)).Times(0);
   EXPECT_CALL(*this, OnJobRetry(_, _)).Times(0);
@@ -765,19 +772,6 @@ TEST_F(DeviceManagementServiceTest, CancelApiAuthCodeFetch) {
   EXPECT_CALL(*this, OnShouldJobRetry(_, _)).Times(0);
   std::unique_ptr<DeviceManagementService::Job> request_job(
       StartApiAuthCodeFetchJob());
-  auto* request = GetPendingRequest();
-  ASSERT_TRUE(request);
-
-  // There shouldn't be any callbacks.
-  request_job.reset();
-}
-
-TEST_F(DeviceManagementServiceTest, CancelUnregisterRequest) {
-  EXPECT_CALL(*this, OnJobDone(_, _, _, _)).Times(0);
-  EXPECT_CALL(*this, OnJobRetry(_, _)).Times(0);
-  EXPECT_CALL(*this, OnShouldJobRetry(_, _)).Times(0);
-  std::unique_ptr<DeviceManagementService::Job> request_job(
-      StartUnregistrationJob());
   auto* request = GetPendingRequest();
   ASSERT_TRUE(request);
 
@@ -1218,5 +1212,31 @@ TEST_F(DeviceManagementRequestAuthTest, CannotUseOAuthTokenAsAuthData) {
                "");
 }
 #endif  // GTEST_HAS_DEATH_TEST
+
+class DeviceManagementServiceTestWithTimeManipulation
+    : public DeviceManagementServiceTestBase {
+ protected:
+  DeviceManagementServiceTestWithTimeManipulation()
+      : DeviceManagementServiceTestBase(
+            base::test::TaskEnvironment::TimeSource::MOCK_TIME) {}
+  base::TimeDelta GetTimeoutDuration() const { return timeout_test_duration_; }
+  static constexpr base::TimeDelta timeout_test_duration_ = base::Seconds(30);
+};
+
+TEST_F(DeviceManagementServiceTestWithTimeManipulation,
+       TokenEnrollmentRequestWithTimeout) {
+  // In enrollment timeout cases, expected status is DM_STATUS_REQUEST_FAILED,
+  // and expected net error is NET_ERROR(TIMED_OUT, -7)
+  EXPECT_CALL(*this, OnJobDone(_, DM_STATUS_REQUEST_FAILED, _, ""));
+  EXPECT_CALL(*this, OnJobRetry(_, _)).Times(0);
+
+  std::unique_ptr<DeviceManagementService::Job> request_job(
+      StartTokenEnrollmentJob("", DeviceManagementService::Job::NO_RETRY,
+                              GetTimeoutDuration()));
+  ASSERT_TRUE(GetPendingRequest());
+
+  // fast forward 30+ seconds
+  task_environment_.FastForwardBy(GetTimeoutDuration() + base::Seconds(1));
+}
 
 }  // namespace policy

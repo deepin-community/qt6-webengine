@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -30,9 +30,9 @@ const ReplacementAppsInfo* GetReplacementAppsInfo(const Extension* extension) {
 
 }  // namespace
 
-ReplacementAppsInfo::ReplacementAppsInfo() {}
+ReplacementAppsInfo::ReplacementAppsInfo() = default;
 
-ReplacementAppsInfo::~ReplacementAppsInfo() {}
+ReplacementAppsInfo::~ReplacementAppsInfo() = default;
 
 // static
 bool ReplacementAppsInfo::HasReplacementWebApp(const Extension* extension) {
@@ -107,7 +107,7 @@ bool ReplacementAppsInfo::LoadAndroidApp(const Extension* extension,
     return false;
   }
 
-  replacement_android_app = std::move(app_value->GetString());
+  replacement_android_app = app_value->GetString();
   return true;
 }
 
@@ -119,9 +119,9 @@ bool ReplacementAppsInfo::Parse(const Extension* extension,
   return true;
 }
 
-ReplacementAppsHandler::ReplacementAppsHandler() {}
+ReplacementAppsHandler::ReplacementAppsHandler() = default;
 
-ReplacementAppsHandler::~ReplacementAppsHandler() {}
+ReplacementAppsHandler::~ReplacementAppsHandler() = default;
 
 bool ReplacementAppsHandler::Parse(Extension* extension,
                                    std::u16string* error) {

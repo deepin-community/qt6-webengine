@@ -1,9 +1,10 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 import("//build/config/android/rules.gni")
 import("//build/config/locales.gni")
+import("//components/crash/android/silent_java_assert_reporting.gni")
 import("//weblayer/variables.gni")
 
 template("system_webview_bundle") {
@@ -44,7 +45,6 @@ template("system_webview_bundle") {
                              [
                                "base_module_target",
                                "min_sdk_version",
-                               "uncompress_shared_libraries",
                              ])
       android_manifest = "//weblayer/browser/java/AndroidManifest.xml"
 
@@ -59,13 +59,17 @@ template("system_webview_bundle") {
       }
       aapt_locale_allowlist = platform_pak_locales
       proguard_enabled = !is_java_debug
-      package_name = "weblayer"
+      module_name = "weblayer"
       package_id = 126
       version_name =
           "@FileArg($_rebased_base_module_build_config:deps_info:version_name)"
       version_code = _base_module_version_code
       manifest_package =
           "@FileArg($_rebased_base_module_build_config:deps_info:package_name)"
+
+      if (enable_silent_java_assert_reporting) {
+        custom_assertion_handler = crash_reporting_assertion_handler
+      }
     }
   }
 
@@ -86,6 +90,10 @@ template("system_webview_bundle") {
 
     if (!defined(proguard_android_sdk_dep)) {
       proguard_android_sdk_dep = webview_framework_dep
+    }
+
+    if (enable_silent_java_assert_reporting) {
+      custom_assertion_handler = crash_reporting_assertion_handler
     }
 
     # For this to be respected, it must also be set on the base module target.

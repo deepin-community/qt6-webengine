@@ -13,3 +13,4 @@ usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/ControlsDelegates/TouchSelecti
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/ControlsDelegates/WebEngineQuickDelegatesQml.qmltypes
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/ControlsDelegates/libqtwebenginequickdelegatesplugin.so
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/ControlsDelegates/qmldir
+usr/lib/${DEB_HOST_MULTIARCH}/libQt6WebEngineQuickDelegatesQml.so.*

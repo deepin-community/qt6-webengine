@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,7 +16,6 @@
 #include "base/memory/aligned_memory.h"
 #include "base/path_service.h"
 #include "base/test/mock_callback.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "build/chromecast_buildflags.h"
@@ -73,7 +72,7 @@ class MediaStreamAudioProcessorTest : public ::testing::Test {
  public:
   MediaStreamAudioProcessorTest()
       : params_(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                media::CHANNEL_LAYOUT_STEREO,
+                media::ChannelLayoutConfig::Stereo(),
                 48000,
                 480) {}
 
@@ -138,25 +137,45 @@ class MediaStreamAudioProcessorTest : public ::testing::Test {
     }
   }
 
+  // TODO(bugs.webrtc.org/7494): Remove/reduce duplication with
+  // `CreateWebRtcAudioProcessingModuleTest.CheckDefaultAudioProcessingConfig`.
   void VerifyDefaultComponents(MediaStreamAudioProcessor& audio_processor) {
-    EXPECT_TRUE(audio_processor.has_webrtc_audio_processing());
+    ASSERT_TRUE(audio_processor.has_webrtc_audio_processing());
     const webrtc::AudioProcessing::Config config =
         *audio_processor.GetAudioProcessingModuleConfigForTesting();
-    EXPECT_TRUE(config.echo_canceller.enabled);
-    EXPECT_TRUE(config.gain_controller1.enabled);
+
     EXPECT_TRUE(config.high_pass_filter.enabled);
+    EXPECT_FALSE(config.pre_amplifier.enabled);
+    EXPECT_TRUE(config.echo_canceller.enabled);
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+    EXPECT_TRUE(config.gain_controller1.enabled);
+    EXPECT_TRUE(config.gain_controller2.enabled);
+#elif BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA)
+    EXPECT_TRUE(config.gain_controller1.enabled);
+    EXPECT_FALSE(config.gain_controller2.enabled);
+#elif BUILDFLAG(IS_CASTOS) || BUILDFLAG(IS_CAST_ANDROID)
+    EXPECT_TRUE(config.gain_controller1.enabled);
+    EXPECT_FALSE(config.gain_controller2.enabled);
+#elif BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
+    EXPECT_FALSE(config.gain_controller1.enabled);
+    EXPECT_TRUE(config.gain_controller2.enabled);
+#else
+    GTEST_FAIL() << "Undefined expectation.";
+#endif
+
     EXPECT_TRUE(config.noise_suppression.enabled);
-    EXPECT_EQ(config.noise_suppression.level, config.noise_suppression.kHigh);
-    EXPECT_FALSE(config.gain_controller1.analog_gain_controller
-                     .clipping_predictor.enabled);
+    EXPECT_EQ(config.noise_suppression.level,
+              webrtc::AudioProcessing::Config::NoiseSuppression::kHigh);
+
 #if BUILDFLAG(IS_ANDROID)
+    // Android uses echo cancellation optimized for mobiles, and does not
+    // support keytap suppression.
     EXPECT_TRUE(config.echo_canceller.mobile_mode);
-    EXPECT_EQ(config.gain_controller1.mode,
-              config.gain_controller1.kFixedDigital);
+    EXPECT_FALSE(config.transient_suppression.enabled);
 #else
     EXPECT_FALSE(config.echo_canceller.mobile_mode);
-    EXPECT_EQ(config.gain_controller1.mode,
-              config.gain_controller1.kAdaptiveAnalog);
+    EXPECT_TRUE(config.transient_suppression.enabled);
 #endif
   }
 
@@ -234,6 +253,8 @@ TEST_P(MediaStreamAudioProcessorTestMultichannel, MAYBE_TestAllSampleRates) {
       new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
   blink::AudioProcessingProperties properties;
 
+  // TODO(crbug.com/1334991): Clarify WebRTC audio processing support for 96 kHz
+  // input.
   static const int kSupportedSampleRates[] = {
     8000,
     16000,
@@ -241,17 +262,17 @@ TEST_P(MediaStreamAudioProcessorTestMultichannel, MAYBE_TestAllSampleRates) {
     32000,
     44100,
     48000
-#if BUILDFLAG(IS_CHROMECAST)
+#if BUILDFLAG(IS_CASTOS) || BUILDFLAG(IS_CAST_ANDROID)
     ,
     96000
-#endif  // BUILDFLAG(IS_CHROMECAST)
+#endif  // BUILDFLAG(IS_CASTOS) || BUILDFLAG(IS_CAST_ANDROID)
   };
   for (int sample_rate : kSupportedSampleRates) {
     SCOPED_TRACE(testing::Message() << "sample_rate=" << sample_rate);
     int buffer_size = sample_rate / 100;
     media::AudioParameters params(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                                  media::CHANNEL_LAYOUT_STEREO, sample_rate,
-                                  buffer_size);
+                                  media::ChannelLayoutConfig::Stereo(),
+                                  sample_rate, buffer_size);
     scoped_refptr<MediaStreamAudioProcessor> audio_processor(
         new rtc::RefCountedObject<MediaStreamAudioProcessor>(
             mock_capture_callback_.Get(),
@@ -260,12 +281,14 @@ TEST_P(MediaStreamAudioProcessorTestMultichannel, MAYBE_TestAllSampleRates) {
     EXPECT_TRUE(audio_processor->has_webrtc_audio_processing());
     VerifyDefaultComponents(*audio_processor);
 
+    // TODO(crbug.com/1336055): Investigate why chromecast devices need special
+    // logic here.
     int expected_sample_rate =
-#if BUILDFLAG(IS_CHROMECAST)
+#if BUILDFLAG(IS_CASTOS) || BUILDFLAG(IS_CAST_ANDROID)
         std::min(sample_rate, media::kAudioProcessingSampleRateHz);
 #else
         media::kAudioProcessingSampleRateHz;
-#endif  // BUILDFLAG(IS_CHROMECAST)
+#endif  // BUILDFLAG(IS_CASTOS) || BUILDFLAG(IS_CAST_ANDROID)
     const int expected_output_channels =
         use_multichannel_processing ? params_.channels() : 1;
     ProcessDataAndVerifyFormat(*audio_processor, mock_capture_callback_,
@@ -288,9 +311,11 @@ TEST_F(MediaStreamAudioProcessorTest, StartStopAecDump) {
   base::FilePath temp_file_path;
   ASSERT_TRUE(base::CreateTemporaryFileInDir(temp_directory.GetPath(),
                                              &temp_file_path));
-  media::AudioParameters params(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                                media::CHANNEL_LAYOUT_STEREO_AND_KEYBOARD_MIC,
-                                48000, 480);
+  media::AudioParameters params(
+      media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
+      media::ChannelLayoutConfig::FromLayout<
+          media::CHANNEL_LAYOUT_STEREO_AND_KEYBOARD_MIC>(),
+      48000, 480);
   {
     scoped_refptr<MediaStreamAudioProcessor> audio_processor(
         new rtc::RefCountedObject<MediaStreamAudioProcessor>(
@@ -326,7 +351,7 @@ TEST_P(MediaStreamAudioProcessorTestMultichannel, TestStereoAudio) {
       new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
   const media::AudioParameters source_params(
       media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-      media::CHANNEL_LAYOUT_STEREO, 48000, 480);
+      media::ChannelLayoutConfig::Stereo(), 48000, 480);
 
   // Construct a stereo audio bus and fill the left channel with content.
   std::unique_ptr<media::AudioBus> data_bus =
@@ -425,11 +450,11 @@ TEST_F(MediaStreamAudioProcessorTest, DiscreteChannelLayout) {
   scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
       new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
 
-  media::AudioParameters params(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                                media::CHANNEL_LAYOUT_DISCRETE, 48000, 480);
   // Test both 1 and 2 discrete channels.
   for (int channels = 1; channels <= 2; ++channels) {
-    params.set_channels_for_discrete(channels);
+    media::AudioParameters params(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
+                                  {media::CHANNEL_LAYOUT_DISCRETE, channels},
+                                  48000, 480);
     scoped_refptr<MediaStreamAudioProcessor> audio_processor(
         new rtc::RefCountedObject<MediaStreamAudioProcessor>(
             mock_capture_callback_.Get(),
@@ -455,7 +480,7 @@ TEST(MediaStreamAudioProcessorCallbackTest,
       new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
   // Set buffer size to 4 ms.
   media::AudioParameters params(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                                media::CHANNEL_LAYOUT_STEREO, 48000,
+                                media::ChannelLayoutConfig::Stereo(), 48000,
                                 48000 * 4 / 1000);
   scoped_refptr<MediaStreamAudioProcessor> audio_processor(
       new rtc::RefCountedObject<MediaStreamAudioProcessor>(
@@ -513,7 +538,7 @@ TEST(MediaStreamAudioProcessorCallbackTest,
       new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
   // Set buffer size to 35 ms.
   media::AudioParameters params(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                                media::CHANNEL_LAYOUT_STEREO, 48000,
+                                media::ChannelLayoutConfig::Stereo(), 48000,
                                 48000 * 35 / 1000);
   scoped_refptr<MediaStreamAudioProcessor> audio_processor(
       new rtc::RefCountedObject<MediaStreamAudioProcessor>(
@@ -561,7 +586,7 @@ TEST(MediaStreamAudioProcessorCallbackTest,
       new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
   // Set buffer size to 4 ms.
   media::AudioParameters params(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                                media::CHANNEL_LAYOUT_STEREO, 48000,
+                                media::ChannelLayoutConfig::Stereo(), 48000,
                                 48000 * 4 / 1000);
   scoped_refptr<MediaStreamAudioProcessor> audio_processor(
       new rtc::RefCountedObject<MediaStreamAudioProcessor>(
@@ -606,7 +631,7 @@ TEST(MediaStreamAudioProcessorCallbackTest,
       new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
   // Set buffer size to 35 ms.
   media::AudioParameters params(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                                media::CHANNEL_LAYOUT_STEREO, 48000,
+                                media::ChannelLayoutConfig::Stereo(), 48000,
                                 48000 * 35 / 1000);
   scoped_refptr<MediaStreamAudioProcessor> audio_processor(
       new rtc::RefCountedObject<MediaStreamAudioProcessor>(
@@ -649,7 +674,8 @@ scoped_refptr<MediaStreamAudioProcessor> CreateAudioProcessorWithProperties(
   scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
       new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
   media::AudioParameters params(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                                media::CHANNEL_LAYOUT_STEREO, 48000, 480);
+                                media::ChannelLayoutConfig::Stereo(), 48000,
+                                480);
   scoped_refptr<MediaStreamAudioProcessor> audio_processor(
       new rtc::RefCountedObject<MediaStreamAudioProcessor>(
           mock_capture_callback.Get(),

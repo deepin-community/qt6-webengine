@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,9 @@
 #include <memory>
 
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "media/cast/cast_environment.h"
@@ -78,7 +79,7 @@ class UdpTransportImpl final : public PacketTransport, public UdpTransport {
   //   "disable_non_blocking_io" (value ignored)
   //       - Windows only.  Turns off non-blocking IO for the socket.
   //         Note: Non-blocking IO is, by default, enabled on all platforms.
-  void SetUdpOptions(const base::DictionaryValue& options);
+  void SetUdpOptions(const base::Value::Dict& options);
 
   // This has to be called before |StartReceiving()| to change the
   // |send_buffer_size_|. Calling |SetUdpOptions()| will automatically call it.

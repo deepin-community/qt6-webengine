@@ -1,12 +1,12 @@
 # ODML image library for iOS
 
 load(
-    "@org_tensorflow//tensorflow/lite/ios:ios.bzl",
-    "TFL_MINIMUM_OS_VERSION",
-)
-load(
     "@org_tensorflow//tensorflow/lite:special_rules.bzl",
     "tflite_ios_lab_runner",
+)
+load(
+    "@org_tensorflow//tensorflow/lite/ios:ios.bzl",
+    "TFL_MINIMUM_OS_VERSION",
 )
 load(
     "@build_bazel_rules_apple//apple:ios.bzl",
@@ -15,6 +15,7 @@ load(
 )
 
 package(
+    default_applicable_licenses = ["//tensorflow_lite_support:license"],
     default_visibility = ["//visibility:private"],
     licenses = ["notice"],  # Apache 2.0
 )
@@ -65,17 +66,14 @@ TEST_COPTS = RELEASE_COPTS + [
     "-Wno-shadow",
 ]
 
+exports_files(["apis/GMLImage.h"])
+
 objc_library(
     name = "MLImage",
     srcs = SOURCES,
     hdrs = API_HEADERS,
     copts = RELEASE_COPTS,
     module_name = "MLImage",
-    sdk_frameworks = [
-        "CoreGraphics",
-        "CoreMedia",
-        "CoreVideo",
-    ],
     visibility = ["//visibility:public"],
     alwayslink = 1,
 )
@@ -114,12 +112,6 @@ objc_library(
     data = glob([
         "resources/*.jpg",
     ]),
-    sdk_frameworks = [
-        "Accelerate",
-        "CoreGraphics",
-        "CoreMedia",
-        "CoreVideo",
-    ],
     deps = [
         ":MLImage",
     ],

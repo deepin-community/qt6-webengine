@@ -2,14 +2,23 @@
 
 This project provides the Khronos official Vulkan validation layers for Windows, Linux, Android, and MacOS.
 
-## CI Build Status
-| Build Status |
-|:------------|
-| [![Build Status](https://github.com/KhronosGroup/Vulkan-ValidationLayers/actions/workflows/build_windows.yml/badge.svg?branch=master)](https://github.com/KhronosGroup/Vulkan-ValidationLayers/actions) |
-| [![Build Status](https://github.com/KhronosGroup/Vulkan-ValidationLayers/actions/workflows/build_linux.yml/badge.svg?branch=master)](https://github.com/KhronosGroup/Vulkan-ValidationLayers/actions) |
-| [![Build Status](https://github.com/KhronosGroup/Vulkan-ValidationLayers/actions/workflows/build_linux_gn.yml/badge.svg?branch=master)](https://github.com/KhronosGroup/Vulkan-ValidationLayers/actions) |
-| [![Build Status](https://github.com/KhronosGroup/Vulkan-ValidationLayers/actions/workflows/build_android.yml/badge.svg?branch=master)](https://github.com/KhronosGroup/Vulkan-ValidationLayers/actions) |
+## Default branch changed to 'main' (January 23, 2023)
 
+As discussed in https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/5084, the default branch of this repository is now 'main'. This change should be largely transparent to repository users, since github rewrites many references to the old 'master' branch to 'main'. However, if you have a checked-out local clone, you may wish to take the following steps as recommended by github:
+
+```sh
+git branch -m master main
+git fetch origin
+git branch -u origin/main main
+git remote set-head origin -a
+```
+
+## CI Build Status
+
+![Build Status](https://github.com/KhronosGroup/Vulkan-ValidationLayers/actions/workflows/build_windows.yml/badge.svg)
+![Build Status](https://github.com/KhronosGroup/Vulkan-ValidationLayers/actions/workflows/build_linux.yml/badge.svg)
+![Build Status](https://github.com/KhronosGroup/Vulkan-ValidationLayers/actions/workflows/build_macos.yml/badge.svg)
+![Build Status](https://github.com/KhronosGroup/Vulkan-ValidationLayers/actions/workflows/build_android.yml/badge.svg)
 
 ## Introduction
 
@@ -18,25 +27,19 @@ a Vulkan driver. Applications have full control and responsibility for correct o
 how Vulkan is used can result in a crash. This project provides Vulkan validation layers that can be enabled
 to assist development by enabling developers to verify their applications correct use of the Vulkan API.
 
-The following components are available in this repository:
-- [*Validation Layers*](layers/)
-- [*Tests*](tests/)
+This repository contains both the [*Validation Layers*](layers/) source as well as [*Tests*](tests/) for them.
 
 ## Contact Information
-* [Mark Lobodzinski](mailto:mark@lunarg.com)
-* [Nate Cesario](mailto:nathaniel@lunarg.com)
+* @KhronosGroup/VVL-CODEOWNERS
+* VVL-CODEOWNERS members can also be found on the [Khronos Slack](https://khr.io/slack)
 
-## Information for Developing or Contributing:
-
-Please see the [CONTRIBUTING.md](CONTRIBUTING.md) file in this repository for more details.
-Please see the [GOVERNANCE.md](GOVERNANCE.md) file in this repository for repository management details.
-
-## How to Build and Run
-
-[BUILD.md](BUILD.md)
-Includes directions for building all components as well as running validation tests.
-
-Information on how to enable the various Validation layers is in [LAYER_CONFIGURATION.md](LAYER_CONFIGURATION.md).
+## Info
+* [BUILD.md](BUILD.md) - Instructions for building the Validation Layers
+* [LAYER_CONFIGURATION.md](LAYER_CONFIGURATION.md) - Instructions for configuring the Validation Layers at runtime.
+* [CONTRIBUTING.md](CONTRIBUTING.md) - Information needed to make a contribution.
+    * [./docs](./docs/) - Details of the Validation Layer source code. **For those wanting to make contributions**
+    * [./tests](./tests) - Information about testing the Validation Layers.
+    * [GOVERNANCE.md](GOVERNANCE.md) - Repository management details.
 
 ## Version Tagging Scheme
 

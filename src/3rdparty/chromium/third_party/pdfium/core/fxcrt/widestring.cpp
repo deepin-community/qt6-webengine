@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -286,6 +286,13 @@ namespace fxcrt {
 
 static_assert(sizeof(WideString) <= sizeof(wchar_t*),
               "Strings must not require more space than pointers");
+
+// static
+WideString WideString::FormatInteger(int i) {
+  wchar_t wbuf[32];
+  swprintf(wbuf, std::size(wbuf), L"%d", i);
+  return WideString(wbuf);
+}
 
 // static
 WideString WideString::FormatV(const wchar_t* format, va_list argList) {

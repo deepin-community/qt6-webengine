@@ -1,4 +1,4 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -8,8 +8,6 @@ jumbo_static_library("renderer") {
   sources = [
     "autofill_agent.cc",
     "autofill_agent.h",
-    "autofill_assistant_agent.cc",
-    "autofill_assistant_agent.h",
     "form_autofill_util.cc",
     "form_autofill_util.h",
     "form_cache.cc",

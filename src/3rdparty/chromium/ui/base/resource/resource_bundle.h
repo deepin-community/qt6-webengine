@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -213,6 +213,10 @@ class COMPONENT_EXPORT(UI_BASE) ResourceBundle {
       LottieThemedImageParseFunction parse_lottie_as_themed_still_image);
 #endif
 
+  // Exposed for testing, otherwise use GetSharedInstance().
+  explicit ResourceBundle(Delegate* delegate);
+  ~ResourceBundle();
+
   ResourceBundle(const ResourceBundle&) = delete;
   ResourceBundle& operator=(const ResourceBundle&) = delete;
 
@@ -247,6 +251,28 @@ class COMPONENT_EXPORT(UI_BASE) ResourceBundle {
   // load.
   void AddOptionalDataPackFromPath(const base::FilePath& path,
                                    ResourceScaleFactor scale_factor);
+
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  // Same as AddDataPackFromPath but loads main source `shared_resource_path`
+  // with ash resources `ash_path`.
+  // When creating and adding ResourceHandle for `lacros_path`, we map lacros
+  // resources to ash resources if a resource is common and remove it from
+  // lacros resources. This is for saving memory.
+  // If `shared_resource_path` is not successfully loaded, load `lacros_path`
+  // as DataPack instead. In this case, the memory saving does not work.
+  void AddDataPackFromPathWithAshResources(
+      const base::FilePath& shared_resource_path,
+      const base::FilePath& ash_path,
+      const base::FilePath& lacros_path,
+      ResourceScaleFactor scale_factor);
+
+  // Same as above but does not log an error if the pack fails to load.
+  void AddOptionalDataPackFromPathWithAshResources(
+      const base::FilePath& shared_resource_path,
+      const base::FilePath& ash_path,
+      const base::FilePath& lacros_path,
+      ResourceScaleFactor scale_factor);
+#endif
 
   // Changes the locale for an already-initialized ResourceBundle, returning the
   // name of the newly-loaded locale, or an empty string if initialization
@@ -417,10 +443,6 @@ class COMPONENT_EXPORT(UI_BASE) ResourceBundle {
 
   using IdToStringMap = std::unordered_map<int, std::u16string>;
 
-  // Ctor/dtor are private, since we're a singleton.
-  explicit ResourceBundle(Delegate* delegate);
-  ~ResourceBundle();
-
   // Shared initialization.
   static void InitSharedInstance(Delegate* delegate);
 
@@ -438,6 +460,18 @@ class COMPONENT_EXPORT(UI_BASE) ResourceBundle {
   void AddDataPackFromPathInternal(const base::FilePath& path,
                                    ResourceScaleFactor scale_factor,
                                    bool optional);
+
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  // Implementation for the public methods which add a DataPack from a path with
+  // ash resources. If |optional| is false, an error is logged on failure to
+  // load.
+  void AddDataPackFromPathWithAshResourcesInternal(
+      const base::FilePath& shared_resource_path,
+      const base::FilePath& ash_path,
+      const base::FilePath& lacros_path,
+      ResourceScaleFactor scale_factor,
+      bool optional);
+#endif
 
   // Inserts |resource_handle| to |resource_handle_| and updates
   // |max_scale_factor_| accordingly.

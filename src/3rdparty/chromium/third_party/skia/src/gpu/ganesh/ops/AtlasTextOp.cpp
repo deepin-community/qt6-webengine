@@ -10,7 +10,7 @@
 #include "include/core/SkPoint3.h"
 #include "include/core/SkSpan.h"
 #include "include/gpu/GrRecordingContext.h"
-#include "src/core/SkMathPriv.h"
+#include "src/base/SkMathPriv.h"
 #include "src/core/SkMatrixPriv.h"
 #include "src/core/SkMatrixProvider.h"
 #include "src/core/SkStrikeCache.h"
@@ -20,17 +20,24 @@
 #include "src/gpu/ganesh/GrRecordingContextPriv.h"
 #include "src/gpu/ganesh/GrResourceProvider.h"
 #include "src/gpu/ganesh/SkGr.h"
+#include "src/gpu/ganesh/SurfaceDrawContext.h"
 #include "src/gpu/ganesh/effects/GrBitmapTextGeoProc.h"
 #include "src/gpu/ganesh/effects/GrDistanceFieldGeoProc.h"
 #include "src/gpu/ganesh/ops/GrSimpleMeshDrawOpHelper.h"
 #include "src/gpu/ganesh/text/GrAtlasManager.h"
-#include "src/gpu/ganesh/text/GrDistanceFieldAdjustTable.h"
-#include "src/gpu/ganesh/v1/SurfaceDrawContext_v1.h"
+#include "src/text/GlyphRun.h"
+#include "src/text/gpu/DistanceFieldAdjustTable.h"
 
 #include <new>
 #include <utility>
 
-namespace skgpu::v1 {
+#if GR_TEST_UTILS
+#include "src/gpu/ganesh/GrDrawOpTest.h"
+#endif
+
+using MaskFormat = skgpu::MaskFormat;
+
+namespace skgpu::ganesh {
 
 inline static constexpr int kVerticesPerGlyph = 4;
 inline static constexpr int kIndicesPerGlyph = 6;
@@ -106,13 +113,13 @@ AtlasTextOp::AtlasTextOp(MaskType maskType,
     this->setBounds(deviceRect, HasAABloat::kNo, IsHairline::kNo);
 }
 
-auto AtlasTextOp::Geometry::MakeForBlob(const GrAtlasSubRun& subRun,
-                                        const SkMatrix& drawMatrix,
-                                        SkPoint drawOrigin,
-                                        SkIRect clipRect,
-                                        sk_sp<SkRefCnt> supportData,
-                                        const SkPMColor4f& color,
-                                        SkArenaAlloc* alloc) -> Geometry* {
+auto AtlasTextOp::Geometry::Make(const sktext::gpu::AtlasSubRun& subRun,
+                                 const SkMatrix& drawMatrix,
+                                 SkPoint drawOrigin,
+                                 SkIRect clipRect,
+                                 sk_sp<SkRefCnt>&& supportData,
+                                 const SkPMColor4f& color,
+                                 SkArenaAlloc* alloc) -> Geometry* {
     // Bypass the automatic dtor behavior in SkArenaAlloc. I'm leaving this up to the Op to run
     // all geometry dtors for now.
     void* geo = alloc->makeBytesAlignedTo(sizeof(Geometry), alignof(Geometry));
@@ -121,7 +128,6 @@ auto AtlasTextOp::Geometry::MakeForBlob(const GrAtlasSubRun& subRun,
                              drawOrigin,
                              clipRect,
                              std::move(supportData),
-                             nullptr,
                              color};
 }
 
@@ -170,13 +176,17 @@ GrProcessorSet::Analysis AtlasTextOp::finalize(const GrCaps& caps,
 
     switch (this->maskType()) {
         case MaskType::kGrayscaleCoverage:
+#if !defined(SK_DISABLE_SDF_TEXT)
         case MaskType::kAliasedDistanceField:
         case MaskType::kGrayscaleDistanceField:
+#endif
             coverage = GrProcessorAnalysisCoverage::kSingleChannel;
             break;
         case MaskType::kLCDCoverage:
+#if !defined(SK_DISABLE_SDF_TEXT)
         case MaskType::kLCDDistanceField:
         case MaskType::kLCDBGRDistanceField:
+#endif
             coverage = GrProcessorAnalysisCoverage::kLCD;
             break;
         case MaskType::kColorBitmap:
@@ -207,7 +217,7 @@ void AtlasTextOp::onPrepareDraws(GrMeshDrawTarget* target) {
 
     GrAtlasManager* atlasManager = target->atlasManager();
 
-    GrMaskFormat maskFormat = this->maskFormat();
+    MaskFormat maskFormat = this->maskFormat();
 
     unsigned int numActiveViews;
     const GrSurfaceProxyView* views = atlasManager->getViews(maskFormat, &numActiveViews);
@@ -218,8 +228,10 @@ void AtlasTextOp::onPrepareDraws(GrMeshDrawTarget* target) {
     SkASSERT(views[0].proxy());
 
     static constexpr int kMaxTextures = GrBitmapTextGeoProc::kMaxTextures;
+#if !defined(SK_DISABLE_SDF_TEXT)
     static_assert(GrDistanceFieldA8TextGeoProc::kMaxTextures == kMaxTextures);
     static_assert(GrDistanceFieldLCDTextGeoProc::kMaxTextures == kMaxTextures);
+#endif
 
     auto primProcProxies = target->allocPrimProcProxyPtrs(kMaxTextures);
     for (unsigned i = 0; i < numActiveViews; ++i) {
@@ -233,11 +245,14 @@ void AtlasTextOp::onPrepareDraws(GrMeshDrawTarget* target) {
     flushInfo.fPrimProcProxies = primProcProxies;
     flushInfo.fIndexBuffer = resourceProvider->refNonAAQuadIndexBuffer();
 
+#if !defined(SK_DISABLE_SDF_TEXT)
     if (this->usesDistanceFields()) {
         flushInfo.fGeometryProcessor = this->setupDfProcessor(target->allocator(),
                                                               *target->caps().shaderCaps(),
                                                               localMatrix, views, numActiveViews);
-    } else {
+    } else
+#endif
+    {
         auto filter = fNeedsGlyphTransform ? GrSamplerState::Filter::kLinear
                                            : GrSamplerState::Filter::kNearest;
         // Bitmap text uses a single color, combineIfPossible ensures all geometries have the same
@@ -277,10 +292,12 @@ void AtlasTextOp::onPrepareDraws(GrMeshDrawTarget* target) {
         return true;
     };
 
-    resetVertexBuffer();
+    if (!resetVertexBuffer()) {
+        return;
+    }
 
     for (const Geometry* geo = fHead; geo != nullptr; geo = geo->fNext) {
-        const GrAtlasSubRun& subRun = geo->fSubRun;
+        const sktext::gpu::AtlasSubRun& subRun = geo->fSubRun;
         SkASSERTF((int) subRun.vertexStride(geo->fDrawMatrix) == vertexStride,
                   "subRun stride: %d vertex buffer stride: %d\n",
                   (int)subRun.vertexStride(geo->fDrawMatrix), vertexStride);
@@ -340,7 +357,7 @@ void AtlasTextOp::createDrawForGeneratedGlyphs(GrMeshDrawTarget* target,
     auto atlasManager = target->atlasManager();
 
     GrGeometryProcessor* gp = flushInfo->fGeometryProcessor;
-    GrMaskFormat maskFormat = this->maskFormat();
+    MaskFormat maskFormat = this->maskFormat();
 
     unsigned int numActiveViews;
     const GrSurfaceProxyView* views = atlasManager->getViews(maskFormat, &numActiveViews);
@@ -362,6 +379,7 @@ void AtlasTextOp::createDrawForGeneratedGlyphs(GrMeshDrawTarget* target,
                 flushInfo->fPrimProcProxies[i]->ref();
             }
         }
+#if !defined(SK_DISABLE_SDF_TEXT)
         if (this->usesDistanceFields()) {
             if (this->isLCD()) {
                 reinterpret_cast<GrDistanceFieldLCDTextGeoProc*>(gp)->addNewViews(
@@ -370,7 +388,9 @@ void AtlasTextOp::createDrawForGeneratedGlyphs(GrMeshDrawTarget* target,
                 reinterpret_cast<GrDistanceFieldA8TextGeoProc*>(gp)->addNewViews(
                         views, numActiveViews, GrSamplerState::Filter::kLinear);
             }
-        } else {
+        } else
+#endif
+        {
             auto filter = fNeedsGlyphTransform ? GrSamplerState::Filter::kLinear
                                                : GrSamplerState::Filter::kNearest;
             reinterpret_cast<GrBitmapTextGeoProc*>(gp)->addNewViews(views, numActiveViews, filter);
@@ -415,12 +435,15 @@ GrOp::CombineResult AtlasTextOp::onCombineIfPossible(GrOp* t, SkArenaAlloc*, con
         }
     }
 
-    if (this->usesDistanceFields()) {
+#if !defined(SK_DISABLE_SDF_TEXT)
+   if (this->usesDistanceFields()) {
         SkASSERT(that->usesDistanceFields());
         if (fLuminanceColor != that->fLuminanceColor) {
             return CombineResult::kCannotCombine;
         }
-    } else {
+    } else
+#endif
+    {
         if (this->maskType() == MaskType::kColorBitmap &&
             fHead->fColor != that->fHead->fColor) {
             // This ensures all merged bitmap color text ops have a constant color
@@ -436,6 +459,7 @@ GrOp::CombineResult AtlasTextOp::onCombineIfPossible(GrOp* t, SkArenaAlloc*, con
     return CombineResult::kMerged;
 }
 
+#if !defined(SK_DISABLE_SDF_TEXT)
 // TODO trying to figure out why lcd is so whack
 GrGeometryProcessor* AtlasTextOp::setupDfProcessor(SkArenaAlloc* arena,
                                                    const GrShaderCaps& caps,
@@ -443,7 +467,7 @@ GrGeometryProcessor* AtlasTextOp::setupDfProcessor(SkArenaAlloc* arena,
                                                    const GrSurfaceProxyView* views,
                                                    unsigned int numActiveViews) const {
     static constexpr int kDistanceAdjustLumShift = 5;
-    auto dfAdjustTable = GrDistanceFieldAdjustTable::Get();
+    auto dfAdjustTable = sktext::gpu::DistanceFieldAdjustTable::Get();
 
     // see if we need to create a new effect
     if (this->isLCD()) {
@@ -481,11 +505,10 @@ GrGeometryProcessor* AtlasTextOp::setupDfProcessor(SkArenaAlloc* arena,
 #endif
     }
 }
+#endif // !defined(SK_DISABLE_SDF_TEXT)
 
 #if GR_TEST_UTILS
-#include "src/gpu/ganesh/GrDrawOpTest.h"
-
-GrOp::Owner AtlasTextOp::CreateOpTestingOnly(SurfaceDrawContext* sdc,
+GrOp::Owner AtlasTextOp::CreateOpTestingOnly(skgpu::v1::SurfaceDrawContext* sdc,
                                              const SkPaint& skPaint,
                                              const SkFont& font,
                                              const SkMatrixProvider& mtxProvider,
@@ -497,37 +520,38 @@ GrOp::Owner AtlasTextOp::CreateOpTestingOnly(SurfaceDrawContext* sdc,
     SkMatrix drawMatrix(mtxProvider.localToDevice());
     drawMatrix.preTranslate(x, y);
     auto drawOrigin = SkPoint::Make(x, y);
-    SkGlyphRunBuilder builder;
+    sktext::GlyphRunBuilder builder;
     auto glyphRunList = builder.textToGlyphRunList(font, skPaint, text, textLen, drawOrigin);
     if (glyphRunList.empty()) {
         return nullptr;
     }
 
     auto rContext = sdc->recordingContext();
-    GrSDFTControl control =
+    sktext::gpu::SDFTControl control =
             rContext->priv().getSDFTControl(sdc->surfaceProps().isUseDeviceIndependentFonts());
 
-    SkGlyphRunListPainter* painter = sdc->glyphRunPainter();
-    sk_sp<GrTextBlob> blob = GrTextBlob::Make(
-            glyphRunList, skPaint, drawMatrix, false, control, painter);
+    SkStrikeDeviceInfo strikeDeviceInfo{sdc->surfaceProps(),
+                                        SkScalerContextFlags::kBoostContrast,
+                                        &control};
 
-    const GrAtlasSubRun* subRun = blob->testingOnlyFirstSubRun();
+    sk_sp<sktext::gpu::TextBlob> blob = sktext::gpu::TextBlob::Make(
+        glyphRunList, skPaint, drawMatrix, strikeDeviceInfo, SkStrikeCache::GlobalStrikeCache());
+
+    const sktext::gpu::AtlasSubRun* subRun = blob->testingOnlyFirstSubRun();
     if (!subRun) {
         return nullptr;
     }
 
     GrOp::Owner op;
     std::tie(std::ignore, op) = subRun->makeAtlasTextOp(
-            nullptr, mtxProvider, glyphRunList.origin(), skPaint, sdc, nullptr);
+            nullptr, mtxProvider, glyphRunList.origin(), skPaint, blob, sdc);
     return op;
 }
-
 #endif
 
-} // namespace skgpu::v1
+} // namespace skgpu::ganesh
 
 #if GR_TEST_UTILS
-
 GR_DRAW_OP_TEST_DEFINE(AtlasTextOp) {
     SkMatrixProvider matrixProvider(GrTest::TestMatrixInvertible(random));
 
@@ -551,8 +575,7 @@ GR_DRAW_OP_TEST_DEFINE(AtlasTextOp) {
     int xInt = (random->nextU() % kMaxTrans) * xPos;
     int yInt = (random->nextU() % kMaxTrans) * yPos;
 
-    return skgpu::v1::AtlasTextOp::CreateOpTestingOnly(sdc, skPaint, font, matrixProvider,
-                                                       text, xInt, yInt);
+    return skgpu::ganesh::AtlasTextOp::CreateOpTestingOnly(sdc, skPaint, font, matrixProvider,
+                                                           text, xInt, yInt);
 }
-
 #endif

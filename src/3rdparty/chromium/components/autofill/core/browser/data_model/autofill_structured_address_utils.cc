@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,7 +27,7 @@
 #include "components/autofill/core/browser/data_model/borrowed_transliterator.h"
 #include "components/autofill/core/common/autofill_features.h"
 
-namespace autofill::structured_address {
+namespace autofill {
 
 SortedTokenComparisonResult::SortedTokenComparisonResult(
     SortedTokenComparisonStatus status,
@@ -62,21 +62,9 @@ bool SortedTokenComparisonResult::TokensMatch() const {
   return status == MATCH;
 }
 
-bool StructuredNamesEnabled() {
-  return base::FeatureList::IsEnabled(
-      features::kAutofillEnableSupportForMoreStructureInNames);
-}
-
-bool StructuredAddressesEnabled() {
-  return base::FeatureList::IsEnabled(
-      features::kAutofillEnableSupportForMoreStructureInAddresses);
-}
-
 bool HonorificPrefixEnabled() {
   return base::FeatureList::IsEnabled(
-             features::kAutofillEnableSupportForHonorificPrefixes) &&
-         base::FeatureList::IsEnabled(
-             features::kAutofillEnableSupportForMoreStructureInNames);
+      features::kAutofillEnableSupportForHonorificPrefixes);
 }
 
 Re2RegExCache::Re2RegExCache() = default;
@@ -447,4 +435,4 @@ std::vector<AddressToken> TokenizeValue(const std::u16string value) {
   return tokens;
 }
 
-}  // namespace autofill::structured_address
+}  // namespace autofill

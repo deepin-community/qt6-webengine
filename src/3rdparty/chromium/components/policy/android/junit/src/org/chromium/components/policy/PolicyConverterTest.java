@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,6 @@ package org.chromium.components.policy;
 
 import static org.mockito.Mockito.verify;
 
-import android.os.Build;
 import android.os.Bundle;
 
 import org.junit.Before;
@@ -24,7 +23,7 @@ import org.chromium.base.test.util.JniMocker;
  * Robolectric test for AbstractAppRestrictionsProvider.
  */
 @RunWith(BaseRobolectricTestRunner.class)
-@Config(manifest = Config.NONE, sdk = Build.VERSION_CODES.M)
+@Config(manifest = Config.NONE)
 public class PolicyConverterTest {
     @Rule
     public JniMocker mocker = new JniMocker();

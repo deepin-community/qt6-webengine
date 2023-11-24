@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include "base/auto_reset.h"
 #include "build/build_config.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
+#include "third_party/blink/public/mojom/frame/user_activation_notification_type.mojom-blink.h"
 #include "third_party/blink/public/mojom/input/focus_type.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/core/dom/element.h"
@@ -19,16 +20,12 @@
 #include "third_party/blink/renderer/core/events/keyboard_event.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
-#include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
-#include "third_party/blink/renderer/core/html/closewatcher/close_watcher.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
 #include "third_party/blink/renderer/core/html/html_dialog_element.h"
-#include "third_party/blink/renderer/core/input/event_handler.h"
 #include "third_party/blink/renderer/core/input/event_handling_util.h"
 #include "third_party/blink/renderer/core/input/input_device_capabilities.h"
 #include "third_party/blink/renderer/core/input/scroll_manager.h"
-#include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 #include "third_party/blink/renderer/core/page/focusgroup_controller.h"
 #include "third_party/blink/renderer/core/page/page.h"
@@ -50,6 +47,18 @@ namespace blink {
 namespace {
 
 const int kVKeyProcessKey = 229;
+
+bool IsPageUpOrDownKeyEvent(int key_code, WebInputEvent::Modifiers modifiers) {
+  if (modifiers & WebInputEvent::kAltKey) {
+    // Alt-Up/Down should behave like PageUp/Down on Mac. (Note that Alt-keys
+    // on other platforms are suppressed due to isSystemKey being set.)
+    return key_code == VKEY_UP || key_code == VKEY_DOWN;
+  } else if (key_code == VKEY_PRIOR || key_code == VKEY_NEXT) {
+    return modifiers == WebInputEvent::kNoModifiers;
+  }
+
+  return false;
+}
 
 bool MapKeyCodeForScroll(int key_code,
                          WebInputEvent::Modifiers modifiers,
@@ -173,7 +182,7 @@ bool KeyboardEventManager::HandleAccessKey(const WebKeyboardEvent& evt) {
       frame_->GetDocument()->GetElementByAccessKey(key.DeprecatedLower());
   if (!elem)
     return false;
-  elem->focus(FocusParams(SelectionBehaviorOnFocus::kReset,
+  elem->Focus(FocusParams(SelectionBehaviorOnFocus::kReset,
                           mojom::blink::FocusType::kAccessKey, nullptr));
   elem->AccessKeyAction(SimulatedClickCreationScope::kFromUserAgent);
   return true;
@@ -259,13 +268,21 @@ WebInputEventResult KeyboardEventManager::KeyEvent(
     const int kDomKeysDontSend[] = {0x00200309, 0x00200310};
     const int kDomKeysNotCancellabelUnlessInEditor[] = {0x00400031, 0x00400032,
                                                         0x00400033};
-    for (int dom_key : kDomKeysDontSend) {
+    for (uint32_t dom_key : kDomKeysDontSend) {
       if (initial_key_event.dom_key == dom_key)
         send_key_event = false;
     }
 
-    for (int dom_key : kDomKeysNotCancellabelUnlessInEditor) {
-      if (initial_key_event.dom_key == dom_key && !IsEditableElement(*node))
+    for (uint32_t dom_key : kDomKeysNotCancellabelUnlessInEditor) {
+      auto* text_control = ToTextControlOrNull(node);
+      auto* element = DynamicTo<Element>(node);
+      bool is_editable =
+          IsEditable(*node) ||
+          (text_control && !text_control->IsDisabledOrReadOnly()) ||
+          (element &&
+           EqualIgnoringASCIICase(
+               element->FastGetAttribute(html_names::kRoleAttr), "textbox"));
+      if (initial_key_event.dom_key == dom_key && !is_editable)
         event_cancellable = false;
     }
   } else {
@@ -437,14 +454,16 @@ void KeyboardEventManager::DefaultArrowEventHandler(
   if (!page)
     return;
 
-  if (RuntimeEnabledFeatures::FocusgroupEnabled() &&
+  ExecutionContext* context = frame_->GetDocument()->GetExecutionContext();
+  if (RuntimeEnabledFeatures::FocusgroupEnabled(context) &&
       FocusgroupController::HandleArrowKeyboardEvent(event, frame_)) {
     event->SetDefaultHandled();
     return;
   }
 
   if (IsSpatialNavigationEnabled(frame_) &&
-      !frame_->GetDocument()->InDesignMode()) {
+      !frame_->GetDocument()->InDesignMode() &&
+      !IsPageUpOrDownKeyEvent(event->keyCode(), event->GetModifiers())) {
     if (page->GetSpatialNavigationController().HandleArrowKeyboardEvent(
             event)) {
       event->SetDefaultHandled();
@@ -558,12 +577,24 @@ void KeyboardEventManager::DefaultEscapeEventHandler(KeyboardEvent* event) {
     page->GetSpatialNavigationController().HandleEscapeKeyboardEvent(event);
   }
 
+  bool cancel_skipped = false;
+  frame_->DomWindow()->closewatcher_stack()->EscapeKeyHandler(event,
+                                                              &cancel_skipped);
+
   HTMLDialogElement* dialog = frame_->GetDocument()->ActiveModalDialog();
   if (dialog && !RuntimeEnabledFeatures::CloseWatcherEnabled()) {
-    dialog->DispatchEvent(*Event::CreateCancelable(event_type_names::kCancel));
+    auto* cancel_event = Event::CreateCancelable(event_type_names::kCancel);
+    dialog->DispatchEvent(*cancel_event);
+    if (cancel_event->defaultPrevented() && cancel_skipped) {
+      UseCounter::Count(
+          frame_->GetDocument(),
+          WebFeature::kDialogCloseWatcherCancelSkippedAndDefaultPrevented);
+    }
   }
 
-  frame_->DomWindow()->closewatcher_stack()->EscapeKeyHandler(event);
+  auto* target_node = event->GetEventPath()[0].Target()->ToNode();
+  DCHECK(target_node);
+  HTMLElement::HandlePopoverLightDismiss(*event, *target_node);
 }
 
 void KeyboardEventManager::DefaultEnterEventHandler(KeyboardEvent* event) {

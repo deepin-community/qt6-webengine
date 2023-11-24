@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -35,11 +35,7 @@ class PasswordReuseManager : public KeyedService {
   // Always call this on the UI thread.
   virtual void Init(PrefService* prefs,
                     PasswordStoreInterface* profile_store,
-                    PasswordStoreInterface* account_store = nullptr) = 0;
-
-  // Clears existing cached passwords stored on the account store and schedules
-  // a request to re-fetch.
-  virtual void AccountStoreStateChanged() = 0;
+                    PasswordStoreInterface* account_store) = 0;
 
   // Log whether a sync password hash saved.
   virtual void ReportMetrics(const std::string& username,

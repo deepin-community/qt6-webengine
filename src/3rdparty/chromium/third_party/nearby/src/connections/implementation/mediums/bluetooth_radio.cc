@@ -14,15 +14,10 @@
 
 #include "connections/implementation/mediums/bluetooth_radio.h"
 
-#include "internal/platform/exception.h"
 #include "internal/platform/logging.h"
-#include "internal/platform/system_clock.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
-
-constexpr absl::Duration BluetoothRadio::kPauseBetweenToggle;
 
 BluetoothRadio::BluetoothRadio() {
   if (!IsAdapterValid()) {
@@ -36,12 +31,6 @@ BluetoothRadio::~BluetoothRadio() {
     NEARBY_LOG(INFO, "BT adapter was not used. Not touching HW.");
     return;
   }
-
-  // Toggle Bluetooth regardless of our original state. Some devices/chips can
-  // start to freak out after some time (e.g. b/37775337), and this helps to
-  // ensure BT resets properly.
-  NEARBY_LOG(INFO, "Toggle BT adapter state before releasing adapter.");
-  Toggle();
 
   NEARBY_LOG(INFO, "Bring BT adapter to original state");
   if (!SetBluetoothState(originally_enabled_.Get())) {
@@ -69,29 +58,6 @@ bool BluetoothRadio::IsEnabled() const {
   return IsAdapterValid() && IsInDesiredState(true);
 }
 
-bool BluetoothRadio::Toggle() {
-  if (!SaveOriginalState()) {
-    return false;
-  }
-
-  if (!SetBluetoothState(false)) {
-    NEARBY_LOG(INFO, "BT Toggle: Failed to turn BT off.");
-    return false;
-  }
-
-  if (SystemClock::Sleep(kPauseBetweenToggle).Raised(Exception::kInterrupted)) {
-    NEARBY_LOG(INFO, "BT Toggle: interrupted before turing on.");
-    return false;
-  }
-
-  if (!SetBluetoothState(true)) {
-    NEARBY_LOG(INFO, "BT Toggle: Failed to turn BT on.");
-    return false;
-  }
-
-  return true;
-}
-
 bool BluetoothRadio::SetBluetoothState(bool enable) {
   return bluetooth_adapter_.SetStatus(
       enable ? BluetoothAdapter::Status::kEnabled
@@ -117,4 +83,3 @@ bool BluetoothRadio::SaveOriginalState() {
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location

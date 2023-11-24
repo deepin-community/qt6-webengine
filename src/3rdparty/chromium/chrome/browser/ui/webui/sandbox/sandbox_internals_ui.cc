@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -70,9 +70,9 @@ static void SetSandboxStatusData(content::WebUIDataSource* source) {
 }
 #endif
 
-content::WebUIDataSource* CreateDataSource() {
-  content::WebUIDataSource* source =
-      content::WebUIDataSource::Create(chrome::kChromeUISandboxHost);
+void CreateAndAddDataSource(Profile* profile) {
+  content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
+      profile, chrome::kChromeUISandboxHost);
   source->SetDefaultResource(IDR_SANDBOX_INTERNALS_HTML);
   source->AddResourcePath("sandbox_internals.js", IDR_SANDBOX_INTERNALS_JS);
 
@@ -80,8 +80,6 @@ content::WebUIDataSource* CreateDataSource() {
   SetSandboxStatusData(source);
   source->UseStringsJs();
 #endif
-
-  return source;
 }
 
 }  // namespace
@@ -92,8 +90,7 @@ SandboxInternalsUI::SandboxInternalsUI(content::WebUI* web_ui)
   web_ui->AddMessageHandler(
       std::make_unique<sandbox_handler::SandboxHandler>());
 #endif
-  Profile* profile = Profile::FromWebUI(web_ui);
-  content::WebUIDataSource::Add(profile, CreateDataSource());
+  CreateAndAddDataSource(Profile::FromWebUI(web_ui));
 }
 
 void SandboxInternalsUI::WebUIRenderFrameCreated(

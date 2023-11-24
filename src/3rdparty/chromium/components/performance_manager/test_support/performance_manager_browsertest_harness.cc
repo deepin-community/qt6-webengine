@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -99,10 +99,9 @@ PerformanceManagerBrowserTestHarness::NavigateAndWaitForConsoleMessage(
     base::StringPiece console_pattern) {
   content::WebContentsConsoleObserver console_observer(contents);
   console_observer.SetPattern(std::string(console_pattern));
-  if (!NavigateToURL(contents, url))
-    return ::testing::AssertionFailure();
-  console_observer.Wait();
-  return ::testing::AssertionSuccess();
+  if (NavigateToURL(contents, url) && console_observer.Wait())
+    return ::testing::AssertionSuccess();
+  return ::testing::AssertionFailure();
 }
 
 namespace {

@@ -7,14 +7,12 @@
 <translation id="1178581264944972037">일시중지</translation>
 <translation id="1306460908038601864">꺼짐</translation>
 <translation id="1311894908970423688">값이 <ph name="VALUE_DATE_OR_TIME" />여야 합니다.</translation>
-<translation id="145015347812617860">항목 <ph name="COUNT" />개</translation>
 <translation id="1480676835519562650">여러 항목 선택 가능, <ph name="COUNT" />개 중 <ph name="SELECTED" />개 선택됨.</translation>
 <translation id="1588438908519853928">일반</translation>
 <translation id="1591562245178063882">이번 달</translation>
 <translation id="1637811476055996098">파일 선택</translation>
 <translation id="1681022320378710418">현재 시간</translation>
 <translation id="1727839386348365796">스포이트</translation>
-<translation id="1727886345390570319">자막 메뉴 숨기기</translation>
 <translation id="1729654308190250600">비어 있지 않은 이메일 주소를 입력해 주세요.</translation>
 <translation id="1758486001363313524">다른 일자...</translation>
 <translation id="1787192514241997742">총 시간: <ph name="REMAINING_TIME" /></translation>
@@ -31,7 +29,6 @@
 <translation id="2246498165605549352">로컬 파일</translation>
 <translation id="2247351761944213033"><ph name="YEAR" />, <ph name="WEEKNUMBER" />번째 주</translation>
 <translation id="2277199496770840904"><ph name="NUMBER" />번 트랙</translation>
-<translation id="2307576640803031502">목록의 항목 <ph name="COUNT" />개 중 <ph name="INDEX" />번째</translation>
 <translation id="2393030564806080191">16진수 색상 값</translation>
 <translation id="2398813069815436052">대화상자가 열렸습니다.</translation>
 <translation id="245932805758469625">동영상 남은 시간</translation>
@@ -63,7 +60,6 @@
 <translation id="4103419683916926126">밀리초</translation>
 <translation id="4201051445878709314">이전 달 표시</translation>
 <translation id="4360991593054037559">유효한 값을 입력해 주세요. 가장 근접한 유효 값 2개는 <ph name="VALID_VALUE_LOW" /> 및 <ph name="VALID_VALUE_HIGHER" />입니다.</translation>
-<translation id="4371899966896349864">재생 속도 메뉴 숨기기</translation>
 <translation id="4522570452068850558">세부정보</translation>
 <translation id="4664250907885839816">'<ph name="ATSIGN" />' 다음 부분에 '<ph name="INVALIDCHARACTER" />' 기호가 포함되면 안됩니다.</translation>
 <translation id="4718048029184481307">PIP 모드에서 재생</translation>
@@ -83,6 +79,7 @@
 <translation id="5117590920725113268">다음 달 표시</translation>
 <translation id="5164977714490026579">값은 <ph name="MINIMUM" /> 이상이어야 합니다.</translation>
 <translation id="5196716972587102051">2</translation>
+<translation id="5199514351668672591">옵션으로 돌아가기</translation>
 <translation id="520299402983819650"><ph name="QUANTITY" />PB</translation>
 <translation id="5272594226096532950">선택 안 함. 그룹 내 옵션 <ph name="COUNT" />개 중 <ph name="INDEX" /></translation>
 <translation id="5307600278924710095">'<ph name="ATSIGN" />' 앞 부분을 입력해 주세요. '<ph name="INVALIDADDRESS" />'(이)가 완전하지 않습니다.</translation>

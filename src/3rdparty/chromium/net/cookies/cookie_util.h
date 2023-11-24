@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,15 +8,15 @@
 #include <string>
 #include <vector>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "base/time/time.h"
 #include "net/base/net_export.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_access_result.h"
 #include "net/cookies/cookie_constants.h"
 #include "net/cookies/cookie_options.h"
-#include "net/cookies/first_party_set_metadata.h"
 #include "net/cookies/site_for_cookies.h"
+#include "net/first_party_sets/first_party_set_metadata.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/origin.h"
 
@@ -27,6 +27,7 @@ namespace net {
 class IsolationInfo;
 class SchemefulSite;
 class CookieAccessDelegate;
+class CookieInclusionStatus;
 
 namespace cookie_util {
 
@@ -42,7 +43,9 @@ enum class StorageAccessResult {
   ACCESS_BLOCKED = 0,
   ACCESS_ALLOWED = 1,
   ACCESS_ALLOWED_STORAGE_ACCESS_GRANT = 2,
-  kMaxValue = ACCESS_ALLOWED_STORAGE_ACCESS_GRANT,
+  ACCESS_ALLOWED_FORCED = 3,
+  ACCESS_ALLOWED_TOP_LEVEL_STORAGE_ACCESS_GRANT = 4,
+  kMaxValue = ACCESS_ALLOWED_TOP_LEVEL_STORAGE_ACCESS_GRANT,
 };
 // Helper to fire telemetry indicating if a given request for storage was
 // allowed or not by the provided |result|.
@@ -63,6 +66,7 @@ NET_EXPORT std::string GetEffectiveDomain(const std::string& scheme,
 // begin with a '.' character.
 NET_EXPORT bool GetCookieDomainWithString(const GURL& url,
                                           const std::string& domain_string,
+                                          CookieInclusionStatus& status,
                                           std::string* result);
 
 // Returns true if a domain string represents a host-only cookie,
@@ -131,8 +135,9 @@ using ParsedRequestCookies = std::vector<ParsedRequestCookie>;
 // Assumes that |header_value| is the cookie header value of a HTTP Request
 // following the cookie-string schema of RFC 6265, section 4.2.1, and returns
 // cookie name/value pairs. If cookie values are presented in double quotes,
-// these will appear in |parsed_cookies| as well. Assumes that the cookie
-// header is written by Chromium and therefore well-formed.
+// these will appear in |parsed_cookies| as well. The cookie header can be
+// written by non-Chromium consumers (such as extensions), so the header may not
+// be well-formed.
 NET_EXPORT void ParseRequestCookieLine(const std::string& header_value,
                                        ParsedRequestCookies* parsed_cookies);
 
@@ -257,22 +262,27 @@ ComputeFirstPartySetMetadataMaybeAsync(
     bool force_ignore_top_frame_party,
     base::OnceCallback<void(FirstPartySetMetadata)> callback);
 
+// Converts a string representing the http request method to its enum
+// representation.
+NET_EXPORT CookieOptions::SameSiteCookieContext::ContextMetadata::HttpMethod
+HttpMethodStringToEnum(const std::string& in);
+
 // Get the SameParty inclusion status. If the cookie is not SameParty, returns
 // kNoSamePartyEnforcement; if the cookie is SameParty but does not have a
 // valid context, returns kEnforceSamePartyExclude.
 NET_EXPORT CookieSamePartyStatus
 GetSamePartyStatus(const CanonicalCookie& cookie,
                    const CookieOptions& options,
-                   bool first_party_sets_enabled);
+                   bool same_party_attribute_enabled);
 
-// Takes a callback accepting a CookieAccessResult and returns a callback
-// that accepts a bool, setting the bool to true if the CookieInclusionStatus
-// in CookieAccessResult was set to "include", else sending false.
+// Takes a CookieAccessResult and returns a bool, returning true if the
+// CookieInclusionStatus in CookieAccessResult was set to "include", else
+// returning false.
 //
 // Can be used with SetCanonicalCookie when you don't need to know why a cookie
 // was blocked, only whether it was blocked.
-NET_EXPORT base::OnceCallback<void(CookieAccessResult)>
-AdaptCookieAccessResultToBool(base::OnceCallback<void(bool)> callback);
+NET_EXPORT bool IsCookieAccessResultInclude(
+    CookieAccessResult cookie_access_result);
 
 // Turn a CookieAccessResultList into a CookieList by stripping out access
 // results (for callers who only care about cookies).

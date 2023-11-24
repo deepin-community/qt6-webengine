@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,7 +34,6 @@ class CORE_EXPORT MediaValuesDynamic : public MediaValues {
   mojom::blink::HoverType PrimaryHoverType() const override;
   int AvailableHoverTypes() const override;
   bool ThreeDEnabled() const override;
-  bool InImmersiveMode() const override;
   bool StrictMode() const override;
   const String MediaType() const override;
   blink::mojom::DisplayMode DisplayMode() const override;
@@ -54,6 +53,17 @@ class CORE_EXPORT MediaValuesDynamic : public MediaValues {
   void Trace(Visitor*) const override;
 
  protected:
+  // CSSLengthResolver
+  float EmFontSize(float zoom) const override;
+  float RemFontSize(float zoom) const override;
+  float ExFontSize(float zoom) const override;
+  float RexFontSize(float zoom) const override;
+  float ChFontSize(float zoom) const override;
+  float RchFontSize(float zoom) const override;
+  float IcFontSize(float zoom) const override;
+  float RicFontSize(float zoom) const override;
+  float LineHeight(float zoom) const override;
+  float RootLineHeight(float zoom) const override;
   double ViewportWidth() const override;
   double ViewportHeight() const override;
   double SmallViewportWidth() const override;
@@ -62,10 +72,8 @@ class CORE_EXPORT MediaValuesDynamic : public MediaValues {
   double LargeViewportHeight() const override;
   double DynamicViewportWidth() const override;
   double DynamicViewportHeight() const override;
-  float EmSize() const override;
-  float RemSize() const override;
-  float ExSize() const override;
-  float ChSize() const override;
+  double ContainerWidth() const override;
+  double ContainerHeight() const override;
   WritingMode GetWritingMode() const override {
     return WritingMode::kHorizontalTb;
   }

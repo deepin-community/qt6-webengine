@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -60,7 +60,7 @@ class VIEWS_EXPORT ViewTargeter : public ui::EventTargeter {
 
   // ViewTargeter does not own the |delegate_|, but |delegate_| must
   // outlive the targeter.
-  raw_ptr<ViewTargeterDelegate> delegate_;
+  raw_ptr<ViewTargeterDelegate, DanglingUntriaged> delegate_;
 };
 
 }  // namespace views

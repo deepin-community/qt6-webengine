@@ -10,32 +10,32 @@ import * as DataGrid from '../../ui/legacy/components/data_grid/data_grid.js';
 import * as UI from '../../ui/legacy/legacy.js';
 
 import {Category, IsLong} from './TimelineFilters.js';
-import type {TimelineModeViewDelegate} from './TimelinePanel.js';
-import {TimelineSelection} from './TimelinePanel.js';
+
+import {TimelineSelection, type TimelineModeViewDelegate} from './TimelinePanel.js';
 import {TimelineTreeView} from './TimelineTreeView.js';
 import {TimelineUIUtils} from './TimelineUIUtils.js';
 
 const UIStrings = {
   /**
-  *@description Aria-label for filter bar in Event Log view
-  */
+   *@description Aria-label for filter bar in Event Log view
+   */
   filterEventLog: 'Filter event log',
   /**
-  *@description Text for the start time of an activity
-  */
+   *@description Text for the start time of an activity
+   */
   startTime: 'Start Time',
   /**
-  *@description Screen reader label for a select box that filters the Performance panel Event Log by duration.
-  */
+   *@description Screen reader label for a select box that filters the Performance panel Event Log by duration.
+   */
   durationFilter: 'Duration filter',
   /**
-  *@description Text in Events Timeline Tree View of the Performance panel
-  *@example {2} PH1
-  */
+   *@description Text in Events Timeline Tree View of the Performance panel
+   *@example {2} PH1
+   */
   Dms: '{PH1} ms',
   /**
-  *@description Text for everything
-  */
+   *@description Text for everything
+   */
   all: 'All',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/timeline/EventsTimelineTreeView.ts', UIStrings);

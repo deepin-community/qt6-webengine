@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,18 +9,14 @@
 #include "third_party/blink/renderer/core/layout/ng/ng_block_break_token.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_constraint_space.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_layout_result.h"
-#include "third_party/blink/renderer/core/layout/ng/ng_layout_test.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_physical_box_fragment.h"
+#include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 
 namespace blink {
 namespace {
 
-class NGOutOfFlowLayoutPartTest
-    : public NGBaseLayoutAlgorithmTest,
-      private ScopedLayoutNGBlockFragmentationForTest {
+class NGOutOfFlowLayoutPartTest : public NGBaseLayoutAlgorithmTest {
  protected:
-  NGOutOfFlowLayoutPartTest() : ScopedLayoutNGBlockFragmentationForTest(true) {}
-
   const NGPhysicalBoxFragment* RunBlockLayoutAlgorithm(Element* element) {
     NGBlockNode container(element->GetLayoutBox());
     NGConstraintSpace space = ConstructBlockLayoutTestConstraintSpace(
@@ -88,7 +84,7 @@ TEST_F(NGOutOfFlowLayoutPartTest, FixedInsideAbs) {
   // Test whether the oof fragments have been collected at NG->Legacy boundary.
   Element* rel = GetDocument().getElementById("rel");
   auto* block_flow = To<LayoutBlockFlow>(rel->GetLayoutObject());
-  const NGLayoutResult* result = block_flow->GetCachedLayoutResult();
+  const NGLayoutResult* result = block_flow->GetSingleCachedLayoutResult();
   EXPECT_TRUE(result);
   EXPECT_EQ(result->PhysicalFragment().OutOfFlowPositionedDescendants().size(),
             2u);
@@ -602,8 +598,8 @@ TEST_F(NGOutOfFlowLayoutPartTest,
         offset:0,20 size:5x20
       offset:508,0 size:492x40
         offset:0,0 size:32x20
-        offset:0,0 size:5x40
         offset:0,20 size:30x0
+        offset:0,0 size:5x40
       offset:1016,0 size:492x40
         offset:0,0 size:5x20
 )DUMP";
@@ -1625,16 +1621,15 @@ TEST_F(NGOutOfFlowLayoutPartTest, FragmentainerBreakTokens) {
   ASSERT_EQ(children.size(), 5u);
 
   const auto& column1 = To<NGPhysicalBoxFragment>(*children[0]);
-  const NGBlockBreakToken* break_token =
-      To<NGBlockBreakToken>(column1.BreakToken());
+  const NGBlockBreakToken* break_token = column1.BreakToken();
   EXPECT_TRUE(break_token);
   EXPECT_EQ(break_token->SequenceNumber(), 0u);
   EXPECT_EQ(break_token->ConsumedBlockSize(), 100);
-  EXPECT_EQ(break_token->ChildBreakTokens().size(), 2u);
+  EXPECT_EQ(break_token->ChildBreakTokens().size(), 1u);
   EXPECT_FALSE(break_token->IsCausedByColumnSpanner());
 
   const auto& column2 = To<NGPhysicalBoxFragment>(*children[1]);
-  break_token = To<NGBlockBreakToken>(column2.BreakToken());
+  break_token = column2.BreakToken();
   EXPECT_TRUE(break_token);
   EXPECT_EQ(break_token->SequenceNumber(), 1u);
   EXPECT_EQ(break_token->ConsumedBlockSize(), 200);
@@ -1645,7 +1640,7 @@ TEST_F(NGOutOfFlowLayoutPartTest, FragmentainerBreakTokens) {
   EXPECT_TRUE(spanner.IsColumnSpanAll());
 
   const auto& column3 = To<NGPhysicalBoxFragment>(*children[3]);
-  break_token = To<NGBlockBreakToken>(column3.BreakToken());
+  break_token = column3.BreakToken();
   EXPECT_TRUE(break_token);
   EXPECT_EQ(break_token->SequenceNumber(), 2u);
   EXPECT_EQ(break_token->ConsumedBlockSize(), 250);
@@ -1656,178 +1651,6 @@ TEST_F(NGOutOfFlowLayoutPartTest, FragmentainerBreakTokens) {
   EXPECT_FALSE(column4.BreakToken());
 }
 
-// Make sure the fragmentainer break tokens are correct when new fragmentainers
-// are created as a result of an OOF.
-TEST_F(NGOutOfFlowLayoutPartTest, NewFragmentainerBreakTokens) {
-  SetBodyInnerHTML(
-      R"HTML(
-      <style>
-        #multicol {
-          column-count:2; column-fill:auto; column-gap:0px;
-          height:100px; width:100px;
-        }
-        .abs {
-          position:absolute; width:50px; height:200px;
-        }
-      </style>
-      <div id="multicol">
-        <div style="position:relative;">
-          <div style="height:200px;"></div>
-          <div class="abs"></div>
-        </div>
-      </div>
-      )HTML");
-  const LayoutBox* multicol = GetLayoutBoxByElementId("multicol");
-  ASSERT_EQ(multicol->PhysicalFragmentCount(), 1u);
-  const NGPhysicalBoxFragment* multicol_fragment =
-      multicol->GetPhysicalFragment(0);
-  const auto& children = multicol_fragment->Children();
-  ASSERT_EQ(children.size(), 4u);
-
-  const auto& column1 = To<NGPhysicalBoxFragment>(*children[0]);
-  const NGBlockBreakToken* break_token =
-      To<NGBlockBreakToken>(column1.BreakToken());
-  EXPECT_TRUE(break_token);
-  EXPECT_EQ(break_token->SequenceNumber(), 0u);
-  EXPECT_EQ(break_token->ConsumedBlockSize(), 100);
-  EXPECT_EQ(break_token->ChildBreakTokens().size(), 1u);
-  EXPECT_FALSE(break_token->IsCausedByColumnSpanner());
-
-  const auto& column2 = To<NGPhysicalBoxFragment>(*children[1]);
-  break_token = To<NGBlockBreakToken>(column2.BreakToken());
-  EXPECT_TRUE(break_token);
-  EXPECT_EQ(break_token->SequenceNumber(), 1u);
-  EXPECT_EQ(break_token->ConsumedBlockSize(), 200);
-  EXPECT_EQ(break_token->ChildBreakTokens().size(), 0u);
-  EXPECT_FALSE(break_token->IsCausedByColumnSpanner());
-
-  const auto& column3 = To<NGPhysicalBoxFragment>(*children[2]);
-  break_token = To<NGBlockBreakToken>(column3.BreakToken());
-  EXPECT_TRUE(break_token);
-  EXPECT_EQ(break_token->SequenceNumber(), 2u);
-  EXPECT_EQ(break_token->ConsumedBlockSize(), 300);
-  EXPECT_EQ(break_token->ChildBreakTokens().size(), 1u);
-  EXPECT_FALSE(break_token->IsCausedByColumnSpanner());
-
-  const auto& column4 = To<NGPhysicalBoxFragment>(*children[3]);
-  EXPECT_FALSE(column4.BreakToken());
-}
-
-// Make sure the fragmentainer break tokens are correct when new empty
-// fragmentainers are created as a result of an OOF.
-TEST_F(NGOutOfFlowLayoutPartTest, NewEmptyFragmentainerBreakTokens) {
-  SetBodyInnerHTML(
-      R"HTML(
-      <style>
-        #multicol {
-          column-count:2; column-fill:auto; column-gap:0px;
-          height:100px; width:100px;
-        }
-        .abs {
-          position:absolute; width:50px; height:200px; top:200px;
-        }
-      </style>
-      <div id="multicol">
-        <div style="position:relative;">
-          <div style="height:100px;"></div>
-          <div class="abs"></div>
-        </div>
-      </div>
-      )HTML");
-  const LayoutBox* multicol = GetLayoutBoxByElementId("multicol");
-  ASSERT_EQ(multicol->PhysicalFragmentCount(), 1u);
-  const NGPhysicalBoxFragment* multicol_fragment =
-      multicol->GetPhysicalFragment(0);
-  const auto& children = multicol_fragment->Children();
-  ASSERT_EQ(children.size(), 4u);
-
-  const auto& column1 = To<NGPhysicalBoxFragment>(*children[0]);
-  const NGBlockBreakToken* break_token =
-      To<NGBlockBreakToken>(column1.BreakToken());
-  EXPECT_TRUE(break_token);
-  EXPECT_EQ(break_token->SequenceNumber(), 0u);
-  EXPECT_EQ(break_token->ConsumedBlockSize(), 100);
-  EXPECT_EQ(break_token->ChildBreakTokens().size(), 0u);
-  EXPECT_FALSE(break_token->IsCausedByColumnSpanner());
-
-  const auto& column2 = To<NGPhysicalBoxFragment>(*children[1]);
-  break_token = To<NGBlockBreakToken>(column2.BreakToken());
-  EXPECT_TRUE(break_token);
-  EXPECT_EQ(break_token->SequenceNumber(), 1u);
-  EXPECT_EQ(break_token->ConsumedBlockSize(), 200);
-  EXPECT_EQ(break_token->ChildBreakTokens().size(), 0u);
-  EXPECT_FALSE(break_token->IsCausedByColumnSpanner());
-
-  const auto& column3 = To<NGPhysicalBoxFragment>(*children[2]);
-  break_token = To<NGBlockBreakToken>(column3.BreakToken());
-  EXPECT_TRUE(break_token);
-  EXPECT_EQ(break_token->SequenceNumber(), 2u);
-  EXPECT_EQ(break_token->ConsumedBlockSize(), 300);
-  EXPECT_EQ(break_token->ChildBreakTokens().size(), 1u);
-  EXPECT_FALSE(break_token->IsCausedByColumnSpanner());
-
-  const auto& column4 = To<NGPhysicalBoxFragment>(*children[3]);
-  EXPECT_FALSE(column4.BreakToken());
-}
-
-// Make sure the fragmentainer break tokens are correct when new fragmentainers
-// are created as a result of an OOF in a nested multicol.
-TEST_F(NGOutOfFlowLayoutPartTest, NewFragmentainerBreakTokensInNestedMulticol) {
-  SetBodyInnerHTML(
-      R"HTML(
-      <style>
-        .multicol {
-          column-count:2; column-fill:auto; column-gap:0px;
-        }
-        .abs {
-          position:absolute; width:50px; height:400px; top:0;
-        }
-      </style>
-      <div class="multicol" id="outer">
-        <div class="multicol" id="inner">
-          <div style="position:relative;">
-            <div style="height:200px;"></div>
-            <div class="abs"></div>
-          </div>
-        </div>
-      </div>
-      )HTML");
-  const LayoutBox* multicol = GetLayoutBoxByElementId("inner");
-  ASSERT_EQ(multicol->PhysicalFragmentCount(), 1u);
-  const NGPhysicalBoxFragment* multicol_fragment =
-      multicol->GetPhysicalFragment(0);
-  const auto& children = multicol_fragment->Children();
-  ASSERT_EQ(children.size(), 4u);
-
-  const auto& column1 = To<NGPhysicalBoxFragment>(*children[0]);
-  const NGBlockBreakToken* break_token =
-      To<NGBlockBreakToken>(column1.BreakToken());
-  EXPECT_TRUE(break_token);
-  EXPECT_EQ(break_token->SequenceNumber(), 0u);
-  EXPECT_EQ(break_token->ConsumedBlockSize(), 100);
-  EXPECT_EQ(break_token->ChildBreakTokens().size(), 2u);
-  EXPECT_FALSE(break_token->IsCausedByColumnSpanner());
-
-  const auto& column2 = To<NGPhysicalBoxFragment>(*children[1]);
-  break_token = To<NGBlockBreakToken>(column2.BreakToken());
-  EXPECT_TRUE(break_token);
-  EXPECT_EQ(break_token->SequenceNumber(), 1u);
-  EXPECT_EQ(break_token->ConsumedBlockSize(), 200);
-  EXPECT_EQ(break_token->ChildBreakTokens().size(), 1u);
-  EXPECT_FALSE(break_token->IsCausedByColumnSpanner());
-
-  const auto& column3 = To<NGPhysicalBoxFragment>(*children[2]);
-  break_token = To<NGBlockBreakToken>(column3.BreakToken());
-  EXPECT_TRUE(break_token);
-  EXPECT_EQ(break_token->SequenceNumber(), 2u);
-  EXPECT_EQ(break_token->ConsumedBlockSize(), 300);
-  EXPECT_EQ(break_token->ChildBreakTokens().size(), 1u);
-  EXPECT_FALSE(break_token->IsCausedByColumnSpanner());
-
-  const auto& column4 = To<NGPhysicalBoxFragment>(*children[3]);
-  EXPECT_FALSE(column4.BreakToken());
-}
-
 // Make sure the fragmentainer break tokens are correct when a new column is
 // created before a spanner for an OOF.
 TEST_F(NGOutOfFlowLayoutPartTest, FragmentainerBreakTokenBeforeSpanner) {
@@ -1835,7 +1658,7 @@ TEST_F(NGOutOfFlowLayoutPartTest, FragmentainerBreakTokenBeforeSpanner) {
       R"HTML(
       <style>
         #multicol {
-          column-count:2; column-fill:auto; column-gap:0px; width:100px;
+          column-count:2; column-gap:0px; width:100px;
         }
         .abs {
           position:absolute; width:50px; height:200px; top:0;
@@ -1858,16 +1681,15 @@ TEST_F(NGOutOfFlowLayoutPartTest, FragmentainerBreakTokenBeforeSpanner) {
   ASSERT_EQ(children.size(), 5u);
 
   const auto& column1 = To<NGPhysicalBoxFragment>(*children[0]);
-  const NGBlockBreakToken* break_token =
-      To<NGBlockBreakToken>(column1.BreakToken());
+  const NGBlockBreakToken* break_token = column1.BreakToken();
   EXPECT_TRUE(break_token);
   EXPECT_EQ(break_token->SequenceNumber(), 0u);
   EXPECT_EQ(break_token->ConsumedBlockSize(), 100);
-  EXPECT_EQ(break_token->ChildBreakTokens().size(), 2u);
+  EXPECT_EQ(break_token->ChildBreakTokens().size(), 1u);
   EXPECT_TRUE(break_token->IsCausedByColumnSpanner());
 
   const auto& column2 = To<NGPhysicalBoxFragment>(*children[1]);
-  break_token = To<NGBlockBreakToken>(column2.BreakToken());
+  break_token = column2.BreakToken();
   EXPECT_TRUE(break_token);
   EXPECT_EQ(break_token->SequenceNumber(), 1u);
   EXPECT_EQ(break_token->ConsumedBlockSize(), 200);
@@ -1878,7 +1700,7 @@ TEST_F(NGOutOfFlowLayoutPartTest, FragmentainerBreakTokenBeforeSpanner) {
   EXPECT_TRUE(spanner.IsColumnSpanAll());
 
   const auto& column3 = To<NGPhysicalBoxFragment>(*children[3]);
-  break_token = To<NGBlockBreakToken>(column3.BreakToken());
+  break_token = column3.BreakToken();
   EXPECT_TRUE(break_token);
   EXPECT_EQ(break_token->SequenceNumber(), 2u);
   EXPECT_EQ(break_token->ConsumedBlockSize(), 250);
@@ -1936,30 +1758,6 @@ TEST_F(NGOutOfFlowLayoutPartTest, RelayoutNestedMulticolWithOOF) {
   ASSERT_TRUE(fragmentainer);
   // It should still have two children: the relpos and the OOF.
   EXPECT_EQ(fragmentainer->Children().size(), 2u);
-}
-
-// https://crbug.com/1304371
-TEST_F(NGOutOfFlowLayoutPartTest, PositionedElementMulticolLegacyNGTree) {
-  ScopedLayoutNGBlockFragmentationForTest block_frag(false);
-  ScopedLayoutNGFlexFragmentationForTest flex_frag(false);
-  ScopedLayoutNGGridFragmentationForTest grid_frag(false);
-  ScopedLayoutNGPrintingForTest printing_frag(false);
-  ScopedLayoutNGTableFragmentationForTest table_frag(false);
-  ASSERT_FALSE(RuntimeEnabledFeatures::LayoutNGBlockFragmentationEnabled());
-
-  SetBodyInnerHTML(
-      R"HTML(
-      <div id="container" style="position: relative;">
-        <div style="position: absolute;">
-        </div>
-        <div style="column-count: 2;">
-          <div id="target" style="position: absolute;">PASS</div>
-        </div>
-      </div>
-      )HTML");
-  UpdateAllLifecyclePhasesForTest();
-
-  ASSERT_FALSE(GetElementById("target")->GetLayoutObject()->NeedsLayout());
 }
 
 }  // namespace

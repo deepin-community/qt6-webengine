@@ -10,14 +10,16 @@ include_rules = [
   "+components/discardable_memory/service",
   "+components/download/database",
   "+components/download/public/common",
+  "+components/file_access",
   "+components/filename_generation",
   "+components/permissions/features.h",
+  "+components/power_monitor",
   "+components/services/font",
   "+components/services/filesystem",
-  "+components/services/font/ppapi_fontconfig_matching.h",
   "+components/services/quarantine/test_support.h",
   "+components/services/quarantine/quarantine.h",
-  "+components/services/screen_ai",
+  "+components/services/screen_ai/buildflags",
+  "+components/services/screen_ai/public/cpp",
   "+components/services/storage",
   "+components/services/storage/public",
   "+components/session_manager/core",
@@ -47,7 +49,6 @@ include_rules = [
 
   "+content/public/app",
   "+content/public/browser",
-  "+content/services/shared_storage_worklet/public",
   "+device/base/synchronization",
   "+device/bluetooth",
   "+device/fido/hid",
@@ -62,6 +63,7 @@ include_rules = [
   "+sql",
   "+ui/aura_extra",
   "+components/vector_icons",
+  "+ui/linux",
   "+ui/strings/grit/ax_strings.h",
   "+ui/webui",
 
@@ -96,7 +98,6 @@ include_rules = [
   "+third_party/zlib",
 
   # Allow non-browser Chrome OS code to be used.
-  "+ash/constants",
   "+chromeos",
   "+third_party/cros_system_api",
 
@@ -121,6 +122,8 @@ include_rules = [
   "+third_party/blink/public/web/web_drag_status.h",
   "+third_party/blink/public/web/web_serialized_script_value_version.h",
   "+third_party/blink/public/mojom/frame/tree_scope_type.mojom.h",
+
+  "+tools/v8_context_snapshot/buildflags.h",
 
   # DO NOT ADD ANY CHROME OR COMPONENTS INCLUDES HERE!!!
   # See https://sites.google.com/a/chromium.org/dev/developers/content-module
@@ -170,6 +173,9 @@ specific_include_rules = {
     # These files do not cycle back to SiteInstance or BrowsingInstance.
     "+content/browser/renderer_host/render_process_host_impl.h",
     "+content/browser/renderer_host/agent_scheduling_group_host.h",
+  ],
+  "stable_video_decoder_factory\.cc" : [
+    "+ui/ozone/public/ozone_switches.h",
   ],
   "storage_partition_impl_unittest\.cc": [
     "+services/network/cookie_manager.h",

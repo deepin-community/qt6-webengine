@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -411,6 +411,8 @@ class VIZ_COMMON_EXPORT ExternalBeginFrameSource : public BeginFrameSource {
   // Notifies the begin frame source of the desired frame interval for the
   // observers.
   virtual void SetPreferredInterval(base::TimeDelta interval) {}
+
+  virtual void SetVSyncDisplayID(int64_t display_id) {}
 
  protected:
   // Called on AddObserver and gets missed BeginFrameArgs for the given

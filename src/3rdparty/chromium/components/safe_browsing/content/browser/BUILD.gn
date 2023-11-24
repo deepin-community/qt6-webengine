@@ -1,4 +1,4 @@
-# Copyright 2017 The Chromium Authors. All rights reserved.
+# Copyright 2017 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -17,6 +17,8 @@ source_set("safe_browsing_service") {
     "safe_browsing_service_interface.cc",
     "safe_browsing_service_interface.h",
   ]
+
+  configs += [ "//build/config/compiler:wexit_time_destructors" ]
 
   deps = [
     "//base:base",
@@ -43,17 +45,19 @@ if (safe_browsing_mode > 0) {
       "ui_manager.h",
     ]
 
+    configs += [ "//build/config/compiler:wexit_time_destructors" ]
+
     deps = [
       ":browser",
       "//base",
       "//components/no_state_prefetch/browser",
       "//components/prefs",
       "//components/safe_browsing/content/browser/triggers",
+      "//components/safe_browsing/content/browser/web_ui",
       "//components/safe_browsing/core/browser",
       "//components/safe_browsing/core/browser:safe_browsing_metrics_collector",
       "//components/safe_browsing/core/common",
       "//components/safe_browsing/core/common:safe_browsing_prefs",
-      "//components/safe_browsing/core/common/proto:csd_proto",
       "//components/security_interstitials/content:security_interstitial_page",
       "//components/security_interstitials/core",
       "//components/security_interstitials/core:unsafe_resource",
@@ -85,6 +89,9 @@ jumbo_source_set("browser") {
     "web_api_handshake_checker.cc",
     "web_api_handshake_checker.h",
   ]
+
+  configs += [ "//build/config/compiler:wexit_time_destructors" ]
+
   deps = [
     "//base",
     "//base:i18n",
@@ -97,6 +104,7 @@ jumbo_source_set("browser") {
     "//components/safe_browsing/core/browser:referrer_chain_provider",
     "//components/safe_browsing/core/browser:verdict_cache_manager",
     "//components/safe_browsing/core/browser/db:database_manager",
+    "//components/safe_browsing/core/browser/hashprefix_realtime:hash_realtime_service",
     "//components/safe_browsing/core/browser/realtime:policy_engine",
     "//components/safe_browsing/core/browser/realtime:url_lookup_service_base",
     "//components/safe_browsing/core/common:common",
@@ -145,6 +153,9 @@ source_set("unit_tests") {
     ":client_side_detection",
     "//base:base",
     "//base/test:test_support",
+    "//components/optimization_guide/core:model_executor",
+    "//components/optimization_guide/core:test_support",
+    "//components/optimization_guide/proto:optimization_guide_proto",
     "//components/safe_browsing:buildflags",
     "//components/safe_browsing/content/browser:browser",
     "//components/safe_browsing/core/browser:browser",
@@ -165,7 +176,10 @@ source_set("unit_tests") {
   ]
 
   if (safe_browsing_mode > 0) {
-    sources += [ "ui_manager_unittest.cc" ]
+    sources += [
+      "browser_url_loader_throttle_unittest.cc",
+      "ui_manager_unittest.cc",
+    ]
     deps += [
       "//components/prefs",
       "//components/prefs:test_support",
@@ -198,17 +212,25 @@ jumbo_source_set("client_side_detection") {
     "client_side_detection_service.h",
     "client_side_phishing_model.cc",
     "client_side_phishing_model.h",
+    "client_side_phishing_model_optimization_guide.cc",
+    "client_side_phishing_model_optimization_guide.h",
     "safe_browsing_tab_observer.cc",
     "safe_browsing_tab_observer.h",
   ]
+
+  configs += [ "//build/config/compiler:wexit_time_destructors" ]
+
   deps = [
     "//base:base",
+    "//components/optimization_guide/core:core",
+    "//components/optimization_guide/proto:optimization_guide_proto",
     "//components/prefs",
     "//components/safe_browsing:buildflags",
     "//components/safe_browsing/content/browser",
     "//components/safe_browsing/content/browser/web_ui:web_ui",
     "//components/safe_browsing/content/common:interfaces",
     "//components/safe_browsing/core/browser:token_fetcher",
+    "//components/safe_browsing/core/browser:verdict_cache_manager",
     "//components/safe_browsing/core/browser/db:allowlist_checker_client",
     "//components/safe_browsing/core/browser/db:database_manager",
     "//components/safe_browsing/core/browser/db:v4_protocol_manager_util",

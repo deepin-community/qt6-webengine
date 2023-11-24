@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,10 +8,11 @@
 #include <cstdint>
 #include <memory>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/strings/string_piece.h"
 #include "components/reporting/proto/synced/record.pb.h"
 #include "components/reporting/proto/synced/record_constants.pb.h"
+#include "components/reporting/resources/resource_manager.h"
 #include "components/reporting/util/status.h"
 #include "components/reporting/util/statusor.h"
 
@@ -27,15 +28,18 @@ class UploaderInterface {
  public:
   // Reason upload is instantiated.
   enum class UploadReason : uint32_t {
-    UNKNOWN = 0,
-    MANUAL = 1,
-    KEY_DELIVERY = 2,
-    PERIODIC = 3,
-    IMMEDIATE_FLUSH = 4,
-    FAILURE_RETRY = 5,
-    INCOMPLETE_RETRY = 6,
-    INIT_RESUME = 7,
-    MAX_REASON = 8,  // Anything beyond this is illegal.
+    UNKNOWN = 0,           // Dummy value, should not be attached to any upload
+    MANUAL = 1,            // Upload triggered by manual Flush call
+    KEY_DELIVERY = 2,      // Upload requesting encryption key delivery/update
+    PERIODIC = 3,          // Upload triggered by periodic queue timer
+    IMMEDIATE_FLUSH = 4,   // Upload after IMMEDIATE/SECURITY event is enqueued
+    FAILURE_RETRY = 5,     // Retry after any upload failure
+    INCOMPLETE_RETRY = 6,  // Retry when some time after upload the events
+                           // are still not confirmed by the server
+    INIT_RESUME = 7,       // Automatic upload when queue initialization found
+                           // the queue is not empty (some events remained after
+                           // shutdown and restart)
+    MAX_REASON = 8,        // Anything beyond this is illegal
   };
 
   // using AsyncStartUploaderCb =
@@ -62,6 +66,7 @@ class UploaderInterface {
   // the record or error status has been processed, with true if next record
   // needs to be delivered and false if the Uploader should stop.
   virtual void ProcessRecord(EncryptedRecord record,
+                             ScopedReservation scoped_reservation,
                              base::OnceCallback<void(bool)> processed_cb) = 0;
 
   // Makes a note of a gap [start, start + count). Expects |processed_cb| to

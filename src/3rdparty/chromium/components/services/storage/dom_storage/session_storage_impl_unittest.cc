@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,18 +9,19 @@
 #include <memory>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/contains.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/guid.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
@@ -85,7 +86,7 @@ class SessionStorageImplTest : public testing::Test {
       remote_session_storage_.reset();
       session_storage_ = std::make_unique<SessionStorageImpl>(
           temp_path(), blocking_task_runner_,
-          base::SequencedTaskRunnerHandle::Get(), backing_mode_,
+          base::SequencedTaskRunner::GetCurrentDefault(), backing_mode_,
           kSessionStorageDirectory,
           remote_session_storage_.BindNewPipeAndPassReceiver());
     }
@@ -182,7 +183,7 @@ TEST_F(SessionStorageImplTest, MigrationV0ToV1) {
       temp_path().AppendASCII(kSessionStorageDirectory);
   {
     auto db = base::MakeRefCounted<TestingLegacySessionStorageDatabase>(
-        old_db_path, base::ThreadTaskRunnerHandle::Get().get());
+        old_db_path, base::SingleThreadTaskRunner::GetCurrentDefault().get());
     LegacyDomStorageValuesMap data;
     data[key] = value;
     data[key2] = value;

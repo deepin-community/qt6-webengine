@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -45,13 +45,13 @@ class TestChunkerDisplayItem : public DrawingDisplayItem {
       : DrawingDisplayItem(client_id,
                            type,
                            visual_rect,
-                           nullptr,
+                           PaintRecord(),
                            RasterEffectOutset::kNone) {}
 };
 
-sk_sp<const PaintRecord> OpaquePaintRecord(const gfx::Rect& visual_rect) {
+PaintRecord OpaquePaintRecord(const gfx::Rect& visual_rect) {
   PaintRecorder recorder;
-  auto* canvas = recorder.beginRecording(gfx::RectToSkRect(visual_rect));
+  auto* canvas = recorder.beginRecording();
   cc::PaintFlags flags;
   flags.setColor(SK_ColorBLACK);
   canvas->drawRect(gfx::RectToSkRect(visual_rect), flags);
@@ -85,10 +85,10 @@ class TestDisplayItemRequiringSeparateChunk : public ForeignLayerDisplayItem {
 TEST_F(PaintChunkerTest, Empty) {
   Vector<PaintChunk> chunks;
   PaintChunker chunker(chunks);
-  EXPECT_TRUE(chunks.IsEmpty());
+  EXPECT_TRUE(chunks.empty());
 
   chunker.ResetChunks(&chunks);
-  EXPECT_TRUE(chunks.IsEmpty());
+  EXPECT_TRUE(chunks.empty());
 }
 
 TEST_F(PaintChunkerTest, SingleNonEmptyRange) {
@@ -109,7 +109,7 @@ TEST_F(PaintChunkerTest, SingleNonEmptyRange) {
   chunker.ResetChunks(&chunks1);
   EXPECT_THAT(chunks, ElementsAre(IsPaintChunk(0, 2, id,
                                                DefaultPaintChunkProperties())));
-  EXPECT_TRUE(chunks1.IsEmpty());
+  EXPECT_TRUE(chunks1.empty());
 }
 
 TEST_F(PaintChunkerTest, SamePropertiesTwiceCombineIntoOneChunk) {
@@ -134,7 +134,7 @@ TEST_F(PaintChunkerTest, SamePropertiesTwiceCombineIntoOneChunk) {
   chunker.ResetChunks(&chunks1);
   EXPECT_THAT(chunks, ElementsAre(IsPaintChunk(0, 3, id,
                                                DefaultPaintChunkProperties())));
-  EXPECT_TRUE(chunks1.IsEmpty());
+  EXPECT_TRUE(chunks1.empty());
 }
 
 TEST_F(PaintChunkerTest, BuildMultipleChunksWithSinglePropertyChanging) {
@@ -149,7 +149,7 @@ TEST_F(PaintChunkerTest, BuildMultipleChunksWithSinglePropertyChanging) {
                                     TestChunkerDisplayItem(client_->Id()));
 
   auto simple_transform_node = CreateTransform(
-      t0(), TransformationMatrix(0, 1, 2, 3, 4, 5), gfx::Point3F(9, 8, 7));
+      t0(), gfx::Transform::Affine(0, 1, 2, 3, 4, 5), gfx::Point3F(9, 8, 7));
   auto simple_transform = DefaultPaintChunkProperties();
   simple_transform.SetTransform(*simple_transform_node);
 
@@ -159,7 +159,7 @@ TEST_F(PaintChunkerTest, BuildMultipleChunksWithSinglePropertyChanging) {
                                     TestChunkerDisplayItem(client_->Id()));
 
   auto another_transform_node = CreateTransform(
-      t0(), TransformationMatrix(0, 1, 2, 3, 4, 5), gfx::Point3F(9, 8, 7));
+      t0(), gfx::Transform::Affine(0, 1, 2, 3, 4, 5), gfx::Point3F(9, 8, 7));
   auto another_transform = DefaultPaintChunkProperties();
   another_transform.SetTransform(*another_transform_node);
   PaintChunk::Id id3(client_->Id(), DisplayItemType(3));
@@ -184,7 +184,7 @@ TEST_F(PaintChunkerTest, BuildMultipleChunksWithDifferentPropertyChanges) {
                                     TestChunkerDisplayItem(client_->Id()));
 
   auto simple_transform_node = CreateTransform(
-      t0(), TransformationMatrix(0, 0, 0, 0, 0, 0), gfx::Point3F(9, 8, 7));
+      t0(), gfx::Transform::Affine(0, 0, 0, 0, 0, 0), gfx::Point3F(9, 8, 7));
   auto simple_transform = DefaultPaintChunkProperties();
   simple_transform.SetTransform(*simple_transform_node);
   PaintChunk::Id id2(client_->Id(), DisplayItemType(2));
@@ -207,7 +207,7 @@ TEST_F(PaintChunkerTest, BuildMultipleChunksWithDifferentPropertyChanges) {
                                     TestChunkerDisplayItem(client_->Id()));
 
   auto new_transform_node = CreateTransform(
-      t0(), TransformationMatrix(1, 1, 0, 0, 0, 0), gfx::Point3F(9, 8, 7));
+      t0(), gfx::Transform::Affine(1, 1, 0, 0, 0, 0), gfx::Point3F(9, 8, 7));
   auto simple_transform_and_effect_with_updated_transform =
       DefaultPaintChunkProperties();
   auto new_effect_node = CreateOpacityEffect(e0(), 0.5f);
@@ -263,7 +263,7 @@ TEST_F(PaintChunkerTest, BuildChunksFromNestedTransforms) {
                                     TestChunkerDisplayItem(client_->Id()));
 
   auto simple_transform_node = CreateTransform(
-      t0(), TransformationMatrix(0, 1, 2, 3, 4, 5), gfx::Point3F(9, 8, 7));
+      t0(), gfx::Transform::Affine(0, 1, 2, 3, 4, 5), gfx::Point3F(9, 8, 7));
   auto simple_transform = DefaultPaintChunkProperties();
   simple_transform.SetTransform(*simple_transform_node);
   PaintChunk::Id id2(client_->Id(), DisplayItemType(2));
@@ -296,14 +296,14 @@ TEST_F(PaintChunkerTest, ChangingPropertiesWithoutItems) {
                                     TestChunkerDisplayItem(client_->Id()));
 
   auto first_transform_node = CreateTransform(
-      t0(), TransformationMatrix(0, 1, 2, 3, 4, 5), gfx::Point3F(9, 8, 7));
+      t0(), gfx::Transform::Affine(0, 1, 2, 3, 4, 5), gfx::Point3F(9, 8, 7));
   auto first_transform = DefaultPaintChunkProperties();
   first_transform.SetTransform(*first_transform_node);
   PaintChunk::Id id2(client_->Id(), DisplayItemType(2));
   chunker.UpdateCurrentPaintChunkProperties(first_transform);
 
   auto second_transform_node = CreateTransform(
-      t0(), TransformationMatrix(9, 8, 7, 6, 5, 4), gfx::Point3F(3, 2, 1));
+      t0(), gfx::Transform::Affine(9, 8, 7, 6, 5, 4), gfx::Point3F(3, 2, 1));
   auto second_transform = DefaultPaintChunkProperties();
   second_transform.SetTransform(*second_transform_node);
   PaintChunk::Id id3(client_->Id(), DisplayItemType(3));
@@ -559,7 +559,7 @@ TEST_F(PaintChunkerTest, ChunkIdsSkippingCache) {
                                     TestChunkerDisplayItem(client_->Id()));
 
   auto simple_transform_node = CreateTransform(
-      t0(), TransformationMatrix(0, 1, 2, 3, 4, 5), gfx::Point3F(9, 8, 7));
+      t0(), gfx::Transform::Affine(0, 1, 2, 3, 4, 5), gfx::Point3F(9, 8, 7));
   auto simple_transform = DefaultPaintChunkProperties();
   simple_transform.SetTransform(*simple_transform_node);
 

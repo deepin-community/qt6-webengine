@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,14 +9,13 @@
 #include <cstdint>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/check.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/notreached.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/task/task_runner_util.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "ui/ozone/platform/wayland/test/server_object.h"
@@ -90,7 +89,9 @@ TestSelectionSource::TestSelectionSource(wl_resource* resource,
       task_runner_(
           base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()})) {}
 
-TestSelectionSource::~TestSelectionSource() = default;
+TestSelectionSource::~TestSelectionSource() {
+  delegate_->OnDestroying();
+}
 
 void TestSelectionSource::ReadData(const std::string& mime_type,
                                    ReadDataCallback callback) {
@@ -104,9 +105,8 @@ void TestSelectionSource::ReadData(const std::string& mime_type,
 
   // 2. Schedule the ReadDataOnWorkerThread task. The result of read
   // operation will be then passed in to the callback requested by the caller.
-  base::PostTaskAndReplyWithResult(
-      task_runner_.get(), FROM_HERE,
-      base::BindOnce(&ReadDataOnWorkerThread, std::move(read_fd)),
+  task_runner_->PostTaskAndReplyWithResult(
+      FROM_HERE, base::BindOnce(&ReadDataOnWorkerThread, std::move(read_fd)),
       std::move(callback));
 }
 
@@ -118,6 +118,10 @@ void TestSelectionSource::OnFinished() {
 void TestSelectionSource::OnCancelled() {
   delegate_->SendCancelled();
   mime_types_.clear();
+}
+
+void TestSelectionSource::OnDndAction(uint32_t action) {
+  delegate_->SendDndAction(action);
 }
 
 void TestSelectionSource::Offer(struct wl_client* client,

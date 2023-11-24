@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -38,10 +38,10 @@ ScrollbarDisplayItem::ScrollbarDisplayItem(
   DCHECK(!scroll_translation || scroll_translation->ScrollNode());
 }
 
-sk_sp<const PaintRecord> ScrollbarDisplayItem::Paint() const {
+PaintRecord ScrollbarDisplayItem::Paint() const {
   DCHECK(!IsTombstone());
   auto* scrollbar = data_->scrollbar_.get();
-  if (data_->record_) {
+  if (!data_->record_.empty()) {
     DCHECK(!scrollbar->NeedsRepaintPart(
         cc::ScrollbarPart::TRACK_BUTTONS_TICKMARKS));
     DCHECK(!scrollbar->NeedsRepaintPart(cc::ScrollbarPart::THUMB));
@@ -50,7 +50,7 @@ sk_sp<const PaintRecord> ScrollbarDisplayItem::Paint() const {
 
   PaintRecorder recorder;
   const gfx::Rect& rect = VisualRect();
-  recorder.beginRecording(gfx::RectToSkRect(rect));
+  recorder.beginRecording();
   auto* canvas = recorder.getRecordingCanvas();
   scrollbar->PaintPart(canvas, cc::ScrollbarPart::TRACK_BUTTONS_TICKMARKS,
                        rect);
@@ -67,11 +67,12 @@ scoped_refptr<cc::ScrollbarLayerBase> ScrollbarDisplayItem::CreateOrReuseLayer(
   DCHECK(!IsTombstone());
   // This function is called when the scrollbar is composited. We don't need
   // record_ which is for non-composited scrollbars.
-  data_->record_ = nullptr;
+  data_->record_ = PaintRecord();
 
   auto* scrollbar = data_->scrollbar_.get();
   auto layer = cc::ScrollbarLayerBase::CreateOrReuse(scrollbar, existing_layer);
   layer->SetIsDrawable(true);
+  layer->SetContentsOpaque(IsOpaque());
   if (!scrollbar->IsSolidColor())
     layer->SetHitTestable(true);
   layer->SetElementId(data_->element_id_);
@@ -87,6 +88,12 @@ scoped_refptr<cc::ScrollbarLayerBase> ScrollbarDisplayItem::CreateOrReuseLayer(
       scrollbar->NeedsRepaintPart(cc::ScrollbarPart::TRACK_BUTTONS_TICKMARKS))
     layer->SetNeedsDisplay();
   return layer;
+}
+
+bool ScrollbarDisplayItem::IsOpaque() const {
+  DCHECK(!IsTombstone());
+  // The native themes should ensure opaqueness of non-overlay scrollbars.
+  return !data_->scrollbar_->IsOverlay();
 }
 
 bool ScrollbarDisplayItem::EqualsForUnderInvalidationImpl(

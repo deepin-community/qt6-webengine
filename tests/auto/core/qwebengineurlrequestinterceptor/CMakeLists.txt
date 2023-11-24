@@ -1,3 +1,6 @@
+# Copyright (C) 2022 The Qt Company Ltd.
+# SPDX-License-Identifier: BSD-3-Clause
+
 include(../../util/util.cmake)
 include(../../httpserver/httpserver.cmake)
 
@@ -12,6 +15,8 @@ qt_internal_add_test(tst_qwebengineurlrequestinterceptor
 
 set(tst_qwebengineurlrequestinterceptor_resource_files
     "resources/content.html"
+    "resources/content2.html"
+    "resources/content3.html"
     "resources/favicon.html"
     "resources/firstparty.html"
     "resources/fontawesome.woff"

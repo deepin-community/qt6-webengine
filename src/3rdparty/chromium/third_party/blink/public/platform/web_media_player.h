@@ -31,7 +31,7 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_MEDIA_PLAYER_H_
 #define THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_MEDIA_PLAYER_H_
 
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "components/viz/common/surfaces/surface_id.h"
@@ -134,15 +134,6 @@ class WebMediaPlayer {
     base::TimeDelta average_frame_duration;
   };
 
-  // Describes when we use SurfaceLayer for video instead of VideoLayer.
-  enum class SurfaceLayerMode {
-    // Always use VideoLayer
-    kNever,
-
-    // Always use SurfaceLayer for video.
-    kAlways,
-  };
-
   virtual ~WebMediaPlayer() = default;
 
   virtual LoadTiming Load(LoadType,
@@ -183,11 +174,19 @@ class WebMediaPlayer {
   virtual void OnTimeUpdate() {}
 
   virtual void RequestRemotePlaybackDisabled(bool disabled) {}
+  virtual void RequestMediaRemoting() {}
   virtual void FlingingStarted() {}
   virtual void FlingingStopped() {}
+
   virtual void SetPreload(Preload) {}
   virtual WebTimeRanges Buffered() const = 0;
   virtual WebTimeRanges Seekable() const = 0;
+
+  // Called when the backing media element and the page it is attached to is
+  // frozen, meaning that the page is no longer being rendered but nothing has
+  // yet been deconstructed. This may occur in several cases, such as bfcache
+  // for instant backwards and forwards navigation.
+  virtual void OnFrozen() = 0;
 
   // Attempts to switch the audio output device.
   virtual bool SetSinkId(const WebString& sing_id,
@@ -196,9 +195,6 @@ class WebMediaPlayer {
   // True if the loaded media has a playable video/audio track.
   virtual bool HasVideo() const = 0;
   virtual bool HasAudio() const = 0;
-
-  // True if the media is being played on a remote device.
-  virtual bool IsRemote() const { return false; }
 
   // Dimension of the video.
   virtual gfx::Size NaturalSize() const = 0;
@@ -221,8 +217,6 @@ class WebMediaPlayer {
   virtual NetworkState GetNetworkState() const = 0;
   virtual ReadyState GetReadyState() const = 0;
 
-  virtual SurfaceLayerMode GetVideoSurfaceLayerMode() const = 0;
-
   // Returns an implementation-specific human readable error message, or an
   // empty string if no message is available. The message should begin with a
   // UA-specific-error-code (without any ':'), optionally followed by ': ' and
@@ -243,6 +237,14 @@ class WebMediaPlayer {
   virtual unsigned CorruptedFrameCount() const { return 0; }
   virtual uint64_t AudioDecodedByteCount() const = 0;
   virtual uint64_t VideoDecodedByteCount() const = 0;
+
+  // Returns false if any of the HTTP responses which make up the video data
+  // loaded so far have failed the TAO check as defined by Fetch
+  // (https://fetch.spec.whatwg.org/#tao-check), or true otherwise. Video
+  // streams which do not originate from HTTP responses should return true here.
+  // This check is used to determine if timing information from those responses
+  // may be exposed to the page in Largest Contentful Paint performance entries.
+  virtual bool PassedTimingAllowOriginCheck() const = 0;
 
   // Set the volume multiplier to control audio ducking.
   // Output volume should be set to |player_volume| * |multiplier|. The range
@@ -271,7 +273,12 @@ class WebMediaPlayer {
   // to upload or convert it. Note: This may kick off a process to update the
   // current frame for a future call in some cases. Returns nullptr if no frame
   // is available.
-  virtual scoped_refptr<media::VideoFrame> GetCurrentFrame() = 0;
+  virtual scoped_refptr<media::VideoFrame> GetCurrentFrameThenUpdate() = 0;
+
+  // Return current video frame unique id from compositor. The query is readonly
+  // and should avoid any extra ops. Function returns absl::nullopt if current
+  // frame is invalid or fails to access current frame.
+  virtual absl::optional<media::VideoFrame::ID> CurrentFrameId() const = 0;
 
   // Provides a PaintCanvasVideoRenderer instance owned by this WebMediaPlayer.
   // Useful for ensuring that the paint/texturing operation for current frame is
@@ -296,11 +303,6 @@ class WebMediaPlayer {
   // Sets the poster image URL.
   virtual void SetPoster(const WebURL& poster) {}
 
-  // Whether the WebMediaPlayer supports overlay fullscreen video mode. When
-  // this is true, the video layer will be removed from the layer tree when
-  // entering fullscreen, and the WebMediaPlayer is responsible for displaying
-  // the video in enteredFullscreen().
-  virtual bool SupportsOverlayFullscreenVideo() { return false; }
   // Inform WebMediaPlayer when the element has entered/exited fullscreen.
   virtual void EnteredFullscreen() {}
   virtual void ExitedFullscreen() {}

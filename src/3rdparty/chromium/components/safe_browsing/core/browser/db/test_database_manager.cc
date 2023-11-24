@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/notreached.h"
+#include "base/task/sequenced_task_runner.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace safe_browsing {
@@ -42,7 +43,8 @@ bool TestSafeBrowsingDatabaseManager::ChecksAreAlwaysAsync() const {
 bool TestSafeBrowsingDatabaseManager::CheckBrowseUrl(
     const GURL& url,
     const SBThreatTypeSet& threat_types,
-    Client* client) {
+    Client* client,
+    MechanismExperimentHashDatabaseCache experiment_cache_selection) {
   NOTIMPLEMENTED();
   return true;
 }
@@ -67,22 +69,16 @@ bool TestSafeBrowsingDatabaseManager::CheckResourceUrl(const GURL& url,
   return true;
 }
 
-AsyncMatch TestSafeBrowsingDatabaseManager::CheckUrlForHighConfidenceAllowlist(
+bool TestSafeBrowsingDatabaseManager::CheckUrlForHighConfidenceAllowlist(
     const GURL& url,
-    Client* client) {
+    const std::string& metric_variation) {
   NOTIMPLEMENTED();
-  return AsyncMatch::NO_MATCH;
+  return false;
 }
 
 bool TestSafeBrowsingDatabaseManager::CheckUrlForSubresourceFilter(
     const GURL& url,
     Client* client) {
-  NOTIMPLEMENTED();
-  return true;
-}
-
-bool TestSafeBrowsingDatabaseManager::CheckUrlForAccuracyTips(const GURL& url,
-                                                              Client* client) {
   NOTIMPLEMENTED();
   return true;
 }
@@ -113,11 +109,6 @@ safe_browsing::ThreatSource TestSafeBrowsingDatabaseManager::GetThreatSource()
 }
 
 bool TestSafeBrowsingDatabaseManager::IsDownloadProtectionEnabled() const {
-  NOTIMPLEMENTED();
-  return false;
-}
-
-bool TestSafeBrowsingDatabaseManager::IsSupported() const {
   NOTIMPLEMENTED();
   return false;
 }

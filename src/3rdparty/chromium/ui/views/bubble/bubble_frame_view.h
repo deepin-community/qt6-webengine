@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,6 +17,8 @@
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/progress_bar.h"
 #include "ui/views/input_event_activation_protector.h"
+#include "ui/views/layout/box_layout_view.h"
+#include "ui/views/style/typography.h"
 #include "ui/views/window/non_client_view.h"
 
 namespace gfx {
@@ -68,6 +70,12 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView {
   // Sets a custom view to be the dialog title instead of the |default_title_|
   // label. If there is an existing title view it will be deleted.
   void SetTitleView(std::unique_ptr<View> title_view);
+
+  // Updates the subtitle label from the BubbleDialogDelegate.
+  void UpdateSubtitle();
+
+  // Signals that the main image may have changed and needs to be fetched again.
+  void UpdateMainImage();
 
   // Updates the current progress value of |progress_indicator_|. If progress is
   // absent, hides |the progress_indicator|.
@@ -144,6 +152,7 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView {
   bool GetDisplayVisibleArrow() const;
 
   // Set the background color of the bubble border.
+  // TODO(b/261653838): Update this function to use color id instead.
   void SetBackgroundColor(SkColor color);
   SkColor GetBackgroundColor() const;
 
@@ -165,6 +174,10 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView {
   Button* GetCloseButtonForTesting() { return close_; }
 
   View* GetHeaderViewForTesting() const { return header_view_; }
+
+  // Update the |view_shown_time_stamp_| of input protector. A short time
+  // from this point onward, input event will be ignored.
+  void UpdateInputProtectorTimeStamp();
 
   // Resets the time when view has been shown. Tests may need to call this
   // method if they use events that could be otherwise treated as unintended.
@@ -202,6 +215,8 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView {
                            IgnorePossiblyUnintendedClicksClose);
   FRIEND_TEST_ALL_PREFIXES(BubbleFrameViewTest,
                            IgnorePossiblyUnintendedClicksMinimize);
+  FRIEND_TEST_ALL_PREFIXES(BubbleFrameViewTest,
+                           IgnorePossiblyUnintendedClicksAnchorBoundsChanged);
   FRIEND_TEST_ALL_PREFIXES(BubbleDelegateTest, CloseReasons);
   FRIEND_TEST_ALL_PREFIXES(BubbleDialogDelegateViewTest, CloseMethods);
   FRIEND_TEST_ALL_PREFIXES(BubbleDialogDelegateViewTest, CreateDelegate);
@@ -250,11 +265,19 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView {
   // client views to the bubble border's bounds.
   void UpdateClientLayerCornerRadius();
 
+  int GetMainImageLeftInsets() const;
+
+  // Helper method to create a label with text style
+  static std::unique_ptr<Label> CreateLabelWithContextAndStyle(
+      const std::u16string& label_text,
+      style::TextContext text_context,
+      style::TextStyle text_style);
+
   // The bubble border.
   raw_ptr<BubbleBorder> bubble_border_ = nullptr;
 
   // Margins around the title label.
-  gfx::Insets title_margins_;
+  const gfx::Insets title_margins_;
 
   // Margins between the content and the inside of the border, in pixels.
   gfx::Insets content_margins_;
@@ -265,11 +288,18 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView {
   // The optional title icon.
   raw_ptr<ImageView> title_icon_ = nullptr;
 
+  // The optional main image.
+  raw_ptr<ImageView> main_image_ = nullptr;
+
+  raw_ptr<BoxLayoutView> title_container_ = nullptr;
+
   // One of these fields is used as the dialog title. If SetTitleView is called
   // the custom title view is stored in |custom_title_| and this class assumes
   // ownership. Otherwise |default_title_| is used.
-  raw_ptr<Label> default_title_ = nullptr;
-  raw_ptr<View> custom_title_ = nullptr;
+  raw_ptr<Label, DanglingUntriaged> default_title_ = nullptr;
+  raw_ptr<View, DanglingUntriaged> custom_title_ = nullptr;
+
+  raw_ptr<Label> subtitle_ = nullptr;
 
   // The optional close button (the X).
   raw_ptr<Button> close_ = nullptr;

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,6 @@
 
 #include "base/files/file_path.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 
 namespace chrome {
 
@@ -74,7 +73,6 @@ extern const base::FilePath::CharType kServiceStateFileName[];
 extern const base::FilePath::CharType kSingletonCookieFilename[];
 extern const base::FilePath::CharType kSingletonLockFilename[];
 extern const base::FilePath::CharType kSingletonSocketFilename[];
-extern const base::FilePath::CharType kSupervisedUserSettingsFilename[];
 extern const base::FilePath::CharType kThemePackFilename[];
 extern const base::FilePath::CharType kTransportSecurityPersisterFilename[];
 extern const base::FilePath::CharType kTrustTokenFilename[];
@@ -99,25 +97,6 @@ extern const wchar_t kUserDataDirname[];
 // one-process-per-site mode for all tabs (with poor responsiveness), while
 // still securely isolating each extension in its own process.
 extern const float kMaxShareOfExtensionProcesses;
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-// Chrome OS profile directories have custom prefix.
-// Profile path format: [user_data_dir]/u-[$hash]
-// Ex.: /home/chronos/u-0123456789
-extern const char kProfileDirPrefix[];
-
-// Legacy profile dir that was used when only one cryptohome has been mounted.
-extern const char kLegacyProfileDir[];
-
-// This must be kept in sync with TestingProfile::kTestUserProfileDir.
-extern const char kTestUserProfileDir[];
-
-// An anonymous profile that is used for lock screen apps.
-extern const char kLockScreenAppProfile[];
-
-// An incognito profile that is used for user authentication on lock screen.
-extern const char kLockScreenProfile[];
-#endif
 
 // Used to identify the application to the system AV function in Windows.
 extern const char kApplicationClientIDStringForAVScanning[];

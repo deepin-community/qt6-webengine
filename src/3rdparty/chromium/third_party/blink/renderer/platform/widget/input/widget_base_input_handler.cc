@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -29,6 +29,7 @@
 #include "third_party/blink/renderer/platform/widget/input/ime_event_guard.h"
 #include "third_party/blink/renderer/platform/widget/widget_base.h"
 #include "third_party/blink/renderer/platform/widget/widget_base_client.h"
+#include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "ui/latency/latency_info.h"
 
 #if BUILDFLAG(IS_ANDROID)
@@ -160,7 +161,7 @@ mojom::InputEventResultState GetAckResult(WebInputEventResult processed) {
              : mojom::InputEventResultState::kConsumed;
 }
 
-bool IsGestureScroll(WebInputEvent::Type type) {
+bool IsGestureScrollWBIH(WebInputEvent::Type type) {
   switch (type) {
     case WebGestureEvent::Type::kGestureScrollBegin:
     case WebGestureEvent::Type::kGestureScrollUpdate:
@@ -230,7 +231,7 @@ class WidgetBaseInputHandler::HandlingState {
 
   absl::optional<WebTouchAction>& touch_action() { return touch_action_; }
 
-  std::vector<WidgetBaseInputHandler::InjectScrollGestureParams>&
+  Vector<WidgetBaseInputHandler::InjectScrollGestureParams>&
   injected_scroll_params() {
     return injected_scroll_params_;
   }
@@ -249,7 +250,7 @@ class WidgetBaseInputHandler::HandlingState {
   // Used to hold a sequence of parameters corresponding to scroll gesture
   // events that should be injected once the current input event is done
   // being processed.
-  std::vector<WidgetBaseInputHandler::InjectScrollGestureParams>
+  Vector<WidgetBaseInputHandler::InjectScrollGestureParams>
       injected_scroll_params_;
 
   // Whether the event we are handling is a touch start or move.
@@ -320,7 +321,7 @@ void WidgetBaseInputHandler::HandleInputEvent(
                "WidgetBaseInputHandler::OnHandleInputEvent", "event",
                WebInputEvent::GetName(input_event.GetType()));
   int64_t trace_id = coalesced_event.latency_info().trace_id();
-  TRACE_EVENT("input,benchmark", "LatencyInfo.Flow",
+  TRACE_EVENT("input,benchmark,latencyInfo", "LatencyInfo.Flow",
               [trace_id](perfetto::EventContext ctx) {
                 ChromeLatencyInfo* info =
                     ctx.event()->set_chrome_latency_info();
@@ -564,7 +565,7 @@ void WidgetBaseInputHandler::InjectGestureScrollEvent(
     ui::ScrollGranularity granularity,
     cc::ElementId scrollable_area_element_id,
     WebInputEvent::Type injected_type) {
-  DCHECK(IsGestureScroll(injected_type));
+  DCHECK(IsGestureScrollWBIH(injected_type));
   // If we're currently handling an input event, cache the appropriate
   // parameters so we can dispatch the events directly once blink finishes
   // handling the event.
@@ -598,7 +599,7 @@ void WidgetBaseInputHandler::InjectGestureScrollEvent(
 }
 
 void WidgetBaseInputHandler::HandleInjectedScrollGestures(
-    std::vector<InjectScrollGestureParams> injected_scroll_params,
+    Vector<InjectScrollGestureParams> injected_scroll_params,
     const WebInputEvent& input_event,
     const ui::LatencyInfo& original_latency_info,
     const cc::EventMetrics* original_metrics) {

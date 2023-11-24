@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -48,10 +48,9 @@ class DashboardPrivateShowPermissionPromptForDelegatedInstallFunction
   ExtensionFunction::ResponseAction Run() override;
 
   // WebstoreInstallHelper::Delegate:
-  void OnWebstoreParseSuccess(
-      const std::string& id,
-      const SkBitmap& icon,
-      std::unique_ptr<base::DictionaryValue> parsed_manifest) override;
+  void OnWebstoreParseSuccess(const std::string& id,
+                              const SkBitmap& icon,
+                              base::Value::Dict parsed_manifest) override;
   void OnWebstoreParseFailure(const std::string& id,
                               InstallHelperResultCode result,
                               const std::string& error_message) override;

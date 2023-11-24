@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -55,7 +55,6 @@ WebPreferences::WebPreferences()
       allow_scripts_to_close_windows(false),
       remote_fonts_enabled(true),
       javascript_can_access_clipboard(false),
-      xslt_enabled(true),
       dns_prefetching_enabled(true),
       data_saver_enabled(false),
       local_storage_enabled(false),
@@ -116,8 +115,9 @@ WebPreferences::WebPreferences()
 #endif
       supports_multiple_windows(true),
       viewport_enabled(false),
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
       viewport_meta_enabled(true),
+      auto_zoom_focused_editable_to_legible_scale(true),
       shrinks_viewport_contents_to_fit(true),
       viewport_style(mojom::ViewportStyle::kMobile),
       always_show_context_menu_on_touch(false),
@@ -125,6 +125,7 @@ WebPreferences::WebPreferences()
       main_frame_resizes_are_orientation_changes(true),
 #else
       viewport_meta_enabled(false),
+      auto_zoom_focused_editable_to_legible_scale(false),
       shrinks_viewport_contents_to_fit(false),
       viewport_style(mojom::ViewportStyle::kDefault),
       always_show_context_menu_on_touch(true),
@@ -142,6 +143,7 @@ WebPreferences::WebPreferences()
       fake_no_alloc_direct_call_for_testing_enabled(false),
       v8_cache_options(blink::mojom::V8CacheOptions::kDefault),
       record_whole_document(false),
+      stylus_handwriting_enabled(false),
       cookie_enabled(true),
       accelerated_video_decode_enabled(false),
       animation_policy(
@@ -150,7 +152,7 @@ WebPreferences::WebPreferences()
       text_tracks_enabled(false),
       text_track_margin_percentage(0.0f),
       immersive_mode_enabled(false),
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_APPLE)
       double_tap_to_zoom_enabled(true),
 #else
       double_tap_to_zoom_enabled(false),
@@ -183,7 +185,7 @@ WebPreferences::WebPreferences()
       scroll_top_left_interop_enabled(true),
       disable_accelerated_small_canvases(false),
 #endif  // BUILDFLAG(IS_ANDROID)
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
       default_minimum_page_scale_factor(0.25f),
       default_maximum_page_scale_factor(5.f),
 #elif BUILDFLAG(IS_MAC)
@@ -214,6 +216,13 @@ WebPreferences::WebPreferences()
   sans_serif_font_family_map[web_pref::kCommonScript] = u"Arial";
   cursive_font_family_map[web_pref::kCommonScript] = u"Script";
   fantasy_font_family_map[web_pref::kCommonScript] = u"Impact";
+  // Latin Modern Math is an open source font available in LaTeX distributions,
+  // and consequently other installable system packages. It provides the default
+  // "Computer Modern" style that math people are used to and contains an
+  // OpenType MATH table for math layout. It is thus a good default choice which
+  // may be refined via resource files for the Chrome profile, in order to take
+  // into account platform-specific availability of math fonts.
+  math_font_family_map[web_pref::kCommonScript] = u"Latin Modern Math";
 }
 
 WebPreferences::WebPreferences(const WebPreferences& other) = default;

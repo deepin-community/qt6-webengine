@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -25,13 +25,13 @@ NavigationRequestInfo::NavigationRequestInfo(
         blob_url_loader_factory,
     const base::UnguessableToken& devtools_navigation_token,
     const base::UnguessableToken& devtools_frame_token,
-    bool obey_origin_policy,
     net::HttpRequestHeaders cors_exempt_headers,
     network::mojom::ClientSecurityStatePtr client_security_state,
     const absl::optional<std::vector<net::SourceStream::SourceType>>&
         devtools_accepted_stream_types,
     bool is_pdf,
-    WeakDocumentPtr initiator_document)
+    WeakDocumentPtr initiator_document,
+    bool allow_cookies_from_browser)
     : common_params(std::move(common_params)),
       begin_params(std::move(begin_params)),
       sandbox_flags(sandbox_flags),
@@ -46,12 +46,12 @@ NavigationRequestInfo::NavigationRequestInfo(
       blob_url_loader_factory(std::move(blob_url_loader_factory)),
       devtools_navigation_token(devtools_navigation_token),
       devtools_frame_token(devtools_frame_token),
-      obey_origin_policy(obey_origin_policy),
       cors_exempt_headers(std::move(cors_exempt_headers)),
       client_security_state(std::move(client_security_state)),
       devtools_accepted_stream_types(devtools_accepted_stream_types),
       is_pdf(is_pdf),
-      initiator_document(std::move(initiator_document)) {}
+      initiator_document(std::move(initiator_document)),
+      allow_cookies_from_browser(allow_cookies_from_browser) {}
 
 NavigationRequestInfo::~NavigationRequestInfo() {}
 

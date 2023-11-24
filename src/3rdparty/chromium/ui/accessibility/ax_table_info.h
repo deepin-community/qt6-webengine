@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,7 +27,7 @@ class AXNode;
 class AX_EXPORT AXTableInfo {
  public:
   struct CellData {
-    AXNode* cell;
+    raw_ptr<AXNode, DanglingUntriaged> cell;
     AXNodeID cell_id;
     size_t col_index;
     size_t row_index;
@@ -63,11 +63,11 @@ class AX_EXPORT AXTableInfo {
   // List of column header nodes IDs for each column index.
   std::vector<std::vector<AXNodeID>> col_headers;
 
+  // All column header cells in a one dimensional array.
+  std::vector<AXNodeID> all_col_headers;
+
   // List of row header node IDs for each row index.
   std::vector<std::vector<AXNodeID>> row_headers;
-
-  // All header cells.
-  std::vector<AXNodeID> all_headers;
 
   // The id of the element with the caption tag or ARIA role.
   AXNodeID caption_id;

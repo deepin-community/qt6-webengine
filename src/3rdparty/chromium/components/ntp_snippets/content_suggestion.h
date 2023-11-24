@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,13 +15,6 @@
 #include "url/gurl.h"
 
 namespace ntp_snippets {
-
-// ReadingListSuggestionExtra contains additional data which is only available
-// for Reading List suggestions.
-struct ReadingListSuggestionExtra {
-  // URL of the page whose favicon should be displayed for this suggestion.
-  GURL favicon_page_url;
-};
 
 // Contains additional data for notification-worthy suggestions.
 struct NotificationExtra {
@@ -131,15 +124,6 @@ class ContentSuggestion {
   float score() const { return score_; }
   void set_score(float score) { score_ = score; }
 
-  // Extra information for reading list suggestions. Only available for
-  // KnownCategories::READING_LIST suggestions.
-  ReadingListSuggestionExtra* reading_list_suggestion_extra() const {
-    return reading_list_suggestion_extra_.get();
-  }
-  void set_reading_list_suggestion_extra(
-      std::unique_ptr<ReadingListSuggestionExtra>
-          reading_list_suggestion_extra);
-
   // Extra information for notifications. When absent, no notification should be
   // sent for this suggestion. When present, a notification should be sent,
   // unless other factors disallow it (examples: the extra parameters say to;
@@ -173,7 +157,6 @@ class ContentSuggestion {
   base::Time publish_date_;
   std::u16string publisher_name_;
   float score_;
-  std::unique_ptr<ReadingListSuggestionExtra> reading_list_suggestion_extra_;
   std::unique_ptr<NotificationExtra> notification_extra_;
 
   // The time when the remote suggestion was fetched from the server. This field

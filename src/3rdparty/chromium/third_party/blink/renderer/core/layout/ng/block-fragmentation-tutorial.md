@@ -111,7 +111,7 @@ step before constructing the constraint space. This sets up the
 [fragmentainer](https://www.w3.org/TR/css-break-3/#fragmentainer) (column /
 page) block-size, and block-offset into the fragmentainer, so that we can tell
 how much space we can use before we need to insert a break. See
-[FragmentainerSpaceAtBfcStart()](ng_fragmentation_utils.h). If content is
+[FragmentainerSpaceLeft()](ng_fragmentation_utils.h). If content is
 [monolithic](https://www.w3.org/TR/css-break-3/#monolithic) (i.e. truly
 unbreakable), [NGLayoutInputNode::IsMonolithic()](ng_layout_input_node.h) will
 return true. Being monolithic means that we cannot break inside the element (but
@@ -272,7 +272,7 @@ fragment has been generated for a node, since we also create break tokens
 *before* nodes, not just inside them. If we want to know if we're actually
 resuming layout of a node, we also need to check that it's not a break-before
 break token (NGBlockBreakToken::IsBreakBefore()). There's a utility function for
-this: [IsResumingLayout()](ng_fragmentation_utils.h).
+this: [IsBreakInside()](ng_fragmentation_utils.h).
 
 Break tokens are attached to each fragment that breaks inside. Child fragments
 that broke inside have an entry in the child list

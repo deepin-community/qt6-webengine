@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,8 +12,8 @@
 #include <memory>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/containers/flat_map.h"
+#include "base/functional/callback.h"
 #include "content/browser/aggregation_service/aggregatable_report.h"
 #include "content/browser/aggregation_service/aggregation_service_key_fetcher.h"
 #include "content/browser/aggregation_service/public_key.h"
@@ -54,7 +54,8 @@ class CONTENT_EXPORT AggregatableReportAssembler {
   };
 
   using AssemblyCallback =
-      base::OnceCallback<void(absl::optional<AggregatableReport>,
+      base::OnceCallback<void(AggregatableReportRequest,
+                              absl::optional<AggregatableReport>,
                               AssemblyStatus)>;
 
   // While we shouldn't hit these limits in typical usage, we protect against

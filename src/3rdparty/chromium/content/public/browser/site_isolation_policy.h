@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -78,10 +78,6 @@ class CONTENT_EXPORT SiteIsolationPolicy {
   // startup.
   static void ApplyGlobalIsolatedOrigins();
 
-  // Returns true if the application isolation level is enabled.
-  // This must be called on the UI thread.
-  static bool IsApplicationIsolationLevelEnabled();
-
   // Returns true if the given URL should be assigned the application isolation
   // level.
   // This must be called on the UI thread.
@@ -92,6 +88,10 @@ class CONTENT_EXPORT SiteIsolationPolicy {
   // Forces other methods in this class to reread flag values instead of using
   // their cached value.
   static void DisableFlagCachingForTesting();
+
+  // Returns true when process-isolation of fenced frames from their embedders
+  // is enabled.
+  static bool IsProcessIsolationForFencedFramesEnabled();
 
  private:
   SiteIsolationPolicy();  // Not instantiable.

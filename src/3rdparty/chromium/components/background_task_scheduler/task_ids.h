@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -40,8 +40,6 @@ enum class TaskIds {
   DOWNLOAD_LATER_JOB_ID = 57,
   FEED_REFRESH_JOB_ID = 22,
   COMPONENT_UPDATE_JOB_ID = 2,
-  DEPRECATED_EXPLORE_SITES_REFRESH_JOB_ID = 100,
-  EXPLORE_SITES_REFRESH_JOB_ID = 101,
   BACKGROUND_SYNC_ONE_SHOT_JOB_ID = 102,
   NOTIFICATION_SCHEDULER_JOB_ID = 103,
   NOTIFICATION_TRIGGER_JOB_ID = 104,

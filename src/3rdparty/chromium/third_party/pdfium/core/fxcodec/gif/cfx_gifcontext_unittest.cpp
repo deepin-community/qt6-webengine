@@ -1,12 +1,16 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "core/fxcodec/gif/cfx_gifcontext.h"
 
+#include <stdint.h>
+
 #include <utility>
 
 #include "core/fxcodec/cfx_codec_memory.h"
+#include "core/fxcrt/data_vector.h"
+#include "core/fxcrt/span_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace fxcodec {
@@ -23,7 +27,7 @@ class CFX_GifContextForTest final : public CFX_GifContext {
   CFX_CodecMemory* InputBuffer() const { return input_buffer_.Get(); }
   void SetTestInputBuffer(pdfium::span<uint8_t> input) {
     auto pMemory = pdfium::MakeRetain<CFX_CodecMemory>(input.size());
-    memcpy(pMemory->GetBuffer(), input.data(), input.size());
+    fxcrt::spancpy(pMemory->GetBufferSpan(), input);
     SetInputBuffer(std::move(pMemory));
   }
 };
@@ -46,7 +50,7 @@ TEST(CFX_GifContext, SetInputBuffer) {
 }
 
 TEST(CFX_GifContext, ReadAllOrNone) {
-  std::vector<uint8_t, FxAllocAllocator<uint8_t>> dest_buffer;
+  DataVector<uint8_t> dest_buffer;
   uint8_t src_buffer[] = {0x00, 0x01, 0x02, 0x03, 0x04,
                           0x05, 0x06, 0x07, 0x08, 0x09};
   CFX_GifContextForTest context;

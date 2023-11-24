@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,11 +13,14 @@
 
 namespace blink {
 
+class TreeScope;
+
 class CORE_EXPORT CSSCustomIdentValue : public CSSValue {
  public:
   explicit CSSCustomIdentValue(const AtomicString&);
   explicit CSSCustomIdentValue(CSSPropertyID);
 
+  const TreeScope* GetTreeScope() const { return tree_scope_; }
   const AtomicString& Value() const {
     DCHECK(!IsKnownPropertyID());
     return string_;
@@ -32,14 +35,20 @@ class CORE_EXPORT CSSCustomIdentValue : public CSSValue {
 
   String CustomCSSText() const;
 
+  const CSSCustomIdentValue& PopulateWithTreeScope(const TreeScope*) const;
+
   bool Equals(const CSSCustomIdentValue& other) const {
-    return IsKnownPropertyID() ? property_id_ == other.property_id_
-                               : string_ == other.string_;
+    if (IsKnownPropertyID()) {
+      return property_id_ == other.property_id_;
+    }
+    return IsScopedValue() == other.IsScopedValue() &&
+           tree_scope_ == other.tree_scope_ && string_ == other.string_;
   }
 
   void TraceAfterDispatch(blink::Visitor*) const;
 
  private:
+  WeakMember<const TreeScope> tree_scope_;
   AtomicString string_;
   CSSPropertyID property_id_;
 };

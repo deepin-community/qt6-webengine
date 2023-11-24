@@ -33,19 +33,21 @@
 //  Based on original Protocol Buffers design by
 //  Sanjay Ghemawat, Jeff Dean, and others.
 
+#include <google/protobuf/compiler/java/java_string_field.h>
+
+#include <cstdint>
 #include <map>
 #include <string>
 
 #include <google/protobuf/stubs/logging.h>
 #include <google/protobuf/stubs/common.h>
+#include <google/protobuf/io/printer.h>
+#include <google/protobuf/wire_format.h>
+#include <google/protobuf/stubs/strutil.h>
 #include <google/protobuf/compiler/java/java_context.h>
 #include <google/protobuf/compiler/java/java_doc_comment.h>
 #include <google/protobuf/compiler/java/java_helpers.h>
 #include <google/protobuf/compiler/java/java_name_resolver.h>
-#include <google/protobuf/compiler/java/java_string_field.h>
-#include <google/protobuf/io/printer.h>
-#include <google/protobuf/wire_format.h>
-#include <google/protobuf/stubs/strutil.h>
 
 namespace google {
 namespace protobuf {
@@ -71,13 +73,16 @@ void SetPrimitiveVariables(const FieldDescriptor* descriptor,
       "= " + ImmutableDefaultValue(descriptor, name_resolver);
   (*variables)["capitalized_type"] = "String";
   (*variables)["tag"] =
-      StrCat(static_cast<int32>(WireFormat::MakeTag(descriptor)));
+      StrCat(static_cast<int32_t>(WireFormat::MakeTag(descriptor)));
   (*variables)["tag_size"] = StrCat(
       WireFormat::TagSize(descriptor->number(), GetType(descriptor)));
   (*variables)["null_check"] =
       "  if (value == null) {\n"
       "    throw new NullPointerException();\n"
       "  }\n";
+  (*variables)["isStringEmpty"] = "com.google.protobuf.GeneratedMessage" +
+                                  GeneratedCodeVersionSuffix() +
+                                  ".isStringEmpty";
   (*variables)["writeString"] = "com.google.protobuf.GeneratedMessage" +
                                 GeneratedCodeVersionSuffix() + ".writeString";
   (*variables)["computeStringSize"] = "com.google.protobuf.GeneratedMessage" +
@@ -88,9 +93,14 @@ void SetPrimitiveVariables(const FieldDescriptor* descriptor,
   // by the proto compiler
   (*variables)["deprecation"] =
       descriptor->options().deprecated() ? "@java.lang.Deprecated " : "";
+  (*variables)["kt_deprecation"] =
+      descriptor->options().deprecated()
+          ? "@kotlin.Deprecated(message = \"Field " + (*variables)["name"] +
+                " is deprecated\") "
+          : "";
   (*variables)["on_changed"] = "onChanged();";
 
-  if (SupportFieldPresence(descriptor)) {
+  if (HasHasbit(descriptor)) {
     // For singular messages and builders, one bit is used for the hasField bit.
     (*variables)["get_has_field_bit_message"] = GenerateGetBit(messageBitIndex);
     (*variables)["get_has_field_bit_builder"] = GenerateGetBit(builderBitIndex);
@@ -110,20 +120,13 @@ void SetPrimitiveVariables(const FieldDescriptor* descriptor,
     (*variables)["clear_has_field_bit_builder"] = "";
 
     (*variables)["is_field_present_message"] =
-        "!get" + (*variables)["capitalized_name"] + "Bytes().isEmpty()";
+        "!" + (*variables)["isStringEmpty"] + "(" + (*variables)["name"] + "_)";
   }
 
   // For repeated builders, one bit is used for whether the array is immutable.
   (*variables)["get_mutable_bit_builder"] = GenerateGetBit(builderBitIndex);
   (*variables)["set_mutable_bit_builder"] = GenerateSetBit(builderBitIndex);
   (*variables)["clear_mutable_bit_builder"] = GenerateClearBit(builderBitIndex);
-
-  // For repeated fields, one bit is used for whether the array is immutable
-  // in the parsing constructor.
-  (*variables)["get_mutable_bit_parser"] =
-      GenerateGetBitMutableLocal(builderBitIndex);
-  (*variables)["set_mutable_bit_parser"] =
-      GenerateSetBitMutableLocal(builderBitIndex);
 
   (*variables)["get_has_field_bit_from_local"] =
       GenerateGetBitFromLocal(builderBitIndex);
@@ -147,7 +150,7 @@ ImmutableStringFieldGenerator::ImmutableStringFieldGenerator(
 ImmutableStringFieldGenerator::~ImmutableStringFieldGenerator() {}
 
 int ImmutableStringFieldGenerator::GetNumBitsForMessage() const {
-  return SupportFieldPresence(descriptor_) ? 1 : 0;
+  return HasHasbit(descriptor_) ? 1 : 0;
 }
 
 int ImmutableStringFieldGenerator::GetNumBitsForBuilder() const {
@@ -188,7 +191,7 @@ int ImmutableStringFieldGenerator::GetNumBitsForBuilder() const {
 // UnmodifiableLazyStringList.
 void ImmutableStringFieldGenerator::GenerateInterfaceMembers(
     io::Printer* printer) const {
-  if (SupportFieldPresence(descriptor_)) {
+  if (HasHazzer(descriptor_)) {
     WriteFieldAccessorDocComment(printer, descriptor_, HAZZER);
     printer->Print(variables_,
                    "$deprecation$boolean has$capitalized_name$();\n");
@@ -207,7 +210,7 @@ void ImmutableStringFieldGenerator::GenerateMembers(
   printer->Print(variables_, "private volatile java.lang.Object $name$_;\n");
   PrintExtraFieldInfo(variables_, printer);
 
-  if (SupportFieldPresence(descriptor_)) {
+  if (HasHazzer(descriptor_)) {
     WriteFieldAccessorDocComment(printer, descriptor_, HAZZER);
     printer->Print(
         variables_,
@@ -266,7 +269,7 @@ void ImmutableStringFieldGenerator::GenerateBuilderMembers(
     io::Printer* printer) const {
   printer->Print(variables_,
                  "private java.lang.Object $name$_ $default_init$;\n");
-  if (SupportFieldPresence(descriptor_)) {
+  if (HasHazzer(descriptor_)) {
     WriteFieldAccessorDocComment(printer, descriptor_, HAZZER);
     printer->Print(
         variables_,
@@ -365,6 +368,35 @@ void ImmutableStringFieldGenerator::GenerateBuilderMembers(
                  "}\n");
 }
 
+void ImmutableStringFieldGenerator::GenerateKotlinDslMembers(
+    io::Printer* printer) const {
+  WriteFieldDocComment(printer, descriptor_);
+  printer->Print(variables_,
+                 "$kt_deprecation$public var $kt_name$: kotlin.String\n"
+                 "  @JvmName(\"${$get$kt_capitalized_name$$}$\")\n"
+                 "  get() = $kt_dsl_builder$.${$get$capitalized_name$$}$()\n"
+                 "  @JvmName(\"${$set$kt_capitalized_name$$}$\")\n"
+                 "  set(value) {\n"
+                 "    $kt_dsl_builder$.${$set$capitalized_name$$}$(value)\n"
+                 "  }\n");
+
+  WriteFieldAccessorDocComment(printer, descriptor_, CLEARER,
+                               /* builder */ false);
+  printer->Print(variables_,
+                 "public fun ${$clear$kt_capitalized_name$$}$() {\n"
+                 "  $kt_dsl_builder$.${$clear$capitalized_name$$}$()\n"
+                 "}\n");
+
+  if (HasHazzer(descriptor_)) {
+    WriteFieldAccessorDocComment(printer, descriptor_, HAZZER);
+    printer->Print(
+        variables_,
+        "public fun ${$has$kt_capitalized_name$$}$(): kotlin.Boolean {\n"
+        "  return $kt_dsl_builder$.${$has$capitalized_name$$}$()\n"
+        "}\n");
+  }
+}
+
 void ImmutableStringFieldGenerator::GenerateFieldBuilderInitializationCode(
     io::Printer* printer) const {
   // noop for primitives
@@ -384,7 +416,7 @@ void ImmutableStringFieldGenerator::GenerateBuilderClearCode(
 
 void ImmutableStringFieldGenerator::GenerateMergingCode(
     io::Printer* printer) const {
-  if (SupportFieldPresence(descriptor_)) {
+  if (HasHazzer(descriptor_)) {
     // Allow a slight breach of abstraction here in order to avoid forcing
     // all string fields to Strings when copying fields from a Message.
     printer->Print(variables_,
@@ -404,7 +436,7 @@ void ImmutableStringFieldGenerator::GenerateMergingCode(
 
 void ImmutableStringFieldGenerator::GenerateBuildingCode(
     io::Printer* printer) const {
-  if (SupportFieldPresence(descriptor_)) {
+  if (HasHazzer(descriptor_)) {
     printer->Print(variables_,
                    "if ($get_has_field_bit_from_local$) {\n"
                    "  $set_has_field_bit_to_local$;\n"
@@ -413,24 +445,17 @@ void ImmutableStringFieldGenerator::GenerateBuildingCode(
   printer->Print(variables_, "result.$name$_ = $name$_;\n");
 }
 
-void ImmutableStringFieldGenerator::GenerateParsingCode(
+void ImmutableStringFieldGenerator::GenerateBuilderParsingCode(
     io::Printer* printer) const {
   if (CheckUtf8(descriptor_)) {
     printer->Print(variables_,
-                   "java.lang.String s = input.readStringRequireUtf8();\n"
-                   "$set_has_field_bit_message$\n"
-                   "$name$_ = s;\n");
+                   "$name$_ = input.readStringRequireUtf8();\n"
+                   "$set_has_field_bit_builder$\n");
   } else {
     printer->Print(variables_,
-                   "com.google.protobuf.ByteString bs = input.readBytes();\n"
-                   "$set_has_field_bit_message$\n"
-                   "$name$_ = bs;\n");
+                   "$name$_ = input.readBytes();\n"
+                   "$set_has_field_bit_builder$\n");
   }
-}
-
-void ImmutableStringFieldGenerator::GenerateParsingDoneCode(
-    io::Printer* printer) const {
-  // noop for strings.
 }
 
 void ImmutableStringFieldGenerator::GenerateSerializationCode(
@@ -484,16 +509,13 @@ ImmutableStringOneofFieldGenerator::~ImmutableStringOneofFieldGenerator() {}
 void ImmutableStringOneofFieldGenerator::GenerateMembers(
     io::Printer* printer) const {
   PrintExtraFieldInfo(variables_, printer);
-
-  if (SupportFieldPresence(descriptor_)) {
-    WriteFieldAccessorDocComment(printer, descriptor_, HAZZER);
-    printer->Print(
-        variables_,
-        "$deprecation$public boolean ${$has$capitalized_name$$}$() {\n"
-        "  return $has_oneof_case_message$;\n"
-        "}\n");
-    printer->Annotate("{", "}", descriptor_);
-  }
+  GOOGLE_DCHECK(HasHazzer(descriptor_));
+  WriteFieldAccessorDocComment(printer, descriptor_, HAZZER);
+  printer->Print(variables_,
+                 "$deprecation$public boolean ${$has$capitalized_name$$}$() {\n"
+                 "  return $has_oneof_case_message$;\n"
+                 "}\n");
+  printer->Annotate("{", "}", descriptor_);
 
   WriteFieldAccessorDocComment(printer, descriptor_, GETTER);
   printer->Print(
@@ -551,16 +573,14 @@ void ImmutableStringOneofFieldGenerator::GenerateMembers(
 
 void ImmutableStringOneofFieldGenerator::GenerateBuilderMembers(
     io::Printer* printer) const {
-  if (SupportFieldPresence(descriptor_)) {
-    WriteFieldAccessorDocComment(printer, descriptor_, HAZZER);
-    printer->Print(
-        variables_,
-        "@java.lang.Override\n"
-        "$deprecation$public boolean ${$has$capitalized_name$$}$() {\n"
-        "  return $has_oneof_case_message$;\n"
-        "}\n");
-    printer->Annotate("{", "}", descriptor_);
-  }
+  GOOGLE_DCHECK(HasHazzer(descriptor_));
+  WriteFieldAccessorDocComment(printer, descriptor_, HAZZER);
+  printer->Print(variables_,
+                 "@java.lang.Override\n"
+                 "$deprecation$public boolean ${$has$capitalized_name$$}$() {\n"
+                 "  return $has_oneof_case_message$;\n"
+                 "}\n");
+  printer->Annotate("{", "}", descriptor_);
 
   WriteFieldAccessorDocComment(printer, descriptor_, GETTER);
   printer->Print(
@@ -661,6 +681,11 @@ void ImmutableStringOneofFieldGenerator::GenerateBuilderMembers(
                  "}\n");
 }
 
+void ImmutableStringOneofFieldGenerator::GenerateBuilderClearCode(
+    io::Printer* printer) const {
+  // No-Op: String fields in oneofs are correctly cleared by clearing the oneof
+}
+
 void ImmutableStringOneofFieldGenerator::GenerateMergingCode(
     io::Printer* printer) const {
   // Allow a slight breach of abstraction here in order to avoid forcing
@@ -679,7 +704,7 @@ void ImmutableStringOneofFieldGenerator::GenerateBuildingCode(
                  "}\n");
 }
 
-void ImmutableStringOneofFieldGenerator::GenerateParsingCode(
+void ImmutableStringOneofFieldGenerator::GenerateBuilderParsingCode(
     io::Printer* printer) const {
   if (CheckUtf8(descriptor_)) {
     printer->Print(variables_,
@@ -919,6 +944,107 @@ void RepeatedImmutableStringFieldGenerator::GenerateBuilderMembers(
                  "}\n");
 }
 
+void RepeatedImmutableStringFieldGenerator::GenerateKotlinDslMembers(
+    io::Printer* printer) const {
+  printer->Print(
+      variables_,
+      "/**\n"
+      " * An uninstantiable, behaviorless type to represent the field in\n"
+      " * generics.\n"
+      " */\n"
+      "@kotlin.OptIn"
+      "(com.google.protobuf.kotlin.OnlyForUseByGeneratedProtoCode::class)\n"
+      "public class ${$$kt_capitalized_name$Proxy$}$ private constructor()"
+      " : com.google.protobuf.kotlin.DslProxy()\n");
+
+  // property for List<String>
+  WriteFieldAccessorDocComment(printer, descriptor_, LIST_GETTER);
+  printer->Print(variables_,
+                 "$kt_deprecation$public val $kt_name$: "
+                 "com.google.protobuf.kotlin.DslList"
+                 "<kotlin.String, ${$$kt_capitalized_name$Proxy$}$>\n"
+                 "  @kotlin.jvm.JvmSynthetic\n"
+                 "  get() = com.google.protobuf.kotlin.DslList(\n"
+                 "    $kt_dsl_builder$.${$get$capitalized_name$List$}$()\n"
+                 "  )\n");
+
+  // List<String>.add(String)
+  WriteFieldAccessorDocComment(printer, descriptor_, LIST_ADDER,
+                               /* builder */ false);
+  printer->Print(variables_,
+                 "@kotlin.jvm.JvmSynthetic\n"
+                 "@kotlin.jvm.JvmName(\"add$kt_capitalized_name$\")\n"
+                 "public fun com.google.protobuf.kotlin.DslList"
+                 "<kotlin.String, ${$$kt_capitalized_name$Proxy$}$>."
+                 "add(value: kotlin.String) {\n"
+                 "  $kt_dsl_builder$.${$add$capitalized_name$$}$(value)\n"
+                 "}\n");
+
+  // List<String> += String
+  WriteFieldAccessorDocComment(printer, descriptor_, LIST_ADDER,
+                               /* builder */ false);
+  printer->Print(variables_,
+                 "@kotlin.jvm.JvmSynthetic\n"
+                 "@kotlin.jvm.JvmName(\"plusAssign$kt_capitalized_name$\")\n"
+                 "@Suppress(\"NOTHING_TO_INLINE\")\n"
+                 "public inline operator fun com.google.protobuf.kotlin.DslList"
+                 "<kotlin.String, ${$$kt_capitalized_name$Proxy$}$>."
+                 "plusAssign(value: kotlin.String) {\n"
+                 "  add(value)\n"
+                 "}\n");
+
+  // List<String>.addAll(Iterable<String>)
+  WriteFieldAccessorDocComment(printer, descriptor_, LIST_MULTI_ADDER,
+                               /* builder */ false);
+  printer->Print(
+      variables_,
+      "@kotlin.jvm.JvmSynthetic\n"
+      "@kotlin.jvm.JvmName(\"addAll$kt_capitalized_name$\")\n"
+      "public fun com.google.protobuf.kotlin.DslList"
+      "<kotlin.String, ${$$kt_capitalized_name$Proxy$}$>."
+      "addAll(values: kotlin.collections.Iterable<kotlin.String>) {\n"
+      "  $kt_dsl_builder$.${$addAll$capitalized_name$$}$(values)\n"
+      "}\n");
+
+  // List<String> += Iterable<String>
+  WriteFieldAccessorDocComment(printer, descriptor_, LIST_MULTI_ADDER,
+                               /* builder */ false);
+  printer->Print(
+      variables_,
+      "@kotlin.jvm.JvmSynthetic\n"
+      "@kotlin.jvm.JvmName(\"plusAssignAll$kt_capitalized_name$\")\n"
+      "@Suppress(\"NOTHING_TO_INLINE\")\n"
+      "public inline operator fun com.google.protobuf.kotlin.DslList"
+      "<kotlin.String, ${$$kt_capitalized_name$Proxy$}$>."
+      "plusAssign(values: kotlin.collections.Iterable<kotlin.String>) {\n"
+      "  addAll(values)\n"
+      "}\n");
+
+  // List<String>[Int] = String
+  WriteFieldAccessorDocComment(printer, descriptor_, LIST_INDEXED_SETTER,
+                               /* builder */ false);
+  printer->Print(
+      variables_,
+      "@kotlin.jvm.JvmSynthetic\n"
+      "@kotlin.jvm.JvmName(\"set$kt_capitalized_name$\")\n"
+      "public operator fun com.google.protobuf.kotlin.DslList"
+      "<kotlin.String, ${$$kt_capitalized_name$Proxy$}$>."
+      "set(index: kotlin.Int, value: kotlin.String) {\n"
+      "  $kt_dsl_builder$.${$set$capitalized_name$$}$(index, value)\n"
+      "}");
+
+  WriteFieldAccessorDocComment(printer, descriptor_, CLEARER,
+                               /* builder */ false);
+  printer->Print(variables_,
+                 "@kotlin.jvm.JvmSynthetic\n"
+                 "@kotlin.jvm.JvmName(\"clear$kt_capitalized_name$\")\n"
+                 "public fun com.google.protobuf.kotlin.DslList"
+                 "<kotlin.String, ${$$kt_capitalized_name$Proxy$}$>."
+                 "clear() {\n"
+                 "  $kt_dsl_builder$.${$clear$capitalized_name$$}$()\n"
+                 "}");
+}
+
 void RepeatedImmutableStringFieldGenerator::
     GenerateFieldBuilderInitializationCode(io::Printer* printer) const {
   // noop for primitives
@@ -969,33 +1095,19 @@ void RepeatedImmutableStringFieldGenerator::GenerateBuildingCode(
                  "result.$name$_ = $name$_;\n");
 }
 
-void RepeatedImmutableStringFieldGenerator::GenerateParsingCode(
+void RepeatedImmutableStringFieldGenerator::GenerateBuilderParsingCode(
     io::Printer* printer) const {
   if (CheckUtf8(descriptor_)) {
     printer->Print(variables_,
-                   "java.lang.String s = input.readStringRequireUtf8();\n");
+                   "java.lang.String s = input.readStringRequireUtf8();\n"
+                   "ensure$capitalized_name$IsMutable();\n"
+                   "$name$_.add(s);\n");
   } else {
     printer->Print(variables_,
-                   "com.google.protobuf.ByteString bs = input.readBytes();\n");
+                   "com.google.protobuf.ByteString bs = input.readBytes();\n"
+                   "ensure$capitalized_name$IsMutable();\n"
+                   "$name$_.add(bs);\n");
   }
-  printer->Print(variables_,
-                 "if (!$get_mutable_bit_parser$) {\n"
-                 "  $name$_ = new com.google.protobuf.LazyStringArrayList();\n"
-                 "  $set_mutable_bit_parser$;\n"
-                 "}\n");
-  if (CheckUtf8(descriptor_)) {
-    printer->Print(variables_, "$name$_.add(s);\n");
-  } else {
-    printer->Print(variables_, "$name$_.add(bs);\n");
-  }
-}
-
-void RepeatedImmutableStringFieldGenerator::GenerateParsingDoneCode(
-    io::Printer* printer) const {
-  printer->Print(variables_,
-                 "if ($get_mutable_bit_parser$) {\n"
-                 "  $name$_ = $name$_.getUnmodifiableView();\n"
-                 "}\n");
 }
 
 void RepeatedImmutableStringFieldGenerator::GenerateSerializationCode(

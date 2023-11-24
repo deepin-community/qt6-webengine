@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,12 +7,12 @@
 #include <memory>
 #include <tuple>
 
-#include "base/bind.h"
 #include "base/containers/cxx20_erase.h"
 #include "base/debug/crash_logging.h"
 #include "base/debug/dump_without_crashing.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "build/build_config.h"
 #include "content/browser/media/audible_metrics.h"
 #include "content/browser/media/media_devices_util.h"
@@ -186,12 +186,25 @@ void MediaWebContentsObserver::RenderFrameDeleted(
                media_player_observer_hosts_value_type.first.frame_routing_id;
       });
 
-  base::EraseIf(media_player_remotes_,
-                [frame_routing_id](const MediaPlayerRemotesMap::value_type&
-                                       media_player_remotes_value_type) {
-                  return frame_routing_id ==
-                         media_player_remotes_value_type.first.frame_routing_id;
-                });
+  std::vector<MediaPlayerId> removed_media_players;
+  base::EraseIf(
+      media_player_remotes_, [&](const MediaPlayerRemotesMap::value_type&
+                                     media_player_remotes_value_type) {
+        const MediaPlayerId& player_id = media_player_remotes_value_type.first;
+        if (frame_routing_id == player_id.frame_routing_id) {
+          removed_media_players.push_back(player_id);
+          return true;
+        }
+        return false;
+      });
+
+  for (const MediaPlayerId& player_id : removed_media_players) {
+    // Call MediaDestroyed() after all state associated with the media player is
+    // deleted, to ensure that observers see up-to-date state. For example,
+    // HasActiveEffectivelyFullscreenVideo() should return false if `player_id`
+    // was the only fullscreen media.
+    web_contents_impl()->MediaDestroyed(player_id);
+  }
 
   session_controllers_manager_->RenderFrameDeleted(render_frame_host);
 
@@ -291,7 +304,7 @@ MediaWebContentsObserver::MediaPlayerHostImpl::MediaPlayerHostImpl(
 
 MediaWebContentsObserver::MediaPlayerHostImpl::~MediaPlayerHostImpl() = default;
 
-void MediaWebContentsObserver::MediaPlayerHostImpl::BindMediaPlayerHostReceiver(
+void MediaWebContentsObserver::MediaPlayerHostImpl::AddMediaPlayerHostReceiver(
     mojo::PendingAssociatedReceiver<media::mojom::MediaPlayerHost> receiver) {
   receivers_.Add(this, std::move(receiver));
 }
@@ -434,6 +447,14 @@ void MediaWebContentsObserver::MediaPlayerObserverHostImpl::
       ->OnAudioOutputSinkChangingDisabled(media_player_id_);
 }
 
+void MediaWebContentsObserver::MediaPlayerObserverHostImpl::
+    OnRemotePlaybackMetadataChange(
+        media_session::mojom::RemotePlaybackMetadataPtr
+            remote_playback_metadata) {
+  media_web_contents_observer_->OnRemotePlaybackMetadataChange(
+      media_player_id_, std::move(remote_playback_metadata));
+}
+
 void MediaWebContentsObserver::MediaPlayerObserverHostImpl::OnMediaPlaying() {
   PlayerInfo* player_info = GetPlayerInfo();
   if (!player_info)
@@ -557,6 +578,13 @@ void MediaWebContentsObserver::OnAudioOutputSinkChangedWithRawDeviceId(
                                                          raw_device_id);
 }
 
+void MediaWebContentsObserver::OnRemotePlaybackMetadataChange(
+    const MediaPlayerId& player_id,
+    media_session::mojom::RemotePlaybackMetadataPtr remote_playback_metadata) {
+  session_controllers_manager_->OnRemotePlaybackMetadataChange(
+      player_id, std::move(remote_playback_metadata));
+}
+
 bool MediaWebContentsObserver::IsMediaPlayerRemoteAvailable(
     const MediaPlayerId& player_id) {
   return media_player_remotes_.contains(player_id);
@@ -609,13 +637,15 @@ void MediaWebContentsObserver::BindMediaPlayerHost(
     GlobalRenderFrameHostId frame_routing_id,
     mojo::PendingAssociatedReceiver<media::mojom::MediaPlayerHost>
         player_receiver) {
-  if (!media_player_hosts_.contains(frame_routing_id)) {
-    media_player_hosts_[frame_routing_id] =
-        std::make_unique<MediaPlayerHostImpl>(frame_routing_id, this);
+  auto it = media_player_hosts_.find(frame_routing_id);
+  if (it == media_player_hosts_.end()) {
+    it = media_player_hosts_
+             .try_emplace(
+                 frame_routing_id,
+                 std::make_unique<MediaPlayerHostImpl>(frame_routing_id, this))
+             .first;
   }
-
-  media_player_hosts_[frame_routing_id]->BindMediaPlayerHostReceiver(
-      std::move(player_receiver));
+  it->second->AddMediaPlayerHostReceiver(std::move(player_receiver));
 }
 
 void MediaWebContentsObserver::OnMediaPlayerAdded(
@@ -623,22 +653,17 @@ void MediaWebContentsObserver::OnMediaPlayerAdded(
     mojo::PendingAssociatedReceiver<media::mojom::MediaPlayerObserver>
         media_player_observer,
     MediaPlayerId player_id) {
-  auto* const rfh = RenderFrameHost::FromID(player_id.frame_routing_id);
-  DCHECK(rfh);
-
-  if (media_player_remotes_.contains(player_id)) {
-    // Original remote associated with |player_id| will be overridden. If the
-    // original player is still alive, this will break our ability to control
-    // it from the browser process. We don't know that the original player is
-    // actually still alive.
-    // TODO(https://crbug.com/1172882): Determine the root cause of duplication
-    // and/or refactor to make ID purely a browser-side concept.
-    LOG(ERROR) << __func__ << " Duplicate media player id ("
-               << player_id.delegate_id << ")";
+  if (!RenderFrameHost::FromID(player_id.frame_routing_id) ||
+      media_player_remotes_.contains(player_id) ||
+      media_player_observer_hosts_.contains(player_id)) {
+    // If you see this, it's likely due to https://crbug.com/1392441
+    mojo::ReportBadMessage("Bad MediaPlayer request.");
+    return;
   }
 
-  media_player_remotes_[player_id].Bind(std::move(player_remote));
-  media_player_remotes_[player_id].set_disconnect_handler(base::BindOnce(
+  auto remote_it = media_player_remotes_.try_emplace(player_id);
+  remote_it.first->second.Bind(std::move(player_remote));
+  remote_it.first->second.set_disconnect_handler(base::BindOnce(
       [](MediaWebContentsObserver* observer, const MediaPlayerId& player_id) {
         observer->player_info_map_.erase(player_id);
         observer->media_player_remotes_.erase(player_id);
@@ -651,14 +676,10 @@ void MediaWebContentsObserver::OnMediaPlayerAdded(
       },
       base::Unretained(this), player_id));
 
-  // Create a new MediaPlayerObserverHostImpl for |player_id|, implementing the
-  // media::mojom::MediaPlayerObserver mojo interface, to handle messages sent
-  // from the MediaPlayer element in the renderer process.
-  if (!media_player_observer_hosts_.contains(player_id)) {
-    media_player_observer_hosts_[player_id] =
-        std::make_unique<MediaPlayerObserverHostImpl>(player_id, this);
-  }
-  media_player_observer_hosts_[player_id]->BindMediaPlayerObserverReceiver(
+  auto observer_it = media_player_observer_hosts_.try_emplace(
+      player_id,
+      std::make_unique<MediaPlayerObserverHostImpl>(player_id, this));
+  observer_it.first->second->BindMediaPlayerObserverReceiver(
       std::move(media_player_observer));
 }
 

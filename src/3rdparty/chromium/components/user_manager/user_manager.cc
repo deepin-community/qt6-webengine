@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,6 +19,10 @@ void UserManager::Observer::LocalStateChanged(UserManager* user_manager) {}
 
 void UserManager::Observer::OnUserImageChanged(const User& user) {}
 
+void UserManager::Observer::OnUserImageIsEnterpriseManagedChanged(
+    const User& user,
+    bool is_enterprise_managed) {}
+
 void UserManager::Observer::OnUserProfileImageUpdateFailed(const User& user) {}
 
 void UserManager::Observer::OnUserProfileImageUpdated(
@@ -37,9 +41,6 @@ void UserManager::UserSessionStateObserver::ActiveUserChanged(
 
 void UserManager::UserSessionStateObserver::UserAddedToSession(
     const User* active_user) {}
-
-void UserManager::UserSessionStateObserver::ActiveUserHashChanged(
-    const std::string& hash) {}
 
 UserManager::UserSessionStateObserver::~UserSessionStateObserver() {}
 

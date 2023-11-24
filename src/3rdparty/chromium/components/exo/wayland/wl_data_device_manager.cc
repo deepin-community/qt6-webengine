@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -296,6 +296,7 @@ class WaylandDataDeviceDelegate : public DataDeviceDelegate {
   }
   void OnDrop() override {
     wl_data_device_send_drop(data_device_resource_);
+    wl_data_device_send_leave(data_device_resource_);
     wl_client_flush(client_);
   }
   void OnSelection(const DataOffer& data_offer) override {

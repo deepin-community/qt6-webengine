@@ -1,10 +1,11 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/clipboard/data_transfer.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/core/css/properties/longhands.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
@@ -49,7 +50,7 @@ TEST_P(DataTransferTest, NodeImageWithNestedElement) {
   Element* sample = GetDocument().getElementById("sample");
   const std::unique_ptr<DragImage> image =
       DataTransfer::NodeImage(GetFrame(), *sample);
-  EXPECT_EQ(Color(0, 255, 0),
+  EXPECT_EQ(Color::FromRGB(0, 255, 0),
             sample->firstChild()->GetLayoutObject()->ResolveColor(
                 GetCSSPropertyColor()))
       << "Descendants node should have :-webkit-drag.";
@@ -100,14 +101,14 @@ TEST_P(DataTransferTest, NodeImageWithChangingLayoutObject) {
 
   EXPECT_TRUE(sample->GetLayoutObject() != before_layout_object)
       << ":-webkit-drag causes sample to have different layout object.";
-  EXPECT_EQ(Color(255, 0, 0),
+  EXPECT_EQ(Color::FromRGB(255, 0, 0),
             sample->GetLayoutObject()->ResolveColor(GetCSSPropertyColor()))
       << "#sample has :-webkit-drag.";
 
   // Layout w/o :-webkit-drag
   UpdateAllLifecyclePhasesForTest();
 
-  EXPECT_EQ(Color(0, 0, 255),
+  EXPECT_EQ(Color::FromRGB(0, 0, 255),
             sample->GetLayoutObject()->ResolveColor(GetCSSPropertyColor()))
       << "#sample doesn't have :-webkit-drag.";
 }
@@ -332,11 +333,10 @@ TEST_P(DataTransferTest, NodeImageInOffsetStackingContext) {
   EXPECT_EQ(gfx::Size(drag_width, drag_height), image->Size());
 
   // The dragged image should be (drag_width x drag_height) and fully green.
-  Color green = 0xFF00FF00;
   const SkBitmap& bitmap = image->Bitmap();
   for (int x = 0; x < drag_width; ++x) {
     for (int y = 0; y < drag_height; ++y)
-      EXPECT_EQ(green, bitmap.getColor(x, y));
+      EXPECT_EQ(SK_ColorGREEN, bitmap.getColor(x, y));
   }
 }
 
@@ -375,11 +375,10 @@ TEST_P(DataTransferTest, NodeImageWithLargerPositionedDescendant) {
 
   // The dragged image should be (drag_width x drag_height) and fully green
   // which is the color of the #child which fully covers the dragged element.
-  Color green = 0xFF00FF00;
   const SkBitmap& bitmap = image->Bitmap();
   for (int x = 0; x < drag_width; ++x) {
     for (int y = 0; y < drag_height; ++y)
-      EXPECT_EQ(green, bitmap.getColor(x, y));
+      EXPECT_EQ(SK_ColorGREEN, bitmap.getColor(x, y));
   }
 }
 
@@ -393,7 +392,7 @@ TEST_P(DataTransferTest, NodeImageOutOfView) {
   auto image = DataTransfer::NodeImage(GetFrame(),
                                        *GetDocument().getElementById("drag"));
   EXPECT_EQ(gfx::Size(100, 100), image->Size());
-  Color green(0, 0x80, 0);
+  SkColor green = SkColorSetRGB(0, 0x80, 0);
   const SkBitmap& bitmap = image->Bitmap();
   for (int x = 0; x < 100; ++x) {
     for (int y = 0; y < 100; ++y)
@@ -418,15 +417,27 @@ TEST_P(DataTransferTest, NodeImageFixedChild) {
   auto image = DataTransfer::NodeImage(GetFrame(),
                                        *GetDocument().getElementById("drag"));
   EXPECT_EQ(gfx::Size(100, 100), image->Size());
-  Color green(0, 0x80, 0);
-  Color blue(0, 0, 0xFF);
+  SkColor green = SkColorSetRGB(0, 0x80, 0);
+  SkColor blue = SkColorSetRGB(0, 0, 0xFF);
   const SkBitmap& bitmap = image->Bitmap();
   for (int x = 0; x < 100; ++x) {
-    for (int y = 0; y < 50; ++y)
-      ASSERT_EQ(x < 50 ? green : Color::kTransparent, bitmap.getColor(x, y));
+    for (int y = 0; y < 50; ++y) {
+      ASSERT_EQ(x < 50 ? green : SK_ColorTRANSPARENT, bitmap.getColor(x, y));
+    }
     for (int y = 50; y < 100; ++y)
       ASSERT_EQ(blue, bitmap.getColor(x, y));
   }
+}
+
+TEST_P(DataTransferTest, CreateDragImageWithEmptyImageResource) {
+  DataTransfer* data_transfer = DataTransfer::Create();
+  data_transfer->SetDragImageResource(
+      MakeGarbageCollected<ImageResourceContent>(nullptr), gfx::Point());
+
+  gfx::Point drag_offset;
+  std::unique_ptr<DragImage> drag_image = data_transfer->CreateDragImage(
+      drag_offset, /* device_scale_factor*/ 1, &GetFrame());
+  // The test passes if the above call does not crash.
 }
 
 }  // namespace blink

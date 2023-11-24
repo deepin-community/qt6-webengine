@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 
 #include <memory>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
 #include "content/public/browser/web_contents_delegate.h"
@@ -124,6 +124,9 @@ class WEBVIEW_EXPORT WebView : public View,
     ~ScopedWebContentsCreatorForTesting();
   };
 
+  // View:
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
+
  protected:
   // Called when the web contents is successfully attached.
   virtual void OnWebContentsAttached() {}
@@ -135,7 +138,7 @@ class WEBVIEW_EXPORT WebView : public View,
   const gfx::Size& min_size() const { return min_size_; }
   const gfx::Size& max_size() const { return max_size_; }
 
-  // Overridden from View:
+  // View:
   void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
   void ViewHierarchyChanged(
       const ViewHierarchyChangedDetails& details) override;
@@ -143,7 +146,6 @@ class WEBVIEW_EXPORT WebView : public View,
   bool OnMousePressed(const ui::MouseEvent& event) override;
   void OnFocus() override;
   void AboutToRequestFocusFromTabTraversal(bool reverse) override;
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   gfx::NativeViewAccessible GetNativeViewAccessible() override;
   void AddedToWidget() override;
 

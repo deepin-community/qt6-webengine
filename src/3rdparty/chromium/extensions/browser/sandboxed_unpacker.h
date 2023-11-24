@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -90,7 +90,7 @@ class SandboxedUnpackerClient
   virtual void OnUnpackSuccess(
       const base::FilePath& temp_dir,
       const base::FilePath& extension_root,
-      std::unique_ptr<base::DictionaryValue> original_manifest,
+      std::unique_ptr<base::Value::Dict> original_manifest,
       const Extension* extension,
       const SkBitmap& install_icon,
       declarative_net_request::RulesetInstallPrefs ruleset_install_prefs) = 0;
@@ -160,6 +160,7 @@ class SandboxedUnpacker : public ImageSanitizer::Client {
 
  private:
   friend class SandboxedUnpackerTest;
+  class IOThreadState;
 
   ~SandboxedUnpacker() override;
 
@@ -187,7 +188,7 @@ class SandboxedUnpacker : public ImageSanitizer::Client {
   // Callback which is called after the verified contents are uncompressed.
   void OnVerifiedContentsUncompressed(
       const base::FilePath& unzip_dir,
-      data_decoder::DataDecoder::ResultOrError<mojo_base::BigBuffer> result);
+      base::expected<mojo_base::BigBuffer, std::string> result);
 
   // Verifies the decompressed verified contents fetched from the header of CRX
   // and stores them if the verification of these contents is successful.
@@ -200,7 +201,7 @@ class SandboxedUnpacker : public ImageSanitizer::Client {
   void Unpack(const base::FilePath& directory);
   void ReadManifestDone(absl::optional<base::Value> manifest,
                         const absl::optional<std::string>& error);
-  void UnpackExtensionSucceeded(base::Value manifest);
+  void UnpackExtensionSucceeded(base::Value::Dict manifest);
 
   // Helper which calls ReportFailure.
   void ReportUnpackExtensionFailed(base::StringPiece error);
@@ -229,7 +230,8 @@ class SandboxedUnpacker : public ImageSanitizer::Client {
 
   // Overwrites original manifest with safe result from utility process.
   // Returns nullopt on error.
-  absl::optional<base::Value> RewriteManifestFile(const base::Value& manifest);
+  absl::optional<base::Value::Dict> RewriteManifestFile(
+      const base::Value::Dict& manifest);
 
   // Cleans up temp directory artifacts.
   void Cleanup();
@@ -278,7 +280,7 @@ class SandboxedUnpacker : public ImageSanitizer::Client {
   // Parsed original manifest of the extension. Set after unpacking the
   // extension and working with its manifest, so after UnpackExtensionSucceeded
   // is called.
-  absl::optional<base::Value> manifest_;
+  absl::optional<base::Value::Dict> manifest_;
 
   // Install prefs needed for the Declarative Net Request API.
   declarative_net_request::RulesetInstallPrefs ruleset_install_prefs_;
@@ -315,20 +317,8 @@ class SandboxedUnpacker : public ImageSanitizer::Client {
   // The decoded install icon.
   SkBitmap install_icon_;
 
-  // Controls our own lazily started, isolated instance of the Data Decoder
-  // service so that multiple decode operations related to this
-  // SandboxedUnpacker can share a single instance.
-  data_decoder::DataDecoder data_decoder_;
-
-  // The JSONParser remote from the data decoder service.
-  mojo::Remote<data_decoder::mojom::JsonParser> json_parser_;
-
-  // The ImageSanitizer used to clean-up images.
-  std::unique_ptr<ImageSanitizer> image_sanitizer_;
-
-  // Used during the message catalog rewriting phase to sanitize the extension
-  // provided message catalogs.
-  std::unique_ptr<JsonFileSanitizer> json_file_sanitizer_;
+  // TODO(crbug.com/1346172): Consider to wrap it in base::SequenceBound
+  std::unique_ptr<IOThreadState> io_thread_state_;
 };
 
 }  // namespace extensions

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,8 +17,9 @@ class NATIVE_THEME_EXPORT NativeThemeAura : public NativeThemeBase {
   friend class NativeThemeAuraTest;
   friend class base::NoDestructor<NativeThemeAura>;
 
-  explicit NativeThemeAura(bool use_overlay_scrollbars,
-                           bool should_only_use_dark_colors);
+  NativeThemeAura(bool use_overlay_scrollbars,
+                  bool should_only_use_dark_colors,
+                  ui::SystemTheme system_theme = ui::SystemTheme::kDefault);
 
   NativeThemeAura(const NativeThemeAura&) = delete;
   NativeThemeAura& operator=(const NativeThemeAura&) = delete;
@@ -44,12 +45,14 @@ class NATIVE_THEME_EXPORT NativeThemeAura : public NativeThemeBase {
                                const MenuItemExtraParams& menu_item,
                                ColorScheme color_scheme) const override;
   void PaintArrowButton(cc::PaintCanvas* gc,
+                        const ColorProvider* color_provider,
                         const gfx::Rect& rect,
                         Part direction,
                         State state,
                         ColorScheme color_scheme,
                         const ScrollbarArrowExtraParams& arrow) const override;
   void PaintScrollbarTrack(cc::PaintCanvas* canvas,
+                           const ColorProvider* color_provider,
                            Part part,
                            State state,
                            const ScrollbarTrackExtraParams& extra_params,
@@ -63,6 +66,7 @@ class NATIVE_THEME_EXPORT NativeThemeAura : public NativeThemeBase {
                            ScrollbarOverlayColorTheme theme,
                            ColorScheme color_scheme) const override;
   void PaintScrollbarCorner(cc::PaintCanvas* canvas,
+                            const ColorProvider* color_provider,
                             State state,
                             const gfx::Rect& rect,
                             ColorScheme color_scheme) const override;

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,12 +8,12 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "components/cast_streaming/public/remoting_proto_enum_utils.h"
 #include "components/cast_streaming/public/remoting_proto_utils.h"
 #include "media/base/media_util.h"
@@ -94,6 +94,7 @@ class RendererClientImpl final : public RendererClient {
 
   // RendererClient implementation.
   void OnError(PipelineStatus status) override {}
+  void OnFallback(PipelineStatus status) override {}
   void OnEnded() override {}
   MOCK_METHOD1(OnStatisticsUpdate, void(const PipelineStatistics& stats));
   MOCK_METHOD2(OnBufferingStateChange,
@@ -361,9 +362,9 @@ class CourierRendererTest : public testing::Test {
     controller_->OnMetadataChanged(DefaultMetadata());
 
     RewireSendMessageCallbackToSink();
-    renderer_ =
-        std::make_unique<CourierRenderer>(base::ThreadTaskRunnerHandle::Get(),
-                                          controller_->GetWeakPtr(), nullptr);
+    renderer_ = std::make_unique<CourierRenderer>(
+        base::SingleThreadTaskRunner::GetCurrentDefault(),
+        controller_->GetWeakPtr(), nullptr);
     renderer_->clock_ = &clock_;
     clock_.Advance(base::Seconds(1));
 

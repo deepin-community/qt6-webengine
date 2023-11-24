@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,11 @@
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/memory/raw_ptr.h"
+#include "cc/mojom/render_frame_metadata.mojom-shared.h"
 #include "content/browser/android/render_widget_host_connector.h"
 #include "content/common/content_export.h"
 #include "third_party/blink/public/mojom/input/input_event_result.mojom-shared.h"
+#include "third_party/blink/public/mojom/input/input_handler.mojom-forward.h"
 
 namespace blink {
 class WebGestureEvent;
@@ -52,10 +54,14 @@ class CONTENT_EXPORT GestureListenerManager : public RenderWidgetHostConnector {
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
       jboolean enabled);
-  bool has_listeners_attached() const { return has_listeners_attached_; }
-  void SetHasListenersAttached(JNIEnv* env, jboolean enabled);
+  cc::mojom::RootScrollOffsetUpdateFrequency
+  root_scroll_offset_update_frequency() const {
+    return root_scroll_offset_update_frequency_;
+  }
+  void SetRootScrollOffsetUpdateFrequency(JNIEnv* env, jint frequency);
   void GestureEventAck(const blink::WebGestureEvent& event,
-                       blink::mojom::InputEventResultState ack_result);
+                       blink::mojom::InputEventResultState ack_result,
+                       blink::mojom::ScrollResultDataPtr scroll_result_data);
   void DidStopFlinging();
   bool FilterInputEvent(const blink::WebInputEvent& event);
   void DidOverscroll(const ui::DidOverscrollParams& params);
@@ -96,8 +102,10 @@ class CONTENT_EXPORT GestureListenerManager : public RenderWidgetHostConnector {
   // A weak reference to the Java GestureListenerManager object.
   JavaObjectWeakGlobalRef java_ref_;
 
-  // True if there is at least one listener attached.
-  bool has_listeners_attached_ = false;
+  // Highest update frequency requested by any of the listeners.
+  cc::mojom::RootScrollOffsetUpdateFrequency
+      root_scroll_offset_update_frequency_ =
+          cc::mojom::RootScrollOffsetUpdateFrequency::kNone;
 };
 
 }  // namespace content

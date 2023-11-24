@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,12 @@
 #include <memory>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
+#include "base/memory/unsafe_shared_memory_region.h"
+#include "base/task/sequenced_task_runner.h"
+#include "gpu/config/gpu_driver_bug_workarounds.h"
 #include "gpu/ipc/common/gpu_memory_buffer_support.h"
 #include "media/base/format_utils.h"
 #include "media/base/media_util.h"
@@ -81,8 +84,7 @@ scoped_refptr<DecoderBuffer> DecryptBitstreamBuffer(
     BitstreamBuffer bitstream_buffer) {
   // Check to see if we have our secure buffer tag and then extract the
   // decrypt parameters.
-  auto mem_region = base::UnsafeSharedMemoryRegion::Deserialize(
-      bitstream_buffer.DuplicateRegion());
+  auto mem_region = bitstream_buffer.DuplicateRegion();
   if (!mem_region.IsValid()) {
     DVLOG(2) << "Invalid shared memory region";
     return nullptr;
@@ -113,7 +115,8 @@ scoped_refptr<DecoderBuffer> DecryptBitstreamBuffer(
   if (available_size <= cdm_oemcrypto::kSecureBufferHeaderSize ||
       memcmp(data, cdm_oemcrypto::kSecureBufferTag,
              cdm_oemcrypto::kSecureBufferTagLen)) {
-    return nullptr;
+    // This occurs in Intel implementations when we are in a clear portion.
+    return bitstream_buffer.ToDecoderBuffer();
   }
   VLOG(2) << "Detected secure buffer format in VDVDA";
   // Read the protobuf size.
@@ -175,10 +178,13 @@ std::unique_ptr<VideoDecodeAccelerator> VdVideoDecodeAccelerator::Create(
     CreateVideoDecoderCb create_vd_cb,
     Client* client,
     const Config& config,
+    bool low_delay,
     scoped_refptr<base::SequencedTaskRunner> task_runner) {
-  std::unique_ptr<VideoDecodeAccelerator> vda(new VdVideoDecodeAccelerator(
-      std::move(create_vd_cb), std::move(task_runner)));
-  if (!vda->Initialize(config, client))
+  std::unique_ptr<VdVideoDecodeAccelerator,
+                  std::default_delete<VideoDecodeAccelerator>>
+      vda(new VdVideoDecodeAccelerator(std::move(create_vd_cb),
+                                       std::move(task_runner)));
+  if (!vda->Initialize(config, client, low_delay))
     return nullptr;
   return vda;
 }
@@ -218,6 +224,14 @@ VdVideoDecodeAccelerator::~VdVideoDecodeAccelerator() {
 
 bool VdVideoDecodeAccelerator::Initialize(const Config& config,
                                           Client* client) {
+  // |low_delay_| came from the most recent initialization, or false if it has
+  // never been explicitly set.
+  return Initialize(config, client, low_delay_);
+}
+
+bool VdVideoDecodeAccelerator::Initialize(const Config& config,
+                                          Client* client,
+                                          bool low_delay) {
   VLOGF(2) << "config: " << config.AsHumanReadableString();
   DCHECK_CALLED_ON_VALID_SEQUENCE(client_sequence_checker_);
 
@@ -240,9 +254,14 @@ bool VdVideoDecodeAccelerator::Initialize(const Config& config,
   if (!vd_) {
     std::unique_ptr<VdaVideoFramePool> frame_pool =
         std::make_unique<VdaVideoFramePool>(weak_this_, client_task_runner_);
-    vd_ = create_vd_cb_.Run(client_task_runner_, std::move(frame_pool),
-                            std::make_unique<VideoFrameConverter>(),
-                            std::make_unique<NullMediaLog>());
+    // TODO(b/238684141): Wire a meaningful GpuDriverBugWorkarounds or remove
+    // its use.
+    vd_ = create_vd_cb_.Run(
+        gpu::GpuDriverBugWorkarounds(), client_task_runner_,
+        std::move(frame_pool), std::make_unique<VideoFrameConverter>(),
+        VideoDecoderPipeline::DefaultPreferredRenderableFourccs(),
+        std::make_unique<NullMediaLog>(),
+        /*oop_video_decoder=*/{});
     if (!vd_)
       return false;
 
@@ -265,8 +284,10 @@ bool VdVideoDecodeAccelerator::Initialize(const Config& config,
       base::BindOnce(&VdVideoDecodeAccelerator::OnInitializeDone, weak_this_);
   auto output_cb =
       base::BindRepeating(&VdVideoDecodeAccelerator::OnFrameReady, weak_this_);
-  vd_->Initialize(std::move(vd_config), false /* low_delay */, cdm_context,
-                  std::move(init_cb), std::move(output_cb), WaitingCB());
+  vd_->Initialize(std::move(vd_config), low_delay, cdm_context,
+                  std::move(init_cb), std::move(output_cb), base::DoNothing());
+  // Save the value for possible future re-initialization.
+  low_delay_ = low_delay;
   return true;
 }
 
@@ -530,13 +551,12 @@ void VdVideoDecodeAccelerator::ImportBufferForPicture(
                                            gmb_handle));
   auto buffer_format = VideoPixelFormatToGfxBufferFormat(pixel_format);
   CHECK(buffer_format);
-  // Usage is SCANOUT_VDA_WRITE because we are just wrapping the dmabuf in a
-  // GpuMemoryBuffer. This buffer is just for decoding purposes, so having
-  // the dmabufs mmapped is not necessary.
+  // Usage is SCANOUT_CPU_READ_WRITE because we may need to map the buffer in
+  // order to use the LibYUVImageProcessorBackend.
   std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer =
       gpu::GpuMemoryBufferSupport().CreateGpuMemoryBufferImplFromHandle(
           std::move(gmb_handle), layout_->coded_size(), *buffer_format,
-          gfx::BufferUsage::SCANOUT_VDA_WRITE, base::NullCallback());
+          gfx::BufferUsage::SCANOUT_CPU_READ_WRITE, base::NullCallback());
   if (!gpu_memory_buffer) {
     VLOGF(1) << "Failed to create GpuMemoryBuffer. format: "
              << gfx::BufferFormatToString(*buffer_format)

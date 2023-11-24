@@ -1,11 +1,11 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef MEDIA_MUXERS_LIVE_WEBM_MUXER_DELEGATE_H_
 #define MEDIA_MUXERS_LIVE_WEBM_MUXER_DELEGATE_H_
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/strings/string_piece.h"
 #include "base/thread_annotations.h"
 #include "media/base/media_export.h"

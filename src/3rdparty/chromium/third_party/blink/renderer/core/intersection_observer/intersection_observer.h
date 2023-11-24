@@ -1,11 +1,11 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_INTERSECTION_OBSERVER_INTERSECTION_OBSERVER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_INTERSECTION_OBSERVER_INTERSECTION_OBSERVER_H_
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
@@ -119,8 +119,6 @@ class CORE_EXPORT IntersectionObserver final
       bool use_overflow_clip_edge = false,
       ExceptionState& = ASSERT_NO_EXCEPTION);
 
-  static void ResumeSuspendedObservers();
-
   explicit IntersectionObserver(IntersectionObserverDelegate&,
                                 Node*,
                                 const Vector<Length>& margin,
@@ -154,10 +152,10 @@ class CORE_EXPORT IntersectionObserver final
   // root just because root_ is null.  Hence root_is_implicit_.
   bool RootIsImplicit() const { return root_is_implicit_; }
 
-  bool HasObservations() const { return !observations_.IsEmpty(); }
+  bool HasObservations() const { return !observations_.empty(); }
   bool AlwaysReportRootBounds() const { return always_report_root_bounds_; }
   bool NeedsOcclusionTracking() const {
-    return trackVisibility() && !observations_.IsEmpty();
+    return trackVisibility() && !observations_.empty();
   }
 
   DOMHighResTimeStamp GetTimeStamp(base::TimeTicks monotonic_time) const;
@@ -202,7 +200,7 @@ class CORE_EXPORT IntersectionObserver final
   }
 
  private:
-  bool NeedsDelivery() const { return !active_observations_.IsEmpty(); }
+  bool NeedsDelivery() const { return !active_observations_.empty(); }
   void ProcessCustomWeakness(const LivenessBroker&);
 
   const Member<IntersectionObserverDelegate> delegate_;

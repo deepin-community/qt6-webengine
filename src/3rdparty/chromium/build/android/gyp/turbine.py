@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Wraps the turbine jar and expands @FileArgs."""
@@ -7,14 +7,12 @@
 import argparse
 import functools
 import logging
-import os
-import shutil
 import sys
 import time
+import zipfile
 
 import javac_output_processor
 from util import build_utils
-from util import server_utils
 
 
 def ProcessJavacOutput(output, target_name):
@@ -36,15 +34,6 @@ def main(argv):
       action='append',
       default=[],
       help='List of srcjars to include in compilation.')
-  parser.add_argument(
-      '--bootclasspath',
-      action='append',
-      default=[],
-      help='Boot classpath for javac. If this is specified multiple times, '
-      'they will all be appended to construct the classpath.')
-  parser.add_argument(
-      '--java-version',
-      help='Java language version to use in -source and -target args to javac.')
   parser.add_argument('--classpath', action='append', help='Classpath to use.')
   parser.add_argument(
       '--processors',
@@ -67,9 +56,10 @@ def main(argv):
   parser.add_argument('--warnings-as-errors',
                       action='store_true',
                       help='Treat all warnings as errors.')
+  parser.add_argument('--kotlin-jar-path',
+                      help='Kotlin jar to be merged into the output jar.')
   options, unknown_args = parser.parse_known_args(argv)
 
-  options.bootclasspath = build_utils.ParseGnList(options.bootclasspath)
   options.classpath = build_utils.ParseGnList(options.classpath)
   options.processorpath = build_utils.ParseGnList(options.processorpath)
   options.processors = build_utils.ParseGnList(options.processors)
@@ -81,10 +71,19 @@ def main(argv):
     if arg.startswith('@'):
       files.extend(build_utils.ReadSourcesList(arg[1:]))
 
-  cmd = build_utils.JavaCmd(options.warnings_as_errors) + [
+  # The target's .sources file contains both Java and Kotlin files. We use
+  # compile_kt.py to compile the Kotlin files to .class and header jars.
+  # Turbine is run only on .java files.
+  java_files = [f for f in files if f.endswith('.java')]
+
+  cmd = build_utils.JavaCmd() + [
       '-classpath', options.turbine_jar_path, 'com.google.turbine.main.Main'
   ]
-  javac_cmd = []
+  javac_cmd = [
+      # We currently target JDK 11 everywhere.
+      '--release',
+      '11',
+  ]
 
   # Turbine reads lists from command line args by consuming args until one
   # starts with double dash (--). Thus command line args should be grouped
@@ -92,22 +91,6 @@ def main(argv):
   if options.processors:
     cmd += ['--processors']
     cmd += options.processors
-
-  if options.java_version:
-    javac_cmd.extend([
-        '-source',
-        options.java_version,
-        '-target',
-        options.java_version,
-    ])
-  if options.java_version == '1.8':
-    # Android's boot jar doesn't contain all java 8 classes.
-    options.bootclasspath.append(build_utils.RT_JAR_PATH)
-
-  if options.bootclasspath:
-    cmd += ['--bootclasspath']
-    for bootclasspath in options.bootclasspath:
-      cmd += bootclasspath.split(':')
 
   if options.processorpath:
     cmd += ['--processorpath']
@@ -125,20 +108,19 @@ def main(argv):
     cmd += ['--source_jars']
     cmd += options.java_srcjars
 
-  if files:
+  if java_files:
     # Use jar_path to ensure paths are relative (needed for goma).
-    files_rsp_path = options.jar_path + '.files_list.txt'
+    files_rsp_path = options.jar_path + '.java_files_list.txt'
     with open(files_rsp_path, 'w') as f:
-      f.write(' '.join(files))
+      f.write(' '.join(java_files))
     # Pass source paths as response files to avoid extremely long command lines
     # that are tedius to debug.
     cmd += ['--sources']
     cmd += ['@' + files_rsp_path]
 
-  if javac_cmd:
-    cmd.append('--javacopts')
-    cmd += javac_cmd
-    cmd.append('--')  # Terminate javacopts
+  cmd += ['--javacopts']
+  cmd += javac_cmd
+  cmd += ['--']  # Terminate javacopts
 
   # Use AtomicOutput so that output timestamps are not updated when outputs
   # are not changed.
@@ -158,12 +140,17 @@ def main(argv):
                             fail_on_output=options.warnings_as_errors)
     end = time.time() - start
     logging.info('Header compilation took %ss', end)
+    if options.kotlin_jar_path:
+      with zipfile.ZipFile(output_jar.name, 'a') as out_zip:
+        build_utils.MergeZips(
+            out_zip, [options.kotlin_jar_path],
+            path_transform=lambda p: p if p.endswith('.class') else None)
 
   if options.depfile:
     # GN already knows of the java files, so avoid listing individual java files
     # in the depfile.
-    depfile_deps = (options.bootclasspath + options.classpath +
-                    options.processorpath + options.java_srcjars)
+    depfile_deps = (options.classpath + options.processorpath +
+                    options.java_srcjars)
     build_utils.WriteDepfile(options.depfile, options.jar_path, depfile_deps)
 
 

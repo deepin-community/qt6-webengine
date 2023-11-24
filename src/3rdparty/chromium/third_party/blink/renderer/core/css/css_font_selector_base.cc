@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,10 +16,6 @@
 
 namespace blink {
 
-void CSSFontSelectorBase::CountUse(WebFeature feature) const {
-  return UseCounter::Count(GetUseCounter(), feature);
-}
-
 AtomicString CSSFontSelectorBase::FamilyNameFromSettings(
     const FontDescription& font_description,
     const FontFamily& generic_family_name) {
@@ -27,12 +23,14 @@ AtomicString CSSFontSelectorBase::FamilyNameFromSettings(
       generic_font_family_settings_, font_description, generic_family_name,
       GetUseCounter());
 }
+
 bool CSSFontSelectorBase::IsPlatformFamilyMatchAvailable(
     const FontDescription& font_description,
     const FontFamily& passed_family) {
   AtomicString family = FamilyNameFromSettings(font_description, passed_family);
-  if (family.IsEmpty())
+  if (family.empty()) {
     family = passed_family.FamilyName();
+  }
   return FontCache::Get().IsPlatformFamilyMatchAvailable(font_description,
                                                          family);
 }
@@ -77,39 +75,40 @@ void CSSFontSelectorBase::ReportFailedLocalFontMatch(
 void CSSFontSelectorBase::ReportFontLookupByUniqueOrFamilyName(
     const AtomicString& name,
     const FontDescription& font_description,
-    SimpleFontData* resulting_font_data) {
+    scoped_refptr<SimpleFontData> resulting_font_data) {
   GetFontMatchingMetrics()->ReportFontLookupByUniqueOrFamilyName(
-      name, font_description, resulting_font_data);
+      name, font_description, resulting_font_data.get());
 }
 
 void CSSFontSelectorBase::ReportFontLookupByUniqueNameOnly(
     const AtomicString& name,
     const FontDescription& font_description,
-    SimpleFontData* resulting_font_data,
+    scoped_refptr<SimpleFontData> resulting_font_data,
     bool is_loading_fallback) {
   GetFontMatchingMetrics()->ReportFontLookupByUniqueNameOnly(
-      name, font_description, resulting_font_data, is_loading_fallback);
+      name, font_description, resulting_font_data.get(), is_loading_fallback);
 }
 
 void CSSFontSelectorBase::ReportFontLookupByFallbackCharacter(
     UChar32 fallback_character,
     FontFallbackPriority fallback_priority,
     const FontDescription& font_description,
-    SimpleFontData* resulting_font_data) {
+    scoped_refptr<SimpleFontData> resulting_font_data) {
   GetFontMatchingMetrics()->ReportFontLookupByFallbackCharacter(
       fallback_character, fallback_priority, font_description,
-      resulting_font_data);
+      resulting_font_data.get());
 }
 
 void CSSFontSelectorBase::ReportLastResortFallbackFontLookup(
     const FontDescription& font_description,
-    SimpleFontData* resulting_font_data) {
+    scoped_refptr<SimpleFontData> resulting_font_data) {
   GetFontMatchingMetrics()->ReportLastResortFallbackFontLookup(
-      font_description, resulting_font_data);
+      font_description, resulting_font_data.get());
 }
 
 void CSSFontSelectorBase::ReportNotDefGlyph() const {
-  CountUse(WebFeature::kFontShapingNotDefGlyphObserved);
+  UseCounter::Count(GetUseCounter(),
+                    WebFeature::kFontShapingNotDefGlyphObserved);
 }
 
 void CSSFontSelectorBase::ReportSystemFontFamily(
@@ -127,21 +126,27 @@ void CSSFontSelectorBase::WillUseFontData(
     const FontFamily& family,
     const String& text) {
   if (family.FamilyIsGeneric()) {
-    if (family.IsPrewarmed())
+    if (family.IsPrewarmed() || UNLIKELY(family.FamilyName().empty())) {
       return;
+    }
     family.SetIsPrewarmed();
     // |FamilyNameFromSettings| has a visible impact on the load performance.
     // Because |FamilyName.IsPrewarmed| can prevent doing this multiple times
     // only when the |Font| is shared across elements, and therefore it can't
     // help when e.g., the font size is different, check once more if this
     // generic family is already prewarmed.
-    const auto result = prewarmed_generic_families_.insert(family.FamilyName());
-    if (!result.is_new_entry)
-      return;
+    {
+      const auto result =
+          prewarmed_generic_families_.insert(family.FamilyName());
+      if (!result.is_new_entry) {
+        return;
+      }
+    }
     const AtomicString& family_name =
         FamilyNameFromSettings(font_description, family);
-    if (!family_name.IsEmpty())
+    if (!family_name.empty()) {
       FontCache::PrewarmFamily(family_name);
+    }
     return;
   }
 
@@ -151,8 +156,9 @@ void CSSFontSelectorBase::WillUseFontData(
     return;
   }
 
-  if (family.IsPrewarmed())
+  if (family.IsPrewarmed() || UNLIKELY(family.FamilyName().empty())) {
     return;
+  }
   family.SetIsPrewarmed();
   FontCache::PrewarmFamily(family.FamilyName());
 }
@@ -161,8 +167,9 @@ void CSSFontSelectorBase::WillUseRange(const FontDescription& font_description,
                                        const AtomicString& family,
                                        const FontDataForRangeSet& range_set) {
   if (CSSSegmentedFontFace* face =
-          font_face_cache_->Get(font_description, family))
+          font_face_cache_->Get(font_description, family)) {
     face->WillUseRange(font_description, range_set);
+  }
 }
 
 void CSSFontSelectorBase::Trace(Visitor* visitor) const {

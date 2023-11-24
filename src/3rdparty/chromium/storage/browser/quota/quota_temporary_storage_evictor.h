@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -24,6 +24,7 @@
 namespace storage {
 
 class QuotaEvictionHandler;
+enum class QuotaError;
 struct QuotaSettings;
 
 class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaTemporaryStorageEvictor {
@@ -74,6 +75,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaTemporaryStorageEvictor {
 
   void StartEvictionTimerWithDelay(int64_t delay_ms);
   void ConsiderEviction();
+  void OnEvictedExpiredBuckets(blink::mojom::QuotaStatusCode status);
   void OnGotEvictionRoundInfo(blink::mojom::QuotaStatusCode status,
                               const QuotaSettings& settings,
                               int64_t available_space,
@@ -81,7 +83,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaTemporaryStorageEvictor {
                               int64_t current_usage,
                               bool current_usage_is_complete);
   void OnGotEvictionBucket(const absl::optional<BucketLocator>& bucket);
-  void OnEvictionComplete(blink::mojom::QuotaStatusCode status);
+  void OnEvictionComplete(QuotaError status);
 
   void OnEvictionRoundStarted();
   void OnEvictionRoundFinished();
@@ -96,7 +98,8 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaTemporaryStorageEvictor {
   base::Time time_of_end_of_last_round_;
 
   int64_t interval_ms_;
-  bool timer_disabled_for_testing_;
+  bool timer_disabled_for_testing_ = false;
+  base::RepeatingClosure on_round_finished_for_testing_;
 
   base::OneShotTimer eviction_timer_;
   base::RepeatingTimer histogram_timer_;

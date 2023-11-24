@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace net {
-namespace ntlm {
+namespace net::ntlm {
 
 TEST(NtlmBufferReaderTest, Initialization) {
   const uint8_t buf[1] = {0};
@@ -123,7 +122,7 @@ TEST(NtlmBufferReaderTest, ReadBytes) {
   ASSERT_TRUE(reader.ReadBytes(actual));
   ASSERT_EQ(0, memcmp(actual, expected, std::size(actual)));
   ASSERT_TRUE(reader.IsEndOfBuffer());
-  ASSERT_FALSE(reader.ReadBytes(base::make_span(actual, 1)));
+  ASSERT_FALSE(reader.ReadBytes(base::make_span(actual, 1u)));
 }
 
 TEST(NtlmBufferReaderTest, ReadSecurityBuffer) {
@@ -714,5 +713,4 @@ TEST(NtlmBufferReaderTest, ReadAvPairHeaderPastEob) {
   ASSERT_FALSE(reader.ReadAvPairHeader(&avid, &avlen));
 }
 
-}  // namespace ntlm
-}  // namespace net
+}  // namespace net::ntlm

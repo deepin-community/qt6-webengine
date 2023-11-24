@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -24,6 +24,23 @@
 
 namespace {
 
+// Returns true if the module for |address| is found. |path| will contain
+// the path to the module. Note that |path| may not be absolute.
+[[nodiscard]] bool GetModulePathForAddress(base::FilePath* path,
+                                           const void* address);
+
+bool GetModulePathForAddress(base::FilePath* path, const void* address) {
+  Dl_info info;
+  if (dladdr(address, &info) == 0)
+    return false;
+  *path = base::FilePath(info.dli_fname);
+  return true;
+}
+
+}  // namespace
+
+namespace base {
+
 void GetNSExecutablePath(base::FilePath* path) {
   DCHECK(path);
   // Executable path can have relative references ("..") depending on
@@ -42,26 +59,9 @@ void GetNSExecutablePath(base::FilePath* path) {
   // paths such as DIR_SRC_TEST_DATA_ROOT can work, since we expect absolute
   // paths to be returned here.
   // TODO(bauerb): http://crbug.com/259796, http://crbug.com/373477
-  base::ThreadRestrictions::ScopedAllowIO allow_io;
+  base::ScopedAllowBlocking allow_blocking;
   *path = base::MakeAbsoluteFilePath(base::FilePath(executable_path));
 }
-
-// Returns true if the module for |address| is found. |path| will contain
-// the path to the module. Note that |path| may not be absolute.
-[[nodiscard]] bool GetModulePathForAddress(base::FilePath* path,
-                                           const void* address);
-
-bool GetModulePathForAddress(base::FilePath* path, const void* address) {
-  Dl_info info;
-  if (dladdr(address, &info) == 0)
-    return false;
-  *path = base::FilePath(info.dli_fname);
-  return true;
-}
-
-}  // namespace
-
-namespace base {
 
 bool PathProviderMac(int key, base::FilePath* result) {
   switch (key) {
@@ -115,17 +115,23 @@ bool PathProviderMac(int key, base::FilePath* result) {
       return base::mac::GetUserDirectory(NSDesktopDirectory, result);
 #endif
     case base::DIR_ASSETS:
-#if BUILDFLAG(IS_IOS)
+#if BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_IOS_MACCATALYST)
       // On iOS, the assets are located next to the module binary.
       return PathService::Get(base::DIR_MODULE, result);
 #else
       if (!base::mac::AmIBundled()) {
         return PathService::Get(base::DIR_MODULE, result);
       }
+#if BUILDFLAG(IS_IOS_MACCATALYST)
+      *result = base::mac::MainBundlePath()
+                    .Append(FILE_PATH_LITERAL("Contents"))
+                    .Append(FILE_PATH_LITERAL("Resources"));
+#else
       *result = base::mac::FrameworkBundlePath().Append(
           FILE_PATH_LITERAL("Resources"));
+#endif  // BUILDFLAG(IS_IOS_MACCATALYST)
       return true;
-#endif  // BUILDFLAG(IS_IOS)
+#endif  // BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_IOS_MACCATALYST)
     case base::DIR_CACHE:
       return base::mac::GetUserDirectory(NSCachesDirectory, result);
     default:

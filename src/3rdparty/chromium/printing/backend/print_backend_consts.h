@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -24,5 +24,6 @@ COMPONENT_EXPORT(PRINT_BACKEND) extern const char kCUPSOptPrinterLocation[];
 COMPONENT_EXPORT(PRINT_BACKEND) extern const char kCUPSOptPrinterMakeAndModel[];
 COMPONENT_EXPORT(PRINT_BACKEND) extern const char kCUPSOptPrinterState[];
 COMPONENT_EXPORT(PRINT_BACKEND) extern const char kCUPSOptPrinterType[];
+COMPONENT_EXPORT(PRINT_BACKEND) extern const char kCUPSOptPrinterUriSupported[];
 
 #endif  // PRINTING_BACKEND_PRINT_BACKEND_CONSTS_H_

@@ -32,6 +32,7 @@
 #define THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_PRIVATE_PTR_H_
 
 #include "base/check.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "v8/include/cppgc/persistent.h"
 
@@ -39,6 +40,7 @@
 
 #if INSIDE_BLINK
 #include "base/memory/scoped_refptr.h"
+#include "third_party/blink/renderer/platform/heap/cross_thread_persistent.h"  // nogncheck
 #include "third_party/blink/renderer/platform/heap/persistent.h"  // nogncheck
 #include "third_party/blink/renderer/platform/wtf/type_traits.h"  // nogncheck
 #endif
@@ -147,7 +149,9 @@ class PtrStorageImpl<T,
 
  private:
   union {
-    T* ptr_;
+    // This field is not a raw_ptr<> because it was filtered by the rewriter
+    // for: #union
+    RAW_PTR_EXCLUSION T* ptr_;
     [[maybe_unused]] std::aligned_storage_t<kMaxWebPrivatePtrSize, alignof(T*)>
         unused_;
   };
@@ -222,7 +226,11 @@ class PtrStorageImpl<T,
   void Release() { handle_.Clear(); }
 
  private:
-  BlinkPtrType handle_;
+  union {
+    BlinkPtrType handle_;
+    [[maybe_unused]] std::aligned_storage_t<kMaxWebPrivatePtrSize, alignof(T*)>
+        unused_;
+  };
 };
 
 template <typename T,

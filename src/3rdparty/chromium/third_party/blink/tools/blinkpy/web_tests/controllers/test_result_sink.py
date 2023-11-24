@@ -1,4 +1,4 @@
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """TestResultSink uploads test results and artifacts to ResultDB via ResultSink.
@@ -129,6 +129,17 @@ class TestResultSink(object):
             pair('web_tests_base_timeout',
                  str(int(self._port.timeout_ms() / 1000))),
         ]
+        if (result.image_diff_stats and result.image_diff_stats.keys() >=
+            {'maxDifference', 'totalPixels'}):
+            tags.append(
+                pair('web_tests_image_diff_max_difference',
+                     str(result.image_diff_stats['maxDifference'])))
+            tags.append(
+                pair('web_tests_image_diff_total_pixels',
+                     str(result.image_diff_stats['totalPixels'])))
+
+        if result.test_type:
+            tags.append(pair('web_tests_test_type', str(result.test_type)))
 
         for used_file in self._port.used_expectations_files():
             tags.append(

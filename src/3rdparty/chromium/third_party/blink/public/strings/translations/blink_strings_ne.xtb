@@ -7,14 +7,12 @@
 <translation id="1178581264944972037">पज गर्नुहोस्</translation>
 <translation id="1306460908038601864">निष्क्रिय छ</translation>
 <translation id="1311894908970423688">मान अनिवार्य रूपमा <ph name="VALUE_DATE_OR_TIME" /> हुनु पर्छ।</translation>
-<translation id="145015347812617860"><ph name="COUNT" /> वस्तुहरू</translation>
 <translation id="1480676835519562650">धेरै विकल्प चयन गर्ने सुविधा, <ph name="COUNT" /> मध्ये <ph name="SELECTED" /> चयन गरियो।</translation>
 <translation id="1588438908519853928">सामान्य</translation>
 <translation id="1591562245178063882">यो महिना</translation>
 <translation id="1637811476055996098">फाइलहरू छान्नुहोस्</translation>
 <translation id="1681022320378710418">हालको समय</translation>
 <translation id="1727839386348365796">आइड्रपर</translation>
-<translation id="1727886345390570319">उपशीर्षकहरूको मेनु लुकाउनुहोस्</translation>
 <translation id="1729654308190250600">कृपया एउटा खाली नभएको इमेल ठेगाना प्रविष्टि गर्नुहोस्।</translation>
 <translation id="1758486001363313524">अन्य ...</translation>
 <translation id="1787192514241997742">कुल समय: <ph name="REMAINING_TIME" /></translation>
@@ -31,7 +29,6 @@
 <translation id="2246498165605549352">स्थानीय फाइल</translation>
 <translation id="2247351761944213033">हप्ता <ph name="WEEKNUMBER" />, <ph name="YEAR" /></translation>
 <translation id="2277199496770840904">ट्र्याक <ph name="NUMBER" /></translation>
-<translation id="2307576640803031502">सूचीमा छ, <ph name="COUNT" /> मध्ये <ph name="INDEX" /> औँ वस्तु</translation>
 <translation id="2393030564806080191">रङको हेक्साडेसिमल मान</translation>
 <translation id="2398813069815436052">डायलग खोलिएको छ।</translation>
 <translation id="245932805758469625">भिडियोको बाँकी सेकेन्डको अवधि</translation>
@@ -63,7 +60,6 @@
 <translation id="4103419683916926126">मिलिसेकेन्ड</translation>
 <translation id="4201051445878709314">अघिल्लो महिना देखाउनुहोस्</translation>
 <translation id="4360991593054037559">कृपया एउटा वैध मान प्रविष्टि गर्नुहोस्। दुईवा सबैभण्दा नजिकका वैध मानहरू <ph name="VALID_VALUE_LOW" /> र <ph name="VALID_VALUE_HIGHER" /> हुन्।</translation>
-<translation id="4371899966896349864">प्लेब्याकको गति नामक मेनु लुकाइयोस्</translation>
 <translation id="4522570452068850558">विवरणहरू</translation>
 <translation id="4664250907885839816">'<ph name="ATSIGN" />' पछ्याउने भागले '<ph name="INVALIDCHARACTER" />' चिन्ह समावेश गर्नु हुँदैन।</translation>
 <translation id="4718048029184481307">picture-in-picture मा प्ले गर्दै</translation>
@@ -83,6 +79,7 @@
 <translation id="5117590920725113268">अर्को महिना देखाउनुहोस्</translation>
 <translation id="5164977714490026579">मान <ph name="MINIMUM" /> भन्दा धेरै वा बराबर हुनै पर्छ।</translation>
 <translation id="5196716972587102051">2</translation>
+<translation id="5199514351668672591">"विकल्पहरू" मा फर्कनुहोस्</translation>
 <translation id="520299402983819650"><ph name="QUANTITY" /> पीबी</translation>
 <translation id="5272594226096532950">चिन्ह नलगाइएको। समूहमा <ph name="COUNT" /> मध्ये <ph name="INDEX" /> औँ विकल्प</translation>
 <translation id="5307600278924710095">कृपया '<ph name="ATSIGN" />' पछिको भाग प्रविष्टि गर्नुहोस्। '<ph name="INVALIDADDRESS" />' अपूरो छ।</translation>

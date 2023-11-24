@@ -1,9 +1,10 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "media/mojo/services/mojo_media_client.h"
 
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "media/base/audio_decoder.h"
@@ -22,7 +23,7 @@ MojoMediaClient::~MojoMediaClient() = default;
 void MojoMediaClient::Initialize() {}
 
 std::unique_ptr<AudioDecoder> MojoMediaClient::CreateAudioDecoder(
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+    scoped_refptr<base::SequencedTaskRunner> task_runner) {
   return nullptr;
 }
 
@@ -40,12 +41,22 @@ VideoDecoderType MojoMediaClient::GetDecoderImplementationType() {
   return VideoDecoderType::kUnknown;
 }
 
+#if BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
+void MojoMediaClient::NotifyDecoderSupportKnown(
+    mojo::PendingRemote<stable::mojom::StableVideoDecoder> oop_video_decoder,
+    base::OnceCallback<
+        void(mojo::PendingRemote<stable::mojom::StableVideoDecoder>)> cb) {
+  std::move(cb).Run(std::move(oop_video_decoder));
+}
+#endif  // BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
+
 std::unique_ptr<VideoDecoder> MojoMediaClient::CreateVideoDecoder(
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+    scoped_refptr<base::SequencedTaskRunner> task_runner,
     MediaLog* media_log,
     mojom::CommandBufferIdPtr command_buffer_id,
     RequestOverlayInfoCB request_overlay_info_cb,
-    const gfx::ColorSpace& target_color_space) {
+    const gfx::ColorSpace& target_color_space,
+    mojo::PendingRemote<stable::mojom::StableVideoDecoder> oop_video_decoder) {
   return nullptr;
 }
 

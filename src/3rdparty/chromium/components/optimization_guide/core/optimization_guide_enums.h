@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -110,9 +110,13 @@ enum class PredictionModelDownloadStatus {
   // The new directory to persist this model version's files could not be
   // created.
   kCouldNotCreateDirectory = 12,
+  // The model info was not saved to model store file.
+  kFailedModelInfoSaving = 13,
+  // The additional file was not found in the CRX file.
+  kFailedInvalidAdditionalFile = 14,
 
   // Add new values above this line.
-  kMaxValue = kCouldNotCreateDirectory,
+  kMaxValue = kFailedInvalidAdditionalFile,
 };
 
 // The status for the page content annotations being stored.
@@ -169,8 +173,14 @@ enum class ModelDeliveryEvent {
   // model.
   kModelDownloadFailure = 10,
 
+  // Loading the model from store failed.
+  kModelLoadFailed = 11,
+
+  // Model download was attempted after the model load failed.
+  kModelDownloadDueToModelLoadFailure = 12,
+
   // Add new values above this line.
-  kMaxValue = kModelDownloadFailure,
+  kMaxValue = kModelDownloadDueToModelLoadFailure,
 };
 
 }  // namespace optimization_guide

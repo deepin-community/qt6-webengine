@@ -21,9 +21,7 @@
 namespace openscreen {
 namespace cast {
 
-// TODO(issuetracker.google.com/issues/155336511): Fix the declarations and then
-// remove this:
-using openscreen::operator<<;  // For std::chrono::duration pretty-printing.
+using clock_operators::operator<<;
 
 namespace {
 
@@ -43,8 +41,8 @@ constexpr int kLowestEncodingSpeed = 0;
 
 StreamingAv1Encoder::StreamingAv1Encoder(const Parameters& params,
                                          TaskRunner* task_runner,
-                                         Sender* sender)
-    : StreamingVideoEncoder(params, task_runner, sender) {
+                                         std::unique_ptr<Sender> sender)
+    : StreamingVideoEncoder(params, task_runner, std::move(sender)) {
   ideal_speed_setting_ = kHighestEncodingSpeed;
   encode_thread_ = std::thread([this] { ProcessWorkUnitsUntilTimeToQuit(); });
 
@@ -374,15 +372,15 @@ void StreamingAv1Encoder::SendEncodedFrame(WorkUnitWithResults results) {
   EncodedFrame frame;
   frame.frame_id = sender_->GetNextFrameId();
   if (results.is_key_frame) {
-    frame.dependency = EncodedFrame::KEY_FRAME;
+    frame.dependency = EncodedFrame::Dependency::kKeyFrame;
     frame.referenced_frame_id = frame.frame_id;
   } else {
-    frame.dependency = EncodedFrame::DEPENDS_ON_ANOTHER;
+    frame.dependency = EncodedFrame::Dependency::kDependent;
     frame.referenced_frame_id = frame.frame_id - 1;
   }
   frame.rtp_timestamp = results.rtp_timestamp;
   frame.reference_time = results.reference_time;
-  frame.data = absl::Span<uint8_t>(results.payload);
+  frame.data = ByteBuffer(results.payload);
 
   if (sender_->EnqueueFrame(frame) != Sender::OK) {
     // Since the frame will not be sent, the encoder's frame dependency chain

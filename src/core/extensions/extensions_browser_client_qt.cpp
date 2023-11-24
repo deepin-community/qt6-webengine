@@ -13,16 +13,15 @@
 #include "base/files/file_path.h"
 #include "base/memory/weak_ptr.h"
 #include "base/path_service.h"
-#include "base/task/post_task.h"
 #include "base/task/thread_pool.h"
 #include "base/memory/ref_counted_memory.h"
 #include "chrome/browser/extensions/api/generated_api_registration.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/render_frame_host.h"
+#include "extensions/browser/api/core_extensions_browser_api_provider.h"
 #include "extensions/browser/api/extensions_api_client.h"
 #include "extensions/browser/api/runtime/runtime_api_delegate.h"
-#include "extensions/browser/core_extensions_browser_api_provider.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_host_delegate.h"
 #include "extensions/browser/extension_protocols.h"
@@ -80,7 +79,7 @@ scoped_refptr<base::RefCountedMemory> GetResource(int resource_id, const std::st
         base::StringPiece input(reinterpret_cast<const char *>(bytes->front()), bytes->size());
         std::string temp_str = ui::ReplaceTemplateExpressions(input, *replacements);
         DCHECK(!temp_str.empty());
-        return base::RefCountedString::TakeString(&temp_str);
+        return base::MakeRefCounted<base::RefCountedString>(std::move(temp_str));
     }
     return bytes;
 }
@@ -167,9 +166,7 @@ private:
         if (!head->mime_type.empty()) {
             head->headers->AddHeader(net::HttpRequestHeaders::kContentType, head->mime_type.c_str());
         }
-        client_->OnReceiveResponse(std::move(head),
-                                   mojo::ScopedDataPipeConsumerHandle());
-        client_->OnStartLoadingResponseBody(std::move(consumer_handle));
+        client_->OnReceiveResponse(std::move(head), std::move(consumer_handle), absl::nullopt);
 
         uint32_t write_size = data->size();
         MojoResult result = producer_handle->WriteData(data->front(), &write_size, MOJO_WRITE_DATA_FLAG_NONE);
@@ -291,6 +288,24 @@ BrowserContext *ExtensionsBrowserClientQt::GetOffTheRecordContext(BrowserContext
 
 BrowserContext *ExtensionsBrowserClientQt::GetOriginalContext(BrowserContext *context)
 {
+    return context;
+}
+
+BrowserContext *ExtensionsBrowserClientQt::GetRedirectedContextInIncognito(BrowserContext *context, bool, bool)
+{
+    // like in ShellExtensionsBrowserClient:
+    return context;
+}
+
+BrowserContext *ExtensionsBrowserClientQt::GetContextForRegularAndIncognito(BrowserContext *context, bool, bool)
+{
+    // like in ShellExtensionsBrowserClient:
+    return context;
+}
+
+BrowserContext *ExtensionsBrowserClientQt::GetRegularProfile(BrowserContext *context, bool, bool)
+{
+    // like in ShellExtensionsBrowserClient:
     return context;
 }
 
@@ -449,7 +464,8 @@ const ComponentExtensionResourceManager *ExtensionsBrowserClientQt::GetComponent
 
 void ExtensionsBrowserClientQt::BroadcastEventToRenderers(events::HistogramValue histogram_value,
                                                           const std::string &event_name,
-                                                          std::unique_ptr<base::ListValue> args, bool dispatch_to_off_the_record_profiles)
+                                                          base::Value::List args,
+                                                          bool dispatch_to_off_the_record_profiles)
 {
     NOTIMPLEMENTED();
     // TODO : do the event routing

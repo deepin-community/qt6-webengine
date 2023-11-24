@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
+#include "base/values.h"
 #include "chrome/common/extensions/api/cookies.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_monster.h"
@@ -23,10 +24,6 @@
 
 class Browser;
 class Profile;
-
-namespace base {
-class ListValue;
-}
 
 namespace net {
 class CanonicalCookie;
@@ -54,9 +51,8 @@ api::cookies::Cookie CreateCookie(const net::CanonicalCookie& cookie,
                                   const std::string& store_id);
 
 // Constructs a new CookieStore object as defined by the cookies API.
-api::cookies::CookieStore CreateCookieStore(
-    Profile* profile,
-    std::unique_ptr<base::ListValue> tab_ids);
+api::cookies::CookieStore CreateCookieStore(Profile* profile,
+                                            base::Value::List tab_ids);
 
 // Dispatch a request to the CookieManager for cookies associated with
 // |url|.
@@ -82,7 +78,7 @@ GURL GetURLFromCanonicalCookie(
 // and are allowed by extension host permissions.
 void AppendMatchingCookiesFromCookieListToVector(
     const net::CookieList& all_cookies,
-    const api::cookies::GetAll::Params::Details* details,
+    api::cookies::GetAll::Params::Details* details,
     const Extension* extension,
     std::vector<api::cookies::Cookie>* match_vector);
 
@@ -90,13 +86,13 @@ void AppendMatchingCookiesFromCookieListToVector(
 // results).
 void AppendMatchingCookiesFromCookieAccessResultListToVector(
     const net::CookieAccessResultList& all_cookies_with_access_result,
-    const api::cookies::GetAll::Params::Details* details,
+    api::cookies::GetAll::Params::Details* details,
     const Extension* extension,
     std::vector<api::cookies::Cookie>* match_vector);
 
 // Appends the IDs of all tabs belonging to the given browser to the
 // given list.
-void AppendToTabIdList(Browser* browser, base::ListValue* tab_ids);
+void AppendToTabIdList(Browser* browser, base::Value::List& tab_ids);
 
 // A class representing the cookie filter parameters passed into
 // cookies.getAll().
@@ -109,7 +105,7 @@ class MatchFilter {
   // Takes the details dictionary argument given by the user as input.
   // This class does not take ownership of the lifetime of the Details
   // object.
-  explicit MatchFilter(const api::cookies::GetAll::Params::Details* details);
+  explicit MatchFilter(api::cookies::GetAll::Params::Details* details);
 
   // Returns true if the given cookie matches the properties in the match
   // filter.
@@ -125,7 +121,7 @@ class MatchFilter {
   // 'foo.bar.com', '.foo.bar.com', and 'baz.foo.bar.com'.
   bool MatchesDomain(const std::string& domain);
 
-  raw_ptr<const api::cookies::GetAll::Params::Details> details_;
+  raw_ptr<api::cookies::GetAll::Params::Details> details_;
 };
 
 }  // namespace cookies_helpers

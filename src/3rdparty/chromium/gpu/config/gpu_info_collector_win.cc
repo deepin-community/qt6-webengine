@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,15 +8,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// This has to be included before windows.h.
-#include "third_party/re2/src/re2/re2.h"
-
-#include <windows.h>
-
 #include <d3d11.h>
 #include <d3d11_3.h>
 #include <d3d12.h>
 #include <dxgi.h>
+#include <dxgi1_6.h>
 #include <vulkan/vulkan.h>
 #include <wrl/client.h>
 
@@ -31,12 +27,14 @@
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
 #include "base/win/scoped_com_initializer.h"
-#include "base/win/windows_version.h"
 #include "build/branding_buildflags.h"
 #include "gpu/config/gpu_util.h"
-#include "ui/gl/direct_composition_surface_win.h"
+#include "third_party/re2/src/re2/re2.h"
+#include "ui/gl/direct_composition_support.h"
 #include "ui/gl/gl_angle_util_win.h"
+#include "ui/gl/gl_display.h"
 #include "ui/gl/gl_surface_egl.h"
+#include "ui/gl/gl_utils.h"
 
 namespace gpu {
 
@@ -89,7 +87,8 @@ enum class D3D12ShaderModel {
   kD3DShaderModel_6_4 = 6,
   kD3DShaderModel_6_5 = 7,
   kD3DShaderModel_6_6 = 8,
-  kMaxValue = kD3DShaderModel_6_6,
+  kD3DShaderModel_6_7 = 9,
+  kMaxValue = kD3DShaderModel_6_7,
 };
 
 D3D12ShaderModel ConvertToHistogramShaderVersion(uint32_t version) {
@@ -112,6 +111,8 @@ D3D12ShaderModel ConvertToHistogramShaderVersion(uint32_t version) {
       return D3D12ShaderModel::kD3DShaderModel_6_5;
     case D3D_SHADER_MODEL_6_6:
       return D3D12ShaderModel::kD3DShaderModel_6_6;
+    case D3D_SHADER_MODEL_6_7:
+      return D3D12ShaderModel::kD3DShaderModel_6_7;
 
     default:
       NOTREACHED();
@@ -145,8 +146,7 @@ bool GetActiveAdapterLuid(LUID* luid) {
     return false;
 
   DXGI_ADAPTER_DESC desc;
-  if (FAILED(adapter->GetDesc(&desc)))
-    return false;
+  CHECK_EQ(S_OK, adapter->GetDesc(&desc));
 
   // Zero isn't a valid LUID.
   if (desc.AdapterLuid.HighPart == 0 && desc.AdapterLuid.LowPart == 0)
@@ -158,20 +158,6 @@ bool GetActiveAdapterLuid(LUID* luid) {
 
 }  // namespace
 
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING) && defined(OFFICIAL_BUILD)
-// This function has a real implementation for official builds that can
-// be found in src/third_party/amd.
-bool GetAMDSwitchableInfo(bool* is_switchable,
-                          uint32_t* active_vendor_id,
-                          uint32_t* active_device_id);
-#else
-bool GetAMDSwitchableInfo(bool* is_switchable,
-                          uint32_t* active_vendor_id,
-                          uint32_t* active_device_id) {
-  return false;
-}
-#endif
-
 // This has to be called after a context is created, active GPU is identified,
 // and GPU driver bug workarounds are computed again. Otherwise the workaround
 // |disable_direct_composition| may not be correctly applied.
@@ -179,26 +165,22 @@ bool GetAMDSwitchableInfo(bool* is_switchable,
 // finalized because this function depends on GL is ANGLE's GLES or not.
 void CollectHardwareOverlayInfo(OverlayInfo* overlay_info) {
   if (gl::GetGLImplementation() == gl::kGLImplementationEGLANGLE) {
-    overlay_info->direct_composition =
-        gl::DirectCompositionSurfaceWin::IsDirectCompositionSupported();
-    overlay_info->supports_overlays =
-        gl::DirectCompositionSurfaceWin::AreOverlaysSupported();
+    overlay_info->direct_composition = gl::DirectCompositionSupported();
+    overlay_info->supports_overlays = gl::DirectCompositionOverlaysSupported();
     overlay_info->nv12_overlay_support = FlagsToOverlaySupport(
         overlay_info->supports_overlays,
-        gl::DirectCompositionSurfaceWin::GetOverlaySupportFlags(
-            DXGI_FORMAT_NV12));
+        gl::GetDirectCompositionOverlaySupportFlags(DXGI_FORMAT_NV12));
     overlay_info->yuy2_overlay_support = FlagsToOverlaySupport(
         overlay_info->supports_overlays,
-        gl::DirectCompositionSurfaceWin::GetOverlaySupportFlags(
-            DXGI_FORMAT_YUY2));
-    overlay_info->bgra8_overlay_support = FlagsToOverlaySupport(
-        overlay_info->supports_overlays,
-        gl::DirectCompositionSurfaceWin::GetOverlaySupportFlags(
-            DXGI_FORMAT_B8G8R8A8_UNORM));
-    overlay_info->rgb10a2_overlay_support = FlagsToOverlaySupport(
-        overlay_info->supports_overlays,
-        gl::DirectCompositionSurfaceWin::GetOverlaySupportFlags(
-            DXGI_FORMAT_R10G10B10A2_UNORM));
+        gl::GetDirectCompositionOverlaySupportFlags(DXGI_FORMAT_YUY2));
+    overlay_info->bgra8_overlay_support =
+        FlagsToOverlaySupport(overlay_info->supports_overlays,
+                              gl::GetDirectCompositionOverlaySupportFlags(
+                                  DXGI_FORMAT_B8G8R8A8_UNORM));
+    overlay_info->rgb10a2_overlay_support =
+        FlagsToOverlaySupport(overlay_info->supports_overlays,
+                              gl::GetDirectCompositionOverlaySupportFlags(
+                                  DXGI_FORMAT_R10G10B10A2_UNORM));
   }
 }
 
@@ -210,15 +192,11 @@ bool CollectDriverInfoD3D(GPUInfo* gpu_info) {
   if (FAILED(hr))
     return false;
 
-  bool found_amd = false;
-  bool found_intel = false;
-  bool found_nvidia = false;
-
   UINT i;
   Microsoft::WRL::ComPtr<IDXGIAdapter> dxgi_adapter;
   for (i = 0; SUCCEEDED(dxgi_factory->EnumAdapters(i, &dxgi_adapter)); i++) {
     DXGI_ADAPTER_DESC desc;
-    dxgi_adapter->GetDesc(&desc);
+    CHECK_EQ(S_OK, dxgi_adapter->GetDesc(&desc));
 
     GPUInfo::GPUDevice device;
     device.vendor_id = desc.VendorId;
@@ -240,20 +218,6 @@ bool CollectDriverInfoD3D(GPUInfo* gpu_info) {
       DLOG(ERROR) << "Unable to retrieve the umd version of adapter: "
                   << desc.Description << " HR: " << std::hex << hr;
     }
-    switch (device.vendor_id) {
-      case 0x8086:
-        found_intel = true;
-        break;
-      case 0x1002:
-        found_amd = true;
-        break;
-      case 0x10de:
-        found_nvidia = true;
-        break;
-      default:
-        break;
-    }
-
     if (i == 0) {
       gpu_info->gpu = device;
     } else {
@@ -261,20 +225,27 @@ bool CollectDriverInfoD3D(GPUInfo* gpu_info) {
     }
   }
 
-  if (found_intel && base::win::GetVersion() < base::win::Version::WIN10) {
-    // Since Windows 10 (and Windows 8.1 on some systems), switchable graphics
-    // platforms are managed by Windows and each adapter is accessible as
-    // separate devices.
-    // See https://msdn.microsoft.com/en-us/windows/dn265501(v=vs.80)
-    if (found_amd) {
-      bool is_amd_switchable = false;
-      uint32_t active_vendor = 0, active_device = 0;
-      GetAMDSwitchableInfo(&is_amd_switchable, &active_vendor, &active_device);
-      gpu_info->amd_switchable = is_amd_switchable;
-    } else if (found_nvidia) {
-      // nvd3d9wrap.dll is loaded into all processes when Optimus is enabled.
-      HMODULE nvd3d9wrap = GetModuleHandleW(L"nvd3d9wrap.dll");
-      gpu_info->optimus = nvd3d9wrap != nullptr;
+  Microsoft::WRL::ComPtr<IDXGIFactory6> dxgi_factory6;
+  if (gpu_info->GpuCount() > 1 && SUCCEEDED(dxgi_factory.As(&dxgi_factory6))) {
+    if (SUCCEEDED(dxgi_factory6->EnumAdapterByGpuPreference(
+            0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+            IID_PPV_ARGS(&dxgi_adapter)))) {
+      DXGI_ADAPTER_DESC desc;
+      CHECK_EQ(S_OK, dxgi_adapter->GetDesc(&desc));
+      GPUInfo::GPUDevice* device = gpu_info->FindGpuByLuid(
+          desc.AdapterLuid.LowPart, desc.AdapterLuid.HighPart);
+      DCHECK(device);
+      device->gpu_preference = gl::GpuPreference::kHighPerformance;
+    }
+    if (SUCCEEDED(dxgi_factory6->EnumAdapterByGpuPreference(
+            0, DXGI_GPU_PREFERENCE_MINIMUM_POWER,
+            IID_PPV_ARGS(&dxgi_adapter)))) {
+      DXGI_ADAPTER_DESC desc;
+      CHECK_EQ(S_OK, dxgi_adapter->GetDesc(&desc));
+      GPUInfo::GPUDevice* device = gpu_info->FindGpuByLuid(
+          desc.AdapterLuid.LowPart, desc.AdapterLuid.HighPart);
+      DCHECK(device);
+      device->gpu_preference = gl::GpuPreference::kLowPower;
     }
   }
 
@@ -286,10 +257,7 @@ bool CollectDriverInfoD3D(GPUInfo* gpu_info) {
 // are known driver bugs.
 bool CanCreateD3D12Device(IDXGIAdapter* dxgi_adapter) {
   DXGI_ADAPTER_DESC desc;
-  HRESULT hr = dxgi_adapter->GetDesc(&desc);
-  if (FAILED(hr)) {
-    return false;
-  }
+  CHECK_EQ(S_OK, dxgi_adapter->GetDesc(&desc));
 
   // Known driver bugs are Intel-only. Expand in the future, as necessary, for
   // other IHVs.
@@ -297,7 +265,8 @@ bool CanCreateD3D12Device(IDXGIAdapter* dxgi_adapter) {
     return true;
 
   LARGE_INTEGER umd_version;
-  hr = dxgi_adapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &umd_version);
+  HRESULT hr =
+      dxgi_adapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &umd_version);
   if (FAILED(hr)) {
     return false;
   }
@@ -373,12 +342,25 @@ void GetGpuSupportedD3D12Version(uint32_t& d3d12_feature_level,
 
   // Query the maximum supported shader model version.
   if (d3d12_device) {
-    D3D12_FEATURE_DATA_SHADER_MODEL shader_model_data = {};
-    shader_model_data.HighestShaderModel = D3D_SHADER_MODEL_6_6;
-    if (SUCCEEDED(d3d12_device->CheckFeatureSupport(
-            D3D12_FEATURE_SHADER_MODEL, &shader_model_data,
-            sizeof(shader_model_data)))) {
-      highest_shader_model_version = shader_model_data.HighestShaderModel;
+    // As per the documentation, CheckFeatureSupport will return E_INVALIDARG if
+    // the shader model is not known by the current runtime, so we loop in
+    // decreasing shader model version to determine the highest supported model:
+    // https://docs.microsoft.com/en-us/windows/win32/api/d3d12/ns-d3d12-d3d12_feature_data_shader_model.
+    const D3D_SHADER_MODEL shader_models[] = {
+        D3D_SHADER_MODEL_6_7, D3D_SHADER_MODEL_6_6, D3D_SHADER_MODEL_6_5,
+        D3D_SHADER_MODEL_6_4, D3D_SHADER_MODEL_6_3, D3D_SHADER_MODEL_6_2,
+        D3D_SHADER_MODEL_6_1, D3D_SHADER_MODEL_6_0, D3D_SHADER_MODEL_5_1,
+    };
+
+    for (auto model : shader_models) {
+      D3D12_FEATURE_DATA_SHADER_MODEL shader_model_data = {};
+      shader_model_data.HighestShaderModel = model;
+      if (SUCCEEDED(d3d12_device->CheckFeatureSupport(
+              D3D12_FEATURE_SHADER_MODEL, &shader_model_data,
+              sizeof(shader_model_data)))) {
+        highest_shader_model_version = shader_model_data.HighestShaderModel;
+        break;
+      }
     }
   }
 }
@@ -505,7 +487,6 @@ bool InitVulkanInstanceProc(
     PFN_vkEnumeratePhysicalDevices* vkEnumeratePhysicalDevices,
     PFN_vkEnumerateDeviceExtensionProperties*
         vkEnumerateDeviceExtensionProperties) {
-
   *vkEnumeratePhysicalDevices =
       reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(
           vkGetInstanceProcAddr(vk_instance, "vkEnumeratePhysicalDevices"));
@@ -611,7 +592,7 @@ void RecordGpuSupportedDx12VersionHistograms(
       ConvertToHistogramFeatureLevel(d3d12_feature_level));
 
   UMA_HISTOGRAM_ENUMERATION(
-      "GPU.D3D12HighestShaderModel",
+      "GPU.D3D12HighestShaderModel2",
       ConvertToHistogramShaderVersion(highest_shader_model_version));
 }
 
@@ -631,7 +612,9 @@ bool CollectD3D11FeatureInfo(D3D_FEATURE_LEVEL* d3d11_feature_level,
   if (!D3D11CreateDevice)
     return false;
 
-  // The order of feature levels to attempt to create in D3D CreateDevice
+  // The order of feature levels to attempt to create in D3D CreateDevice.
+  // TODO(crbug.com/1312519): Using 12_2 in kFeatureLevels[] will cause failure
+  // in D3D11CreateDevice(). Limit the highest feature to 12_1.
   const D3D_FEATURE_LEVEL kFeatureLevels[] = {
       D3D_FEATURE_LEVEL_12_1, D3D_FEATURE_LEVEL_12_0, D3D_FEATURE_LEVEL_11_1,
       D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0,
@@ -643,7 +626,8 @@ bool CollectD3D11FeatureInfo(D3D_FEATURE_LEVEL* d3d11_feature_level,
   for (UINT ii = 0; SUCCEEDED(dxgi_factory->EnumAdapters(ii, &dxgi_adapter));
        ++ii) {
     DXGI_ADAPTER_DESC desc;
-    if (SUCCEEDED(dxgi_adapter->GetDesc(&desc)) && desc.VendorId == 0x1414) {
+    CHECK_EQ(S_OK, dxgi_adapter->GetDesc(&desc));
+    if (desc.VendorId == 0x1414) {
       // Bypass Microsoft software renderer.
       continue;
     }
@@ -684,7 +668,7 @@ bool CollectContextGraphicsInfo(GPUInfo* gpu_info) {
 
   DCHECK(gpu_info);
 
-  if (!CollectGraphicsInfoGL(gpu_info))
+  if (!CollectGraphicsInfoGL(gpu_info, gl::GetDefaultDisplayEGL()))
     return false;
 
   // ANGLE's renderer strings are of the form:

@@ -19,12 +19,12 @@
 #include "quiche/http2/hpack/decoder/hpack_entry_type_decoder.h"
 #include "quiche/http2/hpack/decoder/hpack_string_decoder.h"
 #include "quiche/http2/hpack/http2_hpack_constants.h"
-#include "quiche/http2/platform/api/http2_logging.h"
 #include "quiche/common/platform/api/quiche_export.h"
+#include "quiche/common/platform/api/quiche_logging.h"
 
 namespace http2 {
 
-class QUICHE_EXPORT_PRIVATE HpackEntryDecoder {
+class QUICHE_EXPORT HpackEntryDecoder {
  public:
   enum class EntryDecoderState {
     // Have started decoding the type/varint, but didn't finish on the previous
@@ -80,11 +80,10 @@ class QUICHE_EXPORT_PRIVATE HpackEntryDecoder {
   HpackDecodingError error_ = HpackDecodingError::kOk;
 };
 
-QUICHE_EXPORT_PRIVATE std::ostream& operator<<(std::ostream& out,
-                                               const HpackEntryDecoder& v);
-QUICHE_EXPORT_PRIVATE std::ostream& operator<<(
-    std::ostream& out,
-    HpackEntryDecoder::EntryDecoderState state);
+QUICHE_EXPORT std::ostream& operator<<(std::ostream& out,
+                                       const HpackEntryDecoder& v);
+QUICHE_EXPORT std::ostream& operator<<(
+    std::ostream& out, HpackEntryDecoder::EntryDecoderState state);
 
 }  // namespace http2
 

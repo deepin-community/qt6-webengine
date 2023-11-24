@@ -10,11 +10,12 @@
 
 #include "include/private/SkSLDefines.h"
 #include "include/private/SkSLProgramKind.h"
-#include "include/private/SkTArray.h"
+#include "include/private/base/SkTArray.h"
 #include "include/sksl/DSLCase.h"
 #include "include/sksl/DSLExpression.h"
 #include "include/sksl/DSLStatement.h"
-#include "include/sksl/DSLVar.h"
+#include "include/sksl/DSLVar.h"  // IWYU pragma: keep
+#include "include/sksl/SkSLPosition.h"
 
 #include <memory>
 #include <string>
@@ -25,7 +26,6 @@ namespace SkSL {
 
 class Compiler;
 class ErrorReporter;
-class Position;
 struct Program;
 struct ProgramSettings;
 
@@ -57,7 +57,7 @@ void End();
 /**
  * Returns all global elements (functions and global variables) as a self-contained Program. The
  * optional source string is retained as the program's source. DSL programs do not normally have
- * sources, but when a DSL program is produced from parsed program text (as in DSLParser), it may be
+ * sources, but when a DSL program is produced from parsed program text (as in Parser), it may be
  * important to retain it so that any std::string_views derived from it remain valid.
  */
 std::unique_ptr<SkSL::Program> ReleaseProgram(std::unique_ptr<std::string> source = nullptr);
@@ -72,12 +72,6 @@ ErrorReporter& GetErrorReporter();
  * Installs an ErrorReporter which will be notified of any errors that occur during DSL calls.
  */
 void SetErrorReporter(ErrorReporter* errorReporter);
-
-DSLGlobalVar sk_FragColor();
-
-DSLGlobalVar sk_FragCoord();
-
-DSLExpression sk_Position();
 
 /**
  * #extension <name> : enable
@@ -141,7 +135,7 @@ DSLStatement Do(DSLStatement stmt, DSLExpression test, Position pos = {});
  * for (initializer; test; next) stmt;
  */
 DSLStatement For(DSLStatement initializer, DSLExpression test, DSLExpression next,
-                 DSLStatement stmt, Position pos = {});
+                 DSLStatement stmt, Position pos = {}, ForLoopPositions positions = {});
 
 /**
  * if (test) ifTrue; [else ifFalse;]
@@ -149,9 +143,9 @@ DSLStatement For(DSLStatement initializer, DSLExpression test, DSLExpression nex
 DSLStatement If(DSLExpression test, DSLStatement ifTrue, DSLStatement ifFalse = DSLStatement(),
                 Position pos = {});
 
-DSLGlobalVar InterfaceBlock(const DSLModifiers& modifiers,  std::string_view typeName,
-                            SkTArray<DSLField> fields, std::string_view varName = "",
-                            int arraySize = 0, Position pos = {});
+DSLExpression InterfaceBlock(const DSLModifiers& modifiers,  std::string_view typeName,
+                             SkTArray<DSLField> fields, std::string_view varName = "",
+                             int arraySize = 0, Position pos = {});
 
 /**
  * return [value];
@@ -165,42 +159,18 @@ DSLStatement Return(DSLExpression value = DSLExpression(),
 DSLExpression Select(DSLExpression test, DSLExpression ifTrue, DSLExpression ifFalse,
                      Position  = {});
 
-DSLStatement StaticIf(DSLExpression test, DSLStatement ifTrue,
-                      DSLStatement ifFalse = DSLStatement(),
-                      Position pos = {});
-
 // Internal use only
-DSLPossibleStatement PossibleStaticSwitch(DSLExpression value, SkTArray<DSLCase> cases);
-
-DSLStatement StaticSwitch(DSLExpression value, SkTArray<DSLCase> cases,
-                          Position pos = {});
-
-/**
- * @switch (value) { cases }
- */
-template<class... Cases>
-DSLPossibleStatement StaticSwitch(DSLExpression value, Cases... cases) {
-    SkTArray<DSLCase> caseArray;
-    caseArray.reserve_back(sizeof...(cases));
-    (caseArray.push_back(std::move(cases)), ...);
-    return PossibleStaticSwitch(std::move(value), std::move(caseArray));
-}
-
-// Internal use only
-DSLPossibleStatement PossibleSwitch(DSLExpression value, SkTArray<DSLCase> cases);
-
-DSLStatement Switch(DSLExpression value, SkTArray<DSLCase> cases,
-                    Position pos = {});
+DSLStatement Switch(DSLExpression value, SkTArray<DSLCase> cases, Position pos = {});
 
 /**
  * switch (value) { cases }
  */
 template<class... Cases>
-DSLPossibleStatement Switch(DSLExpression value, Cases... cases) {
+DSLStatement Switch(DSLExpression value, Cases... cases) {
     SkTArray<DSLCase> caseArray;
     caseArray.reserve_back(sizeof...(cases));
     (caseArray.push_back(std::move(cases)), ...);
-    return PossibleSwitch(std::move(value), std::move(caseArray));
+    return Switch(std::move(value), std::move(caseArray), Position{});
 }
 
 /**
@@ -214,25 +184,29 @@ DSLStatement While(DSLExpression test, DSLStatement stmt,
  */
 DSLExpression Swizzle(DSLExpression base,
                       SkSL::SwizzleComponent::Type a,
-                      Position pos = {});
+                      Position pos = {},
+                      Position maskPos = {});
 
 DSLExpression Swizzle(DSLExpression base,
                       SkSL::SwizzleComponent::Type a,
                       SkSL::SwizzleComponent::Type b,
-                      Position pos = {});
+                      Position pos = {},
+                      Position maskPos = {});
 
 DSLExpression Swizzle(DSLExpression base,
                       SkSL::SwizzleComponent::Type a,
                       SkSL::SwizzleComponent::Type b,
                       SkSL::SwizzleComponent::Type c,
-                      Position pos = {});
+                      Position pos = {},
+                      Position maskPos = {});
 
 DSLExpression Swizzle(DSLExpression base,
                       SkSL::SwizzleComponent::Type a,
                       SkSL::SwizzleComponent::Type b,
                       SkSL::SwizzleComponent::Type c,
                       SkSL::SwizzleComponent::Type d,
-                      Position pos = {});
+                      Position pos = {},
+                      Position maskPos = {});
 
 /**
  * Returns the absolute value of x. If x is a vector, operates componentwise.

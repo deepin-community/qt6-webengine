@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,6 +20,10 @@
 namespace viz {
 
 namespace {
+
+constexpr int kMaxListToProcess = 32;
+constexpr int kMaxQuadsPerFrame = 8;
+
 struct StackFrame {
   StackFrame(int list_index,
              SharedQuadStateList::ConstIterator sqs_iter,
@@ -44,6 +48,10 @@ std::string SkColorToRGBAString(SkColor color) {
   return str.str();
 }
 
+std::string SkColorToRGBAString(SkColor4f color) {
+  return SkColorToRGBAString(color.toSkColor());
+}
+
 std::unordered_set<uint64_t> ProcessStack(
     std::ostringstream& str,
     std::vector<StackFrame>& stack,
@@ -55,8 +63,8 @@ std::unordered_set<uint64_t> ProcessStack(
   auto write_render_pass = [&str](const CompositorRenderPass* pass) {
     str << "(" << pass << ") render pass id=" << pass->id.GetUnsafeValue()
         << " output_rect=" << pass->output_rect.ToString();
-    if (pass->shared_element_resource_id.IsValid())
-      str << " " << pass->shared_element_resource_id.ToString();
+    if (pass->view_transition_element_resource_id.IsValid())
+      str << " " << pass->view_transition_element_resource_id.ToString();
     str << "\n";
   };
   auto write_sqs = [&str](const SharedQuadState* sqs) {
@@ -78,6 +86,7 @@ std::unordered_set<uint64_t> ProcessStack(
         str << "(" << quad << ") CompositorRenderPassDrawQuad\n";
       };
   std::unordered_set<uint64_t> seen_render_pass_ids;
+  int quads_per_frame_logged = 0;
   while (!stack.empty()) {
     auto& frame = stack.back();
     auto& pass = list[frame.list_index];
@@ -100,6 +109,14 @@ std::unordered_set<uint64_t> ProcessStack(
       frame.indent += 2;
     } else {
       if (++frame.quad_iter == pass->quad_list.end()) {
+        quads_per_frame_logged = 0;
+        stack.pop_back();
+        continue;
+      }
+      if (++quads_per_frame_logged > kMaxQuadsPerFrame) {
+        write_indent(frame.indent);
+        str << "(more quads - orphaned list may not be correct)\n";
+        quads_per_frame_logged = 0;
         stack.pop_back();
         continue;
       }
@@ -156,6 +173,12 @@ std::unordered_set<uint64_t> ProcessStack(
 std::string TransitionUtils::RenderPassListToString(
     const CompositorRenderPassList& list) {
   std::ostringstream str;
+
+  if (list.size() > kMaxListToProcess) {
+    str << "RenderPassList too large (" << list.size()
+        << "), max supported list length " << kMaxListToProcess;
+    return str.str();
+  }
 
   std::vector<StackFrame> stack;
   stack.emplace_back(list.size() - 1,
@@ -239,7 +262,7 @@ TransitionUtils::CopyPassWithQuadFiltering(
       source_pass.transform_to_root_target, source_pass.filters,
       source_pass.backdrop_filters, source_pass.backdrop_filter_bounds,
       source_pass.subtree_capture_id, source_pass.subtree_size,
-      source_pass.shared_element_resource_id,
+      source_pass.view_transition_element_resource_id,
       source_pass.has_transparent_background, source_pass.cache_render_pass,
       source_pass.has_damage_from_contributing_content,
       source_pass.generate_mipmap, source_pass.has_per_quad_damage);

@@ -1,17 +1,15 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/printing/print_view_manager_common.h"
 
-#include "base/bind.h"
 #include "content/public/browser/render_frame_host.h"
 #include "extensions/buildflags/buildflags.h"
 #include "pdf/buildflags.h"
 #include "printing/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-#include "components/guest_view/browser/guest_view_manager.h"
 #include "extensions/browser/guest_view/mime_handler_view/mime_handler_view_guest.h"
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
@@ -28,44 +26,19 @@
 namespace printing {
 
 namespace {
-// Returns true if `contents` is a full page MimeHandlerViewGuest plugin.
-bool IsFullPagePlugin(content::WebContents* contents) {
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-  auto* guest_view =
-      extensions::MimeHandlerViewGuest::FromWebContents(contents);
-  if (guest_view && guest_view->is_full_page_plugin())
-    return true;
-#endif
-  return false;
-}
-
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-// Stores `guest_contents` in `result` and returns true if
-// `IsFullPagePlugin(guest_contents)`. Otherwise, returns false and `result`
-// remains unchanged.
-bool StoreFullPagePlugin(content::WebContents** result,
-                         content::WebContents* guest_contents) {
-  if (IsFullPagePlugin(guest_contents)) {
-    *result = guest_contents;
-    return true;
-  }
-  return false;
-}
-#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 // Pick the right RenderFrameHost based on the WebContents.
 content::RenderFrameHost* GetRenderFrameHostToUse(
     content::WebContents* contents) {
-  if (!IsFullPagePlugin(contents))
-    return GetFrameToPrint(contents);
-
 #if BUILDFLAG(ENABLE_PDF)
-  content::RenderFrameHost* pdf_rfh =
-      pdf_frame_util::FindPdfChildFrame(contents->GetMainFrame());
+  // Pick the plugin frame if `contents` is a PDF viewer guest.
+  content::RenderFrameHost* full_page_plugin = GetFullPagePlugin(contents);
+  content::RenderFrameHost* pdf_rfh = pdf_frame_util::FindPdfChildFrame(
+      full_page_plugin ? full_page_plugin : contents->GetPrimaryMainFrame());
   if (pdf_rfh)
     return pdf_rfh;
 #endif
-  return contents->GetMainFrame();
+  return GetFrameToPrint(contents);
 }
 
 }  // namespace
@@ -81,15 +54,13 @@ void StartPrint(
   using PrintViewManagerImpl = PrintViewManagerBasic;
 #endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW)
 
-  content::WebContents* contents_to_use = GetWebContentsToUse(contents);
-  auto* print_view_manager =
-      PrintViewManagerImpl::FromWebContents(contents_to_use);
-  if (!print_view_manager)
+  content::RenderFrameHost* rfh_to_use = GetRenderFrameHostToUse(contents);
+  if (!rfh_to_use)
     return;
 
-  content::RenderFrameHost* rfh_to_use =
-      GetRenderFrameHostToUse(contents_to_use);
-  if (!rfh_to_use)
+  auto* print_view_manager = PrintViewManagerImpl::FromWebContents(
+      content::WebContents::FromRenderFrameHost(rfh_to_use));
+  if (!print_view_manager)
     return;
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
@@ -109,15 +80,13 @@ void StartPrint(
 
 void StartBasicPrint(content::WebContents* contents) {
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
-  content::WebContents* contents_to_use = GetWebContentsToUse(contents);
-  PrintViewManager* print_view_manager =
-      PrintViewManager::FromWebContents(contents_to_use);
-  if (!print_view_manager)
+  content::RenderFrameHost* rfh_to_use = GetRenderFrameHostToUse(contents);
+  if (!rfh_to_use)
     return;
 
-  content::RenderFrameHost* rfh_to_use =
-      GetRenderFrameHostToUse(contents_to_use);
-  if (!rfh_to_use)
+  PrintViewManager* print_view_manager = PrintViewManager::FromWebContents(
+      content::WebContents::FromRenderFrameHost(rfh_to_use));
+  if (!print_view_manager)
     return;
 
   print_view_manager->BasicPrint(rfh_to_use);
@@ -128,20 +97,25 @@ content::RenderFrameHost* GetFrameToPrint(content::WebContents* contents) {
   auto* focused_frame = contents->GetFocusedFrame();
   return (focused_frame && focused_frame->HasSelection())
              ? focused_frame
-             : contents->GetMainFrame();
+             : contents->GetPrimaryMainFrame();
 }
 
-content::WebContents* GetWebContentsToUse(content::WebContents* contents) {
+content::RenderFrameHost* GetFullPagePlugin(content::WebContents* contents) {
+  content::RenderFrameHost* full_page_plugin = nullptr;
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-  guest_view::GuestViewManager* guest_view_manager =
-      guest_view::GuestViewManager::FromBrowserContext(
-          contents->GetBrowserContext());
-  if (guest_view_manager) {
-    guest_view_manager->ForEachGuest(
-        contents, base::BindRepeating(&StoreFullPagePlugin, &contents));
-  }
+  contents->ForEachRenderFrameHostWithAction(
+      [&full_page_plugin](content::RenderFrameHost* rfh) {
+        auto* guest_view =
+            extensions::MimeHandlerViewGuest::FromRenderFrameHost(rfh);
+        if (guest_view && guest_view->is_full_page_plugin()) {
+          DCHECK_EQ(guest_view->GetGuestMainFrame(), rfh);
+          full_page_plugin = rfh;
+          return content::RenderFrameHost::FrameIterationAction::kStop;
+        }
+        return content::RenderFrameHost::FrameIterationAction::kContinue;
+      });
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
-  return contents;
+  return full_page_plugin;
 }
 
 }  // namespace printing

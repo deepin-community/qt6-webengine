@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -89,6 +89,7 @@ enum class DOMExceptionCode : ExceptionCode {
   kVersionError,
   kOperationError,
   kNotAllowedError,
+  kOptOutError,
 
   // The rest of entries are defined out of scope of Web IDL.
 
@@ -111,6 +112,10 @@ enum class DOMExceptionCode : ExceptionCode {
 
   // WebTransport - https://w3c.github.io/webtransport/
   kWebTransportError,
+
+  // Smart Card API
+  // https://github.com/WICG/web-smart-card/blob/main/README.md#web-idl
+  kSmartCardError,
 
   kNumOfCodes,
 };

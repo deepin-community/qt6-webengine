@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,17 +8,20 @@
 #include <memory>
 #include <string>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "content/common/content_export.h"
+#include "content/public/browser/storage_partition.h"
 #include "net/cookies/cookie_partition_key_collection.h"
+#include "services/network/public/mojom/clear_data_filter.mojom-forward.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "services/network/public/mojom/network_service.mojom.h"
+#include "third_party/blink/public/common/storage_key/storage_key.h"
 
 class GURL;
 
 namespace url {
 class Origin;
-}
+}  // namespace url
 
 namespace content {
 
@@ -40,8 +43,30 @@ class CONTENT_EXPORT BrowsingDataFilterBuilder {
     kPreserve
   };
 
+  // This determines how StorageKeys will be matched given an origin that was
+  // added to the filter.
+  enum class OriginMatchingMode {
+    // Default mode: StorageKeys are matched on origin in 1P context and on
+    // top-level-site in 3P contexts. For deletion that means that the origin
+    // and everything embedded on it is deleted, but the instances when the
+    // origin itself is embedded are left untouched.
+    kThirdPartiesIncluded,
+    // Second option: StorageKeys are matched on origin only in all contexts.
+    // For deletion that means that the origin is deleted in both 1P and 3P
+    // contexts, but anything embedded on it is left untouched.
+    kOriginInAllContexts
+  };
+
   // Constructs a filter with the given |mode|: delete or preserve.
+  // The |OriginMatchingMode| is |kThirdPartiesIncluded| in this case by
+  // default.
   static std::unique_ptr<BrowsingDataFilterBuilder> Create(Mode mode);
+
+  // Same as above, but also allows to choose how origins are matched with
+  // storage keys.
+  static std::unique_ptr<BrowsingDataFilterBuilder> Create(
+      Mode mode,
+      OriginMatchingMode origin_mode);
 
   virtual ~BrowsingDataFilterBuilder() = default;
 
@@ -67,8 +92,25 @@ class CONTENT_EXPORT BrowsingDataFilterBuilder {
           cookie_partition_key_collection) = 0;
 
   // Returns true if this filter is handling a Clear-Site-Data header sent in a
-  // cross-site context.
-  virtual bool IsCrossSiteClearSiteData() const = 0;
+  // cross-site context. Only works for processing the Clear-Site-Data header
+  // (which means the filter contains a single domain) when partitioned cookies
+  // are enabled.
+  virtual bool IsCrossSiteClearSiteDataForCookies() const = 0;
+
+  // Set the StorageKey for the filter.
+  // If the key is set, then only the StoragePartition that matches the key
+  // exactly will be deleted. Without the key, all storage that matches the
+  // other criteria is deleted.
+  virtual void SetStorageKey(
+      const absl::optional<blink::StorageKey>& storage_key) = 0;
+
+  // Returns whether the StorageKey is set (e.g. using the method above).
+  virtual bool HasStorageKey() const = 0;
+
+  // Returns whether the filter's StorageKey matches the given one.
+  // Note: the StorageKey in the filter has to be set.
+  virtual bool MatchesWithSavedStorageKey(
+      const blink::StorageKey& other_key) const = 0;
 
   // Returns true if we're an empty preserve list, where we delete everything.
   virtual bool MatchesAllOriginsAndDomains() = 0;
@@ -78,11 +120,11 @@ class CONTENT_EXPORT BrowsingDataFilterBuilder {
   // in the list to preserve.
   virtual base::RepeatingCallback<bool(const GURL&)> BuildUrlFilter() = 0;
 
-  // Builds a filter that matches origins that are in the list to delete, or
-  // aren't in the list to preserve. This is preferred to BuildUrlFilter() as
-  // it does not inherently perform GURL->Origin conversions.
-  virtual base::RepeatingCallback<bool(const url::Origin&)>
-  BuildOriginFilter() = 0;
+  // Builds a filter that matches storage keys that are in the list to delete,
+  // or aren't in the list to preserve. This is preferred to BuildUrlFilter() as
+  // it preserves storage partitioning information.
+  virtual content::StoragePartition::StorageKeyMatcherFunction
+  BuildStorageKeyFilter() = 0;
 
   // Builds a filter that can be used with the network service. This uses a Mojo
   // struct rather than a predicate function (as used by the rest of the filters
@@ -112,7 +154,12 @@ class CONTENT_EXPORT BrowsingDataFilterBuilder {
   virtual std::unique_ptr<BrowsingDataFilterBuilder> Copy() = 0;
 
   // Comparison.
-  virtual bool operator==(const BrowsingDataFilterBuilder& other) = 0;
+  bool operator==(const BrowsingDataFilterBuilder& other) const {
+    return IsEqual(other);
+  }
+
+ private:
+  virtual bool IsEqual(const BrowsingDataFilterBuilder& other) const = 0;
 };
 
 }  // namespace content

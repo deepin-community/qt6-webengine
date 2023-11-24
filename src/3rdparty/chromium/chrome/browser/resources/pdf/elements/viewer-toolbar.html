@@ -246,14 +246,13 @@
   <div id="end">
   <if expr="enable_ink">
     <template is="dom-if" if="[[pdfAnnotationsEnabled]]">
-      <cr-icon-button id="annotate" iron-icon="pdf:create"
+      <cr-icon-button id="annotate" iron-icon="cr:create"
           on-click="onAnnotationClick_"
           aria-label="$i18n{tooltipAnnotate}"
           disabled="[[!annotationsAvailable]]"
           title="$i18n{tooltipAnnotate}"></cr-icon-button>
     </template>
   </if>
-<!-- to do (mibrunin): Check if we can enable these buttons for Qt WebEngine
     <viewer-download-controls id="downloads"
         has-edits="[[hasEdits]]"
         has-entered-annotation-mode="[[hasEnteredAnnotationMode]]"
@@ -263,7 +262,6 @@
         hidden="[[!printingEnabled]]" title="$i18n{tooltipPrint}"
         aria-label="$i18n{tooltipPrint}" on-click="onPrintClick_">
     </cr-icon-button>
--->
     <cr-icon-button id="more" iron-icon="cr:more-vert"
         title="$i18n{moreActions}" aria-label="$i18n{moreActions}"
         on-click="onMoreClick_"></cr-icon-button>
@@ -278,7 +276,7 @@
 <if expr="enable_ink">
       disabled="[[annotationMode]]"
 </if>
-      aria-checked="[[getTwoPageViewAriaChecked_(twoUpViewEnabled)]]">
+      aria-checked="[[getAriaChecked_(twoUpViewEnabled)]]">
     <span class="check-container">
       <iron-icon icon="pdf:check" hidden="[[!twoUpViewEnabled]]"></iron-icon>
     </span>
@@ -288,12 +286,26 @@
   <button id="show-annotations-button"
       class="dropdown-item" on-click="toggleDisplayAnnotations_"
       role="checkbox"
-      aria-checked="[[getShowAnnotationsAriaChecked_(displayAnnotations_)]]">
+      aria-checked="[[getAriaChecked_(displayAnnotations_)]]">
     <span class="check-container">
       <iron-icon icon="pdf:check" hidden="[[!displayAnnotations_]]"></iron-icon>
     </span>
     $i18n{annotationsShowToggle}
   </button>
+
+<if expr="enable_screen_ai_service">
+  <template is="dom-if" if="[[pdfOcrEnabled]]">
+    <button id="pdf-ocr-button"
+        class="dropdown-item" on-click="onPdfOcrClick_" role="checkbox"
+        aria-checked="[[getAriaChecked_(pdfOcrAlwaysActive_)]]">
+      <span class="check-container">
+        <iron-icon icon="pdf:check" hidden="[[!pdfOcrAlwaysActive_]]">
+        </iron-icon>
+      </span>
+      $i18n{pdfOcrShowToggle}
+    </button>
+  </template>
+</if>
 
   <hr>
 

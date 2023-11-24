@@ -1,20 +1,22 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ui/base/interaction/element_tracker.h"
 
-#include <algorithm>
 #include <iterator>
 #include <list>
 #include <map>
+#include <sstream>
 
 #include "base/auto_reset.h"
-#include "base/bind.h"
+#include "base/callback_list.h"
 #include "base/containers/contains.h"
 #include "base/dcheck_is_on.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
+#include "base/ranges/algorithm.h"
 #include "ui/base/interaction/element_identifier.h"
 
 namespace ui {
@@ -73,17 +75,22 @@ class ElementTracker::ElementData {
     return custom_event_callbacks_.Add(callback);
   }
 
-  void NotifyElementShown(TrackedElement* element) {
+  void NotifyElementShown(TrackedElement*& element) {
+    DCHECK(element);
     DCHECK_EQ(identifier(), element->identifier());
-    DCHECK_EQ(static_cast<intptr_t>(context()),
-              static_cast<intptr_t>(element->context()));
-    const auto it = elements_.insert(elements_.end(), element);
-    const bool success = element_lookup_.emplace(element, it).second;
-    DCHECK(success);
+    // Zero context data is the "all contexts" entry and doesn't actually store
+    // new elements, just calls callbacks.
+    if (context()) {
+      DCHECK_EQ(static_cast<intptr_t>(context()),
+                static_cast<intptr_t>(element->context()));
+      const auto it = elements_.insert(elements_.end(), element);
+      const bool success = element_lookup_.emplace(element, it).second;
+      DCHECK(success);
+    }
     shown_callbacks_.Notify(element);
   }
 
-  void NotifyElementActivated(TrackedElement* element) {
+  void NotifyElementActivated(TrackedElement*& element) {
     DCHECK(base::Contains(element_lookup_, element));
     activated_callbacks_.Notify(element);
   }
@@ -179,6 +186,17 @@ TrackedElement::TrackedElement(ElementIdentifier id, ElementContext context)
 
 TrackedElement::~TrackedElement() = default;
 
+gfx::Rect TrackedElement::GetScreenBounds() const {
+  return gfx::Rect();
+}
+
+std::string TrackedElement::ToString() const {
+  std::ostringstream oss;
+  oss << GetImplementationName() << "(" << identifier() << ", " << context()
+      << ")";
+  return oss.str();
+}
+
 // static
 ElementTracker* ElementTracker::GetElementTracker() {
   static base::NoDestructor<ElementTracker> instance;
@@ -208,14 +226,21 @@ TrackedElement* ElementTracker::GetFirstMatchingElement(
   return it->second.elements().front();
 }
 
+TrackedElement* ElementTracker::GetElementInAnyContext(ElementIdentifier id) {
+  for (const auto& [key, data] : element_data_) {
+    if (key.first == id && !data.elements().empty())
+      return data.elements().front();
+  }
+  return nullptr;
+}
+
 ElementTracker::ElementList ElementTracker::GetAllMatchingElements(
     ElementIdentifier id,
     ElementContext context) {
   const auto it = element_data_.find(LookupKey(id, context));
   ElementList result;
   if (it != element_data_.end()) {
-    std::copy(it->second.elements().begin(), it->second.elements().end(),
-              std::back_inserter(result));
+    base::ranges::copy(it->second.elements(), std::back_inserter(result));
   }
   return result;
 }
@@ -225,8 +250,7 @@ ElementTracker::ElementList ElementTracker::GetAllMatchingElementsInAnyContext(
   ElementList result;
   for (const auto& [key, data] : element_data_) {
     if (key.first == id) {
-      std::copy(data.elements().begin(), data.elements().end(),
-                std::back_inserter(result));
+      base::ranges::copy(data.elements(), std::back_inserter(result));
     }
   }
   return result;
@@ -238,6 +262,19 @@ bool ElementTracker::IsElementVisible(ElementIdentifier id,
   return it != element_data_.end() && it->second.num_elements() > 0;
 }
 
+ElementTracker::Contexts ElementTracker::GetAllContextsForTesting() const {
+  Contexts result;
+  for (const auto& [key, data] : element_data_) {
+    result.insert(key.second);
+  }
+  return result;
+}
+
+ElementTracker::Subscription
+ElementTracker::AddAnyElementShownCallbackForTesting(Callback callback) {
+  return any_element_shown_callbacks_.Add(std::move(callback));
+}
+
 ElementTracker::Subscription ElementTracker::AddElementShownCallback(
     ElementIdentifier id,
     ElementContext context,
@@ -245,6 +282,14 @@ ElementTracker::Subscription ElementTracker::AddElementShownCallback(
   DCHECK(id);
   DCHECK(context);
   return GetOrAddElementData(id, context)->AddElementShownCallback(callback);
+}
+
+ElementTracker::Subscription
+ElementTracker::AddElementShownInAnyContextCallback(ElementIdentifier id,
+                                                    Callback callback) {
+  DCHECK(id);
+  return GetOrAddElementData(id, ElementContext())
+      ->AddElementShownCallback(callback);
 }
 
 ElementTracker::Subscription ElementTracker::AddElementActivatedCallback(
@@ -285,26 +330,54 @@ ElementTracker::ElementTracker()
 ElementTracker::~ElementTracker() = default;
 
 void ElementTracker::NotifyElementShown(TrackedElement* element) {
+  notification_elements_.push_back(element);
+  TrackedElement*& safe_element = notification_elements_.back();
+
   // Prevent garbage collection of dead entries until after we send
   // notifications and all callbacks happen.
   GarbageCollector::Frame gc_frame(gc_.get());
   ElementData* const element_data =
       GetOrAddElementData(element->identifier(), element->context());
   DCHECK(!element_data->HasElement(element));
-  element_data->NotifyElementShown(element);
+  element_data->NotifyElementShown(safe_element);
+
+  // Do "all contexts" notification:
+  if (safe_element) {
+    const auto it =
+        element_data_.find(LookupKey(element->identifier(), ElementContext()));
+    if (it != element_data_.end())
+      it->second.NotifyElementShown(safe_element);
+  }
+
+  // Do the "all elements" notification:
+  if (safe_element)
+    any_element_shown_callbacks_.Notify(element);
+
+  notification_elements_.pop_back();
 }
 
 void ElementTracker::NotifyElementActivated(TrackedElement* element) {
+  notification_elements_.push_back(element);
+  TrackedElement*& safe_element = notification_elements_.back();
+
   // Prevent garbage collection of dead entries until after we send
   // notifications and all callbacks happen.
   GarbageCollector::Frame gc_frame(gc_.get());
   const auto it =
       element_data_.find(LookupKey(element->identifier(), element->context()));
   DCHECK(it != element_data_.end());
-  it->second.NotifyElementActivated(element);
+  it->second.NotifyElementActivated(safe_element);
+
+  notification_elements_.pop_back();
 }
 
 void ElementTracker::NotifyElementHidden(TrackedElement* element) {
+  // Clear out any elements we're in the process of sending events for.
+  for (TrackedElement*& safe_element : notification_elements_) {
+    if (safe_element == element)
+      safe_element = nullptr;
+  }
+
   // Prevent garbage collection of dead entries until after we send
   // notifications and all callbacks happen.
   GarbageCollector::Frame gc_frame(gc_.get());

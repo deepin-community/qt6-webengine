@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/power_monitor/power_monitor.h"
 #include "base/power_monitor/power_monitor_source.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
 #include "components/viz/service/performance_hint/hint_session.h"
 #include "gpu/config/gpu_info.h"
@@ -57,11 +58,8 @@ class MockVizCompositorThreadRunner : public VizCompositorThreadRunner {
       base::RepeatingClosure* wake_up_closure) override {
     return false;
   }
-  MOCK_METHOD1(CreateFrameSinkManager, void(mojom::FrameSinkManagerParamsPtr));
-  MOCK_METHOD3(CreateFrameSinkManager,
-               void(mojom::FrameSinkManagerParamsPtr,
-                    gpu::CommandBufferTaskExecutor*,
-                    GpuServiceImpl*));
+  MOCK_METHOD2(CreateFrameSinkManager,
+               void(mojom::FrameSinkManagerParamsPtr, GpuServiceImpl*));
 
  private:
   const raw_ptr<base::SingleThreadTaskRunner> task_runner_;
@@ -87,7 +85,7 @@ class MockPowerMonitorSource : public base::PowerMonitorSource {
 TEST(VizMainImplTest, OopVizDependencyInjection) {
   VizMainImpl::ExternalDependencies external_deps;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-      base::ThreadTaskRunnerHandle::Get();
+      base::SingleThreadTaskRunner::GetCurrentDefault();
 
   // |VizMainImpl| is supposed to use the |UkmRecorder| injected through
   // |ExternalDependencies|.

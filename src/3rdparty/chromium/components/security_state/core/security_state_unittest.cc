@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,11 +8,9 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_feature_list.h"
-#include "components/security_state/core/features.h"
 #include "net/cert/x509_certificate.h"
 #include "net/ssl/ssl_cipher_suite_names.h"
 #include "net/ssl/ssl_connection_status_flags.h"
@@ -325,14 +323,8 @@ TEST(SecurityStateTest, SafetyTipSometimesRemovesSecure) {
   const SafetyTipCase kTestCases[] = {
       {SafetyTipStatus::kUnknown, SECURE},
       {SafetyTipStatus::kNone, SECURE},
-      {SafetyTipStatus::kBadReputation, NONE},
       {SafetyTipStatus::kLookalike, SECURE},
-      {SafetyTipStatus::kBadKeyword, SECURE},
   };
-
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(
-      security_state::features::kSafetyTipUI);
 
   for (auto testcase : kTestCases) {
     TestSecurityStateHelper helper;
@@ -482,6 +474,7 @@ TEST(SecurityStateTest, HttpsOnlyModeOverridesCertificateError) {
   helper.set_cert_status(net::CERT_STATUS_SHA1_SIGNATURE_PRESENT |
                          net::CERT_STATUS_UNABLE_TO_CHECK_REVOCATION);
   EXPECT_TRUE(helper.HasMajorCertificateError());
+  helper.set_is_error_page(true);
   helper.set_is_https_only_mode_upgraded(true);
   EXPECT_EQ(SecurityLevel::WARNING, helper.GetSecurityLevel());
 }
@@ -491,6 +484,7 @@ TEST(SecurityStateTest, MaliciousContentOverridesHttpsOnlyMode) {
   TestSecurityStateHelper helper;
   helper.set_malicious_content_status(
       MALICIOUS_CONTENT_STATUS_SOCIAL_ENGINEERING);
+  helper.set_is_error_page(true);
   helper.set_is_https_only_mode_upgraded(true);
   EXPECT_EQ(DANGEROUS, helper.GetSecurityLevel());
 }

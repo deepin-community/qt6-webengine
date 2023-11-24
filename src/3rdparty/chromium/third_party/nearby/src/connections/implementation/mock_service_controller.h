@@ -18,7 +18,6 @@
 #include "gmock/gmock.h"
 #include "connections/implementation/service_controller.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 
@@ -83,10 +82,14 @@ class MockServiceController : public ServiceController {
   MOCK_METHOD(void, DisconnectFromEndpoint,
               (ClientProxy * client, const std::string& endpoint_id),
               (override));
+
+  MOCK_METHOD(void, ShutdownBwuManagerExecutors, (), (override));
+
+  MOCK_METHOD(void, SetCustomSavePath,
+              (ClientProxy * client, const std::string& path), (override));
 };
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location
 
 #endif  // CORE_INTERNAL_MOCK_SERVICE_CONTROLLER_H_

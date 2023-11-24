@@ -1,11 +1,15 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ui/accessibility/platform/inspect/ax_call_statement_invoker_mac.h"
 
+#import <Accessibility/Accessibility.h>
+
 #include "base/strings/sys_string_conversions.h"
 #include "ui/accessibility/platform/ax_utils_mac.h"
+#include "ui/accessibility/platform/inspect/ax_element_wrapper_mac.h"
+#include "ui/accessibility/platform/inspect/ax_inspect_utils_mac.h"
 #include "ui/accessibility/platform/inspect/ax_property_node.h"
 
 namespace ui {
@@ -146,14 +150,22 @@ AXOptionalNSObject AXCallStatementInvoker::Invoke(
   if (!property_node.key.empty())
     (*storage_)[property_node.key] = target;
 
-  return AXOptionalNSObject(target);
+  // When dumping tree, return NULL values as NotApplicable in order to
+  // easily filter them out of the dump.
+  return IsDumpingTree() ? AXOptionalNSObject::NotNullOrNotApplicable(target)
+                         : AXOptionalNSObject(target);
 }
 
 AXOptionalNSObject AXCallStatementInvoker::InvokeFor(
     const id target,
     const AXPropertyNode& property_node) const {
-  if (IsNSAccessibilityElement(target) || IsAXUIElement(target))
-    return InvokeForAXElement(target, property_node);
+  if (target == nil) {
+    return AXOptionalNSObject::Error(
+        "Cannot call '" + property_node.ToFlatString() + "' on null value");
+  }
+
+  if (AXElementWrapper::IsValidElement(target))
+    return InvokeForAXElement({target}, property_node);
 
   if (IsAXTextMarkerRange(target)) {
     return InvokeForAXTextMarkerRange(target, property_node);
@@ -165,52 +177,76 @@ AXOptionalNSObject AXCallStatementInvoker::InvokeFor(
   if ([target isKindOfClass:[NSDictionary class]])
     return InvokeForDictionary(target, property_node);
 
+  if (@available(macOS 11.0, *)) {
+    if ([target isKindOfClass:[AXCustomContent class]])
+      return InvokeForAXCustomContent(target, property_node);
+  }
+
   LOG(ERROR) << "Unexpected target type for " << property_node.ToFlatString();
   return AXOptionalNSObject::Error();
 }
 
-AXOptionalNSObject AXCallStatementInvoker::InvokeForAXElement(
+AXOptionalNSObject AXCallStatementInvoker::InvokeForAXCustomContent(
     const id target,
+    const AXPropertyNode& property_node) const {
+  if (@available(macOS 11.0, *)) {
+    AXCustomContent* content = target;
+
+    if (property_node.name_or_value == "label")
+      return AXOptionalNSObject(content.label);
+    if (property_node.name_or_value == "value")
+      return AXOptionalNSObject(content.value);
+
+    return AXOptionalNSObject::Error(
+        "Unrecognized '" + property_node.name_or_value +
+        "' attribute called on AXCustomContent object.");
+  }
+  return AXOptionalNSObject::Error();
+}
+
+AXOptionalNSObject AXCallStatementInvoker::InvokeForAXElement(
+    const AXElementWrapper& ax_element,
     const AXPropertyNode& property_node) const {
   // Actions.
   if (property_node.name_or_value == "AXActionNames") {
-    return AXOptionalNSObject::NotNullOrNotApplicable(AXActionNamesOf(target));
+    return AXOptionalNSObject::NotNullOrNotApplicable(ax_element.ActionNames());
   }
   if (property_node.name_or_value == "AXPerformAction") {
     AXOptionalNSObject param = ParamFrom(property_node);
     if (param.IsNotNull()) {
-      PerformAXAction(target, *param);
+      ax_element.PerformAction(*param);
       return AXOptionalNSObject::Unsupported();
     }
     return AXOptionalNSObject::Error();
   }
 
   // Get or set attribute value if the attribute is supported.
-  for (NSString* attribute : AXAttributeNamesOf(target)) {
+  for (NSString* attribute : ax_element.AttributeNames()) {
     if (property_node.IsMatching(base::SysNSStringToUTF8(attribute))) {
       // Setter
       if (property_node.rvalue) {
         AXOptionalNSObject rvalue = Invoke(*property_node.rvalue);
         if (rvalue.IsNotNull()) {
-          SetAXAttributeValueOf(target, attribute, *rvalue);
+          ax_element.SetAttributeValue(attribute, *rvalue);
           return {rvalue};
         }
         return rvalue;
       }
       // Getter. Make sure to expose null values in ax scripts.
-      id value = AXAttributeValueOf(target, attribute);
-      return IsDumpingTree() ? AXOptionalNSObject::NotNullOrNotApplicable(value)
-                             : AXOptionalNSObject(value);
+      AXOptionalNSObject optional_value =
+          ax_element.GetAttributeValue(attribute);
+      return IsDumpingTree()
+                 ? AXOptionalNSObject::NotNullOrNotApplicable(*optional_value)
+                 : optional_value;
     }
   }
 
   // Parameterized attributes.
-  for (NSString* attribute : AXParameterizedAttributeNamesOf(target)) {
+  for (NSString* attribute : ax_element.ParameterizedAttributeNames()) {
     if (property_node.IsMatching(base::SysNSStringToUTF8(attribute))) {
       AXOptionalNSObject param = ParamFrom(property_node);
       if (param.IsNotNull()) {
-        return AXOptionalNSObject(
-            AXParameterizedAttributeValueOf(target, attribute, *param));
+        return ax_element.GetParameterizedAttributeValue(attribute, *param);
       }
       return param;
     }
@@ -240,30 +276,23 @@ AXOptionalNSObject AXCallStatementInvoker::InvokeForAXElement(
 
     SEL selector =
         NSSelectorFromString(base::SysUTF8ToNSString(selector_string));
-    if (![target respondsToSelector:selector])
+    if (!ax_element.RespondsToSelector(selector))
       return AXOptionalNSObject::Error();
 
-    NSInvocation* invocation = [NSInvocation
-        invocationWithMethodSignature:
-            [[target class] instanceMethodSignatureForSelector:selector]];
-    [invocation setSelector:selector];
-    [invocation setTarget:target];
-    if (optional_arg_selector) {
-      // The target is at index 0 and the selector at index 1, so arguments
-      // start at index 2.
-      [invocation setArgument:&*optional_arg_selector atIndex:2];
-    }
-    [invocation invoke];
-    BOOL return_value;
-    [invocation getReturnValue:&return_value];
+    BOOL return_value =
+        optional_arg_selector
+            ? ax_element.Invoke<BOOL, SEL>(selector, *optional_arg_selector)
+            : ax_element.Invoke<BOOL>(selector);
     return AXOptionalNSObject([NSNumber numberWithBool:return_value]);
   }
+
+  if (property_node.name_or_value == "setAccessibilityFocused")
+    return InvokeSetAccessibilityFocused(ax_element, property_node);
 
   // accessibilityAttributeValue
   if (property_node.name_or_value == "accessibilityAttributeValue") {
     if (property_node.arguments.size() == 1) {
-      return AXOptionalNSObject(AXAttributeValueOf(
-          target,
+      return AXOptionalNSObject(ax_element.GetAttributeValue(
           base::SysUTF8ToNSString(property_node.arguments[0].name_or_value)));
     }
     // Parameterized accessibilityAttributeValue.
@@ -274,8 +303,8 @@ AXOptionalNSObject AXCallStatementInvoker::InvokeForAXElement(
       if (!param.HasValue())
         return AXOptionalNSObject::Error();
 
-      return AXOptionalNSObject(AXParameterizedAttributeValueOf(
-          target, base::SysUTF8ToNSString(attribute), *param));
+      return AXOptionalNSObject(ax_element.GetParameterizedAttributeValue(
+          base::SysUTF8ToNSString(attribute), *param));
     }
     return AXOptionalNSObject::Error();
   }
@@ -283,14 +312,15 @@ AXOptionalNSObject AXCallStatementInvoker::InvokeForAXElement(
   if (base::StartsWith(property_node.name_or_value, "accessibility")) {
     if (property_node.arguments.size() == 1) {
       absl::optional<id> optional_id =
-          PerformAXSelector(target, property_node.name_or_value,
-                            property_node.arguments[0].name_or_value);
+          ax_element.PerformSelector(property_node.name_or_value,
+                                     property_node.arguments[0].name_or_value);
       if (optional_id) {
         return AXOptionalNSObject(*optional_id);
       }
     }
     if (property_node.arguments.empty()) {
-      auto optional_id = PerformAXSelector(target, property_node.name_or_value);
+      auto optional_id =
+          ax_element.PerformSelector(property_node.name_or_value);
       if (optional_id) {
         return AXOptionalNSObject(*optional_id);
       }
@@ -393,6 +423,28 @@ AXOptionalNSObject AXCallStatementInvoker::InvokeForDictionary(
   NSString* key = PropertyNodeToString(property_node);
   NSDictionary* dictionary = target;
   return AXOptionalNSObject::NotNullOrError(dictionary[key]);
+}
+
+AXOptionalNSObject AXCallStatementInvoker::InvokeSetAccessibilityFocused(
+    const AXElementWrapper& ax_element,
+    const AXPropertyNode& property_node) const {
+  std::string selector_string = property_node.name_or_value + ":";
+  if (property_node.arguments.size() != 1) {
+    LOG(ERROR) << "Wrong arguments number for " << selector_string
+               << ", got: " << property_node.arguments.size()
+               << ", expected: 1";
+    return AXOptionalNSObject::Error();
+  }
+
+  SEL selector = NSSelectorFromString(base::SysUTF8ToNSString(selector_string));
+  if (!ax_element.RespondsToSelector(selector)) {
+    LOG(ERROR) << "Target doesn't answer to " << selector_string << " selector";
+    return AXOptionalNSObject::Error();
+  }
+
+  BOOL val = property_node.arguments[0].name_or_value == "FALSE" ? FALSE : TRUE;
+  ax_element.Invoke<void, BOOL>(selector, val);
+  return AXOptionalNSObject(nil);
 }
 
 AXOptionalNSObject AXCallStatementInvoker::ParamFrom(

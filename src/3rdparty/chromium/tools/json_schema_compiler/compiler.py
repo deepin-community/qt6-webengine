@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2012 The Chromium Authors. All rights reserved.
+# Copyright 2012 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Generator for C++ structs from api json files.
@@ -15,8 +15,6 @@ Usage example:
   compiler.py --destdir gen --root /home/Work/src
     --namespace extensions windows.json tabs.json
 """
-
-from __future__ import print_function
 
 import io
 import optparse

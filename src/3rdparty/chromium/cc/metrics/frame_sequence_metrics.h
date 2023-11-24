@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,11 @@
 #define CC_METRICS_FRAME_SEQUENCE_METRICS_H_
 
 #include <bitset>
+#include <cmath>
 #include <memory>
 
-#include "base/callback.h"
+#include "base/check.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/trace_event/traced_value.h"
 #include "cc/cc_export.h"
@@ -19,7 +21,6 @@ struct BeginFrameArgs;
 }  // namespace viz
 
 namespace cc {
-class ThroughputUkmReporter;
 class JankMetrics;
 struct FrameInfo;
 
@@ -38,6 +39,8 @@ enum class FrameSequenceTrackerType {
                 // and instead are dispatched back to the LayerTreeHostClient.
   kCanvasAnimation = 10,
   kJSAnimation = 11,
+  kSETMainThreadAnimation = 12,
+  kSETCompositorAnimation = 13,
   kMaxType
 };
 
@@ -70,8 +73,7 @@ inline bool HasCompositorThreadAnimation(const ActiveTrackers& trackers) {
 
 class CC_EXPORT FrameSequenceMetrics {
  public:
-  FrameSequenceMetrics(FrameSequenceTrackerType type,
-                       ThroughputUkmReporter* ukm_reporter);
+  explicit FrameSequenceMetrics(FrameSequenceTrackerType type);
   ~FrameSequenceMetrics();
 
   FrameSequenceMetrics(const FrameSequenceMetrics&) = delete;
@@ -88,13 +90,6 @@ class CC_EXPORT FrameSequenceMetrics {
         FrameInfo::SmoothEffectDrivingThread thread_type,
         const ThroughputData& data);
 
-    // Returns the dropped throughput in percent
-    static int ReportDroppedFramePercentHistogram(
-        FrameSequenceMetrics* metrics,
-        FrameInfo::SmoothEffectDrivingThread thread_type,
-        int metric_index,
-        const ThroughputData& data);
-
     // Returns the missed deadline throughput in percent
     static int ReportMissedDeadlineFramePercentHistogram(
         FrameSequenceMetrics* metrics,
@@ -102,21 +97,15 @@ class CC_EXPORT FrameSequenceMetrics {
         int metric_index,
         const ThroughputData& data);
 
+    static void ReportCheckerboardingHistogram(
+        FrameSequenceMetrics* metrics,
+        FrameInfo::SmoothEffectDrivingThread thread_type,
+        int percent);
+
     void Merge(const ThroughputData& data) {
       frames_expected += data.frames_expected;
       frames_produced += data.frames_produced;
       frames_ontime += data.frames_ontime;
-#if DCHECK_IS_ON()
-      frames_processed += data.frames_processed;
-      frames_received += data.frames_received;
-#endif
-    }
-
-    int DroppedFramePercent() const {
-      if (frames_expected == 0)
-        return 0;
-      return std::ceil(100 * (frames_expected - frames_produced) /
-                       static_cast<double>(frames_expected));
     }
 
     int MissedDeadlineFramePercent() const {
@@ -137,15 +126,6 @@ class CC_EXPORT FrameSequenceMetrics {
     // Tracks the number of frames that were actually presented to the user
     // that didn't miss the vsync deadline during this frame-sequence.
     uint32_t frames_ontime = 0;
-
-#if DCHECK_IS_ON()
-    // Tracks the number of frames that is either submitted or reported as no
-    // damage.
-    uint32_t frames_processed = 0;
-
-    // Tracks the number of begin-frames that are received.
-    uint32_t frames_received = 0;
-#endif
   };
 
   void SetScrollingThread(FrameInfo::SmoothEffectDrivingThread thread);
@@ -180,9 +160,6 @@ class CC_EXPORT FrameSequenceMetrics {
   uint32_t frames_checkerboarded() const { return frames_checkerboarded_; }
 
   FrameSequenceTrackerType type() const { return type_; }
-  ThroughputUkmReporter* ukm_reporter() const {
-    return throughput_ukm_reporter_;
-  }
 
   // Must be called before destructor.
   void ReportLeftoverData();
@@ -224,14 +201,11 @@ class CC_EXPORT FrameSequenceMetrics {
     void Terminate();
   } trace_data_{this};
 
-  // Pointer to the reporter owned by the FrameSequenceTrackerCollection.
-  const raw_ptr<ThroughputUkmReporter> throughput_ukm_reporter_;
-
-  // Track state for measuring the PercentDroppedFrames v2 metrics.
+  // Track state for measuring the PercentDroppedFrames v3 metrics.
   struct {
     uint32_t frames_expected = 0;
     uint32_t frames_dropped = 0;
-  } v2_;
+  } v3_;
 
   ThroughputData impl_throughput_;
   ThroughputData main_throughput_;

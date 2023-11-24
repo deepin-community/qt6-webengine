@@ -122,6 +122,7 @@
 //#define SK_HISTOGRAM_BOOLEAN(name, sample)
 //#define SK_HISTOGRAM_EXACT_LINEAR(name, sample, value_max)
 //#define SK_HISTOGRAM_MEMORY_KB(name, sample)
+#include "base/component_export.h"
 #include "skia/ext/skia_histogram.h"
 
 // ===== Begin Chrome-specific definitions =====
@@ -135,6 +136,9 @@
     PDF documents.
  */
 #define SK_PDF_USE_HARFBUZZ_SUBSET
+
+// Handle exporting using base/component_export.h
+#define SK_API COMPONENT_EXPORT(SKIA)
 
 // Chromium does not use these fonts.  This define causes type1 fonts to be
 // converted to type3 when producing PDFs, and reduces build size.
@@ -192,10 +196,18 @@ SK_API void SkDebugf_FileLine(const char* file,
 
 #endif
 
+#ifdef __clang__
+#define SK_TRIVIAL_ABI [[clang::trivial_abi]]
+#else
+#define SK_TRIVIAL_ABI
+#endif
+
 // These flags are no longer defined in Skia, but we have them (temporarily)
 // until we update our call-sites (typically these are for API changes).
 //
 // Remove these as we update our sites.
+
+#define SK_LEGACY_LAYER_BOUNDS_EXPANSION  // skbug.com/12083, skbug.com/12303
 
 // Workaround for poor anisotropic mipmap quality,
 // pending Skia ripmap support.
@@ -205,19 +217,6 @@ SK_API void SkDebugf_FileLine(const char* file,
 // Temporarily insulate Chrome pixel tests from Skia LOD bias change on GPU.
 #define SK_USE_LEGACY_MIPMAP_LOD_BIAS
 
-// Temporarily insulate Chrome pixel tests from Skia kStrict_SrcRectConstraint
-// change to disable mipmapping.
-#define SK_LEGACY_ALLOW_STRICT_CONSTRAINT_MIPMAPPING
-
-// Many Chrome tests use kStrict_SrcRectConstraint where the src subset rect
-// actually contains the entire image. This prevents mipmap disablement in those
-// cases until Chrome codepaths can be updated to identify this case and either
-// pass kFast_SrcRectConstraint or use drawImage instead of drawImageRect.
-#define SK_DISABLE_STRICT_CONSTRAINT_FOR_ENTIRE_IMAGE
-
-// Temporarily insulate Chrome pixel tests from Skia's edge AA -> non-AA checks.
-#define SK_USE_LEGACY_EDGE_AA_DOWNGRADE
-
 // Max. verb count for paths rendered by the edge-AA tessellating path renderer.
 #define GR_AA_TESSELLATOR_MAX_VERB_COUNT 100
 
@@ -225,14 +224,7 @@ SK_API void SkDebugf_FileLine(const char* file,
 
 #define SK_SUPPORT_LEGACY_DRAWLOOPER
 
-#define SK_SUPPORT_LEGACY_RUNTIME_EFFECTS
-
-#define SK_SUPPORT_LEGACY_DITHER
-
-#define SK_LEGACY_INNER_JOINS
-
-// crbug.com/1313579
-#define SK_DISABLE_SKIF_TOLERANCE_ROUND
+#define SK_USE_LEGACY_MIPMAP_BUILDER
 
 ///////////////////////// Imported from BUILD.gn and skia_common.gypi
 

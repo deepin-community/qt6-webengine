@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -75,11 +75,33 @@ bool Manifest::RelatedApplication::operator==(
 }
 
 bool Manifest::LaunchHandler::operator==(const LaunchHandler& other) const {
-  return route_to == other.route_to;
+  return client_mode == other.client_mode;
 }
 
 bool Manifest::LaunchHandler::operator!=(const LaunchHandler& other) const {
   return !(*this == other);
+}
+
+bool Manifest::LaunchHandler::TargetsExistingClients() const {
+  switch (client_mode) {
+    case ClientMode::kAuto:
+    case ClientMode::kNavigateNew:
+      return false;
+    case ClientMode::kNavigateExisting:
+    case ClientMode::kFocusExisting:
+      return true;
+  }
+}
+
+bool Manifest::LaunchHandler::NeverNavigateExistingClients() const {
+  switch (client_mode) {
+    case ClientMode::kAuto:
+    case ClientMode::kNavigateNew:
+    case ClientMode::kNavigateExisting:
+      return false;
+    case ClientMode::kFocusExisting:
+      return true;
+  }
 }
 
 Manifest::TranslationItem::TranslationItem() = default;
@@ -89,6 +111,34 @@ Manifest::TranslationItem::~TranslationItem() = default;
 bool Manifest::TranslationItem::operator==(const TranslationItem& other) const {
   auto AsTuple = [](const auto& item) {
     return std::tie(item.name, item.short_name, item.description);
+  };
+  return AsTuple(*this) == AsTuple(other);
+}
+
+Manifest::HomeTabParams::HomeTabParams() = default;
+
+Manifest::HomeTabParams::~HomeTabParams() = default;
+
+bool Manifest::HomeTabParams::operator==(const HomeTabParams& other) const {
+  return icons == other.icons;
+}
+
+Manifest::NewTabButtonParams::NewTabButtonParams() = default;
+
+Manifest::NewTabButtonParams::~NewTabButtonParams() = default;
+
+bool Manifest::NewTabButtonParams::operator==(
+    const NewTabButtonParams& other) const {
+  return url == other.url;
+}
+
+Manifest::TabStrip::TabStrip() = default;
+
+Manifest::TabStrip::~TabStrip() = default;
+
+bool Manifest::TabStrip::operator==(const TabStrip& other) const {
+  auto AsTuple = [](const auto& item) {
+    return std::tie(item.home_tab, item.new_tab_button);
   };
   return AsTuple(*this) == AsTuple(other);
 }

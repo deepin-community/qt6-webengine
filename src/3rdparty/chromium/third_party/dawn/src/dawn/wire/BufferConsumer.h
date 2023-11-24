@@ -15,70 +15,77 @@
 #ifndef SRC_DAWN_WIRE_BUFFERCONSUMER_H_
 #define SRC_DAWN_WIRE_BUFFERCONSUMER_H_
 
-#include "dawn/wire/WireResult.h"
-
 #include <cstddef>
+
+#include "dawn/common/Constants.h"
+#include "dawn/common/Math.h"
+#include "dawn/wire/WireResult.h"
 
 namespace dawn::wire {
 
-    // BufferConsumer is a utility class that allows reading bytes from a buffer
-    // while simultaneously decrementing the amount of remaining space by exactly
-    // the amount read. It helps prevent bugs where incrementing a pointer and
-    // decrementing a size value are not kept in sync.
-    // BufferConsumer also contains bounds checks to prevent reading out-of-bounds.
-    template <typename BufferT>
-    class BufferConsumer {
-        static_assert(sizeof(BufferT) == 1,
-                      "BufferT must be 1-byte, but may have const/volatile qualifiers.");
+// Wire specific alignment helpers.
+template <typename T>
+constexpr size_t WireAlignSizeof() {
+    return AlignSizeof<T, kWireBufferAlignment>();
+}
+template <typename T>
+std::optional<size_t> WireAlignSizeofN(size_t n) {
+    return AlignSizeofN<T, kWireBufferAlignment>(n);
+}
 
-      public:
-        BufferConsumer(BufferT* buffer, size_t size) : mBuffer(buffer), mSize(size) {
-        }
+// BufferConsumer is a utility class that allows reading bytes from a buffer
+// while simultaneously decrementing the amount of remaining space by exactly
+// the amount read. It helps prevent bugs where incrementing a pointer and
+// decrementing a size value are not kept in sync.
+// BufferConsumer also contains bounds checks to prevent reading out-of-bounds.
+template <typename BufferT>
+class BufferConsumer {
+    static_assert(sizeof(BufferT) == 1,
+                  "BufferT must be 1-byte, but may have const/volatile qualifiers.");
 
-        BufferT* Buffer() const {
-            return mBuffer;
-        }
-        size_t AvailableSize() const {
-            return mSize;
-        }
+  public:
+    BufferConsumer(BufferT* buffer, size_t size) : mBuffer(buffer), mSize(size) {}
 
-      protected:
-        template <typename T, typename N>
-        WireResult NextN(N count, T** data);
+    BufferT* Buffer() const { return mBuffer; }
+    size_t AvailableSize() const { return mSize; }
 
-        template <typename T>
-        WireResult Next(T** data);
+  protected:
+    template <typename T, typename N>
+    WireResult NextN(N count, T** data);
 
-        template <typename T>
-        WireResult Peek(T** data);
+    template <typename T>
+    WireResult Next(T** data);
 
-      private:
-        BufferT* mBuffer;
-        size_t mSize;
-    };
+    template <typename T>
+    WireResult Peek(T** data);
 
-    class SerializeBuffer : public BufferConsumer<char> {
-      public:
-        using BufferConsumer::BufferConsumer;
-        using BufferConsumer::Next;
-        using BufferConsumer::NextN;
-    };
+  private:
+    BufferT* mBuffer;
+    size_t mSize;
+};
 
-    class DeserializeBuffer : public BufferConsumer<const volatile char> {
-      public:
-        using BufferConsumer::BufferConsumer;
-        using BufferConsumer::Peek;
+class SerializeBuffer : public BufferConsumer<char> {
+  public:
+    using BufferConsumer::BufferConsumer;
+    using BufferConsumer::Next;
+    using BufferConsumer::NextN;
+};
 
-        template <typename T, typename N>
-        WireResult ReadN(N count, const volatile T** data) {
-            return NextN(count, data);
-        }
+class DeserializeBuffer : public BufferConsumer<const volatile char> {
+  public:
+    using BufferConsumer::BufferConsumer;
+    using BufferConsumer::Peek;
 
-        template <typename T>
-        WireResult Read(const volatile T** data) {
-            return Next(data);
-        }
-    };
+    template <typename T, typename N>
+    WireResult ReadN(N count, const volatile T** data) {
+        return NextN(count, data);
+    }
+
+    template <typename T>
+    WireResult Read(const volatile T** data) {
+        return Next(data);
+    }
+};
 
 }  // namespace dawn::wire
 

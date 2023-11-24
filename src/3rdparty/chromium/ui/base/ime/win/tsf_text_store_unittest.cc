@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 
 #include <InputScope.h>
 #include <OleCtl.h>
+#include <tsattrs.h>
 #include <wrl/client.h>
 
 #include <vector>
@@ -20,6 +21,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/ime/text_input_client.h"
+#include "ui/base/ime/text_input_flags.h"
 #include "ui/events/event.h"
 #include "ui/events/event_dispatcher.h"
 #include "ui/gfx/geometry/rect.h"
@@ -33,9 +35,9 @@ namespace {
 
 class MockTextInputClient : public TextInputClient {
  public:
-  ~MockTextInputClient() {}
+  ~MockTextInputClient() override {}
   MOCK_METHOD1(SetCompositionText, void(const ui::CompositionText&));
-  MOCK_METHOD1(ConfirmCompositionText, uint32_t(bool));
+  MOCK_METHOD1(ConfirmCompositionText, size_t(bool));
   MOCK_METHOD0(ClearCompositionText, void());
   MOCK_METHOD2(
       InsertText,
@@ -49,7 +51,7 @@ class MockTextInputClient : public TextInputClient {
   MOCK_CONST_METHOD0(CanComposeInline, bool());
   MOCK_CONST_METHOD0(GetCaretBounds, gfx::Rect());
   MOCK_CONST_METHOD0(GetSelectionBoundingBox, gfx::Rect());
-  MOCK_CONST_METHOD2(GetCompositionCharacterBounds, bool(uint32_t, gfx::Rect*));
+  MOCK_CONST_METHOD2(GetCompositionCharacterBounds, bool(size_t, gfx::Rect*));
   MOCK_CONST_METHOD0(HasCompositionText, bool());
   MOCK_CONST_METHOD0(GetFocusReason, ui::TextInputClient::FocusReason());
   MOCK_METHOD0(ShouldDoLearning, bool());
@@ -78,9 +80,9 @@ class MockTextInputClient : public TextInputClient {
   MOCK_METHOD0(GetTextEditingContext, ui::TextInputClient::EditingContext());
 };
 
-class MockInputMethodDelegate : public internal::InputMethodDelegate {
+class MockImeKeyEventDispatcher : public ImeKeyEventDispatcher {
  public:
-  ~MockInputMethodDelegate() {}
+  ~MockImeKeyEventDispatcher() override {}
   MOCK_METHOD1(DispatchKeyEventPostIME, EventDispatchDetails(KeyEvent*));
 };
 
@@ -150,7 +152,7 @@ class TSFTextStoreTest : public testing::Test {
     EXPECT_EQ(S_OK, text_store_->AdviseSink(IID_ITextStoreACPSink, sink_.get(),
                                             TS_AS_ALL_SINKS));
     text_store_->SetFocusedTextInputClient(kWindowHandle, &text_input_client_);
-    text_store_->SetInputMethodDelegate(&input_method_delegate_);
+    text_store_->SetImeKeyEventDispatcher(&ime_key_event_dispatcher_);
   }
 
   void TearDown() override {
@@ -167,7 +169,7 @@ class TSFTextStoreTest : public testing::Test {
 
   base::win::ScopedCOMInitializer com_initializer_;
   MockTextInputClient text_input_client_;
-  MockInputMethodDelegate input_method_delegate_;
+  MockImeKeyEventDispatcher ime_key_event_dispatcher_;
   scoped_refptr<TSFTextStore> text_store_;
   scoped_refptr<MockStoreACPSink> sink_;
 };
@@ -1405,14 +1407,6 @@ class GetTextExtTestCallback : public TSFTextStoreTestCallback {
     has_composition_text_ = true;
     GetTextExtTest(view_cookie, 0, 0, 11, 12, 11, 20);
 
-    // TODO(nona, kinaba): Remove following test case after PPAPI supporting
-    // GetCompositionCharacterBounds.
-    SetInternalState(u"a", 0, 0, 1);
-    layout_prepared_character_num_ = 0;
-    GetTextExtTest(view_cookie, 0, 1, 1, 2, 4, 6);
-    SetInternalState(u"abc", 0, 0, 3);
-    GetTextExtNoLayoutTest(view_cookie, 2, 3);
-
     return S_OK;
   }
 
@@ -1570,7 +1564,6 @@ TEST_F(TSFTextStoreTest, RetrieveRequestedAttrs) {
     SCOPED_TRACE("Verify URL and InputScope support");
     TS_ATTRVAL buffer[2] = {};
     num_copied = 0xfffffff;
-    base::win::ScopedVariant variant;
     const TS_ATTRID inputScopeAndUrlAttributes[] = {GUID_PROP_INPUTSCOPE,
                                                     GUID_PROP_URL};
 
@@ -1603,6 +1596,34 @@ TEST_F(TSFTextStoreTest, RetrieveRequestedAttrs) {
       // we do not break here to clean up all the retrieved VARIANTs.
     }
   }
+
+  {
+    SCOPED_TRACE("Verify TSATTRID_Text_VerticalWriting support");
+    TS_ATTRVAL buffer[2] = {};
+    num_copied = 0xfffffff;
+    const TS_ATTRID attributes[] = {TSATTRID_Text_VerticalWriting};
+
+    ASSERT_EQ(S_OK, text_store_->RequestSupportedAttrs(0, std::size(attributes),
+                                                       attributes));
+
+    EXPECT_CALL(text_input_client_, GetTextInputFlags()).WillOnce(Return(0));
+    ASSERT_EQ(S_OK, text_store_->RetrieveRequestedAttrs(std::size(buffer),
+                                                        buffer, &num_copied));
+    EXPECT_EQ(num_copied, 1U);
+    EXPECT_TRUE(IsEqualGUID(buffer[0].idAttr, TSATTRID_Text_VerticalWriting));
+    EXPECT_EQ(VT_BOOL, buffer[0].varValue.vt);
+    EXPECT_FALSE(buffer[0].varValue.boolVal);
+
+    EXPECT_CALL(text_input_client_, GetTextInputFlags())
+        .WillOnce(Return(ui::TEXT_INPUT_FLAG_VERTICAL));
+    ASSERT_EQ(S_OK, text_store_->RetrieveRequestedAttrs(std::size(buffer),
+                                                        buffer, &num_copied));
+    EXPECT_EQ(num_copied, 1U);
+    EXPECT_TRUE(IsEqualGUID(buffer[0].idAttr, TSATTRID_Text_VerticalWriting));
+    EXPECT_EQ(VT_BOOL, buffer[0].varValue.vt);
+    EXPECT_TRUE(buffer[0].varValue.boolVal);
+  }
+
   {
     SCOPED_TRACE("Check if RetrieveRequestedAttrs fails while focus is lost");
     // Emulate focus lost
@@ -1765,7 +1786,7 @@ TEST_F(TSFTextStoreTest, KeyEventTest) {
       .WillOnce(Invoke(&callback, &KeyEventTestCallback::InsertText2))
       .WillOnce(Invoke(&callback, &KeyEventTestCallback::InsertText3));
 
-  EXPECT_CALL(input_method_delegate_, DispatchKeyEventPostIME(_))
+  EXPECT_CALL(ime_key_event_dispatcher_, DispatchKeyEventPostIME(_))
       .WillOnce(
           Invoke(&callback, &KeyEventTestCallback::DispatchKeyEventPostIME1))
       .WillOnce(
@@ -2821,7 +2842,7 @@ TEST_F(TSFTextStoreTest, RegressionTest) {
       .WillOnce(
           Invoke(&callback, &RegressionTestCallback::SetCompositionText5));
 
-  EXPECT_CALL(input_method_delegate_, DispatchKeyEventPostIME(_))
+  EXPECT_CALL(ime_key_event_dispatcher_, DispatchKeyEventPostIME(_))
       .WillOnce(
           Invoke(&callback, &RegressionTestCallback::DispatchKeyEventPostIME1))
       .WillOnce(

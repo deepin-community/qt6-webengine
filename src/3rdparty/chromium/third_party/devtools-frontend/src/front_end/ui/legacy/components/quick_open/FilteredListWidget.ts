@@ -17,16 +17,16 @@ import filteredListWidgetStyles from './filteredListWidget.css.js';
 
 const UIStrings = {
   /**
-  * @description Aria label for quick open dialog prompt
-  */
+   * @description Aria label for quick open dialog prompt
+   */
   quickOpenPrompt: 'Quick open prompt',
   /**
-  * @description Title of quick open dialog
-  */
+   * @description Title of quick open dialog
+   */
   quickOpen: 'Quick open',
   /**
-  * @description Text to show no results have been found
-  */
+   * @description Text to show no results have been found
+   */
   noResultsFound: 'No results found',
 };
 const str_ = i18n.i18n.registerUIStrings('ui/legacy/components/quick_open/FilteredListWidget.ts', UIStrings);
@@ -67,13 +67,15 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
     this.contentElement.addEventListener('keydown', listener, true);
     UI.ARIAUtils.markAsCombobox(this.contentElement);
 
+    const hbox = this.contentElement.createChild('div', 'hbox');
+
     this.inputBoxElement = new TextPrompt.TextPrompt.TextPrompt();
     this.inputBoxElement.data = {ariaLabel: i18nString(UIStrings.quickOpenPrompt), prefix: '', suggestion: ''};
     this.inputBoxElement.addEventListener(
         TextPrompt.TextPrompt.PromptInputEvent.eventName, this.onInput.bind(this), false);
-    this.contentElement.appendChild(this.inputBoxElement);
+    hbox.appendChild(this.inputBoxElement);
 
-    this.hintElement = this.contentElement.createChild('div', 'filtered-list-widget-hint');
+    this.hintElement = hbox.createChild('span', 'filtered-list-widget-hint');
 
     this.bottomElementsContainer = this.contentElement.createChild('div', 'vbox');
     this.progressElement = this.bottomElementsContainer.createChild('div', 'filtered-list-widget-progress');
@@ -209,7 +211,7 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
   }
 
   private cleanValue(): string {
-    return this.query.substring(this.prefix.length);
+    return this.query.substring(this.prefix.length).trim();
   }
 
   wasShown(): void {
@@ -491,6 +493,7 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
   }
 
   private async queryChanged(): Promise<void> {
+    this.hintElement.classList.toggle('hidden', Boolean(this.query));
     if (this.queryChangedCallback) {
       await this.queryChangedCallback(this.query);
     }

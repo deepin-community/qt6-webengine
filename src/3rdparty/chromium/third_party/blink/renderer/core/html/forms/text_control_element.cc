@@ -25,6 +25,7 @@
 #include "third_party/blink/renderer/core/html/forms/text_control_element.h"
 
 #include "third_party/blink/public/mojom/input/focus_type.mojom-blink.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_selection_mode.h"
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
 #include "third_party/blink/renderer/core/dom/document.h"
@@ -104,15 +105,15 @@ TextControlElement::TextControlElement(const QualifiedName& tag_name,
 
 TextControlElement::~TextControlElement() = default;
 
-void TextControlElement::DispatchFocusEvent(
+bool TextControlElement::DispatchFocusEvent(
     Element* old_focused_element,
     mojom::blink::FocusType type,
     InputDeviceCapabilities* source_capabilities) {
   if (SupportsPlaceholder())
     UpdatePlaceholderVisibility();
   HandleFocusEvent(old_focused_element, type);
-  HTMLFormControlElementWithState::DispatchFocusEvent(old_focused_element, type,
-                                                      source_capabilities);
+  return HTMLFormControlElementWithState::DispatchFocusEvent(
+      old_focused_element, type, source_capabilities);
 }
 
 void TextControlElement::DispatchBlurEvent(
@@ -139,8 +140,10 @@ void TextControlElement::DefaultEventHandler(Event& event) {
       // - The caret is on the beginning of a Text node, and its previous node
       //   is updated, or
       // - The caret is on the end of a text node, and its next node is updated.
-      CacheSelection(ComputeSelectionStart(), ComputeSelectionEnd(),
-                     ComputeSelectionDirection());
+      ComputedSelection computed_selection;
+      ComputeSelection(kStart | kEnd | kDirection, computed_selection);
+      CacheSelection(computed_selection.start, computed_selection.end,
+                     computed_selection.direction);
     }
 
     SubtreeHasChanged();
@@ -189,8 +192,8 @@ bool TextControlElement::IsPlaceholderEmpty() const {
 }
 
 bool TextControlElement::PlaceholderShouldBeVisible() const {
-  return SupportsPlaceholder() && InnerEditorValue().IsEmpty() &&
-         !IsPlaceholderEmpty() && SuggestedValue().IsEmpty();
+  return SupportsPlaceholder() && InnerEditorValue().empty() &&
+         !IsPlaceholderEmpty() && SuggestedValue().empty();
 }
 
 HTMLElement* TextControlElement::PlaceholderElement() const {
@@ -216,14 +219,14 @@ void TextControlElement::UpdatePlaceholderVisibility() {
 
   placeholder->SetInlineStyleProperty(
       CSSPropertyID::kDisplay,
-      IsPlaceholderVisible() || !SuggestedValue().IsEmpty() ? CSSValueID::kBlock
-                                                            : CSSValueID::kNone,
+      IsPlaceholderVisible() || !SuggestedValue().empty() ? CSSValueID::kBlock
+                                                          : CSSValueID::kNone,
       true);
 
   // If there was a visibility change not caused by the suggested value, set
   // that the pseudo state changed.
   if (place_holder_was_visible != IsPlaceholderVisible() &&
-      SuggestedValue().IsEmpty()) {
+      SuggestedValue().empty()) {
     PseudoStateChanged(CSSSelector::kPseudoPlaceholderShown);
   }
 }
@@ -246,15 +249,16 @@ void TextControlElement::select() {
   setSelectionRangeForBinding(0, std::numeric_limits<unsigned>::max());
   // Avoid SelectionBehaviorOnFocus::Restore, which scrolls containers to show
   // the selection.
-  focus(FocusParams(SelectionBehaviorOnFocus::kNone,
-                    mojom::blink::FocusType::kNone, nullptr));
+  Focus(FocusParams(SelectionBehaviorOnFocus::kNone,
+                    mojom::blink::FocusType::kScript, nullptr,
+                    FocusOptions::Create(), /*gate_on_user_activation=*/true));
   RestoreCachedSelection();
 }
 
 void TextControlElement::SetValueBeforeFirstUserEditIfNotSet() {
   if (!value_before_first_user_edit_.IsNull())
     return;
-  String value = this->value();
+  String value = this->Value();
   value_before_first_user_edit_ = value.IsNull() ? g_empty_string : value;
 }
 
@@ -283,7 +287,7 @@ void TextControlElement::SetFocused(bool flag,
 
 void TextControlElement::DispatchFormControlChangeEvent() {
   if (!value_before_first_user_edit_.IsNull() &&
-      !EqualIgnoringNullity(value_before_first_user_edit_, value())) {
+      !EqualIgnoringNullity(value_before_first_user_edit_, Value())) {
     ClearValueBeforeFirstUserEdit();
     DispatchChangeEvent();
   } else {
@@ -293,7 +297,7 @@ void TextControlElement::DispatchFormControlChangeEvent() {
 
 void TextControlElement::EnqueueChangeEvent() {
   if (!value_before_first_user_edit_.IsNull() &&
-      !EqualIgnoringNullity(value_before_first_user_edit_, value())) {
+      !EqualIgnoringNullity(value_before_first_user_edit_, Value())) {
     Event* event = Event::CreateBubble(event_type_names::kChange);
     event->SetTarget(this);
     GetDocument().EnqueueAnimationFrameEvent(event);
@@ -303,14 +307,15 @@ void TextControlElement::EnqueueChangeEvent() {
 
 void TextControlElement::setRangeText(const String& replacement,
                                       ExceptionState& exception_state) {
-  setRangeText(replacement, selectionStart(), selectionEnd(), "preserve",
+  setRangeText(replacement, selectionStart(), selectionEnd(),
+               V8SelectionMode(V8SelectionMode::Enum::kPreserve),
                exception_state);
 }
 
 void TextControlElement::setRangeText(const String& replacement,
                                       unsigned start,
                                       unsigned end,
-                                      const String& selection_mode,
+                                      const V8SelectionMode& selection_mode,
                                       ExceptionState& exception_state) {
   if (start > end) {
     exception_state.ThrowDOMException(
@@ -337,29 +342,34 @@ void TextControlElement::setRangeText(const String& replacement,
   text.Append(replacement);
   text.Append(StringView(original_text, end));
 
-  setValue(text.ToString(), TextFieldEventBehavior::kDispatchNoEvent,
+  SetValue(text.ToString(), TextFieldEventBehavior::kDispatchNoEvent,
            TextControlSetValueSelection::kDoNotSet);
 
-  if (selection_mode == "select") {
-    new_selection_start = start;
-    new_selection_end = start + replacement_length;
-  } else if (selection_mode == "start") {
-    new_selection_start = new_selection_end = start;
-  } else if (selection_mode == "end") {
-    new_selection_start = new_selection_end = start + replacement_length;
-  } else {
-    DCHECK_EQ(selection_mode, "preserve");
-    int delta = replacement_length - (end - start);
-
-    if (new_selection_start > end)
-      new_selection_start += delta;
-    else if (new_selection_start > start)
+  switch (selection_mode.AsEnum()) {
+    case V8SelectionMode::Enum::kSelect:
       new_selection_start = start;
-
-    if (new_selection_end > end)
-      new_selection_end += delta;
-    else if (new_selection_end > start)
       new_selection_end = start + replacement_length;
+      break;
+    case V8SelectionMode::Enum::kStart:
+      new_selection_start = new_selection_end = start;
+      break;
+    case V8SelectionMode::Enum::kEnd:
+      new_selection_start = new_selection_end = start + replacement_length;
+      break;
+    case V8SelectionMode::Enum::kPreserve: {
+      int delta = replacement_length - (end - start);
+
+      if (new_selection_start > end)
+        new_selection_start += delta;
+      else if (new_selection_start > start)
+        new_selection_start = start;
+
+      if (new_selection_end > end)
+        new_selection_end += delta;
+      else if (new_selection_end > start)
+        new_selection_end = start + replacement_length;
+      break;
+    }
   }
 
   setSelectionRangeForBinding(new_selection_start, new_selection_end);
@@ -538,14 +548,25 @@ unsigned TextControlElement::selectionStart() const {
   if (ShouldApplySelectionCache())
     return cached_selection_start_;
 
-  return ComputeSelectionStart();
+  ComputedSelection computed_selection;
+  ComputeSelection(kStart, computed_selection);
+  return computed_selection.start;
 }
 
-unsigned TextControlElement::ComputeSelectionStart() const {
+void TextControlElement::ComputeSelection(
+    uint32_t flags,
+    ComputedSelection& computed_selection) const {
   DCHECK(IsTextControl());
+#if DCHECK_IS_ON()
+  // This code does not set all values of `computed_selection`. Ensure they
+  // are set to the default.
+  DCHECK_EQ(0u, computed_selection.start);
+  DCHECK_EQ(0u, computed_selection.end);
+  DCHECK_EQ(kSelectionHasNoDirection, computed_selection.direction);
+#endif
   LocalFrame* frame = GetDocument().GetFrame();
   if (!frame)
-    return 0;
+    return;
 
   // To avoid regression on speedometer benchmark[1] test, we should not
   // update layout tree in this code block.
@@ -554,8 +575,24 @@ unsigned TextControlElement::ComputeSelectionStart() const {
       GetDocument().Lifecycle());
   const SelectionInDOMTree& selection =
       frame->Selection().GetSelectionInDOMTree();
-  return IndexForPosition(InnerEditorElement(),
-                          selection.ComputeStartPosition());
+  if (flags & kStart) {
+    computed_selection.start = IndexForPosition(
+        InnerEditorElement(), selection.ComputeStartPosition());
+  }
+  if (flags & kEnd) {
+    if (flags & kStart && (selection.Base() == selection.Extent())) {
+      computed_selection.end = computed_selection.start;
+    } else {
+      computed_selection.end = IndexForPosition(InnerEditorElement(),
+                                                selection.ComputeEndPosition());
+    }
+  }
+  if (flags & kDirection && frame->Selection().IsDirectional()) {
+    computed_selection.direction =
+        (selection.Base() == selection.ComputeStartPosition())
+            ? kSelectionHasForwardDirection
+            : kSelectionHasBackwardDirection;
+  }
 }
 
 unsigned TextControlElement::selectionEnd() const {
@@ -563,23 +600,9 @@ unsigned TextControlElement::selectionEnd() const {
     return 0;
   if (ShouldApplySelectionCache())
     return cached_selection_end_;
-  return ComputeSelectionEnd();
-}
-
-unsigned TextControlElement::ComputeSelectionEnd() const {
-  DCHECK(IsTextControl());
-  LocalFrame* frame = GetDocument().GetFrame();
-  if (!frame)
-    return 0;
-
-  // To avoid regression on speedometer benchmark[1] test, we should not
-  // update layout tree in this code block.
-  // [1] http://browserbench.org/Speedometer/
-  DocumentLifecycle::DisallowTransitionScope disallow_transition(
-      GetDocument().Lifecycle());
-  const SelectionInDOMTree& selection =
-      frame->Selection().GetSelectionInDOMTree();
-  return IndexForPosition(InnerEditorElement(), selection.ComputeEndPosition());
+  ComputedSelection computed_selection;
+  ComputeSelection(kEnd, computed_selection);
+  return computed_selection.end;
 }
 
 static const AtomicString& DirectionString(
@@ -606,28 +629,9 @@ const AtomicString& TextControlElement::selectionDirection() const {
   DCHECK(IsTextControl());
   if (ShouldApplySelectionCache())
     return DirectionString(cached_selection_direction_);
-  return DirectionString(ComputeSelectionDirection());
-}
-
-TextFieldSelectionDirection TextControlElement::ComputeSelectionDirection()
-    const {
-  DCHECK(IsTextControl());
-  LocalFrame* frame = GetDocument().GetFrame();
-  if (!frame)
-    return kSelectionHasNoDirection;
-
-  // To avoid regression on speedometer benchmark[1] test, we should not
-  // update layout tree in this code block.
-  // [1] http://browserbench.org/Speedometer/
-  DocumentLifecycle::DisallowTransitionScope disallow_transition(
-      GetDocument().Lifecycle());
-  const SelectionInDOMTree& selection =
-      frame->Selection().GetSelectionInDOMTree();
-  const Position& start = selection.ComputeStartPosition();
-  return frame->Selection().IsDirectional()
-             ? (selection.Base() == start ? kSelectionHasForwardDirection
-                                          : kSelectionHasBackwardDirection)
-             : kSelectionHasNoDirection;
+  ComputedSelection computed_selection;
+  ComputeSelection(kDirection, computed_selection);
+  return DirectionString(computed_selection.direction);
 }
 
 static inline void SetContainerAndOffsetForRange(Node* node,
@@ -758,8 +762,10 @@ void TextControlElement::SelectionChanged(bool user_triggered) {
 
   // selectionStart() or selectionEnd() will return cached selection when this
   // node doesn't have focus.
-  CacheSelection(ComputeSelectionStart(), ComputeSelectionEnd(),
-                 ComputeSelectionDirection());
+  ComputedSelection computed_selection;
+  ComputeSelection(kStart | kEnd | kDirection, computed_selection);
+  CacheSelection(computed_selection.start, computed_selection.end,
+                 computed_selection.direction);
 
   LocalFrame* frame = GetDocument().GetFrame();
   if (!frame || !user_triggered)
@@ -855,7 +861,7 @@ void TextControlElement::SetInnerEditorValue(const String& value) {
     inner_editor->RemoveChild(inner_editor->lastChild(), ASSERT_NO_EXCEPTION);
 
   // We don't use setTextContent.  It triggers unnecessary paint.
-  if (value.IsEmpty())
+  if (value.empty())
     inner_editor->RemoveChildren();
   else
     ReplaceChildrenWithText(inner_editor, value, ASSERT_NO_EXCEPTION);
@@ -926,19 +932,19 @@ String TextControlElement::ValueWithHardLineBreaks() const {
   // problem, it would be best to fix it some day.
   HTMLElement* inner_text = InnerEditorElement();
   if (!inner_text || !IsTextControl())
-    return value();
+    return Value();
 
   auto* layout_object = To<LayoutBlockFlow>(inner_text->GetLayoutObject());
   if (!layout_object)
-    return value();
+    return Value();
 
   if (layout_object->IsLayoutNGObject()) {
     NGInlineCursor cursor(*layout_object);
     if (!cursor)
-      return value();
+      return Value();
     const auto* mapping = NGInlineNode::GetOffsetMapping(layout_object);
     if (!mapping)
-      return value();
+      return Value();
     Position break_position = GetNextSoftBreak(*mapping, cursor);
     StringBuilder result;
     for (Node& node : NodeTraversal::DescendantsOf(*inner_text)) {
@@ -971,7 +977,7 @@ String TextControlElement::ValueWithHardLineBreaks() const {
   unsigned break_offset;
   RootInlineBox* line = layout_object->FirstRootBox();
   if (!line)
-    return value();
+    return Value();
 
   GetNextSoftBreak(line, break_node, break_offset);
 
@@ -1048,21 +1054,30 @@ String TextControlElement::DirectionForFormData() const {
   return "ltr";
 }
 
-void TextControlElement::SetAutofillValue(const String& value) {
+void TextControlElement::SetAutofillValue(const String& value,
+                                          WebAutofillState autofill_state) {
   // Set the value trimmed to the max length of the field and dispatch the input
   // and change events.
-  setValue(value.Substring(0, maxLength()),
-           TextFieldEventBehavior::kDispatchInputAndChangeEvent);
+  SetValue(value.Substring(0, maxLength()),
+           TextFieldEventBehavior::kDispatchInputAndChangeEvent,
+           TextControlSetValueSelection::kSetSelectionToEnd,
+           value.empty() ? WebAutofillState::kNotFilled : autofill_state);
 }
 
 // TODO(crbug.com/772433): Create and use a new suggested-value element instead.
 void TextControlElement::SetSuggestedValue(const String& value) {
-  suggested_value_ = value.Substring(0, maxLength());
-  if (!suggested_value_.IsEmpty() && !InnerEditorValue().IsEmpty()) {
+  // Avoid calling maxLength() if possible as it's non-trivial.
+  const String new_suggested_value =
+      value.empty() ? value : value.Substring(0, maxLength());
+  if (new_suggested_value == suggested_value_)
+    return;
+  suggested_value_ = new_suggested_value;
+
+  if (!suggested_value_.empty() && !InnerEditorValue().empty()) {
     // If there is an inner editor value, hide it so the suggested value can be
     // shown to the user.
     InnerEditorElement()->SetVisibility(false);
-  } else if (suggested_value_.IsEmpty() && InnerEditorElement()) {
+  } else if (suggested_value_.empty() && InnerEditorElement()) {
     // If there is no suggested value and there is an InnerEditorElement, reset
     // its visibility.
     InnerEditorElement()->SetVisibility(true);
@@ -1076,7 +1091,7 @@ void TextControlElement::SetSuggestedValue(const String& value) {
 
   UpdatePlaceholderVisibility();
 
-  if (suggested_value_.IsEmpty()) {
+  if (suggested_value_.empty()) {
     // Reset the pseudo-id for placeholders to use the appropriated style
     placeholder->SetShadowPseudoId(
         shadow_element_names::kPseudoInputPlaceholder);

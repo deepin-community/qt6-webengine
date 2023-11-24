@@ -1,9 +1,12 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef UI_VIEWS_WINDOW_DIALOG_CLIENT_VIEW_H_
 #define UI_VIEWS_WINDOW_DIALOG_CLIENT_VIEW_H_
+
+#include <memory>
+#include <utility>
 
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
@@ -57,11 +60,25 @@ class VIEWS_EXPORT DialogClientView : public ClientView, public DialogObserver {
   gfx::Size GetMaximumSize() const override;
   void VisibilityChanged(View* starting_from, bool is_visible) override;
 
+  // Input protection is triggered upon prompt creation and updated on
+  // visibility changes. Other situations such as top window changes in certain
+  // situations should trigger the input protection manually by calling this
+  // method. Input protection protects against certain kinds of clickjacking.
+  // Essentially it prevents clicks that happen within a user's double click
+  // interval from when the protection is started as well as any following
+  // clicks that happen in shorter succession than the user's double click
+  // interval. Refer to InputEventActivationProtector for more information.
+  void TriggerInputProtection();
+
   void Layout() override;
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override;
   void ViewHierarchyChanged(
       const ViewHierarchyChangedDetails& details) override;
   void OnThemeChanged() override;
+
+  // Update the |view_shown_time_stamp_| of input protector. A short time
+  // from this point onward, input event will be ignored.
+  void UpdateInputProtectorTimeStamp();
 
   void set_minimum_size(const gfx::Size& size) { minimum_size_ = size; }
 
@@ -69,6 +86,13 @@ class VIEWS_EXPORT DialogClientView : public ClientView, public DialogObserver {
   // method if they use events that could be otherwise treated as unintended.
   // See IsPossiblyUnintendedInteraction().
   void ResetViewShownTimeStampForTesting();
+
+  // Override the internal input protector for testing; usually to inject a mock
+  // version whose return value can be controlled.
+  void SetInputProtectorForTesting(
+      std::unique_ptr<views::InputEventActivationProtector> input_protector) {
+    input_protector_ = std::move(input_protector);
+  }
 
  private:
   enum {
@@ -129,7 +153,7 @@ class VIEWS_EXPORT DialogClientView : public ClientView, public DialogObserver {
   LabelButton* cancel_button_ = nullptr;
 
   // The extra view shown in the row of buttons; may be NULL.
-  raw_ptr<View> extra_view_ = nullptr;
+  raw_ptr<View, DanglingUntriaged> extra_view_ = nullptr;
 
   // Container view for the button row.
   raw_ptr<ButtonRowContainer> button_row_container_ = nullptr;
@@ -141,7 +165,7 @@ class VIEWS_EXPORT DialogClientView : public ClientView, public DialogObserver {
   // SetupLayout(). Everything will be manually updated afterwards.
   bool adding_or_removing_views_ = false;
 
-  InputEventActivationProtector input_protector_;
+  std::unique_ptr<InputEventActivationProtector> input_protector_;
 };
 
 BEGIN_VIEW_BUILDER(VIEWS_EXPORT, DialogClientView, ClientView)

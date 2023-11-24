@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -395,6 +395,15 @@ TEST(SchemefulSiteTest, GetGURL) {
     SchemefulSite site(testcase.origin);
     EXPECT_EQ(site.GetURL(), testcase.wantGURL);
   }
+}
+
+TEST(SchemefulSiteTest, InternalValue) {
+  url::Origin origin = url::Origin::Create(GURL("https://example.com"));
+  SchemefulSite site(origin);
+  EXPECT_EQ(site.internal_value(), origin);
+  url::Origin opaque_origin;
+  SchemefulSite opaque_site(opaque_origin);
+  EXPECT_EQ(opaque_site.internal_value(), opaque_origin);
 }
 
 }  // namespace net

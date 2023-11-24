@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,11 +9,12 @@
 
 #include "base/location.h"
 #include "base/run_loop.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "components/pdf/browser/fake_pdf_stream_delegate.h"
 #include "components/pdf/browser/pdf_stream_delegate.h"
 #include "content/public/browser/navigation_throttle.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/test/mock_navigation_handle.h"
 #include "content/public/test/mock_web_contents_observer.h"
 #include "content/public/test/navigation_simulator.h"
@@ -47,6 +48,8 @@ class PdfNavigationThrottleTest : public content::RenderViewHostTestHarness {
             url, render_frame_host);
     navigation_handle_->set_initiator_origin(
         render_frame_host->GetLastCommittedOrigin());
+    navigation_handle_->set_source_site_instance(
+        render_frame_host->GetSiteInstance());
   }
 
   std::unique_ptr<PdfNavigationThrottle> CreateNavigationThrottle(
@@ -97,8 +100,8 @@ TEST_F(PdfNavigationThrottleTest, WillStartRequest) {
 
   EXPECT_CALL(web_contents_observer, DidStartLoading());
   base::RunLoop run_loop;
-  base::SequencedTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                   run_loop.QuitClosure());
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, run_loop.QuitClosure());
   run_loop.Run();
 
   auto navigation_simulator = content::NavigationSimulator::CreateFromPending(
@@ -122,8 +125,8 @@ TEST_F(PdfNavigationThrottleTest, WillStartRequestDeleteContents) {
 
   EXPECT_CALL(web_contents_observer, DidStartLoading()).Times(0);
   base::RunLoop run_loop;
-  base::SequencedTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                   run_loop.QuitClosure());
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, run_loop.QuitClosure());
   run_loop.Run();
 }
 

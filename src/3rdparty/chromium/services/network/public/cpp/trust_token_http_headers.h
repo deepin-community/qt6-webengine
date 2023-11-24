@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -61,11 +61,6 @@ constexpr char kTrustTokensRequestHeaderSignedHeaders[] = "Signed-Headers";
 // data alongside signed requests.
 constexpr char kTrustTokensRequestHeaderSecTrustTokensAdditionalSigningData[] =
     "Sec-Trust-Tokens-Additional-Signing-Data";
-
-// A response header, asks UA to discard all previously issued tokens when
-// value is "all", ignored otherwise.
-constexpr char kTrustTokensResponseHeaderSecTrustTokenClearData[] =
-    "Sec-Trust-Token-Clear-Data";
 
 // A response header, from a Trust Token redemption that includes an integer
 // representing the lifetime of the Trust Token response, in seconds since the

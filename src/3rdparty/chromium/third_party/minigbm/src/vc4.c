@@ -13,8 +13,8 @@
 #include <vc4_drm.h>
 #include <xf86drm.h>
 
+#include "drv_helpers.h"
 #include "drv_priv.h"
-#include "helpers.h"
 #include "util.h"
 
 static const uint32_t render_target_formats[] = { DRM_FORMAT_ARGB8888, DRM_FORMAT_RGB565,
@@ -52,7 +52,7 @@ static int vc4_bo_create_for_modifier(struct bo *bo, uint32_t width, uint32_t he
 	case DRM_FORMAT_MOD_LINEAR:
 		break;
 	case DRM_FORMAT_MOD_BROADCOM_VC4_T_TILED:
-		drv_log("DRM_FORMAT_MOD_BROADCOM_VC4_T_TILED not supported yet\n");
+		drv_loge("DRM_FORMAT_MOD_BROADCOM_VC4_T_TILED not supported yet\n");
 		return -EINVAL;
 	default:
 		return -EINVAL;
@@ -70,7 +70,7 @@ static int vc4_bo_create_for_modifier(struct bo *bo, uint32_t width, uint32_t he
 
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_VC4_CREATE_BO, &bo_create);
 	if (ret) {
-		drv_log("DRM_IOCTL_VC4_CREATE_BO failed (size=%zu)\n", bo->meta.total_size);
+		drv_loge("DRM_IOCTL_VC4_CREATE_BO failed (size=%zu)\n", bo->meta.total_size);
 		return -errno;
 	}
 
@@ -113,7 +113,7 @@ static void *vc4_bo_map(struct bo *bo, struct vma *vma, size_t plane, uint32_t m
 	bo_map.handle = bo->handles[0].u32;
 	ret = drmCommandWriteRead(bo->drv->fd, DRM_VC4_MMAP_BO, &bo_map, sizeof(bo_map));
 	if (ret) {
-		drv_log("DRM_VC4_MMAP_BO failed\n");
+		drv_loge("DRM_VC4_MMAP_BO failed\n");
 		return MAP_FAILED;
 	}
 
@@ -131,6 +131,7 @@ const struct backend backend_vc4 = {
 	.bo_destroy = drv_gem_bo_destroy,
 	.bo_map = vc4_bo_map,
 	.bo_unmap = drv_bo_munmap,
+	.resolve_format_and_use_flags = drv_resolve_format_and_use_flags_helper,
 };
 
 #endif

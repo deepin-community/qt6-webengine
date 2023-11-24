@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,12 +9,14 @@
 
 #include "base/base_export.h"
 #include "base/check.h"
-#include "base/check_op.h"
 #include "base/containers/linked_list.h"
+#include "base/dcheck_is_on.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list_types.h"
 
-#if EXPENSIVE_DCHECKS_ARE_ON()
+#if DCHECK_IS_ON()
 #include "base/debug/stack_trace.h"
 #endif
 
@@ -45,15 +47,15 @@ class BASE_EXPORT UncheckedObserverAdapter {
     return static_cast<ObserverType*>(adapter.ptr_);
   }
 
-#if EXPENSIVE_DCHECKS_ARE_ON()
+#if DCHECK_IS_ON()
   std::string GetCreationStackString() const { return stack_.ToString(); }
-#endif  // EXPENSIVE_DCHECKS_ARE_ON()
+#endif  // DCHECK_IS_ON()
 
  private:
-  void* ptr_;
-#if EXPENSIVE_DCHECKS_ARE_ON()
+  raw_ptr<void, DanglingUntriaged> ptr_;
+#if DCHECK_IS_ON()
   base::debug::StackTrace stack_;
-#endif  // EXPENSIVE_DCHECKS_ARE_ON()
+#endif  // DCHECK_IS_ON()
 };
 
 // Adapter for CheckedObserver types so that they can use the same syntax as a
@@ -105,13 +107,13 @@ class BASE_EXPORT CheckedObserverAdapter {
     return static_cast<ObserverType*>(adapter.weak_ptr_.get());
   }
 
-#if EXPENSIVE_DCHECKS_ARE_ON()
+#if DCHECK_IS_ON()
   std::string GetCreationStackString() const { return stack_.ToString(); }
 #endif
 
  private:
   WeakPtr<CheckedObserver> weak_ptr_;
-#if EXPENSIVE_DCHECKS_ARE_ON()
+#if DCHECK_IS_ON()
   base::debug::StackTrace stack_;
 #endif
 };
@@ -161,7 +163,7 @@ class WeakLinkNode : public base::LinkNode<WeakLinkNode<ObserverList>> {
  private:
   // `list_` is not a raw_ptr<...> for performance reasons: on-stack pointer +
   // based on analysis of sampling profiler data and tab_search:top100:2020.
-  ObserverList* list_ = nullptr;
+  RAW_PTR_EXCLUSION ObserverList* list_ = nullptr;
 };
 
 }  // namespace internal

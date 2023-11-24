@@ -9,7 +9,7 @@
 #define skgpu_graphite_ClipStack_DEFINED
 
 #include "include/core/SkClipOp.h"
-#include "src/core/SkTBlockList.h"
+#include "src/base/SkTBlockList.h"
 #include "src/gpu/graphite/DrawOrder.h"
 #include "src/gpu/graphite/geom/Shape.h"
 #include "src/gpu/graphite/geom/Transform_graphite.h"
@@ -22,6 +22,7 @@ namespace skgpu::graphite {
 class BoundsManager;
 class Clip;
 class Device;
+class Geometry;
 
 // TODO: Port over many of the unit tests for skgpu/v1/ClipStack defined in GrClipStackTest since
 // those tests do a thorough job of enumerating the different element combinations.
@@ -83,7 +84,7 @@ public:
     // If the draw is clipped out, the returned draw bounds will be empty.
     std::pair<Clip, CompressedPaintersOrder> applyClipToDraw(const BoundsManager*,
                                                              const Transform&,
-                                                             const Shape&,
+                                                             const Geometry&,
                                                              const SkStrokeRec&,
                                                              PaintersDepth z);
 

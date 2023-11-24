@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 
+#include "base/task/sequenced_task_runner.h"
 #include "third_party/tflite/src/tensorflow/lite/c/common.h"
 #include "third_party/tflite_support/src/tensorflow_lite_support/cc/task/core/task_utils.h"
 
@@ -19,6 +20,7 @@ ModelValidatorHandler::ModelValidatorHandler(
           model_provider,
           background_task_runner,
           std::make_unique<ModelValidatorExecutor>(),
+          /*model_inference_timeout=*/absl::nullopt,
           proto::OPTIMIZATION_TARGET_MODEL_VALIDATION,
           /*model_metadata=*/absl::nullopt) {}
 

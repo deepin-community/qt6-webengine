@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -30,14 +30,17 @@
 #ifndef BASE_MESSAGE_LOOP_MESSAGE_PUMP_MAC_H_
 #define BASE_MESSAGE_LOOP_MESSAGE_PUMP_MAC_H_
 
+#include "base/memory/raw_ptr.h"
 #include "base/message_loop/message_pump.h"
 
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <memory>
 
+#include "base/containers/stack.h"
 #include "base/message_loop/timer_slack.h"
 #include "build/build_config.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 #if defined(__OBJC__)
 #if BUILDFLAG(IS_IOS)
@@ -78,15 +81,10 @@ typedef NSAutoreleasePool AutoreleasePoolType;
 
 class BASE_EXPORT MessagePumpCFRunLoopBase : public MessagePump {
  public:
-  enum class LudicrousSlackSetting : uint8_t {
-    kLudicrousSlackUninitialized,
-    kLudicrousSlackOff,
-    kLudicrousSlackOn,
-    kLudicrousSlackSuspended,
-  };
-
   MessagePumpCFRunLoopBase(const MessagePumpCFRunLoopBase&) = delete;
   MessagePumpCFRunLoopBase& operator=(const MessagePumpCFRunLoopBase&) = delete;
+
+  static void InitializeFeatures();
 
   // MessagePump:
   void Run(Delegate* delegate) override;
@@ -104,11 +102,6 @@ class BASE_EXPORT MessagePumpCFRunLoopBase : public MessagePump {
   virtual void Attach(Delegate* delegate);
   virtual void Detach();
 #endif  // BUILDFLAG(IS_IOS)
-
-  // Exposed for testing.
-  LudicrousSlackSetting GetLudicrousSlackStateForTesting() const {
-    return GetLudicrousSlackState();
-  }
 
  protected:
   // Needs access to CreateAutoreleasePool.
@@ -142,6 +135,11 @@ class BASE_EXPORT MessagePumpCFRunLoopBase : public MessagePump {
   int run_nesting_level() const { return run_nesting_level_; }
   bool keep_running() const { return keep_running_; }
 
+#if BUILDFLAG(IS_IOS)
+  void OnAttach();
+  void OnDetach();
+#endif
+
   // Sets this pump's delegate.  Signals the appropriate sources if
   // |delegateless_work_| is true.  |delegate| can be NULL.
   void SetDelegate(Delegate* delegate);
@@ -164,14 +162,6 @@ class BASE_EXPORT MessagePumpCFRunLoopBase : public MessagePump {
   // The maximum number of run loop modes that can be monitored.
   static constexpr int kNumModes = 4;
 
-  // Returns the current ludicrous slack state, which implies reading both the
-  // feature flag and the suspension state.
-  LudicrousSlackSetting GetLudicrousSlackState() const;
-
-  // All sources of delayed work scheduling converge to this, using TimeDelta
-  // avoids querying Now() for key callers.
-  void ScheduleDelayedWorkImpl(TimeDelta delta);
-
   // Timer callback scheduled by ScheduleDelayedWork.  This does not do any
   // work, but it signals |work_source_| so that delayed work can be performed
   // within the appropriate priority constraints.
@@ -185,10 +175,9 @@ class BASE_EXPORT MessagePumpCFRunLoopBase : public MessagePump {
   bool RunWork();
 
   // Perform idle-priority work.  This is normally called by PreWaitObserver,
-  // but is also associated with |idle_work_source_|.  When this function
-  // actually does perform idle work, it will resignal that source.  The
-  // static method calls the instance method.
-  static void RunIdleWorkSource(void* info);
+  // but can also be invoked from RunNestingDeferredWork when returning from a
+  // nested loop.  When this function actually does perform idle work, it will
+  // re-signal the |work_source_|.
   void RunIdleWork();
 
   // Perform work that may have been deferred because it was not runnable
@@ -215,6 +204,10 @@ class BASE_EXPORT MessagePumpCFRunLoopBase : public MessagePump {
   static void PreWaitObserver(CFRunLoopObserverRef observer,
                               CFRunLoopActivity activity, void* info);
 
+  static void AfterWaitObserver(CFRunLoopObserverRef observer,
+                                CFRunLoopActivity activity,
+                                void* info);
+
   // Observer callback called before the run loop processes any sources.
   // Associated with |pre_source_observer_|.
   static void PreSourceObserver(CFRunLoopObserverRef observer,
@@ -231,6 +224,12 @@ class BASE_EXPORT MessagePumpCFRunLoopBase : public MessagePump {
   // additional processing on the basis of run loops starting and stopping.
   virtual void EnterExitRunLoop(CFRunLoopActivity activity);
 
+  // Gets rid of the top work item scope.
+  void PopWorkItemScope();
+
+  // Starts tracking a new work item.
+  void PushWorkItemScope();
+
   // The thread's run loop.
   CFRunLoopRef run_loop_;
 
@@ -241,20 +240,19 @@ class BASE_EXPORT MessagePumpCFRunLoopBase : public MessagePump {
   // callbacks.
   CFRunLoopTimerRef delayed_work_timer_;
   CFRunLoopSourceRef work_source_;
-  CFRunLoopSourceRef idle_work_source_;
   CFRunLoopSourceRef nesting_deferred_work_source_;
   CFRunLoopObserverRef pre_wait_observer_;
+  CFRunLoopObserverRef after_wait_observer_;
   CFRunLoopObserverRef pre_source_observer_;
   CFRunLoopObserverRef enter_exit_observer_;
 
   // (weak) Delegate passed as an argument to the innermost Run call.
-  Delegate* delegate_;
+  raw_ptr<Delegate> delegate_;
 
   base::TimerSlack timer_slack_;
 
-  // Cache the ludicrous slack setting.
-  LudicrousSlackSetting ludicrous_slack_setting_ =
-      LudicrousSlackSetting::kLudicrousSlackUninitialized;
+  // Time at which `delayed_work_timer_` is set to fire.
+  base::TimeTicks delayed_work_scheduled_at_ = base::TimeTicks::Max();
 
   // The recursion depth of the currently-executing CFRunLoopRun loop on the
   // run loop's thread.  0 if no run loops are running inside of whatever scope
@@ -279,7 +277,14 @@ class BASE_EXPORT MessagePumpCFRunLoopBase : public MessagePump {
   // any call to Run on the stack.  The Run method will check for delegateless
   // work on entry and redispatch it as needed once a delegate is available.
   bool delegateless_work_;
-  bool delegateless_idle_work_;
+
+  // Used to keep track of the native event work items processed by the message
+  // pump. Made of optionals because tracking can be suspended when it's
+  // determined the loop is not processing a native event but the depth of the
+  // stack should match |nesting_level_| at all times. A nullopt is also used
+  // as a stand-in during delegateless operation.
+  base::stack<absl::optional<base::MessagePump::Delegate::ScopedDoWorkItem>>
+      stack_;
 };
 
 class BASE_EXPORT MessagePumpCFRunLoop : public MessagePumpCFRunLoopBase {

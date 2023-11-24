@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,8 +16,8 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
@@ -361,9 +361,18 @@ bool JobFileUrlEqualPredicate(ComPtr<IBackgroundCopyJob> job, const GURL& url) {
 // Creates an instance of the BITS manager.
 HRESULT CreateBitsManager(ComPtr<IBackgroundCopyManager>* bits_manager) {
   ComPtr<IBackgroundCopyManager> local_bits_manager;
-  HRESULT hr =
-      ::CoCreateInstance(__uuidof(BackgroundCopyManager), nullptr, CLSCTX_ALL,
-                         IID_PPV_ARGS(&local_bits_manager));
+  HRESULT hr;
+  {
+    // CoCreateInstance may acquire the loader lock to load a library. Doing it
+    // at background priority can cause a priority inversion with the main
+    // thread, perceived as a hang by the user.
+    // SCOPED_MAY_LOAD_LIBRARY_AT_BACKGROUND_PRIORITY() mitigates this problem
+    // by boosting the thread's priority. See crbug.com/1295941.
+    SCOPED_MAY_LOAD_LIBRARY_AT_BACKGROUND_PRIORITY();
+    hr = ::CoCreateInstance(__uuidof(BackgroundCopyManager), nullptr,
+                            CLSCTX_ALL, IID_PPV_ARGS(&local_bits_manager));
+  }
+
   if (FAILED(hr)) {
     return hr;
   }
@@ -793,9 +802,9 @@ HRESULT BackgroundDownloader::CompleteJob() {
   if (FAILED(hr))
     return hr;
 
-  // Sanity check the post-conditions of a successful download, including
-  // the file and job invariants. The byte counts for a job and its file
-  // must match as a job only contains one file.
+  // Check the post-conditions of a successful download, including the file and
+  // job invariants. The byte counts for a job and its file must match as a job
+  // only contains one file.
   DCHECK(progress.Completed);
   DCHECK_EQ(progress.BytesTotal, progress.BytesTransferred);
 

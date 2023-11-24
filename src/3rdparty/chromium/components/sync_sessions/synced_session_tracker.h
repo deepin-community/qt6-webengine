@@ -1,4 +1,4 @@
-// Copyright 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,11 +13,13 @@
 #include <string>
 #include <vector>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "components/sessions/core/session_id.h"
 #include "components/sessions/core/session_types.h"
 #include "components/sync/protocol/session_specifics.pb.h"
+#include "components/sync/protocol/sync_enums.pb.h"
+#include "components/sync_device_info/device_info.h"
 #include "components/sync_sessions/synced_session.h"
 #include "components/sync_sessions/tab_node_pool.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
@@ -82,7 +84,7 @@ class SyncedSessionTracker {
   const sessions::SessionTab* LookupSessionTab(const std::string& session_tag,
                                                SessionID tab_id) const;
 
-  absl::optional<sync_pb::SessionWindow::BrowserType> LookupWindowType(
+  absl::optional<sync_pb::SyncEnums::BrowserType> LookupWindowType(
       const std::string& session_tag,
       SessionID window_id) const;
 
@@ -162,16 +164,17 @@ class SyncedSessionTracker {
   void DeleteForeignTab(const std::string& session_tag, int tab_node_id);
 
   // Deletes the session associated with |session_tag| if it exists.
-  // Returns true if the session existed and was deleted, false otherwise.
-  bool DeleteForeignSession(const std::string& session_tag);
+  void DeleteForeignSession(const std::string& session_tag);
 
   // **** Methods specific to the local session. ****
 
   // Set the local session information. Must be called before any other local
   // session methods are invoked.
-  void InitLocalSession(const std::string& local_session_tag,
-                        const std::string& local_session_name,
-                        sync_pb::SyncEnums::DeviceType local_device_type);
+  void InitLocalSession(
+      const std::string& local_session_tag,
+      const std::string& local_session_name,
+      sync_pb::SyncEnums::DeviceType local_device_type,
+      syncer::DeviceInfo::FormFactor local_device_form_factor);
 
   // Gets the session tag previously set with InitLocalSession().
   const std::string& GetLocalSessionTag() const;

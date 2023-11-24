@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -31,6 +31,7 @@ class COMPONENT_EXPORT(UI_BASE) WinCursorFactory : public CursorFactory {
   // CursorFactory:
   scoped_refptr<PlatformCursor> GetDefaultCursor(
       mojom::CursorType type) override;
+  absl::optional<CursorData> GetCursorData(mojom::CursorType) override;
   scoped_refptr<PlatformCursor> CreateImageCursor(
       mojom::CursorType type,
       const SkBitmap& bitmap,

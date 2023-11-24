@@ -134,6 +134,10 @@ struct PerThreadSynch {
 
 // The instances of this class are allocated in NewThreadIdentity() with an
 // alignment of PerThreadSynch::kAlignment.
+//
+// NOTE: The layout of fields in this structure is critical, please do not
+//       add, remove, or modify the field placements without fully auditing the
+//       layout.
 struct ThreadIdentity {
   // Must be the first member.  The Mutex implementation requires that
   // the PerThreadSynch object associated with each thread is
@@ -210,6 +214,8 @@ void ClearCurrentThreadIdentity();
 #elif defined(ABSL_FORCE_THREAD_IDENTITY_MODE)
 #define ABSL_THREAD_IDENTITY_MODE ABSL_FORCE_THREAD_IDENTITY_MODE
 #elif defined(_WIN32) && !defined(__MINGW32__)
+#define ABSL_THREAD_IDENTITY_MODE ABSL_THREAD_IDENTITY_MODE_USE_CPP11
+#elif defined(__clang__) && defined(__MINGW32__) && defined(_WIN32)
 #define ABSL_THREAD_IDENTITY_MODE ABSL_THREAD_IDENTITY_MODE_USE_CPP11
 #elif defined(__APPLE__) && defined(ABSL_HAVE_THREAD_LOCAL)
 #define ABSL_THREAD_IDENTITY_MODE ABSL_THREAD_IDENTITY_MODE_USE_CPP11

@@ -1,4 +1,4 @@
-// Copyright (c) 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -124,10 +124,12 @@ class TailoredSecurityService : public KeyedService {
   // Extracts a JSON-encoded HTTP response into a dictionary.
   static base::Value ReadResponse(Request* request);
 
-  // Called by `request` when a tailored security service query has completed.
-  // Unpacks the response and calls `callback`, which is the original callback
-  // that was passed to QueryTailoredSecurityBit().
-  void QueryTailoredSecurityBitCompletionCallback(
+  // Unpacks the response and calls `callback`. Called by a `Request` when a
+  // tailored security service query sequence has completed. When `success` is
+  // `true`, the method will try to extract the Tailored Security bit value
+  // from the request and run `callback`; when `false` the method performs error
+  // handling.
+  void ExtractTailoredSecurityBitFromResponseAndRunCallback(
       QueryTailoredSecurityBitCallback callback,
       Request* request,
       bool success);
@@ -141,8 +143,7 @@ class TailoredSecurityService : public KeyedService {
   // After `kAccountTailoredSecurityUpdateTimestamp` is updated, we check the
   // true value of the account tailored security preference and run this
   // callback.
-  virtual void MaybeNotifySyncUser(bool is_enabled,
-                                   base::Time previous_update) = 0;
+  virtual void MaybeNotifySyncUser(bool is_enabled, base::Time previous_update);
 
   PrefService* prefs() { return prefs_; }
 
@@ -183,7 +184,7 @@ class TailoredSecurityService : public KeyedService {
   bool is_shut_down_ = false;
 
   // The preferences for the given profile.
-  PrefService* prefs_;
+  raw_ptr<PrefService> prefs_;
 
   // This is used to observe when sync users update their Tailored Security
   // setting.

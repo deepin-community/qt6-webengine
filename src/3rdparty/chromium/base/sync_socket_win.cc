@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <stddef.h>
 
 #include "base/logging.h"
+#include "base/notreached.h"
 #include "base/rand_util.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/win/scoped_handle.h"
@@ -152,7 +153,7 @@ size_t CancelableFileOperation(Function operation,
     if (!operation_ok) {
       if (::GetLastError() == ERROR_IO_PENDING) {
         HANDLE events[] = { io_event->handle(), cancel_event->handle() };
-        const int wait_result = WaitForMultipleObjects(
+        const DWORD wait_result = WaitForMultipleObjects(
             std::size(events), events, FALSE,
             timeout_in_ms == INFINITE
                 ? timeout_in_ms

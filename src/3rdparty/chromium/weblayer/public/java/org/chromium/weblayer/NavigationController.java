@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -24,7 +24,7 @@ import org.chromium.weblayer_private.interfaces.StrictModeWorkaround;
 /**
  * Provides methods to control navigation, along with maintaining the current list of navigations.
  */
-public class NavigationController {
+class NavigationController {
     private INavigationController mNavigationController;
     private final ObserverList<NavigationCallback> mCallbacks;
 
@@ -54,8 +54,6 @@ public class NavigationController {
      * @param uri the destination URI.
      * @param params extra parameters for the navigation.
      *
-     * @throws IllegalStateException if params.getResponse() is not null but a URLBarController
-     *         View is attached to a Window.
      */
     public void navigate(@NonNull Uri uri, @Nullable NavigateParams params) {
         ThreadCheck.ensureOnUiThread();

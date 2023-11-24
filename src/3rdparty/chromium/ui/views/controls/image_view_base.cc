@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -40,7 +40,7 @@ void ImageViewBase::GetAccessibleNodeData(ui::AXNodeData* node_data) {
   }
 
   node_data->role = ax::mojom::Role::kImage;
-  node_data->SetName(name);
+  node_data->SetNameChecked(name);
 }
 
 void ImageViewBase::SetHorizontalAlignment(Alignment alignment) {
@@ -75,17 +75,9 @@ const std::u16string& ImageViewBase::GetTooltipText() const {
   return tooltip_text_;
 }
 
-void ImageViewBase::SetAccessibleName(const std::u16string& accessible_name) {
-  if (accessible_name_ == accessible_name)
-    return;
-
-  accessible_name_ = accessible_name;
-  OnPropertyChanged(&accessible_name_, kPropertyEffectsNone);
-  NotifyAccessibilityEvent(ax::mojom::Event::kTextChanged, true);
-}
-
 const std::u16string& ImageViewBase::GetAccessibleName() const {
-  return accessible_name_.empty() ? tooltip_text_ : accessible_name_;
+  return View::GetAccessibleName().empty() ? tooltip_text_
+                                           : View::GetAccessibleName();
 }
 
 std::u16string ImageViewBase::GetTooltipText(const gfx::Point& p) const {
@@ -166,7 +158,6 @@ void ImageViewBase::PreferredSizeChanged() {
 BEGIN_METADATA(ImageViewBase, View)
 ADD_PROPERTY_METADATA(Alignment, HorizontalAlignment)
 ADD_PROPERTY_METADATA(Alignment, VerticalAlignment)
-ADD_PROPERTY_METADATA(std::u16string, AccessibleName)
 ADD_PROPERTY_METADATA(std::u16string, TooltipText)
 END_METADATA
 

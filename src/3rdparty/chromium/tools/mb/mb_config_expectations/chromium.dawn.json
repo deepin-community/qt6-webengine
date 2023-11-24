@@ -1,4 +1,32 @@
 {
+  "Dawn Android arm DEPS Release (Pixel 4)": {
+    "gn_args": {
+      "dcheck_always_on": true,
+      "debuggable_apks": false,
+      "ffmpeg_branding": "Chrome",
+      "is_component_build": false,
+      "is_debug": false,
+      "proprietary_codecs": true,
+      "symbol_level": 1,
+      "target_os": "android",
+      "use_dawn": true,
+      "use_remoteexec": true
+    }
+  },
+  "Dawn Android arm Release (Pixel 4)": {
+    "gn_args": {
+      "dcheck_always_on": true,
+      "debuggable_apks": false,
+      "ffmpeg_branding": "Chrome",
+      "is_component_build": false,
+      "is_debug": false,
+      "proprietary_codecs": true,
+      "symbol_level": 1,
+      "target_os": "android",
+      "use_dawn": true,
+      "use_remoteexec": true
+    }
+  },
   "Dawn Linux x64 Builder": {
     "gn_args": {
       "dawn_enable_desktop_gl": true,
@@ -8,7 +36,6 @@
       "is_debug": false,
       "symbol_level": 1,
       "use_dawn": true,
-      "use_rbe": true,
       "use_remoteexec": true
     }
   },
@@ -21,7 +48,6 @@
       "is_debug": false,
       "symbol_level": 1,
       "use_dawn": true,
-      "use_rbe": true,
       "use_remoteexec": true
     }
   },
@@ -29,24 +55,28 @@
     "gn_args": {
       "dawn_enable_opengles": true,
       "dcheck_always_on": true,
+      "enable_backup_ref_ptr_support": false,
+      "enable_mte_checked_ptr_support": false,
       "is_component_build": false,
       "is_debug": false,
       "symbol_level": 1,
-      "use_allocator": "none",
       "use_dawn": true,
-      "use_goma": true
+      "use_partition_alloc_as_malloc": false,
+      "use_remoteexec": true
     }
   },
   "Dawn Mac x64 DEPS Builder": {
     "gn_args": {
       "dawn_enable_opengles": true,
       "dcheck_always_on": true,
+      "enable_backup_ref_ptr_support": false,
+      "enable_mte_checked_ptr_support": false,
       "is_component_build": false,
       "is_debug": false,
       "symbol_level": 1,
-      "use_allocator": "none",
       "use_dawn": true,
-      "use_goma": true
+      "use_partition_alloc_as_malloc": false,
+      "use_remoteexec": true
     }
   },
   "Dawn Win10 x64 ASAN Release": {
@@ -58,7 +88,6 @@
       "is_debug": false,
       "symbol_level": 1,
       "use_dawn": true,
-      "use_rbe": true,
       "use_remoteexec": true
     }
   },
@@ -70,7 +99,6 @@
       "is_debug": false,
       "symbol_level": 1,
       "use_dawn": true,
-      "use_rbe": true,
       "use_remoteexec": true
     }
   },
@@ -82,7 +110,6 @@
       "is_debug": false,
       "symbol_level": 1,
       "use_dawn": true,
-      "use_rbe": true,
       "use_remoteexec": true
     }
   },
@@ -95,7 +122,6 @@
       "symbol_level": 1,
       "target_cpu": "x86",
       "use_dawn": true,
-      "use_rbe": true,
       "use_remoteexec": true
     }
   },
@@ -108,7 +134,6 @@
       "symbol_level": 1,
       "target_cpu": "x86",
       "use_dawn": true,
-      "use_rbe": true,
       "use_remoteexec": true
     }
   }

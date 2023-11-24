@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,13 +6,13 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/containers/contains.h"
 #include "base/containers/cxx20_erase.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/strings/string_piece.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/device_event_log/device_event_log.h"
@@ -137,8 +137,7 @@ void FidoRequestHandlerBase::InitDiscoveries(
     // device communication block (only GetAssertionRequestHandler uses
     // caBLE). Otherwise, do not instantiate any other transports.
     base::EraseIf(available_transports, [](auto transport) {
-      return transport !=
-             FidoTransportProtocol::kCloudAssistedBluetoothLowEnergy;
+      return transport != FidoTransportProtocol::kHybrid;
     });
   }
 #endif  // BUILDFLAG(IS_WIN)
@@ -196,9 +195,9 @@ void FidoRequestHandlerBase::InitDiscoveries(
   if (can_call_ble_apis &&
       device::BluetoothAdapterFactory::Get()->IsLowEnergySupported() &&
       base::Contains(transport_availability_info_.available_transports,
-                     FidoTransportProtocol::kCloudAssistedBluetoothLowEnergy)) {
+                     FidoTransportProtocol::kHybrid)) {
     transport_availability_callback_readiness_->ble_information_pending = true;
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(&FidoRequestHandlerBase::ConstructBleAdapterPowerManager,
                        weak_factory_.GetWeakPtr()));
@@ -242,7 +241,7 @@ void FidoRequestHandlerBase::OnBluetoothAdapterEnumerated(
     bool is_peripheral_role_supported) {
   if (!is_present) {
     transport_availability_info_.available_transports.erase(
-        FidoTransportProtocol::kCloudAssistedBluetoothLowEnergy);
+        FidoTransportProtocol::kHybrid);
   }
 
   transport_availability_callback_readiness_->ble_information_pending = false;
@@ -365,7 +364,7 @@ void FidoRequestHandlerBase::AuthenticatorAdded(
     // request callback.
     VLOG(2)
         << "Request handler dispatching request to authenticator immediately.";
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(
             &FidoRequestHandlerBase::InitializeAuthenticatorAndDispatchRequest,
@@ -387,6 +386,10 @@ void FidoRequestHandlerBase::AuthenticatorAdded(
 #endif  // BUILDFLAG(IS_WIN)
 }
 
+void FidoRequestHandlerBase::BleDenied() {
+  transport_availability_info_.ble_access_denied = true;
+}
+
 void FidoRequestHandlerBase::GetPlatformCredentialStatus(
     FidoAuthenticator* platform_authenticator) {
   transport_availability_callback_readiness_
@@ -395,15 +398,17 @@ void FidoRequestHandlerBase::GetPlatformCredentialStatus(
 
 void FidoRequestHandlerBase::OnHavePlatformCredentialStatus(
     std::vector<DiscoverableCredentialMetadata> creds,
-    bool have_credential) {
-  DCHECK(!transport_availability_info_
-              .has_recognized_platform_authenticator_credential.has_value());
-
-  transport_availability_info_
-      .has_recognized_platform_authenticator_credential = have_credential;
+    RecognizedCredential has_credentials) {
+  DCHECK_EQ(transport_availability_info_.has_platform_authenticator_credential,
+            RecognizedCredential::kUnknown);
+  transport_availability_info_.has_platform_authenticator_credential =
+      has_credentials;
   transport_availability_info_.recognized_platform_authenticator_credentials =
       std::move(creds);
-
+  if (has_credentials == RecognizedCredential::kNoRecognizedCredential) {
+    transport_availability_info_.available_transports.erase(
+        FidoTransportProtocol::kInternal);
+  }
   transport_availability_callback_readiness_
       ->platform_credential_check_pending = false;
   MaybeSignalTransportsEnumerated();
@@ -442,7 +447,7 @@ void FidoRequestHandlerBase::ConstructBleAdapterPowerManager() {
 
 void FidoRequestHandlerBase::StopDiscoveries() {
   for (const auto& discovery : discoveries_) {
-    discovery->MaybeStop();
+    discovery->Stop();
   }
 }
 

@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,6 @@
 
 #include <map>
 #include <memory>
-#include <utility>
 #include <vector>
 
 #include "core/fxcrt/widestring.h"
@@ -23,8 +22,8 @@
 #include "v8/include/v8-forward.h"
 #include "xfa/fxfa/fxfa_basic.h"
 
+class CFXJSE_Engine;
 class CFXJSE_MapModule;
-class CFX_V8;
 class CFX_XMLElement;
 class CJX_Object;
 class CXFA_Document;
@@ -35,7 +34,7 @@ class CXFA_Object;
 
 using CJX_MethodCall =
     CJS_Result (*)(CJX_Object* obj,
-                   CFX_V8* runtime,
+                   CFXJSE_Engine* runtime,
                    const std::vector<v8::Local<v8::Value>>& params);
 
 struct CJX_MethodSpec {
@@ -111,7 +110,7 @@ class CJX_Object : public cppgc::GarbageCollected<CJX_Object>,
 
   CXFA_Document* GetDocument() const;
   CXFA_Node* GetXFANode() const;
-  CXFA_Object* GetXFAObject() const { return object_.Get(); }
+  CXFA_Object* GetXFAObject() const { return object_; }
 
   void SetCalcRecursionCount(size_t count) { calc_recursion_count_ = count; }
   size_t GetCalcRecursionCount() const { return calc_recursion_count_; }
@@ -144,10 +143,7 @@ class CJX_Object : public cppgc::GarbageCollected<CJX_Object>,
 
   template <typename T>
   T* GetProperty(int32_t index, XFA_Element eType) const {
-    CXFA_Node* node;
-    int32_t count;
-    std::tie(node, count) = GetPropertyInternal(index, eType);
-    return static_cast<T*>(node);
+    return static_cast<T*>(GetPropertyInternal(index, eType));
   }
   template <typename T>
   T* GetOrCreateProperty(int32_t index, XFA_Element eType) {
@@ -248,8 +244,7 @@ class CJX_Object : public cppgc::GarbageCollected<CJX_Object>,
   using Type__ = CJX_Object;
   static const TypeTag static_type__ = TypeTag::Object;
 
-  std::pair<CXFA_Node*, int32_t> GetPropertyInternal(int32_t index,
-                                                     XFA_Element eType) const;
+  CXFA_Node* GetPropertyInternal(int32_t index, XFA_Element eType) const;
   CXFA_Node* GetOrCreatePropertyInternal(int32_t index, XFA_Element eType);
 
   void OnChanging(XFA_Attribute eAttr);

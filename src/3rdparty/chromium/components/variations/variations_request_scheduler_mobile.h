@@ -1,12 +1,12 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_VARIATIONS_VARIATIONS_REQUEST_SCHEDULER_MOBILE_H_
 #define COMPONENTS_VARIATIONS_VARIATIONS_REQUEST_SCHEDULER_MOBILE_H_
 
-#include "base/bind.h"
 #include "base/component_export.h"
+#include "base/functional/bind.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
@@ -46,6 +46,12 @@ class COMPONENT_EXPORT(VARIATIONS) VariationsRequestSchedulerMobile
                            OnAppEnterForegroundRun);
   FRIEND_TEST_ALL_PREFIXES(VariationsRequestSchedulerMobileTest,
                            OnAppEnterForegroundOnStartup);
+
+  // Determines whether we should fetch a seed depending on how much time has
+  // passed since the last seed fetch. If the
+  // |kDisableVariationsSeedFetchThrottling| command line switch is present,
+  // this always returns true.
+  bool ShouldFetchSeed(base::Time last_fetch_time);
 
   // The local state instance that provides the last fetch time.
   raw_ptr<PrefService> local_state_;

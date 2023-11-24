@@ -9,8 +9,8 @@
 #include "webui_controller_factory_qt.h"
 
 #include "build_config_qt.h"
-
-#include "base/bind.h"
+#include "devtools_frontend_qt.h"
+#include "base/functional/bind.h"
 #include "build/build_config.h"
 #include "chrome/browser/accessibility/accessibility_ui.h"
 #include "chrome/browser/profiles/profile.h"
@@ -25,6 +25,7 @@
 #include "media/media_buildflags.h"
 #include "printing/buildflags/buildflags.h"
 #include "url/gurl.h"
+#include "version_ui_qt.h"
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
 #include "chrome/browser/ui/webui/sandbox/sandbox_internals_ui.h"
@@ -85,19 +86,19 @@ WebUIFactoryFunction GetWebUIFactoryFunction(WebUI *web_ui, Profile *profile, co
     // This will get called a lot to check all URLs, so do a quick check of other
     // schemes to filter out most URLs.
     if (!content::HasWebUIScheme(url))
-        return NULL;
+        return nullptr;
 
     // We must compare hosts only since some of the Web UIs append extra stuff
     // after the host name.
-    if (url.host() == chrome::kChromeUINetInternalsHost)
+    if (url.host_piece() == chrome::kChromeUINetInternalsHost)
         return &NewWebUI<NetInternalsUI>;
 
     if (url.SchemeIs(content::kChromeDevToolsScheme)) {
-        //        if (!DevToolsUIBindings::IsValidFrontendURL(url))
-        //            return nullptr;
+        if (!QtWebEngineCore::DevToolsFrontendQt::IsValidFrontendURL(url))
+            return nullptr;
         return &NewWebUI<DevToolsUI>;
     }
-    if (url.host() == chrome::kChromeUIAccessibilityHost)
+    if (url.host_piece() == chrome::kChromeUIAccessibilityHost)
         return &NewWebUI<AccessibilityUI>;
 
     if (url.host_piece() == chrome::kChromeUIUserActionsHost)
@@ -105,6 +106,9 @@ WebUIFactoryFunction GetWebUIFactoryFunction(WebUI *web_ui, Profile *profile, co
 
     if (url.host_piece() == chrome::kChromeUIDeviceLogHost)
         return &NewWebUI<chromeos::DeviceLogUI>;
+
+    if (url.host_piece() == chrome::kChromeUIVersionQtHost)
+        return &NewWebUI<VersionUIQt>;
 
 //    if (url.host_piece() == chrome::kChromeUIInspectHost)
 //        return &NewWebUI<InspectUI>;
@@ -127,7 +131,7 @@ WebUIFactoryFunction GetWebUIFactoryFunction(WebUI *web_ui, Profile *profile, co
     if (url.host_piece() == chrome::kChromeUIWebRtcLogsHost)
         return &NewWebUI<WebRtcLogsUI>;
 #endif
-#if BUILDFLAG(IS_LINUX) // Consider enabling for BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
     if (url.host_piece() == chrome::kChromeUISandboxHost)
         return &NewWebUI<SandboxInternalsUI>;
 #endif

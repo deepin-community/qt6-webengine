@@ -1,13 +1,13 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/webui/whats_new/whats_new_util.h"
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/check.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
@@ -15,7 +15,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/profiles/profile.h"
@@ -103,12 +102,14 @@ bool ShouldShowForState(PrefService* local_state,
 }
 
 GURL GetServerURL(bool may_redirect) {
-  return may_redirect
-             ? net::AppendQueryParameter(
-                   GURL(kChromeWhatsNewURL), "version",
-                   base::NumberToString(CHROME_VERSION_MAJOR))
-             : GURL(kChromeWhatsNewURL)
-                   .Resolve(base::StringPrintf("m%d", CHROME_VERSION_MAJOR));
+  const GURL url =
+      may_redirect
+          ? net::AppendQueryParameter(
+                GURL(kChromeWhatsNewURL), "version",
+                base::NumberToString(CHROME_VERSION_MAJOR))
+          : GURL(kChromeWhatsNewURL)
+                .Resolve(base::StringPrintf("m%d", CHROME_VERSION_MAJOR));
+  return net::AppendQueryParameter(url, "internal", "true");
 }
 
 GURL GetWebUIStartupURL() {
@@ -132,7 +133,7 @@ class WhatsNewFetcher : public BrowserListObserver {
       // Don't fetch network content if this is the case, just pretend the tab
       // was retrieved successfully. Do so asynchronously to simulate the
       // production code better.
-      base::SequencedTaskRunnerHandle::Get()->PostTask(
+      base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
           FROM_HERE, base::BindOnce(&WhatsNewFetcher::OpenWhatsNewTabForTest,
                                     base::Unretained(this)));
       return;

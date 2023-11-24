@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 #include <memory>
 #include <utility>
 
-#include "base/time/time_delta_from_string.h"
+#include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/bindings/core/v8/serialization/serialized_script_value.h"
@@ -23,6 +23,7 @@
 #include "third_party/blink/renderer/core/animation/worklet_animation_controller.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/execution_context/security_context.h"
 #include "third_party/blink/renderer/core/page/page_animator.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
@@ -148,21 +149,20 @@ TEST_F(WorkletAnimationTest, ElementHasWorkletAnimation) {
 
 // Regression test for crbug.com/1136120, pass if there is no crash.
 TEST_F(WorkletAnimationTest, SetCurrentTimeInfNotCrash) {
-  absl::optional<base::TimeDelta> seek_time = base::TimeDeltaFromString("inf");
   worklet_animation_->SetPlayState(Animation::kRunning);
   GetDocument().GetAnimationClock().UpdateTime(base::TimeTicks::Max());
-  worklet_animation_->SetCurrentTime(seek_time);
+  worklet_animation_->SetCurrentTime(/*current_time=*/base::TimeDelta::Max());
 }
 
 TEST_F(WorkletAnimationTest, StyleHasCurrentAnimation) {
-  scoped_refptr<ComputedStyle> style1 =
+  scoped_refptr<const ComputedStyle> style1 =
       GetDocument()
           .GetStyleResolver()
           .ResolveStyle(element_, StyleRecalcContext())
           .get();
   EXPECT_FALSE(style1->HasCurrentOpacityAnimation());
   worklet_animation_->play(ASSERT_NO_EXCEPTION);
-  scoped_refptr<ComputedStyle> style2 =
+  scoped_refptr<const ComputedStyle> style2 =
       GetDocument()
           .GetStyleResolver()
           .ResolveStyle(element_, StyleRecalcContext())

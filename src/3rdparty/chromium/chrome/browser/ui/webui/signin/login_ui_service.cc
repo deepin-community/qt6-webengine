@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -54,25 +54,22 @@ void LoginUIService::SyncConfirmationUIClosed(
 }
 
 void LoginUIService::DisplayLoginResult(Browser* browser,
-                                        const SigninUIError& error) {
+                                        const SigninUIError& error,
+                                        bool from_profile_picker) {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   // ChromeOS doesn't have the avatar bubble so it never calls this function.
   NOTREACHED();
 #else
   last_login_error_ = error;
+  // TODO(crbug.com/1326904): Check if the condition should be `!error.IsOk()`
   if (!error.message().empty()) {
     if (browser) {
       browser->signin_view_controller()->ShowModalSigninErrorDialog();
-    } else if (profile_->GetPath() ==
-               ProfilePicker::GetForceSigninProfilePath()) {
+    } else if (from_profile_picker) {
       ProfilePickerForceSigninDialog::DisplayErrorMessage();
     } else {
       LOG(ERROR) << "Unable to show Login error message: " << error.message();
     }
-  } else if (browser) {
-    browser->window()->ShowAvatarBubbleFromAvatarButton(
-        BrowserWindow::AVATAR_BUBBLE_MODE_CONFIRM_SIGNIN,
-        signin_metrics::AccessPoint::ACCESS_POINT_EXTENSIONS, false);
   }
 #endif
 }

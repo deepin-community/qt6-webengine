@@ -90,6 +90,9 @@ template<typename DiagonalVectorType_> class DiagonalWrapper;
 template<typename Scalar_, int SizeAtCompileTime, int MaxSizeAtCompileTime=SizeAtCompileTime> class DiagonalMatrix;
 template<typename MatrixType, typename DiagonalType, int ProductOrder> class DiagonalProduct;
 template<typename MatrixType, int Index = 0> class Diagonal;
+template<typename Derived> class SkewSymmetricBase;
+template<typename VectorType_> class SkewSymmetricWrapper;
+template<typename Scalar_> class SkewSymmetricMatrix3;
 template<int SizeAtCompileTime, int MaxSizeAtCompileTime = SizeAtCompileTime, typename IndexType=int> class PermutationMatrix;
 template<int SizeAtCompileTime, int MaxSizeAtCompileTime = SizeAtCompileTime, typename IndexType=int> class Transpositions;
 template<typename Derived> class PermutationBase;
@@ -106,7 +109,7 @@ template<int Value = Dynamic> class OuterStride;
 template<typename MatrixType, int MapOptions=Unaligned, typename StrideType = Stride<0,0> > class Map;
 template<typename Derived> class RefBase;
 template<typename PlainObjectType, int Options = 0,
-         typename StrideType = typename internal::conditional<PlainObjectType::IsVectorAtCompileTime,InnerStride<1>,OuterStride<> >::type > class Ref;
+         typename StrideType = typename std::conditional_t<PlainObjectType::IsVectorAtCompileTime,InnerStride<1>,OuterStride<> > > class Ref;
 template<typename ViewOp,    typename MatrixType, typename StrideType = Stride<0,0>>         class CwiseUnaryView;
 
 template<typename Derived> class TriangularBase;
@@ -189,6 +192,8 @@ template<typename Scalar> struct scalar_sin_op;
 template<typename Scalar> struct scalar_acos_op;
 template<typename Scalar> struct scalar_asin_op;
 template<typename Scalar> struct scalar_tan_op;
+template<typename Scalar> struct scalar_atan_op;
+template <typename LhsScalar, typename RhsScalar = LhsScalar> struct scalar_atan2_op;
 template<typename Scalar> struct scalar_inverse_op;
 template<typename Scalar> struct scalar_square_op;
 template<typename Scalar> struct scalar_cube_op;
@@ -196,8 +201,12 @@ template<typename Scalar, typename NewType> struct scalar_cast_op;
 template<typename Scalar> struct scalar_random_op;
 template<typename Scalar> struct scalar_constant_op;
 template<typename Scalar> struct scalar_identity_op;
-template<typename Scalar,bool is_complex, bool is_integer> struct scalar_sign_op;
-template<typename Scalar,typename ScalarExponent> struct scalar_pow_op;
+template<typename Scalar> struct scalar_sign_op;
+template <typename Scalar, typename ScalarExponent>
+struct scalar_pow_op;
+template <typename Scalar, typename ScalarExponent, bool BaseIsInteger, bool ExponentIsInteger, bool BaseIsComplex,
+          bool ExponentIsComplex>
+struct scalar_unary_pow_op;
 template<typename LhsScalar,typename RhsScalar=LhsScalar> struct scalar_hypot_op;
 template<typename LhsScalar,typename RhsScalar=LhsScalar> struct scalar_product_op;
 template<typename LhsScalar,typename RhsScalar=LhsScalar> struct scalar_quotient_op;
@@ -245,15 +254,22 @@ template<typename ExpressionType, int Direction> class VectorwiseOp;
 template<typename MatrixType,int RowFactor,int ColFactor> class Replicate;
 template<typename MatrixType, int Direction = BothDirections> class Reverse;
 
+#if defined(EIGEN_USE_LAPACKE) && defined(lapack_int)
+// Lapacke interface requires StorageIndex to be lapack_int
+typedef lapack_int DefaultPermutationIndex;
+#else
+typedef int DefaultPermutationIndex;
+#endif
+
 template<typename MatrixType> class FullPivLU;
 template<typename MatrixType> class PartialPivLU;
 namespace internal {
 template<typename MatrixType> struct inverse_impl;
 }
 template<typename MatrixType> class HouseholderQR;
-template<typename MatrixType> class ColPivHouseholderQR;
-template<typename MatrixType> class FullPivHouseholderQR;
-template<typename MatrixType> class CompleteOrthogonalDecomposition;
+template<typename MatrixType, typename PermutationIndex = DefaultPermutationIndex> class ColPivHouseholderQR;
+template<typename MatrixType, typename PermutationIndex = DefaultPermutationIndex> class FullPivHouseholderQR;
+template<typename MatrixType, typename PermutationIndex = DefaultPermutationIndex> class CompleteOrthogonalDecomposition;
 template<typename MatrixType> class SVDBase;
 template<typename MatrixType, int Options = 0> class JacobiSVD;
 template<typename MatrixType, int Options = 0> class BDCSVD;
@@ -263,8 +279,10 @@ template<typename VectorsType, typename CoeffsType, int Side=OnTheLeft> class Ho
 template<typename Scalar>     class JacobiRotation;
 
 // Geometry module:
+namespace internal {
+template<typename Derived, typename OtherDerived, int Size = MatrixBase<Derived>::SizeAtCompileTime> struct cross_impl;
+}
 template<typename Derived, int Dim_> class RotationBase;
-template<typename Lhs, typename Rhs> class Cross;
 template<typename Derived> class QuaternionBase;
 template<typename Scalar> class Rotation2D;
 template<typename Scalar> class AngleAxis;

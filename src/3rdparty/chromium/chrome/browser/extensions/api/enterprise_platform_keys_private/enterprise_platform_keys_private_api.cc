@@ -1,11 +1,11 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/extensions/api/enterprise_platform_keys_private/enterprise_platform_keys_private_api.h"
 
 #include "base/base64.h"
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/values.h"
 #include "chrome/browser/ash/attestation/tpm_challenge_key.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
@@ -39,7 +39,7 @@ bool EPKPChallengeKey::IsExtensionAllowed(
   return platform_keys::IsExtensionAllowed(profile, extension.get());
 }
 
-void EPKPChallengeKey::Run(chromeos::attestation::AttestationKeyType type,
+void EPKPChallengeKey::Run(ash::attestation::AttestationKeyType type,
                            scoped_refptr<ExtensionFunction> caller,
                            ash::attestation::TpmChallengeKeyCallback callback,
                            const std::string& challenge,
@@ -54,15 +54,15 @@ void EPKPChallengeKey::Run(chromeos::attestation::AttestationKeyType type,
   }
 
   std::string key_name_for_spkac;
-  if (register_key && (type == chromeos::attestation::KEY_DEVICE)) {
+  if (register_key && (type == ash::attestation::KEY_DEVICE)) {
     key_name_for_spkac = ash::attestation::kEnterpriseMachineKeyForSpkacPrefix +
                          caller->extension()->id();
   }
 
   impl_ = ash::attestation::TpmChallengeKeyFactory::Create();
   impl_->BuildResponse(type, profile, std::move(callback), challenge,
-                       register_key, key_name_for_spkac,
-                       /*signals=*/absl::nullopt);
+                       register_key, attestation::KEY_TYPE_RSA,
+                       key_name_for_spkac, /*signals=*/absl::nullopt);
 }
 
 EnterprisePlatformKeysPrivateChallengeMachineKeyFunction::
@@ -92,7 +92,7 @@ EnterprisePlatformKeysPrivateChallengeMachineKeyFunction::Run() {
   // |callback| holds a reference to |this|.
   base::OnceClosure task = base::BindOnce(
       &EPKPChallengeKey::Run, base::Unretained(&impl_),
-      chromeos::attestation::KEY_DEVICE, scoped_refptr<ExtensionFunction>(this),
+      ash::attestation::KEY_DEVICE, scoped_refptr<ExtensionFunction>(this),
       std::move(callback), challenge,
       /*register_key=*/false);
   content::GetUIThreadTaskRunner({})->PostTask(FROM_HERE, std::move(task));
@@ -137,7 +137,7 @@ EnterprisePlatformKeysPrivateChallengeUserKeyFunction::Run() {
   // |callback| holds a reference to |this|.
   base::OnceClosure task = base::BindOnce(
       &EPKPChallengeKey::Run, base::Unretained(&impl_),
-      chromeos::attestation::KEY_USER, scoped_refptr<ExtensionFunction>(this),
+      ash::attestation::KEY_USER, scoped_refptr<ExtensionFunction>(this),
       std::move(callback), challenge, params->register_key);
   content::GetUIThreadTaskRunner({})->PostTask(FROM_HERE, std::move(task));
   return RespondLater();

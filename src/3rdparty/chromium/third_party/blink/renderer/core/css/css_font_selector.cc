@@ -30,6 +30,7 @@
 #include "third_party/blink/renderer/core/css/css_segmented_font_face.h"
 #include "third_party/blink/renderer/core/css/css_value_list.h"
 #include "third_party/blink/renderer/core/css/font_face_set_document.h"
+#include "third_party/blink/renderer/core/css/resolver/scoped_style_resolver.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -41,6 +42,7 @@ namespace blink {
 
 CSSFontSelector::CSSFontSelector(const TreeScope& tree_scope)
     : tree_scope_(&tree_scope) {
+  DCHECK(tree_scope.GetDocument().GetExecutionContext()->IsContextThread());
   DCHECK(tree_scope.GetDocument().GetFrame());
   generic_font_family_settings_ = tree_scope.GetDocument()
                                       .GetFrame()
@@ -57,7 +59,8 @@ CSSFontSelector::CSSFontSelector(const TreeScope& tree_scope)
 CSSFontSelector::~CSSFontSelector() = default;
 
 UseCounter* CSSFontSelector::GetUseCounter() const {
-  return GetExecutionContext();
+  auto* const context = GetExecutionContext();
+  return context && context->IsContextThread() ? context : nullptr;
 }
 
 void CSSFontSelector::RegisterForInvalidationCallbacks(
@@ -75,8 +78,7 @@ void CSSFontSelector::DispatchInvalidationCallbacks(
     FontInvalidationReason reason) {
   font_face_cache_->IncrementVersion();
 
-  HeapVector<Member<FontSelectorClient>> clients;
-  CopyToVector(clients_, clients);
+  HeapVector<Member<FontSelectorClient>> clients(clients_);
   for (auto& client : clients) {
     if (client) {
       client->FontsNeedUpdate(this, reason);
@@ -123,6 +125,51 @@ scoped_refptr<FontData> CSSFontSelector::GetFontData(
     }
   }
 
+  if (request_description.GetFontVariantAlternates()) {
+    // TODO(https://crbug.com/1382722): For scoping to work correctly, we'd need
+    // to traverse the TreeScopes here and fuse / override values of
+    // @font-feature-values from these.
+    const FontFeatureValuesStorage* feature_values_storage =
+        document.GetScopedStyleResolver()
+            ? document.GetScopedStyleResolver()->FontFeatureValuesForFamily(
+                  family_name)
+            : nullptr;
+    scoped_refptr<FontVariantAlternates> new_alternates = nullptr;
+    if (feature_values_storage) {
+      new_alternates = request_description.GetFontVariantAlternates()->Resolve(
+          [feature_values_storage](AtomicString alias) {
+            return feature_values_storage->ResolveStylistic(alias);
+          },
+          [feature_values_storage](AtomicString alias) {
+            return feature_values_storage->ResolveStyleset(alias);
+          },
+          [feature_values_storage](AtomicString alias) {
+            return feature_values_storage->ResolveCharacterVariant(alias);
+          },
+          [feature_values_storage](AtomicString alias) {
+            return feature_values_storage->ResolveSwash(alias);
+          },
+          [feature_values_storage](AtomicString alias) {
+            return feature_values_storage->ResolveOrnaments(alias);
+          },
+          [feature_values_storage](AtomicString alias) {
+            return feature_values_storage->ResolveAnnotation(alias);
+          });
+    } else {
+      // If no StyleRuleFontFeature alias table values for this font was found,
+      // it still needs a resolve call to convert historical-forms state (which
+      // is not looked-up against StyleRuleFontFeatureValues) to an internal
+      // feature.
+      auto no_lookup = [](AtomicString) -> Vector<uint32_t> { return {}; };
+      new_alternates = request_description.GetFontVariantAlternates()->Resolve(
+          no_lookup, no_lookup, no_lookup, no_lookup, no_lookup, no_lookup);
+    }
+
+    if (new_alternates) {
+      request_description.SetFontVariantAlternates(new_alternates);
+    }
+  }
+
   if (!font_family.FamilyIsGeneric()) {
     if (CSSSegmentedFontFace* face =
             font_face_cache_->Get(request_description, family_name)) {
@@ -137,8 +184,9 @@ scoped_refptr<FontData> CSSFontSelector::GetFontData(
   // handed the generic font family name.
   AtomicString settings_family_name =
       FamilyNameFromSettings(request_description, font_family);
-  if (settings_family_name.IsEmpty())
+  if (settings_family_name.empty()) {
     return nullptr;
+  }
 
   ReportFontFamilyLookupByGenericFamily(
       family_name, request_description.GetScript(),
@@ -148,14 +196,15 @@ scoped_refptr<FontData> CSSFontSelector::GetFontData(
       FontCache::Get().GetFontData(request_description, settings_family_name);
 
   ReportFontLookupByUniqueOrFamilyName(settings_family_name,
-                                       request_description, font_data.get());
+                                       request_description, font_data);
 
   return font_data;
 }
 
 void CSSFontSelector::UpdateGenericFontFamilySettings(Document& document) {
-  if (!document.GetSettings())
+  if (!document.GetSettings()) {
     return;
+  }
   generic_font_family_settings_ =
       document.GetSettings()->GetGenericFontFamilySettings();
   FontCacheInvalidated();
@@ -163,6 +212,10 @@ void CSSFontSelector::UpdateGenericFontFamilySettings(Document& document) {
 
 FontMatchingMetrics* CSSFontSelector::GetFontMatchingMetrics() const {
   return GetDocument().GetFontMatchingMetrics();
+}
+
+bool CSSFontSelector::IsAlive() const {
+  return tree_scope_;
 }
 
 void CSSFontSelector::Trace(Visitor* visitor) const {

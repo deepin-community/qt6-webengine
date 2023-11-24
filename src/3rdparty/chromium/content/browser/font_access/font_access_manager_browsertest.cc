@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,7 +13,6 @@
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/threading/sequence_bound.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "content/browser/font_access/font_access_test_utils.h"
 #include "content/browser/font_access/font_enumeration_cache.h"
@@ -48,7 +47,7 @@ class FontAccessManagerBrowserBase : public ContentBrowserTest {
   }
 
   RenderFrameHost* main_rfh() {
-    return shell()->web_contents()->GetMainFrame();
+    return shell()->web_contents()->GetPrimaryMainFrame();
   }
 
   FontAccessManager* font_access_manager() {
@@ -84,7 +83,7 @@ class FontAccessManagerBrowserBase : public ContentBrowserTest {
 class FontAccessManagerBrowserTest : public FontAccessManagerBrowserBase {
  public:
   FontAccessManagerBrowserTest() {
-    std::vector<base::Feature> enabled_features({
+    std::vector<base::test::FeatureRef> enabled_features({
         blink::features::kFontAccess,
     });
     scoped_feature_list_->InitWithFeatures(std::move(enabled_features),
@@ -100,7 +99,7 @@ IN_PROC_BROWSER_TEST_F(FontAccessManagerBrowserBase,
   // feature flag is disabled.
 
   RenderFrameHostImpl* rfh = static_cast<RenderFrameHostImpl*>(
-      shell()->web_contents()->GetMainFrame());
+      shell()->web_contents()->GetPrimaryMainFrame());
   mojo::Receiver<blink::mojom::BrowserInterfaceBroker>& bib =
       rfh->browser_interface_broker_receiver_for_testing();
   blink::mojom::BrowserInterfaceBroker* broker = bib.internal_state()->impl();
@@ -126,8 +125,7 @@ IN_PROC_BROWSER_TEST_F(FontAccessManagerBrowserTest, EnumerationTest) {
     EXPECT_LT(0, result.ExtractInt())
         << "Enumeration should return at least one font on supported OS.";
   } else {
-    EXPECT_EQ(0, result.ExtractInt())
-        << "Enumeration should return no font on non-supported OS.";
+    EXPECT_TRUE(!result.error.empty());
   }
 }
 
@@ -144,8 +142,12 @@ IN_PROC_BROWSER_TEST_F(FontAccessManagerBrowserTest,
                                "  return fonts.length;"
                                "})()");
 
-  EXPECT_EQ(0, result.ExtractInt())
-      << "Enumeration should return no fonts for an invalid postscriptName.";
+  if (FontEnumerationDataSource::IsOsSupported()) {
+    EXPECT_EQ(0, result.ExtractInt())
+        << "Enumeration should return no fonts for an invalid postscriptName.";
+  } else {
+    EXPECT_TRUE(!result.error.empty());
+  }
 }
 
 #if BUILDFLAG(IS_WIN)

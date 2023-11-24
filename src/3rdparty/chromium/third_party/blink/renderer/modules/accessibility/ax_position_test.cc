@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -1806,8 +1806,7 @@ TEST_F(AccessibilityTest, PositionInInvalidMapLayout) {
   EXPECT_EQ(0, position_after.GetPosition().OffsetInContainerNode());
 }
 
-TEST_P(ParameterizedAccessibilityTest,
-       ToPositionWithAffinityWithMultipleInlineTextBoxes) {
+TEST_F(AccessibilityTest, ToPositionWithAffinityWithMultipleInlineTextBoxes) {
   // This test expects the starting offset of the last InlineTextBox object to
   // equate the sum of the previous inline text boxes' length, without the
   // collapsed white-spaces.

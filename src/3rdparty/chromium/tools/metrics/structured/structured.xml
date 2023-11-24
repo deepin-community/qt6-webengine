@@ -1,10 +1,90 @@
 <structured-metrics>
 
+<project name="FastPair">
+  <owner>jackshira@chromium.org</owner>
+  <owner>chromeos-cross-device-eng@google.com</owner>
+  <id>none</id>
+  <scope>profile</scope>
+  <key-rotation>30</key-rotation>
+  <summary>
+    Metrics for the ChromeOS Fast Pair implementation.
+  </summary>
+
+  <event name="PairingStart">
+    <summary>
+      The starting of the pairing process.
+    </summary>
+    <metric name="Protocol" type="int">
+      <summary>
+        The pairing protocol being started.
+      </summary>
+    </metric>
+    <metric name="FastPairVersion" type="int">
+      <summary>
+        The Fast Pair spec version the device implements.
+      </summary>
+    </metric>
+    <metric name="ModelId" type="int">
+      <summary>
+        The model ID of the device being paired.
+      </summary>
+    </metric>
+  </event>
+
+  <event name="PairingComplete">
+    <summary>
+      The end of the pairing process.
+    </summary>
+    <metric name="Protocol" type="int">
+      <summary>
+        The pairing protocol being started.
+      </summary>
+    </metric>
+    <metric name="FastPairVersion" type="int">
+      <summary>
+        The Fast Pair spec version the device implements.
+      </summary>
+    </metric>
+    <metric name="ModelId" type="int">
+      <summary>
+        The model ID of the device being paired.
+      </summary>
+    </metric>
+  </event>
+
+  <event name="PairFailure">
+    <summary>
+      The pairing process failed for the provided reason.
+    </summary>
+    <metric name="Protocol" type="int">
+      <summary>
+        The pairing protocol being started.
+      </summary>
+    </metric>
+    <metric name="FastPairVersion" type="int">
+      <summary>
+        The Fast Pair spec version the device implements.
+      </summary>
+    </metric>
+    <metric name="Reason" type="int">
+      <summary>
+        The pairing failure reason.
+      </summary>
+    </metric>
+    <metric name="ModelId" type="int">
+      <summary>
+        The model ID of the device being paired.
+      </summary>
+    </metric>
+  </event>
+</project>
+
 <project name="Hindsight">
   <owner>charleszhao@chromium.org</owner>
   <owner>tby@chromium.org</owner>
   <id>per-project</id>
   <scope>profile</scope>
+  <key-rotation>90</key-rotation>
   <summary>
     Project for recording CrOSActions.
   </summary>
@@ -194,6 +274,7 @@
   <owner>tby@chromium.org</owner>
   <id>per-project</id>
   <scope>profile</scope>
+  <key-rotation>90</key-rotation>
   <summary>
     See event summary.
   </summary>
@@ -225,7 +306,7 @@
     <metric name="ProviderType" type="int">
       <summary>
         Which type of search provider the launched result was created by. This comes
-        from the RankingItemType enum.
+        from the AppListSearchResultType enum.
       </summary>
     </metric>
     <metric name="Score" type="int">
@@ -258,6 +339,7 @@
   <owner>pdyson@chromium.org</owner>
   <id>per-project</id>
   <scope>device</scope>
+  <key-rotation>90</key-rotation>
   <summary>
     Project for recording events to monitor the creation of Neutrino Devices.
   </summary>
@@ -383,6 +465,7 @@
   <owner>tby@chromium.org</owner>
   <id>per-project</id>
   <scope>device</scope>
+  <key-rotation>90</key-rotation>
   <summary>
     Structured Metrics is a logging framework for events. This project is used
     for monitoring the framework itself.
@@ -403,10 +486,162 @@
   </event>
 </project>
 
+<project name="CrOSEvents" cros_events="true">
+  <owner>jongahn@chromium.org</owner>
+  <id>per-project</id>
+  <scope>device</scope>
+  <key-rotation>120</key-rotation>
+  <summary>
+    Project used to record a sequence of events that are related to each other.
+  </summary>
+
+  <event name="AppDiscovery.AppInstalled">
+    <summary>
+      Recorded whenever a new app is installed on Chrome OS.
+    </summary>
+    <metric name="AppId" type="raw-string">
+      <summary>
+        Key that identifies an app.
+      </summary>
+    </metric>
+    <metric name="AppType" type="int">
+      <summary>
+        The type of app that was installed (ie ARC, native, Crostini, etc.).
+      </summary>
+    </metric>
+    <metric name="InstallSource" type="int">
+      <summary>
+        Origin from which the app was installed (ie launcher, playstore).
+      </summary>
+    </metric>
+    <metric name="InstallReason" type="int">
+      <summary>
+        Reason for which the app was installed.
+      </summary>
+    </metric>
+  </event>
+
+  <event name="AppDiscovery.AppLaunched">
+    <summary>
+      Recorded whenever a new app is launched on Chrome OS.
+    </summary>
+    <metric name="AppId" type="raw-string">
+      <summary>
+        Key that identifies an app.
+      </summary>
+    </metric>
+    <metric name="AppType" type="int">
+      <summary>
+        The type of app that was installed (ie ARC, native, Crostini, etc.).
+      </summary>
+    </metric>
+    <metric name="LaunchSource" type="int">
+      <summary>
+        From where the app was launched from (ie launcher, shelf).
+      </summary>
+    </metric>
+  </event>
+
+  <event name="AppDiscovery.AppUninstall">
+    <summary>
+      Recorded whenever an app is uninstalled on Chrome OS.
+    </summary>
+    <metric name="AppId" type="raw-string">
+      <summary>
+        Key that identifies an app.
+      </summary>
+    </metric>
+    <metric name="AppType" type="int">
+      <summary>
+        The type of app that was installed (ie ARC, native, Crostini, etc.).
+      </summary>
+    </metric>
+    <metric name="UninstallSource" type="int">
+      <summary>
+        From where the app was uninstalled.
+      </summary>
+    </metric>
+  </event>
+
+  <event name="AppDiscovery.AppStateChanged">
+    <summary>
+      Recorded when a change in an app state has been detected.
+    </summary>
+    <metric name="AppId" type="raw-string">
+      <summary>
+        Key that identifies an app.
+      </summary>
+    </metric>
+    <metric name="AppState" type="int">
+      <summary>
+        Denotes a change in an app state. 0 - INACTIVE, 1 - ACTIVE, 2 - CLOSED.
+      </summary>
+    </metric>
+  </event>
+
+  <event name="AppDiscovery.LauncherOpen">
+    <summary>
+      Event collected if the launcher is opened. This is recorded when a zero-
+      state query is initiated.
+    </summary>
+
+  </event>
+
+  <event name="AppDiscovery.AppLauncherResultOpened">
+    <summary>
+      Event collected if a result iis opened in the launcher.
+    </summary>
+    <metric name="FuzzyStringMatch" type="double">
+      <summary>
+        Score that represents how close the initial query was to the app result
+        selected. A score of 1.0 represents an exact match.
+      </summary>
+    </metric>
+    <metric name="AppId" type="raw-string">
+      <summary>
+        App ID that identifies an app on the client. This will only be recorded if
+        the user has consented into app-sync.
+      </summary>
+    </metric>
+    <metric name="AppName" type="raw-string">
+      <summary>
+        Name of the app that was launched. Names are UTF-16 string encoding.
+      </summary>
+    </metric>
+  </event>
+
+  <event name="UserLogin">
+    <summary>
+      An event to signify a user is using the system.
+    </summary>
+
+  </event>
+
+  <event name="Test1">
+    <summary>
+      Test event used for unit tests to ensure that the code-gen for the event
+      sequence project is working properly.
+    </summary>
+    <metric name="Metric1" type="double">
+      <summary>
+        Test metric1
+      </summary>
+    </metric>
+  </event>
+
+  <event name="NoMetricsEvent">
+    <summary>
+      Test event for events without metrics.
+    </summary>
+
+  </event>
+</project>
+
 <project name="TestProjectOne">
   <owner>tby@chromium.org</owner>
   <id>per-project</id>
   <scope>profile</scope>
+  <key-rotation>90</key-rotation>
   <summary>
     Project for unit testing, do not use.
   </summary>
@@ -432,6 +667,7 @@
   <owner>tby@chromium.org</owner>
   <id>per-project</id>
   <scope>profile</scope>
+  <key-rotation>90</key-rotation>
   <summary>
     Project for unit testing, do not use.
   </summary>
@@ -463,6 +699,7 @@
   <owner>tby@chromium.org</owner>
   <id>uma</id>
   <scope>profile</scope>
+  <key-rotation>90</key-rotation>
   <summary>
     Project for unit testing, do not use.
   </summary>
@@ -483,6 +720,7 @@
   <owner>tby@chromium.org</owner>
   <id>per-project</id>
   <scope>device</scope>
+  <key-rotation>90</key-rotation>
   <summary>
     Project for unit testing, do not use.
   </summary>
@@ -503,6 +741,7 @@
   <owner>tby@chromium.org</owner>
   <id>none</id>
   <scope>profile</scope>
+  <key-rotation>90</key-rotation>
   <summary>
     Project for unit testing, do not use.
   </summary>
@@ -514,6 +753,27 @@
     <metric name="TestMetricSix" type="raw-string">
       <summary>
         A unhashed string value.
+      </summary>
+    </metric>
+  </event>
+</project>
+
+<project name="TestProjectSix">
+  <owner>andrewbregger@google.com</owner>
+  <id>none</id>
+  <scope>profile</scope>
+  <key-rotation>90</key-rotation>
+  <summary>
+    Project for unit testing, do not use.
+  </summary>
+
+  <event name="TestEventSeven">
+    <summary>
+      Event for unit testing, do not use.
+    </summary>
+    <metric name="TestMetricSeven" type="double">
+      <summary>
+        A floating point value.
       </summary>
     </metric>
   </event>

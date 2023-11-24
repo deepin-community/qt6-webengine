@@ -1,16 +1,16 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/services/print_compositor/print_compositor_impl.h"
 
-#include <algorithm>
 #include <tuple>
 #include <utility>
 
 #include "base/containers/contains.h"
 #include "base/logging.h"
 #include "base/memory/discardable_memory.h"
+#include "base/ranges/algorithm.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
@@ -38,6 +38,9 @@
 #include "third_party/blink/public/platform/platform.h"
 #endif
 
+using MojoDiscardableSharedMemoryManager =
+    discardable_memory::mojom::DiscardableSharedMemoryManager;
+
 namespace printing {
 
 PrintCompositorImpl::PrintCompositorImpl(
@@ -45,8 +48,19 @@ PrintCompositorImpl::PrintCompositorImpl(
     bool initialize_environment,
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner)
     : io_task_runner_(std::move(io_task_runner)) {
-  if (receiver)
+  if (receiver) {
     receiver_.Bind(std::move(receiver));
+
+    mojo::PendingRemote<MojoDiscardableSharedMemoryManager> manager_remote;
+    content::ChildThread::Get()->BindHostReceiver(
+        manager_remote.InitWithNewPipeAndPassReceiver());
+    DCHECK(io_task_runner_);
+    discardable_shared_memory_manager_ = base::MakeRefCounted<
+        discardable_memory::ClientDiscardableSharedMemoryManager>(
+        std::move(manager_remote), io_task_runner_);
+    base::DiscardableMemoryAllocator::SetInstance(
+        discardable_shared_memory_manager_.get());
+  }
 
   if (!initialize_environment)
     return;
@@ -81,19 +95,6 @@ PrintCompositorImpl::~PrintCompositorImpl() {
 #if BUILDFLAG(IS_WIN)
   content::UninitializeDWriteFontProxy();
 #endif
-}
-
-void PrintCompositorImpl::SetDiscardableSharedMemoryManager(
-    mojo::PendingRemote<
-        discardable_memory::mojom::DiscardableSharedMemoryManager> manager) {
-  // Set up discardable memory manager.
-  mojo::PendingRemote<discardable_memory::mojom::DiscardableSharedMemoryManager>
-      manager_remote(std::move(manager));
-  discardable_shared_memory_manager_ = base::MakeRefCounted<
-      discardable_memory::ClientDiscardableSharedMemoryManager>(
-      std::move(manager_remote), io_task_runner_);
-  base::DiscardableMemoryAllocator::SetInstance(
-      discardable_shared_memory_manager_.get());
 }
 
 void PrintCompositorImpl::NotifyUnavailableSubframe(uint64_t frame_guid) {
@@ -221,8 +222,8 @@ void PrintCompositorImpl::UpdateRequestsWithSubframeInfo(
     // update with this frame's pending list.
     auto& pending_list = request->pending_subframes;
     if (pending_list.erase(frame_guid)) {
-      std::copy(pending_subframes.begin(), pending_subframes.end(),
-                std::inserter(pending_list, pending_list.end()));
+      base::ranges::copy(pending_subframes,
+                         std::inserter(pending_list, pending_list.end()));
     }
 
     // If the request still has pending frames, or isn't at the front of the

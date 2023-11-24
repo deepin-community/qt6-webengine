@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,9 @@
 #include <algorithm>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/check_op.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/lazy_instance.h"
 #include "base/no_destructor.h"
 #include "base/numerics/safe_conversions.h"
@@ -27,10 +27,6 @@ namespace internal {
 
 namespace {
 
-// The first 8 characters of sha1 of "ScopedBlockingCall".
-// echo -n "ScopedBlockingCall" | sha1sum
-constexpr uint32_t kActivityTrackerId = 0x11be9915;
-
 LazyInstance<ThreadLocalPointer<BlockingObserver>>::Leaky
     tls_blocking_observer = LAZY_INSTANCE_INITIALIZER;
 
@@ -44,7 +40,7 @@ bool g_only_monitor_observed_threads = false;
 
 bool IsBackgroundPriorityWorker() {
   return GetTaskPriorityForCurrentThread() == TaskPriority::BEST_EFFORT &&
-         CanUseBackgroundPriorityForWorkerThread();
+         CanUseBackgroundThreadTypeForWorkerThread();
 }
 
 }  // namespace
@@ -300,15 +296,13 @@ IOJankReportingCallback& IOJankMonitoringWindow::reporting_callback_storage() {
 }
 
 UncheckedScopedBlockingCall::UncheckedScopedBlockingCall(
-    const Location& from_here,
     BlockingType blocking_type,
     BlockingCallType blocking_call_type)
     : blocking_observer_(tls_blocking_observer.Get().Get()),
       previous_scoped_blocking_call_(tls_last_scoped_blocking_call.Get().Get()),
       is_will_block_(blocking_type == BlockingType::WILL_BLOCK ||
                      (previous_scoped_blocking_call_ &&
-                      previous_scoped_blocking_call_->is_will_block_)),
-      scoped_activity_(from_here, 0, kActivityTrackerId, 0) {
+                      previous_scoped_blocking_call_->is_will_block_)) {
   tls_last_scoped_blocking_call.Get().Set(this);
 
   // Only monitor non-nested ScopedBlockingCall(MAY_BLOCK) calls on foreground
@@ -334,14 +328,6 @@ UncheckedScopedBlockingCall::UncheckedScopedBlockingCall(
                !previous_scoped_blocking_call_->is_will_block_) {
       blocking_observer_->BlockingTypeUpgraded();
     }
-  }
-
-  if (scoped_activity_.IsRecorded()) {
-    // Also record the data for extended crash reporting.
-    const TimeTicks now = TimeTicks::Now();
-    auto& user_data = scoped_activity_.user_data();
-    user_data.SetUint("timestamp_us", now.since_origin().InMicroseconds());
-    user_data.SetUint("blocking_type", static_cast<uint64_t>(blocking_type));
   }
 }
 

@@ -4,6 +4,7 @@
 
 import * as Common from '../../core/common/common.js';
 import * as i18n from '../../core/i18n/i18n.js';
+import * as Root from '../../core/root/root.js';
 import * as SDK from '../../core/sdk/sdk.js';
 import * as CodeMirror from '../../third_party/codemirror.next/codemirror.next.js';
 import * as TextEditor from '../../ui/components/text_editor/text_editor.js';
@@ -16,37 +17,37 @@ import consolePinPaneStyles from './consolePinPane.css.js';
 
 const UIStrings = {
   /**
-  *@description A context menu item in the Console Pin Pane of the Console panel
-  */
+   *@description A context menu item in the Console Pin Pane of the Console panel
+   */
   removeExpression: 'Remove expression',
   /**
-  *@description A context menu item in the Console Pin Pane of the Console panel
-  */
+   *@description A context menu item in the Console Pin Pane of the Console panel
+   */
   removeAllExpressions: 'Remove all expressions',
   /**
-  *@description Screen reader label for delete button on a non-blank live expression
-  *@example {document} PH1
-  */
+   *@description Screen reader label for delete button on a non-blank live expression
+   *@example {document} PH1
+   */
   removeExpressionS: 'Remove expression: {PH1}',
   /**
-  *@description Screen reader label for delete button on a blank live expression
-  */
+   *@description Screen reader label for delete button on a blank live expression
+   */
   removeBlankExpression: 'Remove blank expression',
   /**
-  *@description Text in Console Pin Pane of the Console panel
-  */
+   *@description Text in Console Pin Pane of the Console panel
+   */
   liveExpressionEditor: 'Live expression editor',
   /**
-  *@description Text in Console Pin Pane of the Console panel
-  */
+   *@description Text in Console Pin Pane of the Console panel
+   */
   expression: 'Expression',
   /**
-  *@description Side effect label title in Console Pin Pane of the Console panel
-  */
+   *@description Side effect label title in Console Pin Pane of the Console panel
+   */
   evaluateAllowingSideEffects: 'Evaluate, allowing side effects',
   /**
-  *@description Text of a DOM element in Console Pin Pane of the Console panel
-  */
+   *@description Text of a DOM element in Console Pin Pane of the Console panel
+   */
   notAvailable: 'not available',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/console/ConsolePinPane.ts', UIStrings);
@@ -226,46 +227,46 @@ export class ConsolePin {
     });
   }
 
-  createEditor(expression: string, parent: HTMLElement): TextEditor.TextEditor.TextEditor {
-    const editor = new TextEditor.TextEditor.TextEditor(CodeMirror.EditorState.create({
-      doc: expression,
-      extensions: [
-        CodeMirror.EditorView.contentAttributes.of({'aria-label': i18nString(UIStrings.liveExpressionEditor)}),
-        CodeMirror.EditorView.lineWrapping,
-        CodeMirror.javascript.javascriptLanguage,
-        TextEditor.JavaScript.completion(),
-        TextEditor.Config.showCompletionHint,
-        CodeMirror.placeholder(i18nString(UIStrings.expression)),
-        CodeMirror.keymap.of([
-          {
-            key: 'Escape',
-            run: (view: CodeMirror.EditorView): boolean => {
-              view.dispatch({changes: {from: 0, to: view.state.doc.length, insert: this.committedExpression}});
-              this.focusOut();
-              return true;
-            },
+  createEditor(doc: string, parent: HTMLElement): TextEditor.TextEditor.TextEditor {
+    const extensions = [
+      CodeMirror.EditorView.contentAttributes.of({'aria-label': i18nString(UIStrings.liveExpressionEditor)}),
+      CodeMirror.EditorView.lineWrapping,
+      CodeMirror.javascript.javascriptLanguage,
+      TextEditor.Config.showCompletionHint,
+      CodeMirror.placeholder(i18nString(UIStrings.expression)),
+      CodeMirror.keymap.of([
+        {
+          key: 'Escape',
+          run: (view: CodeMirror.EditorView): boolean => {
+            view.dispatch({changes: {from: 0, to: view.state.doc.length, insert: this.committedExpression}});
+            this.focusOut();
+            return true;
           },
-          {
-            key: 'Enter',
-            run: (): boolean => {
-              this.focusOut();
-              return true;
-            },
+        },
+        {
+          key: 'Enter',
+          run: (): boolean => {
+            this.focusOut();
+            return true;
           },
-          {
-            key: 'Mod-Enter',
-            run: (): boolean => {
-              this.focusOut();
-              return true;
-            },
+        },
+        {
+          key: 'Mod-Enter',
+          run: (): boolean => {
+            this.focusOut();
+            return true;
           },
-        ]),
-        CodeMirror.EditorView.domEventHandlers({blur: (_e, view) => this.onBlur(view)}),
-        TextEditor.Config.baseConfiguration(expression),
-        TextEditor.Config.closeBrackets,
-        TextEditor.Config.autocompletion,
-      ],
-    }));
+        },
+      ]),
+      CodeMirror.EditorView.domEventHandlers({blur: (_e, view) => this.onBlur(view)}),
+      TextEditor.Config.baseConfiguration(doc),
+      TextEditor.Config.closeBrackets,
+      TextEditor.Config.autocompletion.instance(),
+    ];
+    if (Root.Runtime.Runtime.queryParam('noJavaScriptCompletion') !== 'true') {
+      extensions.push(TextEditor.JavaScript.completion());
+    }
+    const editor = new TextEditor.TextEditor.TextEditor(CodeMirror.EditorState.create({doc, extensions}));
     parent.appendChild(editor);
     return editor;
   }
@@ -327,10 +328,10 @@ export class ConsolePin {
     const throwOnSideEffect = isEditing && text !== this.committedExpression;
     const timeout = throwOnSideEffect ? 250 : undefined;
     const executionContext = UI.Context.Context.instance().flavor(SDK.RuntimeModel.ExecutionContext);
-    const preprocessedExpression = ObjectUI.JavaScriptREPL.JavaScriptREPL.preprocessExpression(text);
+    const preprocessedExpression = ObjectUI.JavaScriptREPL.JavaScriptREPL.wrapObjectLiteral(text);
     const {preview, result} = await ObjectUI.JavaScriptREPL.JavaScriptREPL.evaluateAndBuildPreview(
-        preprocessedExpression, throwOnSideEffect, false /* replMode */, timeout, !isEditing /* allowErrors */,
-        'console', true /* awaitPromise */);
+        preprocessedExpression, throwOnSideEffect, true /* replMode */, timeout, !isEditing /* allowErrors */,
+        'console', true /* awaitPromise */, true /* silent */);
     if (this.lastResult && this.lastExecutionContext) {
       this.lastExecutionContext.runtimeModel.releaseEvaluationResult(this.lastResult);
     }

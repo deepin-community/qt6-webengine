@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,9 @@
 namespace blink {
 
 CSSMathOperator ParseCSSArithmeticOperator(const CSSParserToken& token) {
-  if (token.GetType() != kDelimiterToken)
+  if (token.GetType() != kDelimiterToken) {
     return CSSMathOperator::kInvalid;
+  }
   switch (token.Delimiter()) {
     case '+':
       return CSSMathOperator::kAdd;

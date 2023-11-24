@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -233,25 +233,6 @@ TEST(IPCMessageUtilsTest, StrongAlias) {
   EXPECT_EQ(input, output);
 }
 
-TEST(IPCMessageUtilsTest, LegacyDictValueConversion) {
-  base::DictionaryValue dict_value;
-  dict_value.SetInteger("path1", 42);
-  dict_value.SetInteger("path2", 84);
-  base::ListValue subvalue;
-  subvalue.Append(1234);
-  subvalue.Append(5678);
-  dict_value.SetKey("path3", std::move(subvalue));
-
-  IPC::Message message;
-  ParamTraits<base::DictionaryValue>::Write(&message, dict_value);
-
-  base::PickleIterator iter(message);
-  base::DictionaryValue read_value;
-  ASSERT_TRUE(
-      ParamTraits<base::DictionaryValue>::Read(&message, &iter, &read_value));
-  EXPECT_EQ(dict_value, read_value);
-}
-
 TEST(IPCMessageUtilsTest, DictValueConversion) {
   base::Value::Dict dict_value;
   dict_value.Set("path1", 42);
@@ -269,20 +250,6 @@ TEST(IPCMessageUtilsTest, DictValueConversion) {
   ASSERT_TRUE(
       ParamTraits<base::Value::Dict>::Read(&message, &iter, &read_value));
   EXPECT_EQ(dict_value, read_value);
-}
-
-TEST(IPCMessageUtilsTest, LegacyListValueConversion) {
-  base::ListValue list_value;
-  list_value.Append(42);
-  list_value.Append(84);
-
-  IPC::Message message;
-  ParamTraits<base::ListValue>::Write(&message, list_value);
-
-  base::PickleIterator iter(message);
-  base::ListValue read_value;
-  ASSERT_TRUE(ParamTraits<base::ListValue>::Read(&message, &iter, &read_value));
-  EXPECT_EQ(list_value, read_value);
 }
 
 TEST(IPCMessageUtilsTest, ListValueConversion) {

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -74,17 +74,24 @@ class CORE_EXPORT NGColumnLayoutAlgorithm
   void PropagateBaselineFromChild(const NGPhysicalBoxFragment& child,
                                   LayoutUnit block_offset);
 
-  // Calculate the smallest possible block-size for balanced columns. This will
-  // be the initial size we'll try with when actually lay out the columns.
-  LayoutUnit CalculateBalancedColumnBlockSize(
+  // Calculate the smallest possible block-size for columns, based on the
+  // content. For column balancing this will be the initial size we'll try with
+  // when actually lay out the columns (and then stretch the columns and re-lay
+  // out until the desired result is achieved). For column-fill:auto and
+  // unconstrained block-size, we also need to go through this, since we need to
+  // know the column block-size before performing "real" layout, since all
+  // columns in a row need to have the same block-size.
+  LayoutUnit ResolveColumnAutoBlockSize(
       const LogicalSize& column_size,
       LayoutUnit row_offset,
-      const NGBlockBreakToken* child_break_token);
+      const NGBlockBreakToken* child_break_token,
+      bool balance_columns);
 
-  LayoutUnit CalculateBalancedColumnBlockSizeInternal(
+  LayoutUnit ResolveColumnAutoBlockSizeInternal(
       const LogicalSize& column_size,
       LayoutUnit row_offset,
-      const NGBlockBreakToken* child_break_token);
+      const NGBlockBreakToken* child_break_token,
+      bool balance_columns);
 
   LayoutUnit ConstrainColumnBlockSize(LayoutUnit size,
                                       LayoutUnit row_offset) const;
@@ -114,11 +121,21 @@ class CORE_EXPORT NGColumnLayoutAlgorithm
   // fragmentainer. This is not the case for out-of-flow positioned multicol
   // containers, though, as we're not allowed to insert a soft break before an
   // out-of-flow positioned node. Our implementation requires that an OOF start
-  // in the fragmentainer where it would "naturally" occur.
+  // in the fragmentainer where it would "naturally" occur. This is also not the
+  // case for floated multicols since float margins are treated as monolithic
+  // [1]. Given this, the margin of the float wouldn't get truncated after a
+  // break, which could lead to an infinite loop.
+  //
+  // [1] https://codereview.chromium.org/2479483002
   bool MayAbortOnInsufficientSpace() const {
     DCHECK(is_constrained_by_outer_fragmentation_context_);
-    return !Node().IsOutOfFlowPositioned();
+    return !Node().IsFloatingOrOutOfFlowPositioned();
   }
+
+  // The sum of all the current column children's block-sizes, as if they were
+  // stacked, including any block-size that is added as a result of
+  // ClampedToValidFragmentainerCapacity().
+  LayoutUnit TotalColumnBlockSize() const;
 
   const NGColumnSpannerPath* spanner_path_ = nullptr;
 
@@ -134,8 +151,6 @@ class CORE_EXPORT NGColumnLayoutAlgorithm
   // the first piece of content of the multicol container. It is used to check
   // if we're at a valid class A  breakpoint (between block-level siblings).
   bool has_processed_first_child_ = false;
-
-  bool has_processed_first_column_ = false;
 };
 
 }  // namespace blink

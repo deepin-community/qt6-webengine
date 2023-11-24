@@ -1,10 +1,10 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/renderer_host/pepper/pepper_network_proxy_host.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "content/browser/renderer_host/pepper/browser_ppapi_host_impl.h"
 #include "content/browser/renderer_host/pepper/pepper_proxy_lookup_helper.h"
 #include "content/browser/renderer_host/pepper/pepper_socket_utils.h"
@@ -46,7 +46,9 @@ bool LookUpProxyForURLCallback(
       site_instance->GetBrowserContext()->GetStoragePartition(site_instance);
 
   storage_partition->GetNetworkContext()->LookUpProxyForURL(
-      url, render_frame_host->GetNetworkIsolationKey(),
+      url,
+      render_frame_host->GetIsolationInfoForSubresources()
+          .network_anonymization_key(),
       std::move(proxy_lookup_client));
   return true;
 }

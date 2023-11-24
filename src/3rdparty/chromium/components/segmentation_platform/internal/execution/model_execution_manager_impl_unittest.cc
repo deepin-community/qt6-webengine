@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,9 @@
 
 #include <memory>
 
-#include "base/bind.h"
-#include "base/callback_forward.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_forward.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/metrics_hashes.h"
 #include "base/run_loop.h"
@@ -18,19 +18,19 @@
 #include "base/test/simple_test_clock.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
-#include "components/optimization_guide/proto/models.pb.h"
-#include "components/segmentation_platform/internal/database/metadata_utils.h"
 #include "components/segmentation_platform/internal/database/mock_signal_database.h"
 #include "components/segmentation_platform/internal/database/signal_database.h"
 #include "components/segmentation_platform/internal/database/test_segment_info_database.h"
-#include "components/segmentation_platform/internal/execution/feature_list_query_processor.h"
 #include "components/segmentation_platform/internal/execution/mock_model_provider.h"
 #include "components/segmentation_platform/internal/execution/model_execution_manager.h"
 #include "components/segmentation_platform/internal/execution/model_execution_status.h"
-#include "components/segmentation_platform/internal/proto/aggregation.pb.h"
-#include "components/segmentation_platform/internal/proto/model_metadata.pb.h"
-#include "components/segmentation_platform/internal/proto/types.pb.h"
+#include "components/segmentation_platform/internal/execution/processing/feature_list_query_processor.h"
+#include "components/segmentation_platform/internal/metadata/metadata_utils.h"
 #include "components/segmentation_platform/public/model_provider.h"
+#include "components/segmentation_platform/public/proto/aggregation.pb.h"
+#include "components/segmentation_platform/public/proto/model_metadata.pb.h"
+#include "components/segmentation_platform/public/proto/segmentation_platform.pb.h"
+#include "components/segmentation_platform/public/proto/types.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -52,27 +52,23 @@ class MockSegmentInfoDatabase : public test::TestSegmentInfoDatabase {
  public:
   MOCK_METHOD(void, Initialize, (SuccessCallback callback), (override));
   MOCK_METHOD(void,
-              GetAllSegmentInfo,
-              (MultipleSegmentInfoCallback callback),
-              (override));
-  MOCK_METHOD(void,
               GetSegmentInfoForSegments,
-              (const std::vector<OptimizationTarget>& segment_ids,
+              (const base::flat_set<SegmentId>& segment_ids,
                MultipleSegmentInfoCallback callback),
               (override));
   MOCK_METHOD(void,
               GetSegmentInfo,
-              (OptimizationTarget segment_id, SegmentInfoCallback callback),
+              (SegmentId segment_id, SegmentInfoCallback callback),
               (override));
   MOCK_METHOD(void,
               UpdateSegment,
-              (OptimizationTarget segment_id,
+              (SegmentId segment_id,
                absl::optional<proto::SegmentInfo> segment_info,
                SuccessCallback callback),
               (override));
   MOCK_METHOD(void,
               SaveSegmentResult,
-              (OptimizationTarget segment_id,
+              (SegmentId segment_id,
                absl::optional<proto::PredictionResult> result,
                SuccessCallback callback),
               (override));
@@ -100,7 +96,7 @@ class ModelExecutionManagerTest : public testing::Test {
   }
 
   void CreateModelExecutionManager(
-      std::vector<OptimizationTarget> segment_ids,
+      const base::flat_set<SegmentId>& segment_ids,
       const ModelExecutionManager::SegmentationModelUpdatedCallback& callback) {
     model_execution_manager_ = std::make_unique<ModelExecutionManagerImpl>(
         segment_ids, &model_provider_factory_, &clock_, segment_database_.get(),
@@ -109,8 +105,7 @@ class ModelExecutionManagerTest : public testing::Test {
 
   void RunUntilIdle() { task_environment_.RunUntilIdle(); }
 
-  MockModelProvider& FindHandler(
-      optimization_guide::proto::OptimizationTarget segment_id) {
+  MockModelProvider& FindHandler(proto::SegmentId segment_id) {
     return *(*model_provider_data_.model_providers.find(segment_id)).second;
   }
 
@@ -137,8 +132,7 @@ TEST_F(ModelExecutionManagerTest, OnSegmentationModelUpdatedInvalidMetadata) {
   // Construct the ModelExecutionManager.
   base::MockCallback<ModelExecutionManager::SegmentationModelUpdatedCallback>
       callback;
-  auto segment_id =
-      OptimizationTarget::OPTIMIZATION_TARGET_SEGMENTATION_NEW_TAB;
+  auto segment_id = SegmentId::OPTIMIZATION_TARGET_SEGMENTATION_NEW_TAB;
   CreateModelExecutionManager({segment_id}, callback.Get());
 
   // Create invalid metadata, which should be ignored.
@@ -157,8 +151,7 @@ TEST_F(ModelExecutionManagerTest, OnSegmentationModelUpdatedInvalidMetadata) {
 TEST_F(ModelExecutionManagerTest, OnSegmentationModelUpdatedNoOldMetadata) {
   base::MockCallback<ModelExecutionManager::SegmentationModelUpdatedCallback>
       callback;
-  auto segment_id =
-      OptimizationTarget::OPTIMIZATION_TARGET_SEGMENTATION_NEW_TAB;
+  auto segment_id = SegmentId::OPTIMIZATION_TARGET_SEGMENTATION_NEW_TAB;
   CreateModelExecutionManager({segment_id}, callback.Get());
 
   proto::SegmentInfo segment_info;
@@ -172,6 +165,8 @@ TEST_F(ModelExecutionManagerTest, OnSegmentationModelUpdatedNoOldMetadata) {
   // Verify that the resulting callback was invoked correctly.
   EXPECT_EQ(segment_id, segment_info.segment_id());
   EXPECT_EQ(42u, segment_info.model_metadata().bucket_duration());
+  EXPECT_EQ(proto::ModelSource::SERVER_MODEL_SOURCE,
+            segment_info.model_source());
 
   // Also verify that the database has been updated.
   base::MockCallback<SegmentInfoDatabase::SegmentInfoCallback> db_callback;
@@ -195,8 +190,7 @@ TEST_F(ModelExecutionManagerTest,
        OnSegmentationModelUpdatedWithPreviousMetadataAndPredictionResult) {
   base::MockCallback<ModelExecutionManager::SegmentationModelUpdatedCallback>
       callback;
-  auto segment_id =
-      OptimizationTarget::OPTIMIZATION_TARGET_SEGMENTATION_NEW_TAB;
+  auto segment_id = SegmentId::OPTIMIZATION_TARGET_SEGMENTATION_NEW_TAB;
   CreateModelExecutionManager({segment_id}, callback.Get());
 
   // Fill in old data in the SegmentInfo database.
@@ -212,9 +206,13 @@ TEST_F(ModelExecutionManagerTest,
   segment_database_->GetSegmentInfo(segment_id, db_callback_1.Get());
   EXPECT_TRUE(segment_info_from_db_1.has_value());
   EXPECT_EQ(segment_id, segment_info_from_db_1->segment_id());
+
   // Verify the old metadata and prediction result has been stored correctly.
   EXPECT_EQ(456u, segment_info_from_db_1->model_metadata().bucket_duration());
-  EXPECT_EQ(2, segment_info_from_db_1->prediction_result().result());
+  EXPECT_THAT(segment_info_from_db_1->prediction_result().result(),
+              testing::ElementsAre(2));
+  EXPECT_FALSE(segment_info_from_db_1->has_model_source());
+
   // Verify the metadata features have been stored correctly.
   EXPECT_EQ(proto::SignalType::USER_ACTION,
             segment_info_from_db_1->model_metadata()
@@ -263,7 +261,8 @@ TEST_F(ModelExecutionManagerTest,
             segment_info.model_metadata().features(0).name_hash());
   EXPECT_EQ(proto::Aggregation::BUCKETED_SUM,
             segment_info.model_metadata().features(0).aggregation());
-  EXPECT_EQ(2, segment_info.prediction_result().result());
+  EXPECT_THAT(segment_info.prediction_result().result(),
+              testing::ElementsAre(2));
   EXPECT_EQ(clock_.Now().ToDeltaSinceWindowsEpoch().InMicroseconds(),
             segment_info.prediction_result().timestamp_us());
 
@@ -290,7 +289,8 @@ TEST_F(ModelExecutionManagerTest,
   EXPECT_EQ(proto::Aggregation::BUCKETED_SUM,
             segment_info_from_db_2->model_metadata().features(0).aggregation());
   // We shuold have kept the prediction result.
-  EXPECT_EQ(2, segment_info_from_db_2->prediction_result().result());
+  EXPECT_THAT(segment_info.prediction_result().result(),
+              testing::ElementsAre(2));
 }
 
 }  // namespace segmentation_platform

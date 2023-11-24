@@ -35,7 +35,9 @@
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
+#include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
 #include "third_party/blink/renderer/core/dom/focus_params.h"
+#include "third_party/blink/renderer/core/dom/popover_data.h"
 #include "third_party/blink/renderer/core/dom/range.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"  // For firstPositionInOrBeforeNode
@@ -48,7 +50,10 @@
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/remote_frame.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
+#include "third_party/blink/renderer/core/html/forms/html_form_control_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_form_element.h"
+#include "third_party/blink/renderer/core/html/forms/html_select_element.h"
+#include "third_party/blink/renderer/core/html/forms/listed_element.h"
 #include "third_party/blink/renderer/core/html/forms/text_control_element.h"
 #include "third_party/blink/renderer/core/html/html_plugin_element.h"
 #include "third_party/blink/renderer/core/html/html_slot_element.h"
@@ -67,6 +72,34 @@
 namespace blink {
 
 namespace {
+
+bool IsOpenPopoverWithInvoker(const Node* node) {
+  auto* popover = DynamicTo<HTMLElement>(node);
+  return popover && popover->HasPopoverAttribute() && popover->popoverOpen() &&
+         popover->GetPopoverData()->invoker();
+}
+
+const Element* InclusiveAncestorOpenPopoverWithInvoker(const Element* element) {
+  for (; element; element = FlatTreeTraversal::ParentElement(*element)) {
+    if (IsOpenPopoverWithInvoker(element)) {
+      return element;  // Return the popover
+    }
+  }
+  return nullptr;
+}
+
+bool IsOpenPopoverInvoker(const Node* node) {
+  auto* invoker = DynamicTo<HTMLFormControlElement>(node);
+  if (!invoker)
+    return false;
+  HTMLElement* popover = const_cast<HTMLFormControlElement*>(invoker)
+                             ->popoverTargetElement()
+                             .popover;
+  // There could be more than one invoker for a given popover. Only return true
+  // if this invoker was the one that was actually used.
+  return popover && popover->popoverOpen() &&
+         popover->GetPopoverData()->invoker() == invoker;
+}
 
 // This class defines the navigation order.
 class FocusNavigation : public GarbageCollected<FocusNavigation> {
@@ -130,8 +163,15 @@ class FocusNavigation : public GarbageCollected<FocusNavigation> {
     return nullptr;
   }
 
-  // Owner is the slot node for slot scope and slot fallback contents scope, the
-  // shadow host for shadow tree scope and the iframe node for frame scope.
+  // Owner of a FocusNavigation:
+  // - If node is in slot scope, owner is the assigned slot (found by traversing
+  //   ancestors).
+  // - If node is in slot fallback content scope, owner is the parent or
+  //   shadowHost element.
+  // - If node is in shadow tree scope, owner is the parent or shadowHost
+  //   element.
+  // - If node is in frame scope, owner is the iframe node.
+  // - If node is inside an open popover with an invoker, owner is the invoker.
   Element* FindOwner(ContainerNode& node) {
     auto result = owner_map_.find(&node);
     if (result != owner_map_.end())
@@ -141,12 +181,18 @@ class FocusNavigation : public GarbageCollected<FocusNavigation> {
     // the slot node have assigned nodes.
 
     Element* owner = nullptr;
-    if (node.AssignedSlot())
-      owner = node.AssignedSlot();
+    Element* owner_slot = nullptr;
+    if (Element* element = DynamicTo<Element>(node))
+      owner_slot = SlotScopedTraversal::FindScopeOwnerSlot(*element);
+
+    if (owner_slot)
+      owner = owner_slot;
     else if (IsA<HTMLSlotElement>(node.parentNode()))
       owner = node.ParentOrShadowHostElement();
     else if (&node == node.ContainingTreeScope().RootNode())
       owner = TreeOwner(&node);
+    else if (IsOpenPopoverWithInvoker(&node))
+      owner = DynamicTo<HTMLElement>(node)->GetPopoverData()->invoker();
     else if (node.parentNode())
       owner = FindOwner(*node.parentNode());
 
@@ -202,6 +248,9 @@ class ScopedFocusNavigation {
       FocusController::OwnerMap&);
   static ScopedFocusNavigation OwnedByIFrame(const HTMLFrameOwnerElement&,
                                              FocusController::OwnerMap&);
+  static ScopedFocusNavigation OwnedByPopoverInvoker(
+      const Element&,
+      FocusController::OwnerMap&);
   static HTMLSlotElement* FindFallbackScopeOwnerSlot(const Element&);
 
  private:
@@ -231,7 +280,7 @@ ScopedFocusNavigation::ScopedFocusNavigation(
     FocusController::OwnerMap& owner_map)
     : current_(current) {
   if (auto* slot = DynamicTo<HTMLSlotElement>(scoping_root_node)) {
-    if (slot->AssignedNodes().IsEmpty()) {
+    if (slot->AssignedNodes().empty()) {
       navigation_ = MakeGarbageCollected<FocusNavigation>(scoping_root_node,
                                                           *slot, owner_map);
     } else {
@@ -276,8 +325,13 @@ ScopedFocusNavigation ScopedFocusNavigation::CreateFor(
   if (HTMLSlotElement* slot = SlotScopedTraversal::FindScopeOwnerSlot(current))
     return ScopedFocusNavigation(*slot, &current, owner_map);
   if (HTMLSlotElement* slot =
-          ScopedFocusNavigation::FindFallbackScopeOwnerSlot(current))
+          ScopedFocusNavigation::FindFallbackScopeOwnerSlot(current)) {
     return ScopedFocusNavigation(*slot, &current, owner_map);
+  }
+  if (auto* popover = InclusiveAncestorOpenPopoverWithInvoker(&current)) {
+    return ScopedFocusNavigation(const_cast<Element&>(*popover), &current,
+                                 owner_map);
+  }
   return ScopedFocusNavigation(current.ContainingTreeScope().RootNode(),
                                &current, owner_map);
 }
@@ -312,6 +366,18 @@ ScopedFocusNavigation ScopedFocusNavigation::OwnedByIFrame(
       *To<LocalFrame>(frame.ContentFrame())->GetDocument(), nullptr, owner_map);
 }
 
+ScopedFocusNavigation ScopedFocusNavigation::OwnedByPopoverInvoker(
+    const Element& invoker,
+    FocusController::OwnerMap& owner_map) {
+  DCHECK(IsA<HTMLFormControlElement>(invoker));
+  HTMLElement* popover =
+      DynamicTo<HTMLFormControlElement>(const_cast<Element&>(invoker))
+          ->popoverTargetElement()
+          .popover;
+  DCHECK(IsOpenPopoverWithInvoker(popover));
+  return ScopedFocusNavigation(*popover, nullptr, owner_map);
+}
+
 ScopedFocusNavigation ScopedFocusNavigation::OwnedByHTMLSlotElement(
     const HTMLSlotElement& element,
     FocusController::OwnerMap& owner_map) {
@@ -324,7 +390,7 @@ HTMLSlotElement* ScopedFocusNavigation::FindFallbackScopeOwnerSlot(
   Element* parent = const_cast<Element*>(element.parentElement());
   while (parent) {
     if (auto* slot = DynamicTo<HTMLSlotElement>(parent))
-      return slot->AssignedNodes().IsEmpty() ? slot : nullptr;
+      return slot->AssignedNodes().empty() ? slot : nullptr;
     parent = parent->parentElement();
   }
   return nullptr;
@@ -418,22 +484,6 @@ inline bool IsNonFocusableFocusScopeOwner(Element& element) {
          IsA<HTMLSlotElement>(element);
 }
 
-inline int AdjustedTabIndex(Element& element) {
-  if (IsNonKeyboardFocusableShadowHost(element))
-    return 0;
-  if (element.DelegatesFocus() || IsA<HTMLSlotElement>(element)) {
-    // We can't use Element::tabIndex(), which returns -1 for invalid or
-    // missing values.
-    return element.GetIntegralAttribute(html_names::kTabindexAttr, 0);
-  }
-  bool default_focusable =
-      element.SupportsFocus() ||
-      (RuntimeEnabledFeatures::KeyboardFocusableScrollersEnabled() &&
-       IsScrollableNode(&element));
-  return element.GetIntegralAttribute(html_names::kTabindexAttr,
-                                      default_focusable ? 0 : -1);
-}
-
 inline bool ShouldVisit(Element& element) {
   return element.IsKeyboardFocusable() || element.DelegatesFocus() ||
          IsNonFocusableFocusScopeOwner(element);
@@ -447,8 +497,10 @@ Element* ScopedFocusNavigation::FindElementWithExactTabIndex(
                                ? MoveToNext()
                                : MoveToPrevious()) {
     Element* current = CurrentElement();
-    if (ShouldVisit(*current) && AdjustedTabIndex(*current) == tab_index)
+    if (ShouldVisit(*current) &&
+        FocusController::AdjustedTabIndex(*current) == tab_index) {
       return current;
+    }
   }
   return nullptr;
 }
@@ -459,7 +511,7 @@ Element* ScopedFocusNavigation::NextElementWithGreaterTabIndex(int tab_index) {
   Element* winner = nullptr;
   for (; CurrentElement(); MoveToNext()) {
     Element* current = CurrentElement();
-    int current_tab_index = AdjustedTabIndex(*current);
+    int current_tab_index = FocusController::AdjustedTabIndex(*current);
     if (ShouldVisit(*current) && current_tab_index > tab_index) {
       if (!winner || current_tab_index < winning_tab_index) {
         winner = current;
@@ -478,7 +530,7 @@ Element* ScopedFocusNavigation::PreviousElementWithLowerTabIndex(
   Element* winner = nullptr;
   for (; CurrentElement(); MoveToPrevious()) {
     Element* current = CurrentElement();
-    int current_tab_index = AdjustedTabIndex(*current);
+    int current_tab_index = FocusController::AdjustedTabIndex(*current);
     if (ShouldVisit(*current) && current_tab_index < tab_index &&
         current_tab_index > winning_tab_index) {
       winner = current;
@@ -492,14 +544,16 @@ Element* ScopedFocusNavigation::PreviousElementWithLowerTabIndex(
 Element* ScopedFocusNavigation::NextFocusableElement() {
   Element* current = CurrentElement();
   if (current) {
-    int tab_index = AdjustedTabIndex(*current);
+    int tab_index = FocusController::AdjustedTabIndex(*current);
     // If an element is excluded from the normal tabbing cycle, the next
     // focusable element is determined by tree order.
     if (tab_index < 0) {
       for (MoveToNext(); CurrentElement(); MoveToNext()) {
         current = CurrentElement();
-        if (ShouldVisit(*current) && AdjustedTabIndex(*current) >= 0)
+        if (ShouldVisit(*current) &&
+            FocusController::AdjustedTabIndex(*current) >= 0) {
           return current;
+        }
       }
     } else {
       // First try to find an element with the same tabindex as start that comes
@@ -522,7 +576,7 @@ Element* ScopedFocusNavigation::NextFocusableElement() {
   // 2) comes first in the scope, if there's a tie.
   MoveToFirst();
   if (Element* winner = NextElementWithGreaterTabIndex(
-          current ? AdjustedTabIndex(*current) : 0)) {
+          current ? FocusController::AdjustedTabIndex(*current) : 0)) {
     return winner;
   }
 
@@ -540,7 +594,7 @@ Element* ScopedFocusNavigation::PreviousFocusableElement() {
   Element* current = CurrentElement();
   if (current) {
     MoveToPrevious();
-    tab_index = AdjustedTabIndex(*current);
+    tab_index = FocusController::AdjustedTabIndex(*current);
   } else {
     MoveToLast();
     tab_index = 0;
@@ -551,8 +605,10 @@ Element* ScopedFocusNavigation::PreviousFocusableElement() {
   if (tab_index < 0) {
     for (; CurrentElement(); MoveToPrevious()) {
       current = CurrentElement();
-      if (ShouldVisit(*current) && AdjustedTabIndex(*current) >= 0)
+      if (ShouldVisit(*current) &&
+          FocusController::AdjustedTabIndex(*current) >= 0) {
         return current;
+      }
     }
   } else {
     if (Element* winner = FindElementWithExactTabIndex(
@@ -580,7 +636,7 @@ Element* FindFocusableElementRecursivelyForward(
     if (found->DelegatesFocus()) {
       // If tabindex is positive, invalid, or missing, find focusable element
       // inside its shadow tree.
-      if (AdjustedTabIndex(*found) >= 0 &&
+      if (FocusController::AdjustedTabIndex(*found) >= 0 &&
           IsShadowHostWithoutCustomFocusLogic(*found)) {
         ScopedFocusNavigation inner_scope =
             ScopedFocusNavigation::OwnedByShadowHost(*found, owner_map);
@@ -595,8 +651,8 @@ Element* FindFocusableElementRecursivelyForward(
       return found;
 
     // Now |found| is on a non focusable scope owner (either shadow host or
-    // <shadow> or slot) Find inside the inward scope and return it if found.
-    // Otherwise continue searching in the same scope.
+    // slot) Find inside the inward scope and return it if found. Otherwise
+    // continue searching in the same scope.
     ScopedFocusNavigation inner_scope =
         ScopedFocusNavigation::OwnedByNonFocusableFocusScopeOwner(*found,
                                                                   owner_map);
@@ -630,12 +686,14 @@ Element* FindFocusableElementRecursivelyBackward(
 
     // If delegatesFocus is true and tabindex is negative, skip the whole shadow
     // tree under the shadow host.
-    if (found->DelegatesFocus() && AdjustedTabIndex(*found) < 0)
+    if (found->DelegatesFocus() &&
+        FocusController::AdjustedTabIndex(*found) < 0) {
       continue;
+    }
 
-    // Now |found| is on a non focusable scope owner (a shadow host, a <shadow>
-    // or a slot).  Find focusable element in descendant scope. If not found,
-    // find the next focusable element within the current scope.
+    // Now |found| is on a non focusable scope owner (a shadow host or a slot).
+    // Find focusable element in descendant scope. If not found, find the next
+    // focusable element within the current scope.
     if (IsNonFocusableFocusScopeOwner(*found)) {
       ScopedFocusNavigation inner_scope =
           ScopedFocusNavigation::OwnedByNonFocusableFocusScopeOwner(*found,
@@ -690,18 +748,18 @@ Element* FindFocusableElementAcrossFocusScopesForward(
     ScopedFocusNavigation& scope,
     FocusController::OwnerMap& owner_map) {
   const Element* current = scope.CurrentElement();
-  Element* found;
+  Element* found = nullptr;
   if (current && IsShadowHostWithoutCustomFocusLogic(*current)) {
     ScopedFocusNavigation inner_scope =
         ScopedFocusNavigation::OwnedByShadowHost(*current, owner_map);
-    Element* found_in_inner_focus_scope =
-        FindFocusableElementRecursivelyForward(inner_scope, owner_map);
-    found = found_in_inner_focus_scope
-                ? found_in_inner_focus_scope
-                : FindFocusableElementRecursivelyForward(scope, owner_map);
-  } else {
-    found = FindFocusableElementRecursivelyForward(scope, owner_map);
+    found = FindFocusableElementRecursivelyForward(inner_scope, owner_map);
+  } else if (IsOpenPopoverInvoker(current)) {
+    ScopedFocusNavigation inner_scope =
+        ScopedFocusNavigation::OwnedByPopoverInvoker(*current, owner_map);
+    found = FindFocusableElementRecursivelyForward(inner_scope, owner_map);
   }
+  if (!found)
+    found = FindFocusableElementRecursivelyForward(scope, owner_map);
 
   // If there's no focusable element to advance to, move up the focus scopes
   // until we find one.
@@ -722,6 +780,12 @@ Element* FindFocusableElementAcrossFocusScopesBackward(
     FocusController::OwnerMap& owner_map) {
   Element* found = FindFocusableElementRecursivelyBackward(scope, owner_map);
 
+  while (IsOpenPopoverInvoker(found)) {
+    ScopedFocusNavigation inner_scope =
+        ScopedFocusNavigation::OwnedByPopoverInvoker(*found, owner_map);
+    found = FindFocusableElementRecursivelyBackward(inner_scope, owner_map);
+  }
+
   // If there's no focusable element to advance to, move up the focus scopes
   // until we find one.
   ScopedFocusNavigation current_scope = scope;
@@ -730,7 +794,8 @@ Element* FindFocusableElementAcrossFocusScopesBackward(
     if (!owner)
       break;
     current_scope = ScopedFocusNavigation::CreateFor(*owner, owner_map);
-    if (IsKeyboardFocusableShadowHost(*owner) && !owner->DelegatesFocus()) {
+    if ((IsKeyboardFocusableShadowHost(*owner) && !owner->DelegatesFocus()) ||
+        IsOpenPopoverInvoker(owner)) {
       found = owner;
       break;
     }
@@ -1019,8 +1084,9 @@ bool FocusController::AdvanceFocusInDocumentOrder(
 
   document->UpdateStyleAndLayout(DocumentUpdateReason::kFocus);
   ScopedFocusNavigation scope =
-      current ? ScopedFocusNavigation::CreateFor(*current, owner_map)
-              : ScopedFocusNavigation::CreateForDocument(*document, owner_map);
+      (current && current->IsInTreeScope())
+          ? ScopedFocusNavigation::CreateFor(*current, owner_map)
+          : ScopedFocusNavigation::CreateForDocument(*document, owner_map);
   Element* element =
       FindFocusableElementAcrossFocusScopes(type, scope, owner_map);
   if (!element) {
@@ -1128,7 +1194,7 @@ bool FocusController::AdvanceFocusInDocumentOrder(
 
   SetFocusedFrame(new_document.GetFrame());
 
-  element->focus(
+  element->Focus(
       FocusParams(SelectionBehaviorOnFocus::kReset, type, source_capabilities));
   return true;
 }
@@ -1144,12 +1210,12 @@ Element* FocusController::FindFocusableElement(mojom::blink::FocusType type,
   return FindFocusableElementAcrossFocusScopes(type, scope, owner_map);
 }
 
-Element* FocusController::NextFocusableElementForIME(
+Element* FocusController::NextFocusableElementForImeAndAutofill(
     Element* element,
     mojom::blink::FocusType focus_type) {
   // TODO(ajith.v) Due to crbug.com/781026 when next/previous element is far
   // from current element in terms of tabindex, then it's signalling CPU load.
-  // Will nvestigate further for a proper solution later.
+  // Will investigate further for a proper solution later.
   static const int kFocusTraversalThreshold = 50;
   element->GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kFocus);
   auto* html_element = DynamicTo<HTMLElement>(element);
@@ -1194,6 +1260,13 @@ Element* FocusController::NextFocusableElementForIME(
         DynamicTo<HTMLFormControlElement>(next_element);
     if (!next_form_control_element)
       continue;
+    // If it is a submit button, then it is likely the end of the current form
+    // (i.e. no next input field to be focused). This return is especially
+    // important in a combined form where a single <form> element encloses
+    // several user forms (e.g. signin + signup).
+    if (next_form_control_element->CanBeSuccessfulSubmitButton()) {
+      return nullptr;
+    }
     if (next_form_control_element->formOwner() != form_owner ||
         next_form_control_element->IsDisabledOrReadOnly())
       continue;
@@ -1207,8 +1280,12 @@ Element* FocusController::NextFocusableElementForIME(
     }
     LayoutObject* layout = next_element->GetLayoutObject();
     if (layout && layout->IsTextControlIncludingNG()) {
-      // TODO(ajith.v) Extend it for select elements, radio buttons and check
-      // boxes
+      // TODO(crbug.com/1320441): Extend it for radio buttons and checkboxes.
+      return next_element;
+    }
+
+    if (auto* select_element =
+            DynamicTo<HTMLSelectElement>(next_form_control_element)) {
       return next_element;
     }
   }
@@ -1217,9 +1294,6 @@ Element* FocusController::NextFocusableElementForIME(
 
 // This is an implementation of step 2 of the "shadow host" branch of
 // https://html.spec.whatwg.org/C/#get-the-focusable-area
-// TODO(https://crbug.com/383230): update this to the latest spec for "focus
-// delegate", including using Element::GetAutofocusDelegate(), and use it for
-// <dialog> too.
 Element* FocusController::FindFocusableElementInShadowHost(
     const Element& shadow_host) {
   DCHECK(shadow_host.AuthorShadowRoot());
@@ -1254,7 +1328,7 @@ Element* FocusController::FindFocusableElementAfter(
 }
 
 static bool RelinquishesEditingFocus(const Element& element) {
-  DCHECK(HasEditableStyle(element));
+  DCHECK(IsEditable(element));
   return element.GetDocument().GetFrame() && RootEditableElement(element);
 }
 
@@ -1368,6 +1442,24 @@ void FocusController::NotifyFocusChangedObservers() const {
       focus_changed_observers_;
   for (const auto& it : observers)
     it->FocusedFrameChanged();
+}
+
+// static
+int FocusController::AdjustedTabIndex(const Element& element) {
+  if (IsNonKeyboardFocusableShadowHost(element)) {
+    return 0;
+  }
+  if (element.DelegatesFocus() || IsA<HTMLSlotElement>(element)) {
+    // We can't use Element::tabIndex(), which returns -1 for invalid or
+    // missing values.
+    return element.GetIntegralAttribute(html_names::kTabindexAttr, 0);
+  }
+  bool default_focusable =
+      element.SupportsFocus() ||
+      (RuntimeEnabledFeatures::KeyboardFocusableScrollersEnabled() &&
+       IsScrollableNode(&element));
+  return element.GetIntegralAttribute(html_names::kTabindexAttr,
+                                      default_focusable ? 0 : -1);
 }
 
 void FocusController::Trace(Visitor* visitor) const {

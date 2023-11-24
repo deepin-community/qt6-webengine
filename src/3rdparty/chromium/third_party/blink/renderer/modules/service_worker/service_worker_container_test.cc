@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/test/bind.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/mojom/script/script_type.mojom-blink.h"
 #include "third_party/blink/public/platform/modules/service_worker/web_service_worker_provider.h"
@@ -19,11 +20,13 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_gc_controller.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
+#include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
+#include "third_party/blink/renderer/core/testing/wait_for_event.h"
 #include "third_party/blink/renderer/modules/service_worker/navigator_service_worker.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/heap/thread_state.h"
@@ -86,7 +89,8 @@ void ExpectRejected(ScriptState* script_state,
   StubScriptFunction resolved, rejected;
   promise.Then(resolved.GetFunction(script_state),
                rejected.GetFunction(script_state));
-  v8::MicrotasksScope::PerformCheckpoint(promise.GetIsolate());
+  script_state->GetContext()->GetMicrotaskQueue()->PerformCheckpoint(
+      script_state->GetIsolate());
   EXPECT_EQ(0ul, resolved.CallCount());
   EXPECT_EQ(1ul, rejected.CallCount());
   if (rejected.CallCount())
@@ -181,7 +185,6 @@ class ServiceWorkerContainerTest : public PageTestBase {
     ThreadState::Current()->CollectAllGarbageForTesting();
   }
 
-  v8::Isolate* GetIsolate() { return v8::Isolate::GetCurrent(); }
   ScriptState* GetScriptState() {
     return ToScriptStateForMainWorld(GetDocument().GetFrame());
   }
@@ -448,6 +451,93 @@ TEST_F(ServiceWorkerContainerTest, Register_TypeOptionDelegatesToProvider) {
     EXPECT_EQ(mojom::ServiceWorkerUpdateViaCache::kImports,
               stub_provider.UpdateViaCache());
   }
+}
+
+WebServiceWorkerObjectInfo MakeServiceWorkerObjectInfo() {
+  return {1,
+          mojom::blink::ServiceWorkerState::kActivated,
+          WebURL(KURL(KURL(), "http://localhost/x/y/worker.js")),
+          {},
+          {}};
+}
+
+TransferableMessage MakeTransferableMessage() {
+  TransferableMessage message;
+  message.owned_encoded_message = {0xff, 0x09, '0'};
+  message.encoded_message = message.owned_encoded_message;
+  message.sender_agent_cluster_id = base::UnguessableToken::Create();
+  return message;
+}
+
+TEST_F(ServiceWorkerContainerTest, ReceiveMessage) {
+  SetPageURL("http://localhost/x/index.html");
+
+  StubWebServiceWorkerProvider stub_provider;
+  ServiceWorkerContainer* container = ServiceWorkerContainer::CreateForTesting(
+      *GetFrame().DomWindow(), stub_provider.Provider());
+
+  base::RunLoop run_loop;
+  auto* wait = MakeGarbageCollected<WaitForEvent>();
+  wait->AddEventListener(container, event_type_names::kMessage);
+  wait->AddEventListener(container, event_type_names::kMessageerror);
+  wait->AddCompletionClosure(run_loop.QuitClosure());
+  container->ReceiveMessage(MakeServiceWorkerObjectInfo(),
+                            MakeTransferableMessage());
+  run_loop.Run();
+
+  auto* event = wait->GetLastEvent();
+  EXPECT_EQ(event->type(), event_type_names::kMessage);
+}
+
+TEST_F(ServiceWorkerContainerTest, ReceiveMessageLockedToAgentCluster) {
+  SetPageURL("http://localhost/x/index.html");
+
+  StubWebServiceWorkerProvider stub_provider;
+  ServiceWorkerContainer* container = ServiceWorkerContainer::CreateForTesting(
+      *GetFrame().DomWindow(), stub_provider.Provider());
+
+  base::RunLoop run_loop;
+  auto* wait = MakeGarbageCollected<WaitForEvent>();
+  wait->AddEventListener(container, event_type_names::kMessage);
+  wait->AddEventListener(container, event_type_names::kMessageerror);
+  wait->AddCompletionClosure(run_loop.QuitClosure());
+  auto message = MakeTransferableMessage();
+  message.locked_to_sender_agent_cluster = true;
+  container->ReceiveMessage(MakeServiceWorkerObjectInfo(), std::move(message));
+  run_loop.Run();
+
+  auto* event = wait->GetLastEvent();
+  EXPECT_EQ(event->type(), event_type_names::kMessageerror);
+}
+
+TEST_F(ServiceWorkerContainerTest, ReceiveMessageWhichCannotDeserialize) {
+  SetPageURL("http://localhost/x/index.html");
+
+  StubWebServiceWorkerProvider stub_provider;
+  LocalDOMWindow* window = GetFrame().DomWindow();
+  ServiceWorkerContainer* container = ServiceWorkerContainer::CreateForTesting(
+      *window, stub_provider.Provider());
+
+  SerializedScriptValue::ScopedOverrideCanDeserializeInForTesting
+      override_can_deserialize_in(base::BindLambdaForTesting(
+          [&](const SerializedScriptValue& value,
+              ExecutionContext* execution_context, bool can_deserialize) {
+            EXPECT_EQ(execution_context, window);
+            EXPECT_TRUE(can_deserialize);
+            return false;
+          }));
+
+  base::RunLoop run_loop;
+  auto* wait = MakeGarbageCollected<WaitForEvent>();
+  wait->AddEventListener(container, event_type_names::kMessage);
+  wait->AddEventListener(container, event_type_names::kMessageerror);
+  wait->AddCompletionClosure(run_loop.QuitClosure());
+  container->ReceiveMessage(MakeServiceWorkerObjectInfo(),
+                            MakeTransferableMessage());
+  run_loop.Run();
+
+  auto* event = wait->GetLastEvent();
+  EXPECT_EQ(event->type(), event_type_names::kMessageerror);
 }
 
 }  // namespace

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -96,6 +96,9 @@ class PLATFORM_EXPORT AcceleratedStaticBitmapImage final
 
   bool CopyToResourceProvider(
       CanvasResourceProvider* resource_provider) override;
+
+  bool CopyToResourceProvider(CanvasResourceProvider* resource_provider,
+                              const gfx::Rect& copy_rect) override;
 
   // To be called on sender thread before performing a transfer to a different
   // thread.

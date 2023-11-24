@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -103,7 +103,7 @@ void CPDFSDK_AnnotIterator::AddSelectedToAnnots(
 CPDFSDK_AnnotIterator::TabOrder CPDFSDK_AnnotIterator::GetTabOrder(
     CPDFSDK_PageView* pPageView) {
   CPDF_Page* pPDFPage = pPageView->GetPDFPage();
-  ByteString sTabs = pPDFPage->GetDict()->GetStringFor("Tabs");
+  ByteString sTabs = pPDFPage->GetDict()->GetByteStringFor("Tabs");
   if (sTabs == "R")
     return kRow;
   if (sTabs == "C")

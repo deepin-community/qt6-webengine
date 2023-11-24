@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,14 +14,13 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/no_destructor.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "ui/base/buildflags.h"
 #include "ui/base/cursor/cursor_factory.h"
 #include "ui/base/dragdrop/os_exchange_data_provider_factory_ozone.h"
-#include "ui/base/ime/linux/linux_input_method_context_factory.h"
-#include "ui/base/linux/linux_ui_delegate.h"
 #include "ui/base/x/x11_cursor_factory.h"
 #include "ui/base/x/x11_util.h"
 #include "ui/display/fake/fake_display_delegate.h"
@@ -32,12 +31,13 @@
 #include "ui/gfx/linux/gpu_memory_buffer_support_x11.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/switches.h"
+#include "ui/linux/linux_ui_delegate.h"
 #include "ui/ozone/common/stub_overlay_manager.h"
 #include "ui/ozone/platform/x11/gl_egl_utility_x11.h"
 #include "ui/ozone/platform/x11/linux_ui_delegate_x11.h"
 #include "ui/ozone/platform/x11/x11_clipboard_ozone.h"
 #include "ui/ozone/platform/x11/x11_global_shortcut_listener_ozone.h"
-#include "ui/ozone/platform/x11/x11_keyboard_hook_ozone.h"
+#include "ui/ozone/platform/x11/x11_keyboard_hook.h"
 #include "ui/ozone/platform/x11/x11_menu_utils.h"
 #include "ui/ozone/platform/x11/x11_screen_ozone.h"
 #include "ui/ozone/platform/x11/x11_surface_factory.h"
@@ -102,7 +102,6 @@ class OzonePlatformX11 : public OzonePlatform,
       PlatformWindowInitProperties properties) override {
     auto window = std::make_unique<X11Window>(delegate);
     window->Initialize(std::move(properties));
-    window->SetTitle(u"Ozone X11");
     return std::move(window);
   }
 
@@ -132,18 +131,12 @@ class OzonePlatformX11 : public OzonePlatform,
   }
 
   std::unique_ptr<InputMethod> CreateInputMethod(
-      internal::InputMethodDelegate* delegate,
+      ImeKeyEventDispatcher* ime_key_event_dispatcher,
       gfx::AcceleratedWidget) override {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-    return std::make_unique<InputMethodAsh>(delegate);
+    return std::make_unique<ash::InputMethodAsh>(ime_key_event_dispatcher);
 #else
-    // This method is used by upper layer components (e.g: GtkUi) to determine
-    // if the LinuxInputMethodContextFactory instance is provided by the Ozone
-    // platform implementation, so we must consider the case that it is still
-    // not set at this point.
-    if (!ui::LinuxInputMethodContextFactory::instance())
-      return nullptr;
-    return std::make_unique<InputMethodAuraLinux>(delegate);
+    return std::make_unique<InputMethodAuraLinux>(ime_key_event_dispatcher);
 #endif
   }
 
@@ -169,7 +162,7 @@ class OzonePlatformX11 : public OzonePlatform,
       gfx::AcceleratedWidget accelerated_widget) override {
     switch (type) {
       case PlatformKeyboardHookTypes::kModifier:
-        return std::make_unique<X11KeyboardHookOzone>(
+        return std::make_unique<X11KeyboardHook>(
             std::move(dom_codes), std::move(callback), accelerated_widget);
       case PlatformKeyboardHookTypes::kMedia:
         return nullptr;
@@ -198,7 +191,6 @@ class OzonePlatformX11 : public OzonePlatform,
       properties->message_pump_type_for_viz_compositor =
           base::MessagePumpType::UI;
       properties->supports_vulkan_swap_chain = true;
-      properties->uses_external_vulkan_image_factory = true;
       properties->skia_can_fall_back_to_x11 = true;
       properties->platform_shows_drag_image = false;
       properties->supports_global_application_menus = true;
@@ -277,7 +269,7 @@ class OzonePlatformX11 : public OzonePlatform,
 
   void InitializeGPU(const InitParams& params) override {
     InitializeCommon(params);
-#if !defined(TOOLKIT_QT)
+#if BUILDFLAG(USE_VAAPI)
     if (params.enable_native_gpu_memory_buffers) {
       base::ThreadPool::PostTask(
           FROM_HERE, base::BindOnce([]() {
@@ -300,7 +292,8 @@ class OzonePlatformX11 : public OzonePlatform,
   }
 
   void PostCreateMainMessageLoop(
-      base::OnceCallback<void()> shutdown_cb) override {
+      base::OnceCallback<void()> shutdown_cb,
+      scoped_refptr<base::SingleThreadTaskRunner>) override {
     // Installs the X11 error handlers for the UI process after the
     // main message loop has started. This will allow us to exit cleanly
     // if X exits before we do.

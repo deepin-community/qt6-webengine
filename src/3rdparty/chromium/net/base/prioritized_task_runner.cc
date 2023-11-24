@@ -1,4 +1,4 @@
-// Copyright (c) 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,8 @@
 
 #include <algorithm>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/task/task_runner.h"
-#include "base/task/task_runner_util.h"
 #include "base/task/thread_pool.h"
 
 namespace net {
@@ -24,7 +23,7 @@ PrioritizedTaskRunner::Job::Job(const base::Location& from_here,
       priority(priority),
       task_count(task_count) {}
 
-PrioritizedTaskRunner::Job::Job() {}
+PrioritizedTaskRunner::Job::Job() = default;
 
 PrioritizedTaskRunner::Job::~Job() = default;
 PrioritizedTaskRunner::Job::Job(Job&& other) = default;

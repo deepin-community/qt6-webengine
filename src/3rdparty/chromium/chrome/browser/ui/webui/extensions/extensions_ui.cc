@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,8 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
@@ -20,7 +20,6 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/chrome_extension_browser_constants.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/webui/favicon_source.h"
 #include "chrome/browser/ui/webui/managed_ui_handler.h"
 #include "chrome/browser/ui/webui/metrics_handler.h"
@@ -68,10 +67,10 @@ std::string GetLoadTimeClasses(bool in_dev_mode) {
   return in_dev_mode ? "in-dev-mode" : std::string();
 }
 
-content::WebUIDataSource* CreateExtensionsSource(Profile* profile,
-                                                 bool in_dev_mode) {
-  content::WebUIDataSource* source =
-      content::WebUIDataSource::Create(chrome::kChromeUIExtensionsHost);
+content::WebUIDataSource* CreateAndAddExtensionsSource(Profile* profile,
+                                                       bool in_dev_mode) {
+  content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
+      profile, chrome::kChromeUIExtensionsHost);
   webui::SetupWebUIDataSource(
       source, base::make_span(kExtensionsResources, kExtensionsResourcesSize),
       IDR_EXTENSIONS_EXTENSIONS_HTML);
@@ -114,6 +113,8 @@ content::WebUIDataSource* CreateExtensionsSource(Profile* profile,
     {"dropToInstall", IDS_EXTENSIONS_INSTALL_DROP_TARGET},
     {"editSitePermissionsAllowAllExtensions",
      IDS_EXTENSIONS_EDIT_SITE_PERMISSIONS_ALLOW_ALL_EXTENSIONS},
+    {"editSitePermissionsCustomizePerExtension",
+     IDS_EXTENSIONS_EDIT_SITE_PERMISSIONS_CUSTOMIZE_PER_EXTENSION},
     {"editSitePermissionsRestrictExtensions",
      IDS_EXTENSIONS_EDIT_SITE_PERMISSIONS_RESTRICT_EXTENSIONS},
     {"errorsPageHeading", IDS_EXTENSIONS_ERROR_PAGE_HEADING},
@@ -132,12 +133,15 @@ content::WebUIDataSource* CreateExtensionsSource(Profile* profile,
     {"keyboardShortcuts", IDS_EXTENSIONS_SIDEBAR_KEYBOARD_SHORTCUTS},
     {"incognitoInfoWarning", IDS_EXTENSIONS_INCOGNITO_WARNING},
     {"hostPermissionsDescription", IDS_EXTENSIONS_HOST_PERMISSIONS_DESCRIPTION},
+    {"permissionsLearnMoreLabel",
+     IDS_EXTENSIONS_PERMISSIONS_LEARN_MORE_A11Y_LABEL},
     {"hostPermissionsEdit", IDS_EXTENSIONS_HOST_PERMISSIONS_EDIT},
     {"hostPermissionsHeading", IDS_EXTENSIONS_ITEM_HOST_PERMISSIONS_HEADING},
     {"newHostPermissionsHeading", IDS_EXTENSIONS_NEW_HOST_PERMISSIONS_HEADING},
     {"hostPermissionsSubHeading", IDS_EXTENSIONS_HOST_PERMISSIONS_SUB_HEADING},
+    {"hostAccessAskOnEveryVisit",
+     IDS_EXTENSIONS_HOST_ACCESS_ASK_ON_EVERY_VISIT},
     {"hostAccessOnClick", IDS_EXTENSIONS_HOST_ACCESS_ON_CLICK},
-    {"hostAccessWhenClicked", IDS_EXTENSIONS_HOST_ACCESS_WHEN_CLICKED},
     {"hostAccessOnSpecificSites", IDS_EXTENSIONS_HOST_ACCESS_ON_SPECIFIC_SITES},
     {"hostAccessAllowOnSpecificSites",
      IDS_EXTENSIONS_HOST_ACCESS_ALLOW_ON_SPECIFIC_SITES},
@@ -204,10 +208,16 @@ content::WebUIDataSource* CreateExtensionsSource(Profile* profile,
     {"itemPermissionsAndSiteAccessEmpty",
      IDS_EXTENSIONS_ITEM_PERMISSIONS_AND_SITE_ACCESS_EMPTY},
     {"itemRemoveExtension", IDS_EXTENSIONS_ITEM_REMOVE_EXTENSION},
+    {"itemShowAccessRequestsInToolbar",
+     IDS_EXTENSIONS_ITEM_SHOW_ACCESS_REQUESTS_IN_TOOLBAR},
+    {"itemShowAccessRequestsLearnMore",
+     IDS_EXTENSIONS_ACCESS_REQUESTS_LEARN_MORE},
     {"itemSiteAccess", IDS_EXTENSIONS_ITEM_SITE_ACCESS},
     {"itemSiteAccessAddHost", IDS_EXTENSIONS_ITEM_SITE_ACCESS_ADD_HOST},
     {"itemSiteAccessEmpty", IDS_EXTENSIONS_ITEM_SITE_ACCESS_EMPTY},
     {"itemSource", IDS_EXTENSIONS_ITEM_SOURCE},
+    {"itemSourceInstalledByDefault",
+     IDS_EXTENSIONS_ITEM_SOURCE_INSTALLED_BY_DEFAULT},
     {"itemSourcePolicy", IDS_EXTENSIONS_ITEM_SOURCE_POLICY},
     {"itemSourceSideloaded", IDS_EXTENSIONS_ITEM_SOURCE_SIDELOADED},
     {"itemSourceUnpacked", IDS_EXTENSIONS_ITEM_SOURCE_UNPACKED},
@@ -224,6 +234,8 @@ content::WebUIDataSource* CreateExtensionsSource(Profile* profile,
     {"itemCorruptInstall", IDS_EXTENSIONS_CORRUPTED_EXTENSION},
     {"itemAllowlistWarning",
      IDS_EXTENSIONS_SAFE_BROWSING_CRX_ALLOWLIST_WARNING},
+    {"itemAllowlistWarningLearnMoreLabel",
+     IDS_EXTENSIONS_SAFE_BROWSING_CRX_ALLOWLIST_WARNING_LEARN_MORE},
     {"itemRepair", IDS_EXTENSIONS_REPAIR_CORRUPTED},
     {"itemReload", IDS_EXTENSIONS_RELOAD_TERMINATED},
     {"loadErrorCouldNotLoadManifest",
@@ -233,11 +245,16 @@ content::WebUIDataSource* CreateExtensionsSource(Profile* profile,
     {"loadErrorErrorLabel", IDS_EXTENSIONS_LOAD_ERROR_ERROR_LABEL},
     {"loadErrorRetry", IDS_EXTENSIONS_LOAD_ERROR_RETRY},
     {"loadingActivities", IDS_EXTENSIONS_LOADING_ACTIVITIES},
+    {"matchingRestrictedSitesAllow",
+     IDS_EXTENSIONS_MATCHING_RESTRICTED_SITES_ALLOW},
+    {"matchingRestrictedSitesTitle",
+     IDS_EXTENSIONS_MATCHING_RESTRICTED_SITES_TITLE},
     {"matchingRestrictedSitesWarning",
      IDS_EXTENSIONS_MATCHING_RESTRICTED_SITES_WARNING},
     {"missingOrUninstalledExtension", IDS_MISSING_OR_UNINSTALLED_EXTENSION},
     {"noActivities", IDS_EXTENSIONS_NO_ACTIVITIES},
     {"noErrorsToShow", IDS_EXTENSIONS_ERROR_NO_ERRORS_CODE_MESSAGE},
+    {"opensInNewTab", IDS_EXTENSIONS_OPENS_IN_NEW_TAB},
     {"removeSitesDialogTitle", IDS_EXTENSIONS_REMOVE_SITES_DIALOG_TITLE},
     {"runtimeHostsDialogInputError",
      IDS_EXTENSIONS_RUNTIME_HOSTS_DIALOG_INPUT_ERROR},
@@ -257,6 +274,18 @@ content::WebUIDataSource* CreateExtensionsSource(Profile* profile,
     {"sitePermissions", IDS_EXTENSIONS_SITE_PERMISSIONS},
     {"sitePermissionsAllSitesPageTitle",
      IDS_EXTENSIONS_SITE_PERMISSIONS_ALL_SITES_PAGE_TITLE},
+    {"sitePermissionsAllSitesExtensionCount",
+     // TODO(crbug.com/1402795): Convert the below two strings to use plural
+     // strings.
+     IDS_EXTENSIONS_SITE_PERMISSIONS_ALL_SITES_EXTENSION_COUNT},
+    {"sitePermissionsAllSitesOneExtension",
+     IDS_EXTENSIONS_SITE_PERMISSIONS_ALL_SITES_ONE_EXTENSION},
+    {"sitePermissionsAlwaysOnAllSites",
+     IDS_EXTENSIONS_SITE_PERMISSIONS_ALWAYS_ON_ALL_SITES},
+    {"sitePermissionsAlwaysOnThisSite",
+     IDS_EXTENSIONS_SITE_PERMISSIONS_ALWAYS_ON_THIS_SITE},
+    {"sitePermissionsAskOnEveryVisit",
+     IDS_EXTENSIONS_SITE_PERMISSIONS_ASK_ON_EVERY_VISIT},
     {"sitePermissionsPageTitle", IDS_EXTENSIONS_SITE_PERMISSIONS_PAGE_TITLE},
     {"sitePermissionsAddSiteDialogTitle",
      IDS_EXTENSIONS_SITE_PERMISSIONS_ADD_SITE_DIALOG_TITLE},
@@ -271,12 +300,16 @@ content::WebUIDataSource* CreateExtensionsSource(Profile* profile,
     {"sitePermissionsEditPermissionsDialogTitle",
      IDS_EXTENSIONS_SITE_PERMISSIONS_EDIT_PERMISSIONS_DIALOG_TITLE},
     {"sitePermissionsEditUrl", IDS_EXTENSIONS_SITE_PERMISSIONS_EDIT_URL},
+    {"sitePermissionsIncludesSubdomains",
+     IDS_EXTENSIONS_SITE_PERMISSIONS_INCLUDES_SUBDOMAINS},
     {"sitePermissionsViewAllSites",
      IDS_EXTENSIONS_SITE_PERMISSIONS_VIEW_ALL_SITES},
+    {"siteSettings", IDS_EXTENSIONS_SITE_SETTINGS},
     {"permittedSites", IDS_EXTENSIONS_PERMITTED_SITES},
     {"restrictedSites", IDS_EXTENSIONS_RESTRICTED_SITES},
     {"noSitesAdded", IDS_EXTENSIONS_NO_SITES_ADDED},
-    {"editShortcut", IDS_EXTENSIONS_EDIT_SHORTCUT},
+    {"editShortcutInputLabel", IDS_EXTENSIONS_EDIT_SHORTCUT_INPUT_LABEL},
+    {"editShortcutButtonLabel", IDS_EXTENSIONS_EDIT_SHORTCUT_BUTTON_LABEL},
     {"shortcutNotSet", IDS_EXTENSIONS_SHORTCUT_NOT_SET},
     {"shortcutScopeGlobal", IDS_EXTENSIONS_SHORTCUT_SCOPE_GLOBAL},
     {"shortcutScopeLabel", IDS_EXTENSIONS_SHORTCUT_SCOPE_LABEL},
@@ -287,6 +320,8 @@ content::WebUIDataSource* CreateExtensionsSource(Profile* profile,
     {"shortcutTooManyModifiers", IDS_EXTENSIONS_TOO_MANY_MODIFIERS},
     {"shortcutNeedCharacter", IDS_EXTENSIONS_NEED_CHARACTER},
     {"subpageArrowRoleDescription", IDS_EXTENSIONS_SUBPAGE_BUTTON},
+    {"itemSuspiciousInstallLearnMore",
+     IDS_EXTENSIONS_ADDED_WITHOUT_KNOWLEDGE_LEARN_MORE},
     {"toolbarDevMode", IDS_EXTENSIONS_DEVELOPER_MODE},
     {"toolbarLoadUnpacked", IDS_EXTENSIONS_TOOLBAR_LOAD_UNPACKED},
     {"toolbarLoadUnpackedDone", IDS_EXTENSIONS_TOOLBAR_LOAD_UNPACKED_DONE},
@@ -363,9 +398,12 @@ content::WebUIDataSource* CreateExtensionsSource(Profile* profile,
 
   source->AddString(kLoadTimeClassesKey, GetLoadTimeClasses(in_dev_mode));
 
-  source->AddBoolean(
-      kEnableEnhancedSiteControls,
-      base::FeatureList::IsEnabled(features::kExtensionsMenuAccessControl));
+  source->AddBoolean(kEnableEnhancedSiteControls,
+                     base::FeatureList::IsEnabled(
+                         extensions_features::kExtensionsMenuAccessControl));
+  source->AddString(
+      "showAccessRequestsInToolbarLearnMoreLink",
+      chrome_extension_constants::kShowAccessRequestsInToolbarHelpURL);
 
   return source;
 }
@@ -384,7 +422,7 @@ ExtensionsUI::ExtensionsUI(content::WebUI* web_ui)
                     base::BindRepeating(&ExtensionsUI::OnDevModeChanged,
                                         base::Unretained(this)));
 
-  source = CreateExtensionsSource(profile, *in_dev_mode_);
+  source = CreateAndAddExtensionsSource(profile, *in_dev_mode_);
   ManagedUIHandler::Initialize(web_ui, source);
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -398,7 +436,6 @@ ExtensionsUI::ExtensionsUI(content::WebUI* web_ui)
   source->OverrideContentSecurityPolicy(
       network::mojom::CSPDirectiveName::ObjectSrc, "object-src 'self';");
 
-  content::WebUIDataSource::Add(profile, source);
   content::URLDataSource::Add(
       profile, std::make_unique<FaviconSource>(
                    profile, chrome::FaviconUrlFormat::kFavicon2));

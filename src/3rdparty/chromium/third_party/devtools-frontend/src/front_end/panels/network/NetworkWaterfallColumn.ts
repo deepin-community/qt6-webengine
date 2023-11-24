@@ -11,11 +11,11 @@ import * as PerfUI from '../../ui/legacy/components/perf_ui/perf_ui.js';
 import * as UI from '../../ui/legacy/legacy.js';
 import * as ThemeSupport from '../../ui/legacy/theme_support/theme_support.js';
 
-import type {NetworkNode} from './NetworkDataGridNode.js';
+import {type NetworkNode} from './NetworkDataGridNode.js';
 import {RequestTimeRangeNameToColor} from './NetworkOverview.js';
-import type {Label, NetworkTimeCalculator} from './NetworkTimeCalculator.js';
-import type {RequestTimeRange} from './RequestTimingView.js';
-import {RequestTimeRangeNames, RequestTimingView} from './RequestTimingView.js';
+import {type Label, type NetworkTimeCalculator} from './NetworkTimeCalculator.js';
+
+import {RequestTimeRangeNames, RequestTimingView, type RequestTimeRange} from './RequestTimingView.js';
 import networkingTimingTableStyles from './networkTimingTable.css.js';
 
 const BAR_SPACING = 1;
@@ -168,24 +168,24 @@ export class NetworkWaterfallColumn extends UI.Widget.VBox {
     return [waitingStyleMap, downloadingStyleMap];
 
     function toBorderColor(color: string): string|null {
-      const parsedColor = Common.Color.Color.parse(color);
+      const parsedColor = Common.Color.parse(color)?.as(Common.Color.Format.HSL);
       if (!parsedColor) {
         return '';
       }
-      const hsla = parsedColor.hsla();
-      hsla[1] /= 2;
-      hsla[2] -= Math.min(hsla[2], 0.2);
-      return parsedColor.asString(null);
+      let {s, l} = parsedColor;
+      s /= 2;
+      l -= Math.min(l, 0.2);
+      return new Common.Color.HSL(parsedColor.h, s, l, parsedColor.alpha).asString();
     }
 
     function toWaitingColor(color: string): string|null {
-      const parsedColor = Common.Color.Color.parse(color);
+      const parsedColor = Common.Color.parse(color)?.as(Common.Color.Format.HSL);
       if (!parsedColor) {
         return '';
       }
-      const hsla = parsedColor.hsla();
-      hsla[2] *= 1.1;
-      return parsedColor.asString(null);
+      let {l} = parsedColor;
+      l *= 1.1;
+      return new Common.Color.HSL(parsedColor.h, parsedColor.s, l, parsedColor.alpha).asString();
     }
   }
 

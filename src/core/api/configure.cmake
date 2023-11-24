@@ -1,3 +1,6 @@
+# Copyright (C) 2022 The Qt Company Ltd.
+# SPDX-License-Identifier: BSD-3-Clause
+
 #### Libraries
 
 if(NOT QT_CONFIGURE_RUNNING)
@@ -9,6 +12,8 @@ if(NOT QT_CONFIGURE_RUNNING)
         pkg_check_modules(PULSEAUDIO libpulse>=0.9.10 libpulse-mainloop-glib)
         pkg_check_modules(XDAMAGE xdamage)
         pkg_check_modules(POPPLER_CPP poppler-cpp IMPORTED_TARGET)
+        pkg_check_modules(GBM gbm)
+        pkg_check_modules(LIBVA libva)
         if(NOT GIO_FOUND)
             pkg_check_modules(GIO gio-2.0)
         endif()
@@ -59,9 +64,9 @@ qt_feature("webengine-system-alsa" PRIVATE
     LABEL "Use ALSA"
     CONDITION UNIX AND TEST_alsa
 )
-qt_feature("webengine-v8-snapshot-support" PRIVATE
-    LABEL "Building v8 snapshot supported"
-    CONDITION NOT UNIX OR NOT QT_FEATURE_cross_compile OR ( TEST_architecture_arch STREQUAL arm64 ) OR TEST_webengine_host_compiler
+qt_feature("webengine-v8-context-snapshot" PRIVATE
+    LABEL "Use v8 context snapshot"
+    CONDITION NOT CMAKE_CROSSCOMPILING
 )
 qt_feature("webengine-geolocation" PUBLIC
     LABEL "Geolocation"
@@ -147,6 +152,19 @@ qt_feature("webengine-sanitizer" PRIVATE
     AUTODETECT CLANG
     CONDITION CLANG AND ECM_ENABLE_SANITIZERS
 )
+qt_feature("webengine-vulkan" PRIVATE
+    SECTION "WebEngine"
+    LABEL "Vulkan support"
+    PURPOSE "Enables support for Vulkan rendering"
+    CONDITION QT_FEATURE_vulkan
+)
+qt_feature("webengine-vaapi" PRIVATE
+    SECTION "WebEngine"
+    LABEL "VA-API support"
+    PURPOSE "Enables support for VA-API hardware acceleration"
+    AUTODETECT GBM_FOUND AND LIBVA_FOUND AND QT_FEATURE_vulkan
+    CONDITION LINUX
+)
 # internal testing feature
 qt_feature("webengine-system-poppler" PRIVATE
     LABEL "popler"
@@ -175,17 +193,22 @@ qt_configure_add_summary_entry(
     CONDITION UNIX
 )
 qt_configure_add_summary_entry(
-    ARGS "webengine-v8-snapshot-support"
-    CONDITION UNIX AND cross_compile
+    ARGS "webengine-vulkan"
+    CONDITION QT_FEATURE_vulkan
+)
+qt_configure_add_summary_entry(
+    ARGS "webengine-vaapi"
+    CONDITION LINUX
 )
 qt_configure_add_summary_entry(
     ARGS "webengine-system-alsa"
-    CONDITION UNIX
+    CONDITION LINUX
 )
 qt_configure_add_summary_entry(
     ARGS "webengine-system-pulseaudio"
-    CONDITION UNIX
+    CONDITION LINUX
 )
+qt_configure_add_summary_entry(ARGS "webengine-v8-context-snapshot")
 qt_configure_end_summary_section() # end of "Qt WebEngineCore" section
 if(CMAKE_CROSSCOMPILING)
     check_thumb(armThumb)
@@ -198,11 +221,6 @@ if(CMAKE_CROSSCOMPILING)
             AND NOT armThumb
    )
 endif()
-qt_configure_add_report_entry(
-    TYPE WARNING
-    MESSAGE "V8 snapshot cannot be built. Most likely, the 32-bit host compiler does not work. Please make sure you have 32-bit devel environment installed."
-    CONDITION UNIX AND cross_compile AND NOT QT_FEATURE_webengine_v8_snapshot_support
-)
 qt_configure_add_report_entry(
     TYPE WARNING
     MESSAGE "WebRTC requires XDamage with qpa_xcb."

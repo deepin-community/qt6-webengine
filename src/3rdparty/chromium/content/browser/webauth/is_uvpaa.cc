@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -46,9 +46,11 @@ void IsUVPlatformAuthenticatorAvailable(
 
 #elif BUILDFLAG(IS_WIN)
 void IsUVPlatformAuthenticatorAvailable(
+    bool is_off_the_record,
     IsUVPlatformAuthenticatorAvailableCallback callback) {
   device::WinWebAuthnApiAuthenticator::
       IsUserVerifyingPlatformAuthenticatorAvailable(
+          is_off_the_record,
           AuthenticatorEnvironmentImpl::GetInstance()->win_webauthn_api(),
           std::move(callback));
 }

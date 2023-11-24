@@ -1,10 +1,10 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "cc/layers/layer.h"
 
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/timer/lap_timer.h"
 #include "cc/animation/animation_host.h"
 #include "cc/test/fake_impl_task_runner_provider.h"
@@ -37,7 +37,8 @@ class LayerPerfTest : public testing::Test {
     layer_tree_host_ = FakeLayerTreeHost::Create(
         &fake_client_, &task_graph_runner_, animation_host_.get());
     layer_tree_host_->InitializeSingleThreaded(
-        &single_thread_client_, base::ThreadTaskRunnerHandle::Get());
+        &single_thread_client_,
+        base::SingleThreadTaskRunner::GetCurrentDefault());
   }
 
   void TearDown() override {
@@ -125,7 +126,7 @@ TEST_F(LayerPerfTest, ImplPushPropertiesTo) {
   std::unique_ptr<LayerImpl> impl_layer =
       LayerImpl::Create(host_impl_.active_tree(), 2);
 
-  SkColor background_color = SK_ColorRED;
+  SkColor4f background_color = SkColors::kRed;
   gfx::Size bounds(1000, 1000);
   bool draws_content = true;
   bool contents_opaque = true;
@@ -142,7 +143,7 @@ TEST_F(LayerPerfTest, ImplPushPropertiesTo) {
     test_layer->PushPropertiesTo(impl_layer.get());
 
     background_color =
-        background_color == SK_ColorRED ? SK_ColorGREEN : SK_ColorRED;
+        background_color == SkColors::kRed ? SkColors::kGreen : SkColors::kRed;
     bounds = bounds == gfx::Size(1000, 1000) ? gfx::Size(500, 500)
                                              : gfx::Size(1000, 1000);
     draws_content = !draws_content;

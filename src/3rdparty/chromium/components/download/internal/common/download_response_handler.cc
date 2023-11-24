@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,7 @@
 #include "components/download/public/common/download_url_parameters.h"
 #include "components/download/public/common/download_utils.h"
 #include "net/http/http_status_code.h"
+#include "services/network/public/cpp/record_ontransfersizeupdate_utils.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/mojom/early_hints.mojom.h"
 
@@ -101,7 +102,8 @@ void DownloadResponseHandler::OnReceiveEarlyHints(
 
 void DownloadResponseHandler::OnReceiveResponse(
     network::mojom::URLResponseHeadPtr head,
-    mojo::ScopedDataPipeConsumerHandle body) {
+    mojo::ScopedDataPipeConsumerHandle body,
+    absl::optional<mojo_base::BigBuffer> cached_metadata) {
   create_info_ = CreateDownloadCreateInfo(*head);
   cert_status_ = head->cert_status;
 
@@ -128,8 +130,14 @@ void DownloadResponseHandler::OnReceiveResponse(
   if (create_info_->result != DOWNLOAD_INTERRUPT_REASON_NONE)
     OnResponseStarted(mojom::DownloadStreamHandlePtr());
 
-  if (body)
-    OnStartLoadingResponseBody(std::move(body));
+  if (started_)
+    return;
+
+  mojom::DownloadStreamHandlePtr stream_handle =
+      mojom::DownloadStreamHandle::New();
+  stream_handle->stream = std::move(body);
+  stream_handle->client_receiver = client_remote_.BindNewPipeAndPassReceiver();
+  OnResponseStarted(std::move(stream_handle));
 }
 
 std::unique_ptr<DownloadCreateInfo>
@@ -225,22 +233,10 @@ void DownloadResponseHandler::OnUploadProgress(
   std::move(callback).Run();
 }
 
-void DownloadResponseHandler::OnReceiveCachedMetadata(
-    mojo_base::BigBuffer data) {}
-
 void DownloadResponseHandler::OnTransferSizeUpdated(
-    int32_t transfer_size_diff) {}
-
-void DownloadResponseHandler::OnStartLoadingResponseBody(
-    mojo::ScopedDataPipeConsumerHandle body) {
-  if (started_)
-    return;
-
-  mojom::DownloadStreamHandlePtr stream_handle =
-      mojom::DownloadStreamHandle::New();
-  stream_handle->stream = std::move(body);
-  stream_handle->client_receiver = client_remote_.BindNewPipeAndPassReceiver();
-  OnResponseStarted(std::move(stream_handle));
+    int32_t transfer_size_diff) {
+  network::RecordOnTransferSizeUpdatedUMA(
+      network::OnTransferSizeUpdatedFrom::kDownloadResponseHandler);
 }
 
 void DownloadResponseHandler::OnComplete(

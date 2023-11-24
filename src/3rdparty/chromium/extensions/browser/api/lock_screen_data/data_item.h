@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,16 +9,15 @@
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
-#include "base/memory/ref_counted.h"
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
+#include "base/values.h"
 
 namespace content {
 class BrowserContext;
 }
 
 namespace base {
-class DictionaryValue;
 class SequencedTaskRunner;
 }  // namespace base
 
@@ -39,10 +38,10 @@ class DataItem {
                               std::unique_ptr<std::vector<char>> data)>;
   using RegisteredValuesCallback =
       base::OnceCallback<void(OperationResult result,
-                              std::unique_ptr<base::DictionaryValue> values)>;
+                              base::Value::Dict values)>;
 
   // Gets all registered data items for the extension with the provided
-  // extension ID - the items are returned as a DictionaryValue with keys set
+  // extension ID - the items are returned as a Value::Dict with keys set
   // to data item IDs.
   static void GetRegisteredValuesForExtension(
       content::BrowserContext* context,

@@ -183,6 +183,30 @@ void aom_upsampled_pred_c(MACROBLOCKD* xd,
                           int subpel_search);
 #define aom_upsampled_pred aom_upsampled_pred_c
 
+void av1_apply_selfguided_restoration_c(const uint8_t* dat,
+                                        int width,
+                                        int height,
+                                        int stride,
+                                        int eps,
+                                        const int* xqd,
+                                        uint8_t* dst,
+                                        int dst_stride,
+                                        int32_t* tmpbuf,
+                                        int bit_depth,
+                                        int highbd);
+void av1_apply_selfguided_restoration_neon(const uint8_t* dat,
+                                           int width,
+                                           int height,
+                                           int stride,
+                                           int eps,
+                                           const int* xqd,
+                                           uint8_t* dst,
+                                           int dst_stride,
+                                           int32_t* tmpbuf,
+                                           int bit_depth,
+                                           int highbd);
+#define av1_apply_selfguided_restoration av1_apply_selfguided_restoration_neon
+
 int64_t av1_block_error_c(const tran_low_t* coeff,
                           const tran_low_t* dqcoeff,
                           intptr_t block_size,
@@ -234,29 +258,29 @@ void av1_build_compound_diffwtd_mask_d16_neon(uint8_t* mask,
 #define av1_build_compound_diffwtd_mask_d16 \
   av1_build_compound_diffwtd_mask_d16_neon
 
-void av1_calc_indices_dim1_c(const int* data,
-                             const int* centroids,
+int64_t av1_calc_frame_error_c(const uint8_t* const ref,
+                               int stride,
+                               const uint8_t* const dst,
+                               int p_width,
+                               int p_height,
+                               int p_stride);
+#define av1_calc_frame_error av1_calc_frame_error_c
+
+void av1_calc_indices_dim1_c(const int16_t* data,
+                             const int16_t* centroids,
                              uint8_t* indices,
+                             int64_t* total_dist,
                              int n,
                              int k);
 #define av1_calc_indices_dim1 av1_calc_indices_dim1_c
 
-void av1_calc_indices_dim2_c(const int* data,
-                             const int* centroids,
+void av1_calc_indices_dim2_c(const int16_t* data,
+                             const int16_t* centroids,
                              uint8_t* indices,
+                             int64_t* total_dist,
                              int n,
                              int k);
 #define av1_calc_indices_dim2 av1_calc_indices_dim2_c
-
-double av1_compute_cross_correlation_c(unsigned char* im1,
-                                       int stride1,
-                                       int x1,
-                                       int y1,
-                                       unsigned char* im2,
-                                       int stride2,
-                                       int x2,
-                                       int y2);
-#define av1_compute_cross_correlation av1_compute_cross_correlation_c
 
 void av1_convolve_2d_scale_c(const uint8_t* src,
                              int src_stride,
@@ -732,12 +756,6 @@ void av1_get_nz_map_contexts_neon(const uint8_t* const levels,
                                   const TX_CLASS tx_class,
                                   int8_t* const coeff_contexts);
 #define av1_get_nz_map_contexts av1_get_nz_map_contexts_neon
-
-void av1_highbd_fwht4x4_c(const int16_t* input, tran_low_t* output, int stride);
-void av1_highbd_fwht4x4_neon(const int16_t* input,
-                             tran_low_t* output,
-                             int stride);
-#define av1_highbd_fwht4x4 av1_highbd_fwht4x4_neon
 
 void av1_highbd_inv_txfm_add_c(const tran_low_t* input,
                                uint8_t* dest,
@@ -1314,6 +1332,28 @@ void av1_round_shift_array_c(int32_t* arr, int size, int bit);
 void av1_round_shift_array_neon(int32_t* arr, int size, int bit);
 #define av1_round_shift_array av1_round_shift_array_neon
 
+int av1_selfguided_restoration_c(const uint8_t* dgd8,
+                                 int width,
+                                 int height,
+                                 int dgd_stride,
+                                 int32_t* flt0,
+                                 int32_t* flt1,
+                                 int flt_stride,
+                                 int sgr_params_idx,
+                                 int bit_depth,
+                                 int highbd);
+int av1_selfguided_restoration_neon(const uint8_t* dgd8,
+                                    int width,
+                                    int height,
+                                    int dgd_stride,
+                                    int32_t* flt0,
+                                    int32_t* flt1,
+                                    int flt_stride,
+                                    int sgr_params_idx,
+                                    int bit_depth,
+                                    int highbd);
+#define av1_selfguided_restoration av1_selfguided_restoration_neon
+
 void av1_txb_init_levels_c(const tran_low_t* const coeff,
                            const int width,
                            const int height,
@@ -1329,6 +1369,44 @@ void av1_upsample_intra_edge_c(uint8_t* p, int sz);
 
 void av1_upsample_intra_edge_high_c(uint16_t* p, int sz, int bd);
 #define av1_upsample_intra_edge_high av1_upsample_intra_edge_high_c
+
+void av1_warp_affine_c(const int32_t* mat,
+                       const uint8_t* ref,
+                       int width,
+                       int height,
+                       int stride,
+                       uint8_t* pred,
+                       int p_col,
+                       int p_row,
+                       int p_width,
+                       int p_height,
+                       int p_stride,
+                       int subsampling_x,
+                       int subsampling_y,
+                       ConvolveParams* conv_params,
+                       int16_t alpha,
+                       int16_t beta,
+                       int16_t gamma,
+                       int16_t delta);
+void av1_warp_affine_neon(const int32_t* mat,
+                          const uint8_t* ref,
+                          int width,
+                          int height,
+                          int stride,
+                          uint8_t* pred,
+                          int p_col,
+                          int p_row,
+                          int p_width,
+                          int p_height,
+                          int p_stride,
+                          int subsampling_x,
+                          int subsampling_y,
+                          ConvolveParams* conv_params,
+                          int16_t alpha,
+                          int16_t beta,
+                          int16_t gamma,
+                          int16_t delta);
+#define av1_warp_affine av1_warp_affine_neon
 
 void av1_wedge_compute_delta_squares_c(int16_t* d,
                                        const int16_t* a,
@@ -1346,7 +1424,11 @@ uint64_t av1_wedge_sse_from_residuals_c(const int16_t* r1,
                                         const int16_t* d,
                                         const uint8_t* m,
                                         int N);
-#define av1_wedge_sse_from_residuals av1_wedge_sse_from_residuals_c
+uint64_t av1_wedge_sse_from_residuals_neon(const int16_t* r1,
+                                           const int16_t* d,
+                                           const uint8_t* m,
+                                           int N);
+#define av1_wedge_sse_from_residuals av1_wedge_sse_from_residuals_neon
 
 void av1_wiener_convolve_add_src_c(const uint8_t* src,
                                    ptrdiff_t src_stride,
@@ -1376,28 +1458,28 @@ void cdef_copy_rect8_16bit_to_16bit_c(uint16_t* dst,
                                       int dstride,
                                       const uint16_t* src,
                                       int sstride,
-                                      int v,
-                                      int h);
+                                      int width,
+                                      int height);
 void cdef_copy_rect8_16bit_to_16bit_neon(uint16_t* dst,
                                          int dstride,
                                          const uint16_t* src,
                                          int sstride,
-                                         int v,
-                                         int h);
+                                         int width,
+                                         int height);
 #define cdef_copy_rect8_16bit_to_16bit cdef_copy_rect8_16bit_to_16bit_neon
 
 void cdef_copy_rect8_8bit_to_16bit_c(uint16_t* dst,
                                      int dstride,
                                      const uint8_t* src,
                                      int sstride,
-                                     int v,
-                                     int h);
+                                     int width,
+                                     int height);
 void cdef_copy_rect8_8bit_to_16bit_neon(uint16_t* dst,
                                         int dstride,
                                         const uint8_t* src,
                                         int sstride,
-                                        int v,
-                                        int h);
+                                        int width,
+                                        int height);
 #define cdef_copy_rect8_8bit_to_16bit cdef_copy_rect8_8bit_to_16bit_neon
 
 void cdef_filter_16_0_c(void* dst16,
@@ -1610,7 +1692,15 @@ void cdef_find_dir_dual_c(const uint16_t* img1,
                           int coeff_shift,
                           int* out1,
                           int* out2);
-#define cdef_find_dir_dual cdef_find_dir_dual_c
+void cdef_find_dir_dual_neon(const uint16_t* img1,
+                             const uint16_t* img2,
+                             int stride,
+                             int32_t* var1,
+                             int32_t* var2,
+                             int coeff_shift,
+                             int* out1,
+                             int* out2);
+#define cdef_find_dir_dual cdef_find_dir_dual_neon
 
 cfl_subsample_lbd_fn cfl_get_luma_subsampling_420_lbd_c(TX_SIZE tx_size);
 cfl_subsample_lbd_fn cfl_get_luma_subsampling_420_lbd_neon(TX_SIZE tx_size);

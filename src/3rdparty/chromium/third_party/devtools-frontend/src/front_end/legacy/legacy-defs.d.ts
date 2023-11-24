@@ -60,13 +60,8 @@ declare namespace Adb {
   type NetworkDiscoveryConfig = string[];
 }
 
-interface Document {
-  deepActiveElement(): Element|null;
-}
-
 interface HTMLElement {
   createChild(tagName: string, className?: string, content?: string): HTMLElement;
-  totalOffset(): {left: number, top: number};
 }
 
 interface Element {
@@ -76,9 +71,6 @@ interface Element {
   positionAt(x: (number|undefined), y: (number|undefined), relativeTo?: Element): void;
   removeChildren(): void;
   scrollIntoViewIfNeeded(center?: boolean): void;
-  selectionLeftOffset(): (number|null);
-  totalOffsetTop(): number;
-  totalOffsetLeft(): number;
 }
 
 interface DocumentFragment {
@@ -95,7 +87,6 @@ interface Node {
   enclosingNodeOrSelfWithClass(className: string, stayWithin?: Element): Element;
   getComponentRoot(): Document|DocumentFragment|null;
   getComponentSelection(): Selection|null;
-  hasSameShadowRoot(other: Node): boolean;
   hasSelection(): boolean;
   isAncestor(node: Node|null): boolean;
   isDescendant(node: Node|null): boolean;
@@ -105,14 +96,13 @@ interface Node {
   parentNodeOrShadowHost(): Node|null;
   setTextContentTruncatedIfNeeded(text: any, placeholder?: string): boolean;
   traverseNextNode(stayWithin?: Node): Node|null;
+  traversePreviousNode(stayWithin?: Node): Node|null;
   deepTextContent(): string
   window(): Window;
   childTextNodes(): Node[];
   __widget?: any;
 }
 
-declare function isEnterOrSpaceKey(event: Event): boolean;
-declare function isEscKey(event: Event): boolean;
 declare function onInvokeElement(element: Element, callback: (event: Event) => void): void;
 
 // The following types exist in Chrome but were removed for various reasons
@@ -126,8 +116,8 @@ interface DOMError {
 }
 
 interface ShadowRoot {
-  elementFromPoint(x: number, y: number): Element | null;
-  getSelection(): Selection | null;
+  elementFromPoint(x: number, y: number): Element|null;
+  getSelection(): Selection|null;
 }
 
 interface HTMLDialogElement {

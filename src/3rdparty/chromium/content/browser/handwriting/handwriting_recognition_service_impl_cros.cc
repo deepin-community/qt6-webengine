@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,11 +16,11 @@
 #include "third_party/blink/public/mojom/handwriting/handwriting.mojom.h"
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ash/constants/ash_switches.h"
+#include "chromeos/services/machine_learning/public/cpp/ml_switches.h"
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/lacros/lacros_service.h"
+#include "chromeos/startup/browser_params_proxy.h"
 #endif
 
 namespace content {
@@ -35,13 +35,12 @@ bool IsCrOSLibHandwritingRootfsEnabled() {
   // TODO(https://crbug.com/1168978): mlservice should provide an interface to
   // query this.
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  return command_line->HasSwitch(ash::switches::kOndeviceHandwritingSwitch) &&
+  return command_line->HasSwitch(::switches::kOndeviceHandwritingSwitch) &&
          command_line->GetSwitchValueASCII(
-             ash::switches::kOndeviceHandwritingSwitch) == "use_rootfs";
+             ::switches::kOndeviceHandwritingSwitch) == "use_rootfs";
 #elif BUILDFLAG(IS_CHROMEOS_LACROS)
-  auto* service = chromeos::LacrosService::Get();
-  return service && service->init_params()->ondevice_handwriting_support ==
-                        crosapi::mojom::OndeviceHandwritingSupport::kUseRootfs;
+  return chromeos::BrowserParamsProxy::Get()->OndeviceHandwritingSupport() ==
+         crosapi::mojom::OndeviceHandwritingSupport::kUseRootfs;
 #else
   return false;
 #endif

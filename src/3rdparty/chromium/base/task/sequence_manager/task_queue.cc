@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/task/sequence_manager/associated_thread_id.h"
 #include "base/task/sequence_manager/sequence_manager_impl.h"
@@ -128,7 +128,7 @@ TaskQueue::TaskQueue(std::unique_ptr<internal::TaskQueueImpl> impl,
                              : MakeRefCounted<internal::AssociatedThreadId>()),
       default_task_runner_(impl_ ? impl_->CreateTaskRunner(kTaskTypeNone)
                                  : CreateNullTaskRunner()),
-      name_(impl_ ? impl_->GetName() : "") {}
+      name_(impl_ ? impl_->GetProtoName() : QueueName::UNKNOWN_TQ) {}
 
 TaskQueue::~TaskQueue() {
   ShutdownTaskQueueGracefully();
@@ -181,7 +181,6 @@ void TaskQueue::ShutdownTaskQueue() {
     TakeTaskQueueImpl().reset();
     return;
   }
-  impl_->SetBlameContext(nullptr);
   sequence_manager_->UnregisterTaskQueueImpl(TakeTaskQueueImpl());
 }
 
@@ -254,8 +253,12 @@ void TaskQueue::SetQueuePriority(TaskQueue::QueuePriority priority) {
 
 TaskQueue::QueuePriority TaskQueue::GetQueuePriority() const {
   DCHECK_CALLED_ON_VALID_THREAD(associated_thread_->thread_checker);
-  if (!impl_)
-    return TaskQueue::QueuePriority::kLowPriority;
+  // TODO(crbug.com/1413795): change this to DCHECK(impl_) since task queues
+  // should not be used after shutdown.
+  if (!impl_) {
+    DCHECK(sequence_manager_);
+    return sequence_manager_->settings().priority_settings.default_priority();
+  }
   return impl_->GetQueuePriority();
 }
 
@@ -271,13 +274,6 @@ void TaskQueue::RemoveTaskObserver(TaskObserver* task_observer) {
   if (!impl_)
     return;
   impl_->RemoveTaskObserver(task_observer);
-}
-
-void TaskQueue::SetBlameContext(trace_event::BlameContext* blame_context) {
-  DCHECK_CALLED_ON_VALID_THREAD(associated_thread_->thread_checker);
-  if (!impl_)
-    return;
-  impl_->SetBlameContext(blame_context);
 }
 
 void TaskQueue::InsertFence(InsertFencePosition position) {
@@ -313,7 +309,7 @@ bool TaskQueue::BlockedByFence() const {
 }
 
 const char* TaskQueue::GetName() const {
-  return name_;
+  return perfetto::protos::pbzero::SequenceManagerTask::QueueName_Name(name_);
 }
 
 void TaskQueue::WriteIntoTrace(perfetto::TracedValue context) const {

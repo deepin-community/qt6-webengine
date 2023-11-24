@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,7 @@
 #include "base/observer_list.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "ui/base/cursor/cursor.h"
 #include "ui/base/cursor/mojom/cursor_type.mojom-shared.h"
 #include "ui/base/cursor/platform_cursor.h"
 
@@ -66,6 +67,11 @@ scoped_refptr<PlatformCursor> CursorFactory::CreateImageCursor(
     const gfx::Point& hotspot) {
   NOTIMPLEMENTED();
   return nullptr;
+}
+
+absl::optional<CursorData> CursorFactory::GetCursorData(
+    mojom::CursorType type) {
+  return absl::nullopt;
 }
 
 scoped_refptr<PlatformCursor> CursorFactory::CreateAnimatedCursor(
@@ -134,7 +140,7 @@ std::vector<std::string> CursorNamesFromType(mojom::CursorType type) {
     case mojom::CursorType::kNone:
       return {};
     case mojom::CursorType::kGrab:
-      return {"openhand", "grab"};
+      return {"openhand", "grab", "hand1"};
     case mojom::CursorType::kGrabbing:
       return {"closedhand", "grabbing", "hand2"};
     case mojom::CursorType::kCross:

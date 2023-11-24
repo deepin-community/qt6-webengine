@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,12 +12,14 @@
 #include "ui/gfx/linux/gpu_memory_buffer_support_x11.h"
 #include "ui/gfx/linux/native_pixmap_dmabuf.h"
 #include "ui/gfx/x/connection.h"
+#include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_surface_egl.h"
 #include "ui/gl/gl_surface_egl_x11_gles2.h"
 #include "ui/ozone/common/egl_util.h"
 #include "ui/ozone/common/gl_ozone_egl.h"
-#include "ui/ozone/platform/x11/gl_ozone_glx.h"
+#include "ui/ozone/common/native_pixmap_egl_binding.h"
 #include "ui/ozone/platform/x11/gl_surface_egl_readback_x11.h"
+#include "ui/ozone/platform/x11/native_pixmap_egl_x11_binding.h"
 #include "ui/ozone/platform/x11/x11_canvas_surface.h"
 
 #if BUILDFLAG(ENABLE_VULKAN)
@@ -27,9 +29,33 @@
 namespace ui {
 namespace {
 
+enum class NativePixmapSupportType {
+  // Importing native pixmaps not supported.
+  kNone,
+
+  // Native pixmaps are imported directly into EGL using the
+  // EGL_EXT_image_dma_buf_import extension.
+  kDMABuf,
+
+  // Native pixmaps are first imported as X11 pixmaps using DRI3 and then into
+  // EGL. Using pixmap imports is currently not supported.
+  kX11Pixmap,
+};
+
+NativePixmapSupportType GetNativePixmapSupportType() {
+  if (gl::GLSurfaceEGL::GetGLDisplayEGL()
+          ->ext->b_EGL_EXT_image_dma_buf_import) {
+    return NativePixmapSupportType::kDMABuf;
+  } else if (NativePixmapEGLX11Binding::CanImportNativeGLXPixmap()) {
+    return NativePixmapSupportType::kX11Pixmap;
+  } else {
+    return NativePixmapSupportType::kNone;
+  }
+}
+
 class GLOzoneEGLX11 : public GLOzoneEGL {
  public:
-  GLOzoneEGLX11() = default;
+  GLOzoneEGLX11() : support_type_(GetNativePixmapSupportType()) {}
 
   GLOzoneEGLX11(const GLOzoneEGLX11&) = delete;
   GLOzoneEGLX11& operator=(const GLOzoneEGLX11&) = delete;
@@ -43,20 +69,53 @@ class GLOzoneEGLX11 : public GLOzoneEGL {
     return GLOzoneEGL::InitializeStaticGLBindings(implementation);
   }
 
+  bool CanImportNativePixmap() override {
+    // TODO(crbug.com/1236697): enable X11Pixmap support when the Vaapi
+    // pipeline supports it.
+    return support_type_ == NativePixmapSupportType::kDMABuf;
+  }
+
+  std::unique_ptr<NativePixmapGLBinding> ImportNativePixmap(
+      scoped_refptr<gfx::NativePixmap> pixmap,
+      gfx::BufferFormat plane_format,
+      gfx::BufferPlane plane,
+      gfx::Size plane_size,
+      const gfx::ColorSpace& color_space,
+      GLenum target,
+      GLuint texture_id) override {
+    switch (support_type_) {
+      case NativePixmapSupportType::kDMABuf: {
+        return NativePixmapEGLBinding::Create(pixmap, plane_format, plane,
+                                              plane_size, color_space, target,
+                                              texture_id);
+      }
+      case NativePixmapSupportType::kX11Pixmap: {
+        return NativePixmapEGLX11Binding::Create(
+            pixmap, plane_format, plane_size, target, texture_id);
+      }
+      default:
+        return nullptr;
+    }
+  }
+
   scoped_refptr<gl::GLSurface> CreateViewGLSurface(
+      gl::GLDisplay* display,
       gfx::AcceleratedWidget window) override {
     if (is_swiftshader_) {
       return gl::InitializeGLSurface(
-          base::MakeRefCounted<GLSurfaceEglReadbackX11>(window));
+          base::MakeRefCounted<GLSurfaceEglReadbackX11>(
+              display->GetAs<gl::GLDisplayEGL>(), window));
     } else {
       switch (gl::GetGLImplementation()) {
         case gl::kGLImplementationEGLGLES2:
           DCHECK(window != gfx::kNullAcceleratedWidget);
           return gl::InitializeGLSurface(new gl::NativeViewGLSurfaceEGLX11GLES2(
+              display->GetAs<gl::GLDisplayEGL>(),
               static_cast<x11::Window>(window)));
         case gl::kGLImplementationEGLANGLE:
           DCHECK(window != gfx::kNullAcceleratedWidget);
           return gl::InitializeGLSurface(new gl::NativeViewGLSurfaceEGLX11(
+              display->GetAs<gl::GLDisplayEGL>(),
               static_cast<x11::Window>(window)));
         default:
           NOTREACHED();
@@ -66,12 +125,15 @@ class GLOzoneEGLX11 : public GLOzoneEGL {
   }
 
   scoped_refptr<gl::GLSurface> CreateOffscreenGLSurface(
+      gl::GLDisplay* display,
       const gfx::Size& size) override {
-    if (gl::GLSurfaceEGL::IsEGLSurfacelessContextSupported() &&
-        size.width() == 0 && size.height() == 0) {
-      return InitializeGLSurface(new gl::SurfacelessEGL(size));
+    gl::GLDisplayEGL* egl_display = display->GetAs<gl::GLDisplayEGL>();
+    if (egl_display->IsEGLSurfacelessContextSupported() && size.width() == 0 &&
+        size.height() == 0) {
+      return InitializeGLSurface(new gl::SurfacelessEGL(egl_display, size));
     } else {
-      return InitializeGLSurface(new gl::PbufferGLSurfaceEGL(size));
+      return InitializeGLSurface(
+          new gl::PbufferGLSurfaceEGL(egl_display, size));
     }
   }
 
@@ -88,6 +150,7 @@ class GLOzoneEGLX11 : public GLOzoneEGL {
   }
 
  private:
+  const NativePixmapSupportType support_type_;
   bool is_swiftshader_ = false;
 };
 
@@ -95,8 +158,7 @@ class GLOzoneEGLX11 : public GLOzoneEGL {
 
 X11SurfaceFactory::X11SurfaceFactory(
     std::unique_ptr<x11::Connection> connection)
-    : glx_implementation_(std::make_unique<GLOzoneGLX>()),
-      egl_implementation_(std::make_unique<GLOzoneEGLX11>()),
+    : egl_implementation_(std::make_unique<GLOzoneEGLX11>()),
       connection_(std::move(connection)) {}
 
 X11SurfaceFactory::~X11SurfaceFactory() = default;
@@ -104,17 +166,14 @@ X11SurfaceFactory::~X11SurfaceFactory() = default;
 std::vector<gl::GLImplementationParts>
 X11SurfaceFactory::GetAllowedGLImplementations() {
   return std::vector<gl::GLImplementationParts>{
-      gl::GLImplementationParts(gl::kGLImplementationDesktopGL),
-      gl::GLImplementationParts(gl::kGLImplementationEGLGLES2),
       gl::GLImplementationParts(gl::kGLImplementationEGLANGLE),
-      gl::GLImplementationParts(gl::ANGLEImplementation::kSwiftShader)};
+      gl::GLImplementationParts(gl::kGLImplementationEGLGLES2),
+  };
 }
 
 GLOzone* X11SurfaceFactory::GetGLOzone(
     const gl::GLImplementationParts& implementation) {
   switch (implementation.gl) {
-    case gl::kGLImplementationDesktopGL:
-      return glx_implementation_.get();
     case gl::kGLImplementationEGLGLES2:
     case gl::kGLImplementationEGLANGLE:
       return egl_implementation_.get();
@@ -146,17 +205,20 @@ std::unique_ptr<SurfaceOzoneCanvas> X11SurfaceFactory::CreateCanvasForWidget(
 
 scoped_refptr<gfx::NativePixmap> X11SurfaceFactory::CreateNativePixmap(
     gfx::AcceleratedWidget widget,
-    VkDevice vk_device,
+    gpu::VulkanDeviceQueue* device_queue,
     gfx::Size size,
     gfx::BufferFormat format,
     gfx::BufferUsage usage,
     absl::optional<gfx::Size> framebuffer_size) {
   scoped_refptr<gfx::NativePixmapDmaBuf> pixmap;
-#if !defined(TOOLKIT_QT)
+#if BUILDFLAG(USE_VAAPI)
   auto buffer = ui::GpuMemoryBufferSupportX11::GetInstance()->CreateBuffer(
       format, size, usage);
   if (buffer) {
     gfx::NativePixmapHandle handle = buffer->ExportHandle();
+    if (handle.planes.empty()) {
+      return nullptr;
+    }
     pixmap = base::MakeRefCounted<gfx::NativePixmapDmaBuf>(size, format,
                                                            std::move(handle));
   }
@@ -166,16 +228,23 @@ scoped_refptr<gfx::NativePixmap> X11SurfaceFactory::CreateNativePixmap(
   return pixmap;
 }
 
-void X11SurfaceFactory::CreateNativePixmapAsync(gfx::AcceleratedWidget widget,
-                                                VkDevice vk_device,
-                                                gfx::Size size,
-                                                gfx::BufferFormat format,
-                                                gfx::BufferUsage usage,
-                                                NativePixmapCallback callback) {
+bool X11SurfaceFactory::CanCreateNativePixmapForFormat(
+    gfx::BufferFormat format) {
+  return ui::GpuMemoryBufferSupportX11::GetInstance()
+      ->CanCreateNativePixmapForFormat(format);
+}
+
+void X11SurfaceFactory::CreateNativePixmapAsync(
+    gfx::AcceleratedWidget widget,
+    gpu::VulkanDeviceQueue* device_queue,
+    gfx::Size size,
+    gfx::BufferFormat format,
+    gfx::BufferUsage usage,
+    NativePixmapCallback callback) {
   // CreateNativePixmap is non-blocking operation. Thus, it is safe to call it
   // and return the result with the provided callback.
   std::move(callback).Run(
-      CreateNativePixmap(widget, vk_device, size, format, usage));
+      CreateNativePixmap(widget, device_queue, size, format, usage));
 }
 
 scoped_refptr<gfx::NativePixmap>
@@ -189,9 +258,12 @@ X11SurfaceFactory::CreateNativePixmapFromHandle(
       ui::GpuMemoryBufferSupportX11::GetInstance()->CreateBufferFromHandle(
           size, format, std::move(handle));
   if (buffer) {
-    gfx::NativePixmapHandle handle = buffer->ExportHandle();
-    pixmap = base::MakeRefCounted<gfx::NativePixmapDmaBuf>(size, format,
-                                                           std::move(handle));
+    gfx::NativePixmapHandle buffer_handle = buffer->ExportHandle();
+    if (buffer_handle.planes.empty()) {
+      return nullptr;
+    }
+    pixmap = base::MakeRefCounted<gfx::NativePixmapDmaBuf>(
+        size, format, std::move(buffer_handle));
   }
   return pixmap;
 }

@@ -7,21 +7,24 @@
 
 #include "src/sksl/codegen/SkSLPipelineStageCodeGenerator.h"
 
-#if defined(SKSL_STANDALONE) || SK_SUPPORT_GPU || SK_GRAPHITE_ENABLED
+#if defined(SKSL_STANDALONE) || SK_SUPPORT_GPU || defined(SK_GRAPHITE_ENABLED)
 
 #include "include/core/SkSpan.h"
 #include "include/core/SkTypes.h"
 #include "include/private/SkSLDefines.h"
+#include "include/private/SkSLIRNode.h"
 #include "include/private/SkSLLayout.h"
 #include "include/private/SkSLModifiers.h"
 #include "include/private/SkSLProgramElement.h"
 #include "include/private/SkSLProgramKind.h"
 #include "include/private/SkSLStatement.h"
 #include "include/private/SkSLString.h"
-#include "include/private/SkTArray.h"
-#include "include/private/SkTHash.h"
+#include "include/private/base/SkTArray.h"
 #include "include/sksl/SkSLOperator.h"
+#include "src/core/SkTHash.h"
+#include "src/sksl/SkSLBuiltinTypes.h"
 #include "src/sksl/SkSLCompiler.h"
+#include "src/sksl/SkSLIntrinsicList.h"
 #include "src/sksl/SkSLProgramSettings.h"
 #include "src/sksl/SkSLStringStream.h"
 #include "src/sksl/ir/SkSLBinaryExpression.h"
@@ -51,6 +54,7 @@
 #include "src/sksl/ir/SkSLVarDeclarations.h"
 #include "src/sksl/ir/SkSLVariable.h"
 #include "src/sksl/ir/SkSLVariableReference.h"
+
 #include <memory>
 #include <string_view>
 #include <utility>
@@ -75,7 +79,7 @@ public:
     void generateCode();
 
 private:
-    using Precedence = Operator::Precedence;
+    using Precedence = OperatorPrecedence;
 
     void write(std::string_view s);
     void writeLine(std::string_view s = std::string_view());
@@ -168,10 +172,10 @@ void PipelineStageCodeGenerator::writeChildCall(const ChildCall& c) {
     for (const ProgramElement* p : fProgram.elements()) {
         if (p->is<GlobalVarDeclaration>()) {
             const GlobalVarDeclaration& global = p->as<GlobalVarDeclaration>();
-            const VarDeclaration& decl = global.declaration()->as<VarDeclaration>();
-            if (&decl.var() == &c.child()) {
+            const VarDeclaration& decl = global.varDeclaration();
+            if (decl.var() == &c.child()) {
                 found = true;
-            } else if (decl.var().type().isEffectChild()) {
+            } else if (decl.var()->type().isEffectChild()) {
                 ++index;
             }
         }
@@ -260,10 +264,9 @@ void PipelineStageCodeGenerator::writeFunctionCall(const FunctionCall& c) {
     }
 
     this->write("(");
-    const char* separator = "";
+    auto separator = SkSL::String::Separator();
     for (const auto& arg : c.arguments()) {
-        this->write(separator);
-        separator = ", ";
+        this->write(separator());
         this->writeExpression(*arg, Precedence::kSequence);
     }
     this->write(")");
@@ -289,9 +292,6 @@ void PipelineStageCodeGenerator::writeVariableReference(const VariableReference&
 }
 
 void PipelineStageCodeGenerator::writeIfStatement(const IfStatement& stmt) {
-    if (stmt.isStatic()) {
-        this->write("@");
-    }
     this->write("if (");
     this->writeExpression(*stmt.test(), Precedence::kTopLevel);
     this->write(") ");
@@ -355,6 +355,11 @@ std::string PipelineStageCodeGenerator::functionName(const FunctionDeclaration& 
 }
 
 void PipelineStageCodeGenerator::writeFunction(const FunctionDefinition& f) {
+    if (f.declaration().isBuiltin()) {
+        // Don't re-emit builtin functions.
+        return;
+    }
+
     AutoOutputBuffer body(this);
 
     // We allow public SkSL's main() to return half4 -or- float4 (ie vec4). When we emit
@@ -364,8 +369,8 @@ void PipelineStageCodeGenerator::writeFunction(const FunctionDefinition& f) {
     // obscure bug.
     const FunctionDeclaration& decl = f.declaration();
     if (decl.isMain() &&
-        fProgram.fConfig->fKind != SkSL::ProgramKind::kCustomMeshVertex &&
-        fProgram.fConfig->fKind != SkSL::ProgramKind::kCustomMeshFragment) {
+        fProgram.fConfig->fKind != SkSL::ProgramKind::kMeshVertex &&
+        fProgram.fConfig->fKind != SkSL::ProgramKind::kMeshFragment) {
         fCastReturnsToHalf = true;
     }
 
@@ -392,26 +397,25 @@ std::string PipelineStageCodeGenerator::functionDeclaration(const FunctionDeclar
                            (decl.modifiers().fFlags & Modifiers::kNoInline_Flag) ? "noinline " : "",
                            this->typeName(decl.returnType()).c_str(),
                            this->functionName(decl).c_str());
-    const char* separator = "";
+    auto separator = SkSL::String::Separator();
     for (const Variable* p : decl.parameters()) {
-        declString.append(separator);
+        declString.append(separator());
         declString.append(this->modifierString(p->modifiers()));
         declString.append(this->typedVariable(p->type(), p->name()).c_str());
-        separator = ", ";
     }
 
     return declString + ")";
 }
 
 void PipelineStageCodeGenerator::writeFunctionDeclaration(const FunctionDeclaration& decl) {
-    if (!decl.isMain()) {
+    if (!decl.isMain() && !decl.isBuiltin()) {
         fCallbacks->declareFunction(this->functionDeclaration(decl).c_str());
     }
 }
 
 void PipelineStageCodeGenerator::writeGlobalVarDeclaration(const GlobalVarDeclaration& g) {
-    const VarDeclaration& decl = g.declaration()->as<VarDeclaration>();
-    const Variable& var = decl.var();
+    const VarDeclaration& decl = g.varDeclaration();
+    const Variable& var = *decl.var();
 
     if (var.isBuiltin() || var.type().isOpaque()) {
         // Don't re-declare these. (eg, sk_FragCoord, or fragmentProcessor children)
@@ -555,10 +559,9 @@ void PipelineStageCodeGenerator::writeAnyConstructor(const AnyConstructor& c,
                                                      Precedence parentPrecedence) {
     this->writeType(c.type());
     this->write("(");
-    const char* separator = "";
+    auto separator = SkSL::String::Separator();
     for (const auto& arg : c.argumentSpan()) {
-        this->write(separator);
-        separator = ", ";
+        this->write(separator());
         this->writeExpression(*arg, Precedence::kSequence);
     }
     this->write(")");
@@ -674,8 +677,8 @@ std::string PipelineStageCodeGenerator::typedVariable(const Type& type, std::str
 }
 
 void PipelineStageCodeGenerator::writeVarDeclaration(const VarDeclaration& var) {
-    this->write(this->modifierString(var.var().modifiers()));
-    this->write(this->typedVariable(var.var().type(), var.var().name()));
+    this->write(this->modifierString(var.var()->modifiers()));
+    this->write(this->typedVariable(var.var()->type(), var.var()->name()));
     if (var.value()) {
         this->write(" = ");
         this->writeExpression(*var.value(), Precedence::kTopLevel);
@@ -719,7 +722,6 @@ void PipelineStageCodeGenerator::writeStatement(const Statement& s) {
         case Statement::Kind::kDiscard:
             SkDEBUGFAIL("Unsupported control flow");
             break;
-        case Statement::Kind::kInlineMarker:
         case Statement::Kind::kNop:
             this->write(";");
             break;

@@ -18,7 +18,6 @@
 #include "gmock/gmock.h"
 #include "connections/implementation/service_controller_router.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 
@@ -92,10 +91,14 @@ class MockServiceControllerRouter : public ServiceControllerRouter {
   MOCK_METHOD(void, StopAllEndpoints,
               (ClientProxy * client, const ResultCallback& callback),
               (override));
+
+  MOCK_METHOD(void, SetCustomSavePath,
+              (ClientProxy * client, absl::string_view path,
+               const ResultCallback& callback),
+              (override));
 };
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location
 
 #endif  // CORE_INTERNAL_MOCK_SERVICE_CONTROLLER_ROUTER_H_

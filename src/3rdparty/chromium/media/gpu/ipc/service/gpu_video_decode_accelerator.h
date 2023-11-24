@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,11 +11,12 @@
 #include <memory>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/containers/circular_deque.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
+#include "base/task/single_thread_task_runner.h"
 #include "gpu/command_buffer/service/texture_manager.h"
 #include "gpu/config/gpu_info.h"
 #include "gpu/ipc/service/command_buffer_stub.h"
@@ -112,7 +113,7 @@ class GpuVideoDecodeAccelerator
   GpuVideoDecodeGLClient gl_client_;
 
   // Unowned pointer to the underlying gpu::CommandBufferStub.  |this| is
-  // registered as a DestuctionObserver of |stub_| and will self-delete when
+  // registered as a DestructionObserver of |stub_| and will self-delete when
   // |stub_| is destroyed.
   const raw_ptr<gpu::CommandBufferStub> stub_;
 

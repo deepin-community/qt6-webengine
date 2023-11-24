@@ -8,21 +8,29 @@
 #ifndef SKSL_DOSTATEMENT
 #define SKSL_DOSTATEMENT
 
+#include "include/private/SkSLIRNode.h"
 #include "include/private/SkSLStatement.h"
+#include "include/sksl/SkSLPosition.h"
 #include "src/sksl/ir/SkSLExpression.h"
 
+#include <memory>
+#include <string>
+#include <utility>
+
 namespace SkSL {
+
+class Context;
 
 /**
  * A 'do' statement.
  */
 class DoStatement final : public Statement {
 public:
-    inline static constexpr Kind kStatementKind = Kind::kDo;
+    inline static constexpr Kind kIRNodeKind = Kind::kDo;
 
     DoStatement(Position pos, std::unique_ptr<Statement> statement,
             std::unique_ptr<Expression> test)
-        : INHERITED(pos, kStatementKind)
+        : INHERITED(pos, kIRNodeKind)
         , fStatement(std::move(statement))
         , fTest(std::move(test)) {}
 

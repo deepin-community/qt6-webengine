@@ -1,8 +1,10 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #import "components/remote_cocoa/app_shim/bridged_content_view.h"
+
+#include <limits>
 
 #include "base/check_op.h"
 #import "base/mac/foundation_util.h"
@@ -17,7 +19,10 @@
 #include "ui/base/clipboard/clipboard_constants.h"
 #import "ui/base/cocoa/appkit_utils.h"
 #include "ui/base/cocoa/cocoa_base_utils.h"
+#if !defined(TOOLKIT_QT)
 #import "ui/base/dragdrop/cocoa_dnd_util.h"
+#endif
+#include "ui/base/cocoa/find_pasteboard.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/dragdrop/os_exchange_data_provider_mac.h"
 #include "ui/base/ime/input_method.h"
@@ -56,6 +61,26 @@ gfx::Point MovePointToWindow(const NSPoint& point,
       [target_window contentRectForFrameRect:[target_window frame]];
   return gfx::Point(point_in_window.x,
                     NSHeight(content_rect) - point_in_window.y);
+}
+
+// Convert a |point| in |source_window|'s AppKit coordinate system (origin at
+// the bottom left of the window) to |target_view|'s coordinate, with the
+// origin at the top left of the view.
+// If |source_window| is nil, |point| will be treated as screen coordinates.
+gfx::Point MovePointToView(const NSPoint& point,
+                           NSWindow* source_window,
+                           NSView* target_view) {
+  NSPoint point_in_screen =
+      source_window ? ui::ConvertPointFromWindowToScreen(source_window, point)
+                    : point;
+
+  NSWindow* target_window = [target_view window];
+  NSPoint point_in_window =
+      ui::ConvertPointFromScreenToWindow(target_window, point_in_screen);
+  NSPoint point_in_view = [target_view convertPoint:point_in_window
+                                           fromView:nil];
+  return gfx::Point(point_in_window.x,
+                    NSHeight([target_view frame]) - point_in_view.y);
 }
 
 // Some keys are silently consumed by -[NSView interpretKeyEvents:]
@@ -106,10 +131,11 @@ ui::TextEditCommand GetTextEditCommandForMenuAction(SEL action) {
 // Copy of ui::OSExchangeDataProviderMac::SupportedPasteboardTypes() (ui/base/dragdrop/os_exchange_data_provider_mac.mm)
 NSArray* SupportedPasteboardTypes() {
   return @[
-    ui::kWebCustomDataPboardType, ui::ClipboardUtil::UTIForWebURLsAndTitles(),
-    NSURLPboardType, NSFilenamesPboardType, ui::kChromeDragDummyPboardType,
-    NSStringPboardType, NSHTMLPboardType, NSRTFPboardType,
-    NSFilenamesPboardType, ui::kWebCustomDataPboardType, NSPasteboardTypeString
+    ui::kUTTypeChromiumInitiatedDrag, ui::kUTTypeChromiumPrivilegedInitiatedDrag,
+    ui::kUTTypeChromiumRendererInitiatedDrag, ui::kUTTypeChromiumWebCustomData,
+    ui::kUTTypeWebKitWebURLsWithTitles, NSPasteboardTypeFileURL,
+    NSPasteboardTypeHTML, NSPasteboardTypeRTF, NSPasteboardTypeString,
+    NSPasteboardTypeURL
   ];
 }
 #endif
@@ -306,7 +332,7 @@ NSArray* SupportedPasteboardTypes() {
   if (ui::PlatformEventSource::ShouldIgnoreNativePlatformEvents())
     return;
 
-  BOOL isScrollEvent = [theEvent type] == NSScrollWheel;
+  BOOL isScrollEvent = [theEvent type] == NSEventTypeScrollWheel;
 
   // If it's the view's window, process normally.
   if ([target isEqual:source]) {
@@ -314,14 +340,26 @@ NSArray* SupportedPasteboardTypes() {
       [self scrollWheel:theEvent];
     } else {
       [self mouseEvent:theEvent];
-      if ([theEvent type] == NSLeftMouseUp)
+      if ([theEvent type] == NSEventTypeLeftMouseUp)
         [self handleLeftMouseUp:theEvent];
     }
     return;
   }
 
-  gfx::Point event_location =
-      MovePointToWindow([theEvent locationInWindow], source, target);
+  gfx::Point event_location;
+  if (remote_cocoa::IsNSToolbarFullScreenWindow(target)) {
+    // We are in immersive fullscreen. This event is generated from the overlay
+    // window which sits atop the toolbar. Convert the event location to the
+    // content view coordiate, which should have the same bounds as the overlay
+    // window.
+    // This is to handle the case that `target` may contain the titlebar which
+    // the overlay window does not contain. Without this, buttons in the toolbar
+    // are not clickable when the titlebar is revealed.
+    event_location = MovePointToView([theEvent locationInWindow], source, self);
+  } else {
+    event_location =
+        MovePointToWindow([theEvent locationInWindow], source, target);
+  }
   [self updateTooltipIfRequiredAt:event_location];
 
   if (isScrollEvent) {
@@ -431,7 +469,7 @@ NSArray* SupportedPasteboardTypes() {
   // Always propagate the shift modifier if present. Shift doesn't always alter
   // the command selector, but should always be passed along. Control and Alt
   // have different meanings on Mac, so they do not propagate automatically.
-  if ([_keyDownEvent modifierFlags] & NSShiftKeyMask)
+  if ([_keyDownEvent modifierFlags] & NSEventModifierFlagShift)
     eventFlags |= ui::EF_SHIFT_DOWN;
 
   // Generate a synthetic event with the keycode toolkit-views expects.
@@ -533,9 +571,12 @@ NSArray* SupportedPasteboardTypes() {
   // Currently there seems to be no use case to pass non-character events routed
   // from insertText: handlers to the View hierarchy.
   if (isFinalInsertForKeyEvent && ![self hasMarkedText]) {
+    int flags = ui::EF_NONE;
+    if ([_keyDownEvent isARepeat])
+      flags |= ui::EF_IS_REPEAT;
     ui::KeyEvent charEvent([text characterAtIndex:0],
                            ui::KeyboardCodeFromNSEvent(_keyDownEvent),
-                           ui::DomCodeFromNSEvent(_keyDownEvent), ui::EF_NONE);
+                           ui::DomCodeFromNSEvent(_keyDownEvent), flags);
     [self handleKeyEvent:&charEvent];
     _hasUnhandledKeyDownEvent = NO;
     if (charEvent.handled())
@@ -624,7 +665,7 @@ NSArray* SupportedPasteboardTypes() {
   if (!_bridge)
     return;
 
-  DCHECK([theEvent type] != NSScrollWheel);
+  DCHECK([theEvent type] != NSEventTypeScrollWheel);
   auto event = std::make_unique<ui::MouseEvent>(theEvent);
   [self adjustUiEventLocation:event.get() fromNativeEvent:theEvent];
 
@@ -1328,10 +1369,9 @@ NSArray* SupportedPasteboardTypes() {
 // Currently we only support reading and writing plain strings.
 - (id)validRequestorForSendType:(NSString*)sendType
                      returnType:(NSString*)returnType {
-  NSString* const utf8Type = base::mac::CFToNSCast(kUTTypeUTF8PlainText);
-  BOOL canWrite =
-      [sendType isEqualToString:utf8Type] && [self selectedRange].length > 0;
-  BOOL canRead = [returnType isEqualToString:utf8Type];
+  BOOL canWrite = [sendType isEqualToString:NSPasteboardTypeString] &&
+                  [self selectedRange].length > 0;
+  BOOL canRead = [returnType isEqualToString:NSPasteboardTypeString];
   // Valid if (sendType, returnType) is either (string, nil), (nil, string),
   // or (string, string).
   BOOL valid =
@@ -1345,26 +1385,51 @@ NSArray* SupportedPasteboardTypes() {
 // NSServicesMenuRequestor protocol
 
 - (BOOL)writeSelectionToPasteboard:(NSPasteboard*)pboard types:(NSArray*)types {
-  // NB: The NSServicesMenuRequestor protocol has not (as of 10.14) been
-  // upgraded to request UTIs rather than obsolete PboardType constants. Handle
-  // either for when it is upgraded.
-  DCHECK([types containsObject:NSStringPboardType] ||
-         [types containsObject:base::mac::CFToNSCast(kUTTypeUTF8PlainText)]);
+  // /!\ Compatibility hack!
+  //
+  // The NSServicesMenuRequestor protocol does not pass in the correct
+  // NSPasteboardType constants in the `types` array, verified through macOS 13
+  // (FB11838671). To keep the code below clean, if an obsolete type is passed
+  // in, rewrite the array.
+  //
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  if ([types containsObject:NSStringPboardType] &&
+      ![types containsObject:NSPasteboardTypeString]) {
+    types = [types arrayByAddingObject:NSPasteboardTypeString];
+  }
+#pragma clang diagnostic pop
+  // /!\ End compatibility hack.
 
-  bool result = NO;
-  std::u16string text;
-  if (_bridge)
-    _bridge->text_input_host()->GetSelectionText(&result, &text);
-  if (!result)
-    return NO;
-  return [pboard writeObjects:@[ base::SysUTF16ToNSString(text) ]];
+  bool wasAbleToWriteAtLeastOneType = false;
+
+  if ([types containsObject:NSPasteboardTypeString]) {
+    bool result = false;
+    std::u16string selection_text;
+    if (_bridge)
+      _bridge->text_input_host()->GetSelectionText(&result, &selection_text);
+
+    if (result) {
+      NSString* text = base::SysUTF16ToNSString(selection_text);
+      wasAbleToWriteAtLeastOneType |= [pboard writeObjects:@[ text ]];
+    }
+  }
+
+  return wasAbleToWriteAtLeastOneType;
 }
 
 - (BOOL)readSelectionFromPasteboard:(NSPasteboard*)pboard {
-  NSArray* objects = [pboard readObjectsForClasses:@ [[NSString class]]
-      options:0];
-  DCHECK([objects count] == 1);
-  [self insertText:[objects lastObject]];
+  NSArray* objects = [pboard readObjectsForClasses:@[ [NSString class] ]
+                                           options:nil];
+  if (!objects.count) {
+    return NO;
+  }
+
+  // It's expected that there only will be one string object on the pasteboard,
+  // but if there is more than one, catenate them. This is the same compat
+  // technique used by the compatibility call, -[NSPasteboard stringForType:].
+  NSString* allTheText = [objects componentsJoinedByString:@"\n"];
+  [self insertText:allTheText];
   return YES;
 }
 
@@ -1381,16 +1446,12 @@ NSArray* SupportedPasteboardTypes() {
 - (NSAttributedString*)attributedSubstringForProposedRange:(NSRange)range
                                                actualRange:
                                                    (NSRangePointer)actualRange {
-  // On TouchBar Macs, the IME subsystem sometimes sends an invalid range with a
-  // non-zero length. This will cause a DCHECK in gfx::Range, so repair it here.
-  // See https://crbug.com/888782.
-  if (range.location == NSNotFound)
-    range.length = 0;
   std::u16string substring;
   gfx::Range actual_range = gfx::Range::InvalidRange();
   if (_bridge) {
     _bridge->text_input_host()->GetAttributedSubstringForRange(
-        gfx::Range(range), &substring, &actual_range);
+        gfx::Range::FromPossiblyInvalidNSRange(range), &substring,
+        &actual_range);
   }
   if (actualRange) {
     // To maintain consistency with NSTextView, return range {0,0} for an out of
@@ -1398,6 +1459,7 @@ NSArray* SupportedPasteboardTypes() {
     *actualRange =
         actual_range.IsValid() ? actual_range.ToNSRange() : NSMakeRange(0, 0);
   }
+
   return substring.empty()
              ? nil
              : [[[NSAttributedString alloc]
@@ -1521,9 +1583,21 @@ NSArray* SupportedPasteboardTypes() {
   return @[];
 }
 
+- (void)copyToFindPboard:(id)sender {
+  NSString* selection =
+      [[self attributedSubstringForProposedRange:[self selectedRange]
+                                     actualRange:nullptr] string];
+  if (selection.length > 0)
+    [[FindPasteboard sharedInstance] setFindText:selection];
+}
+
 // NSUserInterfaceValidations protocol implementation.
 
 - (BOOL)validateUserInterfaceItem:(id<NSValidatedUserInterfaceItem>)item {
+  // Special case this, since there's no cross-platform text command for it.
+  if (item.action == @selector(copyToFindPboard:))
+    return [self selectedRange].length > 0;
+
   ui::TextEditCommand command = GetTextEditCommandForMenuAction([item action]);
 
   if (command == ui::TextEditCommand::INVALID_COMMAND)

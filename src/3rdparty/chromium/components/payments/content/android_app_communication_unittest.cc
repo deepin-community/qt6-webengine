@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,8 +9,8 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/unguessable_token.h"
 #include "components/payments/content/android_app_communication_test_support.h"
@@ -323,7 +323,7 @@ TEST_F(AndroidAppCommunicationTest, TwaIsReadyToPayOnlyWithPlayBilling) {
   communication->SetForTesting();
 
   std::map<std::string, std::set<std::string>> stringified_method_data;
-  stringified_method_data["https://example.com"].insert("{}");
+  stringified_method_data["https://example.test"].insert("{}");
   communication->IsReadyToPay(
       "com.example.app", "com.example.app.Service", stringified_method_data,
       GURL("https://top-level-origin.com"),
@@ -494,7 +494,7 @@ TEST_F(AndroidAppCommunicationTest, TwaPaymentOnlyWithPlayBilling) {
   communication->SetForTesting();
 
   std::map<std::string, std::set<std::string>> stringified_method_data;
-  stringified_method_data["https://example.com"].insert("{}");
+  stringified_method_data["https://example.test"].insert("{}");
   communication->InvokePaymentApp(
       "com.example.app", "com.example.app.Activity", stringified_method_data,
       GURL("https://top-level-origin.com"),

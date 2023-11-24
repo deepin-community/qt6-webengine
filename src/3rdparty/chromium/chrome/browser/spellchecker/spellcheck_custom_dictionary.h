@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -28,7 +28,6 @@ class Location;
 }
 
 namespace syncer {
-class SyncErrorFactory;
 class SyncChangeProcessor;
 }
 
@@ -183,8 +182,7 @@ class SpellcheckCustomDictionary : public SpellcheckDictionary {
   absl::optional<syncer::ModelError> MergeDataAndStartSyncing(
       syncer::ModelType type,
       const syncer::SyncDataList& initial_sync_data,
-      std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
-      std::unique_ptr<syncer::SyncErrorFactory> sync_error_handler) override;
+      std::unique_ptr<syncer::SyncChangeProcessor> sync_processor) override;
   void StopSyncing(syncer::ModelType type) override;
   syncer::SyncDataList GetAllSyncDataForTesting(syncer::ModelType type) const;
   absl::optional<syncer::ModelError> ProcessSyncChanges(
@@ -252,9 +250,6 @@ class SpellcheckCustomDictionary : public SpellcheckDictionary {
 #ifndef TOOLKIT_QT
   // Used to send local changes to the sync infrastructure.
   std::unique_ptr<syncer::SyncChangeProcessor> sync_processor_;
-
-  // Used to send sync-related errors to the sync infrastructure.
-  std::unique_ptr<syncer::SyncErrorFactory> sync_error_handler_;
 #endif
 
   // True if the dictionary has been loaded. Otherwise false.

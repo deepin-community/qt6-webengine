@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "base/check.h"
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/scoped_refptr.h"
@@ -68,7 +69,7 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) AssociatedReceiverBase {
                 scoped_refptr<base::SequencedTaskRunner> runner,
                 uint32_t interface_version,
                 const char* interface_name,
-                MessageToStableIPCHashCallback ipc_hash_callback,
+                MessageToMethodInfoCallback method_info_callback,
                 MessageToMethodNameCallback method_name_callback);
 
   std::unique_ptr<InterfaceEndpointClient> endpoint_client_;
@@ -112,7 +113,7 @@ class AssociatedReceiver : public internal::AssociatedReceiverBase {
   // Constructs a bound AssociatedReceiver by consuming |pending_receiver|. The
   // AssociatedReceiver is permanently linked to |impl| and will schedule
   // incoming |impl| method and disconnection notifications on the default
-  // SequencedTaskRunner (i.e. base::SequencedTaskRunnerHandle::Get() at
+  // SequencedTaskRunner (i.e. base::SequencedTaskRunner::GetCurrentDefault() at
   // construction time).
   AssociatedReceiver(ImplPointerType impl,
                      PendingAssociatedReceiver<Interface> pending_receiver)
@@ -186,7 +187,8 @@ class AssociatedReceiver : public internal::AssociatedReceiverBase {
   // current SequencedTaskRunner.
   [[nodiscard]] PendingAssociatedRemote<Interface> BindNewEndpointAndPassRemote(
       scoped_refptr<base::SequencedTaskRunner> task_runner = nullptr) {
-    DCHECK(!is_bound()) << "AssociatedReceiver is already bound";
+    DCHECK(!is_bound()) << "AssociatedReceiver for " << Interface::Name_
+                        << " is already bound";
 
     PendingAssociatedRemote<Interface> remote;
     Bind(remote.InitWithNewEndpointAndPassReceiver(), std::move(task_runner));
@@ -200,14 +202,15 @@ class AssociatedReceiver : public internal::AssociatedReceiverBase {
   // current SequencedTaskRunner.
   void Bind(PendingAssociatedReceiver<Interface> pending_receiver,
             scoped_refptr<base::SequencedTaskRunner> task_runner = nullptr) {
-    DCHECK(!is_bound()) << "AssociatedReceiver is already bound";
+    DCHECK(!is_bound()) << "AssociatedReceiver for " << Interface::Name_
+                        << " is already bound";
 
     if (pending_receiver) {
       BindImpl(pending_receiver.PassHandle(), &stub_,
                base::WrapUnique(new typename Interface::RequestValidator_()),
                internal::SyncMethodTraits<Interface>::GetOrdinals(),
                std::move(task_runner), Interface::Version_, Interface::Name_,
-               Interface::MessageToStableIPCHash_,
+               Interface::MessageToMethodInfo_,
                Interface::MessageToMethodName_);
     } else {
       reset();
@@ -225,7 +228,8 @@ class AssociatedReceiver : public internal::AssociatedReceiverBase {
   // endpoints in tests.
   [[nodiscard]] PendingAssociatedRemote<Interface>
   BindNewEndpointAndPassDedicatedRemote() {
-    DCHECK(!is_bound()) << "AssociatedReceiver is already bound";
+    DCHECK(!is_bound()) << "AssociatedReceiver for " << Interface::Name_
+                        << " is already bound";
 
     PendingAssociatedRemote<Interface> remote = BindNewEndpointAndPassRemote();
     remote.EnableUnassociatedUsage();
@@ -293,7 +297,7 @@ class AssociatedReceiver : public internal::AssociatedReceiverBase {
   // message dispatch. If you need to do asynchronous work before determining
   // the legitimacy of a message, use GetBadMessageCallback() and retain its
   // result until ready to invoke or discard it.
-  void ReportBadMessage(const std::string& error) {
+  NOT_TAIL_CALLED void ReportBadMessage(const std::string& error) {
     GetBadMessageCallback().Run(error);
   }
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,15 +27,12 @@
 #include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension_test_util.h"
-#include "chrome/test/base/ui_test_utils.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
+#include "components/supervised_user/core/common/buildflags.h"
 #include "content/public/browser/gpu_data_manager.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
-#include "content/public/browser/render_frame_host.h"
 #include "content/public/test/browser_test.h"
-#include "content/public/test/browser_test_utils.h"
-#include "content/public/test/test_navigation_observer.h"
 #include "extensions/browser/allowlist_state.h"
 #include "extensions/browser/api/management/management_api.h"
 #include "extensions/browser/extension_dialog_auto_confirm.h"
@@ -47,15 +44,13 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "ui/gl/gl_switches.h"
 
-#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
-
-#if !BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS_ASH)
 // TODO(https://crbug.com/1218633): Fix the mixin and enable extensions tests on
 // LaCrOS.
+#include "ash/constants/ash_switches.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/metrics/user_action_tester.h"
 #include "chrome/browser/ash/login/test/logged_in_user_mixin.h"
-#include "chrome/browser/supervised_user/supervised_user_constants.h"
 #include "chrome/browser/supervised_user/supervised_user_service.h"
 #include "chrome/browser/supervised_user/supervised_user_service_factory.h"
 #include "chrome/browser/supervised_user/supervised_user_test_util.h"  // nogncheck
@@ -63,14 +58,9 @@
 #include "chrome/browser/ui/views/supervised_user/parent_permission_dialog_view.h"
 #include "components/account_id/account_id.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
+#include "components/supervised_user/core/common/supervised_user_constants.h"
 #include "extensions/common/extension_builder.h"
-#endif  // !BUILDFLAG(IS_CHROMEOS_LACROS)
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ash/constants/ash_switches.h"
-#endif
-
-#endif  // BUILDFLAG(ENABLE_SUPERVISED_USERS)
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 namespace utils = extension_function_test_utils;
 
@@ -201,10 +191,6 @@ class ExtensionWebstorePrivateApiTest : public MixinBasedExtensionApiTest {
     return OpenTestURL(page_url);
   }
 
-  content::WebContents* GetWebContents() {
-    return browser()->tab_strip_model()->GetActiveWebContents();
-  }
-
   ExtensionService* service() {
     return ExtensionSystem::Get(browser()->profile())->extension_service();
   }
@@ -217,55 +203,6 @@ class ExtensionWebstorePrivateApiTest : public MixinBasedExtensionApiTest {
 
   std::unique_ptr<ScopedTestDialogAutoConfirm> auto_confirm_install_;
 };
-
-// Test cases for webstore origin frame blocking.
-IN_PROC_BROWSER_TEST_F(ExtensionWebstorePrivateApiTest,
-                       FrameWebstorePageBlocked) {
-  GURL url = embedded_test_server()->GetURL(
-      "/extensions/api_test/webstore_private/noframe.html");
-  content::WebContents* web_contents = GetWebContents();
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
-
-  // Try to load the same URL, but with the current Chrome web store origin in
-  // an iframe (i.e. http://www.example.com)
-  content::TestNavigationObserver observer(web_contents);
-  ASSERT_TRUE(content::ExecuteScript(web_contents, "dropFrame()"));
-  EXPECT_TRUE(WaitForLoadStop(web_contents));
-  content::RenderFrameHost* subframe =
-      content::ChildFrameAt(web_contents->GetMainFrame(), 0);
-  ASSERT_TRUE(subframe);
-
-  // The subframe load should fail due to XFO.
-  GURL iframe_url = embedded_test_server()->GetURL(
-      "www.example.com", "/extensions/api_test/webstore_private/noframe.html");
-  EXPECT_EQ(iframe_url, subframe->GetLastCommittedURL());
-  EXPECT_FALSE(observer.last_navigation_succeeded());
-  EXPECT_EQ(net::ERR_BLOCKED_BY_RESPONSE, observer.last_net_error_code());
-}
-
-IN_PROC_BROWSER_TEST_F(ExtensionWebstorePrivateApiTest, FrameErrorPageBlocked) {
-  GURL url = embedded_test_server()->GetURL(
-      "/extensions/api_test/webstore_private/noframe2.html");
-  content::WebContents* web_contents = GetWebContents();
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
-
-  // Try to load the same URL, but with the current Chrome web store origin in
-  // an iframe (i.e. http://www.example.com)
-  content::TestNavigationObserver observer(web_contents);
-  ASSERT_TRUE(content::ExecuteScript(web_contents, "dropFrame()"));
-  EXPECT_TRUE(WaitForLoadStop(web_contents));
-  content::RenderFrameHost* subframe =
-      content::ChildFrameAt(web_contents->GetMainFrame(), 0);
-  ASSERT_TRUE(subframe);
-
-  // The subframe load should fail due to XFO.
-  GURL iframe_url = embedded_test_server()->GetURL(
-      "www.example.com",
-      "/nonesuch/extensions/api_test/webstore_private/noframe2.html ");
-  EXPECT_EQ(iframe_url, subframe->GetLastCommittedURL());
-  EXPECT_FALSE(observer.last_navigation_succeeded());
-  EXPECT_EQ(net::ERR_BLOCKED_BY_RESPONSE, observer.last_net_error_code());
-}
 
 // Test cases where the user accepts the install confirmation dialog.
 IN_PROC_BROWSER_TEST_F(ExtensionWebstorePrivateApiTest, InstallAccepted) {
@@ -372,7 +309,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebstorePrivateApiTest, EmptyCrx) {
   ASSERT_TRUE(RunInstallTest("empty.html", "empty.crx"));
 }
 
-#if BUILDFLAG(ENABLE_SUPERVISED_USERS) && !BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS_ASH)
 static constexpr char kTestChildEmail[] = "test_child_user@google.com";
 static constexpr char kTestChildGaiaId[] = "8u8tuw09sufncmnaos";
 
@@ -572,13 +509,13 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebstorePrivateApiTestChild,
           SupervisedUserExtensionsMetricsRecorder::kFailedToEnableActionName));
 }
 
-#endif  // BUILDFLAG(ENABLE_SUPERVISED_USERS) && !BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 class ExtensionWebstoreGetWebGLStatusTest : public InProcessBrowserTest {
  protected:
   void RunTest(bool webgl_allowed) {
     // If Gpu access is disallowed then WebGL will not be available.
-    if (!content::GpuDataManager::GetInstance()->GpuAccessAllowed(NULL))
+    if (!content::GpuDataManager::GetInstance()->GpuAccessAllowed(nullptr))
       webgl_allowed = false;
 
     static const char kEmptyArgs[] = "[]";
@@ -598,7 +535,13 @@ class ExtensionWebstoreGetWebGLStatusTest : public InProcessBrowserTest {
 };
 
 // Tests getWebGLStatus function when WebGL is allowed.
-IN_PROC_BROWSER_TEST_F(ExtensionWebstoreGetWebGLStatusTest, Allowed) {
+// Flaky on Mac. https://crbug.com/1346413.
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_Allowed DISABLED_Allowed
+#else
+#define MAYBE_Allowed Allowed
+#endif
+IN_PROC_BROWSER_TEST_F(ExtensionWebstoreGetWebGLStatusTest, MAYBE_Allowed) {
   bool webgl_allowed = true;
   RunTest(webgl_allowed);
 }

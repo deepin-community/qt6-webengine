@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -81,10 +81,24 @@ bool VulkanImage::InitializeFromGpuMemoryBufferHandle(
       .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO_KHR,
       .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
   };
-  VkImageDrmFormatModifierListCreateInfoEXT modifier_info = {
-      .sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT,
-      .drmFormatModifierCount = 1,
-      .pDrmFormatModifiers = &native_pixmap_handle.modifier,
+
+  std::vector<VkSubresourceLayout> planeLayouts(
+      native_pixmap_handle.planes.size());
+  for (size_t i = 0; i < native_pixmap_handle.planes.size(); ++i) {
+    planeLayouts[i].offset = native_pixmap_handle.planes[i].offset;
+    planeLayouts[i].size = native_pixmap_handle.planes[i].size;
+    planeLayouts[i].rowPitch = native_pixmap_handle.planes[i].stride;
+    planeLayouts[i].arrayPitch = 0;
+    planeLayouts[i].depthPitch = 0;
+  }
+
+  VkImageDrmFormatModifierExplicitCreateInfoEXT modifier_info = {
+      .sType =
+          VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_EXPLICIT_CREATE_INFO_EXT,
+      .drmFormatModifier = native_pixmap_handle.modifier,
+      .drmFormatModifierPlaneCount =
+          static_cast<uint32_t>(native_pixmap_handle.planes.size()),
+      .pPlaneLayouts = planeLayouts.data(),
   };
 
   if (using_modifier) {
@@ -100,9 +114,10 @@ bool VulkanImage::InitializeFromGpuMemoryBufferHandle(
   };
 
   VkMemoryRequirements* requirements = nullptr;
-  bool result = Initialize(device_queue, size, format, usage, flags,
-                           image_tiling, &external_image_create_info,
-                           &import_memory_fd_info, requirements);
+  // TODO support multiple plane
+  bool result = InitializeSingleOrJointPlanes(
+      device_queue, size, format, usage, flags, image_tiling,
+      &external_image_create_info, &import_memory_fd_info, requirements);
   // If Initialize successfully, the fd in scoped_fd should be owned by vulkan,
   // otherwise take the ownership of the fd back.
   if (!result) {
@@ -187,7 +202,7 @@ bool VulkanImage::InitializeWithExternalMemoryAndModifiers(
   if (!InitializeWithExternalMemory(device_queue, size, format, usage, flags,
                                     VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT,
                                     &modifier_list,
-                                    /*memory_allocation_info_next=*/nullptr)) {
+                                    /*extra_memory_allocation_info=*/nullptr)) {
     return false;
   }
 

@@ -1,4 +1,4 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -31,6 +31,36 @@ jumbo_source_set("policy_namespace_internal") {
   ]
 }
 
+jumbo_source_set("util") {
+  sources = [
+    "cloud/cloud_policy_util.cc",
+    "cloud/cloud_policy_util.h",
+  ]
+
+  configs += [ "//components/policy:component_implementation" ]
+
+  public_deps = [
+    ":common_constants",
+    "//components/policy/proto",
+    "//components/version_info",
+  ]
+
+  deps = [
+    "//base",
+    "//build:chromeos_buildflags",
+  ]
+
+  if (is_chromeos) {
+    deps += [ "//components/user_manager" ]
+  }
+  if (is_chromeos_lacros) {
+    deps += [ "//chromeos/startup:startup" ]
+  }
+  if (is_chromeos_ash) {
+    deps += [ "//chromeos/ash/components/system" ]
+  }
+}
+
 jumbo_source_set("internal") {
   visibility = [ "//components/policy/*" ]
 
@@ -61,12 +91,11 @@ jumbo_source_set("internal") {
     "cloud/cloud_policy_manager.h",
     "cloud/cloud_policy_refresh_scheduler.cc",
     "cloud/cloud_policy_refresh_scheduler.h",
+    "cloud/cloud_policy_refresh_scheduler_observer.h",
     "cloud/cloud_policy_service.cc",
     "cloud/cloud_policy_service.h",
     "cloud/cloud_policy_store.cc",
     "cloud/cloud_policy_store.h",
-    "cloud/cloud_policy_util.cc",
-    "cloud/cloud_policy_util.h",
     "cloud/cloud_policy_validator.cc",
     "cloud/cloud_policy_validator.h",
     "cloud/component_cloud_policy_service.cc",
@@ -126,8 +155,6 @@ jumbo_source_set("internal") {
     "features.h",
     "json_schema_constants.cc",
     "json_schema_constants.h",
-    "legacy_chrome_policy_migrator.cc",
-    "legacy_chrome_policy_migrator.h",
     "management/management_service.cc",
     "management/management_service.h",
     "management/platform_management_service.cc",
@@ -139,6 +166,8 @@ jumbo_source_set("internal") {
     "policy_load_status.h",
     "policy_loader_command_line.cc",
     "policy_loader_command_line.h",
+    "policy_logger.cc",
+    "policy_logger.h",
     "policy_map.cc",
     "policy_map.h",
     "policy_merger.cc",
@@ -181,6 +210,7 @@ jumbo_source_set("internal") {
   public_deps = [
     ":common_constants",
     ":policy_namespace",
+    ":util",
     "//components/policy:generated",
     "//components/policy/proto",
     "//components/reporting/proto:record_constants",
@@ -300,11 +330,15 @@ jumbo_source_set("internal") {
     ]
     deps += [ "//components/policy/android:jni_headers" ]
   }
-  if (is_chromeos_ash) {
-    deps += [ "//chromeos/system" ]
+  if (is_chromeos) {
     sources += [
       "default_chrome_apps_migrator.cc",
       "default_chrome_apps_migrator.h",
+    ]
+  }
+  if (is_chromeos_ash) {
+    deps += [ "//chromeos/ash/components/system" ]
+    sources += [
       "policy_scheduler.cc",
       "policy_scheduler.h",
     ]
@@ -333,8 +367,8 @@ jumbo_source_set("internal") {
       sources += [
         "policy_loader_mac.h",
         "policy_loader_mac.mm",
-        "preferences_mac.cc",
         "preferences_mac.h",
+        "preferences_mac.mm",
       ]
       frameworks += [ "SystemConfiguration.framework" ]
     }
@@ -383,6 +417,8 @@ jumbo_static_library("test_support") {
     "policy_test_utils.h",
     "remote_commands/test_support/echo_remote_command_job.cc",
     "remote_commands/test_support/echo_remote_command_job.h",
+    "remote_commands/test_support/remote_command_builders.cc",
+    "remote_commands/test_support/remote_command_builders.h",
     "remote_commands/test_support/testing_remote_commands_server.cc",
     "remote_commands/test_support/testing_remote_commands_server.h",
   ]
@@ -466,7 +502,6 @@ source_set("unit_tests") {
     "cloud/user_info_fetcher_unittest.cc",
     "command_line_policy_provider_unittest.cc",
     "generate_policy_source_unittest.cc",
-    "legacy_chrome_policy_migrator_unittest.cc",
     "management/management_service_unittest.cc",
     "policy_bundle_unittest.cc",
     "policy_loader_command_line_unittest.cc",
@@ -474,6 +509,7 @@ source_set("unit_tests") {
     "policy_proto_decoders_unittest.cc",
     "policy_service_impl_unittest.cc",
     "policy_statistics_collector_unittest.cc",
+    "proxy_policy_provider_unittest.cc",
     "remote_commands/remote_commands_queue_unittest.cc",
     "remote_commands/remote_commands_service_unittest.cc",
     "schema_map_unittest.cc",
@@ -501,7 +537,6 @@ source_set("unit_tests") {
     sources += [
       "default_chrome_apps_migrator_unittest.cc",
       "policy_scheduler_unittest.cc",
-      "proxy_policy_provider_unittest.cc",
     ]
   } else {
     sources += [
@@ -528,6 +563,7 @@ source_set("unit_tests") {
       "android/policy_converter_unittest.cc",
       "android/policy_map_android_unittest.cc",
       "android/policy_service_android_unittest.cc",
+      "policy_logger_unittest.cc",
     ]
   } else {
     sources += [ "async_policy_provider_unittest.cc" ]
@@ -589,7 +625,7 @@ source_set("unit_tests") {
     "//ui/base",
   ]
   if (is_chromeos_ash) {
-    deps += [ "//chromeos/system" ]
+    deps += [ "//chromeos/ash/components/system" ]
   }
   if (is_android) {
     deps += [ "//components/policy/android:test_jni_headers" ]

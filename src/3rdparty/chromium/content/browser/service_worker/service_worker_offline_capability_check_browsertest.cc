@@ -1,10 +1,10 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/barrier_closure.h"
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/guid.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/task/task_traits.h"
@@ -182,7 +182,8 @@ class ServiceWorkerOfflineCapabilityCheckBrowserTest
     DCHECK(!version_);
     base::RunLoop run_loop;
     GURL url = embedded_test_server()->GetURL("/service_worker/");
-    blink::StorageKey key = blink::StorageKey(url::Origin::Create(url));
+    const blink::StorageKey key =
+        blink::StorageKey::CreateFirstParty(url::Origin::Create(url));
     wrapper()->context()->registry()->FindRegistrationForScope(
         embedded_test_server()->GetURL("/service_worker/"), key,
         base::BindOnce(&ServiceWorkerOfflineCapabilityCheckBrowserTest::
@@ -224,7 +225,7 @@ class ServiceWorkerOfflineCapabilityCheckBrowserTest
     absl::optional<OfflineCapability> out_offline_capability;
     GURL url = embedded_test_server()->GetURL(path);
     wrapper()->CheckOfflineCapability(
-        url, blink::StorageKey(url::Origin::Create(url)),
+        url, blink::StorageKey::CreateFirstParty(url::Origin::Create(url)),
         base::BindLambdaForTesting(
             [&out_offline_capability, &fetch_run_loop](
                 OfflineCapability offline_capability, int64_t registration_id) {
@@ -613,8 +614,9 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerOfflineCapabilityCheckBrowserTest,
 // Sites with a service worker are identified as supporting offline capability
 // only when it returns a valid response in the offline mode.
 
+// TODO(crbug.com/1365409): Flaky on all platforms.
 IN_PROC_BROWSER_TEST_F(ServiceWorkerOfflineCapabilityCheckBrowserTest,
-                       CheckOfflineCapability) {
+                       DISABLED_CheckOfflineCapability) {
   EXPECT_TRUE(NavigateToURL(shell(),
                             embedded_test_server()->GetURL(
                                 "/service_worker/create_service_worker.html")));

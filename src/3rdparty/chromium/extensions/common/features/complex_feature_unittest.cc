@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -130,6 +130,50 @@ TEST(ComplexFeatureTest, Dependencies) {
                                         Feature::GetCurrentPlatform(),
                                         kUnspecifiedContextId)
                 .result());
+}
+
+TEST(ComplexFeatureTest, RequiresDelegatedAvailabilityCheck) {
+  std::vector<Feature*> features;
+
+  // Test a complex feature where requires_delegated_availability_check hasn't
+  // been set on any of its simple features.
+  {
+    {
+      // Rule which doesn't set requires_delegated_availability_check.
+      auto simple_feature = std::make_unique<SimpleFeature>();
+      features.push_back(simple_feature.release());
+    }
+    {
+      // Rule which doesn't set requires_delegated_availability_check.
+      auto simple_feature = std::make_unique<SimpleFeature>();
+      features.push_back(simple_feature.release());
+    }
+
+    ComplexFeature complex_feature(&features);
+    EXPECT_FALSE(complex_feature.RequiresDelegatedAvailabilityCheck());
+  }
+
+  // Test a complex feature where requires_delegated_availability_check is set.
+  {
+    {
+      // Rule which doesn't set requires_delegated_availability_check.
+      auto simple_feature = std::make_unique<SimpleFeature>();
+      features.push_back(simple_feature.release());
+    }
+    {
+      // Rule which doesn't set requires_delegated_availability_check.
+      auto simple_feature = std::make_unique<SimpleFeature>();
+      features.push_back(simple_feature.release());
+    }
+    {
+      // Rule which sets requires_delegated_availability_check to true.
+      auto simple_feature = std::make_unique<SimpleFeature>();
+      simple_feature->set_requires_delegated_availability_check(true);
+      features.push_back(simple_feature.release());
+    }
+    ComplexFeature complex_feature(&features);
+    EXPECT_TRUE(complex_feature.RequiresDelegatedAvailabilityCheck());
+  }
 }
 
 }  // namespace extensions

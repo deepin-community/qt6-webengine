@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -99,6 +99,8 @@ openscreen::cast::VideoCodec ToVideoCaptureConfigCodec(
       return openscreen::cast::VideoCodec::kHevc;
     case media::VideoCodec::kVP9:
       return openscreen::cast::VideoCodec::kVp9;
+    case media::VideoCodec::kAV1:
+      return openscreen::cast::VideoCodec::kAv1;
     default:
       break;
   }

@@ -33,19 +33,19 @@
 #include <memory>
 
 #include "base/allocator/partition_allocator/memory_reclaimer.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "build/build_config.h"
 #include "components/viz/common/gpu/raster_context_provider.h"
 #include "gpu/ipc/client/gpu_channel_host.h"
+#include "media/base/media_log.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
 #include "third_party/blink/public/platform/web_dedicated_worker_host_factory_client.h"
 #include "third_party/blink/public/platform/web_graphics_context_3d_provider.h"
-#include "third_party/blink/public/platform/web_url_loader_factory.h"
 #include "third_party/blink/public/platform/websocket_handshake_throttle.h"
 #include "third_party/blink/renderer/platform/bindings/parkable_string_manager.h"
 #include "third_party/blink/renderer/platform/font_family_names.h"
@@ -60,9 +60,11 @@
 #include "third_party/blink/renderer/platform/instrumentation/partition_alloc_memory_dump_provider.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/memory_cache_dump_provider.h"
 #include "third_party/blink/renderer/platform/language.h"
-#include "third_party/blink/renderer/platform/scheduler/common/simple_thread_scheduler.h"
+#include "third_party/blink/renderer/platform/loader/fetch/url_loader/url_loader_factory.h"
+#include "third_party/blink/renderer/platform/scheduler/common/simple_main_thread_scheduler.h"
+#include "third_party/blink/renderer/platform/scheduler/public/main_thread.h"
+#include "third_party/blink/renderer/platform/scheduler/public/non_main_thread.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
-#include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/theme/web_theme_engine_helper.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
@@ -138,33 +140,35 @@ Platform::~Platform() = default;
 
 namespace {
 
-class SimpleMainThread : public Thread {
+class SimpleMainThread : public MainThread {
  public:
   SimpleMainThread() = default;
 
-  // We rely on base::ThreadTaskRunnerHandle for tasks posted on the main
-  // thread. The task runner handle may not be available on Blink's startup
-  // (== on SimpleMainThread's construction), because some tests like
-  // blink_platform_unittests do not set up a global task environment.
-  // In those cases, a task environment is set up on a test fixture's
-  // creation, and GetTaskRunner() returns the right task runner during
-  // a test.
+  // We rely on base::SingleThreadTaskRunner::CurrentDefaultHandle for tasks
+  // posted on the main thread. The task runner handle may not be available on
+  // Blink's startup (== on SimpleMainThread's construction), because some tests
+  // like blink_platform_unittests do not set up a global task environment.  In
+  // those cases, a task environment is set up on a test fixture's creation, and
+  // GetTaskRunner() returns the right task runner during a test.
   //
-  // If GetTaskRunner() can be called from a non-main thread (including
-  // a worker thread running Mojo callbacks), we need to somehow get a task
-  // runner for the main thread. This is not possible with
-  // ThreadTaskRunnerHandle. We currently deal with this issue by setting
-  // the main thread task runner on the test startup and clearing it on
-  // the test tear-down. This is what SetMainThreadTaskRunnerForTesting() for.
-  // This function is called from Platform::SetMainThreadTaskRunnerForTesting()
-  // and Platform::UnsetMainThreadTaskRunnerForTesting().
+  // If GetTaskRunner() can be called from a non-main thread (including a worker
+  // thread running Mojo callbacks), we need to somehow get a task runner for
+  // the main thread. This is not possible with
+  // SingleThreadTaskRunner::CurrentDefaultHandle. We currently deal with this
+  // issue by setting the main thread task runner on the test startup and
+  // clearing it on the test tear-down. This is what
+  // SetMainThreadTaskRunnerForTesting() for.  This function is called from
+  // Platform::SetMainThreadTaskRunnerForTesting() and
+  // Platform::UnsetMainThreadTaskRunnerForTesting().
 
   ThreadScheduler* Scheduler() override { return &scheduler_; }
-  scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner() const override {
+
+  scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner(
+      MainThreadTaskRunnerRestricted) const override {
     if (main_thread_task_runner_for_testing_)
       return main_thread_task_runner_for_testing_;
     DCHECK(WTF::IsMainThread());
-    return base::ThreadTaskRunnerHandle::Get();
+    return base::SingleThreadTaskRunner::GetCurrentDefault();
   }
 
   void SetMainThreadTaskRunnerForTesting(
@@ -175,7 +179,7 @@ class SimpleMainThread : public Thread {
  private:
   bool IsSimpleMainThread() const override { return true; }
 
-  scheduler::SimpleThreadScheduler scheduler_;
+  scheduler::SimpleMainThreadScheduler scheduler_;
   scoped_refptr<base::SingleThreadTaskRunner>
       main_thread_task_runner_for_testing_;
 };
@@ -211,16 +215,17 @@ void Platform::CreateMainThreadAndInitialize(Platform* platform) {
   InitializeMainThreadCommon(platform, std::make_unique<SimpleMainThread>());
 }
 
-void Platform::InitializeMainThreadCommon(Platform* platform,
-                                          std::unique_ptr<Thread> main_thread) {
+void Platform::InitializeMainThreadCommon(
+    Platform* platform,
+    std::unique_ptr<MainThread> main_thread) {
   DCHECK(did_initialize_blink_);
-  Thread::SetMainThread(std::move(main_thread));
+  MainThread::SetMainThread(std::move(main_thread));
 
   ProcessHeap::Init();
 
   ThreadState* thread_state = ThreadState::AttachMainThread();
   new BlinkGCMemoryDumpProvider(
-      thread_state, base::ThreadTaskRunnerHandle::Get(),
+      thread_state, base::SingleThreadTaskRunner::GetCurrentDefault(),
       BlinkGCMemoryDumpProvider::HeapType::kBlinkMainThread);
 
   MemoryPressureListenerRegistry::Initialize();
@@ -235,25 +240,25 @@ void Platform::InitializeMainThreadCommon(Platform* platform,
   g_gc_task_runner = new GCTaskRunner(Thread::MainThread());
   base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
       PartitionAllocMemoryDumpProvider::Instance(), "PartitionAlloc",
-      base::ThreadTaskRunnerHandle::Get());
+      base::SingleThreadTaskRunner::GetCurrentDefault());
   base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
       FontCacheMemoryDumpProvider::Instance(), "FontCaches",
-      base::ThreadTaskRunnerHandle::Get());
+      base::SingleThreadTaskRunner::GetCurrentDefault());
   base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
       MemoryCacheDumpProvider::Instance(), "MemoryCache",
-      base::ThreadTaskRunnerHandle::Get());
+      base::SingleThreadTaskRunner::GetCurrentDefault());
   base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
       InstanceCountersMemoryDumpProvider::Instance(), "BlinkObjectCounters",
-      base::ThreadTaskRunnerHandle::Get());
+      base::SingleThreadTaskRunner::GetCurrentDefault());
   base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
       ParkableStringManagerDumpProvider::Instance(), "ParkableStrings",
-      base::ThreadTaskRunnerHandle::Get());
+      base::SingleThreadTaskRunner::GetCurrentDefault());
   base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
       &ParkableImageManager::Instance(), "ParkableImages",
-      base::ThreadTaskRunnerHandle::Get());
+      base::SingleThreadTaskRunner::GetCurrentDefault());
   base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
       CanvasMemoryDumpProvider::Instance(), "Canvas",
-      base::ThreadTaskRunnerHandle::Get());
+      base::SingleThreadTaskRunner::GetCurrentDefault());
 
   // Use a delayed idle task as this is low priority work that should stop when
   // the main thread is not doing any work.
@@ -268,14 +273,15 @@ void Platform::SetCurrentPlatformForTesting(Platform* platform) {
 
 void Platform::CreateMainThreadForTesting() {
   DCHECK(!Thread::MainThread());
-  Thread::SetMainThread(std::make_unique<SimpleMainThread>());
+  MainThread::SetMainThread(std::make_unique<SimpleMainThread>());
 }
 
 void Platform::SetMainThreadTaskRunnerForTesting() {
   DCHECK(WTF::IsMainThread());
   DCHECK(Thread::MainThread()->IsSimpleMainThread());
   static_cast<SimpleMainThread*>(Thread::MainThread())
-      ->SetMainThreadTaskRunnerForTesting(base::ThreadTaskRunnerHandle::Get());
+      ->SetMainThreadTaskRunnerForTesting(
+          base::SingleThreadTaskRunner::GetCurrentDefault());
 }
 
 void Platform::UnsetMainThreadTaskRunnerForTesting() {
@@ -287,17 +293,6 @@ void Platform::UnsetMainThreadTaskRunnerForTesting() {
 
 Platform* Platform::Current() {
   return g_platform;
-}
-
-std::unique_ptr<WebURLLoaderFactory> Platform::WrapURLLoaderFactory(
-    CrossVariantMojoRemote<network::mojom::URLLoaderFactoryInterfaceBase>) {
-  return nullptr;
-}
-
-std::unique_ptr<blink::WebURLLoaderFactory>
-Platform::WrapSharedURLLoaderFactory(
-    scoped_refptr<network::SharedURLLoaderFactory> factory) {
-  return nullptr;
 }
 
 std::unique_ptr<WebDedicatedWorkerHostFactoryClient>
@@ -313,20 +308,11 @@ void Platform::CreateServiceWorkerSubresourceLoaderFactory(
     const WebString& client_id,
     std::unique_ptr<network::PendingSharedURLLoaderFactory> fallback_factory,
     mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver,
-    scoped_refptr<base::SequencedTaskRunner> task_runner,
-    scoped_refptr<base::SequencedTaskRunner> worker_timing_callback_task_runner,
-    base::RepeatingCallback<
-        void(int, mojo::PendingReceiver<blink::mojom::WorkerTimingContainer>)>
-        worker_timing_callback) {}
+    scoped_refptr<base::SequencedTaskRunner> task_runner) {}
 
 ThreadSafeBrowserInterfaceBrokerProxy* Platform::GetBrowserInterfaceBroker() {
   DEFINE_STATIC_LOCAL(DefaultBrowserInterfaceBrokerProxy, proxy, ());
   return &proxy;
-}
-
-std::unique_ptr<Thread> Platform::CreateThread(
-    const ThreadCreationParams& params) {
-  return Thread::CreateThread(params);
 }
 
 void Platform::CreateAndSetCompositorThread() {
@@ -335,7 +321,7 @@ void Platform::CreateAndSetCompositorThread() {
 
 scoped_refptr<base::SingleThreadTaskRunner>
 Platform::CompositorThreadTaskRunner() {
-  if (Thread* compositor_thread = Thread::CompositorThread())
+  if (NonMainThread* compositor_thread = Thread::CompositorThread())
     return compositor_thread->GetTaskRunner();
   return nullptr;
 }
@@ -364,8 +350,9 @@ Platform::SharedMainThreadContextProvider() {
   return nullptr;
 }
 
-scoped_refptr<viz::RasterContextProvider>
-Platform::SharedCompositorWorkerContextProvider() {
+scoped_refptr<cc::RasterContextProviderWrapper>
+Platform::SharedCompositorWorkerContextProvider(
+    cc::RasterDarkModeFilter* dark_mode_filter) {
   return nullptr;
 }
 
@@ -379,6 +366,13 @@ void Platform::EstablishGpuChannel(EstablishGpuChannelCallback callback) {
 
 gfx::ColorSpace Platform::GetRenderingColorSpace() const {
   return {};
+}
+
+std::unique_ptr<media::MediaLog> Platform::GetMediaLog(
+    MediaInspectorContext* inspector_context,
+    scoped_refptr<base::SingleThreadTaskRunner> owner_task_runner,
+    bool is_on_worker) {
+  return nullptr;
 }
 
 }  // namespace blink

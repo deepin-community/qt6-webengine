@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 #define SERVICES_NETWORK_URL_LOADER_CONTEXT_H_
 
 #include "base/component_export.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "services/network/public/cpp/corb/corb_api.h"
 
 namespace net {
@@ -26,8 +26,8 @@ class CookieAccessObserver;
 class CrossOriginEmbedderPolicyReporter;
 class DevToolsObserver;
 class NetworkContextClient;
-class OriginPolicyManager;
 class TrustedURLLoaderHeaderClient;
+class TrustTokenAccessObserver;
 class URLLoaderFactoryParams;
 class URLLoaderNetworkServiceObserver;
 }  // namespace mojom
@@ -40,10 +40,11 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoaderContext {
   virtual const cors::OriginAccessList& GetOriginAccessList() const = 0;
   virtual const mojom::URLLoaderFactoryParams& GetFactoryParams() const = 0;
   virtual mojom::CookieAccessObserver* GetCookieAccessObserver() const = 0;
+  virtual mojom::TrustTokenAccessObserver* GetTrustTokenAccessObserver()
+      const = 0;
   virtual mojom::CrossOriginEmbedderPolicyReporter* GetCoepReporter() const = 0;
   virtual mojom::DevToolsObserver* GetDevToolsObserver() const = 0;
   virtual mojom::NetworkContextClient* GetNetworkContextClient() const = 0;
-  virtual mojom::OriginPolicyManager* GetOriginPolicyManager() const = 0;
   virtual mojom::TrustedURLLoaderHeaderClient* GetUrlLoaderHeaderClient()
       const = 0;
   virtual mojom::URLLoaderNetworkServiceObserver*

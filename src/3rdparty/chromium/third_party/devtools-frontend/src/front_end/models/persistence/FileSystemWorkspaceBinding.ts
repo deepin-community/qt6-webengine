@@ -33,10 +33,10 @@ import * as Platform from '../../core/platform/platform.js';
 import * as TextUtils from '../text_utils/text_utils.js';
 import * as Workspace from '../workspace/workspace.js';
 
-import type {IsolatedFileSystem} from './IsolatedFileSystem.js';
-import type {IsolatedFileSystemManager} from './IsolatedFileSystemManager.js';
-import {Events} from './IsolatedFileSystemManager.js';
-import type {PlatformFileSystem} from './PlatformFileSystem.js';
+import {type IsolatedFileSystem} from './IsolatedFileSystem.js';
+
+import {Events, type IsolatedFileSystemManager} from './IsolatedFileSystemManager.js';
+import {type PlatformFileSystem} from './PlatformFileSystem.js';
 
 export class FileSystemWorkspaceBinding {
   readonly isolatedFileSystemManager: IsolatedFileSystemManager;
@@ -351,9 +351,7 @@ export class FileSystem extends Workspace.Workspace.ProjectStore {
     }
     this.fileSystemInternal.addExcludedFolder(relativeFolder);
 
-    const uiSourceCodes = this.uiSourceCodes().slice();
-    for (let i = 0; i < uiSourceCodes.length; ++i) {
-      const uiSourceCode = uiSourceCodes[i];
+    for (const uiSourceCode of this.uiSourceCodes()) {
       if (uiSourceCode.url().startsWith(url)) {
         this.removeUISourceCode(uiSourceCode.url());
       }

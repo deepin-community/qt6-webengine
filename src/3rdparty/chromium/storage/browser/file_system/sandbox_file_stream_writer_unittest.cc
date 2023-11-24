@@ -1,9 +1,9 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "storage/browser/file_system/sandbox_file_stream_writer.h"
-#include "base/test/bind.h"
+#include "base/test/test_future.h"
 #include "storage/browser/file_system/file_stream_writer_test.h"
 
 #include <stdint.h>
@@ -11,10 +11,11 @@
 #include <memory>
 #include <string>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "components/services/storage/public/cpp/buckets/bucket_info.h"
 #include "components/services/storage/public/cpp/buckets/constants.h"
@@ -51,19 +52,22 @@ class SandboxFileStreamWriterTest : public FileStreamWriterTest {
     ASSERT_TRUE(dir_.CreateUniqueTempDir());
 
     quota_manager_ = base::MakeRefCounted<storage::MockQuotaManager>(
-        is_incognito(), dir_.GetPath(), base::ThreadTaskRunnerHandle::Get(),
+        is_incognito(), dir_.GetPath(),
+        base::SingleThreadTaskRunner::GetCurrentDefault(),
         special_storage_policy_);
     quota_manager_proxy_ = base::MakeRefCounted<storage::MockQuotaManagerProxy>(
-        quota_manager_.get(), base::ThreadTaskRunnerHandle::Get());
+        quota_manager_.get(),
+        base::SingleThreadTaskRunner::GetCurrentDefault());
 
     file_system_context_ =
         CreateFileSystemContext(quota_manager_proxy_.get(), dir_);
 
     file_system_context_->OpenFileSystem(
         blink::StorageKey::CreateFromStringForTesting(kURLOrigin),
-        kFileSystemTypeTemporary, OPEN_FILE_SYSTEM_CREATE_IF_NONEXISTENT,
-        base::BindOnce([](const GURL& root_url, const std::string& name,
-                          base::File::Error result) {
+        /*bucket=*/absl::nullopt, kFileSystemTypeTemporary,
+        OPEN_FILE_SYSTEM_CREATE_IF_NONEXISTENT,
+        base::BindOnce([](const FileSystemURL& root_url,
+                          const std::string& name, base::File::Error result) {
           ASSERT_EQ(base::File::FILE_OK, result);
         }));
 
@@ -72,6 +76,7 @@ class SandboxFileStreamWriterTest : public FileStreamWriterTest {
   }
 
   void TearDown() override {
+    file_system_context_ = nullptr;
     quota_manager_proxy_ = nullptr;
     quota_manager_ = nullptr;
     base::RunLoop().RunUntilIdle();
@@ -80,9 +85,9 @@ class SandboxFileStreamWriterTest : public FileStreamWriterTest {
  protected:
   scoped_refptr<MockSpecialStoragePolicy> special_storage_policy_;
 
-  scoped_refptr<FileSystemContext> file_system_context_;
   scoped_refptr<MockQuotaManager> quota_manager_;
   scoped_refptr<MockQuotaManagerProxy> quota_manager_proxy_;
+  scoped_refptr<FileSystemContext> file_system_context_;
 
   struct quota_usage_and_info {
     blink::mojom::QuotaStatusCode status;
@@ -156,16 +161,16 @@ class SandboxFileStreamWriterTest : public FileStreamWriterTest {
   }
 
   quota_usage_and_info GetUsageAndQuotaSync() {
-    quota_usage_and_info info;
+    base::test::TestFuture<blink::mojom::QuotaStatusCode, int64_t, int64_t>
+        future;
     quota_manager_->GetUsageAndQuota(
         blink::StorageKey::CreateFromStringForTesting(kURLOrigin),
-        blink::mojom::StorageType::kTemporary,
-        base::BindLambdaForTesting([&](blink::mojom::QuotaStatusCode status,
-                                       int64_t usage, int64_t quota) {
-          info.status = status;
-          info.usage = usage;
-          info.quota = quota;
-        }));
+        blink::mojom::StorageType::kTemporary, future.GetCallback());
+
+    quota_usage_and_info info;
+    info.status = future.Get<0>();
+    info.usage = future.Get<1>();
+    info.quota = future.Get<2>();
     return info;
   }
 
@@ -356,8 +361,8 @@ class SandboxFileStreamWriterIncognitoTest
       QuotaManagerProxy* quota_manager_proxy,
       const base::ScopedTempDir& dir) override {
     return CreateIncognitoFileSystemContextForTesting(
-        base::ThreadTaskRunnerHandle::Get(),
-        base::ThreadTaskRunnerHandle::Get(), quota_manager_proxy,
+        base::SingleThreadTaskRunner::GetCurrentDefault(),
+        base::SingleThreadTaskRunner::GetCurrentDefault(), quota_manager_proxy,
         dir.GetPath());
   }
 

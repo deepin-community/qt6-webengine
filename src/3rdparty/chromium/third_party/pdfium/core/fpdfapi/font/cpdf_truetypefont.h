@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,7 +23,8 @@ class CPDF_TrueTypeFont final : public CPDF_SimpleFont {
  private:
   enum class CharmapType { kMSUnicode, kMSSymbol, kMacRoman, kOther };
 
-  CPDF_TrueTypeFont(CPDF_Document* pDocument, CPDF_Dictionary* pFontDict);
+  CPDF_TrueTypeFont(CPDF_Document* pDocument,
+                    RetainPtr<CPDF_Dictionary> pFontDict);
 
   // CPDF_Font:
   bool Load() override;

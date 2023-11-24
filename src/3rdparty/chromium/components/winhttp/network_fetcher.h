@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,10 +13,11 @@
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/containers/flat_map.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
+#include "base/functional/callback.h"
+#include "base/memory/raw_ref.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/sequence_checker.h"
 #include "base/strings/string_piece_forward.h"
@@ -25,13 +26,13 @@
 #include "url/gurl.h"
 
 namespace base {
-class SingleThreadTaskRunner;
+class SequencedTaskRunner;
 }
 
 namespace winhttp {
 
 // Implements a network fetcher in terms of WinHTTP. The class is ref-counted
-// as it is accessed from the main thread and the worker threads in WinHTTP.
+// as it is accessed from the main sequence and the worker threads in WinHTTP.
 class NetworkFetcher : public base::RefCountedThreadSafe<NetworkFetcher> {
  public:
   using FetchCompleteCallback = base::OnceCallback<void(int response_code)>;
@@ -87,12 +88,10 @@ class NetworkFetcher : public base::RefCountedThreadSafe<NetworkFetcher> {
                                               void* info,
                                               DWORD info_len);
 
-  DWORD_PTR context() const { return reinterpret_cast<DWORD_PTR>(this); }
+  // Invoked by the last WinHTTPstatus status callback.
+  void HandleClosing();
 
-  void StatusCallback(HINTERNET handle,
-                      uint32_t status,
-                      void* info,
-                      uint32_t info_len);
+  DWORD_PTR context() const { return reinterpret_cast<DWORD_PTR>(this); }
 
   HRESULT BeginFetch(
       const std::string& data,
@@ -105,7 +104,7 @@ class NetworkFetcher : public base::RefCountedThreadSafe<NetworkFetcher> {
   void HeadersAvailable();
   HRESULT ReadData();
   void ReadDataComplete(size_t num_bytes_read);
-  void RequestError(const WINHTTP_ASYNC_RESULT* result);
+  void RequestError(DWORD error);
   void CompleteFetch();
 
   void WriteDataToMemory();
@@ -114,9 +113,10 @@ class NetworkFetcher : public base::RefCountedThreadSafe<NetworkFetcher> {
   void WriteDataToFileComplete(bool is_eof);
 
   SEQUENCE_CHECKER(sequence_checker_);
-  scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner_;
+  scoped_refptr<base::SequencedTaskRunner> main_task_runner_;
 
-  const HINTERNET& session_handle_;  // Owned by NetworkFetcherFactory.
+  const raw_ref<const HINTERNET>
+      session_handle_;  // Owned by NetworkFetcherFactory.
   scoped_refptr<ProxyConfiguration> proxy_configuration_;
   ScopedHInternet connect_handle_;
   ScopedHInternet request_handle_;
@@ -133,6 +133,7 @@ class NetworkFetcher : public base::RefCountedThreadSafe<NetworkFetcher> {
   std::string path_for_request_;
 
   base::WStringPiece verb_;
+  std::string request_data_;
   // The value of Content-Type header, e.g. "application/json".
   std::string content_type_;
   WriteDataCallback write_data_callback_;

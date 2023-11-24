@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,26 +6,31 @@
 
 #include <memory>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/check_op.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/task/bind_post_task.h"
-#include "base/task/task_runner_util.h"
 #include "build/build_config.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "content/browser/renderer_host/media/video_capture_manager.h"
+#include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
+#include "content/public/common/content_client.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
+#include "mojo/public/cpp/bindings/message.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
+#include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/common/mediastream/media_stream_request.h"
 #include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
 #include "url/origin.h"
 
@@ -45,7 +50,7 @@ void BindMediaStreamDeviceObserverReceiver(
 
   RenderFrameHost* render_frame_host =
       RenderFrameHost::FromID(render_process_id, render_frame_id);
-  if (render_frame_host && render_frame_host->IsRenderFrameCreated())
+  if (render_frame_host && render_frame_host->IsRenderFrameLive())
     render_frame_host->GetRemoteInterfaces()->GetInterface(std::move(receiver));
 }
 
@@ -126,7 +131,10 @@ MediaStreamDispatcherHost::CropCallback WrapCropCallback(
         if (result ==
             media::mojom::CropRequestResult::kNonIncreasingCropVersion) {
           std::move(bad_message_callback).Run("Non-increasing crop-version.");
-          return;
+          // Intentionally avoid returning. Instead, continue execution and
+          // invoke the callback. If the callback were allowed to "drop" that
+          // would trigger a DCHECK in the mojom pipe.
+          // TODO(crbug.com/1299008): Avoid the necessity for this.
         }
         std::move(callback).Run(result);
       },
@@ -167,6 +175,7 @@ bool AllowedStreamTypeCombination(
     case blink::mojom::MediaStreamType::GUM_DESKTOP_VIDEO_CAPTURE:
     case blink::mojom::MediaStreamType::DISPLAY_VIDEO_CAPTURE:
     case blink::mojom::MediaStreamType::DISPLAY_VIDEO_CAPTURE_THIS_TAB:
+    case blink::mojom::MediaStreamType::DISPLAY_VIDEO_CAPTURE_SET:
     case blink::mojom::MediaStreamType::NUM_MEDIA_TYPES:
       return false;
   }
@@ -186,7 +195,7 @@ struct MediaStreamDispatcherHost::PendingAccessRequest {
       const blink::StreamControls& controls,
       bool user_gesture,
       blink::mojom::StreamSelectionInfoPtr audio_stream_selection_info_ptr,
-      GenerateStreamCallback callback,
+      GenerateStreamsCallback callback,
       MediaDeviceSaltAndOrigin salt_and_origin)
       : page_request_id(page_request_id),
         controls(controls),
@@ -201,7 +210,7 @@ struct MediaStreamDispatcherHost::PendingAccessRequest {
   const blink::StreamControls controls;
   bool user_gesture;
   blink::mojom::StreamSelectionInfoPtr audio_stream_selection_info_ptr;
-  GenerateStreamCallback callback;
+  GenerateStreamsCallback callback;
   MediaDeviceSaltAndOrigin salt_and_origin;
 };
 
@@ -221,8 +230,8 @@ MediaStreamDispatcherHost::MediaStreamDispatcherHost(
   base::RepeatingClosure focus_callback =
       base::BindRepeating(&MediaStreamDispatcherHost::OnWebContentsFocused,
                           weak_factory_.GetWeakPtr());
-  base::PostTaskAndReplyWithResult(
-      GetUIThreadTaskRunner({}).get(), FROM_HERE,
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+      FROM_HERE,
       base::BindOnce(&StartObservingWebContents, render_process_id_,
                      render_frame_id_, std::move(focus_callback)),
       base::BindOnce(&MediaStreamDispatcherHost::SetWebContentsObserver,
@@ -285,6 +294,15 @@ void MediaStreamDispatcherHost::OnDeviceRequestStateChange(
                                                              new_state);
 }
 
+void MediaStreamDispatcherHost::OnDeviceCaptureConfigurationChange(
+    const std::string& label,
+    const blink::MediaStreamDevice& device) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+
+  GetMediaStreamDeviceObserver()->OnDeviceCaptureConfigurationChange(label,
+                                                                     device);
+}
+
 void MediaStreamDispatcherHost::OnDeviceCaptureHandleChange(
     const std::string& label,
     const blink::MediaStreamDevice& device) {
@@ -300,7 +318,7 @@ void MediaStreamDispatcherHost::OnWebContentsFocused() {
   while (!pending_requests_.empty()) {
     std::unique_ptr<PendingAccessRequest> request =
         std::move(pending_requests_.front());
-    media_stream_manager_->GenerateStream(
+    media_stream_manager_->GenerateStreams(
         render_process_id_, render_frame_id_, requester_id_,
         request->page_request_id, request->controls,
         std::move(request->salt_and_origin), request->user_gesture,
@@ -314,10 +332,48 @@ void MediaStreamDispatcherHost::OnWebContentsFocused() {
             &MediaStreamDispatcherHost::OnDeviceRequestStateChange,
             weak_factory_.GetWeakPtr()),
         base::BindRepeating(
+            &MediaStreamDispatcherHost::OnDeviceCaptureConfigurationChange,
+            weak_factory_.GetWeakPtr()),
+        base::BindRepeating(
             &MediaStreamDispatcherHost::OnDeviceCaptureHandleChange,
             weak_factory_.GetWeakPtr()));
     pending_requests_.pop_front();
   }
+}
+
+bool MediaStreamDispatcherHost::CheckRequestAllScreensAllowed(
+    int render_process_id,
+    int render_frame_id) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  RenderFrameHostImpl* render_frame_host =
+      RenderFrameHostImpl::FromID(render_process_id, render_frame_id);
+  if (!render_frame_host)
+    return false;
+  ContentBrowserClient* browser_client = GetContentClient()->browser();
+  return browser_client->IsGetDisplayMediaSetSelectAllScreensAllowed(
+      render_frame_host->GetBrowserContext(),
+      render_frame_host->GetMainFrame()->GetLastCommittedOrigin());
+}
+
+MediaStreamDispatcherHost::GenerateStreamsUIThreadCheckResult
+MediaStreamDispatcherHost::GenerateStreamsChecksOnUIThread(
+    int render_process_id,
+    int render_frame_id,
+    bool request_all_screens,
+    base::OnceCallback<MediaDeviceSaltAndOrigin()>
+        generate_salt_and_origin_callback) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  if (request_all_screens &&
+      !CheckRequestAllScreensAllowed(render_process_id, render_frame_id)) {
+    return {.request_allowed = false,
+            .salt_and_origin = MediaDeviceSaltAndOrigin()};
+  }
+
+  return {
+      .request_allowed = true,
+      .salt_and_origin = std::move(generate_salt_and_origin_callback).Run()};
 }
 
 const mojo::Remote<blink::mojom::MediaStreamDeviceObserver>&
@@ -351,8 +407,8 @@ void MediaStreamDispatcherHost::CancelAllRequests() {
   for (auto& pending_request : pending_requests_) {
     std::move(pending_request->callback)
         .Run(blink::mojom::MediaStreamRequestResult::FAILED_DUE_TO_SHUTDOWN,
-             std::string(), blink::MediaStreamDevices(),
-             blink::MediaStreamDevices(),
+             /*label=*/std::string(),
+             /*stream_devices_set=*/nullptr,
              /*pan_tilt_zoom_allowed=*/false);
   }
   pending_requests_.clear();
@@ -360,18 +416,28 @@ void MediaStreamDispatcherHost::CancelAllRequests() {
                                            requester_id_);
 }
 
-void MediaStreamDispatcherHost::GenerateStream(
+void MediaStreamDispatcherHost::GenerateStreams(
     int32_t page_request_id,
     const blink::StreamControls& controls,
     bool user_gesture,
     blink::mojom::StreamSelectionInfoPtr audio_stream_selection_info_ptr,
-    GenerateStreamCallback callback) {
+    GenerateStreamsCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  if (!AllowedStreamTypeCombination(controls.audio.stream_type,
-                                    controls.video.stream_type)) {
-    ReceivedBadMessage(render_process_id_,
-                       bad_message::MSDH_INVALID_STREAM_TYPE_COMBINATION);
+  const absl::optional<bad_message::BadMessageReason> bad_message =
+      ValidateControlsForGenerateStreams(controls);
+  if (bad_message.has_value()) {
+    ReceivedBadMessage(render_process_id_, bad_message.value());
+    return;
+  }
+
+  // TODO(crbug/1379794): Move into ValidateControlsForGenerateStreams().
+  if (controls.video.stream_type ==
+          blink::mojom::MediaStreamType::DISPLAY_VIDEO_CAPTURE_SET &&
+      (!base::FeatureList::IsEnabled(features::kGetDisplayMediaSet) ||
+       !base::FeatureList::IsEnabled(
+           features::kGetDisplayMediaSetAutoSelectAllScreens))) {
+    mojo::ReportBadMessage("The GetDisplayMediaSet API has not been enabled");
     return;
   }
 
@@ -384,30 +450,47 @@ void MediaStreamDispatcherHost::GenerateStream(
     return;
   }
 
-  base::PostTaskAndReplyWithResult(
-      GetUIThreadTaskRunner({}).get(), FROM_HERE,
-      base::BindOnce(salt_and_origin_callback_, render_process_id_,
-                     render_frame_id_),
-      base::BindOnce(&MediaStreamDispatcherHost::DoGenerateStream,
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+      FROM_HERE,
+      base::BindOnce(
+          &MediaStreamDispatcherHost::GenerateStreamsChecksOnUIThread,
+          /*render_process_id=*/render_process_id_,
+          /*render_frame_id=*/render_frame_id_, controls.request_all_screens,
+          base::BindOnce(salt_and_origin_callback_, render_process_id_,
+                         render_frame_id_)),
+      base::BindOnce(&MediaStreamDispatcherHost::DoGenerateStreams,
                      weak_factory_.GetWeakPtr(), page_request_id, controls,
                      user_gesture, std::move(audio_stream_selection_info_ptr),
                      std::move(callback)));
 }
 
-void MediaStreamDispatcherHost::DoGenerateStream(
+void MediaStreamDispatcherHost::DoGenerateStreams(
     int32_t page_request_id,
     const blink::StreamControls& controls,
     bool user_gesture,
     blink::mojom::StreamSelectionInfoPtr audio_stream_selection_info_ptr,
-    GenerateStreamCallback callback,
-    MediaDeviceSaltAndOrigin salt_and_origin) {
+    GenerateStreamsCallback callback,
+    GenerateStreamsUIThreadCheckResult ui_check_result) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
+  if (!ui_check_result.request_allowed) {
+    std::move(callback).Run(
+        blink::mojom::MediaStreamRequestResult::PERMISSION_DENIED,
+        /*label=*/std::string(),
+        /*stream_devices_set=*/nullptr,
+        /*pan_tilt_zoom_allowed=*/false);
+    return;
+  }
+
+  MediaDeviceSaltAndOrigin salt_and_origin =
+      std::move(ui_check_result.salt_and_origin);
+  ui_check_result = {};
   if (!MediaStreamManager::IsOriginAllowed(render_process_id_,
                                            salt_and_origin.origin)) {
     std::move(callback).Run(
         blink::mojom::MediaStreamRequestResult::INVALID_SECURITY_ORIGIN,
-        std::string(), blink::MediaStreamDevices(), blink::MediaStreamDevices(),
+        /*label=*/std::string(),
+        /*stream_devices_set=*/nullptr,
         /*pan_tilt_zoom_allowed=*/false);
     return;
   }
@@ -430,7 +513,7 @@ void MediaStreamDispatcherHost::DoGenerateStream(
     return;
   }
 
-  media_stream_manager_->GenerateStream(
+  media_stream_manager_->GenerateStreams(
       render_process_id_, render_frame_id_, requester_id_, page_request_id,
       controls, std::move(salt_and_origin), user_gesture,
       std::move(audio_stream_selection_info_ptr), std::move(callback),
@@ -440,6 +523,9 @@ void MediaStreamDispatcherHost::DoGenerateStream(
                           weak_factory_.GetWeakPtr()),
       base::BindRepeating(
           &MediaStreamDispatcherHost::OnDeviceRequestStateChange,
+          weak_factory_.GetWeakPtr()),
+      base::BindRepeating(
+          &MediaStreamDispatcherHost::OnDeviceCaptureConfigurationChange,
           weak_factory_.GetWeakPtr()),
       base::BindRepeating(
           &MediaStreamDispatcherHost::OnDeviceCaptureHandleChange,
@@ -477,8 +563,8 @@ void MediaStreamDispatcherHost::OpenDevice(int32_t page_request_id,
     return;
   }
 
-  base::PostTaskAndReplyWithResult(
-      GetUIThreadTaskRunner({}).get(), FROM_HERE,
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+      FROM_HERE,
       base::BindOnce(salt_and_origin_callback_, render_process_id_,
                      render_frame_id_),
       base::BindOnce(&MediaStreamDispatcherHost::DoOpenDevice,
@@ -528,7 +614,30 @@ void MediaStreamDispatcherHost::SetCapturingLinkSecured(
 void MediaStreamDispatcherHost::OnStreamStarted(const std::string& label) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
+  if (base::FeatureList::IsEnabled(
+          blink::features::kStartMediaStreamCaptureIndicatorInBrowser)) {
+    ReceivedBadMessage(render_process_id_,
+                       bad_message::MSDH_ON_STREAM_STARTED_DISALLOWED);
+    return;
+  }
   media_stream_manager_->OnStreamStarted(label);
+}
+
+void MediaStreamDispatcherHost::KeepDeviceAliveForTransfer(
+    const base::UnguessableToken& session_id,
+    const base::UnguessableToken& transfer_id,
+    KeepDeviceAliveForTransferCallback callback) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+
+  if (!base::FeatureList::IsEnabled(features::kMediaStreamTrackTransfer)) {
+    ReceivedBadMessage(render_process_id_,
+                       bad_message::MSDH_KEEP_DEVICE_ALIVE_USE_WITHOUT_FEATURE);
+    std::move(callback).Run(/*device_found=*/false);
+    return;
+  }
+  std::move(callback).Run(media_stream_manager_->KeepDeviceAliveForTransfer(
+      render_process_id_, render_frame_id_, requester_id_, session_id,
+      transfer_id));
 }
 
 #if !BUILDFLAG(IS_ANDROID)
@@ -579,7 +688,8 @@ void MediaStreamDispatcherHost::OnCropValidationComplete(
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
   if (!crop_id_passed_validation) {
-    std::move(callback).Run(media::mojom::CropRequestResult::kErrorGeneric);
+    std::move(callback).Run(
+        media::mojom::CropRequestResult::kInvalidCropTarget);
     return;
   }
 
@@ -589,7 +699,9 @@ void MediaStreamDispatcherHost::OnCropValidationComplete(
 #endif
 
 void MediaStreamDispatcherHost::GetOpenDevice(
+    int32_t page_request_id,
     const base::UnguessableToken& session_id,
+    const base::UnguessableToken& transfer_id,
     GetOpenDeviceCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
@@ -601,17 +713,81 @@ void MediaStreamDispatcherHost::GetOpenDevice(
         blink::mojom::MediaStreamRequestResult::NOT_SUPPORTED, nullptr);
     return;
   }
-  // TODO(https://crbug.com/1288839): Implement GetOpenDevice in
-  // MediaStreamManager and call that.
-
   // TODO(https://crbug.com/1288839): Decide whether we need to have another
   // mojo method, called by the first renderer to say "I'm going to be
   // transferring this track, allow the receiving renderer to call GetOpenDevice
   // on it", and whether we can/need to specific the destination renderer/frame
   // in this case.
 
-  std::move(callback).Run(blink::mojom::MediaStreamRequestResult::NOT_SUPPORTED,
-                          nullptr);
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+      FROM_HERE,
+      base::BindOnce(salt_and_origin_callback_, render_process_id_,
+                     render_frame_id_),
+      base::BindOnce(&MediaStreamDispatcherHost::DoGetOpenDevice,
+                     weak_factory_.GetWeakPtr(), page_request_id, session_id,
+                     transfer_id, std::move(callback)));
+}
+
+void MediaStreamDispatcherHost::DoGetOpenDevice(
+    int32_t page_request_id,
+    const base::UnguessableToken& session_id,
+    const base::UnguessableToken& transfer_id,
+    GetOpenDeviceCallback callback,
+    MediaDeviceSaltAndOrigin salt_and_origin) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  if (!MediaStreamManager::IsOriginAllowed(render_process_id_,
+                                           salt_and_origin.origin)) {
+    std::move(callback).Run(
+        blink::mojom::MediaStreamRequestResult::INVALID_SECURITY_ORIGIN,
+        nullptr);
+    return;
+  }
+
+  media_stream_manager_->GetOpenDevice(
+      session_id, transfer_id, render_process_id_, render_frame_id_,
+      requester_id_, page_request_id, std::move(salt_and_origin),
+      std::move(callback),
+      base::BindRepeating(&MediaStreamDispatcherHost::OnDeviceStopped,
+                          weak_factory_.GetWeakPtr()),
+      base::BindRepeating(&MediaStreamDispatcherHost::OnDeviceChanged,
+                          weak_factory_.GetWeakPtr()),
+      base::BindRepeating(
+          &MediaStreamDispatcherHost::OnDeviceRequestStateChange,
+          weak_factory_.GetWeakPtr()),
+      base::BindRepeating(
+          &MediaStreamDispatcherHost::OnDeviceCaptureConfigurationChange,
+          weak_factory_.GetWeakPtr()),
+      base::BindRepeating(
+          &MediaStreamDispatcherHost::OnDeviceCaptureHandleChange,
+          weak_factory_.GetWeakPtr()));
+}
+
+absl::optional<bad_message::BadMessageReason>
+MediaStreamDispatcherHost::ValidateControlsForGenerateStreams(
+    const blink::StreamControls& controls) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+
+  if (!AllowedStreamTypeCombination(controls.audio.stream_type,
+                                    controls.video.stream_type)) {
+    return bad_message::MSDH_INVALID_STREAM_TYPE_COMBINATION;
+  }
+
+  if (!controls.audio.requested()) {
+    if (controls.suppress_local_audio_playback) {
+      return bad_message::
+          MSDH_SUPPRESS_LOCAL_AUDIO_PLAYBACK_BUT_AUDIO_NOT_REQUESTED;
+    }
+
+    if (controls.hotword_enabled) {
+      return bad_message::MSDH_HOTWORD_ENABLED_BUT_AUDIO_NOT_REQUESTED;
+    }
+
+    if (controls.disable_local_echo) {
+      return bad_message::MSDH_DISABLE_LOCAL_ECHO_BUT_AUDIO_NOT_REQUESTED;
+    }
+  }
+
+  return absl::nullopt;
 }
 
 void MediaStreamDispatcherHost::ReceivedBadMessage(

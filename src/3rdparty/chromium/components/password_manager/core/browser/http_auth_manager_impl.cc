@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -141,6 +141,11 @@ void HttpAuthManagerImpl::OnLoginSuccesfull() {
     client_->PromptUserToSaveOrUpdatePassword(std::move(form_manager_),
                                               is_update);
     LogMessage(Logger::STRING_HTTPAUTH_ON_PROMPT_USER);
+  } else {
+    // For existing credentials that haven't been updated invoke
+    // form_manager_->Save() in order to update meta data fields (e.g. last used
+    // timestamp).
+    form_manager_->Save();
   }
 }
 

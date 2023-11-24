@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -7,11 +7,11 @@
 //
 // Relationship of classes.
 //
-//  AudioOutputController                AudioOutputDevice
+//  audio::OutputController              AudioOutputDevice
 //           ^                                  ^
 //           |                                  |
 //           v                 IPC              v
-//  MojoAudioOutputStream  <---------> AudioOutputIPC (MojoAudioOutputIPC)
+//  audio::OutputStream  <---------> AudioOutputIPC (MojoAudioOutputIPC)
 //
 // Transportation of audio samples from the render to the browser process
 // is done by using shared memory in combination with a sync socket pair
@@ -66,7 +66,7 @@
 #include <memory>
 #include <string>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/unsafe_shared_memory_region.h"
 #include "base/synchronization/waitable_event.h"
@@ -160,7 +160,7 @@ class MEDIA_EXPORT AudioOutputDevice : public AudioRendererSink,
   // upon state changes.
   void RequestDeviceAuthorizationOnIOThread();
   void InitializeOnIOThread(const AudioParameters& params,
-                            RenderCallback* callback);
+                            MayBeDangling<RenderCallback> callback);
   void CreateStreamOnIOThread();
   void PlayOnIOThread();
   void PauseOnIOThread();
@@ -184,7 +184,7 @@ class MEDIA_EXPORT AudioOutputDevice : public AudioRendererSink,
 
   AudioParameters audio_parameters_;
 
-  raw_ptr<RenderCallback> callback_;
+  raw_ptr<RenderCallback, DanglingUntriaged> callback_;
 
   // A pointer to the IPC layer that takes care of sending requests over to
   // the implementation. May be set to nullptr after errors.

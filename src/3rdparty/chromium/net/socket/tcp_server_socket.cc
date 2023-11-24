@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,9 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/notreached.h"
 #include "net/base/net_errors.h"
 #include "net/socket/socket_descriptor.h"
@@ -24,7 +24,7 @@ TCPServerSocket::TCPServerSocket(NetLog* net_log, const NetLogSource& source)
                                       source)) {}
 
 TCPServerSocket::TCPServerSocket(std::unique_ptr<TCPSocket> socket)
-    : socket_(std::move(socket)), pending_accept_(false) {}
+    : socket_(std::move(socket)) {}
 
 int TCPServerSocket::AdoptSocket(SocketDescriptor socket) {
   return socket_->AdoptUnconnectedSocket(socket);

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,9 +10,9 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -27,12 +27,12 @@
 #include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/controls/textfield/textfield_controller.h"
+#include "ui/views/examples/examples_color_id.h"
 #include "ui/views/layout/box_layout_view.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/view.h"
 
-namespace views {
-namespace examples {
+namespace views::examples {
 
 namespace {
 
@@ -56,9 +56,12 @@ class AnimationGallery : public BoxLayoutView, public TextfieldController {
             Builder<View>()
                 .CopyAddressTo(&image_view_container)
                 .SetUseDefaultFillLayout(true)
-                .AddChild(Builder<AnimatedImageView>()
-                              .CopyAddressTo(&animated_image_view_)
-                              .SetBorder(CreateSolidBorder(1, SK_ColorBLACK))),
+                .AddChild(
+                    Builder<AnimatedImageView>()
+                        .CopyAddressTo(&animated_image_view_)
+                        .SetBorder(CreateThemedSolidBorder(
+                            1, ExamplesColorIds::
+                                   kColorAnimatedImageViewExampleBorder))),
             Builder<BoxLayoutView>()
                 .CopyAddressTo(&file_container)
                 .SetInsideBorderInsets(gfx::Insets(10))
@@ -140,5 +143,4 @@ void AnimatedImageViewExample::CreateExampleView(View* container) {
   container->AddChildView(std::make_unique<AnimationGallery>());
 }
 
-}  // namespace examples
-}  // namespace views
+}  // namespace views::examples

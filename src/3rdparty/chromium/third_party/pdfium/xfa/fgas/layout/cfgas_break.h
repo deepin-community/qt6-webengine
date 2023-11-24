@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -33,7 +33,7 @@ class CFGAS_Break {
   void SetLayoutStyles(Mask<LayoutStyle> dwLayoutStyles);
   Mask<LayoutStyle> GetLayoutStyles() const { return m_dwLayoutStyles; }
 
-  void SetFont(const RetainPtr<CFGAS_GEFont>& pFont);
+  void SetFont(RetainPtr<CFGAS_GEFont> pFont);
   void SetFontSize(float fFontSize);
   void SetTabWidth(float fTabWidth);
   int32_t GetTabWidth() const { return m_iTabWidth; }
@@ -51,9 +51,7 @@ class CFGAS_Break {
   void ClearBreakPieces();
 
   CFGAS_Char* GetLastChar(int32_t index, bool bOmitChar, bool bRichText) const;
-  const CFGAS_BreakLine* GetCurrentLineForTesting() const {
-    return m_pCurLine.Get();
-  }
+  const CFGAS_BreakLine* GetCurrentLineForTesting() const { return m_pCurLine; }
 
  protected:
   struct TPO {

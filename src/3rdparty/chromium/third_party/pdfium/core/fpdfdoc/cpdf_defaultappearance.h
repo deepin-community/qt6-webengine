@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,17 +20,17 @@ class CPDF_DefaultAppearance {
   CPDF_DefaultAppearance(const CPDF_DefaultAppearance& cDA);
   ~CPDF_DefaultAppearance();
 
-  absl::optional<ByteString> GetFont(float* fFontSize);
+  absl::optional<ByteString> GetFont(float* fFontSize) const;
 
   absl::optional<CFX_Color> GetColor() const;
   absl::optional<CFX_Color::TypeAndARGB> GetColorARGB() const;
 
-  bool FindTagParamFromStartForTesting(CPDF_SimpleParser* parser,
-                                       ByteStringView token,
-                                       int nParams);
+  static bool FindTagParamFromStartForTesting(CPDF_SimpleParser* parser,
+                                              ByteStringView token,
+                                              int nParams);
 
  private:
-  ByteString m_csDA;
+  const ByteString m_csDA;
 };
 
 #endif  // CORE_FPDFDOC_CPDF_DEFAULTAPPEARANCE_H_

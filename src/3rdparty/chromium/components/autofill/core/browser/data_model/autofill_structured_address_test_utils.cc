@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,6 @@
 #include "components/autofill/core/browser/autofill_type.h"
 
 namespace autofill {
-namespace structured_address {
 
 using AddressComponentTestValues = std::vector<AddressComponentTestValue>;
 
@@ -77,5 +76,4 @@ void VerifyTestValues(AddressComponent* component,
   }
 }
 
-}  // namespace structured_address
 }  // namespace autofill

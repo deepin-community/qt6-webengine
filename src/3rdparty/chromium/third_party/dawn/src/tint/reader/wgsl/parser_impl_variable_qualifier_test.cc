@@ -12,108 +12,105 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "src/tint/ast/test_helper.h"
 #include "src/tint/reader/wgsl/parser_impl_test_helper.h"
 
 namespace tint::reader::wgsl {
 namespace {
 
 struct VariableStorageData {
-  const char* input;
-  ast::StorageClass storage_class;
-  ast::Access access;
+    const char* input;
+    builtin::AddressSpace address_space;
+    builtin::Access access;
 };
 inline std::ostream& operator<<(std::ostream& out, VariableStorageData data) {
-  out << std::string(data.input);
-  return out;
+    out << std::string(data.input);
+    return out;
 }
 
-class VariableQualifierTest
-    : public ParserImplTestWithParam<VariableStorageData> {};
+class VariableQualifierTest : public ParserImplTestWithParam<VariableStorageData> {};
 
-TEST_P(VariableQualifierTest, ParsesStorageClass) {
-  auto params = GetParam();
-  auto p = parser(std::string("<") + params.input + ">");
+TEST_P(VariableQualifierTest, ParsesAddressSpace) {
+    auto params = GetParam();
+    auto p = parser(std::string("var<") + params.input + "> name");
 
-  auto sc = p->variable_qualifier();
-  EXPECT_FALSE(p->has_error());
-  EXPECT_FALSE(sc.errored);
-  EXPECT_TRUE(sc.matched);
-  EXPECT_EQ(sc->storage_class, params.storage_class);
-  EXPECT_EQ(sc->access, params.access);
+    auto sc = p->variable_decl();
+    EXPECT_FALSE(p->has_error());
+    EXPECT_FALSE(sc.errored);
+    EXPECT_TRUE(sc.matched);
+    if (params.address_space != builtin::AddressSpace::kUndefined) {
+        ast::CheckIdentifier(p->builder().Symbols(), sc->address_space,
+                             utils::ToString(params.address_space));
+    } else {
+        EXPECT_EQ(sc->address_space, nullptr);
+    }
+    if (params.access != builtin::Access::kUndefined) {
+        ast::CheckIdentifier(p->builder().Symbols(), sc->access, utils::ToString(params.access));
+    } else {
+        EXPECT_EQ(sc->access, nullptr);
+    }
 
-  auto t = p->next();
-  EXPECT_TRUE(t.IsEof());
+    auto& t = p->next();
+    EXPECT_TRUE(t.IsEof());
 }
 INSTANTIATE_TEST_SUITE_P(
     ParserImplTest,
     VariableQualifierTest,
-    testing::Values(
-        VariableStorageData{"uniform", ast::StorageClass::kUniform,
-                            ast::Access::kUndefined},
-        VariableStorageData{"workgroup", ast::StorageClass::kWorkgroup,
-                            ast::Access::kUndefined},
-        VariableStorageData{"storage", ast::StorageClass::kStorage,
-                            ast::Access::kUndefined},
-        VariableStorageData{"storage_buffer", ast::StorageClass::kStorage,
-                            ast::Access::kUndefined},
-        VariableStorageData{"private", ast::StorageClass::kPrivate,
-                            ast::Access::kUndefined},
-        VariableStorageData{"function", ast::StorageClass::kFunction,
-                            ast::Access::kUndefined},
-        VariableStorageData{"storage, read", ast::StorageClass::kStorage,
-                            ast::Access::kRead},
-        VariableStorageData{"storage, write", ast::StorageClass::kStorage,
-                            ast::Access::kWrite},
-        VariableStorageData{"storage, read_write", ast::StorageClass::kStorage,
-                            ast::Access::kReadWrite}));
-
-TEST_F(ParserImplTest, VariableQualifier_NoMatch) {
-  auto p = parser("<not-a-storage-class>");
-  auto sc = p->variable_qualifier();
-  EXPECT_TRUE(p->has_error());
-  EXPECT_TRUE(sc.errored);
-  EXPECT_FALSE(sc.matched);
-  EXPECT_EQ(p->error(), "1:2: invalid storage class for variable declaration");
-}
+    testing::Values(VariableStorageData{"uniform", builtin::AddressSpace::kUniform,
+                                        builtin::Access::kUndefined},
+                    VariableStorageData{"workgroup", builtin::AddressSpace::kWorkgroup,
+                                        builtin::Access::kUndefined},
+                    VariableStorageData{"storage", builtin::AddressSpace::kStorage,
+                                        builtin::Access::kUndefined},
+                    VariableStorageData{"private", builtin::AddressSpace::kPrivate,
+                                        builtin::Access::kUndefined},
+                    VariableStorageData{"function", builtin::AddressSpace::kFunction,
+                                        builtin::Access::kUndefined},
+                    VariableStorageData{"storage, read", builtin::AddressSpace::kStorage,
+                                        builtin::Access::kRead},
+                    VariableStorageData{"storage, write", builtin::AddressSpace::kStorage,
+                                        builtin::Access::kWrite},
+                    VariableStorageData{"storage, read_write", builtin::AddressSpace::kStorage,
+                                        builtin::Access::kReadWrite}));
 
 TEST_F(ParserImplTest, VariableQualifier_Empty) {
-  auto p = parser("<>");
-  auto sc = p->variable_qualifier();
-  EXPECT_TRUE(p->has_error());
-  EXPECT_TRUE(sc.errored);
-  EXPECT_FALSE(sc.matched);
-  EXPECT_EQ(p->error(), "1:2: invalid storage class for variable declaration");
+    auto p = parser("var<> name");
+    auto sc = p->variable_decl();
+    EXPECT_TRUE(p->has_error());
+    EXPECT_TRUE(sc.errored);
+    EXPECT_FALSE(sc.matched);
+    EXPECT_EQ(p->error(), R"(1:5: expected expression for 'var' address space)");
 }
 
 TEST_F(ParserImplTest, VariableQualifier_MissingLessThan) {
-  auto p = parser("private>");
-  auto sc = p->variable_qualifier();
-  EXPECT_FALSE(p->has_error());
-  EXPECT_FALSE(sc.errored);
-  EXPECT_FALSE(sc.matched);
+    auto p = parser("private>");
+    auto sc = p->variable_qualifier();
+    EXPECT_FALSE(p->has_error());
+    EXPECT_FALSE(sc.errored);
+    EXPECT_FALSE(sc.matched);
 
-  auto t = p->next();
-  ASSERT_TRUE(t.Is(Token::Type::kPrivate));
+    auto& t = p->next();
+    ASSERT_TRUE(t.Is(Token::Type::kIdentifier));
 }
 
 TEST_F(ParserImplTest, VariableQualifier_MissingLessThan_AfterSC) {
-  auto p = parser("private, >");
-  auto sc = p->variable_qualifier();
-  EXPECT_FALSE(p->has_error());
-  EXPECT_FALSE(sc.errored);
-  EXPECT_FALSE(sc.matched);
+    auto p = parser("private, >");
+    auto sc = p->variable_qualifier();
+    EXPECT_FALSE(p->has_error());
+    EXPECT_FALSE(sc.errored);
+    EXPECT_FALSE(sc.matched);
 
-  auto t = p->next();
-  ASSERT_TRUE(t.Is(Token::Type::kPrivate));
+    auto& t = p->next();
+    ASSERT_TRUE(t.Is(Token::Type::kIdentifier));
 }
 
 TEST_F(ParserImplTest, VariableQualifier_MissingGreaterThan) {
-  auto p = parser("<private");
-  auto sc = p->variable_qualifier();
-  EXPECT_TRUE(p->has_error());
-  EXPECT_TRUE(sc.errored);
-  EXPECT_FALSE(sc.matched);
-  EXPECT_EQ(p->error(), "1:9: expected '>' for variable declaration");
+    auto p = parser("<private");
+    auto sc = p->variable_qualifier();
+    EXPECT_TRUE(p->has_error());
+    EXPECT_TRUE(sc.errored);
+    EXPECT_FALSE(sc.matched);
+    EXPECT_EQ(p->error(), "1:1: missing closing '>' for variable declaration");
 }
 
 }  // namespace

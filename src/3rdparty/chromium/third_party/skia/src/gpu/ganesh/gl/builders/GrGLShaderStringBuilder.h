@@ -17,7 +17,7 @@
 std::unique_ptr<SkSL::Program> GrSkSLtoGLSL(const GrGLGpu* gpu,
                                             SkSL::ProgramKind programKind,
                                             const std::string& sksl,
-                                            const SkSL::Program::Settings& settings,
+                                            const SkSL::ProgramSettings& settings,
                                             std::string* glsl,
                                             GrContextOptions::ShaderErrorHandler* errorHandler);
 
@@ -27,5 +27,11 @@ GrGLuint GrGLCompileAndAttachShader(const GrGLContext& glCtx,
                                     const std::string& glsl,
                                     GrThreadSafePipelineBuilder::Stats*,
                                     GrContextOptions::ShaderErrorHandler* errorHandler);
+
+bool GrGLCheckLinkStatus(const GrGLGpu* gpu,
+                         GrGLuint programID,
+                         GrContextOptions::ShaderErrorHandler* errorHandler,
+                         const std::string* sksl[kGrShaderTypeCount],
+                         const std::string glsl[kGrShaderTypeCount]);
 
 #endif

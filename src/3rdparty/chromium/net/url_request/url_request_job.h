@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,6 +22,7 @@
 #include "net/base/privacy_mode.h"
 #include "net/base/request_priority.h"
 #include "net/cookies/canonical_cookie.h"
+#include "net/cookies/cookie_setting_override.h"
 #include "net/filter/source_stream.h"
 #include "net/http/http_raw_request_headers.h"
 #include "net/http/http_response_headers.h"
@@ -242,7 +243,7 @@ class NET_EXPORT URLRequestJob {
   virtual void SetRequestHeadersCallback(RequestHeadersCallback callback) {}
 
   // Sets a callback that will be invoked each time the response is received
-  // from the remote party with the actual response headers recieved.
+  // from the remote party with the actual response headers received.
   virtual void SetResponseHeadersCallback(ResponseHeadersCallback callback) {}
 
   // Sets a callback that will be invoked each time a 103 Early Hints response
@@ -352,6 +353,10 @@ class NET_EXPORT URLRequestJob {
   // On return, |this| may be deleted.
   void ReadRawDataComplete(int bytes_read);
 
+  const absl::optional<net::SchemefulSite>& request_initiator_site() const {
+    return request_initiator_site_;
+  }
+
   // The request that initiated this job. This value will never be nullptr.
   const raw_ptr<URLRequest> request_;
 
@@ -408,13 +413,13 @@ class NET_EXPORT URLRequestJob {
   // Indicates that the job is done producing data, either it has completed
   // all the data or an error has been encountered. Set exclusively by
   // NotifyDone so that it is kept in sync with the request.
-  bool done_;
+  bool done_ = false;
 
   // Number of raw network bytes read from job subclass.
-  int64_t prefilter_bytes_read_;
+  int64_t prefilter_bytes_read_ = 0;
 
   // Number of bytes after applying |source_stream_| filters.
-  int64_t postfilter_bytes_read_;
+  int64_t postfilter_bytes_read_ = 0;
 
   // The first SourceStream of the SourceStream chain used.
   std::unique_ptr<SourceStream> source_stream_;
@@ -429,14 +434,19 @@ class NET_EXPORT URLRequestJob {
 
   // Used by HandleResponseIfNecessary to track whether we've sent the
   // OnResponseStarted callback and potentially redirect callbacks as well.
-  bool has_handled_response_;
+  bool has_handled_response_ = false;
 
   // Expected content size
-  int64_t expected_content_size_;
+  int64_t expected_content_size_ = -1;
 
   // Set when a redirect is deferred. Redirects are deferred after validity
   // checks are performed, so this field must not be modified.
   absl::optional<RedirectInfo> deferred_redirect_info_;
+
+  // The request's initiator never changes, so we store it in format of
+  // SchemefulSite so that we don't recompute (including looking up the
+  // registrable domain) it during every redirect.
+  absl::optional<net::SchemefulSite> request_initiator_site_;
 
   // Non-null if ReadRawData() returned ERR_IO_PENDING, and the read has not
   // completed.

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,8 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/cancelable_callback.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
@@ -20,7 +20,6 @@
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_timeouts.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/address_family.h"
 #include "net/base/ip_address.h"
 #include "net/dns/dns_hosts.h"
@@ -97,8 +96,7 @@ class DnsConfigServiceTest : public TestWithTaskEnvironment {
   // Generate a config using the given seed..
   DnsConfig MakeConfig(unsigned seed) {
     DnsConfig config;
-    config.nameservers.push_back(
-        IPEndPoint(IPAddress(1, 2, 3, 4), seed & 0xFFFF));
+    config.nameservers.emplace_back(IPAddress(1, 2, 3, 4), seed & 0xFFFF);
     EXPECT_TRUE(config.IsValid());
     return config;
   }

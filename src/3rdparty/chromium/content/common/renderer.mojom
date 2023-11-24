@@ -1,9 +1,10 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 module content.mojom;
 
+import "components/attribution_reporting/os_support.mojom";
 import "content/common/agent_scheduling_group.mojom";
 import "content/common/native_types.mojom";
 import "ipc/ipc.mojom";
@@ -13,7 +14,6 @@ import "services/network/public/mojom/network_types.mojom";
 import "skia/public/mojom/skcolor.mojom";
 import "third_party/blink/public/mojom/browser_interface_broker.mojom";
 import "third_party/blink/public/mojom/user_agent/user_agent_metadata.mojom";
-import "ui/gfx/geometry/mojom/geometry.mojom";
 import "ui/color/color_id.mojom";
 
 struct UpdateScrollbarThemeParams {
@@ -155,20 +155,17 @@ interface Renderer {
   // This is called at most once, prior to committing a navigation.
   SetIsCrossOriginIsolated(bool value);
 
-  // Direct sockets require isolation above and beyond what "cross-origin
-  // isolation" provides. This flag corresponds to that set of restrictions.
+  // Set whether this renderer process is allowed to use Isolated Context APIs.
   // Similarly to the `SetIsCrossOriginIsolated()` method above, this flag is
   // process global, and called at most once, prior to committing a navigation.
   //
   // TODO(crbug.com/1206150): We need a specification for this restriction.
-  SetIsDirectSocketEnabled(bool value);
+  SetIsIsolatedContext(bool value);
 
-  // Enable the given blink runtime features (based on their names) for this
-  // renderer process. If this is non-empty, the embedder should ensure this
-  // renderer process is isolated to avoid exposing such features to other
-  // sites, because those features are highly privileged and shouldn't be
-  // exposed to other sites.
-  EnableBlinkRuntimeFeatures(array<string> features);
+  // Set the OS-level support for Attribution Reporting indicating whether
+  // OS-level attribution is enabled.
+  SetOsSupportForAttributionReporting(
+      attribution_reporting.mojom.OsSupport os_support);
 
   // Initialize renderer user agent string, user agent metadata and CORS exempt
   // header list on renderer startup.
@@ -188,9 +185,13 @@ interface Renderer {
   //
   // |cors_exempt_header_list| sets the CORS exempt header list for sanity
   // checking (e.g. DCHECKs).
+  //
+  // |attribution_os_support| sets the OS-level support for Attribution
+  // Reporting.
   InitializeRenderer(string user_agent,
                      string full_user_agent,
                      string reduced_user_agent,
                      blink.mojom.UserAgentMetadata metadata,
-                     array<string> cors_exempt_header_list);
+                     array<string> cors_exempt_header_list,
+                     attribution_reporting.mojom.OsSupport attribution_os_support);
 };

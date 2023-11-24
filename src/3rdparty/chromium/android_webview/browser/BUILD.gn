@@ -1,4 +1,4 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -36,6 +36,8 @@ source_set("browser") {
     "aw_browser_process.h",
     "aw_browser_terminator.cc",
     "aw_browser_terminator.h",
+    "aw_client_hints_controller_delegate.cc",
+    "aw_client_hints_controller_delegate.h",
     "aw_content_browser_client.cc",
     "aw_content_browser_client.h",
     "aw_content_browser_client_receiver_bindings.cc",
@@ -45,6 +47,8 @@ source_set("browser") {
     "aw_contents_client_bridge.h",
     "aw_contents_io_thread_client.cc",
     "aw_contents_io_thread_client.h",
+    "aw_contents_origin_matcher.cc",
+    "aw_contents_origin_matcher.h",
     "aw_contents_statics.cc",
     "aw_cookie_access_policy.cc",
     "aw_cookie_access_policy.h",
@@ -57,6 +61,8 @@ source_set("browser") {
     "aw_devtools_server.h",
     "aw_download_manager_delegate.cc",
     "aw_download_manager_delegate.h",
+    "aw_enterprise_authentication_app_link_manager.cc",
+    "aw_enterprise_authentication_app_link_manager.h",
     "aw_feature_entries.cc",
     "aw_feature_entries.h",
     "aw_feature_list.cc",
@@ -75,6 +81,8 @@ source_set("browser") {
     "aw_media_url_interceptor.h",
     "aw_metrics_service_client_delegate.cc",
     "aw_metrics_service_client_delegate.h",
+    "aw_origin_verification_scheduler_bridge.cc",
+    "aw_origin_verification_scheduler_bridge.h",
     "aw_pac_processor.cc",
     "aw_pac_processor.h",
     "aw_pdf_exporter.cc",
@@ -86,8 +94,6 @@ source_set("browser") {
     "aw_proxy_controller.cc",
     "aw_quota_manager_bridge.cc",
     "aw_quota_manager_bridge.h",
-    "aw_quota_permission_context.cc",
-    "aw_quota_permission_context.h",
     "aw_render_process.cc",
     "aw_render_process.h",
     "aw_render_process_gone_delegate.h",
@@ -120,6 +126,8 @@ source_set("browser") {
     "component_updater/trust_token_key_commitments_component_loader.h",
     "cookie_manager.cc",
     "cookie_manager.h",
+    "enterprise_authentication_app_link_policy_handler.cc",
+    "enterprise_authentication_app_link_policy_handler.h",
     "find_helper.cc",
     "find_helper.h",
     "icon_helper.cc",
@@ -183,8 +191,6 @@ source_set("browser") {
     "safe_browsing/aw_safe_browsing_ui_manager.h",
     "safe_browsing/aw_url_checker_delegate_impl.cc",
     "safe_browsing/aw_url_checker_delegate_impl.h",
-    "scoped_add_feature_flags.cc",
-    "scoped_add_feature_flags.h",
     "state_serializer.cc",
     "state_serializer.h",
     "tracing/aw_background_tracing_metrics_provider.cc",
@@ -219,6 +225,7 @@ source_set("browser") {
     "//components/content_capture/android",
     "//components/content_capture/browser",
     "//components/embedder_support:browser_util",
+    "//components/embedder_support:embedder_support",
     "//components/embedder_support/android:util",
     "//components/embedder_support/origin_trials",
     "//components/favicon_base:favicon_base",
@@ -226,11 +233,14 @@ source_set("browser") {
     "//components/keyed_service/content",
     "//components/optimization_guide/core:bloomfilter",
     "//components/profile_metrics",
+    "//components/strings:components_strings_grit",
+    "//components/url_matcher",
 
     # Called via JNI in CrashpadMain
     "//components/crash/android:crashpad_main",
     "//components/crash/content/browser",
     "//components/crash/core/app",
+    "//components/digital_asset_links",
     "//components/embedder_support/android:web_contents_delegate",
     "//components/embedder_support/android/metrics",
     "//components/google/core/common",
@@ -240,9 +250,11 @@ source_set("browser") {
     "//components/js_injection/common:common_mojom",
     "//components/metrics",
     "//components/metrics:component_metrics",
-    "//components/metrics:content",
     "//components/minidump_uploader",
     "//components/navigation_interception",
+    "//components/network_hints/browser",
+    "//components/origin_trials:browser",
+    "//components/origin_trials:common",
     "//components/page_load_metrics/browser",
     "//components/permissions",
     "//components/policy:generated",
@@ -264,6 +276,8 @@ source_set("browser") {
     "//components/services/heap_profiling/public/cpp",
     "//components/spellcheck:buildflags",
     "//components/tracing:background_tracing_metrics_provider",
+    "//components/tracing:background_tracing_utils",
+    "//components/tracing:startup_tracing",
     "//components/url_formatter",
     "//components/user_prefs",
     "//components/variations",
@@ -281,14 +295,16 @@ source_set("browser") {
     "//third_party/blink/public/mojom:mojom_core",
     "//third_party/blink/public/mojom:mojom_platform",
     "//third_party/crashpad/crashpad/client",
+    "//third_party/zlib/google:compression_utils",
     "//ui/android",
+    "//ui/display/util:util",
     "//ui/gl",
     "//ui/resources",
     "//ui/touch_selection",
     "//url:gurl_android",
   ]
 
-  if (enable_basic_printing) {
+  if (enable_printing) {
     deps += [
       "//components/printing/browser",
       "//components/printing/common",
@@ -301,8 +317,5 @@ source_set("browser") {
     deps += [ "//components/spellcheck/browser" ]
   }
 
-  configs += [
-    "//tools/v8_context_snapshot:use_v8_context_snapshot",
-    "//v8:external_startup_data",
-  ]
+  configs += [ "//v8:external_startup_data" ]
 }

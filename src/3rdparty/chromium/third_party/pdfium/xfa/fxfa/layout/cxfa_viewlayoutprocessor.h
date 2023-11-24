@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -31,12 +31,16 @@ class CXFA_ViewLayoutProcessor
 
  public:
   struct BreakData {
+    CPPGC_STACK_ALLOCATED();  // Raw/Unowned pointers allowed.
+   public:
     CXFA_Node* pLeader;
     CXFA_Node* pTrailer;
     bool bCreatePage;
   };
 
   struct OverflowData {
+    CPPGC_STACK_ALLOCATED();  // Raw/Unowned pointers allowed.
+   public:
     CXFA_Node* pLeader;
     CXFA_Node* pTrailer;
   };
@@ -46,7 +50,7 @@ class CXFA_ViewLayoutProcessor
 
   void PreFinalize();
   void Trace(cppgc::Visitor* visitor) const;
-  cppgc::Heap* GetHeap() const { return m_pHeap.Get(); }
+  cppgc::Heap* GetHeap() const { return m_pHeap; }
 
   bool InitLayoutPage(CXFA_Node* pFormNode);
   bool PrepareFirstPage(CXFA_Node* pRootSubform);
@@ -60,7 +64,7 @@ class CXFA_ViewLayoutProcessor
   CXFA_ViewLayoutItem* GetPage(int32_t index) const;
   int32_t GetPageIndex(const CXFA_ViewLayoutItem* pPage) const;
   CXFA_ViewLayoutItem* GetRootLayoutItem() const {
-    return m_pPageSetRootLayoutItem.Get();
+    return m_pPageSetRootLayoutItem;
   }
   absl::optional<BreakData> ProcessBreakBefore(const CXFA_Node* pBreakNode);
   absl::optional<BreakData> ProcessBreakAfter(const CXFA_Node* pBreakNode);
@@ -90,18 +94,16 @@ class CXFA_ViewLayoutProcessor
                            CXFA_LayoutProcessor* pLayoutProcessor);
 
   bool AppendNewPage(bool bFirstTemPage);
-  void ReorderPendingLayoutRecordToTail(CXFA_ViewRecord* pNewRecord,
-                                        CXFA_ViewRecord* pPrevRecord);
   void RemoveLayoutRecord(CXFA_ViewRecord* pNewRecord,
                           CXFA_ViewRecord* pPrevRecord);
   bool HasCurrentViewRecord() const {
     return m_CurrentViewRecordIter != m_ProposedViewRecords.end();
   }
   CXFA_ViewRecord* GetCurrentViewRecord() {
-    return m_CurrentViewRecordIter->Get();
+    return HasCurrentViewRecord() ? m_CurrentViewRecordIter->Get() : nullptr;
   }
   const CXFA_ViewRecord* GetCurrentViewRecord() const {
-    return m_CurrentViewRecordIter->Get();
+    return HasCurrentViewRecord() ? m_CurrentViewRecordIter->Get() : nullptr;
   }
   void ResetToFirstViewRecord() {
     m_CurrentViewRecordIter = m_ProposedViewRecords.begin();

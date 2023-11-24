@@ -14,9 +14,11 @@
 
 #include "src/tint/sem/switch_statement.h"
 
-#include "src/tint/program_builder.h"
+#include "src/tint/ast/case_statement.h"
+#include "src/tint/ast/switch_statement.h"
 
 TINT_INSTANTIATE_TYPEINFO(tint::sem::CaseStatement);
+TINT_INSTANTIATE_TYPEINFO(tint::sem::CaseSelector);
 TINT_INSTANTIATE_TYPEINFO(tint::sem::SwitchStatement);
 
 namespace tint::sem {
@@ -25,27 +27,36 @@ SwitchStatement::SwitchStatement(const ast::SwitchStatement* declaration,
                                  const CompoundStatement* parent,
                                  const sem::Function* function)
     : Base(declaration, parent, function) {
-  TINT_ASSERT(Semantic, parent);
-  TINT_ASSERT(Semantic, function);
+    TINT_ASSERT(Semantic, parent);
+    TINT_ASSERT(Semantic, function);
 }
 
 SwitchStatement::~SwitchStatement() = default;
 
 const ast::SwitchStatement* SwitchStatement::Declaration() const {
-  return static_cast<const ast::SwitchStatement*>(Base::Declaration());
+    return static_cast<const ast::SwitchStatement*>(Base::Declaration());
 }
 
 CaseStatement::CaseStatement(const ast::CaseStatement* declaration,
                              const CompoundStatement* parent,
                              const sem::Function* function)
     : Base(declaration, parent, function) {
-  TINT_ASSERT(Semantic, parent);
-  TINT_ASSERT(Semantic, function);
+    TINT_ASSERT(Semantic, parent);
+    TINT_ASSERT(Semantic, function);
 }
 CaseStatement::~CaseStatement() = default;
 
 const ast::CaseStatement* CaseStatement::Declaration() const {
-  return static_cast<const ast::CaseStatement*>(Base::Declaration());
+    return static_cast<const ast::CaseStatement*>(Base::Declaration());
+}
+
+CaseSelector::CaseSelector(const ast::CaseSelector* decl, const constant::Value* val)
+    : Base(), decl_(decl), val_(val) {}
+
+CaseSelector::~CaseSelector() = default;
+
+const ast::CaseSelector* CaseSelector::Declaration() const {
+    return decl_;
 }
 
 }  // namespace tint::sem

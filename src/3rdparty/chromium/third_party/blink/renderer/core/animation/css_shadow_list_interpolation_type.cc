@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -184,10 +184,10 @@ void CSSShadowListInterpolationType::ApplyStandardPropertyValue(
       CreateShadowList(interpolable_value, non_interpolable_value, state);
   switch (CssProperty().PropertyID()) {
     case CSSPropertyID::kBoxShadow:
-      state.Style()->SetBoxShadow(std::move(shadow_list));
+      state.StyleBuilder().SetBoxShadow(std::move(shadow_list));
       return;
     case CSSPropertyID::kTextShadow:
-      state.Style()->SetTextShadow(std::move(shadow_list));
+      state.StyleBuilder().SetTextShadow(std::move(shadow_list));
       return;
     default:
       NOTREACHED();

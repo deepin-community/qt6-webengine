@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,10 +23,9 @@
 #include "core/fxge/cfx_renderdevice.h"
 #include "fpdfsdk/pwl/cpwl_edit.h"
 #include "fpdfsdk/pwl/cpwl_scroll_bar.h"
-#include "fpdfsdk/pwl/ipwl_systemhandler.h"
+#include "fpdfsdk/pwl/ipwl_fillernotify.h"
 #include "third_party/base/check.h"
 #include "third_party/base/check_op.h"
-#include "third_party/base/compiler_specific.h"
 
 namespace {
 
@@ -583,8 +582,8 @@ void CPWL_EditImpl::DrawEdit(CFX_RenderDevice* pDevice,
                              const CFX_FloatRect& rcClip,
                              const CFX_PointF& ptOffset,
                              const CPVT_WordRange* pRange,
-                             IPWL_SystemHandler* pSystemHandler,
-                             IPWL_SystemHandler::PerWindowData* pSystemData) {
+                             IPWL_FillerNotify* pFillerNotify,
+                             IPWL_FillerNotify::PerWindowData* pSystemData) {
   const bool bContinuous = GetCharArray() == 0;
   uint16_t SubWord = GetPasswordChar();
   float fFontSize = GetFontSize();
@@ -622,7 +621,7 @@ void CPWL_EditImpl::DrawEdit(CFX_RenderDevice* pDevice,
       bSelect = place > wrSelect.BeginPos && place <= wrSelect.EndPos;
       crCurFill = bSelect ? crWhite : crTextFill;
     }
-    if (pSystemHandler->IsSelectionImplemented()) {
+    if (pFillerNotify->IsSelectionImplemented()) {
       crCurFill = crTextFill;
       crOldFill = crCurFill;
     }
@@ -631,12 +630,12 @@ void CPWL_EditImpl::DrawEdit(CFX_RenderDevice* pDevice,
       if (bSelect) {
         CPVT_Line line;
         pIterator->GetLine(line);
-        if (pSystemHandler->IsSelectionImplemented()) {
+        if (pFillerNotify->IsSelectionImplemented()) {
           CFX_FloatRect rc(word.ptWord.x, line.ptLine.y + line.fLineDescent,
                            word.ptWord.x + word.fWidth,
                            line.ptLine.y + line.fLineAscent);
           rc.Intersect(rcClip);
-          pSystemHandler->OutputSelectedRect(pSystemData, rc);
+          pFillerNotify->OutputSelectedRect(pSystemData, rc);
         } else {
           CFX_Path pathSelBK;
           pathSelBK.AppendRect(word.ptWord.x, line.ptLine.y + line.fLineDescent,
@@ -681,7 +680,8 @@ void CPWL_EditImpl::DrawEdit(CFX_RenderDevice* pDevice,
   }
 }
 
-CPWL_EditImpl::CPWL_EditImpl() : m_pVT(std::make_unique<CPVT_VariableText>()) {}
+CPWL_EditImpl::CPWL_EditImpl()
+    : m_pVT(std::make_unique<CPVT_VariableText>(nullptr)) {}
 
 CPWL_EditImpl::~CPWL_EditImpl() = default;
 
@@ -1761,6 +1761,19 @@ void CPWL_EditImpl::PaintInsertText(const CPVT_WordPlace& wpOld,
   }
 }
 
+void CPWL_EditImpl::ReplaceAndKeepSelection(const WideString& text) {
+  AddEditUndoItem(std::make_unique<UndoReplaceSelection>(this, false));
+  ClearSelection();
+
+  // Select the inserted text.
+  CPVT_WordPlace caret_before_insert = m_wpCaret;
+  InsertText(text, FX_Charset::kDefault);
+  CPVT_WordPlace caret_after_insert = m_wpCaret;
+  m_SelState.Set(caret_before_insert, caret_after_insert);
+
+  AddEditUndoItem(std::make_unique<UndoReplaceSelection>(this, true));
+}
+
 void CPWL_EditImpl::ReplaceSelection(const WideString& text) {
   AddEditUndoItem(std::make_unique<UndoReplaceSelection>(this, false));
   ClearSelection();
@@ -1884,7 +1897,7 @@ CPVT_WordPlace CPWL_EditImpl::DoInsertText(const CPVT_WordPlace& place,
         break;
       case '\t':
         word = ' ';
-        FALLTHROUGH;
+        [[fallthrough]];
       default:
         wp = m_pVT->InsertWord(wp, word, GetCharSetFromUnicode(word, charset));
         break;

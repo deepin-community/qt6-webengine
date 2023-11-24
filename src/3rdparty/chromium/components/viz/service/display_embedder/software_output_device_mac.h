@@ -1,14 +1,17 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_VIZ_SERVICE_DISPLAY_EMBEDDER_SOFTWARE_OUTPUT_DEVICE_MAC_H_
 #define COMPONENTS_VIZ_SERVICE_DISPLAY_EMBEDDER_SOFTWARE_OUTPUT_DEVICE_MAC_H_
 
-#include <IOSurface/IOSurface.h>
+#include <IOSurface/IOSurfaceRef.h>
 #include <list>
+#include <memory>
 
 #include "base/mac/scoped_cftyperef.h"
+#include "base/memory/raw_ptr.h"
+#include "base/task/sequenced_task_runner.h"
 #include "components/viz/service/display/software_output_device.h"
 #include "components/viz/service/viz_service_export.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
@@ -69,7 +72,7 @@ class VIZ_SERVICE_EXPORT SoftwareOutputDeviceMac : public SoftwareOutputDevice {
 
   // A pointer to the last element of |buffer_queue_| during paint. It is only
   // valid between BeginPaint and EndPaint.
-  Buffer* current_paint_buffer_ = nullptr;
+  raw_ptr<Buffer> current_paint_buffer_ = nullptr;
 
   // The SkCanvas wraps the mapped |current_paint_buffer_|'s IOSurface. It is
   // valid only between BeginPaint and EndPaint.

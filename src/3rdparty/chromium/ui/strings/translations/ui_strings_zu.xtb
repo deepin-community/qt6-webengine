@@ -6,6 +6,7 @@
 <translation id="1127811143501539442">{DAYS,plural, =1{1 usuku oludlule}one{# izinsuku ezedlule}other{# izinsuku ezedlule}}</translation>
 <translation id="1156623771253174079">{SECONDS,plural, =1{Iminithi elingu-1 eledlule}one{# amaminithi edlule}other{# amaminithi edlule}}</translation>
 <translation id="1169783199079129864">{MINUTES,plural, =1{1m}one{#m}other{#m}}</translation>
+<translation id="1181037720776840403">Susa</translation>
 <translation id="1243314992276662751">Layisha</translation>
 <translation id="1266864766717917324">Ayikwazanga ukwabelana nge-<ph name="CONTENT_TYPE" /></translation>
 <translation id="1269641567813814718">Win</translation>
@@ -25,6 +26,7 @@
 <translation id="1803208670097017349">{MONTHS,plural, =1{1 inyanga}one{# izinyanga}other{# izinyanga}}</translation>
 <translation id="1809410197924942083"><ph name="QUANTITY" /> MB/s</translation>
 <translation id="1830179671306812954">{HOURS,plural, =1{1 ihora ne- }one{# amahora ne- }other{# amahora ne- }}</translation>
+<translation id="185013357618350178">&amp;Khetha</translation>
 <translation id="1859234291848436338">Ibhala izikhobisi-ndlela</translation>
 <translation id="1860796786778352021">Ukuvala isaziso</translation>
 <translation id="186476001994626254">Okuqukethwe kokunamathisela kwe-Web Smart</translation>
@@ -52,7 +54,6 @@
 <translation id="2445449901874883781">Sebenzisa ukuminyana okuphezulu</translation>
 <translation id="2482878487686419369">Izaziso</translation>
 <translation id="2497284189126895209">Wonke amafayela</translation>
-<translation id="2498950423397131220">Ukuntanta</translation>
 <translation id="2515586267016047495">I-Alt</translation>
 <translation id="2522350507219695259">Ukusika kuqediwe</translation>
 <translation id="252373100621549798">Ukubonisa okungaziwa</translation>
@@ -60,6 +61,7 @@
 <translation id="2573731672208488250">{HOURS,plural, =1{nge-1h}one{nge-#h}other{nge-#h}}</translation>
 <translation id="2583543531130364912">Sika  isikrini sakho esithintwayo</translation>
 <translation id="2586657967955657006">Ibhodi lokumanathisela</translation>
+<translation id="2653844658857826081">KUSHA</translation>
 <translation id="2666092431469916601">Ngaphezulu</translation>
 <translation id="2701330563083355633">Kwabelwe kusuka ku-<ph name="DEVICE_NAME" /></translation>
 <translation id="271033894570825754">Okusha</translation>

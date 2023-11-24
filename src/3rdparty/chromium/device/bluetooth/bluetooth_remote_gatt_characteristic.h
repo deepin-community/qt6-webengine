@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,22 +12,21 @@
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
-#include "base/callback_forward.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/queue.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
-#include "build/chromeos_buildflags.h"
 #include "device/bluetooth/bluetooth_export.h"
 #include "device/bluetooth/bluetooth_gatt_characteristic.h"
+#include "device/bluetooth/bluetooth_gatt_notify_session.h"
 #include "device/bluetooth/bluetooth_remote_gatt_service.h"
 #include "device/bluetooth/public/cpp/bluetooth_uuid.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace device {
 
-class BluetoothGattNotifySession;
 class BluetoothRemoteGattDescriptor;
 
 // BluetoothRemoteGattCharacteristic represents a remote GATT characteristic.
@@ -134,7 +133,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattCharacteristic
   // BluetoothGattNotifySession object that you received in |callback|.
   virtual void StartNotifySession(NotifySessionCallback callback,
                                   ErrorCallback error_callback);
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS)
   // TODO(https://crbug.com/849359): This method should also be implemented on
   // Android and Windows.
   // macOS does not support specifying a notification type. According to macOS
@@ -144,7 +143,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattCharacteristic
   virtual void StartNotifySession(NotificationType notification_type,
                                   NotifySessionCallback callback,
                                   ErrorCallback error_callback);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   // Sends a read request to a remote characteristic to read its value.
   // |callback| is called to return the read value or error.
@@ -170,7 +169,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattCharacteristic
       base::OnceClosure callback,
       ErrorCallback error_callback) = 0;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS)
   // Sends a prepare write request to a remote characteristic with the value
   // |value|. |callback| is called to signal success and |error_callback| for
   // failures. This method only applies to remote characteristics and will fail
@@ -181,7 +180,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattCharacteristic
       const std::vector<uint8_t>& value,
       base::OnceClosure callback,
       ErrorCallback error_callback) = 0;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
  protected:
   using DescriptorMap =
@@ -194,7 +193,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattCharacteristic
   // notifications/indications. This method is meant to be called from
   // StartNotifySession and should contain only the code necessary to start
   // listening to characteristic notifications on a particular platform.
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS)
   // |notification_type| specifies the type of notifications that will be
   // enabled: notifications or indications.
   // TODO(https://crbug.com/849359): This method should also be implemented on
@@ -209,7 +208,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattCharacteristic
       BluetoothRemoteGattDescriptor* ccc_descriptor,
       base::OnceClosure callback,
       ErrorCallback error_callback) = 0;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   // Writes to the Client Characteristic Configuration descriptor to disable
   // notifications/indications. This method is meant to be called from
@@ -255,7 +254,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattCharacteristic
   // notifications/indications. Core Bluetooth Specification [V4.2 Vol 3 Part G
   // Section 3.3.1.1. Characteristic Properties] requires this descriptor to be
   // present when notifications/indications are supported.
-  virtual void StopNotifySession(BluetoothGattNotifySession* session,
+  virtual void StopNotifySession(BluetoothGattNotifySession::Id session,
                                  base::OnceClosure callback);
 
   class NotifySessionCommand {
@@ -291,13 +290,13 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattCharacteristic
   void OnStartNotifySessionError(ErrorCallback error_callback,
                                  BluetoothGattService::GattErrorCode error);
 
-  void ExecuteStopNotifySession(BluetoothGattNotifySession* session,
+  void ExecuteStopNotifySession(BluetoothGattNotifySession::Id session,
                                 base::OnceClosure callback,
                                 CommandStatus previous_command);
   void CancelStopNotifySession(base::OnceClosure callback);
-  void OnStopNotifySessionSuccess(BluetoothGattNotifySession* session,
+  void OnStopNotifySessionSuccess(BluetoothGattNotifySession::Id session,
                                   base::OnceClosure callback);
-  void OnStopNotifySessionError(BluetoothGattNotifySession* session,
+  void OnStopNotifySessionError(BluetoothGattNotifySession::Id session,
                                 base::OnceClosure callback,
                                 BluetoothGattService::GattErrorCode error);
   bool IsNotificationTypeSupported(
@@ -313,7 +312,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattCharacteristic
   bool notify_command_running_ = false;
 
   // Set of active notify sessions.
-  std::set<BluetoothGattNotifySession*> notify_sessions_;
+  std::set<BluetoothGattNotifySession::Id> notify_sessions_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 

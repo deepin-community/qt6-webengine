@@ -20,15 +20,17 @@ namespace {
 using MslGeneratorImplTest = TestHelper;
 
 TEST_F(MslGeneratorImplTest, Emit_Discard) {
-  auto* stmt = create<ast::DiscardStatement>();
-  WrapInFunction(stmt);
+    auto* stmt = Discard();
 
-  GeneratorImpl& gen = Build();
+    Func("F", utils::Empty, ty.void_(), utils::Vector{stmt},
+         utils::Vector{Stage(ast::PipelineStage::kFragment)});
 
-  gen.increment_indent();
+    GeneratorImpl& gen = Build();
 
-  ASSERT_TRUE(gen.EmitStatement(stmt)) << gen.error();
-  EXPECT_EQ(gen.result(), "  discard_fragment();\n");
+    gen.increment_indent();
+
+    ASSERT_TRUE(gen.EmitStatement(stmt)) << gen.error();
+    EXPECT_EQ(gen.result(), "  discard_fragment();\n");
 }
 
 }  // namespace

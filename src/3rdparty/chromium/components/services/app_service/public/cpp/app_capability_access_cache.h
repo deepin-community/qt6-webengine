@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,20 +15,18 @@
 #include "base/observer_list_types.h"
 #include "base/sequence_checker.h"
 #include "components/account_id/account_id.h"
+#include "components/services/app_service/public/cpp/capability_access.h"
 #include "components/services/app_service/public/cpp/capability_access_update.h"
 
 namespace apps {
 
-// Caches all of the apps::mojom::CapabilityAccessPtr's seen by an
-// apps::mojom::Subscriber. A Subscriber sees a stream of "deltas", or changes
-// in access state. This cache also keeps the "sum" of those previous deltas, so
-// that observers of this object are presented with CapabilityAccessUpdate's,
-// i.e. "state-and-delta"s.
+// Caches all of the apps::CapabilityAccessPtr. AppServiceProxy sees a stream of
+// "deltas", or changes in access state. This cache also keeps the "sum" of
+// those previous deltas, so that observers of this object are presented with
+// CapabilityAccessUpdate's, i.e. "state-and-delta"s.
 //
 // It can also be queried synchronously, providing answers from its in-memory
-// cache, even though the underlying CapabilityAccess (and its App Publishers)
-// communicate asynchronously, possibly across process boundaries, via Mojo
-// IPC. Synchronous APIs can be more suitable for e.g. UI programming that
+// cache. Synchronous APIs can be more suitable for e.g. UI programming that
 // should not block an event loop on I/O.
 //
 // This class is not thread-safe.
@@ -101,17 +99,16 @@ class COMPONENT_EXPORT(APP_UPDATE) AppCapabilityAccessCache {
   // (and then c1), which means that processing c2 is delayed until after the
   // second OnCapabilityAccesses call returns.
   //
-  // The callee will consume the deltas. An apps::mojom::CapabilityAccessPtr has
+  // The callee will consume the deltas. An apps::CapabilityAccessPtr has
   // the ownership semantics of a unique_ptr, and will be deleted when out of
   // scope. The caller presumably calls OnCapabilityAccesses(std::move(deltas)).
-  void OnCapabilityAccesses(
-      std::vector<apps::mojom::CapabilityAccessPtr> deltas);
+  void OnCapabilityAccesses(std::vector<CapabilityAccessPtr> deltas);
 
   // Calls f, a void-returning function whose arguments are (const
   // apps::CapabilityAccessUpdate&), on each app in AppCapabilityAccessCache.
   //
   // f's argument is an apps::CapabilityAccessUpdate instead of an
-  // apps::mojom::CapabilityAccessPtr so that callers can more easily share code
+  // apps::CapabilityAccessPtr so that callers can more easily share code
   // with Observer::OnCapabilityAccessUpdate (which also takes an
   // apps::CapabilityAccessUpdate), and an apps::CapabilityAccessUpdate also has
   // a StateIsNull method.
@@ -126,24 +123,24 @@ class COMPONENT_EXPORT(APP_UPDATE) AppCapabilityAccessCache {
     DCHECK_CALLED_ON_VALID_SEQUENCE(my_sequence_checker_);
 
     for (const auto& s_iter : states_) {
-      const apps::mojom::CapabilityAccess* state = s_iter.second.get();
+      const CapabilityAccess* state = s_iter.second.get();
 
       auto d_iter = deltas_in_progress_.find(s_iter.first);
-      const apps::mojom::CapabilityAccess* delta =
+      const CapabilityAccess* delta =
           (d_iter != deltas_in_progress_.end()) ? d_iter->second : nullptr;
 
-      f(apps::CapabilityAccessUpdate(state, delta, account_id_));
+      f(CapabilityAccessUpdate(state, delta, account_id_));
     }
 
     for (const auto& d_iter : deltas_in_progress_) {
-      const apps::mojom::CapabilityAccess* delta = d_iter.second;
+      const CapabilityAccess* delta = d_iter.second;
 
       auto s_iter = states_.find(d_iter.first);
       if (s_iter != states_.end()) {
         continue;
       }
 
-      f(apps::CapabilityAccessUpdate(nullptr, delta, account_id_));
+      f(CapabilityAccessUpdate(nullptr, delta, account_id_));
     }
   }
 
@@ -160,28 +157,27 @@ class COMPONENT_EXPORT(APP_UPDATE) AppCapabilityAccessCache {
     DCHECK_CALLED_ON_VALID_SEQUENCE(my_sequence_checker_);
 
     auto s_iter = states_.find(app_id);
-    const apps::mojom::CapabilityAccess* state =
+    const CapabilityAccess* state =
         (s_iter != states_.end()) ? s_iter->second.get() : nullptr;
 
     auto d_iter = deltas_in_progress_.find(app_id);
-    const apps::mojom::CapabilityAccess* delta =
+    const CapabilityAccess* delta =
         (d_iter != deltas_in_progress_.end()) ? d_iter->second : nullptr;
 
     if (state || delta) {
-      f(apps::CapabilityAccessUpdate(state, delta, account_id_));
+      f(CapabilityAccessUpdate(state, delta, account_id_));
       return true;
     }
     return false;
   }
 
  private:
-  void DoOnCapabilityAccesses(
-      std::vector<apps::mojom::CapabilityAccessPtr> deltas);
+  void DoOnCapabilityAccesses(std::vector<CapabilityAccessPtr> deltas);
 
   base::ObserverList<Observer> observers_;
 
   // Maps from app_id to the latest state: the "sum" of all previous deltas.
-  std::map<std::string, apps::mojom::CapabilityAccessPtr> states_;
+  std::map<std::string, CapabilityAccessPtr> states_;
 
   // Track the deltas being processed or are about to be processed by
   // OnCapabilityAccesses. They are separate to manage the "notification and
@@ -201,8 +197,8 @@ class COMPONENT_EXPORT(APP_UPDATE) AppCapabilityAccessCache {
   // Nested OnCapabilityAccesses calls are expected to be rare (but still dealt
   // with sensibly). In the typical case, OnCapabilityAccesses should call
   // DoOnCapabilityAccesses exactly once, and deltas_pending_ will stay empty.
-  std::map<std::string, apps::mojom::CapabilityAccess*> deltas_in_progress_;
-  std::vector<apps::mojom::CapabilityAccessPtr> deltas_pending_;
+  std::map<std::string, CapabilityAccess*> deltas_in_progress_;
+  std::vector<CapabilityAccessPtr> deltas_pending_;
 
   AccountId account_id_;
 

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -732,6 +732,38 @@ TEST_F(MediaSessionImplTest, SessionInfoAudioSink) {
   player_observer_->SetAudioSinkId(player2, "2");
   info = media_session::test::GetMediaSessionInfoSync(GetMediaSession());
   EXPECT_FALSE(info->audio_sink_id.has_value());
+}
+
+TEST_F(MediaSessionImplTest, SessionInfoPresentation) {
+  EXPECT_FALSE(media_session::test::GetMediaSessionInfoSync(GetMediaSession())
+                   ->has_presentation);
+
+  GetMediaSession()->OnPresentationsChanged(true);
+  EXPECT_TRUE(media_session::test::GetMediaSessionInfoSync(GetMediaSession())
+                  ->has_presentation);
+
+  GetMediaSession()->OnPresentationsChanged(false);
+  EXPECT_FALSE(media_session::test::GetMediaSessionInfoSync(GetMediaSession())
+                   ->has_presentation);
+}
+
+TEST_F(MediaSessionImplTest, SessionInfoRemotePlaybackMetadata) {
+  EXPECT_FALSE(media_session::test::GetMediaSessionInfoSync(GetMediaSession())
+                   ->remote_playback_metadata);
+
+  int player1 = player_observer_->StartNewPlayer();
+  GetMediaSession()->AddPlayer(player_observer_.get(), player1);
+  GetMediaSession()->SetRemotePlaybackMetadata(
+      media_session::mojom::RemotePlaybackMetadata::New(
+          "video_codec", "audio_codec", false, true, "device_friendly_name",
+          false));
+  EXPECT_TRUE(media_session::test::GetMediaSessionInfoSync(GetMediaSession())
+                  ->remote_playback_metadata);
+
+  int player2 = player_observer_->StartNewPlayer();
+  GetMediaSession()->AddPlayer(player_observer_.get(), player2);
+  EXPECT_FALSE(media_session::test::GetMediaSessionInfoSync(GetMediaSession())
+                   ->remote_playback_metadata);
 }
 
 TEST_F(MediaSessionImplTest, RaiseActivatesWebContents) {

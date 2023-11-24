@@ -1,15 +1,15 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "services/network/web_transport.h"
 
 #include "base/auto_reset.h"
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 #include "base/strings/string_util.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "net/base/io_buffer.h"
 #include "net/third_party/quiche/src/quiche/common/platform/api/quiche_mem_slice.h"
@@ -27,13 +27,12 @@ net::WebTransportParameters CreateParameters(
     const std::vector<mojom::WebTransportCertificateFingerprintPtr>&
         fingerprints) {
   net::WebTransportParameters params;
-  params.enable_quic_transport = false;
   params.enable_web_transport_http3 = true;
 
   for (const auto& fingerprint : fingerprints) {
     params.server_certificate_fingerprints.push_back(
-        quic::CertificateFingerprint{/*.algorithm =*/ fingerprint->algorithm,
-                                     /*.fingerprint =*/ fingerprint->fingerprint});
+        quic::CertificateFingerprint{.algorithm = fingerprint->algorithm,
+                                     .fingerprint = fingerprint->fingerprint});
   }
   return params;
 }
@@ -71,11 +70,11 @@ class WebTransport::Stream final {
 
     // Visitor implementation:
     void OnCanRead() override {
-      base::SequencedTaskRunnerHandle::Get()->PostTask(
+      base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
           FROM_HERE, base::BindOnce(&Stream::Receive, stream_));
     }
     void OnCanWrite() override {
-      base::SequencedTaskRunnerHandle::Get()->PostTask(
+      base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
           FROM_HERE, base::BindOnce(&Stream::Send, stream_));
     }
     void OnResetStreamReceived(quic::WebTransportStreamError error) override {
@@ -177,7 +176,7 @@ class WebTransport::Stream final {
 
   ~Stream() {
     auto* stream = incoming_ ? incoming_.get() : outgoing_.get();
-    if (!stream) {
+    if (!stream || transport_->closing_ || transport_->torn_down_) {
       return;
     }
     stream->MaybeResetDueToStreamObjectGone();
@@ -218,7 +217,7 @@ class WebTransport::Stream final {
 
   void Send() {
     MaySendFin();
-    while (outgoing_ && outgoing_->CanWrite()) {
+    while (readable_ && outgoing_ && outgoing_->CanWrite()) {
       const void* data = nullptr;
       uint32_t available = 0;
       MojoResult result = readable_->BeginReadData(
@@ -251,7 +250,7 @@ class WebTransport::Stream final {
   }
 
   void MaySendFin() {
-    if (!outgoing_) {
+    if (!readable_ || !outgoing_) {
       return;
     }
     if (!has_seen_end_of_pipe_for_readable_ || !has_received_fin_from_client_) {
@@ -287,13 +286,13 @@ class WebTransport::Stream final {
         }
         DCHECK_EQ(result, MOJO_RESULT_OK);
 
-        read_result =
-            incoming_->Read(reinterpret_cast<char*>(buffer), available);
+        read_result = incoming_->Read(
+            absl::Span<char>(reinterpret_cast<char*>(buffer), available));
         writable_->EndWriteData(read_result.bytes_read);
       } else {
         // Even if ReadableBytes() == 0, we may need to read the FIN at the end
         // of the stream.
-        read_result = incoming_->Read(nullptr, 0);
+        read_result = incoming_->Read(absl::Span<char>());
         if (!read_result.fin) {
           return;
         }
@@ -350,7 +349,7 @@ class WebTransport::Stream final {
       return;
     }
 
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(&Stream::Dispose, weak_factory_.GetWeakPtr()));
   }
@@ -379,7 +378,7 @@ class WebTransport::Stream final {
 WebTransport::WebTransport(
     const GURL& url,
     const url::Origin& origin,
-    const net::NetworkIsolationKey& key,
+    const net::NetworkAnonymizationKey& key,
     const std::vector<mojom::WebTransportCertificateFingerprintPtr>&
         fingerprints,
     NetworkContext* context,
@@ -399,7 +398,10 @@ WebTransport::WebTransport(
   transport_->Connect();
 }
 
-WebTransport::~WebTransport() = default;
+WebTransport::~WebTransport() {
+  // Ensure that we ignore all callbacks while mid-destruction.
+  torn_down_ = true;
+}
 
 void WebTransport::SendDatagram(base::span<const uint8_t> data,
                                 base::OnceCallback<void(bool)> callback) {
@@ -407,11 +409,8 @@ void WebTransport::SendDatagram(base::span<const uint8_t> data,
 
   datagram_callbacks_.emplace(std::move(callback));
 
-  quiche::QuicheBuffer buffer(quiche::SimpleBufferAllocator::Get(),
-                              data.size());
-  memcpy(buffer.data(), data.data(), data.size());
-  quiche::QuicheMemSlice slice(std::move(buffer));
-  transport_->session()->SendOrQueueDatagram(std::move(slice));
+  transport_->session()->SendOrQueueDatagram(absl::string_view(
+      reinterpret_cast<const char*>(data.data()), data.size()));
 }
 
 void WebTransport::CreateStream(
@@ -510,7 +509,7 @@ void WebTransport::SetOutgoingDatagramExpirationDuration(
   }
 
   transport_->session()->SetDatagramMaxTimeInQueue(
-      quic::QuicTime::Delta::FromMicroseconds(duration.InMicroseconds()));
+      absl::Microseconds(duration.InMicroseconds()));
 }
 
 void WebTransport::Close(mojom::WebTransportCloseInfoPtr close_info) {
@@ -728,7 +727,7 @@ void WebTransport::TearDown() {
   handshake_client_.reset();
   client_.reset();
 
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(&WebTransport::Dispose, weak_factory_.GetWeakPtr()));
 }

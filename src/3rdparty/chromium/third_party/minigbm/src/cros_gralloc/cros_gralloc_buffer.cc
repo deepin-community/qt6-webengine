@@ -9,34 +9,110 @@
 #include <assert.h>
 #include <sys/mman.h>
 
-cros_gralloc_buffer::cros_gralloc_buffer(uint32_t id, struct bo *acquire_bo,
-					 struct cros_gralloc_handle *acquire_handle,
-					 int32_t reserved_region_fd, uint64_t reserved_region_size)
-    : id_(id), bo_(acquire_bo), hnd_(acquire_handle), refcount_(1), lockcount_(0),
-      reserved_region_fd_(reserved_region_fd), reserved_region_size_(reserved_region_size),
-      reserved_region_addr_(nullptr)
+#include <cutils/native_handle.h>
+
+/*static*/
+std::unique_ptr<cros_gralloc_buffer>
+cros_gralloc_buffer::create(struct bo *acquire_bo,
+			    const struct cros_gralloc_handle *borrowed_handle)
+{
+	auto acquire_hnd =
+	    reinterpret_cast<struct cros_gralloc_handle *>(native_handle_clone(borrowed_handle));
+	if (!acquire_hnd) {
+		ALOGE("Failed to create cros_gralloc_buffer: failed to clone handle.");
+		return {};
+	}
+
+	std::unique_ptr<cros_gralloc_buffer> buffer(
+	    new cros_gralloc_buffer(acquire_bo, acquire_hnd));
+	if (!buffer) {
+		ALOGE("Failed to create cros_gralloc_buffer: failed to allocate.");
+		native_handle_close(acquire_hnd);
+		native_handle_delete(acquire_hnd);
+		return {};
+	}
+
+	return buffer;
+}
+
+cros_gralloc_buffer::cros_gralloc_buffer(struct bo *acquire_bo,
+					 struct cros_gralloc_handle *acquire_handle)
+    : bo_(acquire_bo), hnd_(acquire_handle)
 {
 	assert(bo_);
-	num_planes_ = drv_bo_get_num_planes(bo_);
-	for (uint32_t plane = 0; plane < num_planes_; plane++)
+	assert(hnd_);
+	for (uint32_t plane = 0; plane < DRV_MAX_PLANES; plane++)
 		lock_data_[plane] = nullptr;
 }
 
 cros_gralloc_buffer::~cros_gralloc_buffer()
 {
 	drv_bo_destroy(bo_);
-	if (hnd_) {
-		native_handle_close(hnd_);
-		native_handle_delete(hnd_);
-	}
 	if (reserved_region_addr_) {
-		munmap(reserved_region_addr_, reserved_region_size_);
+		munmap(reserved_region_addr_, hnd_->reserved_region_size);
 	}
+	native_handle_close(hnd_);
+	native_handle_delete(hnd_);
 }
 
 uint32_t cros_gralloc_buffer::get_id() const
 {
-	return id_;
+	return hnd_->id;
+}
+
+uint32_t cros_gralloc_buffer::get_width() const
+{
+	return hnd_->width;
+}
+
+uint32_t cros_gralloc_buffer::get_height() const
+{
+	return hnd_->height;
+}
+
+uint32_t cros_gralloc_buffer::get_format() const
+{
+	return hnd_->format;
+}
+
+uint64_t cros_gralloc_buffer::get_format_modifier() const
+{
+	return hnd_->format_modifier;
+}
+
+uint64_t cros_gralloc_buffer::get_total_size() const
+{
+	return hnd_->total_size;
+}
+
+uint32_t cros_gralloc_buffer::get_num_planes() const
+{
+	return hnd_->num_planes;
+}
+
+uint32_t cros_gralloc_buffer::get_plane_offset(uint32_t plane) const
+{
+	return hnd_->offsets[plane];
+}
+
+uint32_t cros_gralloc_buffer::get_plane_stride(uint32_t plane) const
+{
+	return hnd_->strides[plane];
+}
+
+uint32_t cros_gralloc_buffer::get_plane_size(uint32_t plane) const
+{
+	return hnd_->sizes[plane];
+}
+
+int32_t cros_gralloc_buffer::get_android_format() const
+{
+	return hnd_->droid_format;
+}
+
+uint64_t cros_gralloc_buffer::get_android_usage() const
+{
+	return static_cast<uint64_t>(hnd_->usage);
 }
 
 int32_t cros_gralloc_buffer::increase_refcount()
@@ -62,7 +138,7 @@ int32_t cros_gralloc_buffer::lock(const struct rectangle *rect, uint32_t map_fla
 	 * just use the first kernel buffer.
 	 */
 	if (drv_num_buffers_per_bo(bo_) != 1) {
-		drv_log("Can only support one buffer per bo.\n");
+		ALOGE("Can only support one buffer per bo.");
 		return -EINVAL;
 	}
 
@@ -86,12 +162,12 @@ int32_t cros_gralloc_buffer::lock(const struct rectangle *rect, uint32_t map_fla
 		}
 
 		if (vaddr == MAP_FAILED) {
-			drv_log("Mapping failed.\n");
+			ALOGE("Mapping failed.");
 			return -EFAULT;
 		}
 	}
 
-	for (uint32_t plane = 0; plane < num_planes_; plane++)
+	for (uint32_t plane = 0; plane < hnd_->num_planes; plane++)
 		addr[plane] = static_cast<uint8_t *>(vaddr) + drv_bo_get_plane_offset(bo_, plane);
 
 	lockcount_++;
@@ -101,7 +177,7 @@ int32_t cros_gralloc_buffer::lock(const struct rectangle *rect, uint32_t map_fla
 int32_t cros_gralloc_buffer::unlock()
 {
 	if (lockcount_ <= 0) {
-		drv_log("Buffer was not locked.\n");
+		ALOGE("Buffer was not locked.");
 		return -EINVAL;
 	}
 
@@ -125,7 +201,7 @@ int32_t cros_gralloc_buffer::resource_info(uint32_t strides[DRV_MAX_PLANES],
 int32_t cros_gralloc_buffer::invalidate()
 {
 	if (lockcount_ <= 0) {
-		drv_log("Buffer was not locked.\n");
+		ALOGE("Buffer was not locked.");
 		return -EINVAL;
 	}
 
@@ -138,7 +214,7 @@ int32_t cros_gralloc_buffer::invalidate()
 int32_t cros_gralloc_buffer::flush()
 {
 	if (lockcount_ <= 0) {
-		drv_log("Buffer was not locked.\n");
+		ALOGE("Buffer was not locked.");
 		return -EINVAL;
 	}
 
@@ -148,23 +224,25 @@ int32_t cros_gralloc_buffer::flush()
 	return 0;
 }
 
-int32_t cros_gralloc_buffer::get_reserved_region(void **addr, uint64_t *size)
+int32_t cros_gralloc_buffer::get_reserved_region(void **addr, uint64_t *size) const
 {
-	if (reserved_region_fd_ <= 0) {
-		drv_log("Buffer does not have reserved region.\n");
+	int32_t reserved_region_fd = hnd_->fds[hnd_->num_planes];
+	if (reserved_region_fd < 0) {
+		ALOGE("Buffer does not have reserved region.");
 		return -EINVAL;
 	}
 
 	if (!reserved_region_addr_) {
-		reserved_region_addr_ = mmap(nullptr, reserved_region_size_, PROT_WRITE | PROT_READ,
-					     MAP_SHARED, reserved_region_fd_, 0);
+		reserved_region_addr_ =
+		    mmap(nullptr, hnd_->reserved_region_size, PROT_WRITE | PROT_READ, MAP_SHARED,
+			 reserved_region_fd, 0);
 		if (reserved_region_addr_ == MAP_FAILED) {
-			drv_log("Failed to mmap reserved region: %s.\n", strerror(errno));
+			ALOGE("Failed to mmap reserved region: %s.", strerror(errno));
 			return -errno;
 		}
 	}
 
 	*addr = reserved_region_addr_;
-	*size = reserved_region_size_;
+	*size = hnd_->reserved_region_size;
 	return 0;
 }

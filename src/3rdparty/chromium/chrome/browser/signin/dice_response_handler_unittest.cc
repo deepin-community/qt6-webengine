@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,14 +7,10 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/check.h"
-#include "base/command_line.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
 #include "base/notreached.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "chrome/test/base/testing_profile.h"
@@ -28,7 +24,6 @@
 #include "components/signin/public/identity_manager/identity_test_utils.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "content/public/test/browser_task_environment.h"
-#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -40,6 +35,15 @@ namespace {
 const char kAuthorizationCode[] = "authorization_code";
 const char kEmail[] = "test@email.com";
 const int kSessionIndex = 42;
+
+DiceResponseParams::AccountInfo GetDiceResponseParamsAccountInfo(
+    const std::string& email) {
+  DiceResponseParams::AccountInfo account_info;
+  account_info.gaia_id = signin::GetTestGaiaIdForEmail(email);
+  account_info.email = kEmail;
+  account_info.session_index = kSessionIndex;
+  return account_info;
+}
 
 // TestSigninClient implementation that intercepts the GaiaAuthConsumer and
 // replaces it by a dummy one.
@@ -117,7 +121,8 @@ class DiceResponseHandlerTest : public testing::Test,
     EXPECT_TRUE(temp_dir_.CreateUniqueTempDir());
     AboutSigninInternals::RegisterPrefs(pref_service_.registry());
     auto account_reconcilor_delegate =
-        std::make_unique<signin::DiceAccountReconcilorDelegate>();
+        std::make_unique<signin::DiceAccountReconcilorDelegate>(
+            identity_manager(), &signin_client_);
     account_reconcilor_ = std::make_unique<AccountReconcilor>(
         identity_test_env_.identity_manager(), &signin_client_,
         std::move(account_reconcilor_delegate));
@@ -144,10 +149,8 @@ class DiceResponseHandlerTest : public testing::Test,
   DiceResponseParams MakeDiceParams(DiceAction action) {
     DiceResponseParams dice_params;
     dice_params.user_intention = action;
-    DiceResponseParams::AccountInfo account_info;
-    account_info.gaia_id = signin::GetTestGaiaIdForEmail(kEmail);
-    account_info.email = kEmail;
-    account_info.session_index = kSessionIndex;
+    DiceResponseParams::AccountInfo account_info =
+        GetDiceResponseParamsAccountInfo(kEmail);
     switch (action) {
       case DiceAction::SIGNIN:
         dice_params.signin_info =
@@ -263,8 +266,6 @@ TEST_F(DiceResponseHandlerTest, Signin) {
 // Checks that the account reconcilor is blocked when where was OAuth
 // outage in Dice, and unblocked after the timeout.
 TEST_F(DiceResponseHandlerTest, SupportOAuthOutageInDice) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(kSupportOAuthOutageInDice);
   DiceResponseParams dice_params = MakeDiceParams(DiceAction::SIGNIN);
   dice_params.signin_info->authorization_code.clear();
   dice_params.signin_info->no_authorization_code = true;
@@ -284,8 +285,6 @@ TEST_F(DiceResponseHandlerTest, SupportOAuthOutageInDice) {
 // timeout still restarts.
 TEST_F(DiceResponseHandlerTest, CheckTimersDuringOutageinDice) {
   ASSERT_GT(kLockAccountReconcilorTimeoutHours, 3);
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(kSupportOAuthOutageInDice);
   // Create params for the first header with no authorization code.
   DiceResponseParams dice_params_1 = MakeDiceParams(DiceAction::SIGNIN);
   dice_params_1.signin_info->authorization_code.clear();
@@ -320,8 +319,6 @@ TEST_F(DiceResponseHandlerTest, CheckTimersDuringOutageinDice) {
 // Check that signin works normally (the token is fetched and added to chrome)
 // on valid headers after getting a no_authorization_code header.
 TEST_F(DiceResponseHandlerTest, CheckSigninAfterOutageInDice) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(kSupportOAuthOutageInDice);
   // Create params for the header with no authorization code.
   DiceResponseParams dice_params_1 = MakeDiceParams(DiceAction::SIGNIN);
   dice_params_1.signin_info->authorization_code.clear();
@@ -830,6 +827,53 @@ TEST_F(DiceResponseHandlerTest, SigninSignoutDifferentAccount) {
   EXPECT_FALSE(
       identity_manager()->HasAccountWithRefreshTokenInPersistentErrorState(
           account_id_2));
+}
+
+TEST_F(DiceResponseHandlerTest,
+       SignoutMainNonSyncAccountWithSignoutRestrictions) {
+  signin_client_.set_is_clear_primary_account_allowed_for_testing(
+      SigninClient::SignoutDecision::CLEAR_PRIMARY_ACCOUNT_DISALLOWED);
+  const char kSecondaryEmail[] = "other@gmail.com";
+  DiceResponseParams dice_params = MakeDiceParams(DiceAction::SIGNOUT);
+  dice_params.signout_info->account_infos.push_back(
+      GetDiceResponseParamsAccountInfo(kSecondaryEmail));
+  const auto& dice_account_info = dice_params.signout_info->account_infos[0];
+  AccountInfo account_info = identity_test_env_.MakePrimaryAccountAvailable(
+      dice_account_info.email, signin::ConsentLevel::kSignin);
+  AccountInfo secondary_account_info =
+      identity_test_env_.MakeAccountAvailable(kSecondaryEmail);
+  EXPECT_TRUE(
+      identity_manager()->HasAccountWithRefreshToken(account_info.account_id));
+  EXPECT_TRUE(identity_manager()->HasAccountWithRefreshToken(
+      secondary_account_info.account_id));
+  EXPECT_FALSE(
+      identity_manager()->HasPrimaryAccount(signin::ConsentLevel::kSync));
+  EXPECT_TRUE(
+      identity_manager()->HasPrimaryAccount(signin::ConsentLevel::kSignin));
+  // Receive signout response.
+  dice_response_handler_->ProcessDiceHeader(
+      dice_params, std::make_unique<TestProcessDiceHeaderDelegate>(this));
+  // User is not signed out, token for the main account is now invalid.
+  // Secondary account removed.
+  EXPECT_TRUE(
+      identity_manager()->HasAccountWithRefreshToken(account_info.account_id));
+  EXPECT_TRUE(
+      identity_manager()->HasAccountWithRefreshTokenInPersistentErrorState(
+          account_info.account_id));
+  auto error = identity_manager()->GetErrorStateOfRefreshTokenForAccount(
+      account_info.account_id);
+  EXPECT_EQ(GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS, error.state());
+  EXPECT_EQ(GoogleServiceAuthError::InvalidGaiaCredentialsReason::
+                CREDENTIALS_REJECTED_BY_CLIENT,
+            error.GetInvalidGaiaCredentialsReason());
+  EXPECT_FALSE(identity_manager()->HasAccountWithRefreshToken(
+      secondary_account_info.account_id));
+
+  EXPECT_TRUE(
+      identity_manager()->HasPrimaryAccount(signin::ConsentLevel::kSignin));
+  // Check that the reconcilor was not blocked.
+  EXPECT_EQ(0, reconcilor_blocked_count_);
+  EXPECT_EQ(0, reconcilor_unblocked_count_);
 }
 
 // Tests that the DiceResponseHandler is created for a normal profile but not

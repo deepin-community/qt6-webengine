@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -60,7 +60,7 @@ namespace blink {
 // ==========================================
 //
 // The user activation state is replicated in the browser process (in
-// |FrameTreeNode|) and in the renderer processes (in |LocalFrame| and
+// |RenderFrameHostImpl|) and in the renderer processes (in |LocalFrame| and
 // |RemoteFrame|).  The replicated states across the browser and renderer
 // processes are kept in sync as follows:
 //

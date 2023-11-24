@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,10 +18,6 @@
 
 class Profile;
 
-namespace extensions {
-class Extension;
-}
-
 namespace settings {
 
 class SearchEnginesHandler : public SettingsPageUIHandler,
@@ -37,9 +33,9 @@ class SearchEnginesHandler : public SettingsPageUIHandler,
 
   // ui::TableModelObserver implementation.
   void OnModelChanged() override;
-  void OnItemsChanged(int start, int length) override;
-  void OnItemsAdded(int start, int length) override;
-  void OnItemsRemoved(int start, int length) override;
+  void OnItemsChanged(size_t start, size_t length) override;
+  void OnItemsAdded(size_t start, size_t length) override;
+  void OnItemsRemoved(size_t start, size_t length) override;
 
   // EditSearchEngineControllerDelegate implementation.
   void OnEditedKeyword(TemplateURL* template_url,
@@ -56,7 +52,7 @@ class SearchEnginesHandler : public SettingsPageUIHandler,
   // Retrieves all search engines and returns them to WebUI.
   void HandleGetSearchEnginesList(const base::Value::List& args);
 
-  std::unique_ptr<base::DictionaryValue> GetSearchEnginesList();
+  base::Value::Dict GetSearchEnginesList();
 
   // Removes the search engine at the given index. Called from WebUI.
   void HandleRemoveSearchEngine(const base::Value::List& args);
@@ -90,12 +86,13 @@ class SearchEnginesHandler : public SettingsPageUIHandler,
   // Called from WebUI.
   void HandleSearchEngineEditCompleted(const base::Value::List& args);
 
-  // Returns a dictionary to pass to WebUI representing the given search engine.
-  base::Value::Dict CreateDictionaryForEngine(int index, bool is_default);
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  // Request the browser to open its search settings.
+  void HandleOpenBrowserSearchSettings(const base::Value::List& args);
+#endif
 
-  // Returns a dictionary to pass to WebUI representing the extension.
-  base::DictionaryValue* CreateDictionaryForExtension(
-      const extensions::Extension& extension);
+  // Returns a dictionary to pass to WebUI representing the given search engine.
+  base::Value::Dict CreateDictionaryForEngine(size_t index, bool is_default);
 
   const raw_ptr<Profile> profile_;
 

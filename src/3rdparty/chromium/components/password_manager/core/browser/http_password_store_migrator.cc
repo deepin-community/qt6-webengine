@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/containers/cxx20_erase.h"
+#include "base/functional/bind.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
@@ -135,9 +135,9 @@ void HttpPasswordStoreMigrator::ProcessPasswordStoreResults() {
 
   // Only log data if there was at least one migrated password.
   if (!results_.empty()) {
-    base::UmaHistogramCounts100("PasswordManager.HttpPasswordMigrationCount",
+    base::UmaHistogramCounts100("PasswordManager.HttpPasswordMigrationCount2",
                                 results_.size());
-    base::UmaHistogramEnumeration("PasswordManager.HttpPasswordMigrationMode",
+    base::UmaHistogramEnumeration("PasswordManager.HttpPasswordMigrationMode2",
                                   mode_);
   }
 

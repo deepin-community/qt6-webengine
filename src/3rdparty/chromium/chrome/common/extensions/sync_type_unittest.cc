@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,6 +12,7 @@
 #include "extensions/common/features/simple_feature.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_constants.h"
+#include "extensions/common/manifest_handlers/app_display_info.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -36,22 +37,22 @@ class ExtensionSyncTypeTest : public testing::Test {
       mojom::ManifestLocation location,
       const base::FilePath& extension_path,
       int creation_flags) {
-    base::DictionaryValue source;
-    source.SetString(keys::kName, "PossiblySyncableExtension");
-    source.SetString(keys::kVersion, "0.0.0.0");
-    source.SetInteger(keys::kManifestVersion, 2);
-    if (type == APP)
-      source.SetString(keys::kApp, "true");
+    base::Value::Dict source;
+    source.Set(keys::kName, "PossiblySyncableExtension");
+    source.Set(keys::kVersion, "0.0.0.0");
+    source.Set(keys::kManifestVersion, 2);
+    if (type == APP && launch_url.is_empty())
+      source.Set(keys::kApp, "true");
     if (type == THEME)
-      source.SetKey(keys::kTheme, base::Value(base::Value::Type::DICTIONARY));
+      source.Set(keys::kTheme, base::Value(base::Value::Type::DICT));
     if (!update_url.is_empty()) {
-      source.SetString(keys::kUpdateURL, update_url.spec());
+      source.Set(keys::kUpdateURL, update_url.spec());
     }
     if (!launch_url.is_empty()) {
-      source.SetString(keys::kLaunchWebURL, launch_url.spec());
+      source.SetByDottedPath(keys::kLaunchWebURL, launch_url.spec());
     }
     if (type != THEME)
-      source.SetBoolean(keys::kConvertedFromUserScript, type == USER_SCRIPT);
+      source.Set(keys::kConvertedFromUserScript, type == USER_SCRIPT);
 
     std::string error;
     scoped_refptr<Extension> extension = Extension::Create(
@@ -134,23 +135,22 @@ TEST_F(ExtensionSyncTypeTest, OnlyDisplayAppsInLauncher) {
       EXTENSION, GURL(), GURL(), mojom::ManifestLocation::kInternal,
       base::FilePath(), Extension::NO_FLAGS));
 
-  EXPECT_FALSE(extension->ShouldDisplayInAppLauncher());
-  EXPECT_FALSE(extension->ShouldDisplayInNewTabPage());
+  EXPECT_FALSE(AppDisplayInfo::ShouldDisplayInAppLauncher(*extension));
+  EXPECT_FALSE(AppDisplayInfo::ShouldDisplayInNewTabPage(*extension));
 
   scoped_refptr<Extension> app(
       MakeSyncTestExtension(APP, GURL(), GURL("http://www.google.com"),
                             mojom::ManifestLocation::kInternal,
                             base::FilePath(), Extension::NO_FLAGS));
-  EXPECT_TRUE(app->ShouldDisplayInAppLauncher());
-  EXPECT_TRUE(app->ShouldDisplayInNewTabPage());
+  EXPECT_TRUE(AppDisplayInfo::ShouldDisplayInAppLauncher(*app));
+  EXPECT_TRUE(AppDisplayInfo::ShouldDisplayInNewTabPage(*app));
 }
 
 TEST_F(ExtensionSyncTypeTest, DisplayInXManifestProperties) {
-  base::DictionaryValue manifest;
-  manifest.SetString(keys::kName, "TestComponentApp");
-  manifest.SetString(keys::kVersion, "0.0.0.0");
-  manifest.SetString(keys::kApp, "true");
-  manifest.SetString(keys::kPlatformAppBackgroundPage, std::string());
+  base::Value::Dict manifest;
+  manifest.Set(keys::kName, "TestComponentApp");
+  manifest.Set(keys::kVersion, "0.0.0.0");
+  manifest.SetByDottedPath(keys::kPlatformAppBackgroundPage, std::string());
 
   // Default to true.
   std::string error;
@@ -158,36 +158,36 @@ TEST_F(ExtensionSyncTypeTest, DisplayInXManifestProperties) {
       Extension::Create(base::FilePath(), mojom::ManifestLocation::kComponent,
                         manifest, 0, &error);
   EXPECT_EQ(error, std::string());
-  EXPECT_TRUE(app->ShouldDisplayInAppLauncher());
-  EXPECT_TRUE(app->ShouldDisplayInNewTabPage());
+  EXPECT_TRUE(AppDisplayInfo::ShouldDisplayInAppLauncher(*app));
+  EXPECT_TRUE(AppDisplayInfo::ShouldDisplayInNewTabPage(*app));
 
   // Value display_in_NTP defaults to display_in_launcher.
-  manifest.SetBoolean(keys::kDisplayInLauncher, false);
+  manifest.Set(keys::kDisplayInLauncher, false);
   app = Extension::Create(base::FilePath(), mojom::ManifestLocation::kComponent,
                           manifest, 0, &error);
   EXPECT_EQ(error, std::string());
-  EXPECT_FALSE(app->ShouldDisplayInAppLauncher());
-  EXPECT_FALSE(app->ShouldDisplayInNewTabPage());
+  EXPECT_FALSE(AppDisplayInfo::ShouldDisplayInAppLauncher(*app));
+  EXPECT_FALSE(AppDisplayInfo::ShouldDisplayInNewTabPage(*app));
 
   // Value display_in_NTP = true overriding display_in_launcher = false.
-  manifest.SetBoolean(keys::kDisplayInNewTabPage, true);
+  manifest.Set(keys::kDisplayInNewTabPage, true);
   app = Extension::Create(base::FilePath(), mojom::ManifestLocation::kComponent,
                           manifest, 0, &error);
   EXPECT_EQ(error, std::string());
-  EXPECT_FALSE(app->ShouldDisplayInAppLauncher());
-  EXPECT_TRUE(app->ShouldDisplayInNewTabPage());
+  EXPECT_FALSE(AppDisplayInfo::ShouldDisplayInAppLauncher(*app));
+  EXPECT_TRUE(AppDisplayInfo::ShouldDisplayInNewTabPage(*app));
 
   // Value display_in_NTP = false only, overrides default = true.
-  manifest.RemoveKey(keys::kDisplayInLauncher);
-  manifest.SetBoolean(keys::kDisplayInNewTabPage, false);
+  manifest.Remove(keys::kDisplayInLauncher);
+  manifest.Set(keys::kDisplayInNewTabPage, false);
   app = Extension::Create(base::FilePath(), mojom::ManifestLocation::kComponent,
                           manifest, 0, &error);
   EXPECT_EQ(error, std::string());
-  EXPECT_TRUE(app->ShouldDisplayInAppLauncher());
-  EXPECT_FALSE(app->ShouldDisplayInNewTabPage());
+  EXPECT_TRUE(AppDisplayInfo::ShouldDisplayInAppLauncher(*app));
+  EXPECT_FALSE(AppDisplayInfo::ShouldDisplayInNewTabPage(*app));
 
   // Error checking.
-  manifest.SetString(keys::kDisplayInNewTabPage, "invalid");
+  manifest.Set(keys::kDisplayInNewTabPage, "invalid");
   app = Extension::Create(base::FilePath(), mojom::ManifestLocation::kComponent,
                           manifest, 0, &error);
   EXPECT_EQ(error, base::UTF16ToUTF8(errors::kInvalidDisplayInNewTabPage));

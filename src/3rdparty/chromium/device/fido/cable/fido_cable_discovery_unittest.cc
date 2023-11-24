@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,10 +8,12 @@
 #include <memory>
 #include <utility>
 
+#include "base/containers/contains.h"
 #include "base/containers/span.h"
+#include "base/ranges/algorithm.h"
 #include "base/run_loop.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "device/bluetooth/bluetooth_advertisement.h"
@@ -101,11 +103,8 @@ MATCHER_P2(IsAdvertisementContent,
            expected_uuid_formatted_client_eid,
            "") {
 #if BUILDFLAG(IS_MAC)
-  const auto uuid_list = arg->service_uuids();
-  return std::any_of(uuid_list->begin(), uuid_list->end(),
-                     [this](const auto& uuid) {
-                       return uuid == expected_uuid_formatted_client_eid;
-                     });
+  return base::Contains(*arg->service_uuids(),
+                        expected_uuid_formatted_client_eid);
 
 #elif BUILDFLAG(IS_WIN)
   const auto manufacturer_data = arg->manufacturer_data();
@@ -138,9 +137,9 @@ MATCHER_P2(IsAdvertisementContent,
          std::equal(service_data_value.begin() + 2, service_data_value.end(),
                     expected_client_eid.begin(), expected_client_eid.end());
 
-#endif
-
+#else
   return true;
+#endif
 }
 
 class CableMockBluetoothAdvertisement : public BluetoothAdvertisement {
@@ -152,8 +151,8 @@ class CableMockBluetoothAdvertisement : public BluetoothAdvertisement {
   void ExpectUnregisterAndSucceed() {
     EXPECT_CALL(*this, Unregister(_, _))
         .WillOnce(::testing::WithArg<0>(::testing::Invoke([](auto success_cb) {
-          base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                        std::move(success_cb));
+          base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+              FROM_HERE, std::move(success_cb));
         })));
   }
 
@@ -207,8 +206,7 @@ class CableMockAdapter : public MockBluetoothAdapter {
 
     std::vector<uint8_t> service_data(18);
     service_data[0] = 1 << 5;
-    std::copy(authenticator_eid.begin(), authenticator_eid.end(),
-              service_data.begin() + 2);
+    base::ranges::copy(authenticator_eid, service_data.begin() + 2);
     BluetoothDevice::ServiceDataMap service_data_map;
     service_data_map.emplace(kGoogleCableUUID128, std::move(service_data));
 
@@ -591,7 +589,7 @@ TEST_F(FidoCableDiscoveryTest, TestUnregisterAdvertisementUponStop) {
   task_environment_.FastForwardUntilNoTasksRemain();
   EXPECT_EQ(1u, cable_discovery->AdvertisementsForTesting().size());
 
-  EXPECT_TRUE(cable_discovery->MaybeStop());
+  cable_discovery->Stop();
   task_environment_.FastForwardUntilNoTasksRemain();
   EXPECT_EQ(0u, cable_discovery->AdvertisementsForTesting().size());
 }
@@ -610,7 +608,7 @@ TEST_F(FidoCableDiscoveryTest, TestStopWithNoAdvertisementsSucceeds) {
   task_environment_.FastForwardUntilNoTasksRemain();
 
   EXPECT_EQ(0u, cable_discovery->AdvertisementsForTesting().size());
-  EXPECT_TRUE(cable_discovery->MaybeStop());
+  cable_discovery->Stop();
 }
 
 // Tests that cable discovery resumes after Bluetooth adapter is powered on.

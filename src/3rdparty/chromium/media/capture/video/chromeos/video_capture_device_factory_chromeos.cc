@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/memory/ptr_util.h"
+#include "base/task/single_thread_task_runner.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/capture/video/chromeos/camera_app_device_bridge_impl.h"
 #include "media/capture/video/chromeos/camera_hal_dispatcher_impl.h"
@@ -20,10 +21,8 @@ gpu::GpuMemoryBufferManager* g_gpu_buffer_manager = nullptr;
 }  // namespace
 
 VideoCaptureDeviceFactoryChromeOS::VideoCaptureDeviceFactoryChromeOS(
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner_for_screen_observer)
-    : task_runner_for_screen_observer_(task_runner_for_screen_observer),
-      camera_hal_ipc_thread_("CameraHalIpcThread"),
-      initialized_(Init()) {}
+    scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner)
+    : ui_task_runner_(ui_task_runner), initialized_(Init()) {}
 
 VideoCaptureDeviceFactoryChromeOS::~VideoCaptureDeviceFactoryChromeOS() {
   CameraAppDeviceBridgeImpl::GetInstance()->UnsetCameraInfoGetter();
@@ -33,7 +32,7 @@ VideoCaptureDeviceFactoryChromeOS::~VideoCaptureDeviceFactoryChromeOS() {
   camera_app_device_bridge->UnsetVirtualDeviceController();
 
   camera_hal_delegate_->Reset();
-  camera_hal_ipc_thread_.Stop();
+  camera_hal_delegate_.reset();
 }
 
 VideoCaptureErrorOrDevice VideoCaptureDeviceFactoryChromeOS::CreateDevice(
@@ -44,13 +43,12 @@ VideoCaptureErrorOrDevice VideoCaptureDeviceFactoryChromeOS::CreateDevice(
         VideoCaptureError::
             kCrosHalV3DeviceDelegateFailedToInitializeCameraDevice);
   }
-  auto device = camera_hal_delegate_->CreateDevice(
-      task_runner_for_screen_observer_, device_descriptor);
-  return device
-             ? VideoCaptureErrorOrDevice(std::move(device))
-             : VideoCaptureErrorOrDevice(
-                   VideoCaptureError::
-                       kVideoCaptureControllerInvalidOrUnsupportedVideoCaptureParametersRequested);
+  auto device =
+      camera_hal_delegate_->CreateDevice(ui_task_runner_, device_descriptor);
+  return device ? VideoCaptureErrorOrDevice(std::move(device))
+                : VideoCaptureErrorOrDevice(
+                      VideoCaptureError::
+                          kVideoCaptureDeviceFactoryChromeOSCreateDeviceFailed);
 }
 
 void VideoCaptureDeviceFactoryChromeOS::GetDevicesInfo(
@@ -77,18 +75,19 @@ void VideoCaptureDeviceFactoryChromeOS::SetGpuBufferManager(
 }
 
 bool VideoCaptureDeviceFactoryChromeOS::Init() {
-  if (!camera_hal_ipc_thread_.Start()) {
-    LOG(ERROR) << "Module thread failed to start";
-    return false;
-  }
-
   if (!CameraHalDispatcherImpl::GetInstance()->IsStarted()) {
     LOG(ERROR) << "CameraHalDispatcherImpl is not started";
     return false;
   }
 
-  camera_hal_delegate_ =
-      new CameraHalDelegate(camera_hal_ipc_thread_.task_runner());
+  camera_hal_delegate_ = std::make_unique<CameraHalDelegate>(ui_task_runner_);
+
+  if (!camera_hal_delegate_->Init()) {
+    LOG(ERROR) << "Failed to initialize CameraHalDelegate";
+    camera_hal_delegate_.reset();
+    return false;
+  }
+
   if (!camera_hal_delegate_->RegisterCameraClient()) {
     LOG(ERROR) << "Failed to register camera client";
     return false;

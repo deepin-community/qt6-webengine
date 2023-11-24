@@ -32,6 +32,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_DOM_DOCUMENT_LIFECYCLE_H_
 
 #include "base/auto_reset.h"
+#include "base/check_op.h"
 #include "base/dcheck_is_on.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
@@ -60,11 +61,6 @@ class CORE_EXPORT DocumentLifecycle {
     kInPerformLayout,
     kAfterPerformLayout,
     kLayoutClean,
-
-    // In InAccessibility step, fire deferred accessibility events which
-    // require layout to be in a clean state.
-    kInAccessibility,
-    kAccessibilityClean,
 
     kInCompositingInputsUpdate,
     kCompositingInputsClean,

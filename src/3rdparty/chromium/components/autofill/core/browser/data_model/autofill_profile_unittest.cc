@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -24,13 +24,13 @@
 #include "components/autofill/core/common/autofill_constants.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/form_field_data.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using base::UTF8ToUTF16;
 
 namespace autofill {
 
-using structured_address::VerificationStatus;
 constexpr VerificationStatus kObserved = VerificationStatus::kObserved;
 
 namespace {
@@ -61,32 +61,9 @@ std::vector<AutofillProfile*> ToRawPointerVector(
 
 }  // namespace
 
-class AutofillProfileTest : public testing::Test,
-                            public testing::WithParamInterface<bool> {
- protected:
-  void SetUp() override { InitializeFeatures(); }
-
-  void InitializeFeatures() {
-    structured_names_enabled_ = GetParam();
-    if (structured_names_enabled_) {
-      scoped_features_.InitAndEnableFeature(
-          features::kAutofillEnableSupportForMoreStructureInNames);
-    } else {
-      scoped_features_.InitAndDisableFeature(
-          features::kAutofillEnableSupportForMoreStructureInNames);
-    }
-  }
-
-  bool StructuredNames() const { return structured_names_enabled_; }
-
- private:
-  bool structured_names_enabled_;
-  base::test::ScopedFeatureList scoped_features_;
-};
-
 // Tests different possibilities for summary string generation.
 // Based on existence of first name, last name, and address line 1.
-TEST_P(AutofillProfileTest, PreviewSummaryString) {
+TEST(AutofillProfileTest, PreviewSummaryString) {
   // Case 0/null: ""
   AutofillProfile profile0(base::GenerateGUID(), test::kEmptyOrigin);
   // Empty profile - nothing to update.
@@ -185,7 +162,7 @@ TEST_P(AutofillProfileTest, PreviewSummaryString) {
   EXPECT_EQ(u"Marion Mitchell Morrison, 123 Zoo St., marion@me.xyz", summary7a);
 }
 
-TEST_P(AutofillProfileTest, AdjustInferredLabels) {
+TEST(AutofillProfileTest, AdjustInferredLabels) {
   std::vector<std::unique_ptr<AutofillProfile>> profiles;
   profiles.push_back(std::make_unique<AutofillProfile>(base::GenerateGUID(),
                                                        test::kEmptyOrigin));
@@ -281,7 +258,7 @@ TEST_P(AutofillProfileTest, AdjustInferredLabels) {
   EXPECT_EQ(u"John Doe, 666 Erebus St., CO, johndoe@styx.com", labels[4]);
 }
 
-TEST_P(AutofillProfileTest, CreateInferredLabelsI18n_CH) {
+TEST(AutofillProfileTest, CreateInferredLabelsI18n_CH) {
   std::vector<std::unique_ptr<AutofillProfile>> profiles;
   profiles.push_back(std::make_unique<AutofillProfile>(base::GenerateGUID(),
                                                        test::kEmptyOrigin));
@@ -314,7 +291,7 @@ TEST_P(AutofillProfileTest, CreateInferredLabelsI18n_CH) {
   }
 }
 
-TEST_P(AutofillProfileTest, CreateInferredLabelsI18n_FR) {
+TEST(AutofillProfileTest, CreateInferredLabelsI18n_FR) {
   std::vector<std::unique_ptr<AutofillProfile>> profiles;
   profiles.push_back(std::make_unique<AutofillProfile>(base::GenerateGUID(),
                                                        test::kEmptyOrigin));
@@ -348,7 +325,7 @@ TEST_P(AutofillProfileTest, CreateInferredLabelsI18n_FR) {
   }
 }
 
-TEST_P(AutofillProfileTest, CreateInferredLabelsI18n_KR) {
+TEST(AutofillProfileTest, CreateInferredLabelsI18n_KR) {
   std::vector<std::unique_ptr<AutofillProfile>> profiles;
   profiles.push_back(std::make_unique<AutofillProfile>(base::GenerateGUID(),
                                                        test::kEmptyOrigin));
@@ -392,7 +369,7 @@ TEST_P(AutofillProfileTest, CreateInferredLabelsI18n_KR) {
   }
 }
 
-TEST_P(AutofillProfileTest, CreateInferredLabelsI18n_JP_Latn) {
+TEST(AutofillProfileTest, CreateInferredLabelsI18n_JP_Latn) {
   std::vector<std::unique_ptr<AutofillProfile>> profiles;
   profiles.push_back(std::make_unique<AutofillProfile>(base::GenerateGUID(),
                                                        test::kEmptyOrigin));
@@ -429,7 +406,7 @@ TEST_P(AutofillProfileTest, CreateInferredLabelsI18n_JP_Latn) {
   }
 }
 
-TEST_P(AutofillProfileTest, CreateInferredLabelsI18n_JP_ja) {
+TEST(AutofillProfileTest, CreateInferredLabelsI18n_JP_ja) {
   std::vector<std::unique_ptr<AutofillProfile>> profiles;
   profiles.push_back(std::make_unique<AutofillProfile>(base::GenerateGUID(),
                                                        test::kEmptyOrigin));
@@ -462,7 +439,7 @@ TEST_P(AutofillProfileTest, CreateInferredLabelsI18n_JP_ja) {
   }
 }
 
-TEST_P(AutofillProfileTest, CreateInferredLabels) {
+TEST(AutofillProfileTest, CreateInferredLabels) {
   std::vector<std::unique_ptr<AutofillProfile>> profiles;
   profiles.push_back(std::make_unique<AutofillProfile>(base::GenerateGUID(),
                                                        test::kEmptyOrigin));
@@ -563,7 +540,7 @@ TEST_P(AutofillProfileTest, CreateInferredLabels) {
 
 // Test that we fall back to using the full name if there are no other
 // distinguishing fields, but only if it makes sense given the suggested fields.
-TEST_P(AutofillProfileTest, CreateInferredLabelsFallsBackToFullName) {
+TEST(AutofillProfileTest, CreateInferredLabelsFallsBackToFullName) {
   std::vector<std::unique_ptr<AutofillProfile>> profiles;
   profiles.push_back(std::make_unique<AutofillProfile>(base::GenerateGUID(),
                                                        test::kEmptyOrigin));
@@ -600,7 +577,7 @@ TEST_P(AutofillProfileTest, CreateInferredLabelsFallsBackToFullName) {
 }
 
 // Test that we do not show duplicate fields in the labels.
-TEST_P(AutofillProfileTest, CreateInferredLabelsNoDuplicatedFields) {
+TEST(AutofillProfileTest, CreateInferredLabelsNoDuplicatedFields) {
   std::vector<std::unique_ptr<AutofillProfile>> profiles;
   profiles.push_back(std::make_unique<AutofillProfile>(base::GenerateGUID(),
                                                        test::kEmptyOrigin));
@@ -615,7 +592,6 @@ TEST_P(AutofillProfileTest, CreateInferredLabelsNoDuplicatedFields) {
   // should not fall back to the full name as a distinguishing field.
   std::vector<ServerFieldType> suggested_fields;
   suggested_fields.push_back(ADDRESS_HOME_LINE1);
-  suggested_fields.push_back(ADDRESS_BILLING_LINE1);
   suggested_fields.push_back(EMAIL_ADDRESS);
   std::vector<std::u16string> labels;
   AutofillProfile::CreateInferredLabels(ToRawPointerVector(profiles),
@@ -627,7 +603,7 @@ TEST_P(AutofillProfileTest, CreateInferredLabelsNoDuplicatedFields) {
 }
 
 // Make sure that empty fields are not treated as distinguishing fields.
-TEST_P(AutofillProfileTest, CreateInferredLabelsSkipsEmptyFields) {
+TEST(AutofillProfileTest, CreateInferredLabelsSkipsEmptyFields) {
   std::vector<std::unique_ptr<AutofillProfile>> profiles;
   profiles.push_back(std::make_unique<AutofillProfile>(base::GenerateGUID(),
                                                        test::kEmptyOrigin));
@@ -664,7 +640,7 @@ TEST_P(AutofillProfileTest, CreateInferredLabelsSkipsEmptyFields) {
 }
 
 // Test that labels that would otherwise have multiline values are flattened.
-TEST_P(AutofillProfileTest, CreateInferredLabelsFlattensMultiLineValues) {
+TEST(AutofillProfileTest, CreateInferredLabelsFlattensMultiLineValues) {
   std::vector<std::unique_ptr<AutofillProfile>> profiles;
   profiles.push_back(std::make_unique<AutofillProfile>(base::GenerateGUID(),
                                                        test::kEmptyOrigin));
@@ -684,7 +660,7 @@ TEST_P(AutofillProfileTest, CreateInferredLabelsFlattensMultiLineValues) {
   EXPECT_EQ(u"88 Nowhere Ave., Apt. 42", labels[0]);
 }
 
-TEST_P(AutofillProfileTest, IsSubsetOfForFieldSet_DifferentMiddleNames) {
+TEST(AutofillProfileTest, IsSubsetOfForFieldSet_DifferentMiddleNames) {
   AutofillProfile profile1 =
       AutofillProfile(base::GenerateGUID(), test::kEmptyOrigin);
   test::SetProfileInfo(&profile1, "Genevieve", "", "Fox", "", "", "", "", "",
@@ -735,7 +711,7 @@ TEST_P(AutofillProfileTest, IsSubsetOfForFieldSet_DifferentMiddleNames) {
                                               {NAME_MIDDLE}));
 }
 
-TEST_P(AutofillProfileTest, IsSubsetOfForFieldSet_DifferentFirstNames) {
+TEST(AutofillProfileTest, IsSubsetOfForFieldSet_DifferentFirstNames) {
   AutofillProfile profile1 =
       AutofillProfile(base::GenerateGUID(), test::kEmptyOrigin);
   test::SetProfileInfo(&profile1, "Cynthia", "", "Fox", "", "", "", "", "", "",
@@ -758,7 +734,7 @@ TEST_P(AutofillProfileTest, IsSubsetOfForFieldSet_DifferentFirstNames) {
                                               {NAME_FIRST}));
 }
 
-TEST_P(AutofillProfileTest, IsSubsetOfForFieldSet_DifferentLastNames) {
+TEST(AutofillProfileTest, IsSubsetOfForFieldSet_DifferentLastNames) {
   AutofillProfile profile1 =
       AutofillProfile(base::GenerateGUID(), test::kEmptyOrigin);
   test::SetProfileInfo(&profile1, "Genevieve", "", "Fuller", "", "", "", "", "",
@@ -801,7 +777,7 @@ TEST(AutofillProfileTest,
       comparator, profile1, "en-US", {NAME_FULL, ADDRESS_HOME_STREET_ADDRESS}));
 }
 
-TEST_P(AutofillProfileTest, IsSubsetOfForFieldSet_DifferentNonStreetAddresses) {
+TEST(AutofillProfileTest, IsSubsetOfForFieldSet_DifferentNonStreetAddresses) {
   AutofillProfile profile1 =
       AutofillProfile(base::GenerateGUID(), test::kEmptyOrigin);
   test::SetProfileInfo(&profile1, "Genevieve", "", "Fox", "", "", "274 Main St",
@@ -964,11 +940,7 @@ TEST(AutofillProfileTest,
       comparator, profile2, "pt-BR", {NAME_FULL, PHONE_HOME_CITY_AND_NUMBER}));
 }
 
-TEST_P(AutofillProfileTest, TestFinalizeAfterImport) {
-  base::test::ScopedFeatureList structured_addresses_feature;
-  structured_addresses_feature.InitAndEnableFeature(
-      features::kAutofillEnableSupportForMoreStructureInNames);
-
+TEST(AutofillProfileTest, TestFinalizeAfterImport) {
   // A profile with just a full name should be finalizeable.
   {
     AutofillProfile profile;
@@ -997,11 +969,7 @@ TEST_P(AutofillProfileTest, TestFinalizeAfterImport) {
   }
 }
 
-TEST_P(AutofillProfileTest, SetAndGetRawInfoWithValidationStatus) {
-  base::test::ScopedFeatureList structured_addresses_feature;
-  structured_addresses_feature.InitAndEnableFeature(
-      features::kAutofillEnableSupportForMoreStructureInNames);
-
+TEST(AutofillProfileTest, SetAndGetRawInfoWithValidationStatus) {
   AutofillProfile profile;
   // An unsupported type should return |kNoStatus|.
   EXPECT_EQ(profile.GetVerificationStatus(UNKNOWN_TYPE),
@@ -1026,11 +994,7 @@ TEST_P(AutofillProfileTest, SetAndGetRawInfoWithValidationStatus) {
   EXPECT_EQ(profile.GetVerificationStatusInt(NAME_FULL), 2);
 }
 
-TEST_P(AutofillProfileTest, SetAndGetInfoWithValidationStatus) {
-  base::test::ScopedFeatureList structured_addresses_feature;
-  structured_addresses_feature.InitAndEnableFeature(
-      features::kAutofillEnableSupportForMoreStructureInNames);
-
+TEST(AutofillProfileTest, SetAndGetInfoWithValidationStatus) {
   AutofillProfile profile;
   // An unsupported type should return |kNoStatus|.
   EXPECT_EQ(profile.GetVerificationStatus(UNKNOWN_TYPE),
@@ -1072,7 +1036,7 @@ TEST_P(AutofillProfileTest, SetAndGetInfoWithValidationStatus) {
   EXPECT_EQ(profile.GetRawInfo(NAME_MIDDLE_INITIAL), u"CS");
 }
 
-TEST_P(AutofillProfileTest, MergeDataFrom_DifferentProfile) {
+TEST(AutofillProfileTest, MergeDataFrom_DifferentProfile) {
   AutofillProfile a;
   SetupTestProfile(a);
 
@@ -1085,12 +1049,10 @@ TEST_P(AutofillProfileTest, MergeDataFrom_DifferentProfile) {
   AutofillProfile b = a;
   b.set_guid(base::GenerateGUID());
   b.set_origin(kSettingsOrigin);
-  b.SetRawInfoWithVerificationStatus(
-      ADDRESS_HOME_LINE2, u"Unit 5, area 51",
-      structured_address::VerificationStatus::kObserved);
-  b.SetRawInfoWithVerificationStatus(
-      COMPANY_NAME, std::u16string(),
-      structured_address::VerificationStatus::kObserved);
+  b.SetRawInfoWithVerificationStatus(ADDRESS_HOME_LINE2, u"Unit 5, area 51",
+                                     VerificationStatus::kObserved);
+  b.SetRawInfoWithVerificationStatus(COMPANY_NAME, std::u16string(),
+                                     VerificationStatus::kObserved);
 
   b.SetRawInfo(NAME_MIDDLE, u"M.");
   b.SetRawInfo(NAME_FULL, u"Marion M. Morrison");
@@ -1109,7 +1071,7 @@ TEST_P(AutofillProfileTest, MergeDataFrom_DifferentProfile) {
   EXPECT_EQ("en", a.language_code());
 }
 
-TEST_P(AutofillProfileTest, MergeDataFrom_SameProfile) {
+TEST(AutofillProfileTest, MergeDataFrom_SameProfile) {
   AutofillProfile a;
   SetupTestProfile(a);
 
@@ -1118,10 +1080,8 @@ TEST_P(AutofillProfileTest, MergeDataFrom_SameProfile) {
   // For the new structured profiles, the profile must be altered for the
   // merging to have an effect. The verification status of the full name is set
   // to user verified.
-  if (StructuredNames()) {
-    b.SetRawInfoWithVerificationStatus(NAME_FULL, b.GetRawInfo(NAME_FULL),
-                                       VerificationStatus::kUserVerified);
-  }
+  b.SetRawInfoWithVerificationStatus(NAME_FULL, b.GetRawInfo(NAME_FULL),
+                                     VerificationStatus::kUserVerified);
   b.set_guid(base::GenerateGUID());
   EXPECT_TRUE(a.MergeDataFrom(b, "en-US"));
   // Merge has modified profile a, the validation is not updated.
@@ -1137,7 +1097,7 @@ TEST_P(AutofillProfileTest, MergeDataFrom_SameProfile) {
   EXPECT_EQ(3u, a.use_count());
 }
 
-TEST_P(AutofillProfileTest, OverwriteName_AddNameFull) {
+TEST(AutofillProfileTest, OverwriteName_AddNameFull) {
   AutofillProfile a;
 
   a.SetRawInfo(NAME_FIRST, u"Marion");
@@ -1147,9 +1107,8 @@ TEST_P(AutofillProfileTest, OverwriteName_AddNameFull) {
   AutofillProfile b = a;
   a.FinalizeAfterImport();
 
-  b.SetRawInfoWithVerificationStatus(
-      NAME_FULL, u"Marion Mitchell Morrison",
-      structured_address::VerificationStatus::kUserVerified);
+  b.SetRawInfoWithVerificationStatus(NAME_FULL, u"Marion Mitchell Morrison",
+                                     VerificationStatus::kUserVerified);
   b.FinalizeAfterImport();
 
   EXPECT_TRUE(a.MergeDataFrom(b, "en-US"));
@@ -1161,7 +1120,7 @@ TEST_P(AutofillProfileTest, OverwriteName_AddNameFull) {
 
 // Tests that OverwriteName overwrites the name parts if they have different
 // case.
-TEST_P(AutofillProfileTest, OverwriteName_DifferentCase) {
+TEST(AutofillProfileTest, OverwriteName_DifferentCase) {
   AutofillProfile a;
   AutofillProfile b = a;
 
@@ -1188,7 +1147,7 @@ TEST_P(AutofillProfileTest, OverwriteName_DifferentCase) {
   EXPECT_EQ(u"Morrison", a.GetRawInfo(NAME_LAST));
 }
 
-TEST_P(AutofillProfileTest, AssignmentOperator) {
+TEST(AutofillProfileTest, AssignmentOperator) {
   AutofillProfile a(base::GenerateGUID(), test::kEmptyOrigin);
   test::SetProfileInfo(&a, "Marion", "Mitchell", "Morrison", "marion@me.xyz",
                        "Fox", "123 Zoo St.", "unit 5", "Hollywood", "CA",
@@ -1204,7 +1163,7 @@ TEST_P(AutofillProfileTest, AssignmentOperator) {
   EXPECT_TRUE(a == b);
 }
 
-TEST_P(AutofillProfileTest, Copy) {
+TEST(AutofillProfileTest, Copy) {
   AutofillProfile a(base::GenerateGUID(), test::kEmptyOrigin);
   test::SetProfileInfo(&a, "Marion", "Mitchell", "Morrison", "marion@me.xyz",
                        "Fox", "123 Zoo St.", "unit 5", "Hollywood", "CA",
@@ -1215,7 +1174,7 @@ TEST_P(AutofillProfileTest, Copy) {
   EXPECT_TRUE(a == b);
 }
 
-TEST_P(AutofillProfileTest, Compare) {
+TEST(AutofillProfileTest, Compare) {
   AutofillProfile a(base::GenerateGUID(), std::string());
   AutofillProfile b(base::GenerateGUID(), std::string());
 
@@ -1263,7 +1222,68 @@ TEST_P(AutofillProfileTest, Compare) {
   EXPECT_LT(0, b.Compare(a));
 }
 
-TEST_P(AutofillProfileTest, IsPresentButInvalid) {
+// For each structured profile tokens, test the comparison operator for both the
+// value and the status.
+TEST(AutofillProfileTest, Compare_StructuredTypes) {
+  // Those types do store a verification status.
+  ServerFieldTypeSet structured_types{
+      NAME_FULL,
+      NAME_FIRST,
+      NAME_MIDDLE,
+      NAME_LAST,
+      NAME_LAST_FIRST,
+      NAME_LAST_SECOND,
+      NAME_LAST_CONJUNCTION,
+      ADDRESS_HOME_STREET_ADDRESS,
+      ADDRESS_HOME_DEPENDENT_LOCALITY,
+      ADDRESS_HOME_CITY,
+      ADDRESS_HOME_STATE,
+      ADDRESS_HOME_ZIP,
+      ADDRESS_HOME_SORTING_CODE,
+      ADDRESS_HOME_COUNTRY,
+      ADDRESS_HOME_HOUSE_NUMBER,
+      ADDRESS_HOME_STREET_NAME,
+      ADDRESS_HOME_DEPENDENT_STREET_NAME,
+      ADDRESS_HOME_PREMISE_NAME,
+      ADDRESS_HOME_SUBPREMISE,
+  };
+
+  // Those values are legal for all tokens.
+  const std::u16string value1 = u"DE";
+  const std::u16string value2 = u"US";
+
+  const VerificationStatus status1 = VerificationStatus::kObserved;
+  const VerificationStatus status2 = VerificationStatus::kParsed;
+
+  ASSERT_NE(value1, value2);
+  ASSERT_NE(status1, status2);
+
+  for (auto type : structured_types) {
+    // Create two empty profiles to test the tokens individually.
+    AutofillProfile profile1;
+    AutofillProfile profile2;
+
+    SCOPED_TRACE(testing::Message()
+                 << "Testing the Compare method for the type: "
+                 << AutofillType(type).ToString());
+
+    SCOPED_TRACE(testing::Message()
+                 << "Verify the corrext result for identical values");
+    profile1.SetRawInfoWithVerificationStatus(type, value1, status1);
+    profile2.SetRawInfoWithVerificationStatus(type, value1, status1);
+    EXPECT_EQ(profile1.Compare(profile2), 0);
+
+    SCOPED_TRACE(testing::Message() << "Verify the sensitivity to the value");
+    profile2.SetRawInfoWithVerificationStatus(type, value2, status1);
+    EXPECT_NE(profile1.Compare(profile2), 0);
+
+    SCOPED_TRACE(testing::Message() << "Verify the sensitivity to the status");
+    profile2.SetRawInfoWithVerificationStatus(type, value1, status2);
+    EXPECT_NE(profile1.Compare(profile2), 0);
+  }
+}
+
+TEST(AutofillProfileTest, IsPresentButInvalid) {
   AutofillProfile profile(base::GenerateGUID(), test::kEmptyOrigin);
   EXPECT_FALSE(profile.IsPresentButInvalid(ADDRESS_HOME_STATE));
   EXPECT_FALSE(profile.IsPresentButInvalid(ADDRESS_HOME_ZIP));
@@ -1293,7 +1313,7 @@ TEST_P(AutofillProfileTest, IsPresentButInvalid) {
   EXPECT_FALSE(profile.IsPresentButInvalid(PHONE_HOME_WHOLE_NUMBER));
 }
 
-TEST_P(AutofillProfileTest, SetRawInfoPreservesLineBreaks) {
+TEST(AutofillProfileTest, SetRawInfoPreservesLineBreaks) {
   AutofillProfile profile(base::GenerateGUID(), test::kEmptyOrigin);
 
   profile.SetRawInfo(ADDRESS_HOME_STREET_ADDRESS,
@@ -1305,7 +1325,7 @@ TEST_P(AutofillProfileTest, SetRawInfoPreservesLineBreaks) {
       profile.GetRawInfo(ADDRESS_HOME_STREET_ADDRESS));
 }
 
-TEST_P(AutofillProfileTest, SetInfoPreservesLineBreaks) {
+TEST(AutofillProfileTest, SetInfoPreservesLineBreaks) {
   AutofillProfile profile(base::GenerateGUID(), test::kEmptyOrigin);
 
   profile.SetInfo(ADDRESS_HOME_STREET_ADDRESS,
@@ -1318,27 +1338,27 @@ TEST_P(AutofillProfileTest, SetInfoPreservesLineBreaks) {
       profile.GetRawInfo(ADDRESS_HOME_STREET_ADDRESS));
 }
 
-TEST_P(AutofillProfileTest, SetRawInfoDoesntTrimWhitespace) {
+TEST(AutofillProfileTest, SetRawInfoDoesntTrimWhitespace) {
   AutofillProfile profile(base::GenerateGUID(), test::kEmptyOrigin);
 
   profile.SetRawInfo(EMAIL_ADDRESS, u"\tuser@example.com    ");
   EXPECT_EQ(u"\tuser@example.com    ", profile.GetRawInfo(EMAIL_ADDRESS));
 }
 
-TEST_P(AutofillProfileTest, SetInfoTrimsWhitespace) {
+TEST(AutofillProfileTest, SetInfoTrimsWhitespace) {
   AutofillProfile profile(base::GenerateGUID(), test::kEmptyOrigin);
 
   profile.SetInfo(EMAIL_ADDRESS, u"\tuser@example.com    ", "en-US");
   EXPECT_EQ(u"user@example.com", profile.GetRawInfo(EMAIL_ADDRESS));
 }
 
-TEST_P(AutofillProfileTest, FullAddress) {
+TEST(AutofillProfileTest, FullAddress) {
   AutofillProfile profile(base::GenerateGUID(), test::kEmptyOrigin);
   test::SetProfileInfo(&profile, "Marion", "Mitchell", "Morrison",
                        "marion@me.xyz", "Fox", "123 Zoo St.", "unit 5",
                        "Hollywood", "CA", "91601", "US", "12345678910");
 
-  AutofillType full_address(HTML_TYPE_FULL_ADDRESS, HTML_MODE_NONE);
+  AutofillType full_address(HtmlFieldType::kFullAddress, HtmlFieldMode::kNone);
   std::u16string formatted_address(
       u"Marion Mitchell Morrison\n"
       u"Fox\n"
@@ -1371,11 +1391,7 @@ TEST_P(AutofillProfileTest, FullAddress) {
   EXPECT_TRUE(profile.GetInfo(full_address, "en-US").empty());
 }
 
-TEST_P(AutofillProfileTest, SaveAdditionalInfo_Verified_MergeStructure) {
-  // This test is only applicable for structured names.
-  if (!StructuredNames())
-    return;
-
+TEST(AutofillProfileTest, SaveAdditionalInfo_Verified_MergeStructure) {
   AutofillProfile a;
   a.SetRawInfoWithVerificationStatus(NAME_FULL, u"Marion Mitchell Morrison",
                                      VerificationStatus::kUserVerified);
@@ -1418,7 +1434,7 @@ TEST_P(AutofillProfileTest, SaveAdditionalInfo_Verified_MergeStructure) {
   EXPECT_EQ(a.GetRawInfo(NAME_LAST), u"Morrison");
 }
 
-TEST_P(AutofillProfileTest, SaveAdditionalInfo_Name_AddingNameFull) {
+TEST(AutofillProfileTest, SaveAdditionalInfo_Name_AddingNameFull) {
   AutofillProfile a;
 
   a.SetRawInfo(NAME_FIRST, u"Marion");
@@ -1439,7 +1455,7 @@ TEST_P(AutofillProfileTest, SaveAdditionalInfo_Name_AddingNameFull) {
   EXPECT_EQ(u"Marion Mitchell Morrison", a.GetRawInfo(NAME_FULL));
 }
 
-TEST_P(AutofillProfileTest, SaveAdditionalInfo_Name_KeepNameFull) {
+TEST(AutofillProfileTest, SaveAdditionalInfo_Name_KeepNameFull) {
   AutofillProfile a;
 
   a.SetRawInfo(NAME_FIRST, u"Marion");
@@ -1460,8 +1476,8 @@ TEST_P(AutofillProfileTest, SaveAdditionalInfo_Name_KeepNameFull) {
 
 // Tests the merging of two similar profiles results in the second profile's
 // non-empty fields overwriting the initial profiles values.
-TEST_P(AutofillProfileTest,
-       SaveAdditionalInfo_Name_DifferentCaseAndDiacriticsNoNameFull) {
+TEST(AutofillProfileTest,
+     SaveAdditionalInfo_Name_DifferentCaseAndDiacriticsNoNameFull) {
   AutofillProfile a;
 
   a.SetRawInfoWithVerificationStatus(NAME_FIRST, u"marion", kObserved);
@@ -1486,18 +1502,14 @@ TEST_P(AutofillProfileTest,
   EXPECT_EQ(u"Märion", a.GetRawInfo(NAME_FIRST));
   EXPECT_EQ(u"Mitchéll", a.GetRawInfo(NAME_MIDDLE));
   EXPECT_EQ(u"Morrison", a.GetRawInfo(NAME_LAST));
-  if (!StructuredNames()) {
-    EXPECT_EQ(u"Märion Mitchéll Morrison", a.GetRawInfo(NAME_FULL));
-  } else {
-    // In the new merging logic the observed lower-case value should remain
-    // because the upper-case-diacritic version is only formatted.
-    EXPECT_EQ(u"marion mitchell morrison", a.GetRawInfo(NAME_FULL));
-  }
+  // In the merging logic the observed lower-case value should remain
+  // because the upper-case-diacritic version is only formatted.
+  EXPECT_EQ(u"marion mitchell morrison", a.GetRawInfo(NAME_FULL));
 }
 
 // Tests that no loss of information happens when SavingAdditionalInfo with a
 // profile with an empty name part.
-TEST_P(AutofillProfileTest, SaveAdditionalInfo_Name_LossOfInformation) {
+TEST(AutofillProfileTest, SaveAdditionalInfo_Name_LossOfInformation) {
   AutofillProfile a;
 
   a.SetRawInfo(NAME_FIRST, u"Marion");
@@ -1516,7 +1528,7 @@ TEST_P(AutofillProfileTest, SaveAdditionalInfo_Name_LossOfInformation) {
 
 // Tests that merging two complementary profiles for names results in a profile
 // with a complete name.
-TEST_P(AutofillProfileTest, SaveAdditionalInfo_Name_ComplementaryInformation) {
+TEST(AutofillProfileTest, SaveAdditionalInfo_Name_ComplementaryInformation) {
   AutofillProfile a;
 
   a.SetRawInfo(NAME_FIRST, u"Marion");
@@ -1539,7 +1551,7 @@ TEST_P(AutofillProfileTest, SaveAdditionalInfo_Name_ComplementaryInformation) {
 }
 
 // Test that the label is correctly set and retrieved from the profile.
-TEST_P(AutofillProfileTest, SetAndGetProfileLabels) {
+TEST(AutofillProfileTest, SetAndGetProfileLabels) {
   AutofillProfile p;
   EXPECT_EQ(p.profile_label(), std::string());
 
@@ -1547,7 +1559,7 @@ TEST_P(AutofillProfileTest, SetAndGetProfileLabels) {
   EXPECT_EQ(p.profile_label(), "my label");
 }
 
-TEST_P(AutofillProfileTest, LabelsInAssignmentAndComparisonOperator) {
+TEST(AutofillProfileTest, LabelsInAssignmentAndComparisonOperator) {
   AutofillProfile p1;
   p1.set_profile_label("my label");
 
@@ -1565,7 +1577,7 @@ TEST_P(AutofillProfileTest, LabelsInAssignmentAndComparisonOperator) {
 
 // Test that the state to disallow confirmable merges is correctly set and
 // retrieved from the profile.
-TEST_P(AutofillProfileTest, SetAndGetProfileDisallowConfirmableMergestate) {
+TEST(AutofillProfileTest, SetAndGetProfileDisallowConfirmableMergestate) {
   AutofillProfile p;
   EXPECT_EQ(p.disallow_settings_visible_updates(), false);
 
@@ -1573,7 +1585,7 @@ TEST_P(AutofillProfileTest, SetAndGetProfileDisallowConfirmableMergestate) {
   EXPECT_EQ(p.disallow_settings_visible_updates(), true);
 }
 
-TEST_P(AutofillProfileTest, LockStateInAssignmentAndComparisonOperator) {
+TEST(AutofillProfileTest, LockStateInAssignmentAndComparisonOperator) {
   AutofillProfile p1;
   p1.set_disallow_settings_visible_updates(true);
 
@@ -1592,7 +1604,7 @@ TEST_P(AutofillProfileTest, LockStateInAssignmentAndComparisonOperator) {
   EXPECT_NE(p1, p2);
 }
 
-TEST_P(AutofillProfileTest, GetMetadata) {
+TEST(AutofillProfileTest, GetMetadata) {
   AutofillProfile local_profile = test::GetFullProfile();
   local_profile.set_use_count(2);
   local_profile.set_use_date(base::Time::FromDoubleT(25));
@@ -1614,7 +1626,7 @@ TEST_P(AutofillProfileTest, GetMetadata) {
   EXPECT_EQ(server_profile.use_date(), server_metadata.use_date);
 }
 
-TEST_P(AutofillProfileTest, SetMetadata_MatchingId) {
+TEST(AutofillProfileTest, SetMetadata_MatchingId) {
   AutofillProfile local_profile = test::GetFullProfile();
   AutofillMetadata local_metadata;
   local_metadata.id = local_profile.guid();
@@ -1640,7 +1652,7 @@ TEST_P(AutofillProfileTest, SetMetadata_MatchingId) {
   EXPECT_EQ(server_metadata.use_date, server_profile.use_date());
 }
 
-TEST_P(AutofillProfileTest, SetMetadata_NotMatchingId) {
+TEST(AutofillProfileTest, SetMetadata_NotMatchingId) {
   AutofillProfile local_profile = test::GetFullProfile();
   AutofillMetadata local_metadata;
   local_metadata.id = "WrongId";
@@ -1667,7 +1679,7 @@ TEST_P(AutofillProfileTest, SetMetadata_NotMatchingId) {
 }
 
 // Tests that the profile is only deletable if it is not verified.
-TEST_P(AutofillProfileTest, IsDeletable) {
+TEST(AutofillProfileTest, IsDeletable) {
   // Set up an arbitrary time, as setup the current time to just above the
   // threshold later than that time.
   const base::Time kArbitraryTime = base::Time::FromDoubleT(25000000000);
@@ -1692,7 +1704,7 @@ TEST_P(AutofillProfileTest, IsDeletable) {
 
 // Tests that the |HasStructuredData| returns whether the profile has structured
 // data or not.
-TEST_P(AutofillProfileTest, HasStructuredData) {
+TEST(AutofillProfileTest, HasStructuredData) {
   AutofillProfile profile;
   profile.SetRawInfoWithVerificationStatus(
       NAME_FULL, u"marion mitchell morrison", kObserved);
@@ -1704,41 +1716,144 @@ TEST_P(AutofillProfileTest, HasStructuredData) {
   EXPECT_TRUE(profile.HasStructuredData());
 }
 
-TEST_P(AutofillProfileTest, RemoveInaccessibleProfileValues) {
+TEST(AutofillProfileTest, RemoveInaccessibleProfileValues) {
   // Returns true if at least one field was removed.
-  auto RemoveInaccessibleProfileValues = [](AutofillProfile& profile,
-                                            const std::string& country_code) {
+  auto RemoveInaccessibleProfileValues = [](AutofillProfile& profile) {
     const ServerFieldTypeSet inaccessible_fields =
-        profile.FindInaccessibleProfileValues(country_code);
+        profile.FindInaccessibleProfileValues();
     profile.ClearFields(inaccessible_fields);
     return !inaccessible_fields.empty();
   };
 
-  AutofillProfile profile1;
-  profile1.SetRawInfo(NAME_FIRST, u"Florian");
-  AutofillProfile profile2 = profile1;
+  AutofillProfile actual_profile;
+  actual_profile.SetRawInfo(NAME_FIRST, u"Florian");
 
   // State is uncommon in Germany and inaccessible in the settings. Expect it
   // to be removed.
-  profile1.SetRawInfo(ADDRESS_HOME_STATE, u"Bayern");
-  EXPECT_TRUE(RemoveInaccessibleProfileValues(profile1, "DE"));
-  EXPECT_EQ(profile1.Compare(profile2), 0);
+  actual_profile.SetRawInfo(ADDRESS_HOME_COUNTRY, u"DE");
+  AutofillProfile expected_profile = actual_profile;
+  actual_profile.SetRawInfo(ADDRESS_HOME_STATE, u"Bayern");
+  EXPECT_TRUE(RemoveInaccessibleProfileValues(actual_profile));
+  EXPECT_EQ(actual_profile.Compare(expected_profile), 0);
 
   // There are no ZIP codes in Angola.
-  profile1.SetRawInfo(ADDRESS_HOME_ZIP, u"12345");
-  EXPECT_TRUE(RemoveInaccessibleProfileValues(profile1, "AO"));
-  EXPECT_EQ(profile1.Compare(profile2), 0);
+  actual_profile.SetRawInfo(ADDRESS_HOME_COUNTRY, u"AO");
+  expected_profile = actual_profile;
+  actual_profile.SetRawInfo(ADDRESS_HOME_ZIP, u"12345");
+  EXPECT_TRUE(RemoveInaccessibleProfileValues(actual_profile));
+  EXPECT_EQ(actual_profile.Compare(expected_profile), 0);
 
+  // If no country is set, the US requirements are used.
   // The US uses both ZIP codes and states.
-  profile1.SetRawInfo(ADDRESS_HOME_STATE, u"CA");
-  profile1.SetRawInfo(ADDRESS_HOME_ZIP, u"12345");
-  profile2 = profile1;
-  EXPECT_FALSE(RemoveInaccessibleProfileValues(profile1, "US"));
-  EXPECT_EQ(profile1.Compare(profile2), 0);
+  actual_profile.ClearFields({ADDRESS_HOME_COUNTRY});
+  actual_profile.SetRawInfo(ADDRESS_HOME_STATE, u"CA");
+  actual_profile.SetRawInfo(ADDRESS_HOME_ZIP, u"12345");
+  expected_profile = actual_profile;
+  EXPECT_FALSE(RemoveInaccessibleProfileValues(actual_profile));
+  EXPECT_EQ(actual_profile.Compare(expected_profile), 0);
 }
 
-enum Expectation { GREATER, LESS, EQUAL };
+TEST(AutofillProfileTest, GetNonEmptyRawTypes) {
+  AutofillProfile profile(base::GenerateGUID(), test::kEmptyOrigin);
+  test::SetProfileInfo(&profile, "Marion", nullptr, "Morrison",
+                       "johnwayne@me.xyz", nullptr, "123 Zoo St.", nullptr,
+                       "Hollywood", "CA", "91601", "US", "14155678910");
 
-INSTANTIATE_TEST_SUITE_P(All, AutofillProfileTest, testing::Bool());
+  std::vector<ServerFieldType> expected_raw_types{
+      NAME_FIRST,
+      NAME_LAST,
+      NAME_FULL,
+      EMAIL_ADDRESS,
+      PHONE_HOME_WHOLE_NUMBER,
+      ADDRESS_HOME_ADDRESS,
+      ADDRESS_HOME_LINE1,
+      ADDRESS_HOME_CITY,
+      ADDRESS_HOME_STATE,
+      ADDRESS_HOME_ZIP,
+      ADDRESS_HOME_COUNTRY,
+      ADDRESS_HOME_STREET_ADDRESS,
+      ADDRESS_HOME_STREET_NAME,
+      ADDRESS_HOME_STREET_AND_DEPENDENT_STREET_NAME,
+      ADDRESS_HOME_HOUSE_NUMBER,
+      NAME_LAST_SECOND};
+
+  ServerFieldTypeSet non_empty_raw_types;
+  profile.GetNonEmptyRawTypes(&non_empty_raw_types);
+
+  EXPECT_THAT(non_empty_raw_types,
+              testing::UnorderedElementsAreArray(expected_raw_types));
+}
+
+enum Expectation { GREATER, LESS };
+struct ProfileRankingTestCase {
+  const std::string guid_a;
+  const int use_count_a;
+  const base::Time use_date_a;
+  const std::string guid_b;
+  const int use_count_b;
+  const base::Time use_date_b;
+  Expectation expectation;
+};
+
+base::Time current = AutofillClock::Now();
+
+class ProfileRankingTest
+    : public testing::TestWithParam<ProfileRankingTestCase> {};
+
+TEST_P(ProfileRankingTest, HasGreaterRankingThan) {
+  // Enable kAutofillEnableRankingFormulaProfiles so that it uses the new
+  // formula instead of frecency.
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      features::kAutofillEnableRankingFormulaAddressProfiles);
+
+  auto test_case = GetParam();
+
+  AutofillProfile profile1 = test::GetFullProfile();
+  profile1.set_guid(test_case.guid_a);
+  profile1.set_use_count(test_case.use_count_a);
+  profile1.set_use_date(test_case.use_date_a);
+
+  AutofillProfile profile2 = test::GetFullProfile();
+  profile2.set_guid(test_case.guid_b);
+  profile2.set_use_count(test_case.use_count_b);
+  profile2.set_use_date(test_case.use_date_b);
+
+  EXPECT_EQ(test_case.expectation == GREATER,
+            profile1.HasGreaterRankingThan(&profile2, current));
+  EXPECT_NE(test_case.expectation == GREATER,
+            profile2.HasGreaterRankingThan(&profile1, current));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    AutofillProfileTest,
+    ProfileRankingTest,
+    testing::Values(
+        // Same ranking score, profile1 has a smaller GUID (tie breaker).
+        ProfileRankingTestCase{"guid_a", 8, current, "guid_b", 8, current,
+                               LESS},
+        // Same days since last use, profile1 has a bigger use count.
+        ProfileRankingTestCase{"guid_a", 10, current, "guid_b", 8, current,
+                               GREATER},
+        // Same days since last use, profile1 has a smaller use count.
+        ProfileRankingTestCase{"guid_a", 8, current, "guid_b", 10, current,
+                               LESS},
+        // Same days since last use, profile1 has larger use count.
+        ProfileRankingTestCase{"guid_a", 8, current, "guid_b", 8,
+                               current - base::Days(1), GREATER},
+        // Same use count, profile1 has smaller days since last use.
+        ProfileRankingTestCase{"guid_a", 8, current - base::Days(1), "guid_b",
+                               8, current, LESS},
+        // Special case: occasional profiles. A profile with relatively low
+        // usage and used recently (profile2) should not rank higher than a more
+        // used profile that has been unused for a short amount of time
+        // (profile1).
+        ProfileRankingTestCase{"guid_a", 300, current - base::Days(5), "guid_b",
+                               10, current - base::Days(1), GREATER},
+        // Special case: moving. A new profile used frequently (profile2) should
+        // rank higher than a profile with more usage that has not been used for
+        // a while (profile1).
+        ProfileRankingTestCase{"guid_a", 90, current - base::Days(20), "guid_b",
+                               10, current - base::Days(5), LESS}));
 
 }  // namespace autofill

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
@@ -42,7 +42,8 @@ SSLBlockingPage::GetTypeForTesting() {
 
 SSLBlockingPage::~SSLBlockingPage() = default;
 
-void SSLBlockingPage::PopulateInterstitialStrings(base::Value* load_time_data) {
+void SSLBlockingPage::PopulateInterstitialStrings(
+    base::Value::Dict& load_time_data) {
   ssl_error_ui_->PopulateStringsForHTML(load_time_data);
   cert_report_helper()->PopulateExtendedReportingOption(load_time_data);
   cert_report_helper()->PopulateEnhancedProtectionMessage(load_time_data);

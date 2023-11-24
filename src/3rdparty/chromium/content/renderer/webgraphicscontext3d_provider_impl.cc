@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,13 +27,13 @@ WebGraphicsContext3DProviderImpl::~WebGraphicsContext3DProviderImpl() {
   provider_->RemoveObserver(this);
 }
 
-bool WebGraphicsContext3DProviderImpl::BindToCurrentThread() {
+bool WebGraphicsContext3DProviderImpl::BindToCurrentSequence() {
   // TODO(danakj): Could plumb this result out to the caller so they know to
   // retry or not, if any client cared to know if it should retry or not.
   // Call AddObserver here instead of in constructor so that it's called on the
   // correct thread.
   provider_->AddObserver(this);
-  return provider_->BindToCurrentThread() == gpu::ContextResult::kSuccess;
+  return provider_->BindToCurrentSequence() == gpu::ContextResult::kSuccess;
 }
 
 gpu::InterfaceBase* WebGraphicsContext3DProviderImpl::InterfaceBase() {
@@ -58,6 +58,10 @@ WebGraphicsContext3DProviderImpl::RasterInterface() {
 gpu::webgpu::WebGPUInterface*
 WebGraphicsContext3DProviderImpl::WebGPUInterface() {
   return provider_->WebGPUInterface();
+}
+
+gpu::ContextSupport* WebGraphicsContext3DProviderImpl::ContextSupport() {
+  return provider_->ContextSupport();
 }
 
 bool WebGraphicsContext3DProviderImpl::IsContextLost() {
@@ -182,8 +186,7 @@ cc::ImageDecodeCache* WebGraphicsContext3DProviderImpl::ImageDecodeCache(
       color_type,
       std::make_unique<cc::GpuImageDecodeCache>(
           provider_.get(), use_transfer_cache, color_type, kMaxWorkingSetBytes,
-          provider_->ContextCapabilities().max_texture_size,
-          cc::PaintImage::kDefaultGeneratorClientId, nullptr));
+          provider_->ContextCapabilities().max_texture_size, nullptr));
   DCHECK(insertion_result.second);
   cache_iterator = insertion_result.first;
   return cache_iterator->second.get();

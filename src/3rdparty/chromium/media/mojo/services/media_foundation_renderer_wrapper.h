@@ -1,13 +1,15 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef MEDIA_MOJO_SERVICES_MEDIA_FOUNDATION_RENDERER_WRAPPER_H_
 #define MEDIA_MOJO_SERVICES_MEDIA_FOUNDATION_RENDERER_WRAPPER_H_
 
-#include "base/callback.h"
+#include "base/callback_list.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/task/sequenced_task_runner.h"
 #include "media/base/media_resource.h"
 #include "media/base/pipeline_status.h"
 #include "media/base/renderer.h"
@@ -55,6 +57,7 @@ class MediaFoundationRendererWrapper final
   void SetPlaybackRate(double playback_rate) override;
   void SetVolume(float volume) override;
   base::TimeDelta GetMediaTime() override;
+  RendererType GetRendererType() override;
 
   // mojom::MediaFoundationRendererExtension implementation.
   void GetDCOMPSurface(GetDCOMPSurfaceCallback callback) override;
@@ -62,14 +65,15 @@ class MediaFoundationRendererWrapper final
   void SetOutputRect(const gfx::Rect& output_rect,
                      SetOutputRectCallback callback) override;
   void NotifyFrameReleased(const base::UnguessableToken& frame_token) override;
-  void RequestNextFrameBetweenTimestamps(base::TimeTicks deadline_min,
-                                         base::TimeTicks deadline_max) override;
-  void SetRenderingMode(media::RenderingMode mode) override;
+  void RequestNextFrame() override;
+  void SetMediaFoundationRenderingMode(
+      MediaFoundationRenderingMode mode) override;
 
   // mojom::MuteStateObserver implementation.
   void OnMuteStateChange(bool muted) override;
 
  private:
+  void OnGpuLuidChange(const CHROME_LUID& adapter_luid);
   void OnReceiveDCOMPSurface(GetDCOMPSurfaceCallback callback,
                              base::win::ScopedHandle handle,
                              const std::string& error);
@@ -90,6 +94,8 @@ class MediaFoundationRendererWrapper final
   mojo::Remote<media::mojom::MediaFoundationRendererClientExtension>
       client_extension_remote_;
   mojo::Receiver<mojom::MuteStateObserver> site_mute_observer_;
+
+  base::CallbackListSubscription luid_update_subscription_;
 
   float volume_ = 1.0;
   bool muted_ = false;  // Whether the site (WebContents) is muted.

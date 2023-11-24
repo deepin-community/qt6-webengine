@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,11 +12,11 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/check_op.h"
 #include "base/dcheck_is_on.h"
 #include "base/files/file_path.h"
 #include "base/format_macros.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/notreached.h"
 #include "base/strings/string_util.h"
@@ -73,10 +73,10 @@ void Recovery::Rollback(std::unique_ptr<Recovery> r) {
 Recovery::Recovery(Database* connection)
     : db_(connection),
       recover_db_({
-          /*.exclusive_locking =*/ false,
-          /*.page_size =*/ db_->page_size(),
+          .exclusive_locking = false,
+          .page_size = db_->page_size(),
           // The interface to the recovery module is a virtual table.
-          /*.enable_virtual_tables_discouraged =*/ true,
+          .enable_virtual_tables_discouraged = true,
       }) {
   // Files with I/O errors cannot be safely memory-mapped.
   recover_db_.set_mmap_disabled();

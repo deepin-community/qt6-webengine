@@ -1,11 +1,13 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/optimization_guide/core/prediction_model_download_manager.h"
 
+#include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/guid.h"
 #include "base/path_service.h"
 #include "base/sequence_checker.h"
 #include "base/strings/utf_string_conversions.h"
@@ -41,7 +43,8 @@ class TestPredictionModelDownloadObserver
   TestPredictionModelDownloadObserver() = default;
   ~TestPredictionModelDownloadObserver() override = default;
 
-  void OnModelReady(const proto::PredictionModel& model) override {
+  void OnModelReady(const base::FilePath& base_model_dir,
+                    const proto::PredictionModel& model) override {
     last_ready_model_ = model;
   }
 
@@ -79,7 +82,14 @@ class PredictionModelDownloadManagerTest : public testing::Test {
     mock_download_service_ =
         std::make_unique<download::test::MockDownloadService>();
     download_manager_ = std::make_unique<PredictionModelDownloadManager>(
-        mock_download_service_.get(), temp_models_dir_.GetPath(),
+        mock_download_service_.get(),
+        base::BindRepeating(
+            [](const base::FilePath& models_dir_path,
+               proto::OptimizationTarget optimization_target) {
+              return models_dir_path.AppendASCII(
+                  base::GUID::GenerateRandomV4().AsLowercaseString());
+            },
+            temp_models_dir_.GetPath()),
         task_environment_.GetMainThreadTaskRunner());
 
 #if !BUILDFLAG(IS_IOS)
@@ -601,13 +611,7 @@ TEST_F(PredictionModelDownloadManagerTest,
   histogram_tester.ExpectUniqueSample(
       "OptimizationGuide.PredictionModelDownloadManager."
       "DownloadStatus",
-      PredictionModelDownloadStatus::kFailedModelFileOtherError, 1);
-  // The error code for ReplaceFile varies by platform for this test, only
-  // care that the error code is recorded.
-  histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.PredictionModelDownloadManager.ReplaceFileError."
-      "PainfulPageLoad",
-      1);
+      PredictionModelDownloadStatus::kFailedModelFileNotFound, 1);
 }
 
 TEST_F(

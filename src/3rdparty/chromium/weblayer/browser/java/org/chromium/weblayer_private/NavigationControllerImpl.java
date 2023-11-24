@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,7 @@ import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
 import org.chromium.base.annotations.NativeMethods;
 import org.chromium.components.embedder_support.util.WebResourceResponseInfo;
+import org.chromium.weblayer_private.TabImpl.HeaderVerificationStatus;
 import org.chromium.weblayer_private.interfaces.APICallException;
 import org.chromium.weblayer_private.interfaces.IClientPage;
 import org.chromium.weblayer_private.interfaces.INavigateParams;
@@ -47,6 +48,7 @@ public final class NavigationControllerImpl extends INavigationController.Stub {
     @Override
     public void navigate(String uri, NavigateParams params) {
         StrictModeWorkaround.apply();
+        mTab.setHeaderVerification(HeaderVerificationStatus.PENDING);
         if (WebLayerFactoryImpl.getClientMajorVersion() < 83) {
             assert params == null;
         }
@@ -78,15 +80,6 @@ public final class NavigationControllerImpl extends INavigationController.Stub {
         NavigateParamsImpl params = (NavigateParamsImpl) iParams;
         WebResourceResponseInfo responseInfo = null;
         if (params.getResponse() != null) {
-            if (mTab.isActiveTab()) {
-                BrowserImpl browser = mTab.getBrowser();
-                UrlBarControllerImpl urlBarController = browser.getUrlBarControllerImpl();
-                if (urlBarController != null && urlBarController.hasActiveView()) {
-                    throw new IllegalStateException(
-                            "Can't navigate to an InputStream if the stock URL bar is visible.");
-                }
-            }
-
             WebResourceResponse response =
                     ObjectWrapper.unwrap(params.getResponse(), WebResourceResponse.class);
             responseInfo = new WebResourceResponseInfo(response.getMimeType(),
@@ -220,6 +213,7 @@ public final class NavigationControllerImpl extends INavigationController.Stub {
 
     @CalledByNative
     private void navigationStarted(NavigationImpl navigation) throws RemoteException {
+        mTab.setHeaderVerification(HeaderVerificationStatus.PENDING);
         mNavigationControllerClient.navigationStarted(navigation.getClientNavigation());
     }
 
@@ -240,6 +234,11 @@ public final class NavigationControllerImpl extends INavigationController.Stub {
 
     @CalledByNative
     private void navigationCompleted(NavigationImpl navigation) throws RemoteException {
+        if (navigation.getIsConsentingContent()) {
+            mTab.setHeaderVerification(HeaderVerificationStatus.VALIDATED);
+        } else {
+            mTab.setHeaderVerification(HeaderVerificationStatus.NOT_VALIDATED);
+        }
         mNavigationControllerClient.navigationCompleted(navigation.getClientNavigation());
     }
 

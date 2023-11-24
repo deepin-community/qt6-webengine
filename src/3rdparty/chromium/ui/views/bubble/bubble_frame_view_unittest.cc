@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -32,15 +32,14 @@
 #include "ui/views/test/views_test_base.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
+#include "ui/views/widget/widget_interactive_uitest_utils.h"
+#include "ui/views/window/dialog_client_view.h"
 
 namespace views {
-
-using BubbleFrameViewTest = ViewsTestBase;
 
 namespace {
 
 constexpr BubbleBorder::Arrow kArrow = BubbleBorder::TOP_LEFT;
-constexpr SkColor kColor = SK_ColorRED;
 constexpr int kMargin = 6;
 constexpr gfx::Size kMinimumClientSize = gfx::Size(100, 200);
 constexpr gfx::Size kPreferredClientSize = gfx::Size(150, 250);
@@ -89,8 +88,8 @@ class TestBubbleFrameView : public BubbleFrameView {
  public:
   explicit TestBubbleFrameView(ViewsTestBase* test_base)
       : BubbleFrameView(gfx::Insets(), gfx::Insets(kMargin)) {
-    SetBubbleBorder(std::make_unique<BubbleBorder>(
-        kArrow, BubbleBorder::STANDARD_SHADOW, kColor));
+    SetBubbleBorder(
+        std::make_unique<BubbleBorder>(kArrow, BubbleBorder::STANDARD_SHADOW));
     widget_ = std::make_unique<Widget>();
     widget_delegate_ =
         std::make_unique<TestBubbleFrameViewWidgetDelegate>(widget_.get());
@@ -112,10 +111,6 @@ class TestBubbleFrameView : public BubbleFrameView {
 
   BubbleBorder::Arrow GetBorderArrow() const {
     return bubble_border()->arrow();
-  }
-
-  SkColor GetBorderBackgroundColor() const {
-    return bubble_border()->background_color();
   }
 
   gfx::Insets GetBorderInsets() const { return bubble_border()->GetInsets(); }
@@ -147,10 +142,21 @@ class TestBubbleFrameView : public BubbleFrameView {
 
 }  // namespace
 
+class BubbleFrameViewTest : public ViewsTestBase {
+ public:
+  BubbleFrameViewTest()
+      : views::ViewsTestBase(
+            base::test::TaskEnvironment::TimeSource::MOCK_TIME) {}
+
+  BubbleFrameViewTest(const BubbleFrameViewTest&) = delete;
+  BubbleFrameViewTest& operator=(const BubbleFrameViewTest&) = delete;
+
+  ~BubbleFrameViewTest() override = default;
+};
+
 TEST_F(BubbleFrameViewTest, GetBoundsForClientView) {
   TestBubbleFrameView frame(this);
   EXPECT_EQ(kArrow, frame.GetBorderArrow());
-  EXPECT_EQ(kColor, frame.GetBorderBackgroundColor());
 
   const gfx::Insets content_margins = frame.GetContentMargins();
   const gfx::Insets insets = frame.GetBorderInsets();
@@ -164,7 +170,6 @@ TEST_F(BubbleFrameViewTest, GetBoundsForClientViewWithClose) {
   frame.widget_delegate()->SetShouldShowCloseButton(true);
   frame.ResetWindowControls();
   EXPECT_EQ(kArrow, frame.GetBorderArrow());
-  EXPECT_EQ(kColor, frame.GetBorderBackgroundColor());
 
   const gfx::Insets content_margins = frame.GetContentMargins();
   const gfx::Insets insets = frame.GetBorderInsets();
@@ -209,8 +214,8 @@ TEST_F(BubbleFrameViewTest, GetUpdatedWindowBounds) {
   TestBubbleFrameView frame(this);
   gfx::Rect window_bounds;
 
-  frame.SetBubbleBorder(std::make_unique<BubbleBorder>(
-      kArrow, BubbleBorder::NO_SHADOW_LEGACY, kColor));
+  frame.SetBubbleBorder(
+      std::make_unique<BubbleBorder>(kArrow, BubbleBorder::NO_SHADOW));
 
   // Test that the info bubble displays normally when it fits.
   frame.SetArrow(BubbleBorder::TOP_LEFT);
@@ -372,7 +377,7 @@ TEST_F(BubbleFrameViewTest, TestMirroringForCenteredArrow) {
 TEST_F(BubbleFrameViewTest, GetUpdatedWindowBoundsDontTryMirror) {
   TestBubbleFrameView frame(this);
   frame.SetBubbleBorder(std::make_unique<BubbleBorder>(
-      BubbleBorder::TOP_RIGHT, BubbleBorder::NO_SHADOW_LEGACY, kColor));
+      BubbleBorder::TOP_RIGHT, BubbleBorder::NO_SHADOW));
   gfx::Rect window_bounds = frame.GetUpdatedWindowBounds(
       gfx::Rect(100, 900, 0, 0),       // |anchor_rect|
       BubbleBorder::Arrow::TOP_RIGHT,  // |delegate_arrow|
@@ -389,8 +394,8 @@ TEST_F(BubbleFrameViewTest, GetUpdatedWindowBoundsCenterArrows) {
   TestBubbleFrameView frame(this);
   gfx::Rect window_bounds;
 
-  frame.SetBubbleBorder(std::make_unique<BubbleBorder>(
-      kArrow, BubbleBorder::NO_SHADOW_LEGACY, kColor));
+  frame.SetBubbleBorder(
+      std::make_unique<BubbleBorder>(kArrow, BubbleBorder::NO_SHADOW));
 
   // Some of these tests may go away once --secondary-ui-md becomes the
   // default. Under Material Design mode, the BubbleBorder doesn't support all
@@ -453,8 +458,8 @@ TEST_F(BubbleFrameViewTest, GetUpdatedWindowBoundsForBubbleWithAnchorWindow) {
   frame.SetAvailableAnchorWindowBounds(gfx::Rect(100, 100, 500, 500));
   gfx::Rect window_bounds;
 
-  frame.SetBubbleBorder(std::make_unique<BubbleBorder>(
-      kArrow, BubbleBorder::NO_SHADOW_LEGACY, kColor));
+  frame.SetBubbleBorder(
+      std::make_unique<BubbleBorder>(kArrow, BubbleBorder::NO_SHADOW));
 
   // Test that the bubble displays normally when it fits.
   frame.SetArrow(BubbleBorder::TOP_LEFT);
@@ -571,8 +576,8 @@ TEST_F(BubbleFrameViewTest,
   TestBubbleFrameView frame(this);
   gfx::Rect window_bounds;
 
-  frame.SetBubbleBorder(std::make_unique<BubbleBorder>(
-      kArrow, BubbleBorder::NO_SHADOW_LEGACY, kColor));
+  frame.SetBubbleBorder(
+      std::make_unique<BubbleBorder>(kArrow, BubbleBorder::NO_SHADOW));
 
   // Test bubble fitting anchor window and not fitting screen on right.
   //     ________________________
@@ -643,8 +648,8 @@ TEST_F(BubbleFrameViewTest, MirroringNotStickyForGetUpdatedWindowBounds) {
   TestBubbleFrameView frame(this);
   gfx::Rect window_bounds;
 
-  frame.SetBubbleBorder(std::make_unique<BubbleBorder>(
-      kArrow, BubbleBorder::NO_SHADOW_LEGACY, kColor));
+  frame.SetBubbleBorder(
+      std::make_unique<BubbleBorder>(kArrow, BubbleBorder::NO_SHADOW));
 
   // Test bubble fitting anchor window and not fitting screen on right.
   frame.SetAvailableAnchorWindowBounds(gfx::Rect(700, 200, 400, 400));
@@ -680,8 +685,8 @@ TEST_F(BubbleFrameViewTest, GetUpdatedWindowBoundsForBubbleSetToOffset) {
       BubbleFrameView::PreferredArrowAdjustment::kOffset);
   gfx::Rect window_bounds;
 
-  frame.SetBubbleBorder(std::make_unique<BubbleBorder>(
-      kArrow, BubbleBorder::NO_SHADOW_LEGACY, kColor));
+  frame.SetBubbleBorder(
+      std::make_unique<BubbleBorder>(kArrow, BubbleBorder::NO_SHADOW));
 
   // Test that the bubble displays normally when it fits.
   frame.SetArrow(BubbleBorder::TOP_LEFT);
@@ -738,8 +743,8 @@ TEST_F(BubbleFrameViewTest,
       BubbleFrameView::PreferredArrowAdjustment::kOffset);
   gfx::Rect window_bounds;
 
-  frame.SetBubbleBorder(std::make_unique<BubbleBorder>(
-      kArrow, BubbleBorder::NO_SHADOW_LEGACY, kColor));
+  frame.SetBubbleBorder(
+      std::make_unique<BubbleBorder>(kArrow, BubbleBorder::NO_SHADOW));
 
   // Test that the bubble exiting right side of anchor window displays against
   // left edge of anchor window bounds if larger than anchor window.
@@ -936,10 +941,17 @@ class TestBubbleDialogDelegateView : public BubbleDialogDelegateView {
     SizeToContents();
   }
 
+  void ChangeSubtitle(const std::u16string& subtitle) {
+    subtitle_ = subtitle;
+    GetBubbleFrameView()->UpdateSubtitle();
+    SizeToContents();
+  }
+
   // BubbleDialogDelegateView:
   using BubbleDialogDelegateView::SetAnchorView;
   using BubbleDialogDelegateView::SizeToContents;
   std::u16string GetWindowTitle() const override { return title_; }
+  std::u16string GetSubtitle() const override { return subtitle_; }
   bool ShouldShowWindowTitle() const override { return !title_.empty(); }
   bool ShouldShowCloseButton() const override { return should_show_close_; }
   void SetShouldShowCloseButton(bool should_show_close) {
@@ -957,6 +969,7 @@ class TestBubbleDialogDelegateView : public BubbleDialogDelegateView {
 
  private:
   std::u16string title_;
+  std::u16string subtitle_;
   bool should_show_close_ = false;
 };
 
@@ -1132,7 +1145,7 @@ TEST_F(BubbleFrameViewTest, LayoutEdgeCasesWithHeader) {
       frame->GetCloseButtonForTesting()->height() +
       LayoutProvider::Get()->GetDistanceMetric(DISTANCE_CLOSE_BUTTON_MARGIN);
 
-  // Set a header view that is 1 dip smaller smaller than the close button.
+  // Set a header view that is 1 dip smaller than the close button.
   frame->SetHeaderView(
       std::make_unique<StaticSizedView>(gfx::Size(10, close_margin - 1)));
 
@@ -1169,6 +1182,56 @@ TEST_F(BubbleFrameViewTest, LayoutEdgeCasesWithHeader) {
   // When |anchor| goes out of scope it should take |bubble| with it.
 }
 
+// Layout tests with Subtitle label.
+// This will test adding a Subtitle and wrap-around case for Subtitle.
+TEST_F(BubbleFrameViewTest, LayoutSubtitleEdgeCases) {
+  test::TestLayoutProvider provider;
+  auto delegate_unique = std::make_unique<TestBubbleDialogDelegateView>();
+  TestBubbleDialogDelegateView* const delegate = delegate_unique.get();
+  TestAnchor anchor(CreateParams(Widget::InitParams::TYPE_WINDOW));
+  delegate->SetAnchorView(anchor.widget().GetContentsView());
+
+  Widget* bubble =
+      BubbleDialogDelegateView::CreateBubble(std::move(delegate_unique));
+  bubble->Show();
+
+  // Even though the bubble has default margins, the dialog view should have
+  // been given its preferred size.
+  EXPECT_FALSE(delegate->margins().IsEmpty());
+  EXPECT_EQ(delegate->size(), delegate->GetPreferredSize());
+
+  // Add title to bubble frame view.
+  delegate->ChangeTitle(u"This is a title");
+
+  int min_bubble_height = bubble->GetWindowBoundsInScreen().height();
+  EXPECT_LT(delegate->GetPreferredSize().height(), min_bubble_height);
+
+  // Add a short subtitle to guarantee a one-line addition.
+  // Line height can vary depending on the platform so check
+  // boundary where the height diff is between 12 and 18.
+  // (12 < single_line_height < 18)
+  std::u16string subtitle(1, 'j');
+  delegate->ChangeSubtitle(subtitle);
+  int line_height_diff =
+      bubble->GetWindowBoundsInScreen().height() - min_bubble_height;
+  EXPECT_GT(line_height_diff, 12);
+  EXPECT_LT(line_height_diff, 18);
+
+  // Set the new min bubble height with a Subtitle added.
+  min_bubble_height = bubble->GetWindowBoundsInScreen().height();
+  // Grow the subtitle incrementally until word wrap is required.
+  while (bubble->GetWindowBoundsInScreen().height() == min_bubble_height) {
+    subtitle += u" j";
+    delegate->ChangeSubtitle(subtitle);
+  }
+
+  // Subtitle wrap should have increased by one line.
+  line_height_diff =
+      bubble->GetWindowBoundsInScreen().height() - min_bubble_height;
+  EXPECT_GT(line_height_diff, 12);
+  EXPECT_LT(line_height_diff, 18);
+}
+
 TEST_F(BubbleFrameViewTest, LayoutWithIcon) {
   auto delegate_unique = std::make_unique<TestBubbleDialogDelegateView>();
   TestBubbleDialogDelegateView* const delegate = delegate_unique.get();
@@ -1177,7 +1240,8 @@ TEST_F(BubbleFrameViewTest, LayoutWithIcon) {
   SkBitmap bitmap;
   bitmap.allocN32Pixels(20, 80);
   bitmap.eraseColor(SK_ColorYELLOW);
-  delegate->SetIcon(gfx::ImageSkia::CreateFrom1xBitmap(bitmap));
+  delegate->SetIcon(ui::ImageModel::FromImageSkia(
+      gfx::ImageSkia::CreateFrom1xBitmap(bitmap)));
   delegate->SetShowIcon(true);
 
   Widget* widget =
@@ -1187,7 +1251,7 @@ TEST_F(BubbleFrameViewTest, LayoutWithIcon) {
   delegate->ChangeTitle(u"test title");
   BubbleFrameView* frame = delegate->GetBubbleFrameView();
   View* icon = frame->title_icon_;
-  View* title = frame->title();
+  View* title = frame->title_container_;
 
   // There should be equal amounts of space on the left and right of the icon.
   EXPECT_EQ(icon->x() * 2 + icon->width(), title->x());
@@ -1295,12 +1359,56 @@ TEST_F(BubbleFrameViewTest, IgnorePossiblyUnintendedClicksMinimize) {
                                   ui::EF_NONE, ui::EF_NONE));
   EXPECT_FALSE(bubble->IsClosed());
 
+  views::test::PropertyWaiter minimize_waiter(
+      base::BindRepeating(&Widget::IsMinimized, base::Unretained(bubble)),
+      true);
   test::ButtonTestApi(frame->minimize_)
       .NotifyClick(ui::MouseEvent(
           ui::ET_MOUSE_PRESSED, gfx::Point(), gfx::Point(),
           ui::EventTimeForNow() + base::Milliseconds(GetDoubleClickInterval()),
           ui::EF_NONE, ui::EF_NONE));
+  EXPECT_TRUE(minimize_waiter.Wait());
   EXPECT_TRUE(bubble->IsMinimized());
+}
+
+// Ensures that clicks are ignored for short time after anchor view bounds
+// changed.
+TEST_F(BubbleFrameViewTest, IgnorePossiblyUnintendedClicksAnchorBoundsChanged) {
+  auto delegate_unique = std::make_unique<TestBubbleDialogDelegateView>();
+  TestBubbleDialogDelegateView* const delegate = delegate_unique.get();
+  TestAnchor anchor(CreateParams(Widget::InitParams::TYPE_WINDOW));
+  delegate->SetAnchorView(anchor.widget().GetContentsView());
+  delegate->SetCanMinimize(true);
+  Widget* bubble =
+      BubbleDialogDelegateView::CreateBubble(std::move(delegate_unique));
+  bubble->Show();
+  ui::MouseEvent mouse_event(ui::ET_MOUSE_PRESSED, gfx::Point(), gfx::Point(),
+                             ui::EventTimeForNow(), ui::EF_NONE, ui::EF_NONE);
+  BubbleFrameView* frame = delegate->GetBubbleFrameView();
+  test::ButtonTestApi(frame->minimize_).NotifyClick(mouse_event);
+  auto* widget = delegate->GetWidget();
+  auto* dialog = delegate->GetDialogClientView();
+  auto* ok_button = dialog->ok_button();
+  test::ButtonTestApi(ok_button).NotifyClick(mouse_event);
+  EXPECT_FALSE(bubble->IsMinimized());
+  EXPECT_FALSE(widget->IsClosed());
+
+  task_environment()->FastForwardBy(
+      base::Milliseconds(GetDoubleClickInterval()));
+  anchor.widget().SetBounds(gfx::Rect(10, 10, 100, 100));
+
+  ui::MouseEvent mouse_event_1(ui::ET_MOUSE_PRESSED, gfx::Point(), gfx::Point(),
+                               ui::EventTimeForNow(), ui::EF_NONE, ui::EF_NONE);
+  test::ButtonTestApi(ok_button).NotifyClick(mouse_event_1);
+  test::ButtonTestApi(frame->minimize_).NotifyClick(mouse_event_1);
+  EXPECT_FALSE(widget->IsClosed());
+  EXPECT_FALSE(bubble->IsMinimized());
+
+  test::ButtonTestApi(ok_button).NotifyClick(ui::MouseEvent(
+      ui::ET_MOUSE_PRESSED, gfx::Point(), gfx::Point(),
+      ui::EventTimeForNow() + base::Milliseconds(GetDoubleClickInterval()),
+      ui::EF_NONE, ui::EF_NONE));
+  EXPECT_TRUE(widget->IsClosed());
 }
 
 // Ensures that layout is correct when the progress indicator is visible.

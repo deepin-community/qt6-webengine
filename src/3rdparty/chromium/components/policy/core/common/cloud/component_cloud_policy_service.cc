@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,13 +12,12 @@
 #include <unordered_map>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/core/common/cloud/cloud_policy_refresh_scheduler.h"
 #include "components/policy/core/common/cloud/component_cloud_policy_store.h"
@@ -27,13 +26,12 @@
 #include "components/policy/core/common/cloud/resource_cache.h"
 #include "components/policy/core/common/schema.h"
 #include "components/policy/core/common/schema_map.h"
+#include "components/policy/core/common/values_util.h"
 #include "components/policy/proto/device_management_backend.pb.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace em = enterprise_management;
 
-using ComponentPolicyMap =
-    policy::ComponentCloudPolicyServiceObserver::ComponentPolicyMap;
 using ScopedResponseMap = std::unordered_map<policy::PolicyNamespace,
                                              em::PolicyFetchResponse,
                                              policy::PolicyNamespaceHash>;
@@ -204,13 +202,11 @@ void ComponentCloudPolicyService::Backend::InitIfNeeded() {
   updater_ = std::make_unique<ComponentCloudPolicyUpdater>(
       task_runner_, std::move(external_policy_data_fetcher_), &store_);
 
-  std::unique_ptr<PolicyBundle> bundle(std::make_unique<PolicyBundle>());
-  bundle->CopyFrom(store_.policy());
+  auto bundle(std::make_unique<PolicyBundle>(store_.policy().Clone()));
   service_task_runner_->PostTask(
       FROM_HERE,
-      base::BindOnce(
-          &ComponentCloudPolicyService::SetPolicy, service_, std::move(bundle),
-          std::make_unique<ComponentPolicyMap>(store_.serialized_policy())));
+      base::BindOnce(&ComponentCloudPolicyService::SetPolicy, service_,
+                     std::move(bundle), store_.GetJsonPolicyMap()));
 
   initialized_ = true;
 
@@ -237,13 +233,12 @@ void ComponentCloudPolicyService::Backend::
   }
   DVLOG(2) << "Installing updated policy from the component policy store";
 
-  std::unique_ptr<PolicyBundle> bundle(std::make_unique<PolicyBundle>());
-  bundle->CopyFrom(store_.policy());
+  std::unique_ptr<PolicyBundle> bundle(
+      std::make_unique<PolicyBundle>(store_.policy().Clone()));
   service_task_runner_->PostTask(
       FROM_HERE,
-      base::BindOnce(
-          &ComponentCloudPolicyService::SetPolicy, service_, std::move(bundle),
-          std::make_unique<ComponentPolicyMap>(store_.serialized_policy())));
+      base::BindOnce(&ComponentCloudPolicyService::SetPolicy, service_,
+                     std::move(bundle), store_.GetJsonPolicyMap()));
 }
 
 void ComponentCloudPolicyService::Backend::UpdateWithLastFetchedPolicy() {
@@ -291,7 +286,7 @@ ComponentCloudPolicyService::ComponentCloudPolicyService(
 
   backend_ = std::make_unique<Backend>(
       weak_ptr_factory_.GetWeakPtr(), backend_task_runner_,
-      base::ThreadTaskRunnerHandle::Get(), std::move(cache),
+      base::SingleThreadTaskRunner::GetCurrentDefault(), std::move(cache),
       std::make_unique<ExternalPolicyDataFetcher>(client->GetURLLoaderFactory(),
                                                   backend_task_runner_),
       policy_type);
@@ -461,7 +456,7 @@ void ComponentCloudPolicyService::UpdateFromSuperiorStore() {
 void ComponentCloudPolicyService::UpdateFromClient() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  if (core_->client()->responses().empty()) {
+  if (core_->client()->last_policy_fetch_responses().empty()) {
     // The client's responses will be empty if it hasn't fetched policy from the
     // DMServer yet. Make sure we don't purge the caches in this case.
     return;
@@ -471,7 +466,7 @@ void ComponentCloudPolicyService::UpdateFromClient() {
 
   std::unique_ptr<ScopedResponseMap> valid_responses =
       std::make_unique<ScopedResponseMap>();
-  for (const auto& response : core_->client()->responses()) {
+  for (const auto& response : core_->client()->last_policy_fetch_responses()) {
     PolicyNamespace ns;
     if (!ToPolicyNamespace(response.first, &ns)) {
       DVLOG(1) << "Ignored policy with type = " << response.first.first;
@@ -510,13 +505,13 @@ void ComponentCloudPolicyService::Disconnect() {
 
 void ComponentCloudPolicyService::SetPolicy(
     std::unique_ptr<PolicyBundle> policy,
-    std::unique_ptr<ComponentPolicyMap> serialized_policy) {
+    const ComponentPolicyMap& component_policy) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // Store the current unfiltered policies.
   unfiltered_policy_ = std::move(policy);
 
-  NotifyComponentPolicyUpdated(std::move(serialized_policy));
+  NotifyComponentPolicyUpdated(component_policy);
   FilterAndInstallPolicy();
 }
 
@@ -528,8 +523,8 @@ void ComponentCloudPolicyService::FilterAndInstallPolicy() {
 
   // Make a copy in |policy_| and filter it and validate against the schemas;
   // this is what's passed to the outside world.
-  policy_.CopyFrom(*unfiltered_policy_);
-  current_schema_map_->FilterBundle(&policy_,
+  policy_ = unfiltered_policy_->Clone();
+  current_schema_map_->FilterBundle(policy_,
                                     /*drop_invalid_component_policies=*/false);
 
   policy_installed_ = true;
@@ -539,9 +534,9 @@ void ComponentCloudPolicyService::FilterAndInstallPolicy() {
 }
 
 void ComponentCloudPolicyService::NotifyComponentPolicyUpdated(
-    std::unique_ptr<ComponentPolicyMap> serialized_policy) {
+    const ComponentPolicyMap& component_policy) {
   for (auto& observer : observers_) {
-    observer.OnComponentPolicyUpdated(*serialized_policy);
+    observer.OnComponentPolicyUpdated(component_policy);
   }
 }
 

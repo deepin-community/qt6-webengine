@@ -321,6 +321,11 @@ export interface ExtensionDescriptor {
   startPage: string;
   name: string;
   exposeExperimentalAPIs: boolean;
+  hostsPolicy?: ExtensionHostsPolicy;
+}
+export interface ExtensionHostsPolicy {
+  runtimeAllowedHosts: string[];
+  runtimeBlockedHosts: string[];
 }
 export interface ShowSurveyResult {
   surveyShown: boolean;
@@ -350,6 +355,8 @@ export interface SyncInformation {
 // eslint-disable-next-line rulesdir/const_enum
 export enum EnumeratedHistogram {
   ActionTaken = 'DevTools.ActionTaken',
+  BreakpointWithConditionAdded = 'DevTools.BreakpointWithConditionAdded',
+  BreakpointEditDialogRevealedFrom = 'DevTools.BreakpointEditDialogRevealedFrom',
   PanelClosed = 'DevTools.PanelClosed',
   PanelShown = 'DevTools.PanelShown',
   SidebarPaneShown = 'DevTools.SidebarPaneShown',
@@ -367,12 +374,22 @@ export enum EnumeratedHistogram {
   LinearMemoryInspectorRevealedFrom = 'DevTools.LinearMemoryInspector.RevealedFrom',
   LinearMemoryInspectorTarget = 'DevTools.LinearMemoryInspector.Target',
   Language = 'DevTools.Language',
-  ConsoleShowsCorsErrors = 'DevTools.ConsoleShowsCorsErrors',
   SyncSetting = 'DevTools.SyncSetting',
+  RecordingCodeToggled = 'DevTools.RecordingCodeToggled',
+  RecordingCopiedToClipboard = 'DevTools.RecordingCopiedToClipboard',
   RecordingEdited = 'DevTools.RecordingEdited',
   RecordingExported = 'DevTools.RecordingExported',
   RecordingReplayFinished = 'DevTools.RecordingReplayFinished',
+  RecordingReplaySpeed = 'DevTools.RecordingReplaySpeed',
   RecordingReplayStarted = 'DevTools.RecordingReplayStarted',
   RecordingToggled = 'DevTools.RecordingToggled',
+  SourcesPanelFileOpened = 'DevTools.SourcesPanelFileOpened',
+  NetworkPanelResponsePreviewOpened = 'DevTools.NetworkPanelResponsePreviewOpened',
   StyleTextCopied = 'DevTools.StyleTextCopied',
+  ManifestSectionSelected = 'DevTools.ManifestSectionSelected',
+  CSSHintShown = 'DevTools.CSSHintShown',
+  LighthouseModeRun = 'DevTools.LighthouseModeRun',
+  ColorConvertedFrom = 'DevTools.ColorConvertedFrom',
+  ColorPickerOpenedFrom = 'DevTools.ColorPickerOpenedFrom',
+  CSSPropertyDocumentation = 'DevTools.CSSPropertyDocumentation',
 }

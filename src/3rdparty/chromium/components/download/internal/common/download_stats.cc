@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,8 @@
 
 #include <map>
 
-#include "base/callback.h"
 #include "base/files/file_path.h"
+#include "base/functional/callback.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
@@ -115,6 +115,9 @@ std::string CreateHistogramNameWithSuffix(const std::string& name,
       break;
     case DownloadSource::RETRY:
       suffix = "Retry";
+      break;
+    case DownloadSource::RETRY_FROM_BUBBLE:
+      suffix = "RetryFromBubble";
       break;
   }
 
@@ -235,6 +238,13 @@ void RecordDownloadResumption(DownloadInterruptReason reason,
   UMA_HISTOGRAM_CUSTOM_ENUMERATION("Download.Resume.LastReason", reason,
                                    samples);
   base::UmaHistogramBoolean("Download.Resume.UserResume", user_resume);
+}
+
+void RecordDownloadRetry(DownloadInterruptReason reason) {
+  std::vector<base::HistogramBase::Sample> samples =
+      base::CustomHistogram::ArrayToCustomEnumRanges(kAllInterruptReasonCodes);
+  UMA_HISTOGRAM_CUSTOM_ENUMERATION("Download.Retry.InterruptReason", reason,
+                                   samples);
 }
 
 void RecordAutoResumeCountLimitReached(DownloadInterruptReason reason) {
@@ -682,6 +692,24 @@ void RecordDownloadManagerMemoryUsage(size_t bytes_used) {
 
 void RecordDownloadLaterEvent(DownloadLaterEvent event) {
   base::UmaHistogramEnumeration("Download.Later.Events", event);
+}
+
+void RecordInputStreamReadError(MojoResult mojo_result) {
+  InputStreamReadError error = InputStreamReadError::kUnknown;
+  switch (mojo_result) {
+    case MOJO_RESULT_INVALID_ARGUMENT:
+      error = InputStreamReadError::kInvalidArgument;
+      break;
+    case MOJO_RESULT_OUT_OF_RANGE:
+      error = InputStreamReadError::kOutOfRange;
+      break;
+    case MOJO_RESULT_BUSY:
+      error = InputStreamReadError::kBusy;
+      break;
+    default:
+      NOTREACHED();
+  }
+  base::UmaHistogramEnumeration("Download.InputStreamReadError", error);
 }
 
 #if BUILDFLAG(IS_ANDROID)

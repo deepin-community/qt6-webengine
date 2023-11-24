@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -99,6 +99,15 @@ RulesetMatcher::GetAllowlistedFrameActionForTesting(
   return GetMaxPriorityAction(
       url_pattern_index_matcher_.GetAllowlistedFrameActionForTesting(host),
       regex_matcher_.GetAllowlistedFrameActionForTesting(host));
+}
+
+void RulesetMatcher::SetDisabledRuleIds(base::flat_set<int> disabled_rule_ids) {
+  url_pattern_index_matcher_.SetDisabledRuleIds(std::move(disabled_rule_ids));
+}
+
+const base::flat_set<int>& RulesetMatcher::GetDisabledRuleIdsForTesting()
+    const {
+  return url_pattern_index_matcher_.GetDisabledRuleIdsForTesting();
 }
 
 }  // namespace declarative_net_request

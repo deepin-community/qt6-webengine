@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,20 +7,37 @@ package org.chromium.ui.widget;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import android.app.Activity;
 import android.graphics.Rect;
+import android.graphics.drawable.Drawable;
+import android.util.DisplayMetrics;
+import android.view.View;
+import android.view.ViewGroup;
 import android.widget.FrameLayout;
+import android.widget.PopupWindow;
 
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.Answers;
 import org.robolectric.Robolectric;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowView;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.ui.R;
 import org.chromium.ui.widget.AnchoredPopupWindow.HorizontalOrientation;
 import org.chromium.ui.widget.AnchoredPopupWindow.PopupSpec;
 import org.chromium.ui.widget.AnchoredPopupWindow.VerticalOrientation;
@@ -53,6 +70,7 @@ public final class AnchoredPopupWindowTest {
     private boolean mSmartAnchorWithMaxWidth;
 
     private FrameLayout mContentView;
+    private Activity mActivity;
 
     @Before
     public void setUp() {
@@ -62,12 +80,19 @@ public final class AnchoredPopupWindowTest {
         mPopupHeight = 300;
         mWindowRect = new Rect(0, 0, mRootWidth, mRootHeight);
 
-        final Activity activity = Robolectric.buildActivity(Activity.class).get();
-        mContentView = new FrameLayout(activity);
+        mActivity = Robolectric.buildActivity(Activity.class).get();
+
+        mContentView = new FrameLayout(mActivity);
         mContentView.setMinimumWidth(mPopupWidth);
         mContentView.setMinimumHeight(mPopupHeight);
 
         setDefaultValueForAnchoredPopup();
+    }
+
+    @After
+    public void tearDown() {
+        mActivity.finish();
+        UiWidgetFactory.setInstance(null);
     }
 
     @Test
@@ -600,6 +625,125 @@ public final class AnchoredPopupWindowTest {
                 /*expectedPopupRect*/ new Rect(350, 800, 500, 1000));
     }
 
+    @Test
+    public void calculateAnimationStyleStartTop() {
+        assertEquals("Position below right -> animate from start top.",
+                R.style.AnchoredPopupAnimStartTop,
+                AnchoredPopupWindow.calculateAnimationStyle(/*isPositionBelow*/ true,
+                        /*isPositionToLeft*/ false));
+    }
+
+    @Test
+    public void calculateAnimationStyleStartBottom() {
+        assertEquals("Position above right -> animate from start bottom.",
+                R.style.AnchoredPopupAnimStartBottom,
+                AnchoredPopupWindow.calculateAnimationStyle(/*isPositionBelow*/ false,
+                        /*isPositionToLeft*/ false));
+    }
+
+    @Test
+    public void calculateAnimationStyleEndTop() {
+        assertEquals("Position below left -> animate from end top.",
+                R.style.AnchoredPopupAnimEndTop,
+                AnchoredPopupWindow.calculateAnimationStyle(/*isPositionBelow*/ true,
+                        /*isPositionToLeft*/ true));
+    }
+
+    @Test
+    public void calculateAnimationStyleEndBottom() {
+        assertEquals("Position above left -> animate from end bottom.",
+                R.style.AnchoredPopupAnimEndBottom,
+                AnchoredPopupWindow.calculateAnimationStyle(/*isPositionBelow*/ false,
+                        /*isPositionToLeft*/ true));
+    }
+
+    @Test
+    public void setAnimateFromAnchor() {
+        // Set up for test case, so we have a mock popup window.
+        UiWidgetFactory mockFactory = mock(UiWidgetFactory.class);
+        UiWidgetFactory.setInstance(mockFactory);
+
+        PopupWindow mockPopup = mock(PopupWindow.class);
+        doReturn(mockPopup).when(mockFactory).createPopupWindow(any());
+
+        AnchoredPopupWindow popupWindow = createAnchorPopupWindow(0);
+        popupWindow.setAnimateFromAnchor(true);
+        popupWindow.showPopupWindow();
+        verify(mockPopup).setAnimationStyle(anyInt());
+    }
+
+    @Test
+    public void setAnimationStyleNotOverrideByAnimateFromAnchor() {
+        // Set up for test case, so we have a mock popup window.
+        UiWidgetFactory mockFactory = mock(UiWidgetFactory.class);
+        UiWidgetFactory.setInstance(mockFactory);
+        PopupWindow mockPopup = mock(PopupWindow.class);
+        doReturn(mockPopup).when(mockFactory).createPopupWindow(any());
+
+        AnchoredPopupWindow popupWindow = createAnchorPopupWindow(0);
+        popupWindow.setAnimationStyle(R.style.Animation_AppCompat_Dialog);
+        verify(mockPopup).setAnimationStyle(R.style.Animation_AppCompat_Dialog);
+
+        popupWindow.setAnimateFromAnchor(true);
+        popupWindow.showPopupWindow();
+        // setAnimationStyle should only called once, since #setAnimateFromAnchor is no-op.
+        verify(mockPopup, times(1)).setAnimationStyle(anyInt());
+    }
+
+    @Test
+    public void testVerySmallPopupsDoNotShow() {
+        UiWidgetFactory mockFactory = mock(UiWidgetFactory.class);
+        UiWidgetFactory.setInstance(mockFactory);
+        PopupWindow mockPopup = mock(PopupWindow.class);
+        when(mockPopup.isShowing()).thenReturn(false);
+        when(mockPopup.getBackground()).thenReturn(mock(Drawable.class));
+        when(mockFactory.createPopupWindow(any())).thenReturn(mockPopup);
+        View contentView = mock(ViewGroup.class);
+        when(contentView.getMeasuredHeight()).thenReturn(1);
+        when(contentView.getMeasuredWidth()).thenReturn(1);
+        when(mockPopup.getContentView()).thenReturn(contentView);
+
+        AnchoredPopupWindow anchoredPopupWindow =
+                createAnchorPopupWindow(DisplayMetrics.DENSITY_HIGH);
+        anchoredPopupWindow.show();
+
+        verify(mockPopup, never()).update(anyInt(), anyInt(), anyInt(), anyInt());
+    }
+
+    @Test
+    public void testWebContentsRectChangesUpdatesPopup() {
+        UiWidgetFactory mockFactory = mock(UiWidgetFactory.class);
+        UiWidgetFactory.setInstance(mockFactory);
+        PopupWindow mockPopup = mock(PopupWindow.class);
+        when(mockPopup.isShowing()).thenReturn(false);
+        when(mockPopup.getBackground()).thenReturn(mock(Drawable.class));
+        when(mockFactory.createPopupWindow(any())).thenReturn(mockPopup);
+        View contentView = mock(ViewGroup.class);
+        when(contentView.getMeasuredHeight()).thenReturn(200);
+        when(contentView.getMeasuredWidth()).thenReturn(800);
+        when(mockPopup.getContentView()).thenReturn(contentView);
+
+        View view = mock(View.class, Answers.RETURNS_DEEP_STUBS);
+        DisplayMetrics fakeMetrics = new DisplayMetrics();
+        fakeMetrics.density = 1;
+        when(view.getRootView().getResources().getDisplayMetrics()).thenReturn(fakeMetrics);
+        when(view.getRootView().isAttachedToWindow()).thenReturn(true);
+        RectProvider anchorRectProvider = new RectProvider(new Rect(0, 0, 1000, 1000));
+        RectProvider visibleWebContentsRectSupplier = new RectProvider(new Rect(0, 100, 1000, 900));
+        AnchoredPopupWindow anchoredPopupWindow = new AnchoredPopupWindow(mActivity, view, null,
+                mContentView, anchorRectProvider, visibleWebContentsRectSupplier);
+
+        anchoredPopupWindow.show();
+
+        verify(mockPopup, times(1)).update(anyInt(), anyInt(), anyInt(), anyInt());
+        clearInvocations(mockPopup);
+
+        // changing the rect should retrigger popup updates.
+        visibleWebContentsRectSupplier.setRect(new Rect(0, 100, 1000, 500));
+
+        verify(mockPopup, times(1)).update(anyInt(), anyInt(), anyInt(), anyInt());
+    }
+
     private void setDefaultValueForAnchoredPopup() {
         mPaddingX = 0;
         mPaddingY = 0;
@@ -631,5 +775,15 @@ public final class AnchoredPopupWindowTest {
         Assert.assertEquals(
                 String.format("PopupRect does not match expected Rect. Test case:<%s>", testCase),
                 expectedRect, popupRect);
+    }
+
+    private AnchoredPopupWindow createAnchorPopupWindow(int density) {
+        View view = mock(View.class, Answers.RETURNS_DEEP_STUBS);
+        DisplayMetrics fakeMetrics = new DisplayMetrics();
+        fakeMetrics.density = density;
+        when(view.getRootView().getResources().getDisplayMetrics()).thenReturn(fakeMetrics);
+        when(view.getRootView().isAttachedToWindow()).thenReturn(true);
+        RectProvider provider = new RectProvider(new Rect(0, 0, 0, 0));
+        return new AnchoredPopupWindow(mActivity, view, null, mContentView, provider, null);
     }
 }

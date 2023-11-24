@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -69,9 +69,10 @@ TEST_F(BluetoothSocketApiUnittest, MAYBE_CreateThenClose) {
 
   auto create_function =
       base::MakeRefCounted<api::BluetoothSocketCreateFunction>();
-  std::unique_ptr<base::DictionaryValue> result =
-      RunFunctionAndReturnDictionary(create_function.get(), "[]");
+  absl::optional<base::Value> result =
+      RunFunctionAndReturnValue(create_function.get(), "[]");
   ASSERT_TRUE(result);
+  ASSERT_TRUE(result->is_dict());
 
   api::bluetooth_socket::CreateInfo create_info;
   EXPECT_TRUE(

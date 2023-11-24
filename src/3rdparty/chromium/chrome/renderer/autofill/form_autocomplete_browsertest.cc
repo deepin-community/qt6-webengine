@@ -1,11 +1,11 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <memory>
 #include <tuple>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
@@ -17,7 +17,6 @@
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/form_data.h"
 #include "content/public/renderer/render_frame.h"
-#include "content/public/renderer/render_view.h"
 #include "mojo/public/cpp/bindings/associated_receiver_set.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -96,11 +95,17 @@ class FakeContentAutofillDriver : public mojom::AutofillDriver {
     select_control_changed_ = std::make_unique<FormFieldData>(field);
   }
 
-  void AskForValuesToFill(int32_t id,
-                          const FormData& form,
-                          const FormFieldData& field,
-                          const gfx::RectF& bounding_box,
-                          bool autoselect_first_field) override {}
+  void JavaScriptChangedAutofilledValue(
+      const FormData& form,
+      const FormFieldData& field,
+      const std::u16string& old_value) override {}
+
+  void AskForValuesToFill(
+      const FormData& form,
+      const FormFieldData& field,
+      const gfx::RectF& bounding_box,
+      AutoselectFirstSuggestion autoselect_first_field,
+      FormElementWasClicked form_element_was_clicked) override {}
 
   void HidePopup() override {}
 
@@ -237,7 +242,7 @@ void SimulateFillForm(const FormData& form_data,
   autofill_agent->FormControlElementClicked(
       fname_element.To<WebInputElement>());
 
-  autofill_agent->FillOrPreviewForm(0, form_data,
+  autofill_agent->FillOrPreviewForm(form_data,
                                     mojom::RendererFormDataAction::kFill);
 }
 
@@ -301,20 +306,17 @@ void SimulateFillFormWithNonFillableFields(
   autofill_agent->FormControlElementClicked(
       fname_element.To<WebInputElement>());
 
-  autofill_agent->FillOrPreviewForm(0, data,
-                                    mojom::RendererFormDataAction::kFill);
+  autofill_agent->FillOrPreviewForm(data, mojom::RendererFormDataAction::kFill);
 }
 
 }  // end namespace
 
 class FormAutocompleteTest : public ChromeRenderViewTest {
  public:
-  FormAutocompleteTest() {}
-
+  FormAutocompleteTest() = default;
   FormAutocompleteTest(const FormAutocompleteTest&) = delete;
   FormAutocompleteTest& operator=(const FormAutocompleteTest&) = delete;
-
-  ~FormAutocompleteTest() override {}
+  ~FormAutocompleteTest() override = default;
 
  protected:
   void SetUp() override {

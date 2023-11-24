@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -86,14 +86,16 @@ void CachedTextInputInfo::DidLayoutSubtree(const LayoutObject& layout_object) {
   // <div style="contain:strict; ...">abc</div> reaches here.
   if (!container_)
     return;
-  Node* const node = layout_object.NonPseudoNode();
-  if (!node)
-    return;
-  const ContainerNode* const container =
-      RootEditableElementOrTreeScopeRootNodeOf(Position(node, 0));
-  if (container != container_)
-    return;
-  Clear();
+
+  if (layout_object_->IsDescendantOf(&layout_object)) {
+    // `<span contenteditable>...</span>` reaches here.
+    return Clear();
+  }
+
+  if (layout_object.IsDescendantOf(layout_object_)) {
+    // CachedTextInputInfoTest.RelayoutBoundary reaches here.
+    return Clear();
+  }
 }
 
 void CachedTextInputInfo::DidUpdateLayout(const LayoutObject& layout_object) {
@@ -124,7 +126,7 @@ void CachedTextInputInfo::EnsureCached(const ContainerNode& container) const {
   if (it.AtEnd())
     return;
 
-  const bool needs_text = HasEditableStyle(*container_);
+  const bool needs_text = IsEditable(*container_);
 
   // The initial buffer size can be critical for performance:
   // https://bugs.webkit.org/show_bug.cgi?id=81192
@@ -156,7 +158,7 @@ void CachedTextInputInfo::EnsureCached(const ContainerNode& container) const {
     length += it.GetTextState().length();
   }
 
-  if (!builder.IsEmpty())
+  if (!builder.empty())
     text_ = builder.ToString();
 }
 
@@ -209,7 +211,7 @@ PlainTextRange CachedTextInputInfo::GetSelection(
 
 String CachedTextInputInfo::GetText() const {
   DCHECK(container_);
-  DCHECK(HasEditableStyle(*container_));
+  DCHECK(IsEditable(*container_));
   return text_;
 }
 

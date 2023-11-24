@@ -1,8 +1,10 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ui/message_center/views/notification_view.h"
+
+#include <memory>
 
 #include "build/build_config.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -13,6 +15,7 @@
 #include "ui/gfx/text_elider.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/views/notification_background_painter.h"
+#include "ui/message_center/views/notification_control_button_factory.h"
 #include "ui/message_center/views/notification_control_buttons_view.h"
 #include "ui/message_center/views/notification_header_view.h"
 #include "ui/message_center/views/notification_view_base.h"
@@ -21,7 +24,7 @@
 #include "ui/views/animation/flood_fill_ink_drop_ripple.h"
 #include "ui/views/animation/ink_drop.h"
 #include "ui/views/animation/ink_drop_highlight.h"
-#include "ui/views/animation/ink_drop_host_view.h"
+#include "ui/views/animation/ink_drop_host.h"
 #include "ui/views/animation/ink_drop_impl.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/button/md_text_button.h"
@@ -142,6 +145,8 @@ class NotificationTextButton : public views::MdTextButton {
     label()->SetAutoColorReadabilityEnabled(true);
   }
 
+  absl::optional<SkColor> color() const { return color_; }
+
  private:
   absl::optional<SkColor> color_;
 };
@@ -250,7 +255,7 @@ NotificationView::NotificationView(
   views::InkDrop::Get(this)->SetCreateRippleCallback(base::BindRepeating(
       [](NotificationViewBase* host) -> std::unique_ptr<views::InkDropRipple> {
         return std::make_unique<views::FloodFillInkDropRipple>(
-            host->GetPreferredSize(),
+            views::InkDrop::Get(host), host->GetPreferredSize(),
             views::InkDrop::Get(host)->GetInkDropCenterBasedOnLastEvent(),
             views::InkDrop::Get(host)->GetBaseColor(),
             views::InkDrop::Get(host)->GetVisibleOpacity());
@@ -271,7 +276,13 @@ NotificationView::NotificationView(
   header_row->ConfigureLabelsStyle(font_list, text_view_padding, false);
   header_row->SetPreferredSize(header_row->GetPreferredSize() -
                                gfx::Size(GetInsets().width(), 0));
-  header_row->AddChildView(CreateControlButtonsBuilder().Build());
+  header_row->SetCallback(base::BindRepeating(
+      &NotificationView::HeaderRowPressed, base::Unretained(this)));
+  header_row->AddChildView(
+      CreateControlButtonsBuilder()
+          .SetNotificationControlButtonFactory(
+              std::make_unique<NotificationControlButtonFactory>())
+          .Build());
 
   auto content_row = CreateContentRowBuilder()
                          .SetLayoutManager(std::make_unique<views::BoxLayout>(
@@ -310,10 +321,17 @@ NotificationView::NotificationView(
 
 NotificationView::~NotificationView() {
   // InkDrop is explicitly removed as it can have `this` as an observer
-  // installed. This is currently also required because RemoveLayerBeneathView()
-  // gets called in the destructor of InkDrop which would've called the wrong
-  // override if it destroys in a parent destructor.
+  // installed. This is currently also required because
+  // RemoveLayerFromRegions() gets called in the destructor of InkDrop which
+  // would've called the wrong override if it destroys in a parent destructor.
   views::InkDrop::Remove(this);
+}
+
+SkColor NotificationView::GetActionButtonColorForTesting(
+    views::LabelButton* action_button) {
+  NotificationTextButton* button =
+      static_cast<NotificationTextButton*>(action_button);
+  return button->color().value_or(SkColor());
 }
 
 void NotificationView::CreateOrUpdateHeaderView(
@@ -576,16 +594,17 @@ bool NotificationView::IsExpandable() const {
   return false;
 }
 
-void NotificationView::AddLayerBeneathView(ui::Layer* layer) {
+void NotificationView::AddLayerToRegion(ui::Layer* layer,
+                                        views::LayerRegion region) {
   for (auto* child : GetChildrenForLayerAdjustment()) {
     child->SetPaintToLayer();
     child->layer()->SetFillsBoundsOpaquely(false);
   }
-  ink_drop_container_->AddLayerBeneathView(layer);
+  ink_drop_container_->AddLayerToRegion(layer, region);
 }
 
-void NotificationView::RemoveLayerBeneathView(ui::Layer* layer) {
-  ink_drop_container_->RemoveLayerBeneathView(layer);
+void NotificationView::RemoveLayerFromRegions(ui::Layer* layer) {
+  ink_drop_container_->RemoveLayerFromRegions(layer);
   for (auto* child : GetChildrenForLayerAdjustment())
     child->DestroyLayer();
 }
@@ -650,6 +669,27 @@ void NotificationView::RemoveBackgroundAnimation() {
 std::vector<views::View*> NotificationView::GetChildrenForLayerAdjustment() {
   return {header_row(), block_all_button_, dont_block_button_,
           settings_done_button_};
+}
+
+void NotificationView::HeaderRowPressed() {
+  if (!IsExpandable() || !content_row()->GetVisible())
+    return;
+
+  const bool target_expanded_state = !IsExpanded();
+
+  // Tapping anywhere on |header_row_| can expand the notification, though only
+  // |expand_button| can be focused by TAB.
+  SetManuallyExpandedOrCollapsed(
+      target_expanded_state ? message_center::ExpandState::USER_EXPANDED
+                            : message_center::ExpandState::USER_COLLAPSED);
+  auto weak_ptr = weak_ptr_factory_.GetWeakPtr();
+  SetExpanded(target_expanded_state);
+  // Check |this| is valid before continuing, because ToggleExpanded() might
+  // cause |this| to be deleted.
+  if (!weak_ptr)
+    return;
+  Layout();
+  SchedulePaint();
 }
 
 }  // namespace message_center

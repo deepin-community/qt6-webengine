@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,8 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/observer_list.h"
 #include "build/build_config.h"
@@ -25,6 +25,7 @@
 #include "content/public/browser/web_contents.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "printing/buildflags/buildflags.h"
+#include "printing/printing_features.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/chromeos/policy/dlp/dlp_content_manager.h"
@@ -32,7 +33,6 @@
 
 #if BUILDFLAG(ENABLE_PRINT_CONTENT_ANALYSIS)
 #include "chrome/browser/enterprise/connectors/analysis/content_analysis_delegate.h"
-#include "printing/printing_features.h"
 #endif  // BUILDFLAG(ENABLE_PRINT_CONTENT_ANALYSIS)
 
 using content::BrowserThread;
@@ -113,14 +113,16 @@ bool PrintViewManager::PrintForSystemDialogNow(
   }
 
 #if BUILDFLAG(ENABLE_OOP_PRINTING)
-  // Register this worker so that the service persists as long as the user
-  // keeps the system print dialog UI displayed.
-  if (!RegisterSystemPrintClient())
-    return false;
+  if (printing::features::kEnableOopPrintDriversJobPrint.Get()) {
+    // Register this worker so that the service persists as long as the user
+    // keeps the system print dialog UI displayed.
+    if (!RegisterSystemPrintClient())
+      return false;
+  }
 #endif
 
   SetPrintingRFH(print_preview_rfh_);
-  GetPrintRenderFrame(print_preview_rfh_)->PrintForSystemDialog();
+  PrintForSystemDialogImpl();
   return true;
 }
 
@@ -153,13 +155,7 @@ void PrintViewManager::PrintPreviewForWebNode(content::RenderFrameHost* rfh) {
   if (print_preview_state_ != NOT_PREVIEWING)
     return;
 
-  DCHECK(rfh);
-  DCHECK(IsPrintRenderFrameConnected(rfh));
-  // All callers should already ensure this condition holds; CHECK to
-  // aggressively protect against future unsafety.
-  CHECK(rfh->IsRenderFrameLive());
-  DCHECK(!print_preview_rfh_);
-  print_preview_rfh_ = rfh;
+  SetPrintPreviewRenderFrameHost(rfh);
   print_preview_state_ = USER_INITIATED_PREVIEW;
 
   for (auto& observer : GetObservers())
@@ -229,14 +225,14 @@ void PrintViewManager::RejectPrintPreviewRequestIfRestricted(
   // `OnDlpPrintingRestrictionsChecked` as a wrapper callback to proceed with
   // scanning if needed afterwards.
   policy::DlpContentManager::Get()->CheckPrintingRestriction(
-      web_contents(),
+      web_contents(), rfh_id,
       base::BindOnce(&PrintViewManager::OnDlpPrintingRestrictionsChecked,
                      weak_factory_.GetWeakPtr(), rfh_id, std::move(callback)));
 #elif BUILDFLAG(IS_CHROMEOS)
   // Don't print DLP restricted content on Chrome OS, and use `callback`
   // directly since scanning isn't an option.
   policy::DlpContentManager::Get()->CheckPrintingRestriction(
-      web_contents(), std::move(callback));
+      web_contents(), rfh_id, std::move(callback));
 #elif BUILDFLAG(ENABLE_PRINT_CONTENT_ANALYSIS)
   RejectPrintPreviewRequestIfRestrictedByContentAnalysis(rfh_id,
                                                          std::move(callback));
@@ -279,8 +275,9 @@ void PrintViewManager::RejectPrintPreviewRequestIfRestrictedByContentAnalysis(
       base::FeatureList::IsEnabled(features::kEnablePrintContentAnalysis) &&
       enterprise_connectors::ContentAnalysisDelegate::IsEnabled(
           Profile::FromBrowserContext(web_contents()->GetBrowserContext()),
-          web_contents()->GetLastCommittedURL(), &scanning_data,
-          enterprise_connectors::AnalysisConnector::PRINT)) {
+          web_contents()->GetOutermostWebContents()->GetLastCommittedURL(),
+          &scanning_data, enterprise_connectors::AnalysisConnector::PRINT)) {
+    set_snapshotting_for_content_analysis();
     GetPrintRenderFrame(rfh)->SnapshotForContentAnalysis(base::BindOnce(
         &PrintViewManager::OnGotSnapshotCallback, weak_factory_.GetWeakPtr(),
         std::move(callback), std::move(scanning_data), rfh_id));
@@ -321,8 +318,7 @@ bool PrintViewManager::PrintPreview(
   GetPrintRenderFrame(rfh)->InitiatePrintPreview(std::move(print_renderer),
                                                  has_selection);
 
-  DCHECK(!print_preview_rfh_);
-  print_preview_rfh_ = rfh;
+  SetPrintPreviewRenderFrameHost(rfh);
   print_preview_state_ = USER_INITIATED_PREVIEW;
 
   for (auto& observer : GetObservers())
@@ -381,8 +377,12 @@ void PrintViewManager::SetupScriptedPrintPreview(
     return;
   }
 
-  DCHECK(!print_preview_rfh_);
-  print_preview_rfh_ = rfh;
+  // Since window.print() is renderer-initiated, explicitly establish a
+  // connection to the RenderFrame here. Without this, later operations that
+  // expect the established connection can unexpected fail.
+  GetPrintRenderFrame(rfh);
+
+  SetPrintPreviewRenderFrameHost(rfh);
   print_preview_state_ = SCRIPTED_PREVIEW;
   map[rph] = base::BindOnce(&PrintViewManager::OnScriptedPrintPreviewReply,
                             base::Unretained(this), std::move(callback));
@@ -498,6 +498,22 @@ void PrintViewManager::MaybeUnblockScriptedPreviewRPH() {
     scripted_print_preview_rph_->SetBlocked(false);
     scripted_print_preview_rph_set_blocked_ = false;
   }
+}
+
+void PrintViewManager::SetPrintPreviewRenderFrameHost(
+    content::RenderFrameHost* rfh) {
+  DCHECK_EQ(print_preview_state_, NOT_PREVIEWING);
+  DCHECK(rfh);
+  DCHECK(IsPrintRenderFrameConnected(rfh));
+  // All callers should already ensure this condition holds; CHECK to
+  // aggressively protect against future unsafety.
+  CHECK(rfh->IsRenderFrameLive());
+  DCHECK(!print_preview_rfh_);
+  print_preview_rfh_ = rfh;
+}
+
+void PrintViewManager::PrintForSystemDialogImpl() {
+  GetPrintRenderFrame(print_preview_rfh_)->PrintForSystemDialog();
 }
 
 void PrintViewManager::PrintPreviewRejectedForTesting() {

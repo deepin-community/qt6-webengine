@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -104,22 +104,8 @@ void OnContentBlockedOnUI(int render_process_id,
                           int32_t render_frame_id,
                           ContentSettingsType type) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  PageSpecificContentSettings* settings =
-      PageSpecificContentSettings::GetForFrame(render_process_id,
-                                               render_frame_id);
-  if (settings)
-    settings->OnContentBlocked(type);
-}
-
-// We may or may not be on the UI thread depending on whether the
-// NavigationThreadingOptimizations feature is enabled.
-// TODO(https://crbug.com/1187753): Clean this up once the feature is
-// shipped and the code path is removed.
-void RunOrPostTaskOnUI(const base::Location& location, base::OnceClosure task) {
-  if (content::BrowserThread::CurrentlyOn(content::BrowserThread::UI))
-    std::move(task).Run();
-  else
-    content::GetUIThreadTaskRunner({})->PostTask(location, std::move(task));
+  PageSpecificContentSettings::ContentBlocked(render_process_id,
+                                              render_frame_id, type);
 }
 
 }  // namespace
@@ -133,24 +119,15 @@ void ContentSettingsManagerImpl::Create(
         receiver,
     std::unique_ptr<Delegate> delegate) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  auto create = base::BindOnce(
-      &ContentSettingsManagerImpl::CreateOnThread, render_process_host->GetID(),
-      std::move(receiver),
-      delegate->GetCookieSettings(render_process_host->GetBrowserContext()),
-      std::move(delegate));
-  if (base::FeatureList::IsEnabled(
-          features::kNavigationThreadingOptimizations)) {
-    if (base::FeatureList::IsEnabled(features::kThreadingOptimizationsOnIO)) {
-      content::GetIOThreadTaskRunner({})->PostTask(FROM_HERE,
-                                                   std::move(create));
-    } else {
-      base::ThreadPool::CreateSingleThreadTaskRunner(
-          {base::TaskPriority::USER_BLOCKING})
-          ->PostTask(FROM_HERE, std::move(create));
-    }
-  } else {
-    std::move(create).Run();
-  }
+  base::ThreadPool::CreateSingleThreadTaskRunner(
+      {base::TaskPriority::USER_BLOCKING})
+      ->PostTask(
+          FROM_HERE,
+          base::BindOnce(&ContentSettingsManagerImpl::CreateOnThread,
+                         render_process_host->GetID(), std::move(receiver),
+                         delegate->GetCookieSettings(
+                             render_process_host->GetBrowserContext()),
+                         std::move(delegate)));
 }
 
 void ContentSettingsManagerImpl::Clone(
@@ -172,15 +149,18 @@ void ContentSettingsManagerImpl::AllowStorageAccess(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   GURL url = origin.GetURL();
 
+  // TODO(crbug.com/1386190): Consider whether the following check should
+  // get CookieSettingOverrides from the frame rather than default to none.
   bool allowed = cookie_settings_->IsFullCookieAccessAllowed(
-      url, site_for_cookies, top_frame_origin);
+      url, site_for_cookies, top_frame_origin,
+      cookie_settings_->SettingOverridesForStorage());
   if (delegate_->AllowStorageAccess(render_process_id_, render_frame_id,
                                     storage_type, url, allowed, &callback)) {
     DCHECK(!callback);
     return;
   }
 
-  RunOrPostTaskOnUI(
+  content::GetUIThreadTaskRunner({})->PostTask(
       FROM_HERE,
       base::BindOnce(&NotifyStorageAccess, render_process_id_, render_frame_id,
                      storage_type, url, top_frame_origin, allowed));
@@ -191,9 +171,9 @@ void ContentSettingsManagerImpl::AllowStorageAccess(
 void ContentSettingsManagerImpl::OnContentBlocked(int32_t render_frame_id,
                                                   ContentSettingsType type) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  RunOrPostTaskOnUI(FROM_HERE,
-                    base::BindOnce(&OnContentBlockedOnUI, render_process_id_,
-                                   render_frame_id, type));
+  content::GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE, base::BindOnce(&OnContentBlockedOnUI, render_process_id_,
+                                render_frame_id, type));
 }
 
 ContentSettingsManagerImpl::ContentSettingsManagerImpl(

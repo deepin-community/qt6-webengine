@@ -1,5 +1,5 @@
 <!--
-Copyright 2020 The Chromium Authors. All rights reserved.
+Copyright 2020 The Chromium Authors
 Use of this source code is governed by a BSD-style license that can be
 found in the LICENSE file.
 -->
@@ -22,6 +22,11 @@ chromium-metrics-reviews@google.com.
 
 <histograms>
 
+<variants name="LegacyIdentifierType">
+  <variant name="ManifestUrl"/>
+  <variant name="StartUrl"/>
+</variants>
+
 <variants name="WebApkDistributorType">
   <variant name=".Browser" summary="Installed by Chrome"/>
   <variant name=".DevicePolicy" summary="Installed by device policy"/>
@@ -29,11 +34,9 @@ chromium-metrics-reviews@google.com.
 </variants>
 
 <histogram name="WebApk.Install.AvailableSpace.Fail" units="MB"
-    expires_after="2022-06-01">
+    expires_after="2023-06-01">
   <owner>hartmanng@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
     Records the available space that can be used when installing a WebAPK from
     Google Play fails. The space recorded is the available space beyond the
@@ -44,11 +47,9 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebApk.Install.AvailableSpaceAfterFreeUpCache.Fail" units="MB"
-    expires_after="2022-06-01">
+    expires_after="2023-06-01">
   <owner>hartmanng@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
     Records the available space that can be used when installing a WebAPK from
     Google Play fails after freeing up cache. The space recorded is the
@@ -59,11 +60,9 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebApk.Install.GooglePlayErrorCode"
-    enum="WebApkInstallGooglePlayErrorCode" expires_after="2022-10-09">
+    enum="WebApkInstallGooglePlayErrorCode" expires_after="2023-07-16">
   <owner>hartmanng@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
     Records the error code when installing a WebAPK from Google Play fails. See
     go/webapk-install-googleplayerrorcode.
@@ -71,11 +70,9 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebApk.Install.GooglePlayInstallResult"
-    enum="WebApkGooglePlayInstallResult" expires_after="2022-09-25">
+    enum="WebApkGooglePlayInstallResult" expires_after="2023-08-06">
   <owner>hartmanng@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
     Records whether installing a WebAPK from Google Play succeeded. If not,
     records the reason that the install failed.
@@ -83,11 +80,9 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebApk.Install.InstallDuration" units="ms"
-    expires_after="2022-08-21">
+    expires_after="2023-07-02">
   <owner>hartmanng@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
     How long it takes to install a WebAPK. The time is measured from the time
     that the user initiates the install to the time that the Open button is
@@ -96,11 +91,9 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebApk.Install.InstallEvent" enum="WebApkInstallEvent"
-    expires_after="2022-08-28">
+    expires_after="2023-07-09">
   <owner>hartmanng@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
     WebAPKs are PWAs wrapped in an Android apk, installed from an app banner or
     the add to homescreen menu item. This stat tracks WebAPK installation
@@ -109,12 +102,10 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebApk.Install.InstallResult" enum="WebApkInstallResult"
-    expires_after="2022-08-28">
+    expires_after="2023-08-08">
   <owner>eirage@chromium.org</owner>
   <owner>hartmanng@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
     Record whether installing a WebAPK succeeded. If not record the reason that
     the install failed.
@@ -122,12 +113,10 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebApk.Install.PathToInstall" enum="PwaInstallPath"
-    expires_after="2022-08-14">
+    expires_after="2023-06-25">
   <owner>finnur@chromium.org</owner>
   <owner>peter@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
     Records the path that the user took to reach install point for PWAs. This
     can be via the Install Modal or the new BottomSheet and may involve the
@@ -137,12 +126,10 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebApk.Install.RequestTokenDurationV2" units="ms"
-    expires_after="2022-10-02">
+    expires_after="2023-08-20">
   <owner>hartmanng@chromium.org</owner>
   <owner>rayankans@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
     Records the amount of time which has elapsed from the &quot;install infobar
     showing&quot; to the &quot;install request being sent to Google Play&quot;.
@@ -153,22 +140,18 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebApk.Launch.NetworkError" enum="NetErrorCodes"
-    expires_after="2022-06-01">
+    expires_after="2023-06-01">
   <owner>hartmanng@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
     Records the error codes when a WebAPK is launched with network failures.
   </summary>
 </histogram>
 
 <histogram name="WebApk.Navigation.InScope" enum="Boolean"
-    expires_after="2022-06-05">
+    expires_after="2023-06-01">
   <owner>hartmanng@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
     Recorded each time that a WebAPK is navigated. Records whether the
     navigation is within the scope of the WebAPK's Web Manifest. Not recorded
@@ -177,36 +160,46 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebApk.Notification.Permission.Status"
-    enum="BooleanWebApkNotificationPermission" expires_after="2022-10-04">
+    enum="BooleanWebApkNotificationPermission" expires_after="2022-12-04">
+  <obsolete>
+    Replaced by WebApk.Notification.Permission.Status2 in June 20220.
+  </obsolete>
   <owner>hartmanng@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
     When a WebAPK receives a notification, log whether it has permission to
     display that notification.
   </summary>
 </histogram>
 
-<histogram name="WebApk.Session.TotalDuration2{WebApkDistributorType}"
-    units="ms" expires_after="2022-12-16">
+<histogram name="WebApk.Notification.Permission.Status2" enum="ContentSetting"
+    expires_after="2023-08-20">
   <owner>hartmanng@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>mvanouwerkerk@chromium.org</owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
-    The length of a WebAPK session (launch/foregrounding to backgrounding) in
-    milliseconds. {WebApkDistributorType}
+    When a WebAPK receives a notification, log whether it has permission to
+    display that notification.
   </summary>
-  <token key="WebApkDistributorType" variants="WebApkDistributorType"/>
+</histogram>
+
+<histogram name="WebApk.Notification.PermissionRequestResult"
+    enum="ContentSetting" expires_after="2023-08-20">
+  <owner>mvanouwerkerk@chromium.org</owner>
+  <owner>peconn@chromium.org</owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
+  <summary>
+    The result of a WebAPK notification permission request for the purpose of
+    notification delegation. This is logged when the
+    NotificationPermissionUpdater receives the result from the
+    WebApkServiceClient.
+  </summary>
 </histogram>
 
 <histogram name="WebApk.ShellApkVersion2{WebApkDistributorType}" units="units"
-    expires_after="2022-06-01">
+    expires_after="2023-06-01">
   <owner>hartmanng@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
     Records WebAPK &quot;Shell APK version&quot; when the WebAPK is launched.
     The &quot;Shell APK version&quot; is documented in shell_apk_version.gni
@@ -216,11 +209,9 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebApk.Startup.Cold.NewStyle.ShellLaunchToSplashscreenVisible"
-    units="ms" expires_after="2022-06-01">
+    units="ms" expires_after="2023-06-01">
   <owner>hartmanng@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
     Tracks the time to splash screen visible starting from the launch of the
     WebAPK shell (rather than from the launch of Chrome) for new-style WebAPKs.
@@ -233,24 +224,8 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
-<histogram name="WebApk.Startup.Cold.ShellLaunchToSplashscreenHidden"
-    units="ms" expires_after="2020-08-31">
-  <owner>mheikal@chromium.org</owner>
-  <owner>yfriedman@chromium.org</owner>
-  <summary>
-    Tracks the time to splashscreen hidden starting from the launch of the
-    WebAPK shell (rather than from the launch of Chrome). The splashscreen is
-    hidden after the first visually non-empty paint.
-
-    This is recorded iff: - This is a cold startup of Chrome. - Chrome has not
-    been sent to the background since launch. - There was no recents entry for
-    Chrome (android replays intents if a recents entry exists), which otherwise
-    adds noise/long-tail to this histogram.
-  </summary>
-</histogram>
-
 <histogram name="WebApk.Startup.Cold.ShellLaunchToSplashscreenVisible"
-    units="ms" expires_after="2022-10-02">
+    units="ms" expires_after="2023-08-13">
   <owner>mheikal@chromium.org</owner>
   <owner>yfriedman@chromium.org</owner>
   <summary>
@@ -266,23 +241,30 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebApk.Uninstall{WebApkDistributorType}" enum="BooleanHit"
-    expires_after="2022-06-01">
+    expires_after="2023-06-01">
   <owner>hartmanng@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
     Records that a WebAPK was uninstalled. {WebApkDistributorType}
   </summary>
   <token key="WebApkDistributorType" variants="WebApkDistributorType"/>
 </histogram>
 
-<histogram name="WebApk.Update.GooglePlayUpdateResult"
-    enum="WebApkGooglePlayInstallResult" expires_after="2022-10-02">
+<histogram name="WebApk.Update.DidGetInstallableData"
+    enum="WebApkUpdateManifestResult" expires_after="2023-06-30">
+  <owner>eirage@chromium.org</owner>
   <owner>hartmanng@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
+  <summary>
+    When WebApkUpdateDataFetcher found a valid manifest, record whether the
+    manifest can be used to update the WebAPK.
+  </summary>
+</histogram>
+
+<histogram name="WebApk.Update.GooglePlayUpdateResult"
+    enum="WebApkGooglePlayInstallResult" expires_after="2023-08-06">
+  <owner>hartmanng@chromium.org</owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
     Records whether updating a WebAPK from Google Play succeeded. If not,
     records the reason that the update failed.
@@ -290,11 +272,9 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebApk.Update.NumStaleUpdateRequestFiles" units="files"
-    expires_after="2022-06-01">
+    expires_after="2023-06-01">
   <owner>hartmanng@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
     Records the number of zombie &quot;WebAPK update request&quot; files that
     the update process failed to cleanup. Recorded for all WebAPKs whenever a
@@ -303,11 +283,9 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebApk.Update.RequestQueued" enum="WebApkUpdateRequestQueued"
-    expires_after="2022-06-01">
+    expires_after="2023-08-08">
   <owner>hartmanng@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
     Records the number of times that a WebAPK update request was queued (i.e.
     waiting for the WebAPK to be backgrounded) before being sent to the server.
@@ -315,23 +293,47 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebApk.Update.RequestSent" enum="WebApkUpdateRequestSent"
-    expires_after="2022-06-01">
+    expires_after="2023-08-08">
   <owner>hartmanng@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
     Records the time point when a request to update a WebAPK is sent to the
     WebAPK Server.
   </summary>
 </histogram>
 
-<histogram name="WebApk.WebApkService.BindSuccess" enum="BooleanSuccess"
-    expires_after="2022-06-01">
+<histogram name="WebApk.Update.UniqueId{SameOrEmpty}.{LegacyIdentifierType}"
+    enum="Boolean" expires_after="2023-06-30">
+  <owner>eirage@chromium.org</owner>
   <owner>hartmanng@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
+  <summary>
+    When WebAPK updates with empty or same UniqueId, record whether each of the
+    {LegacyIdentifierType} was the same.
+  </summary>
+  <token key="SameOrEmpty">
+    <variant name="Empty"/>
+    <variant name="Same"/>
+  </token>
+  <token key="LegacyIdentifierType" variants="LegacyIdentifierType"/>
+</histogram>
+
+<histogram name="WebApk.Update.UpdateEmptyUniqueId.NeedsUpgrade" enum="Boolean"
+    expires_after="2023-06-30">
+  <owner>eirage@chromium.org</owner>
+  <owner>hartmanng@chromium.org</owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
+  <summary>
+    For WebAPK unique ID migration, record whether an update is neede (with
+    non-empty update reason). This only records for the first legacy update that
+    updates the WebAPK from an empty id.
+  </summary>
+</histogram>
+
+<histogram name="WebApk.WebApkService.BindSuccess" enum="BooleanSuccess"
+    expires_after="2023-06-01">
+  <owner>hartmanng@chromium.org</owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
     Records whether Chrome can bind to a WebAPK's &quot;WebAPK service&quot;.
     Recorded each time that Chrome attempts to bind to a WebAPK service.
@@ -339,11 +341,9 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebApk.WebappRegistry.NumberOfOrigins" units="count"
-    expires_after="2022-09-11">
+    expires_after="2023-07-15">
   <owner>eirage@chromium.org</owner>
-  <owner>
-    src/chrome/android/java/src/org/chromium/chrome/browser/webapps/OWNERS
-  </owner>
+  <owner>src/chrome/android/webapk/OWNERS</owner>
   <summary>
     Records number of unique origins for WebAPKs that have been added to
     WebappRegistry. This is recorded each time on Chrome startup, after the

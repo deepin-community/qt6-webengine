@@ -1,10 +1,10 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "extensions/browser/api/web_request/web_request_proxying_websocket.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/no_destructor.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -524,6 +524,11 @@ void WebRequestProxyingWebSocket::OnMojoConnectionErrorWithCustomReason(
 void WebRequestProxyingWebSocket::OnMojoConnectionError() {
   OnError(net::ERR_FAILED);
   // Deletes |this|.
+}
+
+// static
+void WebRequestProxyingWebSocket::EnsureAssociatedFactoryBuilt() {
+  ShutdownNotifierFactory::GetInstance();
 }
 
 }  // namespace extensions

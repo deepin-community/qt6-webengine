@@ -4,6 +4,7 @@
 <translation id="1135328998467923690">Paket ist ungültig: "<ph name="ERROR_CODE" />".</translation>
 <translation id="1140871961407805696">Rückkamera</translation>
 <translation id="1196338895211115272">Privater Schlüssel konnte nicht exportiert werden.</translation>
+<translation id="132960226125594336">Die Datei „<ph name="RELATIVE_PATH" />“ konnte nicht für das Content-Skript geladen werden, da sie die maximale Skriptgröße oder die maximale Content-Skriptgröße der Erweiterung überschreitet.</translation>
 <translation id="1420684932347524586">Der per Zufallsauswahl generierte private RSA-Schlüssel konnte nicht erstellt werden.</translation>
 <translation id="1445572445564823378">Diese Erweiterung verlangsamt die Ausführung von <ph name="PRODUCT_NAME" />. Deaktiviere sie, um die Leistung von <ph name="PRODUCT_NAME" /> nicht zu beeinträchtigen.</translation>
 <translation id="1468038450257740950">WebGL wird nicht unterstützt.</translation>
@@ -61,6 +62,7 @@
 <translation id="8636666366616799973">Paket ist ungültig. Details: "<ph name="ERROR_MESSAGE" />"</translation>
 <translation id="8761756413268424715">„<ph name="APP_NAME" />“ fordert Zugriff auf eines deiner Geräte an:</translation>
 <translation id="8885905466771744233">Es existiert bereits ein privater Schlüssel für die angegebene Erweiterung. Verwende diesen Schlüssel oder lösche ihn zuerst.</translation>
+<translation id="9039223174332979184">Der Administrator dieses Computers hat festgelegt, dass <ph name="EXTENSION_NAME" /> die Manifest-Version 3 oder höher haben muss.</translation>
 <translation id="907841381057066561">Während des Packvorgangs wurde keine temporäre ZIP-Datei erstellt.</translation>
 <translation id="941543339607623937">Ungültiger privater Schlüssel</translation>
 </translationbundle>

@@ -52,13 +52,13 @@
 #include "third_party/blink/renderer/platform/graphics/compositing_reasons.h"
 #include "third_party/blink/renderer/platform/graphics/compositor_element_id.h"
 #include "third_party/blink/renderer/platform/graphics/picture_snapshot.h"
-#include "third_party/blink/renderer/platform/transforms/transformation_matrix.h"
 #include "third_party/blink/renderer/platform/wtf/text/base64.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "third_party/inspector_protocol/crdtp/json.h"
 #include "third_party/skia/include/core/SkPicture.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/transform.h"
 
 namespace blink {
 
@@ -219,11 +219,8 @@ static std::unique_ptr<protocol::LayerTree::Layer> BuildObjectForLayer(
   gfx::Transform transform = layer->ScreenSpaceTransform();
 
   if (!transform.IsIdentity()) {
-    auto transform_array = std::make_unique<protocol::Array<double>>();
-    for (int col = 0; col < 4; ++col) {
-      for (int row = 0; row < 4; ++row)
-        transform_array->emplace_back(transform.matrix().rc(row, col));
-    }
+    auto transform_array = std::make_unique<protocol::Array<double>>(16);
+    transform.GetColMajor(transform_array->data());
     layer_object->setTransform(std::move(transform_array));
     // FIXME: rename these to setTransformOrigin*
     // TODO(pdr): Now that BlinkGenPropertyTrees has launched, we can remove
@@ -463,7 +460,7 @@ Response InspectorLayerTreeAgent::replaySnapshot(const String& snapshot_id,
     return response;
   auto png_data = snapshot->Replay(from_step.fromMaybe(0), to_step.fromMaybe(0),
                                    scale.fromMaybe(1.0));
-  if (png_data.IsEmpty())
+  if (png_data.empty())
     return Response::ServerError("Image encoding failed");
   *data_url = "data:image/png;base64," + Base64Encode(png_data);
   return Response::Success();

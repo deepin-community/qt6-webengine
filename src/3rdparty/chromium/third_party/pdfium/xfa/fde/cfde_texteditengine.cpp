@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "core/fxcrt/fx_extension.h"
+#include "core/fxcrt/span_util.h"
 #include "core/fxge/text_char_pos.h"
 #include "third_party/base/check.h"
 #include "third_party/base/notreached.h"
@@ -325,8 +326,8 @@ void CFDE_TextEditEngine::Insert(size_t idx,
     previous_text = GetText();
 
   // Copy the new text into the gap.
-  static const size_t char_size = sizeof(WideString::CharType);
-  memcpy(content_.data() + gap_position_, text.c_str(), length * char_size);
+  fxcrt::spancpy(pdfium::make_span(content_).subspan(gap_position_),
+                 text.span().first(length));
   gap_position_ += length;
   gap_size_ -= length;
   text_length_ += length;
@@ -619,7 +620,7 @@ void CFDE_TextEditEngine::SetFont(RetainPtr<CFGAS_GEFont> font) {
   if (font_ == font)
     return;
 
-  font_ = font;
+  font_ = std::move(font);
   text_break_.SetFont(font_);
   is_dirty_ = true;
 }
@@ -896,7 +897,7 @@ wchar_t CFDE_TextEditEngine::GetChar(size_t idx) const {
              : content_[gap_position_ + gap_size_ + (idx - gap_position_)];
 }
 
-size_t CFDE_TextEditEngine::GetWidthOfChar(size_t idx) {
+int32_t CFDE_TextEditEngine::GetWidthOfChar(size_t idx) {
   // Recalculate the widths if necessary.
   Layout();
   return idx < char_widths_.size() ? char_widths_[idx] : 0;
@@ -1066,16 +1067,16 @@ void CFDE_TextEditEngine::RebuildPieces() {
       const CFGAS_BreakPiece* piece = text_break_.GetBreakPieceUnstable(i);
 
       FDE_TEXTEDITPIECE txtEdtPiece;
-      txtEdtPiece.rtPiece.left = piece->m_iStartPos / 20000.0f;
+      txtEdtPiece.rtPiece.left = piece->GetStartPos() / 20000.0f;
       txtEdtPiece.rtPiece.top = current_line_start;
-      txtEdtPiece.rtPiece.width = piece->m_iWidth / 20000.0f;
+      txtEdtPiece.rtPiece.width = piece->GetWidth() / 20000.0f;
       txtEdtPiece.rtPiece.height = line_spacing_;
       txtEdtPiece.nStart =
           pdfium::base::checked_cast<int32_t>(current_piece_start);
-      txtEdtPiece.nCount = piece->GetLength();
-      txtEdtPiece.nBidiLevel = piece->m_iBidiLevel;
-      txtEdtPiece.dwCharStyles = piece->m_dwCharStyles;
-      if (FX_IsOdd(piece->m_iBidiLevel))
+      txtEdtPiece.nCount = piece->GetCharCount();
+      txtEdtPiece.nBidiLevel = piece->GetBidiLevel();
+      txtEdtPiece.dwCharStyles = piece->GetCharStyles();
+      if (FX_IsOdd(piece->GetBidiLevel()))
         txtEdtPiece.dwCharStyles |= FX_TXTCHARSTYLE_OddBidiLevel;
 
       text_piece_info_.push_back(txtEdtPiece);

@@ -271,11 +271,13 @@ angle::Result Texture::MakeTexture(ContextMtl *context,
     {
         return angle::Result::Stop;
     }
-    refOut->reset(new Texture(context, desc, mips, renderTargetOnly, allowFormatView, memoryLess));
-    if (!refOut || !refOut->get())
-    {
-        ANGLE_MTL_CHECK(context, false, GL_OUT_OF_MEMORY);
-    }
+
+    ASSERT(refOut);
+    Texture *newTexture =
+        new Texture(context, desc, mips, renderTargetOnly, allowFormatView, memoryLess);
+    ANGLE_MTL_CHECK(context, newTexture->valid(), GL_OUT_OF_MEMORY);
+    refOut->reset(newTexture);
+
     if (!mtlFormat.hasDepthAndStencilBits())
     {
         refOut->get()->setColorWritableMask(GetEmulatedColorWriteMask(mtlFormat));
@@ -300,12 +302,10 @@ angle::Result Texture::MakeTexture(ContextMtl *context,
                                    TextureRef *refOut)
 {
 
-    refOut->reset(new Texture(context, desc, surfaceRef, slice, renderTargetOnly));
-
-    if (!(*refOut) || !(*refOut)->get())
-    {
-        ANGLE_MTL_CHECK(context, false, GL_OUT_OF_MEMORY);
-    }
+    ASSERT(refOut);
+    Texture *newTexture = new Texture(context, desc, surfaceRef, slice, renderTargetOnly);
+    ANGLE_MTL_CHECK(context, newTexture->valid(), GL_OUT_OF_MEMORY);
+    refOut->reset(newTexture);
     if (!mtlFormat.hasDepthAndStencilBits())
     {
         refOut->get()->setColorWritableMask(GetEmulatedColorWriteMask(mtlFormat));
@@ -330,7 +330,10 @@ bool needMultisampleColorFormatShaderReadWorkaround(ContextMtl *context, MTLText
 /** static */
 TextureRef Texture::MakeFromMetal(id<MTLTexture> metalTexture)
 {
-    ANGLE_MTL_OBJC_SCOPE { return TextureRef(new Texture(metalTexture)); }
+    ANGLE_MTL_OBJC_SCOPE
+    {
+        return TextureRef(new Texture(metalTexture));
+    }
 }
 
 Texture::Texture(id<MTLTexture> metalTexture)
@@ -502,6 +505,28 @@ Texture::Texture(Texture *original, const TextureSwizzleChannels &swizzle)
 #endif
 }
 
+Texture::Texture(Texture *original,
+                 MTLTextureType type,
+                 const MipmapNativeLevel &level,
+                 int layer,
+                 MTLPixelFormat pixelFormat)
+    : Resource(original),
+      mColorWritableMask(std::make_shared<MTLColorWriteMask>(MTLColorWriteMaskAll))
+{
+    ANGLE_MTL_OBJC_SCOPE
+    {
+        ASSERT(original->pixelFormat() == pixelFormat || original->supportFormatView());
+        auto view = [original->get() newTextureViewWithPixelFormat:pixelFormat
+                                                       textureType:type
+                                                            levels:NSMakeRange(level.get(), 1)
+                                                            slices:NSMakeRange(layer, 1)];
+
+        set([view ANGLE_MTL_AUTORELEASE]);
+        // Texture views consume no additional memory
+        mEstimatedByteSize = 0;
+    }
+}
+
 void Texture::syncContent(ContextMtl *context, mtl::BlitCommandEncoder *blitEncoder)
 {
     InvokeCPUMemSync(context, blitEncoder, this);
@@ -526,6 +551,11 @@ bool Texture::isCPUAccessible() const
 bool Texture::isShaderReadable() const
 {
     return get().usage & MTLTextureUsageShaderRead;
+}
+
+bool Texture::isShaderWritable() const
+{
+    return get().usage & MTLTextureUsageShaderWrite;
 }
 
 bool Texture::supportFormatView() const
@@ -662,6 +692,16 @@ TextureRef Texture::createViewWithDifferentFormat(MTLPixelFormat format)
 {
     ASSERT(supportFormatView());
     return TextureRef(new Texture(this, format));
+}
+
+TextureRef Texture::createShaderImageView(const MipmapNativeLevel &level,
+                                          int layer,
+                                          MTLPixelFormat format)
+{
+    ASSERT(isShaderReadable());
+    ASSERT(isShaderWritable());
+    ASSERT(format == pixelFormat() || supportFormatView());
+    return TextureRef(new Texture(this, textureType(), level, layer, format));
 }
 
 TextureRef Texture::createViewWithCompatibleFormat(MTLPixelFormat format)
@@ -1072,5 +1112,5 @@ bool Buffer::useSharedMem() const
 {
     return get().storageMode == MTLStorageModeShared;
 }
-}
-}
+}  // namespace mtl
+}  // namespace rx

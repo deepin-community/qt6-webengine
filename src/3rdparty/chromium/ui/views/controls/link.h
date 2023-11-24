@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 #include <string>
 #include <utility>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/color_palette.h"
@@ -61,9 +61,10 @@ class VIEWS_EXPORT Link : public Label {
   SkColor GetColor() const;
 
   void SetForceUnderline(bool force_underline);
+  bool GetForceUnderline() const;
 
   // Label:
-  gfx::NativeCursor GetCursor(const ui::MouseEvent& event) override;
+  ui::Cursor GetCursor(const ui::MouseEvent& event) override;
   bool GetCanProcessEventsWithinSubtree() const override;
   void OnMouseEntered(const ui::MouseEvent& event) override;
   void OnMouseExited(const ui::MouseEvent& event) override;
@@ -84,11 +85,11 @@ class VIEWS_EXPORT Link : public Label {
   bool IsSelectionSupported() const override;
 
  private:
+  virtual void RecalculateFont();
+
   void SetPressed(bool pressed);
 
   void OnClick(const ui::Event& event);
-
-  void RecalculateFont();
 
   void ConfigureFocus();
 
@@ -104,7 +105,7 @@ class VIEWS_EXPORT Link : public Label {
 
   // Whether the link text should use underline style regardless of enabled or
   // focused state.
-  bool force_underline_ = false;
+  bool force_underline_ = true;
 };
 
 BEGIN_VIEW_BUILDER(VIEWS_EXPORT, Link, Label)

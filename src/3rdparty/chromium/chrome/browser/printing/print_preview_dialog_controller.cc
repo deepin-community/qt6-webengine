@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -28,11 +28,10 @@
 #include "components/guest_view/browser/guest_view_base.h"
 #include "components/web_modal/web_contents_modal_dialog_host.h"
 #include "content/public/browser/host_zoom_map.h"
-#include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/common/url_constants.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -47,6 +46,7 @@
 #endif
 
 using content::NavigationController;
+using content::NavigationHandle;
 using content::WebContents;
 using content::WebUIMessageHandler;
 
@@ -56,8 +56,7 @@ namespace {
 
 PrintPreviewUI* GetPrintPreviewUIForDialog(WebContents* dialog) {
   content::WebUI* web_ui = dialog->GetWebUI();
-  return web_ui ? static_cast<PrintPreviewUI*>(web_ui->GetController())
-                : nullptr;
+  return web_ui ? web_ui->GetController()->GetAs<PrintPreviewUI>() : nullptr;
 }
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -228,25 +227,23 @@ WebContents* PrintPreviewDialogController::GetOrCreatePreviewDialog(
     WebContents* initiator) {
   DCHECK(initiator);
 
-  // Get the print preview dialog for |initiator|.
+  // Get the print preview dialog for `initiator`.
   WebContents* preview_dialog = GetPrintPreviewForContents(initiator);
-  if (!preview_dialog)
-    return CreatePrintPreviewDialog(initiator);
-
-  // Show the initiator holding the existing preview dialog.
-  initiator->GetDelegate()->ActivateContents(initiator);
-  return preview_dialog;
+  if (preview_dialog) {
+    return preview_dialog;
+  }
+  return CreatePrintPreviewDialog(initiator);
 }
 
 WebContents* PrintPreviewDialogController::GetPrintPreviewForContents(
     WebContents* contents) const {
-  // |preview_dialog_map_| is keyed by the preview dialog, so if
-  // base::Contains() succeeds, then |contents| is the preview dialog.
+  // `preview_dialog_map_` is keyed by the preview dialog, so if
+  // base::Contains() succeeds, then `contents` is the preview dialog.
   if (base::Contains(preview_dialog_map_, contents))
     return contents;
 
   for (const auto& it : preview_dialog_map_) {
-    // If |contents| is an initiator.
+    // If `contents` is an initiator.
     if (contents == it.second) {
       // Return the associated preview dialog.
       return it.first;
@@ -294,18 +291,19 @@ PrintPreviewDialogController::~PrintPreviewDialogController() = default;
 void PrintPreviewDialogController::RenderProcessGone(
     content::WebContents* web_contents,
     base::TerminationStatus status) {
-  content::RenderProcessHost* rph = web_contents->GetMainFrame()->GetProcess();
+  content::RenderProcessHost* rph =
+      web_contents->GetPrimaryMainFrame()->GetProcess();
 
   // Store contents in a vector and deal with them after iterating through
-  // |preview_dialog_map_| because RemoveFoo() can change |preview_dialog_map_|.
+  // `preview_dialog_map_` because RemoveFoo() can change `preview_dialog_map_`.
   std::vector<WebContents*> closed_initiators;
   std::vector<WebContents*> closed_preview_dialogs;
   for (auto& it : preview_dialog_map_) {
     WebContents* preview_dialog = it.first;
     WebContents* initiator = it.second;
-    if (preview_dialog->GetMainFrame()->GetProcess() == rph)
+    if (preview_dialog->GetPrimaryMainFrame()->GetProcess() == rph)
       closed_preview_dialogs.push_back(preview_dialog);
-    else if (initiator && initiator->GetMainFrame()->GetProcess() == rph)
+    else if (initiator && initiator->GetPrimaryMainFrame()->GetProcess() == rph)
       closed_initiators.push_back(initiator);
   }
 
@@ -333,9 +331,14 @@ void PrintPreviewDialogController::WebContentsDestroyed(WebContents* contents) {
     RemoveInitiator(contents);
 }
 
-void PrintPreviewDialogController::NavigationEntryCommitted(
+void PrintPreviewDialogController::DidFinishNavigation(
     WebContents* contents,
-    const content::LoadCommittedDetails& details) {
+    NavigationHandle* navigation_handle) {
+  if (!navigation_handle->IsInPrimaryMainFrame() ||
+      !navigation_handle->HasCommitted()) {
+    return;
+  }
+
   WebContents* preview_dialog = GetPrintPreviewForContents(contents);
   if (!preview_dialog) {
     NOTREACHED();
@@ -343,20 +346,21 @@ void PrintPreviewDialogController::NavigationEntryCommitted(
   }
 
   if (contents != preview_dialog)
-    OnInitiatorNavigated(contents, details);
+    OnInitiatorNavigated(contents, navigation_handle);
   else
-    OnPreviewDialogNavigated(contents, details);
+    OnPreviewDialogNavigated(contents, navigation_handle);
 }
 
 void PrintPreviewDialogController::OnInitiatorNavigated(
     WebContents* initiator,
-    const content::LoadCommittedDetails& details) {
-  if (details.type == content::NAVIGATION_TYPE_MAIN_FRAME_EXISTING_ENTRY) {
+    NavigationHandle* navigation_handle) {
+  if (navigation_handle->IsSameDocument()) {
     static const ui::PageTransition kTransitions[] = {
         ui::PageTransitionFromInt(ui::PAGE_TRANSITION_TYPED |
                                   ui::PAGE_TRANSITION_FROM_ADDRESS_BAR),
         ui::PAGE_TRANSITION_LINK, ui::PAGE_TRANSITION_AUTO_BOOKMARK};
-    ui::PageTransition type = details.entry->GetTransitionType();
+    ui::PageTransition type =
+        initiator->GetController().GetLastCommittedEntry()->GetTransitionType();
     for (ui::PageTransition transition : kTransitions) {
       if (ui::PageTransitionTypeIncludingQualifiersIs(type, transition))
         return;
@@ -368,26 +372,25 @@ void PrintPreviewDialogController::OnInitiatorNavigated(
 
 void PrintPreviewDialogController::OnPreviewDialogNavigated(
     WebContents* preview_dialog,
-    const content::LoadCommittedDetails& details) {
-  ui::PageTransition type = details.entry->GetTransitionType();
+    NavigationHandle* navigation_handle) {
+  ui::PageTransition type = preview_dialog->GetController()
+                                .GetLastCommittedEntry()
+                                ->GetTransitionType();
 
-  // New |preview_dialog| is created. Don't update/erase map entry.
-  if (details.previous_main_frame_url.is_empty() && details.entry &&
-      IsPrintPreviewURL(details.entry->GetURL()) &&
+  // New `preview_dialog` is created. Don't update/erase map entry.
+  if (navigation_handle->GetPreviousPrimaryMainFrameURL().is_empty() &&
+      IsPrintPreviewURL(navigation_handle->GetURL()) &&
       ui::PageTransitionCoreTypeIs(type, ui::PAGE_TRANSITION_AUTO_TOPLEVEL) &&
-      details.type == content::NAVIGATION_TYPE_MAIN_FRAME_NEW_ENTRY) {
+      !navigation_handle->IsSameDocument()) {
     SaveInitiatorTitle(preview_dialog);
     return;
   }
 
-  // Cloud print sign-in causes a reload.
-  if (ui::PageTransitionCoreTypeIs(type, ui::PAGE_TRANSITION_RELOAD) &&
-      details.type == content::NAVIGATION_TYPE_MAIN_FRAME_EXISTING_ENTRY &&
-      IsPrintPreviewURL(details.previous_main_frame_url)) {
-    return;
-  }
-
-  NOTREACHED();
+  // Cloud print sign-in causes a reload, but other cases should not be reached
+  // here.
+  DCHECK(ui::PageTransitionCoreTypeIs(type, ui::PAGE_TRANSITION_RELOAD));
+  DCHECK(
+      IsPrintPreviewURL(navigation_handle->GetPreviousPrimaryMainFrameURL()));
 }
 
 WebContents* PrintPreviewDialogController::CreatePrintPreviewDialog(

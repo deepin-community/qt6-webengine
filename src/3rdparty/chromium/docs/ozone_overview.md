@@ -71,7 +71,7 @@ applications on the host system using a system clipboard mechanism.
 Our implementation of Ozone required changes concentrated in these areas:
 
 * Cleaning up extensive assumptions about use of X11 throughout the tree,
-  protecting this code behind the `USE_X11` ifdef, and adding a new `USE_OZONE`
+  protecting this code behind the `USE_X11` ifdef, and adding a new `IS_OZONE`
   path that works in a relatively platform-neutral way by delegating to the
   interfaces described above.
 * a `WindowTreeHostOzone` to send events into Aura and participate in display
@@ -353,6 +353,12 @@ ninja -C out/OzoneCaca content_shell
 
   Note: traditional TTYs are not the ideal browsing experience.<br/>
   ![Picture of a workstation using Ozone/caca to display the Google home page in a text terminal](./images/ozone_caca.jpg)
+
+### drm
+Ash-chrome client implementation.
+
+### flatland / scenic
+For fuchsia.
 
 ## Communication
 

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,11 @@
 
 #include "base/json/json_reader.h"
 #include "base/run_loop.h"
+#include "base/test/bind.h"
+#include "base/test/simple_test_tick_clock.h"
+#include "base/time/time.h"
 #include "chrome/browser/apps/platform_apps/app_browsertest_util.h"
+#include "chrome/browser/extensions/api/runtime/chrome_runtime_api_delegate.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -71,7 +75,7 @@ IN_PROC_BROWSER_TEST_P(RuntimeApiTest, ChromeRuntimeUninstallURL) {
   // Auto-confirm the uninstall dialog.
   extensions::ScopedTestDialogAutoConfirm auto_confirm(
       extensions::ScopedTestDialogAutoConfirm::ACCEPT);
-  ExtensionTestMessageListener ready_listener("ready", false);
+  ExtensionTestMessageListener ready_listener("ready");
   ASSERT_TRUE(LoadExtension(test_data_dir_.AppendASCII("runtime")
                                 .AppendASCII("uninstall_url")
                                 .AppendASCII("sets_uninstall_url")));
@@ -96,7 +100,7 @@ std::string GetActiveUrl(Browser* browser) {
 
 class RuntimeAPIUpdateTest : public ExtensionApiTest {
  public:
-  RuntimeAPIUpdateTest() {}
+  RuntimeAPIUpdateTest() = default;
 
   RuntimeAPIUpdateTest(const RuntimeAPIUpdateTest&) = delete;
   RuntimeAPIUpdateTest& operator=(const RuntimeAPIUpdateTest&) = delete;
@@ -132,8 +136,9 @@ class RuntimeAPIUpdateTest : public ExtensionApiTest {
     ExtensionHost* background_host =
         ProcessManager::Get(browser()->profile())
             ->GetBackgroundHostForExtension(extension_id);
-    if (!background_host)
+    if (!background_host) {
       return false;
+    }
     content::CrashTab(background_host->host_contents());
     return true;
   }
@@ -153,7 +158,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, ChromeRuntimeOpenOptionsPageError) {
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionApiTest, ChromeRuntimeGetPlatformInfo) {
-  base::Value::DictStorage dict = extension_function_test_utils::ToDictionary(
+  base::Value::Dict dict = extension_function_test_utils::ToDictionary(
       extension_function_test_utils::RunFunctionAndReturnSingleResult(
           new RuntimeGetPlatformInfoFunction(), "[]", browser()));
   EXPECT_TRUE(dict.contains("os"));
@@ -207,7 +212,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, ExtensionTerminatedForRapidReloads) {
   // reload itself that often without being terminated, the test fails
   // anyway.
   for (int i = 0; i < RuntimeAPI::kFastReloadCount + 1; i++) {
-    ExtensionTestMessageListener ready_listener_reload("ready", false);
+    ExtensionTestMessageListener ready_listener_reload("ready");
     TestExtensionRegistryObserver unload_observer(registry, extension_id);
     ASSERT_TRUE(ExecuteScriptInBackgroundPageNoWait(
         extension_id, "chrome.runtime.reload();"));
@@ -253,7 +258,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, ChromeRuntimeReload) {
 
   // This listener will respond to the initial load of the extension
   // and tell the script to do the reload.
-  ExtensionTestMessageListener ready_listener_reload("ready", true);
+  ExtensionTestMessageListener ready_listener_reload("ready",
+                                                     ReplyBehavior::kWillReply);
   const Extension* extension = LoadExtension(dir.UnpackedPath());
   ASSERT_TRUE(extension);
   const std::string extension_id = extension->id();
@@ -261,7 +267,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, ChromeRuntimeReload) {
 
   // This listener will respond to the ready message from the
   // reloaded extension and tell the script to finish the test.
-  ExtensionTestMessageListener ready_listener_done("ready", true);
+  ExtensionTestMessageListener ready_listener_done("ready",
+                                                   ReplyBehavior::kWillReply);
   ResultCatcher reload_catcher;
   ready_listener_reload.Reply("reload");
   EXPECT_TRUE(ready_listener_done.WaitUntilSatisfied());
@@ -274,7 +281,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, ChromeRuntimeReload) {
 // service worker in a chrome.runtime.onMessage listener.
 IN_PROC_BROWSER_TEST_F(ExtensionApiTest, ChromeRuntimeSendMessage) {
   ASSERT_TRUE(
-      RunExtensionTest("runtime/send_message", {.page_url = "test.html"}));
+      RunExtensionTest("runtime/send_message", {.extension_url = "test.html"}));
 }
 
 // Simple test for chrome.runtime.getBackgroundPage with a persistent background
@@ -309,7 +316,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, ChromeGetBackgroundPage) {
   dir.WriteFile(FILE_PATH_LITERAL("test.html"), kTestPage);
   dir.WriteFile(FILE_PATH_LITERAL("test.js"), kTestJS);
 
-  ASSERT_TRUE(RunExtensionTest(dir.UnpackedPath(), {.page_url = "test.html"},
+  ASSERT_TRUE(RunExtensionTest(dir.UnpackedPath(),
+                               {.extension_url = "test.html"},
                                /*load_options=*/{}));
 }
 
@@ -354,8 +362,79 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, ChromeGetBackgroundPageMV3) {
   dir.WriteFile(FILE_PATH_LITERAL("test.html"), kTestPage);
   dir.WriteFile(FILE_PATH_LITERAL("test.js"), kTestJS);
 
-  ASSERT_TRUE(RunExtensionTest(dir.UnpackedPath(), {.page_url = "test.html"},
-                               /*load_options=*/{}));
+  ASSERT_TRUE(RunExtensionTest(
+      dir.UnpackedPath(), {.extension_url = "test.html"}, /*load_options=*/{}));
+}
+
+// Simple test for chrome.runtime.requestUpdateCheck using promises and
+// callbacks. The actual behaviors and responses are more thoroughly tested in
+// chrome_runtime_api_delegate_unittest.cc
+IN_PROC_BROWSER_TEST_F(ExtensionApiTest, RuntimeRequestUpdateCheck) {
+  static constexpr char kManifest[] = R"(
+      {
+        "name": "requestUpdateCheck",
+        "version": "1.0",
+        "background": {
+          "service_worker": "worker.js"
+        },
+        "manifest_version": 3
+      })";
+
+  static constexpr char kWorker[] = R"(
+    chrome.test.runTests([
+      // Note: when called with a callback, the callback will receive two
+      // parameters, but when called with a promise they will come back as
+      // parameters on a single object.
+      function noUpdateCallback() {
+        chrome.runtime.requestUpdateCheck((status, details) => {
+          chrome.test.assertNoLastError();
+          chrome.test.assertEq('no_update', status);
+          chrome.test.assertEq({version: ''}, details);
+
+          // Another call soon after will be throttled.
+          chrome.runtime.requestUpdateCheck((status, details) => {
+            chrome.test.assertNoLastError();
+            chrome.test.assertEq('throttled', status);
+            chrome.test.assertEq({version: ''}, details);
+            chrome.test.succeed();
+          });
+        });
+      },
+
+      async function noUpdate() {
+        // Advance the throttle clock so the requests in the previous test don't
+        // result in this getting a throttled response.
+        await chrome.test.sendMessage('Advance');
+        let result = await chrome.runtime.requestUpdateCheck();
+        chrome.test.assertEq({status:'no_update', version: ''}, result);
+
+        result = await chrome.runtime.requestUpdateCheck();
+        chrome.test.assertEq({status:'throttled', version: ''}, result);
+        chrome.test.succeed();
+      }
+    ]);
+  )";
+  base::SimpleTestTickClock clock;
+  ChromeRuntimeAPIDelegate::set_tick_clock_for_tests(&clock);
+
+  ExtensionTestMessageListener message_listener("Advance",
+                                                ReplyBehavior::kWillReply);
+
+  TestExtensionDir dir;
+  dir.WriteManifest(kManifest);
+  dir.WriteFile(FILE_PATH_LITERAL("worker.js"), kWorker);
+  // In the test environment we need this to be a packed extension.
+  base::FilePath crx_path = PackExtension(dir.UnpackedPath());
+  ASSERT_FALSE(crx_path.empty());
+
+  auto OnMessage = [&](const std::string& message) {
+    // Advance the clock past the point it will be throttled.
+    clock.Advance(base::Days(1));
+    message_listener.Reply("");
+  };
+  message_listener.SetOnSatisfied(base::BindLambdaForTesting(OnMessage));
+
+  ASSERT_TRUE(RunExtensionTest(crx_path, {}, {}));
 }
 
 // Tests that updating a terminated extension sends runtime.onInstalled event
@@ -403,7 +482,7 @@ IN_PROC_BROWSER_TEST_F(RuntimeAPIUpdateTest,
 // uninstalled, its uninstall url does not open.
 IN_PROC_BROWSER_TEST_P(RuntimeApiTest,
                        DoNotOpenUninstallUrlForBlocklistedExtensions) {
-  ExtensionTestMessageListener ready_listener("ready", false);
+  ExtensionTestMessageListener ready_listener("ready");
   // Load an extension that has set an uninstall url.
   scoped_refptr<const extensions::Extension> extension =
       LoadExtension(test_data_dir_.AppendASCII("runtime")
@@ -416,7 +495,7 @@ IN_PROC_BROWSER_TEST_P(RuntimeApiTest,
 
   // Uninstall the extension and expect its uninstall url to open.
   extension_service()->UninstallExtension(
-      extension->id(), extensions::UNINSTALL_REASON_USER_INITIATED, NULL);
+      extension->id(), extensions::UNINSTALL_REASON_USER_INITIATED, nullptr);
   TabStripModel* tabs = browser()->tab_strip_model();
 
   EXPECT_EQ(2, tabs->count());
@@ -430,7 +509,7 @@ IN_PROC_BROWSER_TEST_P(RuntimeApiTest,
   EXPECT_EQ("about:blank", GetActiveUrl(browser()));
 
   // Load the same extension again, except blocklist it after installation.
-  ExtensionTestMessageListener ready_listener_reload("ready", false);
+  ExtensionTestMessageListener ready_listener_reload("ready");
   extension = LoadExtension(test_data_dir_.AppendASCII("runtime")
                                 .AppendASCII("uninstall_url")
                                 .AppendASCII("sets_uninstall_url"));
@@ -447,7 +526,7 @@ IN_PROC_BROWSER_TEST_P(RuntimeApiTest,
   TestExtensionRegistryObserver observer(ExtensionRegistry::Get(profile()),
                                          extension->id());
   extension_service()->UninstallExtension(
-      extension->id(), extensions::UNINSTALL_REASON_USER_INITIATED, NULL);
+      extension->id(), extensions::UNINSTALL_REASON_USER_INITIATED, nullptr);
   observer.WaitForExtensionUninstalled();
 
   EXPECT_EQ(1, tabs->count());
@@ -496,7 +575,11 @@ IN_PROC_BROWSER_TEST_P(BackgroundPageOnlyRuntimeApiTest,
   }
 
   {
-    content::DOMMessageQueue message_queue;
+    ExtensionHost* host = ProcessManager::Get(browser()->profile())
+                              ->GetBackgroundHostForExtension(extension->id());
+    ASSERT_TRUE(host);
+    content::DOMMessageQueue message_queue(host->host_contents());
+
     static constexpr char kScript[] = R"(
         const foundWindows = chrome.extension.getViews({type: 'tab'});
         domAutomationController.send(foundWindows.length);

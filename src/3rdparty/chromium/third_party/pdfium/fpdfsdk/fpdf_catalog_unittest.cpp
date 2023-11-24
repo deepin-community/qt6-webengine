@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -48,7 +48,7 @@ TEST_F(PDFCatalogTest, IsTagged) {
   EXPECT_FALSE(FPDFCatalog_IsTagged(m_pDoc.get()));
 
   // Empty root
-  pTestDoc->SetRoot(m_pRootObj.Get());
+  pTestDoc->SetRoot(m_pRootObj);
   EXPECT_FALSE(FPDFCatalog_IsTagged(m_pDoc.get()));
 
   // Root with other key
@@ -56,8 +56,7 @@ TEST_F(PDFCatalogTest, IsTagged) {
   EXPECT_FALSE(FPDFCatalog_IsTagged(m_pDoc.get()));
 
   // Root with empty MarkInfo
-  CPDF_Dictionary* markInfoDict =
-      m_pRootObj->SetNewFor<CPDF_Dictionary>("MarkInfo");
+  auto markInfoDict = m_pRootObj->SetNewFor<CPDF_Dictionary>("MarkInfo");
   EXPECT_FALSE(FPDFCatalog_IsTagged(m_pDoc.get()));
 
   // MarkInfo present but Marked is 0

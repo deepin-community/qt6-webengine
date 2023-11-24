@@ -1,4 +1,4 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -108,7 +108,6 @@ source_set("identity_manager") {
 
   if (is_chromeos_ash) {
     deps += [ "//ash/constants" ]
-    public_deps += [ "//ash/components/account_manager" ]
   }
 
   if (!is_android && !is_ios) {
@@ -120,10 +119,9 @@ source_set("identity_manager") {
 
   if (is_ios) {
     sources += [
+      "profile_oauth2_token_service_delegate_ios.cc",
       "profile_oauth2_token_service_delegate_ios.h",
-      "profile_oauth2_token_service_delegate_ios.mm",
     ]
-    configs += [ "//build/config/compiler:enable_arc" ]
 
     deps += [ "//components/signin/public/identity_manager/ios" ]
   }
@@ -189,19 +187,18 @@ source_set("unit_tests") {
     ]
   }
 
-  if (is_chromeos_ash) {
+  if (is_chromeos) {
     sources += [ "profile_oauth2_token_service_delegate_chromeos_unittest.cc" ]
 
-    deps += [
-      "//ash/components/account_manager",
-      "//ash/constants",
-      "//components/account_manager_core:test_support",
-    ]
+    deps += [ "//components/account_manager_core:test_support" ]
+  }
+
+  if (is_chromeos_ash) {
+    deps += [ "//ash/constants" ]
   }
 
   if (is_ios) {
-    sources += [ "profile_oauth2_token_service_delegate_ios_unittest.mm" ]
-    configs += [ "//build/config/compiler:enable_arc" ]
+    sources += [ "profile_oauth2_token_service_delegate_ios_unittest.cc" ]
 
     deps += [ "//components/signin/public/identity_manager/ios:test_support" ]
   }

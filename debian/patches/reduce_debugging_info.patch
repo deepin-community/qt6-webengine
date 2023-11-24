@@ -1,12 +1,11 @@
 --- a/src/3rdparty/chromium/build/config/compiler/BUILD.gn
 +++ b/src/3rdparty/chromium/build/config/compiler/BUILD.gn
-@@ -2553,7 +2553,7 @@ config("symbols") {
-     # flag, so we can use use -g1 for pnacl and nacl-clang compiles.
-     # gcc nacl is is_nacl && !is_clang, pnacl and nacl-clang are && is_clang.
-     if ((!is_nacl || is_clang) && current_os != "zos") {
+@@ -2682,7 +2682,7 @@ config("symbols") {
+     # Keeping -g2 for saigo as it's the only toolchain whose artifacts that are
+     # part of chromium release (other nacl toolchains are used only for tests).
+     if ((!is_nacl || is_nacl_saigo) && current_os != "zos") {
 -      cflags += [ "-g2" ]
 +      cflags += [ "-g0" ]
      }
 
-     if (!is_nacl && is_clang && !is_tsan && !is_asan &&
-
+     if (!is_nacl && is_clang && !is_tsan && !is_asan) {

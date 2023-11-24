@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,10 +8,11 @@
 #include <utility>
 #include <vector>
 
-#include "base/callback.h"
+#include "base/cfi_buildflags.h"
 #include "base/containers/flat_map.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/callback.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/memory/raw_ptr.h"
@@ -66,6 +67,8 @@
 #include "ui/shell_dialogs/select_file_dialog.h"          // nogncheck
 #include "ui/shell_dialogs/select_file_dialog_factory.h"  // nogncheck
 #include "ui/shell_dialogs/select_file_policy.h"          // nogncheck
+#else
+#include "chrome/browser/toolbar_manager_test_helper_android.h"
 #endif  // !BUILDFLAG(IS_ANDROID)
 
 using testing::_;
@@ -166,22 +169,19 @@ std::vector<std::string> PopulateExpectedPolicy(
 }
 
 #if !BUILDFLAG(IS_ANDROID)
-void SetChromeMetaData(base::DictionaryValue* expected) {
+void SetChromeMetaData(base::Value::Dict& expected) {
   // Only set the expected keys and types and not the values since
   // these can vary greatly on the platform, OS, architecture
   // that is running.
-  constexpr char prefix[] = "chromeMetadata";
-  expected->SetPath({prefix, "application"}, base::Value(""));
-  expected->SetPath({prefix, "version"}, base::Value(""));
-  expected->SetPath({prefix, "revision"}, base::Value(""));
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  expected->SetPath({prefix, "platform"}, base::Value(""));
-#else
-  expected->SetPath({prefix, "OS"}, base::Value(""));
+  expected.SetByDottedPath("chromeMetadata.application", "");
+  expected.SetByDottedPath("chromeMetadata.version", "");
+  expected.SetByDottedPath("chromeMetadata.revision", "");
+#if !BUILDFLAG(IS_CHROMEOS_ASH)
+  expected.SetByDottedPath("chromeMetadata.OS", "");
 #endif
 }
 
-void SetExpectedPolicy(base::DictionaryValue* expected,
+void SetExpectedPolicy(base::Value::Dict& expected,
                        const std::string& name,
                        const std::string& level,
                        const std::string& scope,
@@ -190,17 +190,18 @@ void SetExpectedPolicy(base::DictionaryValue* expected,
                        const std::string& warning,
                        bool ignored,
                        const base::Value& value) {
-  const char prefix[] = "chromePolicies";
-  expected->SetPath({prefix, name.c_str(), "level"}, base::Value(level));
-  expected->SetPath({prefix, name.c_str(), "scope"}, base::Value(scope));
-  expected->SetPath({prefix, name.c_str(), "source"}, base::Value(source));
+  base::Value::Dict* dict =
+      expected.EnsureDict("chromePolicies")->EnsureDict(name.c_str());
+  dict->Set("level", level);
+  dict->Set("scope", scope);
+  dict->Set("source", source);
   if (!error.empty())
-    expected->SetPath({prefix, name.c_str(), "error"}, base::Value(error));
+    dict->Set("error", error);
   if (!warning.empty())
-    expected->SetPath({prefix, name.c_str(), "warning"}, base::Value(warning));
+    dict->Set("warning", warning);
   if (ignored)
-    expected->SetPath({prefix, name.c_str(), "ignored"}, base::Value(ignored));
-  expected->SetPath({prefix, name.c_str(), "value"}, value.Clone());
+    dict->Set("ignored", ignored);
+  dict->Set("value", value.Clone());
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
 
@@ -231,7 +232,9 @@ class PolicyUITest : public PlatformBrowserTest {
 
   void VerifyPolicies(const std::vector<std::vector<std::string>>& expected);
 
-  void VerifyExportingPolicies(const base::DictionaryValue& expected);
+  void VerifyReportButton(bool visible);
+
+  void VerifyExportingPolicies(const base::Value::Dict& expected);
 
   content::WebContents* web_contents() {
     return chrome_test_utils::GetActiveWebContents(this);
@@ -256,7 +259,8 @@ class TestSelectFileDialog : public ui::SelectFileDialog {
                       int file_type_index,
                       const base::FilePath::StringType& default_extension,
                       gfx::NativeWindow owning_window,
-                      void* params) override {
+                      void* params,
+                      const GURL* caller) override {
     listener_->FileSelected(export_policies_test_file_path, 0, nullptr);
   }
 
@@ -283,7 +287,14 @@ class TestSelectFileDialogFactory : public ui::SelectFileDialogFactory {
 };
 #endif  // !BUILDFLAG(IS_ANDROID)
 
-PolicyUITest::PolicyUITest() = default;
+PolicyUITest::PolicyUITest() {
+#if BUILDFLAG(IS_ANDROID)
+  // Skips recreating the Android activity when homepage settings are changed.
+  // This happens when the feature chrome::android::kStartSurfaceAndroid is
+  // enabled.
+  toolbar_manager::setSkipRecreateForTesting(true);
+#endif  // BUILDFLAG(IS_ANDROID)
+}
 
 PolicyUITest::~PolicyUITest() = default;
 
@@ -303,9 +314,8 @@ void PolicyUITest::SetUpInProcessBrowserTestFixture() {
 void PolicyUITest::UpdateProviderPolicyForNamespace(
     const policy::PolicyNamespace& policy_namespace,
     const policy::PolicyMap& policy) {
-  std::unique_ptr<policy::PolicyBundle> bundle =
-      std::make_unique<policy::PolicyBundle>();
-  bundle->Get(policy_namespace) = policy.Clone();
+  policy::PolicyBundle bundle;
+  bundle.Get(policy_namespace) = policy.Clone();
   provider_.UpdatePolicy(std::move(bundle));
 }
 
@@ -316,13 +326,12 @@ void PolicyUITest::VerifyPolicies(
 
   // Retrieve the text contents of the policy table cells for all policies.
   const std::string javascript =
-      "var entries = document.getElementById('policy-ui')"
-      "  .querySelectorAll('.policy-table');"
+      "var entries = getAllPolicyTables();"
       "var policies = [];"
       "for (var i = 0; i < entries.length; ++i) {"
-      "  var items = entries[i].querySelectorAll('.policy.row');"
+      "  var items = getAllPolicyRows(entries[i]);"
       "  for (var j = 0; j < items.length; ++j) {"
-      "    var children = items[j].querySelectorAll('div');"
+      "    var children = getAllPolicyRowDivs(items[j]);"
       "    var values = [];"
       "    for(var k = 0; k < children.length - 1; ++k) {"
       "      values.push(children[k].textContent.trim());"
@@ -337,15 +346,14 @@ void PolicyUITest::VerifyPolicies(
   absl::optional<base::Value> value_ptr = base::JSONReader::Read(json);
   ASSERT_TRUE(value_ptr);
   ASSERT_TRUE(value_ptr->is_list());
-  base::Value::ConstListView actual_policies = value_ptr->GetListDeprecated();
+  const base::Value::List& actual_policies = value_ptr->GetList();
 
   // Verify that the cells contain the expected strings for all policies.
   ASSERT_EQ(expected_policies.size(), actual_policies.size());
   for (size_t i = 0; i < expected_policies.size(); ++i) {
     const std::vector<std::string> expected_policy = expected_policies[i];
     ASSERT_TRUE(actual_policies[i].is_list());
-    base::Value::ConstListView actual_policy =
-        actual_policies[i].GetListDeprecated();
+    const base::Value::List& actual_policy = actual_policies[i].GetList();
     ASSERT_EQ(expected_policy.size(), actual_policy.size());
     for (size_t j = 0; j < expected_policy.size(); ++j) {
       const std::string* value = actual_policy[j].GetIfString();
@@ -356,9 +364,17 @@ void PolicyUITest::VerifyPolicies(
   }
 }
 
+void PolicyUITest::VerifyReportButton(bool visible) {
+  const std::string kJavaScript =
+      "domAutomationController.send(getReportButtonVisibility());";
+  std::string ret;
+  ASSERT_TRUE(content::ExecuteScriptAndExtractString(web_contents(),
+                                                     kJavaScript, &ret));
+  EXPECT_EQ(visible, ret != "none");
+}
+
 #if !BUILDFLAG(IS_ANDROID)
-void PolicyUITest::VerifyExportingPolicies(
-    const base::DictionaryValue& expected) {
+void PolicyUITest::VerifyExportingPolicies(const base::Value::Dict& expected) {
   // Set SelectFileDialog to use our factory.
   ui::SelectFileDialog::SetFactory(new TestSelectFileDialogFactory());
 
@@ -378,27 +394,25 @@ void PolicyUITest::VerifyExportingPolicies(
   EXPECT_TRUE(
       base::ReadFileToString(export_policies_test_file_path, &file_contents));
 
-  absl::optional<base::Value> value_ptr = base::JSONReader::Read(file_contents);
+  absl::optional<base::Value> value = base::JSONReader::Read(file_contents);
 
   // Check that the file contains a valid dictionary.
-  EXPECT_TRUE(value_ptr);
-  EXPECT_TRUE(value_ptr->is_dict());
+  EXPECT_TRUE(value);
+  base::Value::Dict* dict = value->GetIfDict();
+  EXPECT_TRUE(dict);
 
   // Since Chrome Metadata has a lot of variations based on platform, OS,
   // architecture and version, it is difficult to test for exact values. Test
   // instead that the same keys exist in the meta data and also that the type of
   // all the keys is a string. The incoming |expected| value should already be
   // filled with the expected keys.
-  base::Value* chrome_metadata =
-      value_ptr->FindKeyOfType("chromeMetadata", base::Value::Type::DICTIONARY);
+  base::Value::Dict* chrome_metadata = dict->FindDict("chromeMetadata");
   EXPECT_NE(chrome_metadata, nullptr);
-
-  EXPECT_TRUE(chrome_metadata->is_dict());
 
   // The |chrome_metadata| we compare against will have the actual values so
   // those will be cleared to empty values so that the equals comparison below
   // will just compare key existence and value types.
-  for (auto key_value : chrome_metadata->DictItems())
+  for (auto key_value : *chrome_metadata)
     key_value.second = base::Value(key_value.second.type());
 
   // Since policy management status can have variable information based on the
@@ -407,65 +421,72 @@ void PolicyUITest::VerifyExportingPolicies(
   // "status" exist and also that the type of it is a dictionary. The incoming
   // |expected| value should already have a "status" key with an empty
   // dictionary value.
-  base::Value* status =
-      value_ptr->FindKeyOfType("status", base::Value::Type::DICTIONARY);
+  base::Value::Dict* status = dict->FindDict("status");
   EXPECT_NE(status, nullptr);
-  status->DictClear();
+  status->clear();
 
   // Check that this dictionary is the same as expected.
-  EXPECT_EQ(expected, *value_ptr);
+  EXPECT_EQ(expected, *dict);
 }
 
-IN_PROC_BROWSER_TEST_F(PolicyUITest, WritePoliciesToJSONFile) {
+#if !defined(NDEBUG) ||                                          \
+    (BUILDFLAG(IS_LINUX) &&                                      \
+     (BUILDFLAG(CFI_CAST_CHECK) || BUILDFLAG(CFI_ICALL_CHECK) || \
+      BUILDFLAG(CFI_ENFORCEMENT_TRAP) ||                         \
+      BUILDFLAG(CFI_ENFORCEMENT_DIAGNOSTIC)))
+// Slow in debug and CFI builds crbug.com/1338642
+#define MAYBE_WritePoliciesToJSONFile DISABLED_WritePoliciesToJSONFile
+#else
+#define MAYBE_WritePoliciesToJSONFile WritePoliciesToJSONFile
+#endif
+IN_PROC_BROWSER_TEST_F(PolicyUITest, MAYBE_WritePoliciesToJSONFile) {
   // Set policy values and generate expected dictionary.
   policy::PolicyMap values;
-  base::DictionaryValue expected_values;
+  base::Value::Dict expected_values;
 
-  SetChromeMetaData(&expected_values);
+  SetChromeMetaData(expected_values);
 
-  base::ListValue popups_blocked_for_urls;
+  base::Value::List popups_blocked_for_urls;
   popups_blocked_for_urls.Append("aaa");
   popups_blocked_for_urls.Append("bbb");
   popups_blocked_for_urls.Append("ccc");
   values.Set(policy::key::kPopupsBlockedForUrls, policy::POLICY_LEVEL_MANDATORY,
              policy::POLICY_SCOPE_MACHINE, policy::POLICY_SOURCE_PLATFORM,
-             popups_blocked_for_urls.Clone(), nullptr);
-  SetExpectedPolicy(&expected_values, policy::key::kPopupsBlockedForUrls,
+             base::Value(popups_blocked_for_urls.Clone()), nullptr);
+  SetExpectedPolicy(expected_values, policy::key::kPopupsBlockedForUrls,
                     "mandatory", "machine", "platform", std::string(),
-                    std::string(), false, popups_blocked_for_urls);
+                    std::string(), false,
+                    base::Value(popups_blocked_for_urls.Clone()));
 
   values.Set(policy::key::kDefaultImagesSetting, policy::POLICY_LEVEL_MANDATORY,
              policy::POLICY_SCOPE_MACHINE, policy::POLICY_SOURCE_CLOUD,
              base::Value(2), nullptr);
-  SetExpectedPolicy(&expected_values, policy::key::kDefaultImagesSetting,
+  SetExpectedPolicy(expected_values, policy::key::kDefaultImagesSetting,
                     "mandatory", "machine", "cloud", std::string(),
                     std::string(), false, base::Value(2));
 
   // This also checks that we save complex policies correctly.
-  base::Value unknown_policy(base::Value::Type::DICTIONARY);
-  base::Value* body =
-      unknown_policy.SetKey("body", base::Value(base::Value::Type::DICTIONARY));
-  body->SetIntKey("first", 0);
-  body->SetBoolKey("second", true);
-  unknown_policy.SetIntKey("head", 12);
+  base::Value::Dict unknown_policy;
+  base::Value::Dict* body = unknown_policy.EnsureDict("body");
+  body->Set("first", 0);
+  body->Set("second", true);
+  unknown_policy.Set("head", 12);
   const std::string kUnknownPolicy = "NoSuchThing";
   values.Set(kUnknownPolicy, policy::POLICY_LEVEL_RECOMMENDED,
              policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
-             unknown_policy.Clone(), nullptr);
-  SetExpectedPolicy(&expected_values, kUnknownPolicy, "recommended", "user",
+             base::Value(unknown_policy.Clone()), nullptr);
+  SetExpectedPolicy(expected_values, kUnknownPolicy, "recommended", "user",
                     "cloud", l10n_util::GetStringUTF8(IDS_POLICY_UNKNOWN),
-                    std::string(), false, unknown_policy);
+                    std::string(), false,
+                    base::Value(std::move(unknown_policy)));
 
   // Set the extension policies to an empty dictionary as we haven't added any
   // such policies.
-  expected_values.SetKey("extensionPolicies",
-                         base::Value(base::Value::Type::DICTIONARY));
-  expected_values.SetKey("status", base::Value(base::Value::Type::DICTIONARY));
+  expected_values.Set("extensionPolicies", base::Value::Dict());
+  expected_values.Set("status", base::Value::Dict());
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-  expected_values.SetKey("loginScreenExtensionPolicies",
-                         base::Value(base::Value::Type::DICTIONARY));
-  expected_values.SetKey("deviceLocalAccountPolicies",
-                         base::Value(base::Value::Type::DICTIONARY));
+  expected_values.Set("loginScreenExtensionPolicies", base::Value::Dict());
+  expected_values.Set("deviceLocalAccountPolicies", base::Value::Dict());
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
   provider_.UpdateChromePolicy(values);
@@ -475,16 +496,18 @@ IN_PROC_BROWSER_TEST_F(PolicyUITest, WritePoliciesToJSONFile) {
 
   // Change policy values.
   values.Erase(policy::key::kDefaultImagesSetting);
-  expected_values.RemovePath(std::string("chromePolicies.") +
-                             std::string(policy::key::kDefaultImagesSetting));
+  expected_values.RemoveByDottedPath(
+      std::string("chromePolicies.") +
+      std::string(policy::key::kDefaultImagesSetting));
 
   popups_blocked_for_urls.Append("ddd");
   values.Set(policy::key::kPopupsBlockedForUrls, policy::POLICY_LEVEL_MANDATORY,
              policy::POLICY_SCOPE_MACHINE, policy::POLICY_SOURCE_PLATFORM,
-             popups_blocked_for_urls.Clone(), nullptr);
-  SetExpectedPolicy(&expected_values, policy::key::kPopupsBlockedForUrls,
+             base::Value(popups_blocked_for_urls.Clone()), nullptr);
+  SetExpectedPolicy(expected_values, policy::key::kPopupsBlockedForUrls,
                     "mandatory", "machine", "platform", std::string(),
-                    std::string(), false, popups_blocked_for_urls);
+                    std::string(), false,
+                    base::Value(popups_blocked_for_urls.Clone()));
 
   provider_.UpdateChromePolicy(values);
 
@@ -492,16 +515,17 @@ IN_PROC_BROWSER_TEST_F(PolicyUITest, WritePoliciesToJSONFile) {
   // contents).
   VerifyExportingPolicies(expected_values);
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
   // This also checks that we do not bypass the policy that blocks file
   // selection dialogs. This is a desktop only policy.
   values.Set(policy::key::kAllowFileSelectionDialogs,
              policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_MACHINE,
              policy::POLICY_SOURCE_PLATFORM, base::Value(false), nullptr);
+
   popups_blocked_for_urls.Append("eeeeee");
   values.Set(policy::key::kPopupsBlockedForUrls, policy::POLICY_LEVEL_MANDATORY,
              policy::POLICY_SCOPE_MACHINE, policy::POLICY_SOURCE_PLATFORM,
-             popups_blocked_for_urls.Clone(), nullptr);
+             base::Value(popups_blocked_for_urls.Clone()), nullptr);
   provider_.UpdateChromePolicy(values);
 
   // Check writing changed policies did not overwrite the exported policies
@@ -531,12 +555,12 @@ class PolicyUIStatusTest : public MixinBasedInProcessBrowserTest {
   bool ReloadPolicies();
 
  protected:
-  chromeos::DeviceStateMixin device_state_{
+  ash::DeviceStateMixin device_state_{
       &mixin_host_,
       ash::DeviceStateMixin::State::OOBE_COMPLETED_CLOUD_ENROLLED};
-  chromeos::LoggedInUserMixin logged_in_user_mixin_{
+  ash::LoggedInUserMixin logged_in_user_mixin_{
       &mixin_host_,
-      chromeos::LoggedInUserMixin::LogInType::kRegular,
+      ash::LoggedInUserMixin::LogInType::kRegular,
       embedded_test_server(),
       this,
       /*should_launch_browser=*/true,
@@ -558,7 +582,7 @@ bool PolicyUIStatusTest::ReadStatusFor(
           return;
         }
 
-        const policies = statusSection.querySelectorAll('fieldset');
+        const policies = getPolicyFieldsets();
         const statuses = {};
         for (let i = 0; i < policies.length; ++i) {
           const legend = policies[i].querySelector('legend').textContent;
@@ -583,11 +607,14 @@ bool PolicyUIStatusTest::ReadStatusFor(
   absl::optional<base::Value> statuses = base::JSONReader::Read(json);
   if (!statuses.has_value() || !statuses->is_dict())
     return false;
-  const base::Value* actual_entries = statuses->FindDictKey(policy_legend);
-  if (!actual_entries || !actual_entries->is_dict())
+  const base::Value::Dict& status_dict = statuses->GetDict();
+  const base::Value::Dict* actual_entries = status_dict.FindDict(policy_legend);
+  if (!actual_entries) {
     return false;
-  for (const auto entry : actual_entries->DictItems())
+  }
+  for (const auto entry : *actual_entries) {
     policy_status->insert_or_assign(entry.first, entry.second.GetString());
+  }
   return true;
 }
 
@@ -761,14 +788,15 @@ IN_PROC_BROWSER_TEST_F(PolicyUITest, SendPolicyValues) {
   std::map<std::string, std::string> expected_values;
 
   // Set the values of four existing policies.
-  base::Value blocked_urls(base::Value::Type::LIST);
+  base::Value::List blocked_urls;
   blocked_urls.Append("site1.com");
   blocked_urls.Append("site2.com");
   blocked_urls.Append("site3.com");
   values.Set(policy::key::kURLBlocklist, policy::POLICY_LEVEL_MANDATORY,
              policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
-             std::move(blocked_urls), nullptr);
-  expected_values[policy::key::kURLBlocklist] = "site1.com,site2.com,site3.com";
+             base::Value(std::move(blocked_urls)), nullptr);
+  expected_values[policy::key::kURLBlocklist] =
+      R"(["site1.com","site2.com","site3.com"])";
   values.Set(policy::key::kHomepageLocation, policy::POLICY_LEVEL_MANDATORY,
              policy::POLICY_SCOPE_MACHINE, policy::POLICY_SOURCE_CLOUD,
              base::Value("http://google.com"), nullptr);
@@ -841,6 +869,33 @@ IN_PROC_BROWSER_TEST_F(PolicyUITest, SendPolicyValues) {
   VerifyPolicies(expected_policies);
 }
 
+IN_PROC_BROWSER_TEST_F(PolicyUITest, ReportButton) {
+  ASSERT_TRUE(
+      content::NavigateToURL(web_contents(), GURL(chrome::kChromeUIPolicyURL)));
+
+  // Hide by default.
+  VerifyReportButton(/*visible=*/false);
+
+  // Turn on with the policy
+  policy::PolicyMap policy_map;
+  policy_map.Set(policy::key::kCloudReportingEnabled,
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_MACHINE,
+                 policy::POLICY_SOURCE_CLOUD, base::Value(true), nullptr);
+  provider_.UpdateChromePolicy(policy_map);
+#if !BUILDFLAG(IS_CHROMEOS)
+  VerifyReportButton(/*visible=*/true);
+#else
+  // Always hide on Chrome OS.
+  VerifyReportButton(/*visible=*/false);
+#endif
+  // Hide while policy is off.
+  policy_map.Set(policy::key::kCloudReportingEnabled,
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_MACHINE,
+                 policy::POLICY_SOURCE_CLOUD, base::Value(false), nullptr);
+  provider_.UpdateChromePolicy(policy_map);
+  VerifyReportButton(/*visible=*/false);
+}
+
 #if !BUILDFLAG(IS_CHROMEOS)
 class PolicyPrecedenceUITest
     : public PolicyUITest,
@@ -881,8 +936,7 @@ class PolicyPrecedenceUITest
 
   // Used to retrieve the contents of the policy precedence rows.
   const std::string kJavaScript =
-      "var precedence_row = document.getElementById('policy-ui')"
-      "  .querySelector('.policy-table .precedence.row > .value');"
+      "var precedence_row = getPrecedenceRowValue();"
       "domAutomationController.send(precedence_row.textContent);";
 };
 
@@ -1090,9 +1144,9 @@ IN_PROC_BROWSER_TEST_P(ExtensionPolicyUITest,
   // Verify if policy UI includes policy that extension have.
   VerifyPolicies(expected_policies);
 
-  base::Value object_value(base::Value::Type::DICTIONARY);
-  object_value.SetBoolKey("objectProperty", true);
-  base::Value array_value(base::Value::Type::LIST);
+  base::Value::Dict object_value;
+  object_value.Set("objectProperty", true);
+  base::Value::List array_value;
   array_value.Append(true);
 
   policy::PolicyMap values;
@@ -1101,7 +1155,7 @@ IN_PROC_BROWSER_TEST_P(ExtensionPolicyUITest,
              base::Value(true), nullptr);
   values.Set(kSensitiveArrayPolicy, policy::POLICY_LEVEL_MANDATORY,
              policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
-             std::move(array_value), nullptr);
+             base::Value(std::move(array_value)), nullptr);
   values.Set(kSensitiveBooleanPolicy, policy::POLICY_LEVEL_MANDATORY,
              policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
              base::Value(true), nullptr);
@@ -1113,7 +1167,7 @@ IN_PROC_BROWSER_TEST_P(ExtensionPolicyUITest,
              base::Value(3.141), nullptr);
   values.Set(kSensitiveObjectPolicy, policy::POLICY_LEVEL_MANDATORY,
              policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
-             std::move(object_value), nullptr);
+             base::Value(std::move(object_value)), nullptr);
   values.Set(kSensitiveStringPolicy, policy::POLICY_LEVEL_MANDATORY,
              policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
              base::Value("value"), nullptr);

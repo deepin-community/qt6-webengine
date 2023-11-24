@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,9 +12,11 @@
 #include <numeric>
 #include <utility>
 
+#include "base/auto_reset.h"
 #include "base/containers/adapters.h"
 #include "base/containers/contains.h"
 #include "base/i18n/case_conversion.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
@@ -22,7 +24,6 @@
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/accessibility/platform/ax_platform_node.h"
-#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/models/menu_model.h"
@@ -39,7 +40,7 @@
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/text_utils.h"
 #include "ui/native_theme/native_theme.h"
-#include "ui/strings/grit/ui_strings.h"
+#include "ui/views/badge_painter.h"
 #include "ui/views/controls/button/menu_button.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/menu/menu_config.h"
@@ -47,7 +48,6 @@
 #include "ui/views/controls/menu/menu_image_util.h"
 #include "ui/views/controls/menu/menu_scroll_view_container.h"
 #include "ui/views/controls/menu/menu_separator.h"
-#include "ui/views/controls/menu/new_badge.h"
 #include "ui/views/controls/menu/submenu_view.h"
 #include "ui/views/controls/separator.h"
 #include "ui/views/style/typography.h"
@@ -97,9 +97,6 @@ class VerticalSeparator : public Separator {
   VerticalSeparator(const VerticalSeparator&) = delete;
   VerticalSeparator& operator=(const VerticalSeparator&) = delete;
   ~VerticalSeparator() override = default;
-
-  // Separator:
-  void OnThemeChanged() override;
 };
 
 VerticalSeparator::VerticalSeparator() {
@@ -109,15 +106,11 @@ VerticalSeparator::VerticalSeparator() {
       gfx::Size(config.actionable_submenu_vertical_separator_width,
                 config.actionable_submenu_vertical_separator_height));
   SetCanProcessEventsWithinSubtree(false);
-}
-
-void VerticalSeparator::OnThemeChanged() {
-  Separator::OnThemeChanged();
   ui::ColorId id = ui::kColorMenuSeparator;
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   id = ui::kColorAshSystemUIMenuSeparator;
 #endif
-  SetColor(GetColorProvider()->GetColor(id));
+  SetColorId(id);
 }
 
 BEGIN_METADATA(VerticalSeparator, Separator)
@@ -171,8 +164,10 @@ void MenuItemView::ViewHierarchyChanged(
     const ViewHierarchyChangedDetails& details) {
   // Whether the selection is painted may change based on the number of
   // children.
-  if (details.parent == this)
+  if (details.parent == this &&
+      update_selection_based_state_in_view_herarchy_changed_) {
     UpdateSelectionBasedStateIfChanged(PaintMode::kNormal);
+  }
 }
 
 std::u16string MenuItemView::GetTooltipText(const gfx::Point& p) const {
@@ -221,7 +216,7 @@ void MenuItemView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
       break;
   }
 
-  node_data->SetName(GetAccessibleName());
+  node_data->SetName(CalculateAccessibleName());
 
   switch (type_) {
     case Type::kSubMenu:
@@ -342,7 +337,7 @@ std::u16string MenuItemView::GetAccessibleNameForMenuItem(
 
   if (is_new_feature) {
     accessible_name.push_back(' ');
-    accessible_name.append(NewBadge::GetNewBadgeAccessibleDescription());
+    accessible_name.append(GetNewBadgeAccessibleDescription());
   }
 
   return accessible_name;
@@ -356,7 +351,7 @@ void MenuItemView::Cancel() {
 }
 
 MenuItemView* MenuItemView::AddMenuItemAt(
-    int index,
+    size_t index,
     int item_id,
     const std::u16string& label,
     const std::u16string& secondary_label,
@@ -366,10 +361,9 @@ MenuItemView* MenuItemView::AddMenuItemAt(
     Type type,
     ui::MenuSeparatorType separator_style) {
   DCHECK_NE(type, Type::kEmpty);
-  DCHECK_GE(index, 0);
   if (!submenu_)
     CreateSubmenu();
-  DCHECK_LE(static_cast<size_t>(index), submenu_->children().size());
+  DCHECK_LE(index, submenu_->children().size());
   if (type == Type::kSeparator) {
     submenu_->AddChildViewAt(std::make_unique<MenuSeparator>(separator_style),
                              index);
@@ -429,7 +423,7 @@ void MenuItemView::AppendSeparator() {
   AppendMenuItemImpl(0, std::u16string(), ui::ImageModel(), Type::kSeparator);
 }
 
-void MenuItemView::AddSeparatorAt(int index) {
+void MenuItemView::AddSeparatorAt(size_t index) {
   AddMenuItemAt(index, /*item_id=*/0, /*label=*/std::u16string(),
                 /*secondary_label=*/std::u16string(),
                 /*minor_text=*/std::u16string(),
@@ -443,8 +437,7 @@ MenuItemView* MenuItemView::AppendMenuItemImpl(int item_id,
                                                const std::u16string& label,
                                                const ui::ImageModel& icon,
                                                Type type) {
-  const int index =
-      submenu_ ? static_cast<int>(submenu_->children().size()) : 0;
+  const size_t index = submenu_ ? submenu_->children().size() : size_t{0};
   return AddMenuItemAt(index, item_id, label, std::u16string(),
                        std::u16string(), ui::ImageModel(), icon, type,
                        ui::NORMAL_SEPARATOR);
@@ -559,19 +552,28 @@ void MenuItemView::SetIcon(const ui::ImageModel& icon) {
 }
 
 void MenuItemView::SetIconView(std::unique_ptr<ImageView> icon_view) {
-  if (icon_view_) {
-    RemoveChildViewT(icon_view_.get());
-    icon_view_ = nullptr;
+  {
+    // See comment in `update_selection_based_state_in_view_herarchy_changed_`
+    // as to why setting the field and explicitly calling
+    // UpdateSelectionBasedStateIfChanged() is necessary.
+    base::AutoReset setter(
+        &update_selection_based_state_in_view_herarchy_changed_, false);
+    if (icon_view_) {
+      RemoveChildViewT(icon_view_.get());
+      icon_view_ = nullptr;
+    }
+
+    if (icon_view)
+      icon_view_ = AddChildView(std::move(icon_view));
   }
 
-  if (icon_view)
-    icon_view_ = AddChildView(std::move(icon_view));
+  UpdateSelectionBasedStateIfChanged(PaintMode::kNormal);
 
   InvalidateLayout();
   SchedulePaint();
 }
 
-void MenuItemView::OnDropStatusChanged() {
+void MenuItemView::OnDropOrSelectionStatusMayHaveChanged() {
   UpdateSelectionBasedStateIfChanged(PaintMode::kNormal);
 }
 
@@ -826,6 +828,10 @@ bool MenuItemView::IsTraversableByKeyboard() const {
   return GetVisible() && (ignore_enabled || GetEnabled());
 }
 
+std::u16string MenuItemView::GetNewBadgeAccessibleDescription() {
+  return l10n_util::GetStringUTF16(IDS_NEW_BADGE_SCREEN_READER_MESSAGE);
+}
+
 MenuItemView::MenuItemView(MenuItemView* parent,
                            int command,
                            MenuItemView::Type type)
@@ -1049,11 +1055,11 @@ void MenuItemView::OnPaintImpl(gfx::Canvas* canvas, PaintMode mode) {
   PaintMinorIconAndText(canvas, colors.minor_fg_color);
 
   if (ShouldShowNewBadge()) {
-    NewBadge::DrawNewBadge(canvas, this,
-                           label_start +
-                               gfx::GetStringWidth(title(), font_list) +
-                               NewBadge::kNewBadgeHorizontalMargin,
-                           top_margin, font_list);
+    BadgePainter::PaintBadge(canvas, this,
+                             label_start +
+                                 gfx::GetStringWidth(title(), font_list) +
+                                 BadgePainter::kBadgeHorizontalMargin,
+                             top_margin, new_badge_text_, font_list);
   }
 }
 
@@ -1189,8 +1195,8 @@ MenuItemView::Colors MenuItemView::CalculateColors(
   return colors;
 }
 
-std::u16string MenuItemView::GetAccessibleName() const {
-  std::u16string item_text = accessible_name();
+std::u16string MenuItemView::CalculateAccessibleName() const {
+  std::u16string item_text = View::GetAccessibleName();
   if (!item_text.empty())
     return item_text;
 
@@ -1336,8 +1342,8 @@ MenuItemView::MenuItemDimensions MenuItemView::CalculateDimensions() const {
 
   if (ShouldShowNewBadge())
     dimensions.minor_text_width +=
-        NewBadge::GetNewBadgeSize(font_list).width() +
-        2 * NewBadge::kNewBadgeHorizontalMargin;
+        views::BadgePainter::GetBadgeSize(new_badge_text_, font_list).width() +
+        2 * BadgePainter::kBadgeHorizontalMargin;
 
   // Determine the height to use.
   int label_text_height = secondary_title().empty() ? font_list.GetHeight()
@@ -1433,6 +1439,11 @@ gfx::Insets MenuItemView::GetContainerMargins() const {
 }
 
 int MenuItemView::NonIconChildViewsCount() const {
+  // WARNING: if adding a new field that is checked here you may need to
+  // set `update_selection_based_state_in_view_herarchy_changed_` to false
+  // when setting the field and explicitly call
+  // UpdateSelectionBasedStateIfChanged(). See comment in header
+  // for details.
   return static_cast<int>(children().size()) - (icon_view_ ? 1 : 0) -
          (radio_check_image_view_ ? 1 : 0) -
          (submenu_arrow_image_view_ ? 1 : 0) - (vertical_separator_ ? 1 : 0);
@@ -1467,10 +1478,9 @@ bool MenuItemView::HasChecksOrRadioButtons() const {
     return true;
   if (!HasSubmenu())
     return false;
-  const auto menu_items = submenu_->GetMenuItems();
-  return std::any_of(
-      menu_items.cbegin(), menu_items.cend(),
-      [](const auto* item) { return item->HasChecksOrRadioButtons(); });
+  return base::ranges::any_of(submenu_->GetMenuItems(), [](const auto* item) {
+    return item->HasChecksOrRadioButtons();
+  });
 }
 
 void MenuItemView::UpdateSelectionBasedStateIfChanged(PaintMode mode) {
@@ -1506,8 +1516,8 @@ void MenuItemView::UpdateSelectionBasedState(bool paint_as_selected) {
     const SkColor radio_icon_color = GetColorProvider()->GetColor(
         toggled ? ui::kColorButtonForegroundChecked
                 : ui::kColorButtonForegroundUnchecked);
-    radio_check_image_view_->SetImage(
-        gfx::CreateVectorIcon(radio_icon, kMenuCheckSize, radio_icon_color));
+    radio_check_image_view_->SetImage(ui::ImageModel::FromVectorIcon(
+        radio_icon, radio_icon_color, kMenuCheckSize));
   }
 }
 

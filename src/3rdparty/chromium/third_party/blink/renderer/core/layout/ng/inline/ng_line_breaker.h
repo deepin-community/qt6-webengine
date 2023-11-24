@@ -1,10 +1,11 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_INLINE_NG_LINE_BREAKER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_INLINE_NG_LINE_BREAKER_H_
 
+#include "base/check_op.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/ng/exclusions/ng_line_layout_opportunity.h"
@@ -193,6 +194,7 @@ class CORE_EXPORT NGLineBreaker {
 
   void HandleFloat(const NGInlineItem&,
                    NGLineInfo*);
+  void HandleInitialLetter(const NGInlineItem&, NGLineInfo*);
   void HandleOutOfFlowPositioned(const NGInlineItem&, NGLineInfo*);
 
   void HandleOpenTag(const NGInlineItem&, NGLineInfo*);
@@ -261,6 +263,9 @@ class CORE_EXPORT NGLineBreaker {
   NGInlineNode node_;
 
   NGLineBreakerMode mode_;
+
+  // True if node_ is an initial letter box.
+  const bool is_initial_letter_box_;
 
   // True if node_ is an SVG <text>.
   const bool is_svg_text_;

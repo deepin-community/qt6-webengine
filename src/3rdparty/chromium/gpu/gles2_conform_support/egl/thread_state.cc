@@ -1,4 +1,4 @@
-// Copyright (c) 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,11 +22,12 @@
 #include "gpu/gles2_conform_support/egl/surface.h"
 #include "gpu/gles2_conform_support/egl/test_support.h"
 #include "ui/gl/gl_context.h"
+#include "ui/gl/gl_display.h"
 #include "ui/gl/gl_surface.h"
 #include "ui/gl/gl_switches.h"
 #include "ui/gl/init/gl_factory.h"
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
 #include "ui/ozone/public/ozone_platform.h"
 #endif
 
@@ -85,11 +86,12 @@ egl::ThreadState* ThreadState::Get() {
       // Need to call both Init and InitFromArgv, since Windows does not use
       // argc, argv in CommandLine::Init(argc, argv).
       command_line->InitFromArgv(argv);
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
       ui::OzonePlatform::InitializeForGPU(ui::OzonePlatform::InitParams());
 #endif
-      gl::init::InitializeGLNoExtensionsOneOff(/*init_bindings=*/true,
-                                               /*system_device_id=*/0);
+      gl::GLDisplay* display = gl::init::InitializeGLNoExtensionsOneOff(
+          /*init_bindings=*/true,
+          /*gpu_preference=*/gl::GpuPreference::kDefault);
       gpu::GpuFeatureInfo gpu_feature_info;
       if (!command_line->HasSwitch(switches::kDisableGpuDriverBugWorkarounds)) {
         gpu::GPUInfo gpu_info;
@@ -101,7 +103,7 @@ egl::ThreadState* ThreadState::Get() {
 
       gl::init::SetDisabledExtensionsPlatform(
           gpu_feature_info.disabled_extensions);
-      gl::init::InitializeExtensionSettingsOneOffPlatform();
+      gl::init::InitializeExtensionSettingsOneOffPlatform(display);
     }
 
     g_egl_default_display = new egl::Display();

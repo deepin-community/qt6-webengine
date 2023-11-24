@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,8 +12,8 @@ import android.os.HandlerThread;
 import androidx.annotation.Nullable;
 
 import org.chromium.base.Callback;
-import org.chromium.base.Consumer;
 import org.chromium.base.ThreadUtils;
+import org.chromium.components.metrics.AndroidMetricsLogConsumer;
 import org.chromium.components.metrics.AndroidMetricsLogUploader;
 
 /**
@@ -29,10 +29,12 @@ public abstract class GmsBridge {
     private static final Object sHandlerLock = new Object();
 
     protected GmsBridge() {
-        AndroidMetricsLogUploader.setUploader(new Consumer<byte[]>() {
+        AndroidMetricsLogUploader.setConsumer(new AndroidMetricsLogConsumer() {
             @Override
-            public void accept(byte[] data) {
+            public int log(byte[] data) {
                 logMetrics(data);
+                // Just pass 200 (HTTP OK) and pretend everything is peachy.
+                return 200;
             }
         });
     }

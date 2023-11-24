@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,9 @@
 #include <string>
 
 #include "base/logging.h"
+#include "base/memory/raw_ptr.h"
 #include "ui/ozone/platform/wayland/test/test_selection_device_manager.h"
+#include "ui/ozone/platform/wayland/test/test_wayland_server_thread.h"
 
 namespace wl {
 
@@ -26,7 +28,7 @@ void DataSourceSetActions(wl_client* client,
 }
 
 struct WlDataSourceImpl : public TestSelectionSource::Delegate {
-  explicit WlDataSourceImpl(TestDataSource* offer) : source_(offer) {}
+  explicit WlDataSourceImpl(TestDataSource* source) : source_(source) {}
   ~WlDataSourceImpl() override = default;
 
   WlDataSourceImpl(const WlDataSourceImpl&) = delete;
@@ -41,16 +43,23 @@ struct WlDataSourceImpl : public TestSelectionSource::Delegate {
 
   void SendFinished() override {
     wl_data_source_send_dnd_finished(source_->resource());
+    wl_client_flush(wl_resource_get_client(source_->resource()));
   }
 
   void SendCancelled() override {
     wl_data_source_send_cancelled(source_->resource());
+    wl_client_flush(wl_resource_get_client(source_->resource()));
+  }
+
+  void SendDndAction(uint32_t action) override {
+    wl_data_source_send_action(source_->resource(), action);
+    wl_client_flush(wl_resource_get_client(source_->resource()));
   }
 
   void OnDestroying() override { delete this; }
 
  private:
-  TestDataSource* const source_;
+  const raw_ptr<TestDataSource> source_;
 };
 
 }  // namespace

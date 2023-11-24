@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,20 +8,19 @@
 
 #include <fuzzer/FuzzedDataProvider.h>
 
-#include <algorithm>
 #include <limits>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/notreached.h"
+#include "base/ranges/algorithm.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/address_list.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/io_buffer.h"
@@ -35,6 +34,7 @@
 #include "net/dns/host_cache.h"
 #include "net/dns/host_resolver_manager.h"
 #include "net/dns/host_resolver_proc.h"
+#include "net/dns/host_resolver_system_task.h"
 #include "net/dns/mdns_client.h"
 #include "net/dns/public/util.h"
 #include "net/dns/resolve_context.h"
@@ -154,7 +154,8 @@ class FuzzedHostResolverProc : public HostResolverProc {
       base::WeakPtr<FuzzedDataProvider> data_provider)
       : HostResolverProc(nullptr),
         data_provider_(data_provider),
-        network_task_runner_(base::ThreadTaskRunnerHandle::Get()) {}
+        network_task_runner_(
+            base::SingleThreadTaskRunner::GetCurrentDefault()) {}
 
   FuzzedHostResolverProc(const FuzzedHostResolverProc&) = delete;
   FuzzedHostResolverProc& operator=(const FuzzedHostResolverProc&) = delete;
@@ -247,7 +248,7 @@ class FuzzedMdnsSocket : public DatagramServerSocket {
 
     // Maybe never receive any responses.
     if (data_provider_->ConsumeBool()) {
-      base::ThreadTaskRunnerHandle::Get()->PostTask(
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
           FROM_HERE,
           base::BindOnce(&FuzzedMdnsSocket::CompleteRecv,
                          weak_factory_.GetWeakPtr(), std::move(callback),
@@ -268,7 +269,7 @@ class FuzzedMdnsSocket : public DatagramServerSocket {
                  : data_provider_->PickValueInArray(kMdnsErrors);
     }
 
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(&FuzzedMdnsSocket::CompleteSend,
                        weak_factory_.GetWeakPtr(), std::move(callback)));
@@ -320,7 +321,7 @@ class FuzzedMdnsSocket : public DatagramServerSocket {
     if (data_provider_->ConsumeBool()) {
       std::string data =
           data_provider_->ConsumeRandomLengthString(buffer_length);
-      std::copy(data.begin(), data.end(), buffer->data());
+      base::ranges::copy(data, buffer->data());
       *out_address =
           IPEndPoint(FuzzIPAddress(data_provider_), FuzzPort(data_provider_));
       return data.size();
@@ -375,13 +376,13 @@ class FuzzedHostResolverManager : public HostResolverManager {
         socket_factory_(data_provider_),
         net_log_(net_log),
         data_provider_weak_factory_(data_provider) {
-    ProcTaskParams proc_task_params(
-        new FuzzedHostResolverProc(data_provider_weak_factory_.GetWeakPtr()),
+    HostResolverSystemTask::Params system_task_params(
+        base::MakeRefCounted<FuzzedHostResolverProc>(
+            data_provider_weak_factory_.GetWeakPtr()),
         // Retries are only used when the original request hangs, which this
         // class currently can't simulate.
         0 /* max_retry_attempts */);
-    set_proc_params_for_test(proc_task_params);
-    SetTaskRunnerForTesting(base::SequencedTaskRunnerHandle::Get());
+    set_host_resolver_system_params_for_test(system_task_params);  // IN-TEST
     SetMdnsSocketFactoryForTesting(
         std::make_unique<FuzzedMdnsSocketFactory>(data_provider_));
     std::unique_ptr<DnsClient> dns_client = DnsClient::CreateClientForTesting(

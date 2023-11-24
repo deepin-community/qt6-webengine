@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 
 #include <stddef.h>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "net/third_party/quiche/src/quiche/quic/core/quic_connection.h"
 #include "net/third_party/quiche/src/quiche/quic/core/quic_packet_writer.h"
@@ -65,7 +65,7 @@ class QuicSimpleServerPacketWriter : public quic::QuicPacketWriter {
   quic::QuicDispatcher* dispatcher_;
 
   // Whether a write is currently in flight.
-  bool write_blocked_;
+  bool write_blocked_ = false;
 
   base::WeakPtrFactory<QuicSimpleServerPacketWriter> weak_factory_{this};
 };

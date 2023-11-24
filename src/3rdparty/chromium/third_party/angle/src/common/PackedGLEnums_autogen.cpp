@@ -1265,9 +1265,9 @@ ProvokingVertexConvention FromGLenum<ProvokingVertexConvention>(GLenum from)
 {
     switch (from)
     {
-        case GL_FIRST_VERTEX_CONVENTION:
+        case GL_FIRST_VERTEX_CONVENTION_ANGLE:
             return ProvokingVertexConvention::FirstVertexConvention;
-        case GL_LAST_VERTEX_CONVENTION:
+        case GL_LAST_VERTEX_CONVENTION_ANGLE:
             return ProvokingVertexConvention::LastVertexConvention;
         default:
             return ProvokingVertexConvention::InvalidEnum;
@@ -1279,9 +1279,9 @@ GLenum ToGLenum(ProvokingVertexConvention from)
     switch (from)
     {
         case ProvokingVertexConvention::FirstVertexConvention:
-            return GL_FIRST_VERTEX_CONVENTION;
+            return GL_FIRST_VERTEX_CONVENTION_ANGLE;
         case ProvokingVertexConvention::LastVertexConvention:
-            return GL_LAST_VERTEX_CONVENTION;
+            return GL_LAST_VERTEX_CONVENTION_ANGLE;
         default:
             UNREACHABLE();
             return 0;
@@ -1293,10 +1293,10 @@ std::ostream &operator<<(std::ostream &os, ProvokingVertexConvention value)
     switch (value)
     {
         case ProvokingVertexConvention::FirstVertexConvention:
-            os << "GL_FIRST_VERTEX_CONVENTION";
+            os << "GL_FIRST_VERTEX_CONVENTION_ANGLE";
             break;
         case ProvokingVertexConvention::LastVertexConvention:
-            os << "GL_LAST_VERTEX_CONVENTION";
+            os << "GL_LAST_VERTEX_CONVENTION_ANGLE";
             break;
         default:
             os << "GL_INVALID_ENUM";
@@ -1495,6 +1495,86 @@ std::ostream &operator<<(std::ostream &os, ShadingModel value)
             break;
         case ShadingModel::Smooth:
             os << "GL_SMOOTH";
+            break;
+        default:
+            os << "GL_INVALID_ENUM";
+            break;
+    }
+    return os;
+}
+
+template <>
+ShadingRate FromGLenum<ShadingRate>(GLenum from)
+{
+    switch (from)
+    {
+        case GL_NONE:
+            return ShadingRate::Undefined;
+        case GL_SHADING_RATE_1X1_PIXELS_QCOM:
+            return ShadingRate::_1x1;
+        case GL_SHADING_RATE_1X2_PIXELS_QCOM:
+            return ShadingRate::_1x2;
+        case GL_SHADING_RATE_2X1_PIXELS_QCOM:
+            return ShadingRate::_2x1;
+        case GL_SHADING_RATE_2X2_PIXELS_QCOM:
+            return ShadingRate::_2x2;
+        case GL_SHADING_RATE_4X2_PIXELS_QCOM:
+            return ShadingRate::_4x2;
+        case GL_SHADING_RATE_4X4_PIXELS_QCOM:
+            return ShadingRate::_4x4;
+        default:
+            return ShadingRate::InvalidEnum;
+    }
+}
+
+GLenum ToGLenum(ShadingRate from)
+{
+    switch (from)
+    {
+        case ShadingRate::Undefined:
+            return GL_NONE;
+        case ShadingRate::_1x1:
+            return GL_SHADING_RATE_1X1_PIXELS_QCOM;
+        case ShadingRate::_1x2:
+            return GL_SHADING_RATE_1X2_PIXELS_QCOM;
+        case ShadingRate::_2x1:
+            return GL_SHADING_RATE_2X1_PIXELS_QCOM;
+        case ShadingRate::_2x2:
+            return GL_SHADING_RATE_2X2_PIXELS_QCOM;
+        case ShadingRate::_4x2:
+            return GL_SHADING_RATE_4X2_PIXELS_QCOM;
+        case ShadingRate::_4x4:
+            return GL_SHADING_RATE_4X4_PIXELS_QCOM;
+        default:
+            UNREACHABLE();
+            return 0;
+    }
+}
+
+std::ostream &operator<<(std::ostream &os, ShadingRate value)
+{
+    switch (value)
+    {
+        case ShadingRate::Undefined:
+            os << "GL_NONE";
+            break;
+        case ShadingRate::_1x1:
+            os << "GL_SHADING_RATE_1X1_PIXELS_QCOM";
+            break;
+        case ShadingRate::_1x2:
+            os << "GL_SHADING_RATE_1X2_PIXELS_QCOM";
+            break;
+        case ShadingRate::_2x1:
+            os << "GL_SHADING_RATE_2X1_PIXELS_QCOM";
+            break;
+        case ShadingRate::_2x2:
+            os << "GL_SHADING_RATE_2X2_PIXELS_QCOM";
+            break;
+        case ShadingRate::_4x2:
+            os << "GL_SHADING_RATE_4X2_PIXELS_QCOM";
+            break;
+        case ShadingRate::_4x4:
+            os << "GL_SHADING_RATE_4X4_PIXELS_QCOM";
             break;
         default:
             os << "GL_INVALID_ENUM";

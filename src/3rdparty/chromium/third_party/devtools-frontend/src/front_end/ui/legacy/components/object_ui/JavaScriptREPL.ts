@@ -11,17 +11,27 @@ import {RemoteObjectPreviewFormatter} from './RemoteObjectPreviewFormatter.js';
 export class JavaScriptREPL {
   static wrapObjectLiteral(code: string): string {
     // Only parenthesize what appears to be an object literal.
-    if (!(/^\s*\{/.test(code) && /\}\s*$/.test(code))) {
+    const result = /^\s*\{\s*(.*)\s*\}[\s;]*$/.exec(code);
+    if (result === null) {
       return code;
+    }
+    const [, body] = result;
+    let level = 0;
+    for (const c of body) {
+      if (c === '{') {
+        level++;
+      } else if (c === '}' && --level < 0) {
+        return code;
+      }
     }
 
     const parse = (async(): Promise<number> => 0).constructor;
     try {
-      // Check if the code can be interpreted as an expression.
-      parse('return ' + code + ';');
+      // Check if the body can be interpreted as an expression.
+      parse('return {' + body + '};');
 
       // No syntax error! Does it work parenthesized?
-      const wrappedCode = '(' + code + ')';
+      const wrappedCode = '({' + body + '})';
       parse(wrappedCode);
 
       return wrappedCode;
@@ -30,13 +40,9 @@ export class JavaScriptREPL {
     }
   }
 
-  static preprocessExpression(text: string): string {
-    return JavaScriptREPL.wrapObjectLiteral(text);
-  }
-
   static async evaluateAndBuildPreview(
       text: string, throwOnSideEffect: boolean, replMode: boolean, timeout?: number, allowErrors?: boolean,
-      objectGroup?: string, awaitPromise: boolean = false): Promise<{
+      objectGroup?: string, awaitPromise: boolean = false, silent: boolean = false): Promise<{
     preview: DocumentFragment,
     result: SDK.RuntimeModel.EvaluationResult|null,
   }> {
@@ -46,7 +52,7 @@ export class JavaScriptREPL {
       return {preview: document.createDocumentFragment(), result: null};
     }
 
-    const expression = JavaScriptREPL.preprocessExpression(text);
+    const expression = JavaScriptREPL.wrapObjectLiteral(text);
     const options = {
       expression: expression,
       generatePreview: true,
@@ -56,7 +62,7 @@ export class JavaScriptREPL {
       objectGroup: objectGroup,
       disableBreaks: true,
       replMode: replMode,
-      silent: undefined,
+      silent: silent,
       returnByValue: undefined,
       allowUnsafeEvalBlockedByCSP: undefined,
     };

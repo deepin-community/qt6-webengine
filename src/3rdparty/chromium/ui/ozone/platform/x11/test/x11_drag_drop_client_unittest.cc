@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,15 +9,15 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkPath.h"
@@ -72,7 +72,7 @@ class ClientMessageEventCollector {
   x11::Window window_;
 
   // Not owned.
-  TestDragDropClient* client_;
+  raw_ptr<TestDragDropClient> client_;
 
   std::vector<x11::ClientMessageEvent> events_;
 };
@@ -96,7 +96,7 @@ class TestMoveLoop : public X11MoveLoop {
 
  private:
   // Not owned.
-  X11MoveLoopDelegate* delegate_;
+  raw_ptr<X11MoveLoopDelegate> delegate_;
 
   // Ends the move loop.
   base::OnceClosure quit_closure_;
@@ -155,7 +155,7 @@ class SimpleTestDragDropClient : public XDragDropClient,
   x11::Window target_window_ = x11::Window::None;
 
   // The move loop. Not owned.
-  TestMoveLoop* loop_ = nullptr;
+  raw_ptr<TestMoveLoop> loop_ = nullptr;
 
   base::OnceClosure quit_closure_;
 };
@@ -296,7 +296,7 @@ bool SimpleTestDragDropClient::IsMoveLoopRunning() {
 std::unique_ptr<X11MoveLoop> SimpleTestDragDropClient::CreateMoveLoop(
     X11MoveLoopDelegate* delegate) {
   loop_ = new TestMoveLoop(delegate);
-  return base::WrapUnique(loop_);
+  return base::WrapUnique(loop_.get());
 }
 
 DragOperation SimpleTestDragDropClient::StartDragAndDrop(
@@ -614,14 +614,14 @@ void BasicStep3(TestDragDropClient* client, x11::Window toplevel) {
 TEST_F(X11DragDropClientTest, Basic) {
   x11::Window toplevel = static_cast<x11::Window>(1);
 
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&BasicStep2, client(), toplevel));
   DragOperation result = StartDragAndDrop();
   EXPECT_EQ(DragOperation::kCopy, result);
 
   // Do another drag and drop to test that the data is properly cleaned up as a
   // result of the XdndFinished message.
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&BasicStep3, client(), toplevel));
   result = StartDragAndDrop();
   EXPECT_EQ(DragOperation::kCopy, result);
@@ -655,7 +655,7 @@ void TargetDoesNotRespondStep2(TestDragDropClient* client) {
 // DNDCollectionWindow is an example of an XdndAware target which does not
 // respond to XdndPosition messages at all.
 TEST_F(X11DragDropClientTest, TargetDoesNotRespond) {
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&TargetDoesNotRespondStep2, client()));
   DragOperation result = StartDragAndDrop();
   EXPECT_EQ(DragOperation::kNone, result);
@@ -700,7 +700,7 @@ void QueuePositionStep2(TestDragDropClient* client) {
 // Test that XdndPosition messages are queued till the pending XdndPosition
 // message is acked via an XdndStatus message.
 TEST_F(X11DragDropClientTest, QueuePosition) {
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&QueuePositionStep2, client()));
   DragOperation result = StartDragAndDrop();
   EXPECT_EQ(DragOperation::kCopy, result);
@@ -752,7 +752,7 @@ void TargetChangesStep2(TestDragDropClient* client) {
 
 // Test the behavior when the target changes during a drag.
 TEST_F(X11DragDropClientTest, TargetChanges) {
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&TargetChangesStep2, client()));
   DragOperation result = StartDragAndDrop();
   EXPECT_EQ(DragOperation::kCopy, result);
@@ -821,13 +821,13 @@ void RejectAfterMouseReleaseStep3(TestDragDropClient* client) {
 // Test that the source sends XdndLeave instead of XdndDrop if the drag
 // operation is rejected after the mouse is released.
 TEST_F(X11DragDropClientTest, RejectAfterMouseRelease) {
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&RejectAfterMouseReleaseStep2, client()));
   DragOperation result = StartDragAndDrop();
   EXPECT_EQ(DragOperation::kNone, result);
 
   // Repeat the test but reject the drop in the XdndFinished message instead.
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&RejectAfterMouseReleaseStep3, client()));
   result = StartDragAndDrop();
   EXPECT_EQ(DragOperation::kNone, result);

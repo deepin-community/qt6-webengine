@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,9 @@
 #include <ostream>
 #include <sstream>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "media/base/video_types.h"
@@ -68,17 +69,17 @@ std::unique_ptr<ImageProcessor> ImageProcessor::Create(
     VideoRotation relative_rotation,
     ErrorCB error_cb,
     scoped_refptr<base::SequencedTaskRunner> client_task_runner) {
-  scoped_refptr<base::SequencedTaskRunner> backend_task_runner =
-      base::ThreadPool::CreateSequencedTaskRunner({});
   auto wrapped_error_cb = base::BindRepeating(
       base::IgnoreResult(&base::SequencedTaskRunner::PostTask),
       client_task_runner, FROM_HERE, std::move(error_cb));
-  std::unique_ptr<ImageProcessorBackend> backend = create_backend_cb.Run(
-      input_config, output_config, output_mode, relative_rotation,
-      std::move(wrapped_error_cb), backend_task_runner);
+  std::unique_ptr<ImageProcessorBackend> backend =
+      create_backend_cb.Run(input_config, output_config, output_mode,
+                            relative_rotation, std::move(wrapped_error_cb));
   if (!backend)
     return nullptr;
 
+  scoped_refptr<base::SequencedTaskRunner> backend_task_runner =
+      backend->task_runner();
   return base::WrapUnique(new ImageProcessor(std::move(backend),
                                              std::move(client_task_runner),
                                              std::move(backend_task_runner)));

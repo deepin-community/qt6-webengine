@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/task/task_traits.h"
@@ -72,7 +72,7 @@ void WaylandDataDeviceBase::RegisterDeferredReadCallback() {
 
   wl_callback_add_listener(deferred_read_callback_.get(), &kListener, this);
 
-  connection_->ScheduleFlush();
+  connection_->Flush();
 }
 
 void WaylandDataDeviceBase::RegisterDeferredReadClosure(

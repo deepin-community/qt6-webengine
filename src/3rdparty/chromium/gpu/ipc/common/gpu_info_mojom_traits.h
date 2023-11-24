@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -77,6 +77,11 @@ struct GPU_EXPORT
   static int cuda_compute_capability_major(
       const gpu::GPUInfo::GPUDevice& input) {
     return input.cuda_compute_capability_major;
+  }
+
+  static gl::GpuPreference gpu_preference(
+      const gpu::GPUInfo::GPUDevice& input) {
+    return input.gpu_preference;
   }
 };
 
@@ -303,6 +308,18 @@ struct GPU_EXPORT StructTraits<gpu::mojom::GpuInfoDataView, gpu::GPUInfo> {
     return input.machine_model_version;
   }
 
+  static const std::string& gl_implementation(const gpu::GPUInfo& input) {
+    return input.gl_implementation;
+  }
+
+  static const std::string& angle_implementation(const gpu::GPUInfo& input) {
+    return input.angle_implementation;
+  }
+
+  static const std::string& display_type(const gpu::GPUInfo& input) {
+    return input.display_type;
+  }
+
   static const std::string& gl_version(const gpu::GPUInfo& input) {
     return input.gl_version;
   }
@@ -379,6 +396,10 @@ struct GPU_EXPORT StructTraits<gpu::mojom::GpuInfoDataView, gpu::GPUInfo> {
 
   static const gpu::OverlayInfo& overlay_info(const gpu::GPUInfo& input) {
     return input.overlay_info;
+  }
+
+  static bool shared_image_d3d(const gpu::GPUInfo& input) {
+    return input.shared_image_d3d;
   }
 #endif
   static const gpu::VideoDecodeAcceleratorSupportedProfiles&

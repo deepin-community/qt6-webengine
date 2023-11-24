@@ -1,10 +1,11 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "extensions/renderer/ipc_message_sender.h"
 
 #include <map>
+#include <utility>
 
 #include "base/guid.h"
 #include "base/memory/weak_ptr.h"
@@ -18,11 +19,12 @@
 #include "extensions/common/features/feature.h"
 #include "extensions/common/mojom/event_router.mojom.h"
 #include "extensions/common/mojom/frame.mojom.h"
+#include "extensions/common/mojom/renderer_host.mojom.h"
 #include "extensions/common/trace_util.h"
+#include "extensions/renderer/api/messaging/message_target.h"
 #include "extensions/renderer/dispatcher.h"
 #include "extensions/renderer/extension_frame_helper.h"
 #include "extensions/renderer/extensions_renderer_client.h"
-#include "extensions/renderer/message_target.h"
 #include "extensions/renderer/native_extension_bindings_system.h"
 #include "extensions/renderer/script_context.h"
 #include "extensions/renderer/trace_util.h"
@@ -110,7 +112,7 @@ class MainThreadIPCMessageSender : public IPCMessageSender {
 
   void SendAddFilteredEventListenerIPC(ScriptContext* context,
                                        const std::string& event_name,
-                                       const base::DictionaryValue& filter,
+                                       const base::Value::Dict& filter,
                                        bool is_lazy) override {
     DCHECK(!context->IsForServiceWorker());
     DCHECK_EQ(kMainThreadId, content::WorkerThread::GetCurrentId());
@@ -121,7 +123,7 @@ class MainThreadIPCMessageSender : public IPCMessageSender {
 
   void SendRemoveFilteredEventListenerIPC(ScriptContext* context,
                                           const std::string& event_name,
-                                          const base::DictionaryValue& filter,
+                                          const base::Value::Dict& filter,
                                           bool remove_lazy_listener) override {
     DCHECK(!context->IsForServiceWorker());
     DCHECK_EQ(kMainThreadId, content::WorkerThread::GetCurrentId());
@@ -172,7 +174,7 @@ class MainThreadIPCMessageSender : public IPCMessageSender {
         if (target.document_id)
           info.document_id = *target.document_id;
         render_frame->Send(new ExtensionHostMsg_OpenChannelToTab(
-            frame_context, info, extension->id(), channel_name, port_id));
+            frame_context, info, channel_name, port_id));
         break;
       }
       case MessageTarget::NATIVE_APP:
@@ -205,18 +207,19 @@ class MainThreadIPCMessageSender : public IPCMessageSender {
         PortContext::ForFrame(routing_id), port_id));
   }
 
-  void SendActivityLogIPC(
-      const ExtensionId& extension_id,
-      ActivityLogCallType call_type,
-      const ExtensionHostMsg_APIActionOrEvent_Params& params) override {
+  void SendActivityLogIPC(const ExtensionId& extension_id,
+                          ActivityLogCallType call_type,
+                          const std::string& call_name,
+                          base::Value::List args,
+                          const std::string& extra) override {
     switch (call_type) {
       case ActivityLogCallType::APICALL:
-        render_thread_->Send(new ExtensionHostMsg_AddAPIActionToActivityLog(
-            extension_id, params));
+        GetRendererHost()->AddAPIActionToActivityLog(extension_id, call_name,
+                                                     std::move(args), extra);
         break;
       case ActivityLogCallType::EVENT:
-        render_thread_->Send(
-            new ExtensionHostMsg_AddEventToActivityLog(extension_id, params));
+        GetRendererHost()->AddEventToActivityLog(extension_id, call_name,
+                                                 std::move(args), extra);
         break;
     }
   }
@@ -225,11 +228,13 @@ class MainThreadIPCMessageSender : public IPCMessageSender {
   void OnResponse(int request_id,
                   bool success,
                   base::Value::List response,
-                  const std::string& error) {
+                  const std::string& error,
+                  mojom::ExtraResponseDataPtr response_data) {
     ExtensionsRendererClient::Get()
         ->GetDispatcher()
         ->bindings_system()
-        ->HandleResponse(request_id, success, std::move(response), error);
+        ->HandleResponse(request_id, success, std::move(response), error,
+                         std::move(response_data));
   }
 
   mojom::EventRouter* GetEventRouter() {
@@ -240,8 +245,17 @@ class MainThreadIPCMessageSender : public IPCMessageSender {
     return event_router_remote_.get();
   }
 
+  mojom::RendererHost* GetRendererHost() {
+    if (!renderer_host_.is_bound()) {
+      render_thread_->GetChannel()->GetRemoteAssociatedInterface(
+          &renderer_host_);
+    }
+    return renderer_host_.get();
+  }
+
   content::RenderThread* const render_thread_;
   mojo::AssociatedRemote<mojom::EventRouter> event_router_remote_;
+  mojo::AssociatedRemote<mojom::RendererHost> renderer_host_;
 
   base::WeakPtrFactory<MainThreadIPCMessageSender> weak_ptr_factory_{this};
 };
@@ -337,7 +351,7 @@ class WorkerThreadIPCMessageSender : public IPCMessageSender {
 
   void SendAddFilteredEventListenerIPC(ScriptContext* context,
                                        const std::string& event_name,
-                                       const base::DictionaryValue& filter,
+                                       const base::Value::Dict& filter,
                                        bool is_lazy) override {
     DCHECK(context->IsForServiceWorker());
     DCHECK_NE(kMainThreadId, content::WorkerThread::GetCurrentId());
@@ -352,7 +366,7 @@ class WorkerThreadIPCMessageSender : public IPCMessageSender {
 
   void SendRemoveFilteredEventListenerIPC(ScriptContext* context,
                                           const std::string& event_name,
-                                          const base::DictionaryValue& filter,
+                                          const base::Value::Dict& filter,
                                           bool remove_lazy_listener) override {
     DCHECK(context->IsForServiceWorker());
     DCHECK_NE(kMainThreadId, content::WorkerThread::GetCurrentId());
@@ -396,8 +410,7 @@ class WorkerThreadIPCMessageSender : public IPCMessageSender {
         info.tab_id = *target.tab_id;
         info.frame_id = *target.frame_id;
         dispatcher_->Send(new ExtensionHostMsg_OpenChannelToTab(
-            PortContextForCurrentWorker(), info, extension->id(), channel_name,
-            port_id));
+            PortContextForCurrentWorker(), info, channel_name, port_id));
         break;
       }
       case MessageTarget::NATIVE_APP:
@@ -434,10 +447,15 @@ class WorkerThreadIPCMessageSender : public IPCMessageSender {
         PortContextForCurrentWorker(), port_id));
   }
 
-  void SendActivityLogIPC(
-      const ExtensionId& extension_id,
-      ActivityLogCallType call_type,
-      const ExtensionHostMsg_APIActionOrEvent_Params& params) override {
+  void SendActivityLogIPC(const ExtensionId& extension_id,
+                          ActivityLogCallType call_type,
+                          const std::string& call_name,
+                          base::Value::List args,
+                          const std::string& extra) override {
+    ExtensionHostMsg_APIActionOrEvent_Params params;
+    params.api_call = call_name;
+    params.arguments = std::move(args);
+    params.extra = extra;
     switch (call_type) {
       case ActivityLogCallType::APICALL:
         dispatcher_->Send(new ExtensionHostMsg_AddAPIActionToActivityLog(
@@ -472,7 +490,8 @@ class WorkerThreadIPCMessageSender : public IPCMessageSender {
 
 }  // namespace
 
-IPCMessageSender::IPCMessageSender() {}
+IPCMessageSender::IPCMessageSender() = default;
+
 IPCMessageSender::~IPCMessageSender() = default;
 
 // static

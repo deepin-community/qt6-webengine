@@ -1,11 +1,5 @@
-# Use system libraries, fixed upstream in 6.5
-system-openjpeg2.patch
-
-# GCC-13
-gcc-13.patch
-
 # Don't do shift optimisation in ffmpeg, fails on x86
-ffmpeg-remove-x86-optimization.patch
+ffmpeg-x86-optimization.patch
 
 # remove catapult
 remove_catapult_3rdparty.patch

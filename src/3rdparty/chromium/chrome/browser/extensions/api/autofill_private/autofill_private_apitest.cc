@@ -1,8 +1,9 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/command_line.h"
+#include "base/test/metrics/user_action_tester.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/autofill/autofill_uitest_util.h"
@@ -81,6 +82,52 @@ IN_PROC_BROWSER_TEST_P(AutofillPrivateApiTest, AddAndUpdateAddress) {
 
 IN_PROC_BROWSER_TEST_P(AutofillPrivateApiTest, AddAndUpdateCreditCard) {
   EXPECT_TRUE(RunAutofillSubtest("addAndUpdateCreditCard")) << message_;
+}
+
+IN_PROC_BROWSER_TEST_P(AutofillPrivateApiTest, AddNewIban_NoNickname) {
+  base::UserActionTester user_action_tester;
+  EXPECT_TRUE(RunAutofillSubtest("addNewIbanNoNickname")) << message_;
+  EXPECT_EQ(1, user_action_tester.GetActionCount("AutofillIbanAdded"));
+  EXPECT_EQ(0,
+            user_action_tester.GetActionCount("AutofillIbanAddedWithNickname"));
+}
+
+IN_PROC_BROWSER_TEST_P(AutofillPrivateApiTest, AddNewIban_WithNickname) {
+  base::UserActionTester user_action_tester;
+  EXPECT_TRUE(RunAutofillSubtest("addNewIbanWithNickname")) << message_;
+  EXPECT_EQ(1, user_action_tester.GetActionCount("AutofillIbanAdded"));
+  EXPECT_EQ(1,
+            user_action_tester.GetActionCount("AutofillIbanAddedWithNickname"));
+}
+
+IN_PROC_BROWSER_TEST_P(AutofillPrivateApiTest, noChangesToExistingIban) {
+  base::UserActionTester user_action_tester;
+  EXPECT_TRUE(RunAutofillSubtest("noChangesToExistingIban")) << message_;
+  EXPECT_EQ(0, user_action_tester.GetActionCount("AutofillIbanEdited"));
+  EXPECT_EQ(
+      0, user_action_tester.GetActionCount("AutofillIbanEditedWithNickname"));
+}
+
+IN_PROC_BROWSER_TEST_P(AutofillPrivateApiTest, updateExistingIbanNoNickname) {
+  base::UserActionTester user_action_tester;
+  EXPECT_TRUE(RunAutofillSubtest("updateExistingIbanNoNickname")) << message_;
+  EXPECT_EQ(1, user_action_tester.GetActionCount("AutofillIbanEdited"));
+  EXPECT_EQ(
+      0, user_action_tester.GetActionCount("AutofillIbanEditedWithNickname"));
+}
+
+IN_PROC_BROWSER_TEST_P(AutofillPrivateApiTest, updateExistingIbanWithNickname) {
+  base::UserActionTester user_action_tester;
+  EXPECT_TRUE(RunAutofillSubtest("updateExistingIbanWithNickname")) << message_;
+  EXPECT_EQ(1, user_action_tester.GetActionCount("AutofillIbanEdited"));
+  EXPECT_EQ(
+      1, user_action_tester.GetActionCount("AutofillIbanEditedWithNickname"));
+}
+
+IN_PROC_BROWSER_TEST_P(AutofillPrivateApiTest, removeExistingIban) {
+  base::UserActionTester user_action_tester;
+  EXPECT_TRUE(RunAutofillSubtest("removeExistingIban")) << message_;
+  EXPECT_EQ(1, user_action_tester.GetActionCount("AutofillIbanDeleted"));
 }
 
 }  // namespace extensions

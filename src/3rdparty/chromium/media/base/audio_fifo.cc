@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -56,15 +56,20 @@ int AudioFifo::frames() const {
 }
 
 void AudioFifo::Push(const AudioBus* source) {
+  Push(source, source->frames());
+}
+
+void AudioFifo::Push(const AudioBus* source, int source_size) {
   DCHECK(source);
   DCHECK_EQ(source->channels(), audio_bus_->channels());
+  DCHECK_LE(source_size, source->frames());
 
   // Ensure that there is space for the new data in the FIFO.
-  const int source_size = source->frames();
   CHECK_LE(source_size + frames(), max_frames_);
 
   TRACE_EVENT2(TRACE_DISABLED_BY_DEFAULT("audio"), "AudioFifo::Push", "this",
                static_cast<void*>(this), "frames", source_size);
+
   // Figure out if wrapping is needed and if so what segment sizes we need
   // when adding the new audio bus content to the FIFO.
   int append_size = 0;

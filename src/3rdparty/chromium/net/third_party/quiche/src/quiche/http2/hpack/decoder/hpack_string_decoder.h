@@ -19,8 +19,8 @@
 #include "quiche/http2/decoder/decode_buffer.h"
 #include "quiche/http2/decoder/decode_status.h"
 #include "quiche/http2/hpack/varint/hpack_varint_decoder.h"
-#include "quiche/http2/platform/api/http2_logging.h"
 #include "quiche/common/platform/api/quiche_export.h"
+#include "quiche/common/platform/api/quiche_logging.h"
 
 namespace http2 {
 
@@ -33,7 +33,7 @@ namespace http2 {
 // Resume() when more input is available, repeating until kDecodeInProgress is
 // not returned. If kDecodeDone or kDecodeError is returned, then Resume() must
 // not be called until Start() has been called to start decoding a new string.
-class QUICHE_EXPORT_PRIVATE HpackStringDecoder {
+class QUICHE_EXPORT HpackStringDecoder {
  public:
   enum StringDecoderState {
     kStartDecodingLength,
@@ -81,8 +81,8 @@ class QUICHE_EXPORT_PRIVATE HpackStringDecoder {
     while (true) {
       switch (state_) {
         case kStartDecodingLength:
-          HTTP2_DVLOG(2) << "kStartDecodingLength: db->Remaining="
-                         << db->Remaining();
+          QUICHE_DVLOG(2) << "kStartDecodingLength: db->Remaining="
+                          << db->Remaining();
           if (!StartDecodingLength(db, cb, &status)) {
             // The length is split across decode buffers.
             return status;
@@ -99,13 +99,13 @@ class QUICHE_EXPORT_PRIVATE HpackStringDecoder {
           ABSL_FALLTHROUGH_INTENDED;
 
         case kDecodingString:
-          HTTP2_DVLOG(2) << "kDecodingString: db->Remaining=" << db->Remaining()
-                         << "    remaining_=" << remaining_;
+          QUICHE_DVLOG(2) << "kDecodingString: db->Remaining="
+                          << db->Remaining() << "    remaining_=" << remaining_;
           return DecodeString(db, cb);
 
         case kResumeDecodingLength:
-          HTTP2_DVLOG(2) << "kResumeDecodingLength: db->Remaining="
-                         << db->Remaining();
+          QUICHE_DVLOG(2) << "kResumeDecodingLength: db->Remaining="
+                          << db->Remaining();
           if (!ResumeDecodingLength(db, cb, &status)) {
             return status;
           }
@@ -124,8 +124,7 @@ class QUICHE_EXPORT_PRIVATE HpackStringDecoder {
   // If the length is not fully decoded, case state_ is set appropriately
   // for the next call to Resume.
   template <class Listener>
-  bool StartDecodingLength(DecodeBuffer* db,
-                           Listener* cb,
+  bool StartDecodingLength(DecodeBuffer* db, Listener* cb,
                            DecodeStatus* status) {
     if (db->Empty()) {
       *status = DecodeStatus::kDecodeInProgress;
@@ -151,8 +150,7 @@ class QUICHE_EXPORT_PRIVATE HpackStringDecoder {
   // If the length is not fully decoded, case state_ is set appropriately
   // for the next call to Resume.
   template <class Listener>
-  bool ResumeDecodingLength(DecodeBuffer* db,
-                            Listener* cb,
+  bool ResumeDecodingLength(DecodeBuffer* db, Listener* cb,
                             DecodeStatus* status) {
     QUICHE_DCHECK_EQ(state_, kResumeDecodingLength);
     *status = length_decoder_.Resume(db);
@@ -202,8 +200,8 @@ class QUICHE_EXPORT_PRIVATE HpackStringDecoder {
   bool huffman_encoded_ = false;
 };
 
-QUICHE_EXPORT_PRIVATE std::ostream& operator<<(std::ostream& out,
-                                               const HpackStringDecoder& v);
+QUICHE_EXPORT std::ostream& operator<<(std::ostream& out,
+                                       const HpackStringDecoder& v);
 
 }  // namespace http2
 #endif  // QUICHE_HTTP2_HPACK_DECODER_HPACK_STRING_DECODER_H_

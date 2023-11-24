@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,11 +10,11 @@
 #include <memory>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/component_export.h"
 #include "base/containers/enum_set.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
+#include "base/functional/callback.h"
 #include "base/process/process.h"
 #include "base/types/pass_key.h"
 #include "components/services/filesystem/public/mojom/types.mojom.h"
@@ -347,7 +347,7 @@ class FileSystemOperation {
   //
   // This function is used only by Pepper as of writing.
   virtual void OpenFile(const FileSystemURL& path,
-                        int file_flags,
+                        uint32_t file_flags,
                         OpenFileCallback callback) = 0;
 
   // Creates a local snapshot file for a given |path| and returns the

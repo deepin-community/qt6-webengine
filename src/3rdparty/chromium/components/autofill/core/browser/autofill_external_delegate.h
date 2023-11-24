@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,13 +8,14 @@
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/functional/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "components/autofill/core/browser/ui/autofill_popup_delegate.h"
 #include "components/autofill/core/browser/ui/suggestion.h"
+#include "components/autofill/core/common/aliases.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "ui/gfx/geometry/rect_f.h"
@@ -40,7 +41,7 @@ class AutofillExternalDelegate : public AutofillPopupDelegate {
   AutofillExternalDelegate(const AutofillExternalDelegate&) = delete;
   AutofillExternalDelegate& operator=(const AutofillExternalDelegate&) = delete;
 
-  virtual ~AutofillExternalDelegate();
+  ~AutofillExternalDelegate() override;
 
   // AutofillPopupDelegate implementation.
   void OnPopupShown() override;
@@ -48,11 +49,8 @@ class AutofillExternalDelegate : public AutofillPopupDelegate {
   void OnPopupSuppressed() override;
   void DidSelectSuggestion(const std::u16string& value,
                            int frontend_id,
-                           const std::string& backend_id) override;
-  void DidAcceptSuggestion(const std::u16string& value,
-                           int frontend_id,
-                           const std::string& backend_id,
-                           int position) override;
+                           const Suggestion::BackendId& backend_id) override;
+  void DidAcceptSuggestion(const Suggestion& suggestion, int position) override;
   bool GetDeletionConfirmationText(const std::u16string& value,
                                    int frontend_id,
                                    std::u16string* title,
@@ -73,22 +71,24 @@ class AutofillExternalDelegate : public AutofillPopupDelegate {
 
   void RegisterDeletionCallback(base::OnceClosure deletion_callback) override;
 
-  // Records and associates a query_id with web form data.  Called
-  // when the renderer posts an Autofill query to the browser. |bounds|
+  // Called when the renderer posts an Autofill query to the browser. |bounds|
   // is window relative. We might not want to display the warning if a website
   // has disabled Autocomplete because they have their own popup, and showing
   // our popup on to of theirs would be a poor user experience.
-  virtual void OnQuery(int query_id,
-                       const FormData& form,
+  //
+  // TODO(crbug.com/1117028): Storing `form` and `field` in member variables
+  // breaks the cache.
+  virtual void OnQuery(const FormData& form,
                        const FormFieldData& field,
                        const gfx::RectF& element_bounds);
 
   // Records query results and correctly formats them before sending them off
   // to be displayed.  Called when an Autofill query result is available.
-  virtual void OnSuggestionsReturned(int query_id,
-                                     const std::vector<Suggestion>& suggestions,
-                                     bool autoselect_first_suggestion,
-                                     bool is_all_server_suggestions = false);
+  virtual void OnSuggestionsReturned(
+      FieldGlobalId field_id,
+      const std::vector<Suggestion>& suggestions,
+      AutoselectFirstSuggestion autoselect_first_suggestion,
+      bool is_all_server_suggestions = false);
 
   // Returns true if there is a screen reader installed on the machine.
   virtual bool HasActiveScreenReader() const;
@@ -117,7 +117,7 @@ class AutofillExternalDelegate : public AutofillPopupDelegate {
 
  private:
   FRIEND_TEST_ALL_PREFIXES(AutofillExternalDelegateUnitTest,
-                           FillCreditCardForm);
+                           FillCreditCardFormImpl);
 
   // Called when a credit card is scanned using device camera.
   void OnCreditCardScanned(const CreditCard& card);
@@ -157,10 +157,6 @@ class AutofillExternalDelegate : public AutofillPopupDelegate {
   // Provides driver-level context to the shared code of the component. Must
   // outlive this object.
   const raw_ptr<AutofillDriver> driver_;  // weak
-
-  // The ID of the last request sent for form field Autofill.  Used to ignore
-  // out of date responses.
-  int query_id_ = 0;
 
   // The current form and field selected by Autofill.
   FormData query_form_;

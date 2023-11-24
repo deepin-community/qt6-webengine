@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,19 +11,24 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/check_op.h"
+#include "base/dcheck_is_on.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
+#include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
 #include "base/sequence_checker.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/values.h"
+#include "printing/buildflags/buildflags.h"
 #include "printing/metafile.h"
 #include "printing/mojom/print.mojom.h"
 #include "printing/print_job_constants.h"
 #include "printing/print_settings.h"
+#include "printing/printing_features.h"
 #include "ui/aura/window.h"
 #include "ui/gtk/gtk_compat.h"
 #include "ui/gtk/gtk_ui.h"
@@ -31,7 +36,7 @@
 #include "ui/gtk/gtk_util.h"
 #include "ui/gtk/printing/printing_gtk_util.h"
 
-#if defined(USE_CUPS)
+#if BUILDFLAG(USE_CUPS)
 #include "printing/mojom/print.mojom.h"  // nogncheck
 #endif
 
@@ -40,7 +45,7 @@ using printing::PrintSettings;
 
 namespace {
 
-#if defined(USE_CUPS)
+#if BUILDFLAG(USE_CUPS)
 // CUPS Duplex attribute and values.
 const char kCUPSDuplex[] = "cups-Duplex";
 const char kDuplexNone[] = "None";
@@ -116,7 +121,7 @@ class StickyPrintSettingGtk {
   }
 
  private:
-  GtkPrintSettings* last_used_settings_;
+  raw_ptr<GtkPrintSettings> last_used_settings_;
 };
 
 StickyPrintSettingGtk& GetLastUsedSettings() {
@@ -167,21 +172,24 @@ class GtkPrinterList {
   }
 
   std::vector<GtkPrinter*> printers_;
-  GtkPrinter* default_printer_ = nullptr;
+  raw_ptr<GtkPrinter> default_printer_ = nullptr;
 };
 
 }  // namespace
 
 // static
-printing::PrintDialogGtkInterface* PrintDialogGtk::CreatePrintDialog(
+printing::PrintDialogLinuxInterface* PrintDialogGtk::CreatePrintDialog(
     PrintingContextLinux* context) {
   return new PrintDialogGtk(context);
 }
 
 PrintDialogGtk::PrintDialogGtk(PrintingContextLinux* context)
     : base::RefCountedDeleteOnSequence<PrintDialogGtk>(
-          base::SequencedTaskRunnerHandle::Get()),
-      context_(context) {}
+          base::SequencedTaskRunner::GetCurrentDefault()),
+      context_(context) {
+  // Paired with the ReleaseDialog() call.
+  AddRef();
+}
 
 PrintDialogGtk::~PrintDialogGtk() {
   DCHECK(owning_task_runner()->RunsTasksInCurrentSequence());
@@ -242,7 +250,7 @@ void PrintDialogGtk::UpdateSettings(
   if (settings->dpi_horizontal() > 0 && settings->dpi_vertical() > 0) {
     gtk_print_settings_set_resolution_xy(
         gtk_settings_, settings->dpi_horizontal(), settings->dpi_vertical());
-#if defined(USE_CUPS)
+#if BUILDFLAG(USE_CUPS)
     std::string dpi = base::NumberToString(settings->dpi_horizontal());
     if (settings->dpi_horizontal() != settings->dpi_vertical())
       dpi += "x" + base::NumberToString(settings->dpi_vertical());
@@ -276,13 +284,13 @@ void PrintDialogGtk::UpdateSettings(
 #endif
   }
 
-#if defined(USE_CUPS)
+#if BUILDFLAG(USE_CUPS)
   // Set advanced settings first so they can be overridden by user applied
   // settings.
+  static constexpr char kSettingNamePrefix[] = "cups-";
   for (const auto& pair : settings->advanced_settings()) {
     if (!pair.second.is_string())
       continue;
-    static constexpr char kSettingNamePrefix[] = "cups-";
     const std::string setting_name = kSettingNamePrefix + pair.first;
     gtk_print_settings_set(gtk_settings_, setting_name.c_str(),
                            pair.second.GetString().c_str());
@@ -292,6 +300,7 @@ void PrintDialogGtk::UpdateSettings(
   std::string color_setting_name;
   printing::GetColorModelForModel(settings->color(), &color_setting_name,
                                   &color_value);
+  color_setting_name.insert(0, kSettingNamePrefix);
   gtk_print_settings_set(gtk_settings_, color_setting_name.c_str(),
                          color_value.c_str());
 
@@ -413,8 +422,19 @@ void PrintDialogGtk::ShowDialog(
 
 void PrintDialogGtk::PrintDocument(const printing::MetafilePlayer& metafile,
                                    const std::u16string& document_name) {
-  // This runs on the print worker thread, does not block the UI thread.
-  DCHECK(!owning_task_runner()->RunsTasksInCurrentSequence());
+#if DCHECK_IS_ON()
+#if BUILDFLAG(ENABLE_OOP_PRINTING)
+  const bool kOopPrinting =
+      printing::features::kEnableOopPrintDriversJobPrint.Get();
+#else
+  const bool kOopPrinting = false;
+#endif  // BUILDFLAG(ENABLE_OOP_PRINTING)
+
+  // For in-browser printing, this runs on the print worker thread, so it does
+  // not block the UI thread.  For OOP it runs on the service document task
+  // runner.
+  DCHECK_EQ(owning_task_runner()->RunsTasksInCurrentSequence(), kOopPrinting);
+#endif  // DCHECK_IS_ON()
 
   // The document printing tasks can outlive the PrintingContext that created
   // this dialog.
@@ -445,11 +465,8 @@ void PrintDialogGtk::PrintDocument(const printing::MetafilePlayer& metafile,
                                 document_name));
 }
 
-void PrintDialogGtk::AddRefToDialog() {
-  AddRef();
-}
-
 void PrintDialogGtk::ReleaseDialog() {
+  context_ = nullptr;
   Release();
 }
 
@@ -462,6 +479,11 @@ void PrintDialogGtk::OnResponse(GtkWidget* dialog, int response_id) {
 
   switch (response_id) {
     case GTK_RESPONSE_OK: {
+      if (!context_) {
+        std::move(callback_).Run(printing::mojom::ResultCode::kCanceled);
+        return;
+      }
+
       if (gtk_settings_)
         g_object_unref(gtk_settings_);
       gtk_settings_ =
@@ -566,17 +588,19 @@ void PrintDialogGtk::OnJobCompleted(GtkPrintJob* print_job,
   if (print_job)
     g_object_unref(print_job);
 
-  base::ThreadPool::PostTask(
-      FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
-       base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
-      base::BindOnce(base::GetDeleteFileCallback(), path_to_pdf_));
+  base::ThreadPool::PostTask(FROM_HERE,
+                             {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+                              base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
+                             base::GetDeleteFileCallback(path_to_pdf_));
   // Printing finished. Matches AddRef() in PrintDocument();
   Release();
 }
 
 void PrintDialogGtk::InitPrintSettings(
     std::unique_ptr<PrintSettings> settings) {
+  if (!context_)
+    return;
+
   InitPrintSettingsGtk(gtk_settings_, page_setup_, settings.get());
   context_->InitWithSettings(std::move(settings));
 }

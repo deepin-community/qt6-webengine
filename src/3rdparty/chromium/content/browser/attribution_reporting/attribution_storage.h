@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,24 +7,21 @@
 
 #include <vector>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "base/time/time.h"
 #include "content/browser/attribution_reporting/attribution_report.h"
-#include "content/browser/attribution_reporting/storable_source.h"
+#include "content/browser/attribution_reporting/store_source_result.mojom-forward.h"
 #include "content/common/content_export.h"
+#include "content/public/browser/attribution_data_model.h"
+#include "content/public/browser/storage_partition.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
-
-namespace url {
-class Origin;
-}  // namespace url
 
 namespace content {
 
 class AttributionTrigger;
 class CreateReportResult;
+class StorableSource;
 class StoredSource;
-
-struct DeactivatedSource;
 
 // This class provides an interface for persisting attribution data to
 // disk, and performing queries on it. AttributionStorage should initialize
@@ -34,9 +31,11 @@ class AttributionStorage {
  public:
   struct CONTENT_EXPORT StoreSourceResult {
     explicit StoreSourceResult(
-        StorableSource::Result status,
-        std::vector<DeactivatedSource> deactivated_sources = {},
-        absl::optional<base::Time> min_fake_report_time = absl::nullopt);
+        attribution_reporting::mojom::StoreSourceResult status,
+        absl::optional<base::Time> min_fake_report_time = absl::nullopt,
+        absl::optional<int> max_destinations_per_source_site_reporting_origin =
+            absl::nullopt,
+        absl::optional<int> max_sources_per_origin = absl::nullopt);
 
     ~StoreSourceResult();
 
@@ -46,11 +45,19 @@ class AttributionStorage {
     StoreSourceResult& operator=(const StoreSourceResult&);
     StoreSourceResult& operator=(StoreSourceResult&&);
 
-    StorableSource::Result status;
-    std::vector<DeactivatedSource> deactivated_sources;
+    attribution_reporting::mojom::StoreSourceResult status;
+
     // The earliest report time for any fake reports stored alongside the
     // source, if any.
     absl::optional<base::Time> min_fake_report_time;
+
+    // Only populated in case of
+    // `attribution_reporting::mojom::StoreSourceResult::kInsufficientUniqueDestinationCapacity`.
+    absl::optional<int> max_destinations_per_source_site_reporting_origin;
+
+    // Only populated in case of
+    // `attribution_reporting::mojom::StoreSourceResult::kInsufficientSourceCapacity`.
+    absl::optional<int> max_sources_per_origin;
   };
 
   virtual ~AttributionStorage() = default;
@@ -63,11 +70,7 @@ class AttributionStorage {
   // pair. When a source is stored, all matching sources that have already
   // converted are marked as inactive, and are no longer eligible for reporting.
   // Unconverted matching sources are not modified.
-  // Returns at most `deactivated_source_return_limit` deactivated sources, to
-  // put an upper bound on memory usage; use a negative number for no limit.
-  virtual StoreSourceResult StoreSource(
-      const StorableSource& source,
-      int deactivated_source_return_limit = -1) = 0;
+  virtual StoreSourceResult StoreSource(const StorableSource& source) = 0;
 
   // Finds all stored sources matching a given `trigger`, and stores the
   // new associated report. Only active sources will receive new attributions.
@@ -82,9 +85,9 @@ class AttributionStorage {
   virtual std::vector<AttributionReport> GetAttributionReports(
       base::Time max_report_time,
       int limit = -1,
-      AttributionReport::ReportTypes report_types = {
-          AttributionReport::ReportType::kEventLevel,
-          AttributionReport::ReportType::kAggregatableAttribution}) = 0;
+      AttributionReport::Types report_types = {
+          AttributionReport::Type::kEventLevel,
+          AttributionReport::Type::kAggregatableAttribution}) = 0;
 
   // Returns the first report time strictly after `time`.
   virtual absl::optional<base::Time> GetNextReportTime(base::Time time) = 0;
@@ -101,6 +104,15 @@ class AttributionStorage {
   // returned. |limit| limits the number of sources to return; use
   // a negative number for no limit.
   virtual std::vector<StoredSource> GetActiveSources(int limit = -1) = 0;
+
+  // Returns all distinct reporting_origins as DataKeys for the
+  // Browsing Data Model. Partial data will still be returned
+  // in the event of an error.
+  virtual std::vector<AttributionDataModel::DataKey> GetAllDataKeys() = 0;
+
+  // Deletes all data in storage for storage keys matching the provided
+  // reporting origin in the data key.
+  virtual void DeleteByDataKey(const AttributionDataModel::DataKey&) = 0;
 
   // Deletes the report with the given |report_id|. Returns
   // false if an error occurred.
@@ -121,22 +133,21 @@ class AttributionStorage {
   // report time in storage, if any.
   virtual absl::optional<base::Time> AdjustOfflineReportTimes() = 0;
 
-  // Deletes all data in storage for URLs matching |filter|, between
-  // |delete_begin| and |delete_end| time. More specifically, this:
+  // Deletes all data in storage for reporting origins matching `filter`,
+  // between `delete_begin` and `delete_end` time. More specifically, this:
   // 1. Deletes all sources within the time range. If any report is
   //    attributed to this source it is also deleted.
   // 2. Deletes all reports within the time range. All sources
   //    attributed to the report are also deleted.
+  // 3. Deletes any rate limits matching `filter` or whose corresponding source
+  //    was deleted.
   //
-  // Note: if |filter| is null, it means that all Origins should match.
-  virtual void ClearData(
-      base::Time delete_begin,
-      base::Time delete_end,
-      base::RepeatingCallback<bool(const url::Origin& origin)> filter) = 0;
-
-  // Aggregate Attribution:
-  [[nodiscard]] virtual bool AddAggregatableAttributionForTesting(
-      const AttributionReport& report) = 0;
+  // Note: if `filter` is null, it means that all reporting origins should
+  // match.
+  virtual void ClearData(base::Time delete_begin,
+                         base::Time delete_end,
+                         StoragePartition::StorageKeyMatcherFunction filter,
+                         bool delete_rate_limit_data = true) = 0;
 };
 
 }  // namespace content

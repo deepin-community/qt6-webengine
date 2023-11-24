@@ -164,6 +164,7 @@ static const AVOption ebur128_options[] = {
     { "size",  "set video size",   OFFSET(w), AV_OPT_TYPE_IMAGE_SIZE, {.str = "640x480"}, 0, 0, V|F },
     { "meter", "set scale meter (+9 to +18)",  OFFSET(meter), AV_OPT_TYPE_INT, {.i64 = 9}, 9, 18, V|F },
     { "framelog", "force frame logging level", OFFSET(loglevel), AV_OPT_TYPE_INT, {.i64 = -1},   INT_MIN, INT_MAX, A|V|F, "level" },
+        { "quiet",   "logging disabled",          0, AV_OPT_TYPE_CONST, {.i64 = AV_LOG_QUIET},   INT_MIN, INT_MAX, A|V|F, "level" },
         { "info",    "information logging level", 0, AV_OPT_TYPE_CONST, {.i64 = AV_LOG_INFO},    INT_MIN, INT_MAX, A|V|F, "level" },
         { "verbose", "verbose logging level",     0, AV_OPT_TYPE_CONST, {.i64 = AV_LOG_VERBOSE}, INT_MIN, INT_MAX, A|V|F, "level" },
     { "metadata", "inject metadata in the filtergraph", OFFSET(metadata), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, A|V|F },
@@ -336,7 +337,8 @@ static int config_video_output(AVFilterLink *outlink)
         return AVERROR(ENOMEM);
 
     /* black background */
-    memset(outpicref->data[0], 0, ebur128->h * outpicref->linesize[0]);
+    for (int y = 0; y < ebur128->h; y++)
+        memset(outpicref->data[0] + y * outpicref->linesize[0], 0, ebur128->w * 3);
 
     /* draw LU legends */
     drawtext(outpicref, PAD, PAD+16, FONT8, font_colors+3, " LU");
@@ -487,11 +489,11 @@ static int config_audio_output(AVFilterLink *outlink)
             !ebur128->true_peaks_per_frame || !ebur128->swr_ctx)
             return AVERROR(ENOMEM);
 
-        av_opt_set_chlayout(ebur128->swr_ctx, "in_ch_layout",   &outlink->ch_layout, 0);
+        av_opt_set_chlayout(ebur128->swr_ctx, "in_chlayout",    &outlink->ch_layout, 0);
         av_opt_set_int(ebur128->swr_ctx, "in_sample_rate",       outlink->sample_rate, 0);
         av_opt_set_sample_fmt(ebur128->swr_ctx, "in_sample_fmt", outlink->format, 0);
 
-        av_opt_set_chlayout(ebur128->swr_ctx, "out_ch_layout",   &outlink->ch_layout, 0);
+        av_opt_set_chlayout(ebur128->swr_ctx, "out_chlayout",    &outlink->ch_layout, 0);
         av_opt_set_int(ebur128->swr_ctx, "out_sample_rate",       192000, 0);
         av_opt_set_sample_fmt(ebur128->swr_ctx, "out_sample_fmt", outlink->format, 0);
 
@@ -535,6 +537,7 @@ static av_cold int init(AVFilterContext *ctx)
     int ret;
 
     if (ebur128->loglevel != AV_LOG_INFO &&
+        ebur128->loglevel != AV_LOG_QUIET &&
         ebur128->loglevel != AV_LOG_VERBOSE) {
         if (ebur128->do_video || ebur128->metadata)
             ebur128->loglevel = AV_LOG_VERBOSE;
@@ -768,7 +771,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *insamples)
 
                     /* get lower loudness to consider */
                     n = 0;
-                    nb_pow = LRA_LOWER_PRC * 0.01 * nb_powers + 0.5;
+                    nb_pow = LRA_LOWER_PRC * nb_powers * 0.01 + 0.5;
                     for (i = gate_hist_pos; i < HIST_SIZE; i++) {
                         n += ebur128->i3000.histogram[i].count;
                         if (n >= nb_pow) {
@@ -779,7 +782,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *insamples)
 
                     /* get higher loudness to consider */
                     n = nb_powers;
-                    nb_pow = LRA_HIGHER_PRC * 0.01 * nb_powers + 0.5;
+                    nb_pow = LRA_HIGHER_PRC * nb_powers * 0.01 + 0.5;
                     for (i = HIST_SIZE - 1; i >= 0; i--) {
                         n -= FFMIN(n, ebur128->i3000.histogram[i].count);
                         if (n < nb_pow) {
@@ -898,6 +901,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *insamples)
                 SET_META_PEAK(true,   TRUE);
             }
 
+            if (ebur128->loglevel != AV_LOG_QUIET) {
             if (ebur128->scale == SCALE_TYPE_ABSOLUTE) {
                 av_log(ctx, ebur128->loglevel, "t: %-10s " LOG_FMT,
                        av_ts2timestr(pts, &outlink->time_base),
@@ -923,7 +927,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *insamples)
             PRINT_PEAKS("FTPK", ebur128->true_peaks_per_frame, TRUE);
             PRINT_PEAKS("TPK", ebur128->true_peaks,   TRUE);
             av_log(ctx, ebur128->loglevel, "\n");
-
+            }
         }
     }
 

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,15 +9,15 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/command_line.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/memory_dump_request_args.h"
 #include "base/trace_event/trace_event.h"
@@ -275,7 +275,7 @@ void CoordinatorImpl::UnregisterClientProcess(base::ProcessId process_id) {
   for (auto& pair : in_progress_vm_region_requests_) {
     // PostTask to avoid re-entrancy or modification of data-structure during
     // iteration.
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(
             &CoordinatorImpl::FinalizeVmRegionDumpIfAllManagersReplied,
@@ -394,7 +394,7 @@ void CoordinatorImpl::PerformNextQueuedGlobalMemoryDump() {
   QueuedRequestDispatcher::SetUpAndDispatch(request, clients, chrome_callback,
                                             os_callback);
 
-  base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE,
       base::BindOnce(&CoordinatorImpl::OnQueuedRequestTimedOut,
                      weak_ptr_factory_.GetWeakPtr(), request->dump_guid),
@@ -416,7 +416,7 @@ void CoordinatorImpl::PerformNextQueuedGlobalMemoryDump() {
         base::BindOnce(&CoordinatorImpl::OnDumpProcessesForTracing,
                        weak_ptr_factory_.GetWeakPtr(), request->dump_guid));
 
-    base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE,
         base::BindOnce(&CoordinatorImpl::OnHeapDumpTimeOut,
                        weak_ptr_factory_.GetWeakPtr(), request->dump_guid),
@@ -589,7 +589,7 @@ void CoordinatorImpl::FinalizeGlobalMemoryDumpIfAllManagersReplied() {
 
   // Schedule the next queued dump (if applicable).
   if (!queued_memory_dump_requests_.empty()) {
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(&CoordinatorImpl::PerformNextQueuedGlobalMemoryDump,
                        weak_ptr_factory_.GetWeakPtr()));

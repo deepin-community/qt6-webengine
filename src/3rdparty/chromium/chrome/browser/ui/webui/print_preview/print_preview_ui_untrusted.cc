@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -28,11 +28,10 @@ PrintPreviewUIUntrustedConfig::CreateWebUIController(content::WebUI* web_ui) {
 
 PrintPreviewUIUntrusted::PrintPreviewUIUntrusted(content::WebUI* web_ui)
     : UntrustedWebUIController(web_ui) {
-  std::unique_ptr<content::WebUIDataSource> source(
-      content::WebUIDataSource::Create(chrome::kChromeUIUntrustedPrintURL));
+  content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
+      web_ui->GetWebContents()->GetBrowserContext(),
+      chrome::kChromeUIUntrustedPrintURL);
   AddDataRequestFilter(*source);
-  content::WebUIDataSource::Add(web_ui->GetWebContents()->GetBrowserContext(),
-                                source.release());
 }
 
 PrintPreviewUIUntrusted::~PrintPreviewUIUntrusted() = default;

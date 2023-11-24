@@ -68,6 +68,9 @@ typedef long FileOffset; /* NOLINT */
 #define IVF_FILE_HDR_SZ 32
 
 #define RAW_FRAME_HDR_SZ sizeof(uint32_t)
+#define OBU_DETECTION_SZ 34  // See common/obudec.c
+
+#define DETECT_BUF_SZ 34  // Max of the above header sizes
 
 #define AV1_FOURCC 0x31305641
 
@@ -83,7 +86,7 @@ enum VideoFileType {
 #define LST_FOURCC 0x4354534c
 
 struct FileTypeDetectionBuffer {
-  char buf[4];
+  char buf[DETECT_BUF_SZ];
   size_t buf_read;
   size_t position;
 };
@@ -173,7 +176,8 @@ uint32_t get_fourcc_by_aom_decoder(aom_codec_iface_t *iface);
 int read_yuv_frame(struct AvxInputContext *input_ctx, aom_image_t *yuv_frame);
 
 void aom_img_write(const aom_image_t *img, FILE *file);
-int aom_img_read(aom_image_t *img, FILE *file);
+// Returns true on success, false on failure.
+bool aom_img_read(aom_image_t *img, FILE *file);
 
 double sse_to_psnr(double samples, double peak, double mse);
 void aom_img_upshift(aom_image_t *dst, const aom_image_t *src, int input_shift);
@@ -186,6 +190,14 @@ void aom_img_truncate_16_to_8(aom_image_t *dst, const aom_image_t *src);
 
 // Output in NV12 format.
 void aom_img_write_nv12(const aom_image_t *img, FILE *file);
+
+size_t read_from_input(struct AvxInputContext *input_ctx, size_t n,
+                       unsigned char *buf);
+size_t input_to_detect_buf(struct AvxInputContext *input_ctx, size_t n);
+size_t buffer_input(struct AvxInputContext *input_ctx, size_t n,
+                    unsigned char *buf, bool buffered);
+void rewind_detect(struct AvxInputContext *input_ctx);
+bool input_eof(struct AvxInputContext *input_ctx);
 
 #ifdef __cplusplus
 } /* extern "C" */

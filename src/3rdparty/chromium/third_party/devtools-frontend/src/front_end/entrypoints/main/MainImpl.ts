@@ -57,54 +57,58 @@ import {ExecutionContextSelector} from './ExecutionContextSelector.js';
 
 const UIStrings = {
   /**
-  *@description Title of item in main
-  */
+   *@description Title of item in main
+   */
   customizeAndControlDevtools: 'Customize and control DevTools',
   /**
-  *@description Title element text content in Main
-  */
+   *@description Title element text content in Main
+   */
   dockSide: 'Dock side',
   /**
-  *@description Title element title in Main
-  *@example {Ctrl+Shift+D} PH1
-  */
+   *@description Title element title in Main
+   *@example {Ctrl+Shift+D} PH1
+   */
   placementOfDevtoolsRelativeToThe: 'Placement of DevTools relative to the page. ({PH1} to restore last position)',
   /**
-  *@description Text to undock the DevTools
-  */
+   *@description Text to undock the DevTools
+   */
   undockIntoSeparateWindow: 'Undock into separate window',
   /**
-  *@description Text to dock the DevTools to the bottom of the browser tab
-  */
+   *@description Text to dock the DevTools to the bottom of the browser tab
+   */
   dockToBottom: 'Dock to bottom',
   /**
-  *@description Text to dock the DevTools to the right of the browser tab
-  */
+   *@description Text to dock the DevTools to the right of the browser tab
+   */
   dockToRight: 'Dock to right',
   /**
-  *@description Text to dock the DevTools to the left of the browser tab
-  */
+   *@description Text to dock the DevTools to the left of the browser tab
+   */
   dockToLeft: 'Dock to left',
   /**
-  *@description Text in Main
-  */
+   *@description Text in Main
+   */
   focusDebuggee: 'Focus debuggee',
   /**
-  *@description Text in Main
-  */
+   *@description Text in Main
+   */
   hideConsoleDrawer: 'Hide console drawer',
   /**
-  *@description Text in Main
-  */
+   *@description Text in Main
+   */
   showConsoleDrawer: 'Show console drawer',
   /**
-  *@description A context menu item in the Main
-  */
+   *@description A context menu item in the Main
+   */
   moreTools: 'More tools',
   /**
-  *@description Text for the viewing the help options
-  */
+   *@description Text for the viewing the help options
+   */
   help: 'Help',
+  /**
+   *@description Text describing how to navigate the dock side menu
+   */
+  dockSideNaviation: 'Use left and right arrow keys to navigate the options',
 };
 const str_ = i18n.i18n.registerUIStrings('entrypoints/main/MainImpl.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
@@ -148,10 +152,7 @@ export class MainImpl {
     this.createSettings(prefs);
     await this.requestAndRegisterLocaleData();
 
-    if (Root.Runtime.experiments.isEnabled(Root.Runtime.ExperimentName.SYNC_SETTINGS)) {
-      Host.userMetrics.syncSetting(
-          Common.Settings.Settings.instance().moduleSetting<boolean>('sync_preferences').get());
-    }
+    Host.userMetrics.syncSetting(Common.Settings.Settings.instance().moduleSetting<boolean>('sync_preferences').get());
 
     void this.#createAppUI();
   }
@@ -179,6 +180,10 @@ export class MainImpl {
     self.Host.userMetrics = self.Host.userMetrics || Host.userMetrics;
     // @ts-ignore e2e test global
     self.Host.UserMetrics = self.Host.UserMetrics || Host.UserMetrics;
+    // @ts-ignore e2e test global
+    self.ProtocolClient = self.ProtocolClient || {};
+    // @ts-ignore e2e test global
+    self.ProtocolClient.test = self.ProtocolClient.test || ProtocolClient.InspectorBackend.test;
   }
 
   async requestAndRegisterLocaleData(): Promise<void> {
@@ -204,7 +209,7 @@ export class MainImpl {
     try {
       await i18n.i18n.fetchAndRegisterLocaleData(devToolsLocale.locale);
     } catch (error) {
-      console.error(error);
+      console.warn(`Unable to fetch & register locale data for '${devToolsLocale.locale}', falling back to 'en-US'. Cause: `, error);
       // Loading the actual locale data failed, tell DevTools to use 'en-US'.
       devToolsLocale.forceFallbackLocale();
     }
@@ -270,13 +275,6 @@ export class MainImpl {
     Root.Runtime.experiments.register('applyCustomStylesheet', 'Allow extensions to load custom stylesheets');
     Root.Runtime.experiments.register('captureNodeCreationStacks', 'Capture node creation stacks');
     Root.Runtime.experiments.register('sourcesPrettyPrint', 'Automatically pretty print in the Sources Panel');
-    Root.Runtime.experiments.register('backgroundServices', 'Background web platform feature events', true);
-    Root.Runtime.experiments.register(
-        'backgroundServicesNotifications', 'Background services section for Notifications');
-    Root.Runtime.experiments.register(
-        'backgroundServicesPaymentHandler', 'Background services section for Payment Handler');
-    Root.Runtime.experiments.register(
-        'backgroundServicesPushMessaging', 'Background services section for Push Messaging');
     Root.Runtime.experiments.register(
         'ignoreListJSFramesOnTimeline', 'Ignore List for JavaScript frames on Timeline', true);
     Root.Runtime.experiments.register('inputEventsOnTimelineOverview', 'Input events on Timeline overview', true);
@@ -292,14 +290,13 @@ export class MainImpl {
         'recordCoverageWithPerformanceTracing', 'Record coverage while performance tracing');
     Root.Runtime.experiments.register('samplingHeapProfilerTimeline', 'Sampling heap profiler timeline', true);
     Root.Runtime.experiments.register(
-        'showOptionToNotTreatGlobalObjectsAsRoots',
-        'Show option to take heap snapshot where globals are not treated as root');
+        'showOptionToExposeInternalsInHeapSnapshot', 'Show option to expose internals in heap snapshots');
     Root.Runtime.experiments.register(
         'sourceOrderViewer', 'Source order viewer', undefined,
         'https://developer.chrome.com/blog/new-in-devtools-92/#source-order');
     Root.Runtime.experiments.register('webauthnPane', 'WebAuthn Pane');
     Root.Runtime.experiments.register(
-        'keyboardShortcutEditor', 'Enable keyboard shortcut editor', true,
+        'keyboardShortcutEditor', 'Enable keyboard shortcut editor', false,
         'https://developer.chrome.com/blog/new-in-devtools-88/#keyboard-shortcuts');
 
     // Back/forward cache
@@ -312,8 +309,12 @@ export class MainImpl {
     Root.Runtime.experiments.register('timelineShowAllEvents', 'Timeline: show all events', true);
     Root.Runtime.experiments.register(
         'timelineV8RuntimeCallStats', 'Timeline: V8 Runtime Call Stats on Timeline', true);
-    Root.Runtime.experiments.register('timelineWebGL', 'Timeline: WebGL-based flamechart');
     Root.Runtime.experiments.register('timelineReplayEvent', 'Timeline: Replay input events', true);
+    Root.Runtime.experiments.register(
+        'timelineAsConsoleProfileResultPanel', 'View console.profile() results in the Performance panel for Node.js',
+        true);
+    Root.Runtime.experiments.register(
+        'timelineDoNotSkipSystemNodesOfCpuProfile', 'View system nodes of CPUProfile in the Performance panel', true);
 
     // Debugging
     Root.Runtime.experiments.register(
@@ -322,6 +323,10 @@ export class MainImpl {
     Root.Runtime.experiments.register(
         'evaluateExpressionsWithSourceMaps', 'Console: Resolve variable names in expressions using source maps',
         undefined);
+    Root.Runtime.experiments.register('instrumentationBreakpoints', 'Enable instrumentation breakpoints', true);
+    Root.Runtime.experiments.register(
+        Root.Runtime.ExperimentName.BREAKPOINT_VIEW, 'Enable re-designed Breakpoint Sidebar Pane in the Sources Panel',
+        true);
 
     // Dual-screen
     Root.Runtime.experiments.register(
@@ -338,7 +343,8 @@ export class MainImpl {
     // Full Accessibility Tree
     Root.Runtime.experiments.register(
         'fullAccessibilityTree', 'Enable full accessibility tree view in the Elements panel', undefined,
-        'https://developer.chrome.com/blog/new-in-devtools-90/#accesibility-tree');
+        'https://developer.chrome.com/blog/new-in-devtools-90/#accesibility-tree',
+        'https://g.co/devtools/a11y-tree-feedback');
 
     // Font Editor
     Root.Runtime.experiments.register(
@@ -354,25 +360,12 @@ export class MainImpl {
     Root.Runtime.experiments.register('experimentalCookieFeatures', 'Enable experimental cookie features');
 
     // Hide Issues Feature.
-    Root.Runtime.experiments.register(
-        'hideIssuesFeature', 'Enable experimental hide issues menu', undefined,
-        'https://developer.chrome.com/blog/new-in-devtools-94/#hide-issues');
-
-    // Hide Issues Feature.
     Root.Runtime.experiments.register('groupAndHideIssuesByKind', 'Allow grouping and hiding of issues by IssueKind');
-
-    // Checkbox in the Settings UI to enable Chrome Sync is behind this experiment.
-    Root.Runtime.experiments.register(
-        Root.Runtime.ExperimentName.SYNC_SETTINGS, 'Sync DevTools settings with Chrome Sync');
-
-    // Debugging of Reporting API
-    Root.Runtime.experiments.register('reportingApiDebugging', 'Enable Reporting API panel in the Application panel');
 
     // CSS <length> authoring tool.
     Root.Runtime.experiments.register(
-        'cssTypeComponentLength',
-        'Enable CSS <length> authoring tool in the Styles pane (https://goo.gle/length-feedback)', undefined,
-        'https://developer.chrome.com/blog/new-in-devtools-96/#length');
+        'cssTypeComponentLength', 'Enable CSS <length> authoring tool in the Styles pane', undefined,
+        'https://developer.chrome.com/blog/new-in-devtools-96/#length', 'https://g.co/devtools/length-feedback');
 
     // Display precise changes in the Changes tab.
     Root.Runtime.experiments.register(
@@ -386,25 +379,54 @@ export class MainImpl {
     Root.Runtime.experiments.register(
         Root.Runtime.ExperimentName.HEADER_OVERRIDES, 'Local overrides for response headers');
 
-    // New Lighthouse panel with timespan and snapshot mode
-    Root.Runtime.experiments.register('lighthousePanelFR', 'Use Lighthouse panel with timespan and snapshot modes');
-
-    // Tooling for CSS layers in Styles sidebar pane.
+    // Enable CSS Authoring hints for inactive rules, deprecated properties, etc.
     Root.Runtime.experiments.register(
-        Root.Runtime.ExperimentName.CSS_LAYERS, 'Tooling for CSS layers in the Styles pane');
+        Root.Runtime.ExperimentName.CSS_AUTHORING_HINTS,
+        'Enable CSS Authoring hints for inactive rules, deprecated properties, etc.');
 
     // Enable color picking outside the browser window (using Eyedropper API)
     Root.Runtime.experiments.register(
         Root.Runtime.ExperimentName.EYEDROPPER_COLOR_PICKER, 'Enable color picking outside the browser window');
 
+    // Change grouping of sources panel to use Authored/Deployed trees
+    Root.Runtime.experiments.register(
+        Root.Runtime.ExperimentName.AUTHORED_DEPLOYED_GROUPING, 'Group sources into Authored and Deployed trees',
+        undefined, 'https://goo.gle/authored-deployed', 'https://goo.gle/authored-deployed-feedback');
+
+    // Hide third party code (as determined by ignore lists or source maps)
+    Root.Runtime.experiments.register(
+        Root.Runtime.ExperimentName.JUST_MY_CODE, 'Hide ignore-listed code in sources tree view');
+
+    // Highlight important DOM properties in the Object Properties viewer.
+    Root.Runtime.experiments.register(
+        Root.Runtime.ExperimentName.IMPORTANT_DOM_PROPERTIES,
+        'Highlight important DOM properties in the Object Properties viewer');
+
+    Root.Runtime.experiments.register(
+        Root.Runtime.ExperimentName.PRELOADING_STATUS_PANEL, 'Enable Preloading Status Panel in Application panel',
+        true);
+
+    Root.Runtime.experiments.register(
+        Root.Runtime.ExperimentName.DISABLE_COLOR_FORMAT_SETTING,
+        // Adding the reload hint here because users getting here are likely coming from inside the settings UI, but the regular reminder bar is only shown after the UI is closed which they're not going to see.
+        'Disable the deprecated `Color format` setting (requires reloading DevTools)', false);
+
     Root.Runtime.experiments.enableExperimentsByDefault([
       'sourceOrderViewer',
-      'hideIssuesFeature',
       'cssTypeComponentLength',
       Root.Runtime.ExperimentName.PRECISE_CHANGES,
-      'reportingApiDebugging',
-      Root.Runtime.ExperimentName.SYNC_SETTINGS,
-      Root.Runtime.ExperimentName.CSS_LAYERS,
+      ...('EyeDropper' in window ? [Root.Runtime.ExperimentName.EYEDROPPER_COLOR_PICKER] : []),
+      'keyboardShortcutEditor',
+      'groupAndHideIssuesByKind',
+      Root.Runtime.ExperimentName.CSS_AUTHORING_HINTS,
+      'sourcesPrettyPrint',
+      Root.Runtime.ExperimentName.DISABLE_COLOR_FORMAT_SETTING,
+      Root.Runtime.ExperimentName.BREAKPOINT_VIEW,
+      Root.Runtime.ExperimentName.TIMELINE_AS_CONSOLE_PROFILE_RESULT_PANEL,
+    ]);
+
+    Root.Runtime.experiments.setNonConfigurableExperiments([
+      ...(!('EyeDropper' in window) ? [Root.Runtime.ExperimentName.EYEDROPPER_COLOR_PICKER] : []),
     ]);
 
     Root.Runtime.experiments.cleanUpStaleExperiments();
@@ -413,10 +435,7 @@ export class MainImpl {
       Root.Runtime.experiments.setServerEnabledExperiments(enabledExperiments.split(';'));
     }
     Root.Runtime.experiments.enableExperimentsTransiently([
-      'backgroundServices',
-      'backgroundServicesNotifications',
-      'backgroundServicesPushMessaging',
-      'backgroundServicesPaymentHandler',
+      'bfcacheDisplayTree',
       'webauthnPane',
       'developerResourcesView',
     ]);
@@ -462,7 +481,9 @@ export class MainImpl {
     // Equally if the user has set to match the system and the OS preference changes
     // we perform the same change.
     const darkThemeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const highContrastMediaQuery = window.matchMedia('(forced-colors: active)');
     darkThemeMediaQuery.addEventListener('change', onThemeChange);
+    highContrastMediaQuery.addEventListener('change', onThemeChange);
     themeSetting.addChangeListener(onThemeChange);
 
     UI.UIUtils.installComponentRootStyles((document.body as Element));
@@ -508,24 +529,24 @@ export class MainImpl {
 
     // @ts-ignore layout test global
     self.Bindings.networkProjectManager = Bindings.NetworkProject.NetworkProjectManager.instance();
+    const resourceMapping = new Bindings.ResourceMapping.ResourceMapping(
+        SDK.TargetManager.TargetManager.instance(),
+        Workspace.Workspace.WorkspaceImpl.instance(),
+    );
     // @ts-ignore layout test global
-    self.Bindings.resourceMapping = Bindings.ResourceMapping.ResourceMapping.instance({
-      forceNew: true,
-      targetManager: SDK.TargetManager.TargetManager.instance(),
-      workspace: Workspace.Workspace.WorkspaceImpl.instance(),
-    });
+    self.Bindings.resourceMapping = resourceMapping;
     new Bindings.PresentationConsoleMessageHelper.PresentationConsoleMessageManager();
     // @ts-ignore layout test global
     self.Bindings.cssWorkspaceBinding = Bindings.CSSWorkspaceBinding.CSSWorkspaceBinding.instance({
       forceNew: true,
+      resourceMapping,
       targetManager: SDK.TargetManager.TargetManager.instance(),
-      workspace: Workspace.Workspace.WorkspaceImpl.instance(),
     });
     // @ts-ignore layout test global
     self.Bindings.debuggerWorkspaceBinding = Bindings.DebuggerWorkspaceBinding.DebuggerWorkspaceBinding.instance({
       forceNew: true,
+      resourceMapping,
       targetManager: SDK.TargetManager.TargetManager.instance(),
-      workspace: Workspace.Workspace.WorkspaceImpl.instance(),
     });
     // @ts-ignore layout test global
     self.Bindings.breakpointManager = Bindings.BreakpointManager.BreakpointManager.instance({
@@ -554,6 +575,8 @@ export class MainImpl {
     self.Persistence.networkPersistenceManager =
         Persistence.NetworkPersistenceManager.NetworkPersistenceManager.instance(
             {forceNew: true, workspace: Workspace.Workspace.WorkspaceImpl.instance()});
+    // @ts-ignore layout test global
+    self.Host.Platform = Host.Platform;
 
     new ExecutionContextSelector(SDK.TargetManager.TargetManager.instance(), UI.Context.Context.instance());
     // @ts-ignore layout test global
@@ -610,6 +633,7 @@ export class MainImpl {
 
     // Initialize ARIAUtils.alert Element
     UI.ARIAUtils.alertElementInstance();
+    UI.DockController.DockController.instance().announceDockLocation();
 
     // Allow UI cycles to repaint prior to creating connection.
     window.setTimeout(this.#initializeTarget.bind(this), 0);
@@ -711,7 +735,7 @@ export class MainImpl {
     // @ts-ignore Used in ElementsTreeOutline
     eventCopy['original'] = event;
     const document = event.target && (event.target as HTMLElement).ownerDocument;
-    const target = document ? document.deepActiveElement() : null;
+    const target = document ? Platform.DOMUtilities.deepActiveElement(document) : null;
     if (target) {
       target.dispatchEvent(eventCopy);
     }
@@ -797,7 +821,9 @@ export class SearchActionDelegate implements UI.ActionRegistration.ActionDelegat
   }
 
   handleAction(context: UI.Context.Context, actionId: string): boolean {
-    let searchableView = UI.SearchableView.SearchableView.fromElement(document.deepActiveElement());
+    let searchableView = UI.SearchableView.SearchableView.fromElement(
+        Platform.DOMUtilities.deepActiveElement(document),
+    );
     if (!searchableView) {
       const currentPanel = (UI.InspectorView.InspectorView.instance().currentPanelDeprecated() as UI.Panel.Panel);
       if (currentPanel && currentPanel.searchableView) {
@@ -850,8 +876,9 @@ export class MainMenuItem implements UI.Toolbar.Provider {
       const dockItemElement = document.createElement('div');
       dockItemElement.classList.add('flex-centered');
       dockItemElement.classList.add('flex-auto');
+      dockItemElement.classList.add('location-menu');
       dockItemElement.tabIndex = -1;
-      UI.ARIAUtils.setAccessibleName(dockItemElement, UIStrings.dockSide);
+      UI.ARIAUtils.setAccessibleName(dockItemElement, UIStrings.dockSide + UIStrings.dockSideNaviation);
       const titleElement = dockItemElement.createChild('span', 'dockside-title');
       titleElement.textContent = i18nString(UIStrings.dockSide);
       const toggleDockSideShorcuts =
@@ -893,6 +920,10 @@ export class MainMenuItem implements UI.Toolbar.Provider {
           dir = -1;
         } else if (event.key === 'ArrowRight') {
           dir = 1;
+        } else if (event.key === 'ArrowDown') {
+          const contextMenuElement = dockItemElement.closest('.soft-context-menu');
+          contextMenuElement?.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowDown'}));
+          return;
         } else {
           return;
         }
@@ -918,7 +949,7 @@ export class MainMenuItem implements UI.Toolbar.Provider {
     }
 
     if (UI.DockController.DockController.instance().dockSide() === UI.DockController.DockState.UNDOCKED) {
-      const mainTarget = SDK.TargetManager.TargetManager.instance().mainTarget();
+      const mainTarget = SDK.TargetManager.TargetManager.instance().mainFrameTarget();
       if (mainTarget && mainTarget.type() === SDK.Target.Type.Frame) {
         contextMenu.defaultSection().appendAction('inspector_main.focus-debuggee', i18nString(UIStrings.focusDebuggee));
       }

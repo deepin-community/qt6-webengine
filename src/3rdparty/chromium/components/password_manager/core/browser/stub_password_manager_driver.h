@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -24,7 +24,9 @@ class StubPasswordManagerDriver : public PasswordManagerDriver {
 
   // PasswordManagerDriver:
   int GetId() const override;
-  void FillPasswordForm(
+  void PasswordFieldHasNoAssociatedUsername(
+      autofill::FieldRendererId password_element_renderer_id) override;
+  void SetPasswordFillData(
       const autofill::PasswordFormFillData& form_data) override;
   void GeneratedPasswordAccepted(const std::u16string& password) override;
   void FillSuggestion(const std::u16string& username,
@@ -34,9 +36,13 @@ class StubPasswordManagerDriver : public PasswordManagerDriver {
 #endif
   void PreviewSuggestion(const std::u16string& username,
                          const std::u16string& password) override;
+  void PreviewGenerationSuggestion(const std::u16string& password) override;
   void ClearPreviewedForm() override;
+  void SetSuggestionAvailability(
+      autofill::FieldRendererId generation_element_id,
+      const autofill::mojom::AutofillState state) override;
   PasswordGenerationFrameHelper* GetPasswordGenerationHelper() override;
-  PasswordManager* GetPasswordManager() override;
+  PasswordManagerInterface* GetPasswordManager() override;
   PasswordAutofillManager* GetPasswordAutofillManager() override;
   bool IsInPrimaryMainFrame() const override;
   bool CanShowAutofillUi() const override;

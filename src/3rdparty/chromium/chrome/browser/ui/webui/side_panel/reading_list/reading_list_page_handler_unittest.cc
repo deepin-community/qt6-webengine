@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,15 +10,15 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/test/bind.h"
+#include "chrome/browser/reading_list/reading_list_model_factory.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_list.h"
-#include "chrome/browser/ui/read_later/read_later_test_utils.h"
-#include "chrome/browser/ui/read_later/reading_list_model_factory.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/test_browser_window.h"
 #include "components/reading_list/core/reading_list_model.h"
+#include "components/reading_list/core/reading_list_test_utils.h"
 #include "content/public/test/test_web_ui.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "ui/base/mojom/window_open_disposition.mojom.h"
@@ -87,17 +87,19 @@ class TestReadingListPageHandlerTest : public BrowserWithTestWindowTest {
         page_.BindAndGetRemote(), test_web_ui_.get());
     model_ =
         ReadingListModelFactory::GetForBrowserContext(browser()->profile());
-    test::ReadingListLoadObserver(model_).Wait();
+    ReadingListLoadObserver(model_).Wait();
 
     AddTabWithTitle(browser(), GURL(kTabUrl1), kTabName1);
     AddTabWithTitle(browser(), GURL(kTabUrl2), kTabName2);
     AddTabWithTitle(browser(), GURL(kTabUrl3), kTabName3);
     AddTabWithTitle(browser(), GURL(kTabUrl4), kTabName4);
 
-    model()->AddEntry(GURL(kTabUrl1), kTabName1,
-                      reading_list::EntrySource::ADDED_VIA_CURRENT_APP);
-    model()->AddEntry(GURL(kTabUrl3), kTabName3,
-                      reading_list::EntrySource::ADDED_VIA_CURRENT_APP);
+    model()->AddOrReplaceEntry(GURL(kTabUrl1), kTabName1,
+                               reading_list::EntrySource::ADDED_VIA_CURRENT_APP,
+                               /*estimated_read_time=*/base::TimeDelta());
+    model()->AddOrReplaceEntry(GURL(kTabUrl3), kTabName3,
+                               reading_list::EntrySource::ADDED_VIA_CURRENT_APP,
+                               /*estimated_read_time=*/base::TimeDelta());
   }
 
   void TearDown() override {
@@ -346,9 +348,18 @@ TEST_F(TestReadingListPageHandlerTest, OpenURLAndReadd) {
   EXPECT_EQ(browser()->tab_strip_model()->count(), 4);
   handler()->OpenURL(GURL(kTabUrl3), true, GetClickModifiers());
   EXPECT_EQ(browser()->tab_strip_model()->count(), 4);
-  model()->AddEntry(GURL(kTabUrl3), kTabName3,
-                    reading_list::EntrySource::ADDED_VIA_CURRENT_APP);
+  // Expect CurrentPageActionButtonState to be add, due to the current
+  // tab not being on the reading list.
+  EXPECT_EQ(handler()->GetCurrentPageActionButtonStateForTesting(),
+            reading_list::mojom::CurrentPageActionButtonState::kAdd);
+  model()->AddOrReplaceEntry(GURL(kTabUrl3), kTabName3,
+                             reading_list::EntrySource::ADDED_VIA_CURRENT_APP,
+                             /*estimated_read_time=*/base::TimeDelta());
 
+  // Expect CurrentPageActionButtonState to be mark as read, due to the current
+  // tab being unread on the reading list.
+  EXPECT_EQ(handler()->GetCurrentPageActionButtonStateForTesting(),
+            reading_list::mojom::CurrentPageActionButtonState::kMarkAsRead);
   // Expect ItemsChanged to be called 6 times.
   // Four times for the two AddEntry calls in SetUp().
   // Twice for the AddEntry call above.

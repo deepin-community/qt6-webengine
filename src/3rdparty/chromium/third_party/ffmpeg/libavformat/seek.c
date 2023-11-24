@@ -25,8 +25,11 @@
 #include "libavutil/mathematics.h"
 #include "libavutil/timestamp.h"
 
+#include "libavcodec/avcodec.h"
+
 #include "avformat.h"
 #include "avio_internal.h"
+#include "demux.h"
 #include "internal.h"
 
 void avpriv_update_cur_dts(AVFormatContext *s, AVStream *ref_st, int64_t timestamp)

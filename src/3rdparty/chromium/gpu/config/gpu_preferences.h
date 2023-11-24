@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,7 +15,7 @@
 #include "media/media_buildflags.h"
 #include "ui/gfx/buffer_types.h"
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
 #include "base/message_loop/message_pump_type.h"
 #endif
 
@@ -28,6 +28,8 @@ const size_t kDefaultMaxProgramCacheMemoryBytes = 6 * 1024 * 1024;
 const size_t kDefaultMaxProgramCacheMemoryBytes = 2 * 1024 * 1024;
 const size_t kLowEndMaxProgramCacheMemoryBytes = 128 * 1024;
 #endif
+
+GPU_EXPORT size_t GetDefaultGpuDiskCacheSize();
 
 enum class VulkanImplementationName : uint32_t {
   kNone = 0,
@@ -269,7 +271,7 @@ struct GPU_EXPORT GpuPreferences {
   // only enabled on Windows platform for the info collection GPU process.
   bool enable_perf_data_collection = false;
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
   // Determines message pump type for the GPU thread.
   base::MessagePumpType message_pump_type = base::MessagePumpType::DEFAULT;
 #endif
@@ -290,6 +292,10 @@ struct GPU_EXPORT GpuPreferences {
 
   // Disables oppr debug crash dumps.
   bool disable_oopr_debug_crash_dump = false;
+
+  // Forces the use of a separate EGL display for WebGL contexts even when one
+  // GPU is used.
+  bool force_separate_egl_display_for_webgl_testing = false;
 
   // Please update gpu_preferences_unittest.cc when making additions or
   // changes to this struct.

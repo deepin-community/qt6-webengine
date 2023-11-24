@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -61,8 +61,9 @@ struct CrossThreadCopier<
   static Type Copy(const Type& value) {
     Type result;
     result.ReserveInitialCapacity(value.size());
-    for (const auto& element : value)
+    for (const auto& element : value) {
       result.push_back(element.IsolatedCopy());
+    }
     return result;
   }
 };

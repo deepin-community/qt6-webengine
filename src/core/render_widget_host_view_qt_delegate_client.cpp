@@ -16,9 +16,7 @@
 
 #include <QEvent>
 #include <QInputMethodEvent>
-#include <QScopeGuard>
 #include <QSet>
-#include <QSGNode>
 #include <QStyleHints>
 #include <QTextFormat>
 #include <QVariant>
@@ -410,6 +408,7 @@ void RenderWidgetHostViewQtDelegateClient::handlePointerEvent(T *event)
 
     webEvent.movement_x = event->globalPosition().x() - m_previousMousePosition.x();
     webEvent.movement_y = event->globalPosition().y() - m_previousMousePosition.y();
+    webEvent.is_raw_movement_event = true;
 
     if (m_rwhv->IsMouseLocked())
         QCursor::setPos(m_previousMousePosition);
@@ -527,7 +526,7 @@ void RenderWidgetHostViewQtDelegateClient::handleTouchEvent(QTouchEvent *event)
         m_eventsToNowDelta = (base::TimeTicks::Now() - eventTimestamp).InMicroseconds();
     eventTimestamp += base::Microseconds(m_eventsToNowDelta);
 
-    auto touchPoints = mapTouchPointIds(event->touchPoints());
+    auto touchPoints = mapTouchPointIds(event->points());
     // Make sure that POINTER_DOWN action is delivered before MOVE, and MOVE before POINTER_UP
     std::sort(touchPoints.begin(), touchPoints.end(), [] (const TouchPoint &l, const TouchPoint &r) {
         return l.second.state() < r.second.state();

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,10 +9,10 @@
 #include <tuple>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/containers/span.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/guid.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
@@ -49,6 +49,12 @@
 
 namespace content {
 namespace service_worker_version_unittest {
+
+constexpr base::TimeDelta kTestTimeoutBeyondRequestTimeout =
+    // Value of kRequestTimeout in service_worker_version.cc
+    base::Minutes(5) +
+    // A little past that.
+    base::Minutes(1);
 
 base::OnceCallback<void()> VerifyCalled(
     bool* called,
@@ -103,7 +109,7 @@ class ServiceWorkerVersionTest : public testing::Test {
     options.scope = scope_;
     registration_ = CreateNewServiceWorkerRegistration(
         helper_->context()->registry(), options,
-        blink::StorageKey(url::Origin::Create(scope_)));
+        blink::StorageKey::CreateFirstParty(url::Origin::Create(scope_)));
     version_ = CreateNewServiceWorkerVersion(
         helper_->context()->registry(), registration_.get(),
         GURL("https://www.example.com/test/service_worker.js"),
@@ -116,9 +122,8 @@ class ServiceWorkerVersionTest : public testing::Test {
     version_->script_cache_map()->SetResources(records);
     version_->SetMainScriptResponse(
         EmbeddedWorkerTestHelper::CreateMainScriptResponse());
-    if (GetFetchHandlerExistence() !=
-        ServiceWorkerVersion::FetchHandlerExistence::UNKNOWN) {
-      version_->set_fetch_handler_existence(GetFetchHandlerExistence());
+    if (GetFetchHandlerType()) {
+      version_->set_fetch_handler_type(*GetFetchHandlerType());
     }
 
     // Make the registration findable via storage functions.
@@ -174,9 +179,9 @@ class ServiceWorkerVersionTest : public testing::Test {
     version_->SetTickClockForTesting(tick_clock);
   }
 
-  virtual ServiceWorkerVersion::FetchHandlerExistence GetFetchHandlerExistence()
-      const {
-    return ServiceWorkerVersion::FetchHandlerExistence::EXISTS;
+  virtual absl::optional<ServiceWorkerVersion::FetchHandlerType>
+  GetFetchHandlerType() const {
+    return ServiceWorkerVersion::FetchHandlerType::kNotSkippable;
   }
 
   // Make the client in a different process from the service worker when
@@ -204,10 +209,9 @@ class ServiceWorkerVersionTest : public testing::Test {
                                     /*mock frame_routing_id=*/1),
             /*is_parent_frame_secure=*/true, helper_->context()->AsWeakPtr(),
             &remote_endpoint);
-    container_host->UpdateUrls(
-        registration_->scope(),
-        net::SiteForCookies::FromUrl(registration_->scope()),
-        registration_->key().origin(), registration_->key());
+    container_host->UpdateUrls(registration_->scope(),
+                               registration_->key().origin(),
+                               registration_->key());
     container_host->SetControllerRegistration(
         registration_, false /* notify_controllerchange */);
     EXPECT_TRUE(version_->HasControllee());
@@ -254,11 +258,15 @@ TEST_F(ServiceWorkerVersionTest, ConcurrentStartAndStop) {
       ServiceWorkerMetrics::EventType::UNKNOWN,
       ReceiveServiceWorkerStatus(&status1, run_loop_1.QuitClosure()));
   EXPECT_EQ(EmbeddedWorkerStatus::STARTING, version_->running_status());
+  EXPECT_TRUE(helper_->context_wrapper()->IsLiveRunningServiceWorker(
+      version_->version_id()));
   version_->StartWorker(
       ServiceWorkerMetrics::EventType::UNKNOWN,
       ReceiveServiceWorkerStatus(&status2, run_loop_2.QuitClosure()));
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(EmbeddedWorkerStatus::RUNNING, version_->running_status());
+  EXPECT_TRUE(helper_->context_wrapper()->IsLiveRunningServiceWorker(
+      version_->version_id()));
 
   // Call StartWorker() after it's started.
   version_->StartWorker(
@@ -285,9 +293,13 @@ TEST_F(ServiceWorkerVersionTest, ConcurrentStartAndStop) {
     version_->StopWorker(VerifyCalled(&has_stopped2, run_loop_5.QuitClosure()));
 
     EXPECT_EQ(EmbeddedWorkerStatus::STOPPING, version_->running_status());
+    EXPECT_FALSE(helper_->context_wrapper()->IsLiveRunningServiceWorker(
+        version_->version_id()));
     run_loop_4.Run();
     run_loop_5.Run();
     EXPECT_EQ(EmbeddedWorkerStatus::STOPPED, version_->running_status());
+    EXPECT_FALSE(helper_->context_wrapper()->IsLiveRunningServiceWorker(
+        version_->version_id()));
 
     // All StopWorker should just succeed.
     EXPECT_TRUE(has_stopped1);
@@ -306,8 +318,12 @@ TEST_F(ServiceWorkerVersionTest, ConcurrentStartAndStop) {
       ReceiveServiceWorkerStatus(&status1, run_loop_6.QuitClosure()));
 
   EXPECT_EQ(EmbeddedWorkerStatus::STARTING, version_->running_status());
+  EXPECT_TRUE(helper_->context_wrapper()->IsLiveRunningServiceWorker(
+      version_->version_id()));
   run_loop_6.Run();
   EXPECT_EQ(EmbeddedWorkerStatus::RUNNING, version_->running_status());
+  EXPECT_TRUE(helper_->context_wrapper()->IsLiveRunningServiceWorker(
+      version_->version_id()));
 
   {
     // Call StopWorker()
@@ -320,8 +336,12 @@ TEST_F(ServiceWorkerVersionTest, ConcurrentStartAndStop) {
         ReceiveServiceWorkerStatus(&status2, run_loop_7.QuitClosure()));
 
     EXPECT_EQ(EmbeddedWorkerStatus::STOPPING, version_->running_status());
+    EXPECT_FALSE(helper_->context_wrapper()->IsLiveRunningServiceWorker(
+        version_->version_id()));
     run_loop_7.Run();
     EXPECT_EQ(EmbeddedWorkerStatus::RUNNING, version_->running_status());
+    EXPECT_TRUE(helper_->context_wrapper()->IsLiveRunningServiceWorker(
+        version_->version_id()));
 
     // All should just succeed.
     EXPECT_EQ(blink::ServiceWorkerStatusCode::kOk, status1.value());
@@ -373,22 +393,28 @@ TEST_F(ServiceWorkerVersionTest, StartUnregisteredButStillLiveWorker) {
   absl::optional<blink::ServiceWorkerStatusCode> status;
   base::RunLoop run_loop;
   helper_->context()->registry()->DeleteRegistration(
-      registration_, registration_->key(),
+      registration_,
       ReceiveServiceWorkerStatus(&status, run_loop.QuitClosure()));
   run_loop.Run();
   ASSERT_EQ(blink::ServiceWorkerStatusCode::kOk, status.value());
 
   // The live registration is marked as uninstalling, but still exists.
   ASSERT_TRUE(registration_->is_uninstalling());
+  EXPECT_TRUE(helper_->context_wrapper()->IsLiveRunningServiceWorker(
+      version_->version_id()));
 
   // Stop the worker.
   StopServiceWorker(version_.get());
+  EXPECT_FALSE(helper_->context_wrapper()->IsLiveRunningServiceWorker(
+      version_->version_id()));
 
   // Dispatch an event on the unregistered and stopped but still live worker.
   SimulateDispatchEvent(ServiceWorkerMetrics::EventType::FETCH_MAIN_FRAME);
 
   // The worker should be now started again.
   EXPECT_EQ(EmbeddedWorkerStatus::RUNNING, version_->running_status());
+  EXPECT_TRUE(helper_->context_wrapper()->IsLiveRunningServiceWorker(
+      version_->version_id()));
 }
 
 TEST_F(ServiceWorkerVersionTest, InstallAndWaitCompletion) {
@@ -404,6 +430,9 @@ TEST_F(ServiceWorkerVersionTest, InstallAndWaitCompletion) {
   // Version's status must not have changed during installation.
   EXPECT_FALSE(status_change_called);
   EXPECT_EQ(ServiceWorkerVersion::INSTALLING, version_->status());
+  EXPECT_EQ(EmbeddedWorkerStatus::RUNNING, version_->running_status());
+  EXPECT_TRUE(helper_->context_wrapper()->IsLiveRunningServiceWorker(
+      version_->version_id()));
 }
 
 TEST_F(ServiceWorkerVersionTest, ActivateAndWaitCompletion) {
@@ -424,6 +453,9 @@ TEST_F(ServiceWorkerVersionTest, ActivateAndWaitCompletion) {
   // Version's status must not have changed during activation.
   EXPECT_FALSE(status_change_called);
   EXPECT_EQ(ServiceWorkerVersion::ACTIVATING, version_->status());
+  EXPECT_EQ(EmbeddedWorkerStatus::RUNNING, version_->running_status());
+  EXPECT_TRUE(helper_->context_wrapper()->IsLiveRunningServiceWorker(
+      version_->version_id()));
 }
 
 TEST_F(ServiceWorkerVersionTest, RepeatedlyObserveStatusChanges) {
@@ -460,21 +492,30 @@ TEST_F(ServiceWorkerVersionTest, Doom) {
                                   /*mock frame_routing_id=*/1),
           /*is_parent_frame_secure=*/true, helper_->context()->AsWeakPtr(),
           &remote_endpoint);
-  container_host->UpdateUrls(
-      registration_->scope(),
-      net::SiteForCookies::FromUrl(registration_->scope()),
-      registration_->key().origin(), registration_->key());
+  container_host->UpdateUrls(registration_->scope(),
+                             registration_->key().origin(),
+                             registration_->key());
   container_host->SetControllerRegistration(registration_, false);
   EXPECT_TRUE(version_->HasControllee());
   EXPECT_TRUE(container_host->controller());
 
+  // Set main_script_load_params_.
+  version_->set_main_script_load_params(
+      blink::mojom::WorkerMainScriptLoadParams::New());
+
   // Doom the version.
   version_->Doom();
+
+  EXPECT_FALSE(helper_->context_wrapper()->IsLiveRunningServiceWorker(
+      version_->version_id()));
 
   // The controllee should have been removed.
   EXPECT_EQ(ServiceWorkerVersion::REDUNDANT, version_->status());
   EXPECT_FALSE(version_->HasControllee());
   EXPECT_FALSE(container_host->controller());
+
+  // Ensure that the params are released.
+  EXPECT_TRUE(version_->main_script_load_params_.is_null());
 }
 
 TEST_F(ServiceWorkerVersionTest, SetDevToolsAttached) {
@@ -507,6 +548,92 @@ TEST_F(ServiceWorkerVersionTest, SetDevToolsAttached) {
   run_loop.Run();
   EXPECT_EQ(blink::ServiceWorkerStatusCode::kOk, status.value());
   EXPECT_EQ(EmbeddedWorkerStatus::RUNNING, version_->running_status());
+}
+
+// Tests that a worker containing external request with
+// ServiceWorkerExternalRequestTimeoutType::kDoesNotTimeout does not stop
+// if devtools is detached (after it is attached).
+//
+// Regression test for crbug.com/1152255#c144
+TEST_F(ServiceWorkerVersionTest, DevToolsAttachThenDetach) {
+  base::SimpleTestTickClock tick_clock;
+  SetTickClockForTesting(&tick_clock);
+  absl::optional<blink::ServiceWorkerStatusCode> status;
+
+  auto start_external_request_test =
+      [&](ServiceWorkerExternalRequestTimeoutType timeout_type,
+          bool expect_running) {
+        SCOPED_TRACE(testing::Message()
+                     << std::boolalpha << "expect_running: " << expect_running);
+        {
+          // Start worker.
+          base::RunLoop run_loop;
+          version_->StartWorker(
+              ServiceWorkerMetrics::EventType::UNKNOWN,
+              ReceiveServiceWorkerStatus(&status, run_loop.QuitClosure()));
+          ASSERT_EQ(EmbeddedWorkerStatus::STARTING, version_->running_status());
+
+          // Add an external request.
+          EXPECT_EQ(ServiceWorkerExternalRequestResult::kOk,
+                    version_->StartExternalRequest(base::GenerateGUID(),
+                                                   timeout_type));
+          run_loop.Run();
+          EXPECT_EQ(blink::ServiceWorkerStatusCode::kOk, status.value());
+          EXPECT_EQ(EmbeddedWorkerStatus::RUNNING, version_->running_status());
+        }
+
+        {
+          // Simulate DevTools is attached.
+          version_->SetDevToolsAttached(true);
+          EXPECT_TRUE(version_->timeout_timer_.IsRunning());
+          EXPECT_TRUE(version_->start_time_.is_null());
+          EXPECT_TRUE(version_->skip_recording_startup_time_);
+
+          // Simulate DevTools is detached.
+          version_->SetDevToolsAttached(false);
+          EXPECT_TRUE(version_->timeout_timer_.IsRunning());
+          EXPECT_TRUE(version_->skip_recording_startup_time_);
+
+          EXPECT_EQ(blink::ServiceWorkerStatusCode::kOk, status.value());
+          EXPECT_EQ(EmbeddedWorkerStatus::RUNNING, version_->running_status());
+        }
+
+        // Now advance time to check worker's running state.
+        tick_clock.Advance(kTestTimeoutBeyondRequestTimeout);
+        version_->timeout_timer_.user_task().Run();
+        base::RunLoop().RunUntilIdle();
+
+        const bool worker_stopped_or_stopping =
+            version_->OnRequestTermination();
+
+        EXPECT_EQ(!expect_running, worker_stopped_or_stopping);
+        const bool worker_running =
+            version_->running_status() == EmbeddedWorkerStatus::RUNNING;
+        EXPECT_EQ(expect_running, worker_running);
+
+        // Ensure the worker is stopped, so that start_external_request_test()
+        // works next time.
+        {
+          bool has_stopped = false;
+          base::RunLoop run_loop;
+          version_->StopWorker(
+              VerifyCalled(&has_stopped, run_loop.QuitClosure()));
+          run_loop.Run();
+          EXPECT_TRUE(has_stopped);
+          EXPECT_EQ(EmbeddedWorkerStatus::STOPPED, version_->running_status());
+        }
+      };
+
+  // kDoesNotTimeout timeout external request would continue to keep the worker
+  // running.
+  start_external_request_test(
+      ServiceWorkerExternalRequestTimeoutType::kDoesNotTimeout,
+      true /* expect_running */);
+
+  // And ensure that kDefault timeout external request does not keep the worker
+  // running.
+  start_external_request_test(ServiceWorkerExternalRequestTimeoutType::kDefault,
+                              false /* expect_running */);
 }
 
 TEST_F(ServiceWorkerVersionTest, RequestTerminationWithDevToolsAttached) {
@@ -793,8 +920,11 @@ TEST_F(ServiceWorkerVersionTest, RequestTimeout) {
       ReceiveServiceWorkerStatus(&error_status, run_loop.QuitClosure()));
 
   // Dispatch a dummy event.
+  auto message_event = blink::mojom::ExtendableMessageEvent::New();
+  message_event->message.sender_agent_cluster_id =
+      base::UnguessableToken::Create();
   version_->endpoint()->DispatchExtendableMessageEvent(
-      blink::mojom::ExtendableMessageEvent::New(),
+      std::move(message_event),
       version_->CreateSimpleEventCallback(request_id));
   worker->RunUntilDispatchMessageEvent();
 
@@ -1005,6 +1135,8 @@ TEST_F(ServiceWorkerVersionTest, FailToStart_RendererCrash) {
   // Callback has not completed yet.
   EXPECT_FALSE(status);
   EXPECT_EQ(EmbeddedWorkerStatus::STARTING, version_->running_status());
+  EXPECT_TRUE(helper_->context_wrapper()->IsLiveRunningServiceWorker(
+      version_->version_id()));
 
   // Simulate renderer crash: break EmbeddedWorkerInstance's Mojo connection to
   // the renderer-side client.
@@ -1014,6 +1146,8 @@ TEST_F(ServiceWorkerVersionTest, FailToStart_RendererCrash) {
   EXPECT_EQ(blink::ServiceWorkerStatusCode::kErrorStartWorkerFailed,
             status.value());
   EXPECT_EQ(EmbeddedWorkerStatus::STOPPED, version_->running_status());
+  EXPECT_FALSE(helper_->context_wrapper()->IsLiveRunningServiceWorker(
+      version_->version_id()));
 }
 
 TEST_F(ServiceWorkerVersionTest, FailToStart_Timeout) {
@@ -1032,6 +1166,8 @@ TEST_F(ServiceWorkerVersionTest, FailToStart_Timeout) {
   // Callback has not completed yet.
   EXPECT_FALSE(status);
   EXPECT_EQ(EmbeddedWorkerStatus::STARTING, version_->running_status());
+  EXPECT_TRUE(helper_->context_wrapper()->IsLiveRunningServiceWorker(
+      version_->version_id()));
 
   // Simulate timeout.
   EXPECT_TRUE(version_->timeout_timer_.IsRunning());
@@ -1043,6 +1179,8 @@ TEST_F(ServiceWorkerVersionTest, FailToStart_Timeout) {
   EXPECT_EQ(blink::ServiceWorkerStatusCode::kErrorTimeout, status.value());
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(EmbeddedWorkerStatus::STOPPED, version_->running_status());
+  EXPECT_FALSE(helper_->context_wrapper()->IsLiveRunningServiceWorker(
+      version_->version_id()));
 }
 
 // Test that a service worker stalled in stopping will timeout and not get in a
@@ -1146,6 +1284,8 @@ TEST_F(ServiceWorkerVersionTest, RendererCrashDuringEvent) {
   loop.Run();
   EXPECT_EQ(blink::ServiceWorkerStatusCode::kErrorFailed, status);
   EXPECT_EQ(EmbeddedWorkerStatus::STOPPED, version_->running_status());
+  EXPECT_FALSE(helper_->context_wrapper()->IsLiveRunningServiceWorker(
+      version_->version_id()));
 
   // Request already failed, calling finish should return false.
   EXPECT_FALSE(version_->FinishRequest(request_id, /*was_handled=*/true));
@@ -1175,7 +1315,7 @@ TEST_F(ServiceWorkerVersionTest, BadOrigin) {
 
   auto registration = CreateNewServiceWorkerRegistration(
       helper_->context()->registry(), options,
-      blink::StorageKey(url::Origin::Create(scope)));
+      blink::StorageKey::CreateFirstParty(url::Origin::Create(scope)));
   auto version = CreateNewServiceWorkerVersion(
       helper_->context()->registry(), registration_.get(),
       GURL("bad-origin://www.example.com/test/service_worker.js"),
@@ -1255,10 +1395,9 @@ TEST_F(ServiceWorkerVersionTest,
   base::WeakPtr<ServiceWorkerContainerHost> container_host =
       std::move(host_and_info->host);
   remote_endpoint.BindForWindow(std::move(host_and_info->info));
-  container_host->UpdateUrls(
-      registration_->scope(),
-      net::SiteForCookies::FromUrl(registration_->scope()),
-      registration_->key().origin(), registration_->key());
+  container_host->UpdateUrls(registration_->scope(),
+                             registration_->key().origin(),
+                             registration_->key());
   container_host->SetControllerRegistration(
       registration_, false /* notify_controllerchange */);
   EXPECT_TRUE(version_->HasControllee());
@@ -1284,7 +1423,7 @@ TEST_F(ServiceWorkerVersionTest,
   container_host->OnBeginNavigationCommit(
       GlobalRenderFrameHostId(version_->embedded_worker()->process_id(),
                               /*frame_routing_id=*/1),
-      network::CrossOriginEmbedderPolicy(), std::move(reporter),
+      PolicyContainerPolicies(), std::move(reporter),
       ukm::UkmRecorder::GetNewSourceID());
 
   // RenderProcessHost should be notified of foreground worker.
@@ -1358,11 +1497,35 @@ TEST_F(ServiceWorkerVersionTest,
       helper_->mock_render_process_host()->foreground_service_worker_count());
 }
 
+// An instance client whose fetch handler type is kNoHandler.
+class NoFetchHandlerClient : public FakeEmbeddedWorkerInstanceClient {
+ public:
+  explicit NoFetchHandlerClient(EmbeddedWorkerTestHelper* helper)
+      : FakeEmbeddedWorkerInstanceClient(helper) {}
+
+  NoFetchHandlerClient(const NoFetchHandlerClient&) = delete;
+  NoFetchHandlerClient& operator=(const NoFetchHandlerClient&) = delete;
+
+  void EvaluateScript() override {
+    host()->OnScriptEvaluationStart();
+    host()->OnStarted(blink::mojom::ServiceWorkerStartStatus::kNormalCompletion,
+                      blink::mojom::ServiceWorkerFetchHandlerType::kNoHandler,
+                      helper()->GetNextThreadId(),
+                      blink::mojom::EmbeddedWorkerStartTiming::New());
+  }
+};
+
 class ServiceWorkerVersionNoFetchHandlerTest : public ServiceWorkerVersionTest {
  protected:
-  ServiceWorkerVersion::FetchHandlerExistence GetFetchHandlerExistence()
+  void SetUp() override {
+    ServiceWorkerVersionTest::SetUp();
+    // Make the service worker says no handler.
+    helper_->AddPendingInstanceClient(
+        std::make_unique<NoFetchHandlerClient>(helper_.get()));
+  }
+  absl::optional<ServiceWorkerVersion::FetchHandlerType> GetFetchHandlerType()
       const override {
-    return ServiceWorkerVersion::FetchHandlerExistence::DOES_NOT_EXIST;
+    return ServiceWorkerVersion::FetchHandlerType::kNoHandler;
   }
 };
 
@@ -1405,6 +1568,7 @@ TEST_F(ServiceWorkerVersionTest, FailToStart_UseNewRendererProcess) {
   ASSERT_EQ(blink::ServiceWorkerStatusCode::kErrorStartWorkerFailed,
             StartServiceWorker(version_.get()));
   EXPECT_EQ(1, context->GetVersionFailureCount(id));
+  EXPECT_FALSE(helper_->context_wrapper()->IsLiveRunningServiceWorker(id));
 
   // Fail again.
   helper_->AddPendingInstanceClient(
@@ -1412,6 +1576,7 @@ TEST_F(ServiceWorkerVersionTest, FailToStart_UseNewRendererProcess) {
   ASSERT_EQ(blink::ServiceWorkerStatusCode::kErrorStartWorkerFailed,
             StartServiceWorker(version_.get()));
   EXPECT_EQ(2, context->GetVersionFailureCount(id));
+  EXPECT_FALSE(helper_->context_wrapper()->IsLiveRunningServiceWorker(id));
 
   // Succeed. It should choose the "new process".
   ASSERT_EQ(blink::ServiceWorkerStatusCode::kOk,
@@ -1419,6 +1584,7 @@ TEST_F(ServiceWorkerVersionTest, FailToStart_UseNewRendererProcess) {
   EXPECT_EQ(helper_->new_render_process_id(),
             version_->embedded_worker()->process_id());
   EXPECT_EQ(0, context->GetVersionFailureCount(id));
+  EXPECT_TRUE(helper_->context_wrapper()->IsLiveRunningServiceWorker(id));
   version_->StopWorker(base::DoNothing());
   base::RunLoop().RunUntilIdle();
 
@@ -1457,6 +1623,8 @@ TEST_F(ServiceWorkerVersionTest, FailToStart_RestartStalledWorker) {
   EXPECT_EQ(blink::ServiceWorkerStatusCode::kOk, status.value());
   EXPECT_TRUE(has_stopped);
   EXPECT_EQ(EmbeddedWorkerStatus::RUNNING, version_->running_status());
+  EXPECT_TRUE(helper_->context_wrapper()->IsLiveRunningServiceWorker(
+      version_->version_id()));
 }
 
 TEST_F(ServiceWorkerVersionTest, InstalledFetchEventHandlerExists) {
@@ -1631,12 +1799,6 @@ TEST_F(ServiceWorkerVersionTest, PendingExternalRequest) {
 
 // Tests worker lifetime with ServiceWorkerVersion::StartExternalRequest.
 TEST_F(ServiceWorkerVersionTest, WorkerLifetimeWithExternalRequest) {
-  constexpr base::TimeDelta kTestTimeout =
-      // Value of kRequestTimeout in service_worker_version.cc
-      base::Minutes(5) +
-      // A little past that.
-      base::Minutes(1);
-
   base::SimpleTestTickClock tick_clock;
   SetTickClockForTesting(&tick_clock);
   absl::optional<blink::ServiceWorkerStatusCode> status;
@@ -1664,13 +1826,18 @@ TEST_F(ServiceWorkerVersionTest, WorkerLifetimeWithExternalRequest) {
         }
 
         // Now advance time to check worker's running state.
-        tick_clock.Advance(kTestTimeout);
+        tick_clock.Advance(kTestTimeoutBeyondRequestTimeout);
         version_->timeout_timer_.user_task().Run();
         base::RunLoop().RunUntilIdle();
 
-        EXPECT_EQ(expect_running, version_->timeout_timer_.IsRunning());
-        EXPECT_EQ(!expect_running,
-                  version_->running_status() == EmbeddedWorkerStatus::STOPPED);
+        version_->OnPongFromWorker();  // Avoids ping timeout.
+        const bool worker_stopped_or_stopping =
+            version_->OnRequestTermination();
+
+        EXPECT_EQ(!expect_running, worker_stopped_or_stopping);
+        const bool worker_running =
+            version_->running_status() == EmbeddedWorkerStatus::RUNNING;
+        EXPECT_EQ(expect_running, worker_running);
 
         // Ensure the worker is stopped, so that start_external_request_test()
         // works next time.
@@ -1696,245 +1863,72 @@ TEST_F(ServiceWorkerVersionTest, WorkerLifetimeWithExternalRequest) {
       true /* expect_running */);
 }
 
-class ServiceWorkerVersionTerminationOnNoControlleeTest
-    : public ServiceWorkerVersionTest,
-      public testing::WithParamInterface<bool> {
- public:
-  ServiceWorkerVersionTerminationOnNoControlleeTest() {
-    if (IsTerminationEnabled()) {
-      // The value should be the same with |kTerminationDelay|.
-      feature_list_.InitAndEnableFeatureWithParameters(
-          features::kServiceWorkerTerminationOnNoControllee,
-          {{"termination_delay_in_ms", "5000"}});
-    } else {
-      feature_list_.InitAndDisableFeature(
-          features::kServiceWorkerTerminationOnNoControllee);
-    }
-  }
+// Tests that a worker containing external request with
+// ServiceWorkerExternalRequestTimeoutType::kDoesNotTimeout is not
+// stopped by an external request with "default" timeout.
+//
+// Regression test for https://crbug.com/1189678
+TEST_F(ServiceWorkerVersionTest,
+       DefaultTimeoutRequestDoesNotAffectMaxTimeoutRequest) {
+  base::SimpleTestTickClock tick_clock;
+  SetTickClockForTesting(&tick_clock);
+  absl::optional<blink::ServiceWorkerStatusCode> status;
 
-  ServiceWorkerContainerHost* CreateControllee() {
-    remote_endpoints_.emplace_back();
-    base::WeakPtr<ServiceWorkerContainerHost> container_host =
-        CreateContainerHostForWindow(
-            GlobalRenderFrameHostId(/*mock process_id=*/33,
-                                    /*mock frame_routing_id=*/1),
-            /*is_parent_frame_secure=*/true, helper_->context()->AsWeakPtr(),
-            &remote_endpoints_.back());
-    return container_host.get();
-  }
-
-  static bool IsTerminationEnabled() { return GetParam(); }
-
- protected:
-  // The value should be the same with the number set in the constructor.
-  static constexpr base::TimeDelta kTerminationDelay = base::Milliseconds(5000);
-
-  static constexpr base::TimeDelta kDefaultIdleDelay =
-      base::Seconds(blink::mojom::kServiceWorkerDefaultIdleDelayInSeconds);
-
- private:
-  base::test::ScopedFeatureList feature_list_;
-  std::vector<ServiceWorkerRemoteContainerEndpoint> remote_endpoints_;
-};
-
-// static
-constexpr base::TimeDelta
-    ServiceWorkerVersionTerminationOnNoControlleeTest::kTerminationDelay;
-
-// static
-constexpr base::TimeDelta
-    ServiceWorkerVersionTerminationOnNoControlleeTest::kDefaultIdleDelay;
-
-INSTANTIATE_TEST_SUITE_P(All,
-                         ServiceWorkerVersionTerminationOnNoControlleeTest,
-                         testing::Bool());
-
-// Confirm if the idle delay is updated when all controllees are gone.
-TEST_P(ServiceWorkerVersionTerminationOnNoControlleeTest,
-       IdleDelayOnNoControllee) {
-  version_->SetStatus(ServiceWorkerVersion::ACTIVATED);
-  FakeServiceWorker* service_worker_in_renderer =
-      helper_->AddNewPendingServiceWorker<FakeServiceWorker>(helper_.get());
-
-  // Add a controllee before starting a worker.
-  ServiceWorkerContainerHost* controllee = CreateControllee();
-  version_->AddControllee(controllee);
-
-  // Start the worker.
-  EXPECT_EQ(blink::ServiceWorkerStatusCode::kOk,
-            StartServiceWorker(version_.get()));
-  EXPECT_EQ(EmbeddedWorkerStatus::RUNNING, version_->running_status());
-
-  // The idle delay is set to the default until all controllees are gone.
-  task_environment_.RunUntilIdle();
-  EXPECT_FALSE(service_worker_in_renderer->idle_delay().has_value());
-
-  // The idle delay is updated to |kTerminationDelay|, which is the same with
-  // when all controllees are gone.
-  version_->RemoveControllee(controllee->client_uuid());
-  task_environment_.RunUntilIdle();
-  if (IsTerminationEnabled()) {
-    EXPECT_EQ(kTerminationDelay,
-              service_worker_in_renderer->idle_delay().value());
-  } else {
-    EXPECT_FALSE(service_worker_in_renderer->idle_delay().has_value());
-  }
-}
-
-// Confirm if the idle timeout is not updated if a controllee still exists.
-TEST_P(ServiceWorkerVersionTerminationOnNoControlleeTest,
-       NoIdleDelayUntilAllControlleeAreGone) {
-  version_->SetStatus(ServiceWorkerVersion::ACTIVATED);
-  FakeServiceWorker* service_worker_in_renderer =
-      helper_->AddNewPendingServiceWorker<FakeServiceWorker>(helper_.get());
-
-  // Add controlees before starting a worker.
-  ServiceWorkerContainerHost* controllee1 = CreateControllee();
-  ServiceWorkerContainerHost* controllee2 = CreateControllee();
-  version_->AddControllee(controllee1);
-  version_->AddControllee(controllee2);
-
-  // Start the worker.
-  EXPECT_EQ(blink::ServiceWorkerStatusCode::kOk,
-            StartServiceWorker(version_.get()));
-  EXPECT_EQ(EmbeddedWorkerStatus::RUNNING, version_->running_status());
-
-  // The idle delay should not be updated until all controllees are gone.
-  version_->RemoveControllee(controllee1->client_uuid());
-  task_environment_.RunUntilIdle();
-  EXPECT_FALSE(service_worker_in_renderer->idle_delay().has_value());
-
-  // The idle delay is set to |kTerminationDelay| when all controllees are gone.
-  version_->RemoveControllee(controllee2->client_uuid());
-  task_environment_.RunUntilIdle();
-  if (IsTerminationEnabled()) {
-    EXPECT_EQ(kTerminationDelay,
-              service_worker_in_renderer->idle_delay().value());
-  } else {
-    EXPECT_FALSE(service_worker_in_renderer->idle_delay().has_value());
-  }
-}
-
-// Confirm the timeout is set back to the default when a new controllee is added
-// to the ServiceWorkerVersion before it's terminated.
-TEST_P(ServiceWorkerVersionTerminationOnNoControlleeTest,
-       AddControlleeAfterNoControllee) {
-  version_->SetStatus(ServiceWorkerVersion::ACTIVATED);
-  FakeServiceWorker* service_worker_in_renderer =
-      helper_->AddNewPendingServiceWorker<FakeServiceWorker>(helper_.get());
-  EXPECT_EQ(blink::ServiceWorkerStatusCode::kOk,
-            StartServiceWorker(version_.get()));
-  EXPECT_EQ(EmbeddedWorkerStatus::RUNNING, version_->running_status());
-
+  using ReqTimeoutType = ServiceWorkerExternalRequestTimeoutType;
   {
-    // The idle timeout is set to |kTerminationDelay| if all controllees are
-    // gone.
-    ServiceWorkerContainerHost* controllee = CreateControllee();
-    version_->AddControllee(controllee);
-    version_->RemoveControllee(controllee->client_uuid());
-    task_environment_.RunUntilIdle();
-    if (IsTerminationEnabled()) {
-      EXPECT_EQ(kTerminationDelay,
-                service_worker_in_renderer->idle_delay().value());
-    } else {
-      EXPECT_FALSE(service_worker_in_renderer->idle_delay().has_value());
-    }
+    // Start worker.
+    base::RunLoop run_loop;
+    version_->StartWorker(
+        ServiceWorkerMetrics::EventType::UNKNOWN,
+        ReceiveServiceWorkerStatus(&status, run_loop.QuitClosure()));
+    ASSERT_EQ(EmbeddedWorkerStatus::STARTING, version_->running_status());
+
+    // Add an external request, with kDoesNotTimeout timeout.
+    EXPECT_EQ(ServiceWorkerExternalRequestResult::kOk,
+              version_->StartExternalRequest(base::GenerateGUID(),
+                                             ReqTimeoutType::kDoesNotTimeout));
+    run_loop.Run();
+    EXPECT_EQ(blink::ServiceWorkerStatusCode::kOk, status.value());
+    EXPECT_EQ(EmbeddedWorkerStatus::RUNNING, version_->running_status());
+
+    // Add another external request with kDefault timeout.
+    EXPECT_EQ(ServiceWorkerExternalRequestResult::kOk,
+              version_->StartExternalRequest(base::GenerateGUID(),
+                                             ReqTimeoutType::kDefault));
   }
 
-  {
-    // The idle timeout is set to the default again if a new client is started
-    // to be controlled by the service worker.
-    ServiceWorkerContainerHost* controllee = CreateControllee();
-    version_->AddControllee(controllee);
-    task_environment_.RunUntilIdle();
-    if (IsTerminationEnabled()) {
-      EXPECT_EQ(kDefaultIdleDelay,
-                service_worker_in_renderer->idle_delay().value());
-    } else {
-      EXPECT_FALSE(service_worker_in_renderer->idle_delay().has_value());
-    }
+  // Now advance time to check worker's running state.
+  tick_clock.Advance(kTestTimeoutBeyondRequestTimeout);
+  version_->timeout_timer_.user_task().Run();
+  version_->OnPongFromWorker();  // Avoids ping timeout.
+  base::RunLoop().RunUntilIdle();
 
-    // The idle timeout is set to |kTerminationDelay| again when all controllees
-    // are gone.
-    version_->RemoveControllee(controllee->client_uuid());
-    task_environment_.RunUntilIdle();
-    if (IsTerminationEnabled()) {
-      EXPECT_EQ(kTerminationDelay,
-                service_worker_in_renderer->idle_delay().value());
-    } else {
-      EXPECT_FALSE(service_worker_in_renderer->idle_delay().has_value());
-    }
-  }
-}
-
-// Confirm no crash happens if the worker is stopped.
-TEST_P(ServiceWorkerVersionTerminationOnNoControlleeTest, StoppedWorker) {
-  version_->SetStatus(ServiceWorkerVersion::ACTIVATED);
-  EXPECT_EQ(EmbeddedWorkerStatus::STOPPED, version_->running_status());
-
-  ServiceWorkerContainerHost* controllee = CreateControllee();
-  version_->AddControllee(controllee);
-  version_->RemoveControllee(controllee->client_uuid());
-}
-
-// FakeEmbeddedWorkerInstanceClient which waits to call OnStarted() until
-// CallOnStarted() is called.
-class WaitToCallOnStartedEmbeddedWorkerInstanceClient
-    : public FakeEmbeddedWorkerInstanceClient {
- public:
-  explicit WaitToCallOnStartedEmbeddedWorkerInstanceClient(
-      EmbeddedWorkerTestHelper* helper)
-      : FakeEmbeddedWorkerInstanceClient(helper) {}
-
-  void CallOnStarted() {
-    host()->OnStarted(blink::mojom::ServiceWorkerStartStatus::kNormalCompletion,
-                      true /* has_fetch_handler */, helper()->GetNextThreadId(),
-                      blink::mojom::EmbeddedWorkerStartTiming::New());
-  }
-
- protected:
-  void EvaluateScript() override { host()->OnScriptEvaluationStart(); }
-};
-
-// Call AddControllee() and RemoveControllee() while starting a worker.
-// This is a regression test for https://crbug.com/1099744.
-TEST_P(ServiceWorkerVersionTerminationOnNoControlleeTest,
-       RemoveControlleeBeforeStarted) {
-  version_->SetStatus(ServiceWorkerVersion::ACTIVATED);
-  EXPECT_EQ(EmbeddedWorkerStatus::STOPPED, version_->running_status());
-  auto* embedded_worker_in_renderer = helper_->AddNewPendingInstanceClient<
-      WaitToCallOnStartedEmbeddedWorkerInstanceClient>(helper_.get());
-  auto* service_worker_in_renderer =
-      helper_->AddNewPendingServiceWorker<FakeServiceWorker>(helper_.get());
-  base::RunLoop loop;
-  version_->StartWorker(
-      ServiceWorkerMetrics::EventType::UNKNOWN,
-      base::BindLambdaForTesting(
-          [&](blink::ServiceWorkerStatusCode) { loop.Quit(); }));
-
-  // Add and remove controllee during starting the worker. This doesn't update
-  // the idle delay.
-  ServiceWorkerContainerHost* controllee = CreateControllee();
-  version_->AddControllee(controllee);
-  version_->RemoveControllee(controllee->client_uuid());
-  service_worker_in_renderer->RunUntilInitializeGlobalScope();
-  EXPECT_FALSE(service_worker_in_renderer->idle_delay().has_value());
-  EXPECT_EQ(EmbeddedWorkerStatus::STARTING, version_->running_status());
-
-  // Start the worker and make sure the fake service worker receives all the
-  // messages. At the OnStarted message, the browser sends the idle timeout
-  // because there's no controllee at this point.
-  embedded_worker_in_renderer->CallOnStarted();
-  loop.Run();
-  service_worker_in_renderer->FlushForTesting();
+  // Expect the worker to be still running.
+  const bool worker_stopped_or_stopping = version_->OnRequestTermination();
+  EXPECT_FALSE(worker_stopped_or_stopping);
   EXPECT_EQ(EmbeddedWorkerStatus::RUNNING, version_->running_status());
-  if (IsTerminationEnabled()) {
-    EXPECT_EQ(kTerminationDelay,
-              service_worker_in_renderer->idle_delay().value());
-  } else {
-    EXPECT_FALSE(service_worker_in_renderer->idle_delay().has_value());
-  }
 }
 
+TEST_F(ServiceWorkerVersionTest, SetResources) {
+  // Create a new version
+  scoped_refptr<ServiceWorkerVersion> version = CreateNewServiceWorkerVersion(
+      helper_->context()->registry(), registration_.get(),
+      GURL("https://www.example.com/test/service_worker.js"),
+      blink::mojom::ScriptType::kClassic);
+
+  // The checksum is empty because still no resource records.
+  EXPECT_FALSE(version->sha256_script_checksum());
+
+  // Set resource records.
+  std::vector<storage::mojom::ServiceWorkerResourceRecordPtr> records;
+  records.push_back(WriteToDiskCacheWithIdSync(
+      helper_->context()->GetStorageControl(), version->script_url(), 10,
+      {} /* headers */, "I'm a body", "I'm a meta data"));
+  version->SetResources(records);
+
+  // The checksum has been calculated after the SetResources.
+  EXPECT_EQ("CBE5CFDF7C2118A9C3D78EF1D684F3AFA089201352886449A06A6511CFEF74A7",
+            version->sha256_script_checksum());
+}
 }  // namespace service_worker_version_unittest
 }  // namespace content

@@ -1,4 +1,4 @@
-// Copyright 2020 PDFium Authors. All rights reserved.
+// Copyright 2020 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -45,11 +45,6 @@ class GCedTreeNodeUnitTest : public FXGCUnitTest {
   ObservableGCedTreeNodeForTest* CreateNode() {
     return cppgc::MakeGarbageCollected<ObservableGCedTreeNodeForTest>(
         heap()->GetAllocationHandle());
-  }
-
-  void ForceGCAndPump() {
-    FXGC_ForceGarbageCollection(heap());
-    V8TestEnvironment::PumpPlatformMessageLoop(isolate());
   }
 
   void AddClutterToFront(ObservableGCedTreeNodeForTest* parent) {

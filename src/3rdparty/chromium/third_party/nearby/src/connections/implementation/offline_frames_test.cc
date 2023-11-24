@@ -16,6 +16,7 @@
 
 #include <array>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -26,13 +27,16 @@
 #include "connections/implementation/proto/offline_wire_formats.pb.h"
 #include "internal/platform/byte_array.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 namespace parser {
 namespace {
 
-using Medium = proto::connections::Medium;
+using ::location::nearby::connections::OfflineFrame;
+using ::location::nearby::connections::OsInfo;
+using ::location::nearby::connections::PayloadTransferFrame;
+using ::location::nearby::connections::V1Frame;
+using Medium = ::location::nearby::proto::connections::Medium;
 using ::protobuf_matchers::EqualsProto;
 
 constexpr absl::string_view kEndpointId{"ABC"};
@@ -40,6 +44,8 @@ constexpr absl::string_view kEndpointName{"XYZ"};
 constexpr int kNonce = 1234;
 constexpr bool kSupports5ghz = true;
 constexpr absl::string_view kBssid{"FF:FF:FF:FF:FF:FF"};
+constexpr int kApFrequency = 2412;
+constexpr absl::string_view kIp4Bytes = {"8xqT"};
 constexpr std::array<Medium, 9> kMediums = {
     Medium::MDNS, Medium::BLUETOOTH,   Medium::WIFI_HOTSPOT,
     Medium::BLE,  Medium::WIFI_LAN,    Medium::WIFI_AWARE,
@@ -95,7 +101,12 @@ TEST(OfflineFramesTest, CanGenerateConnectionRequest) {
         endpoint_name: "XYZ"
         endpoint_info: "XYZ"
         nonce: 1234
-        medium_metadata: < supports_5_ghz: true bssid: "FF:FF:FF:FF:FF:FF" >
+        medium_metadata: <
+          supports_5_ghz: true
+          bssid: "FF:FF:FF:FF:FF:FF"
+          ip_address: "8xqT"
+          ap_frequency: 2412
+        >
         mediums: MDNS
         mediums: BLUETOOTH
         mediums: WIFI_HOTSPOT
@@ -109,11 +120,19 @@ TEST(OfflineFramesTest, CanGenerateConnectionRequest) {
         keep_alive_timeout_millis: 5000
       >
     >)pb";
-  ByteArray bytes = ForConnectionRequest(
-      std::string(kEndpointId), ByteArray{std::string(kEndpointName)}, kNonce,
-      kSupports5ghz, std::string(kBssid),
-      std::vector(kMediums.begin(), kMediums.end()), kKeepAliveIntervalMillis,
-      kKeepAliveTimeoutMillis);
+
+  ConnectionInfo connection_info{std::string(kEndpointId),
+                                 ByteArray{std::string(kEndpointName)},
+                                 kNonce,
+                                 kSupports5ghz,
+                                 std::string(kBssid),
+                                 kApFrequency,
+                                 std::string(kIp4Bytes),
+                                 std::vector<Medium, std::allocator<Medium>>(
+                                     kMediums.begin(), kMediums.end()),
+                                 kKeepAliveIntervalMillis,
+                                 kKeepAliveTimeoutMillis};
+  ByteArray bytes = ForConnectionRequest(connection_info);
   auto response = FromBytes(bytes);
   ASSERT_TRUE(response.ok());
   OfflineFrame message = FromBytes(bytes).result();
@@ -126,9 +145,16 @@ TEST(OfflineFramesTest, CanGenerateConnectionResponse) {
     version: V1
     v1: <
       type: CONNECTION_RESPONSE
-      connection_response: < status: 1 response: REJECT >
+      connection_response: <
+        status: 1
+        response: REJECT
+        os_info { type: LINUX }
+      >
     >)pb";
-  ByteArray bytes = ForConnectionResponse(1);
+
+  OsInfo os_info;
+  os_info.set_type(OsInfo::LINUX);
+  ByteArray bytes = ForConnectionResponse(1, os_info);
   auto response = FromBytes(bytes);
   ASSERT_TRUE(response.ok());
   OfflineFrame message = FromBytes(bytes).result();
@@ -283,7 +309,8 @@ TEST(OfflineFramesTest, CanGenerateBwuWifiDirectPathAvailable) {
             ssid: "DIRECT-A0-0123456789AB"
             password: "password"
             port: 1000
-            frequency: 1000
+            frequency: 2412
+            gateway: "192.168.1.1"
           >
           supports_disabling_encryption: false
           supports_client_introduction_ack: true
@@ -291,7 +318,7 @@ TEST(OfflineFramesTest, CanGenerateBwuWifiDirectPathAvailable) {
       >
     >)pb";
   ByteArray bytes = ForBwuWifiDirectPathAvailable(
-      "DIRECT-A0-0123456789AB", "password", 1000, 1000, false);
+      "DIRECT-A0-0123456789AB", "password", 1000, 2412, false, "192.168.1.1");
   auto response = FromBytes(bytes);
   ASSERT_TRUE(response.ok());
   OfflineFrame message = FromBytes(bytes).result();
@@ -362,10 +389,14 @@ TEST(OfflineFramesTest, CanGenerateBwuIntroduction) {
       type: BANDWIDTH_UPGRADE_NEGOTIATION
       bandwidth_upgrade_negotiation: <
         event_type: CLIENT_INTRODUCTION
-        client_introduction: < endpoint_id: "ABC" >
+        client_introduction: < 
+          endpoint_id: "ABC"
+          supports_disabling_encryption: false
+        >
       >
     >)pb";
-  ByteArray bytes = ForBwuIntroduction(std::string(kEndpointId));
+  ByteArray bytes = ForBwuIntroduction(
+      std::string(kEndpointId), false /* supports_disabling_encryption */);
   auto response = FromBytes(bytes);
   ASSERT_TRUE(response.ok());
   OfflineFrame message = FromBytes(bytes).result();
@@ -391,4 +422,3 @@ TEST(OfflineFramesTest, CanGenerateKeepAlive) {
 }  // namespace parser
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location

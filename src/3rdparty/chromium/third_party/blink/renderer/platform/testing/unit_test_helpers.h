@@ -40,7 +40,7 @@ namespace blink {
 namespace test {
 
 // Note: You may want to use TestingPlatformSupportWithMockScheduler to
-// provides runUntilIdle() method that can work with WebURLLoaderMockFactory.
+// provides runUntilIdle() method that can work with URLLoaderMockFactory.
 void RunPendingTasks();
 
 // Waits for delayed task to complete or timers to fire for |delay|.
@@ -80,10 +80,16 @@ String PlatformTestDataPath(const String& relative_path = String());
 String AccessibilityTestDataPath(const String& relative_path = String());
 
 // Returns Blink web_tests fonts as an absolute path, i.e.
-// <blinkRootDir>/src/third_party/blink/web_tests/external/wpt/fonts/<relative_path>.
+// <blinkRootDir>/web_tests/external/wpt/fonts/<relative_path>.
 // It returns the top fonts test directory if |relative_path| was not
 // specified.
 String BlinkWebTestsFontsTestDataPath(const String& relative_path = String());
+
+// Returns Blink style perftest data as an absolute path, i.e.
+// <blinkRootDir>/renderer/core/css/perftest_data/<relative_path>.
+// It returns the top perftest data directory if |relative_path| was not
+// specified.
+String StylePerfTestDataPath(const String& relative_path = String());
 
 // Returns the directory of hyphenation dictionaries for testing.
 base::FilePath HyphenationDictionaryDir();

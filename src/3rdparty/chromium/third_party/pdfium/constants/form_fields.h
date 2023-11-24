@@ -1,4 +1,4 @@
-// Copyright 2019 PDFium Authors. All rights reserved.
+// Copyright 2019 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,6 +23,11 @@ extern const char kBtn[];
 extern const char kTx[];
 extern const char kCh[];
 extern const char kSig[];
+
+extern const char kDA[];
+extern const char kQ[];
+extern const char kDS[];
+extern const char kRV[];
 
 }  // namespace form_fields
 }  // namespace pdfium

@@ -15,32 +15,35 @@
 #include "src/gpu/graphite/Caps.h"
 
 namespace skgpu::graphite {
+struct ContextOptions;
 
-class MtlCaps final : public skgpu::graphite::Caps {
+class MtlCaps final : public Caps {
 public:
-    MtlCaps(const id<MTLDevice>);
+    MtlCaps(const id<MTLDevice>, const ContextOptions&);
     ~MtlCaps() override {}
 
     TextureInfo getDefaultSampledTextureInfo(SkColorType,
-                                             uint32_t levelCount,
+                                             Mipmapped mipmapped,
                                              Protected,
                                              Renderable) const override;
 
-    TextureInfo getDefaultMSAATextureInfo(SkColorType,
-                                          uint32_t sampleCount,
-                                          Protected) const override;
+    TextureInfo getDefaultMSAATextureInfo(const TextureInfo& singleSampledInfo,
+                                          Discardable discardable) const override;
 
-    TextureInfo getDefaultDepthStencilTextureInfo(Mask<DepthStencilFlags>,
+    TextureInfo getDefaultDepthStencilTextureInfo(SkEnumBitMask<DepthStencilFlags>,
                                                   uint32_t sampleCount,
                                                   Protected) const override;
 
     UniqueKey makeGraphicsPipelineKey(const GraphicsPipelineDesc&,
                                       const RenderPassDesc&) const override;
+    UniqueKey makeComputePipelineKey(const ComputePipelineDesc&) const override;
+
+    // Get a sufficiently unique bit representation for the RenderPassDesc to be embedded in other
+    // UniqueKeys (e.g. makeGraphicsPipelineKey).
+    uint64_t getRenderPassDescKey(const RenderPassDesc&) const;
 
     bool isMac() const { return fGPUFamily == GPUFamily::kMac; }
     bool isApple()const  { return fGPUFamily == GPUFamily::kApple; }
-
-    size_t getMinBufferAlignment() const { return this->isMac() ? 4 : 1; }
 
     bool isRenderable(const TextureInfo&) const override;
 
@@ -77,7 +80,17 @@ private:
     bool isRenderable(MTLPixelFormat, uint32_t numSamples) const;
     uint32_t maxRenderTargetSampleCount(MTLPixelFormat) const;
 
-    size_t getTransferBufferAlignment(size_t bytesPerPixel) const override;
+    bool supportsWritePixels(const TextureInfo&) const override;
+    bool supportsReadPixels(const TextureInfo&) const override;
+
+    SkColorType supportedWritePixelsColorType(SkColorType dstColorType,
+                                              const TextureInfo& dstTextureInfo,
+                                              SkColorType srcColorType) const override;
+    SkColorType supportedReadPixelsColorType(SkColorType srcColorType,
+                                             const TextureInfo& srcTextureInfo,
+                                             SkColorType dstColorType) const override;
+
+    MTLStorageMode getDefaultMSAAStorageMode(Discardable discardable) const;
 
     struct FormatInfo {
         uint32_t colorTypeFlags(SkColorType colorType) const {
@@ -103,7 +116,7 @@ private:
         std::unique_ptr<ColorTypeInfo[]> fColorTypeInfos;
         int fColorTypeInfoCount = 0;
     };
-    inline static constexpr size_t kNumMtlFormats = 8;
+    inline static constexpr size_t kNumMtlFormats = 12;
 
     static size_t GetFormatIndex(MTLPixelFormat);
     FormatInfo fFormatTable[kNumMtlFormats];

@@ -7,17 +7,7 @@
       "is_debug": false,
       "proprietary_codecs": true,
       "symbol_level": 0,
-      "use_goma": true
-    }
-  },
-  "linux-swangle-try-tot-angle-x64": {
-    "gn_args": {
-      "build_angle_deqp_tests": true,
-      "dcheck_always_on": true,
-      "is_component_build": true,
-      "is_debug": false,
-      "symbol_level": 1,
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "linux-swangle-try-tot-swiftshader-x64": {
@@ -27,7 +17,7 @@
       "is_component_build": true,
       "is_debug": false,
       "symbol_level": 1,
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "linux-swangle-try-x64": {
@@ -37,7 +27,7 @@
       "is_component_build": true,
       "is_debug": false,
       "symbol_level": 1,
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "mac-swangle-chromium-try-x64": {
@@ -61,28 +51,7 @@
       "proprietary_codecs": true,
       "symbol_level": 0,
       "target_cpu": "x86",
-      "use_goma": true
-    }
-  },
-  "win-swangle-try-tot-angle-x64": {
-    "gn_args": {
-      "build_angle_deqp_tests": true,
-      "dcheck_always_on": true,
-      "is_component_build": true,
-      "is_debug": false,
-      "symbol_level": 1,
-      "use_goma": true
-    }
-  },
-  "win-swangle-try-tot-angle-x86": {
-    "gn_args": {
-      "build_angle_deqp_tests": true,
-      "dcheck_always_on": true,
-      "is_component_build": true,
-      "is_debug": false,
-      "symbol_level": 0,
-      "target_cpu": "x86",
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "win-swangle-try-tot-swiftshader-x64": {
@@ -92,7 +61,7 @@
       "is_component_build": true,
       "is_debug": false,
       "symbol_level": 1,
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "win-swangle-try-tot-swiftshader-x86": {
@@ -103,7 +72,7 @@
       "is_debug": false,
       "symbol_level": 0,
       "target_cpu": "x86",
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "win-swangle-try-x64": {
@@ -113,7 +82,7 @@
       "is_component_build": true,
       "is_debug": false,
       "symbol_level": 1,
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "win-swangle-try-x86": {
@@ -124,7 +93,7 @@
       "is_debug": false,
       "symbol_level": 0,
       "target_cpu": "x86",
-      "use_goma": true
+      "use_remoteexec": true
     }
   }
 }

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,17 +17,14 @@
 #include "skia/grit/skia_resources.h"
 #include "skia/grit/skia_resources_map.h"
 #include "ui/base/webui/web_ui_util.h"
-#include "ui/resources/grit/webui_generated_resources.h"
-#include "ui/resources/grit/webui_generated_resources_map.h"
+#include "ui/resources/grit/webui_resources.h"
+#include "ui/resources/grit/webui_resources_map.h"
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ash/constants/ash_features.h"
-#include "ash/grit/ash_resources.h"
-#include "ash/grit/ash_resources_map.h"
-#include "base/feature_list.h"
+#include "chromeos/ash/grit/ash_resources.h"
+#include "chromeos/ash/grit/ash_resources_map.h"
 #include "chromeos/grit/chromeos_resources.h"
 #include "chromeos/grit/chromeos_resources_map.h"
-#include "ui/chromeos/styles/cros_styles.h"  // nogncheck
 #endif
 
 namespace content {
@@ -35,25 +32,17 @@ namespace content {
 namespace {
 
 const std::set<int> GetContentResourceIds() {
-  return std::set<int>{
-      IDR_GEOMETRY_MOJOM_WEBUI_JS,
-      IDR_IMAGE_MOJOM_WEBUI_JS,
-      IDR_ORIGIN_MOJO_WEBUI_JS,
-      IDR_RANGE_MOJOM_WEBUI_JS,
-      IDR_TOKEN_MOJO_WEBUI_JS,
-      IDR_UI_WINDOW_OPEN_DISPOSITION_MOJO_WEBUI_JS,
-      IDR_URL_MOJOM_WEBUI_JS,
-      IDR_VULKAN_INFO_MOJO_JS,
-      IDR_VULKAN_TYPES_MOJO_JS,
+  return std::set<int> {
+    IDR_GEOMETRY_MOJOM_WEBUI_JS, IDR_IMAGE_MOJOM_WEBUI_JS,
+        IDR_ORIGIN_MOJO_WEBUI_JS, IDR_RANGE_MOJOM_WEBUI_JS,
+        IDR_TOKEN_MOJO_WEBUI_JS, IDR_UI_ACCELERATORS_MOJOM_WEBUI_JS,
+        IDR_UI_EVENT_MOJOM_WEBUI_JS, IDR_UI_LATENCY_INFO_MOJOM_WEBUI_JS,
+        IDR_UI_WINDOW_OPEN_DISPOSITION_MOJO_WEBUI_JS, IDR_URL_MOJOM_WEBUI_JS,
+        IDR_VULKAN_INFO_MOJO_JS, IDR_VULKAN_TYPES_MOJO_JS,
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-      IDR_ORIGIN_MOJO_HTML,
-      IDR_ORIGIN_MOJO_JS,
-      IDR_UI_WINDOW_OPEN_DISPOSITION_MOJO_JS,
-      IDR_UNGUESSABLE_TOKEN_MOJO_HTML,
-      IDR_UNGUESSABLE_TOKEN_MOJO_JS,
-      IDR_URL_MOJO_HTML,
-      IDR_URL_MOJO_JS,
+        IDR_ORIGIN_MOJO_JS, IDR_UI_WINDOW_OPEN_DISPOSITION_MOJO_JS,
+        IDR_UNGUESSABLE_TOKEN_MOJO_JS, IDR_URL_MOJO_JS,
 #endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
   };
 }
@@ -61,36 +50,32 @@ const std::set<int> GetContentResourceIds() {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 const std::set<int> GetChromeosMojoResourceIds() {
   return std::set<int>{
-      IDR_BLUETOOTH_CONFIG_MOJOM_LITE_JS,
-      IDR_IP_ADDRESS_MOJOM_HTML,
-      IDR_IP_ADDRESS_MOJOM_LITE_JS,
       IDR_IP_ADDRESS_MOJOM_WEBUI_JS,
       IDR_NETWORK_CONFIG_CONSTANTS_MOJOM_WEBUI_JS,
-      IDR_NETWORK_CONFIG_MOJOM_HTML,
-      IDR_NETWORK_CONFIG_MOJOM_LITE_JS,
       IDR_NETWORK_CONFIG_MOJOM_WEBUI_JS,
-      IDR_NETWORK_CONFIG_TYPES_MOJOM_HTML,
-      IDR_NETWORK_CONFIG_TYPES_MOJOM_LITE_JS,
       IDR_NETWORK_CONFIG_TYPES_MOJOM_WEBUI_JS,
-      IDR_NETWORK_DIAGNOSTICS_MOJOM_HTML,
       IDR_NETWORK_DIAGNOSTICS_MOJOM_LITE_JS,
-      IDR_NETWORK_HEALTH_MOJOM_HTML,
-      IDR_NETWORK_HEALTH_MOJOM_LITE_JS,
+      IDR_NETWORK_DIAGNOSTICS_MOJOM_WEBUI_JS,
+      IDR_NETWORK_HEALTH_MOJOM_WEBUI_JS,
+      IDR_NETWORK_HEALTH_TYPES_MOJOM_WEBUI_JS,
   };
 }
 
 const std::set<int> GetAshMojoResourceIds() {
   return std::set<int>{
-      IDR_CELLULAR_SETUP_MOJOM_HTML,
-      IDR_CELLULAR_SETUP_MOJOM_LITE_JS,
-      IDR_ESIM_MANAGER_MOJOM_HTML,
-      IDR_ESIM_MANAGER_MOJOM_LITE_JS,
-      IDR_MULTIDEVICE_DEVICE_SYNC_MOJOM_HTML,
+      IDR_AUTH_FACTOR_CONFIG_MOJOM_WEBUI_JS,
+      IDR_BLUETOOTH_CONFIG_MOJOM_WEBUI_JS,
+      IDR_CELLULAR_SETUP_MOJOM_WEBUI_JS,
+      IDR_ESIM_MANAGER_MOJOM_WEBUI_JS,
+      IDR_HOTSPOT_CONFIG_MOJOM_WEBUI_JS,
       IDR_MULTIDEVICE_DEVICE_SYNC_MOJOM_LITE_JS,
-      IDR_MULTIDEVICE_MULTIDEVICE_SETUP_MOJOM_HTML,
+      IDR_MULTIDEVICE_DEVICE_SYNC_MOJOM_WEBUI_JS,
       IDR_MULTIDEVICE_MULTIDEVICE_SETUP_MOJOM_LITE_JS,
-      IDR_MULTIDEVICE_MULTIDEVICE_TYPES_MOJOM_HTML,
+      IDR_MULTIDEVICE_MULTIDEVICE_SETUP_MOJOM_WEBUI_JS,
       IDR_MULTIDEVICE_MULTIDEVICE_TYPES_MOJOM_LITE_JS,
+      IDR_MULTIDEVICE_MULTIDEVICE_TYPES_MOJOM_WEBUI_JS,
+      IDR_NEARBY_NEARBY_SHARE_SETTINGS_MOJOM_WEBUI_JS,
+      IDR_NEARBY_NEARBY_SHARE_TARGET_TYPES_MOJOM_WEBUI_JS,
   };
 }
 #endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
@@ -121,7 +106,7 @@ void PopulateSharedResourcesDataSource(WebUIDataSource* source) {
   AddResources(GetContentResourceIds(), kContentResources,
                kContentResourcesSize, source);
   source->AddResourcePaths(
-      base::make_span(kWebuiGeneratedResources, kWebuiGeneratedResourcesSize));
+      base::make_span(kWebuiResources, kWebuiResourcesSize));
   source->AddResourcePaths(
       base::make_span(kMojoBindingsResources, kMojoBindingsResourcesSize));
   source->AddResourcePaths(base::make_span(kSkiaResources, kSkiaResourcesSize));
@@ -130,12 +115,6 @@ void PopulateSharedResourcesDataSource(WebUIDataSource* source) {
                kChromeosResourcesSize, source);
   AddResources(GetAshMojoResourceIds(), kAshResources, kAshResourcesSize,
                source);
-
-  source->AddString(
-      "crosColorsDebugOverrides",
-      base::FeatureList::IsEnabled(ash::features::kSemanticColorsDebugOverride)
-          ? cros_styles::kDebugOverrideCssString
-          : "");
 #endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
 
   source->AddString("fontFamily", webui::GetFontFamily());

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,8 +11,9 @@
 #include <memory>
 #include <vector>
 
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/synchronization/lock.h"
+#include "base/task/sequenced_task_runner.h"
 #include "media/base/android/media_codec_bridge.h"
 #include "media/base/decoder_buffer.h"
 #include "media/gpu/android/codec_surface_bundle.h"
@@ -107,7 +108,8 @@ class MEDIA_GPU_EXPORT CodecWrapper {
   using OutputReleasedCB = base::RepeatingCallback<void(bool)>;
   CodecWrapper(CodecSurfacePair codec_surface_pair,
                OutputReleasedCB output_buffer_release_cb,
-               scoped_refptr<base::SequencedTaskRunner> release_task_runner);
+               scoped_refptr<base::SequencedTaskRunner> release_task_runner,
+               const gfx::Size& initial_expected_size);
 
   CodecWrapper(const CodecWrapper&) = delete;
   CodecWrapper& operator=(const CodecWrapper&) = delete;

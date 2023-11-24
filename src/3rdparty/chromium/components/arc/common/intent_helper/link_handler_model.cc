@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
@@ -37,7 +37,7 @@ bool GetQueryValue(const GURL& url,
   url::Component value;
 
   while (url::ExtractQueryKeyValue(str.c_str(), &query, &key, &value)) {
-    if (!value.is_nonempty())
+    if (value.is_empty())
       continue;
     if (str.substr(key.begin, key.len) == key_to_find) {
       if (value.len >= kMaxValueLen)
@@ -184,8 +184,8 @@ GURL LinkHandlerModel::RewriteUrlFromQueryIfAvailable(const GURL& url) {
   static const char kPathToFind[] = "/url";
   static const char kKeyToFind[] = "url";
 
-  if (!google_util::IsGoogleHostname(url.host_piece(),
-                                     google_util::DISALLOW_SUBDOMAIN)) {
+  if (!google_util::IsGoogleDomainUrl(url, google_util::DISALLOW_SUBDOMAIN,
+                                      google_util::ALLOW_NON_STANDARD_PORTS)) {
     return url;
   }
   if (!url.has_path() || url.path() != kPathToFind)

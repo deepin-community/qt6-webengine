@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,7 @@
 #include <utility>
 
 #include "base/android/android_hardware_buffer_compat.h"
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/no_destructor.h"
 #include "base/time/time.h"
@@ -30,14 +30,6 @@ using base::android::JavaRef;
 namespace device {
 
 namespace {
-
-mojom::VRDisplayInfoPtr CreateVRDisplayInfo(gvr::GvrApi* gvr_api) {
-  TRACE_EVENT0("input", "GvrDelegate::CreateVRDisplayInfo");
-
-  mojom::VRDisplayInfoPtr device = mojom::VRDisplayInfo::New();
-  device->views = device::gvr_utils::CreateViews(gvr_api, nullptr);
-  return device;
-}
 
 const std::vector<mojom::XRSessionFeature>& GetSupportedFeatures() {
   static base::NoDestructor<std::vector<mojom::XRSessionFeature>>
@@ -140,10 +132,7 @@ void GvrDevice::ShutdownSession(
   StopPresenting();
 
   // At this point, the main thread session shutdown is complete, but the GL
-  // thread may still be in the process of finishing shutdown or transitioning
-  // to VR Browser mode. Java VrShell::setWebVrModeEnable calls native
-  // VrShell::setWebVrMode which calls BrowserRenderer::SetWebXrMode on the GL
-  // thread, and that triggers the VRB transition via ui_->SetWebVrMode.
+  // thread may still be in the process of finishing shutdown.
   //
   // Since tasks posted to the GL thread are handled in sequence, any calls
   // related to a new session will be processed after the GL thread transition
@@ -191,12 +180,6 @@ GvrDelegateProvider* GvrDevice::GetGvrDelegateProvider() {
   return GvrDelegateProviderFactory::Create();
 }
 
-void GvrDevice::OnDisplayConfigurationChanged(JNIEnv* env,
-                                              const JavaRef<jobject>& obj) {
-  DCHECK(gvr_api_);
-  SetVRDisplayInfo(CreateVRDisplayInfo(gvr_api_.get()));
-}
-
 void GvrDevice::Init(base::OnceCallback<void(bool)> on_finished) {
   GvrDelegateProvider* delegate_provider = GetGvrDelegateProvider();
   if (!delegate_provider || delegate_provider->ShouldDisableGvrDevice()) {
@@ -218,7 +201,6 @@ void GvrDevice::CreateNonPresentingContext() {
   jlong context = Java_NonPresentingGvrContext_getNativeGvrContext(
       env, non_presenting_context_);
   gvr_api_ = gvr::GvrApi::WrapNonOwned(reinterpret_cast<gvr_context*>(context));
-  SetVRDisplayInfo(CreateVRDisplayInfo(gvr_api_.get()));
 
   if (paused_) {
     PauseTracking();
@@ -248,9 +230,8 @@ void GvrDevice::OnInitRequestSessionFinished(
   // StartWebXRPresentation is async as we may trigger a DON (Device ON) flow
   // that pauses Chrome.
   delegate_provider->StartWebXRPresentation(
-      GetVRDisplayInfo(), std::move(options),
-      base::BindOnce(&GvrDevice::OnStartPresentResult,
-                     weak_ptr_factory_.GetWeakPtr()));
+      std::move(options), base::BindOnce(&GvrDevice::OnStartPresentResult,
+                                         weak_ptr_factory_.GetWeakPtr()));
 }
 
 }  // namespace device

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include <inttypes.h>
 
+#include <algorithm>
 #include <array>
 #include <type_traits>
 
@@ -13,6 +14,7 @@
 #include "base/bits.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/numerics/safe_math.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
@@ -23,6 +25,7 @@
 #include "components/device_event_log/device_event_log.h"
 #include "crypto/aead.h"
 #include "device/fido/cable/v2_constants.h"
+#include "device/fido/features.h"
 #include "device/fido/fido_constants.h"
 #include "device/fido/fido_parsing_utils.h"
 #include "third_party/boringssl/src/include/openssl/aes.h"
@@ -63,7 +66,7 @@ bool ConstructNonce(uint32_t counter,
            sizeof(counter));
   } else {
     memcpy(counter_bytes.data(), &counter, sizeof(counter));
-    std::copy(counter_bytes.begin(), counter_bytes.end(), out_nonce.begin());
+    base::ranges::copy(counter_bytes, out_nonce.begin());
     std::fill(out_nonce.begin() + counter_bytes.size(), out_nonce.end(), 0);
   }
   return true;
@@ -398,7 +401,7 @@ absl::optional<Components> Parse(const std::string& qr_url) {
   if (qr_secret.size() != ret.secret.size()) {
     return absl::nullopt;
   }
-  std::copy(qr_secret.begin(), qr_secret.end(), ret.secret.begin());
+  base::ranges::copy(qr_secret, ret.secret.begin());
 
   absl::optional<std::array<uint8_t, device::kP256X962Length>> peer_identity =
       DecompressPublicKey(compressed_public_key);
@@ -436,7 +439,7 @@ absl::optional<Components> Parse(const std::string& qr_url) {
 }
 
 std::string Encode(base::span<const uint8_t, kQRKeySize> qr_key,
-                   FidoRequestType request_type) {
+                   CableRequestType request_type) {
   cbor::Value::MapValue qr_contents;
   qr_contents.emplace(
       0, SeedToCompressedPublicKey(
@@ -453,6 +456,12 @@ std::string Encode(base::span<const uint8_t, kQRKeySize> qr_key,
   qr_contents.emplace(4, true);  // client supports storing linking information.
 
   qr_contents.emplace(5, RequestTypeToString(request_type));
+
+  if (request_type == CableRequestType::kMakeCredential &&
+      base::FeatureList::IsEnabled(
+          device::kWebAuthnNonDiscoverableMakeCredentialQRFlag)) {
+    qr_contents.emplace(6, true);
+  }
 
   const absl::optional<std::vector<uint8_t>> qr_data =
       cbor::Writer::Write(cbor::Value(std::move(qr_contents)));
@@ -572,12 +581,9 @@ uint32_t IDNow() {
   return static_cast<uint32_t>(utc_time);
 }
 
-bool IDIsValid(uint32_t candidate) {
+bool IDIsMoreThanNPeriodsOld(uint32_t candidate, unsigned periods) {
   const uint32_t now = IDNow();
-  // Sync secrets are allowed to be, at most, 21 periods (~21 days) old. This is
-  // because the desktop accepts DeviceInfo records of phones that are 14 days
-  // old and the phone should be slightly laxer than that.
-  return candidate <= now && (now - candidate) < 21;
+  return candidate > now || (now - candidate) > periods;
 }
 
 }  // namespace sync
@@ -599,22 +605,23 @@ void Derive(uint8_t* out,
 
 }  // namespace internal
 
-const char* RequestTypeToString(FidoRequestType request_type) {
+const char* RequestTypeToString(CableRequestType request_type) {
   switch (request_type) {
-    case FidoRequestType::kMakeCredential:
+    case CableRequestType::kMakeCredential:
+    case CableRequestType::kDiscoverableMakeCredential:
       return "mc";
-    case FidoRequestType::kGetAssertion:
+    case CableRequestType::kGetAssertion:
       return "ga";
       // If adding a value here, also update `RequestTypeFromString`.
   }
 }
 
-FidoRequestType RequestTypeFromString(const std::string& s) {
+CableRequestType RequestTypeFromString(const std::string& s) {
   if (s == "mc") {
-    return FidoRequestType::kMakeCredential;
+    return CableRequestType::kMakeCredential;
   }
   // kGetAssertion is the default if the value is unknown too.
-  return FidoRequestType::kGetAssertion;
+  return CableRequestType::kGetAssertion;
 }
 
 bssl::UniquePtr<EC_KEY> IdentityKey(base::span<const uint8_t, 32> root_secret) {

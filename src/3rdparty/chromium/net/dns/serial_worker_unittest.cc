@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,9 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
@@ -19,7 +19,6 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/threading/thread_restrictions.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "net/base/backoff_entry.h"
@@ -168,8 +167,7 @@ class SerialWorkerTest : public TestWithTaskEnvironment {
         work_allowed_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
                       base::WaitableEvent::InitialState::NOT_SIGNALED),
         work_called_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
-                     base::WaitableEvent::InitialState::NOT_SIGNALED),
-        work_running_(false) {}
+                     base::WaitableEvent::InitialState::NOT_SIGNALED) {}
 
   // Helpers for tests.
 
@@ -184,7 +182,7 @@ class SerialWorkerTest : public TestWithTaskEnvironment {
 
   // test::Test methods
   void SetUp() override {
-    task_runner_ = base::ThreadTaskRunnerHandle::Get();
+    task_runner_ = base::SingleThreadTaskRunner::GetCurrentDefault();
   }
 
   void TearDown() override {
@@ -212,7 +210,7 @@ class SerialWorkerTest : public TestWithTaskEnvironment {
   base::WaitableEvent work_called_;
 
   // Protected by read_lock_. Used to verify that read calls are serialized.
-  bool work_running_;
+  bool work_running_ = false;
   base::Lock work_lock_;
 
   int work_finished_calls_ = 0;

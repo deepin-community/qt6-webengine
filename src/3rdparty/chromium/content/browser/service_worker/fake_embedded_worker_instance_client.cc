@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,12 +6,13 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "base/test/bind.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
+#include "services/network/public/cpp/record_ontransfersizeupdate_utils.h"
 #include "services/network/public/mojom/early_hints.mojom.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "services/network/test/test_url_loader_client.h"
@@ -62,18 +63,20 @@ class FakeEmbeddedWorkerInstanceClient::LoaderClient final
 
   void OnReceiveEarlyHints(network::mojom::EarlyHintsPtr early_hints) override {
   }
-  void OnReceiveResponse(network::mojom::URLResponseHeadPtr response_head,
-                         mojo::ScopedDataPipeConsumerHandle body) override {}
+  void OnReceiveResponse(
+      network::mojom::URLResponseHeadPtr response_head,
+      mojo::ScopedDataPipeConsumerHandle body,
+      absl::optional<mojo_base::BigBuffer> cached_metadata) override {}
   void OnReceiveRedirect(
       const net::RedirectInfo& redirect_info,
       network::mojom::URLResponseHeadPtr response_head) override {}
-  void OnReceiveCachedMetadata(mojo_base::BigBuffer data) override {}
-  void OnTransferSizeUpdated(int32_t transfer_size_diff) override {}
+  void OnTransferSizeUpdated(int32_t transfer_size_diff) override {
+    network::RecordOnTransferSizeUpdatedUMA(
+        network::OnTransferSizeUpdatedFrom::kFakeEmbeddedWorkerInstanceClient);
+  }
   void OnUploadProgress(int64_t current_position,
                         int64_t total_size,
                         OnUploadProgressCallback ack_callback) override {}
-  void OnStartLoadingResponseBody(
-      mojo::ScopedDataPipeConsumerHandle body) override {}
   void OnComplete(const network::URLLoaderCompletionStatus& status) override {
     auto callback = std::move(callback_);
     std::move(callback).Run();
@@ -220,7 +223,8 @@ void FakeEmbeddedWorkerInstanceClient::CallOnConnectionError() {
 void FakeEmbeddedWorkerInstanceClient::EvaluateScript() {
   host_->OnScriptEvaluationStart();
   host_->OnStarted(blink::mojom::ServiceWorkerStartStatus::kNormalCompletion,
-                   true /* has_fetch_handler */, helper_->GetNextThreadId(),
+                   blink::mojom::ServiceWorkerFetchHandlerType::kNotSkippable,
+                   helper_->GetNextThreadId(),
                    blink::mojom::EmbeddedWorkerStartTiming::New());
 }
 

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,10 +12,10 @@
 #include <utility>
 
 #include "base/base64.h"
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_number_conversions.h"
 #include "components/crx_file/crx3.pb.h"
@@ -188,7 +188,7 @@ VerifierResult VerifyCrx3(
                          base::as_bytes(base::make_span(sig)),
                          base::as_bytes(base::make_span(key))))
         return VerifierResult::ERROR_SIGNATURE_INITIALIZATION_FAILED;
-      v->VerifyUpdate(kSignatureContext);
+      v->VerifyUpdate(base::as_bytes(base::make_span(kSignatureContext)));
       v->VerifyUpdate(header_size_octets);
       v->VerifyUpdate(base::as_bytes(base::make_span(signed_header_data_str)));
       verifiers.push_back(std::move(v));

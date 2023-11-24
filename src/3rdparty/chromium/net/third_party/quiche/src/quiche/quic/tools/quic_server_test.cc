@@ -4,10 +4,16 @@
 
 #include "quiche/quic/tools/quic_server.h"
 
+#include <memory>
+
 #include "absl/base/macros.h"
 #include "quiche/quic/core/crypto/quic_random.h"
-#include "quiche/quic/core/quic_epoll_alarm_factory.h"
-#include "quiche/quic/core/quic_epoll_connection_helper.h"
+#include "quiche/quic/core/deterministic_connection_id_generator.h"
+#include "quiche/quic/core/io/quic_default_event_loop.h"
+#include "quiche/quic/core/io/quic_event_loop.h"
+#include "quiche/quic/core/quic_default_clock.h"
+#include "quiche/quic/core/quic_default_connection_helper.h"
+#include "quiche/quic/core/quic_default_packet_writer.h"
 #include "quiche/quic/core/quic_utils.h"
 #include "quiche/quic/platform/api/quic_flags.h"
 #include "quiche/quic/platform/api/quic_logging.h"
@@ -35,11 +41,13 @@ class MockQuicSimpleDispatcher : public QuicSimpleDispatcher {
       std::unique_ptr<QuicConnectionHelperInterface> helper,
       std::unique_ptr<QuicCryptoServerStreamBase::Helper> session_helper,
       std::unique_ptr<QuicAlarmFactory> alarm_factory,
-      QuicSimpleServerBackend* quic_simple_server_backend)
-      : QuicSimpleDispatcher(
-            config, crypto_config, version_manager, std::move(helper),
-            std::move(session_helper), std::move(alarm_factory),
-            quic_simple_server_backend, kQuicDefaultConnectionIdLength) {}
+      QuicSimpleServerBackend* quic_simple_server_backend,
+      ConnectionIdGeneratorInterface& generator)
+      : QuicSimpleDispatcher(config, crypto_config, version_manager,
+                             std::move(helper), std::move(session_helper),
+                             std::move(alarm_factory),
+                             quic_simple_server_backend,
+                             kQuicDefaultConnectionIdLength, generator) {}
   ~MockQuicSimpleDispatcher() override = default;
 
   MOCK_METHOD(void, OnCanWrite, (), (override));
@@ -50,9 +58,12 @@ class MockQuicSimpleDispatcher : public QuicSimpleDispatcher {
 
 class TestQuicServer : public QuicServer {
  public:
-  TestQuicServer()
+  explicit TestQuicServer(QuicEventLoopFactory* event_loop_factory,
+                          QuicMemoryCacheBackend* quic_simple_server_backend)
       : QuicServer(crypto_test_utils::ProofSourceForTesting(),
-                   &quic_simple_server_backend_) {}
+                   quic_simple_server_backend),
+        quic_simple_server_backend_(quic_simple_server_backend),
+        event_loop_factory_(event_loop_factory) {}
 
   ~TestQuicServer() override = default;
 
@@ -62,24 +73,28 @@ class TestQuicServer : public QuicServer {
   QuicDispatcher* CreateQuicDispatcher() override {
     mock_dispatcher_ = new MockQuicSimpleDispatcher(
         &config(), &crypto_config(), version_manager(),
-        std::unique_ptr<QuicEpollConnectionHelper>(
-            new QuicEpollConnectionHelper(epoll_server(),
-                                          QuicAllocator::BUFFER_POOL)),
+        std::make_unique<QuicDefaultConnectionHelper>(),
         std::unique_ptr<QuicCryptoServerStreamBase::Helper>(
             new QuicSimpleCryptoServerStreamHelper()),
-        std::unique_ptr<QuicEpollAlarmFactory>(
-            new QuicEpollAlarmFactory(epoll_server())),
-        &quic_simple_server_backend_);
+        event_loop()->CreateAlarmFactory(), quic_simple_server_backend_,
+        connection_id_generator());
     return mock_dispatcher_;
   }
 
+  std::unique_ptr<QuicEventLoop> CreateEventLoop() override {
+    return event_loop_factory_->Create(QuicDefaultClock::Get());
+  }
+
   MockQuicSimpleDispatcher* mock_dispatcher_ = nullptr;
-  QuicMemoryCacheBackend quic_simple_server_backend_;
+  QuicMemoryCacheBackend* quic_simple_server_backend_;
+  QuicEventLoopFactory* event_loop_factory_;
 };
 
-class QuicServerEpollInTest : public QuicTest {
+class QuicServerEpollInTest : public QuicTestWithParam<QuicEventLoopFactory*> {
  public:
-  QuicServerEpollInTest() : server_address_(TestLoopback(), 0) {}
+  QuicServerEpollInTest()
+      : server_address_(TestLoopback(), 0),
+        server_(GetParam(), &quic_simple_server_backend_) {}
 
   void StartListening() {
     server_.CreateUDPSocketAndListen(server_address_);
@@ -95,13 +110,23 @@ class QuicServerEpollInTest : public QuicTest {
 
  protected:
   QuicSocketAddress server_address_;
+  QuicMemoryCacheBackend quic_simple_server_backend_;
   TestQuicServer server_;
 };
+
+std::string GetTestParamName(
+    ::testing::TestParamInfo<QuicEventLoopFactory*> info) {
+  return EscapeTestParamName(info.param->GetName());
+}
+
+INSTANTIATE_TEST_SUITE_P(QuicServerEpollInTests, QuicServerEpollInTest,
+                         ::testing::ValuesIn(GetAllSupportedEventLoops()),
+                         GetTestParamName);
 
 // Tests that if dispatcher has CHLOs waiting for connection creation, EPOLLIN
 // event should try to create connections for them. And set epoll mask with
 // EPOLLIN if there are still CHLOs remaining at the end of epoll event.
-TEST_F(QuicServerEpollInTest, ProcessBufferedCHLOsOnEpollin) {
+TEST_P(QuicServerEpollInTest, ProcessBufferedCHLOsOnEpollin) {
   // Given an EPOLLIN event, try to create session for buffered CHLOs. In first
   // event, dispatcher can't create session for all of CHLOs. So listener should
   // register another EPOLLIN event by itself. Even without new packet arrival,
@@ -121,18 +146,21 @@ TEST_F(QuicServerEpollInTest, ProcessBufferedCHLOsOnEpollin) {
           DoAll(testing::Assign(&more_chlos, false), testing::Return(false)));
 
   // Send a packet to trigger epoll event.
-  int fd = socket(
-      AddressFamilyUnderTest() == IpAddressFamily::IP_V4 ? AF_INET : AF_INET6,
-      SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
-  ASSERT_LT(0, fd);
+  QuicUdpSocketApi socket_api;
+  SocketFd fd =
+      socket_api.Create(server_address_.host().AddressFamilyToInt(),
+                        /*receive_buffer_size =*/kDefaultSocketReceiveBuffer,
+                        /*send_buffer_size =*/kDefaultSocketReceiveBuffer);
+  ASSERT_NE(fd, kQuicInvalidSocketFd);
 
   char buf[1024];
   memset(buf, 0, ABSL_ARRAYSIZE(buf));
-  sockaddr_storage storage = server_address_.generic_address();
-  int rc = sendto(fd, buf, ABSL_ARRAYSIZE(buf), 0,
-                  reinterpret_cast<sockaddr*>(&storage), sizeof(storage));
-  if (rc < 0) {
-    QUIC_DLOG(INFO) << errno << " " << strerror(errno);
+  QuicUdpPacketInfo packet_info;
+  packet_info.SetPeerAddress(server_address_);
+  WriteResult result =
+      socket_api.WritePacket(fd, buf, sizeof(buf), packet_info);
+  if (result.status != WRITE_STATUS_OK) {
+    QUIC_LOG(ERROR) << "Write error for UDP packet: " << result.error_code;
   }
 
   while (more_chlos) {
@@ -147,15 +175,13 @@ class QuicServerDispatchPacketTest : public QuicTest {
                        crypto_test_utils::ProofSourceForTesting(),
                        KeyExchangeSource::Default()),
         version_manager_(AllSupportedVersions()),
+        event_loop_(GetDefaultEventLoop()->Create(QuicDefaultClock::Get())),
+        connection_id_generator_(kQuicDefaultConnectionIdLength),
         dispatcher_(&config_, &crypto_config_, &version_manager_,
-                    std::unique_ptr<QuicEpollConnectionHelper>(
-                        new QuicEpollConnectionHelper(
-                            &eps_, QuicAllocator::BUFFER_POOL)),
-                    std::unique_ptr<QuicCryptoServerStreamBase::Helper>(
-                        new QuicSimpleCryptoServerStreamHelper()),
-                    std::unique_ptr<QuicEpollAlarmFactory>(
-                        new QuicEpollAlarmFactory(&eps_)),
-                    &quic_simple_server_backend_) {
+                    std::make_unique<QuicDefaultConnectionHelper>(),
+                    std::make_unique<QuicSimpleCryptoServerStreamHelper>(),
+                    event_loop_->CreateAlarmFactory(),
+                    &quic_simple_server_backend_, connection_id_generator_) {
     dispatcher_.InitializeWithWriter(new QuicDefaultPacketWriter(1234));
   }
 
@@ -168,8 +194,9 @@ class QuicServerDispatchPacketTest : public QuicTest {
   QuicConfig config_;
   QuicCryptoServerConfig crypto_config_;
   QuicVersionManager version_manager_;
-  QuicEpollServer eps_;
+  std::unique_ptr<QuicEventLoop> event_loop_;
   QuicMemoryCacheBackend quic_simple_server_backend_;
+  DeterministicConnectionIdGenerator connection_id_generator_;
   MockQuicDispatcher dispatcher_;
 };
 

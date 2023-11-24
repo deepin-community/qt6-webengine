@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -37,7 +37,8 @@ std::unique_ptr<ui::Event> PenEventProcessor::GenerateEvent(
     UINT32 pointer_id,
     const POINTER_PEN_INFO& pointer_pen_info,
     const gfx::Point& point) {
-  unsigned int mapped_pointer_id = id_generator_->GetGeneratedID(pointer_id);
+  auto mapped_pointer_id =
+      static_cast<ui::PointerId>(id_generator_->GetGeneratedID(pointer_id));
 
   // We are now creating a fake mouse event with pointer type of pen from
   // the WM_POINTER message and then setting up an associated pointer
@@ -157,7 +158,7 @@ std::unique_ptr<ui::Event> PenEventProcessor::GenerateMouseEvent(
       id_generator_->ReleaseNumber(pointer_id);
       break;
     default:
-      NOTREACHED();
+      NOTREACHED_NORETURN();
   }
   std::unique_ptr<ui::Event> event = std::make_unique<ui::MouseEvent>(
       event_type, point, point, ui::EventTimeForNow(),
@@ -195,7 +196,7 @@ std::unique_ptr<ui::Event> PenEventProcessor::GenerateTouchEvent(
       event_type = ui::ET_TOUCH_MOVED;
       break;
     default:
-      NOTREACHED();
+      NOTREACHED_NORETURN();
   }
 
   const base::TimeTicks event_time = ui::EventTimeForNow();

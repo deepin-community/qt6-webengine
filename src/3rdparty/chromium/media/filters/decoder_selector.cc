@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,9 @@
 #include <algorithm>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
@@ -152,7 +152,7 @@ DecoderSelector<StreamType>::~DecoderSelector() {
   DVLOG(2) << __func__;
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (select_decoder_cb_)
-    ReturnNullDecoder();
+    ReturnSelectionError(DecoderStatus::Codes::kFailed);
 }
 
 template <DemuxerStream::Type StreamType>
@@ -174,9 +174,10 @@ void DecoderSelector<StreamType>::Initialize(StreamTraits* traits,
 }
 
 template <DemuxerStream::Type StreamType>
-void DecoderSelector<StreamType>::SelectDecoder(
+void DecoderSelector<StreamType>::SelectDecoderInternal(
     SelectDecoderCB select_decoder_cb,
-    typename Decoder::OutputCB output_cb) {
+    typename Decoder::OutputCB output_cb,
+    bool needs_new_decoders) {
   DVLOG(2) << __func__;
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(select_decoder_cb);
@@ -191,19 +192,36 @@ void DecoderSelector<StreamType>::SelectDecoder(
 
   if (!config_.IsValidConfig()) {
     DLOG(ERROR) << "Invalid stream config";
-    ReturnNullDecoder();
+    ReturnSelectionError(DecoderStatus::Codes::kUnsupportedConfig);
     return;
   }
 
-  // If this is the first selection (ever or since FinalizeDecoderSelection()),
-  // start selection with the full list of potential decoders.
-  if (!is_selecting_decoders_) {
-    is_selecting_decoders_ = true;
-    decoder_selection_start_ = base::TimeTicks::Now();
+  if (needs_new_decoders) {
+    decode_failure_reinit_cause_ = absl::nullopt;
     CreateDecoders();
   }
 
-  InitializeDecoder();
+  GetAndInitializeNextDecoder();
+}
+
+template <DemuxerStream::Type StreamType>
+void DecoderSelector<StreamType>::BeginDecoderSelection(
+    SelectDecoderCB select_decoder_cb,
+    typename Decoder::OutputCB output_cb) {
+  SelectDecoderInternal(std::move(select_decoder_cb), std::move(output_cb),
+                        /*needs_new_decoders = */ true);
+}
+
+template <DemuxerStream::Type StreamType>
+void DecoderSelector<StreamType>::ResumeDecoderSelection(
+    SelectDecoderCB select_decoder_cb,
+    typename Decoder::OutputCB output_cb,
+    DecoderStatus&& reinit_cause) {
+  DVLOG(2) << __func__;
+  if (!decode_failure_reinit_cause_.has_value())
+    decode_failure_reinit_cause_ = std::move(reinit_cause);
+  SelectDecoderInternal(std::move(select_decoder_cb), std::move(output_cb),
+                        /*needs_new_decoders = */ false);
 }
 
 template <DemuxerStream::Type StreamType>
@@ -211,47 +229,9 @@ void DecoderSelector<StreamType>::FinalizeDecoderSelection() {
   DVLOG(2) << __func__;
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!select_decoder_cb_);
-  is_selecting_decoders_ = false;
-
-  const std::string decoder_type = is_platform_decoder_ ? "HW" : "SW";
-  const std::string stream_type =
-      StreamType == DemuxerStream::AUDIO ? "Audio" : "Video";
-
-  if (is_selecting_for_config_change_) {
-    is_selecting_for_config_change_ = false;
-    base::UmaHistogramTimes("Media.ConfigChangeDecoderSelectionTime." +
-                                stream_type + "." + decoder_type,
-                            base::TimeTicks::Now() - decoder_selection_start_);
-  } else {
-    // Initial selection
-    base::UmaHistogramTimes(
-        "Media.InitialDecoderSelectionTime." + stream_type + "." + decoder_type,
-        base::TimeTicks::Now() - decoder_selection_start_);
-  }
-
-  if (is_codec_changing_) {
-    is_codec_changing_ = false;
-    base::UmaHistogramTimes(
-        "Media.MSE.CodecChangeTime." + stream_type + "." + decoder_type,
-        base::TimeTicks::Now() - codec_change_start_);
-  }
 
   // Discard any remaining decoder instances, they won't be used.
   decoders_.clear();
-}
-
-template <DemuxerStream::Type StreamType>
-void DecoderSelector<StreamType>::NotifyConfigChanged() {
-  DVLOG(2) << __func__;
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
-  is_selecting_for_config_change_ = true;
-
-  DecoderConfig config = traits_->GetDecoderConfig(stream_);
-  if (config.codec() != config_.codec()) {
-    is_codec_changing_ = true;
-    codec_change_start_ = base::TimeTicks::Now();
-  }
 }
 
 template <DemuxerStream::Type StreamType>
@@ -263,9 +243,7 @@ void DecoderSelector<StreamType>::PrependDecoder(
   // Decoders inserted directly should be given priority over those returned by
   // |create_decoders_cb_|.
   decoders_.insert(decoders_.begin(), std::move(decoder));
-
-  if (is_selecting_decoders_)
-    FilterAndSortAvailableDecoders();
+  FilterAndSortAvailableDecoders();
 }
 
 template <DemuxerStream::Type StreamType>
@@ -287,7 +265,7 @@ void DecoderSelector<StreamType>::CreateDecoders() {
 }
 
 template <DemuxerStream::Type StreamType>
-void DecoderSelector<StreamType>::InitializeDecoder() {
+void DecoderSelector<StreamType>::GetAndInitializeNextDecoder() {
   DVLOG(2) << __func__;
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!decoder_);
@@ -300,14 +278,17 @@ void DecoderSelector<StreamType>::InitializeDecoder() {
       return;
     }
 
-    ReturnNullDecoder();
+    if (decode_failure_reinit_cause_.has_value()) {
+      ReturnSelectionError(std::move(*decode_failure_reinit_cause_));
+    } else {
+      ReturnSelectionError(DecoderStatus::Codes::kUnsupportedConfig);
+    }
     return;
   }
 
   // Initialize the first decoder on the list.
   decoder_ = std::move(decoders_.front());
   decoders_.erase(decoders_.begin());
-  is_platform_decoder_ = decoder_->IsPlatformDecoder();
   TRACE_EVENT_ASYNC_STEP_INTO0("media", kSelectDecoderTrace, this,
                                GetDecoderName(decoder_->GetDecoderType()));
 
@@ -323,35 +304,36 @@ void DecoderSelector<StreamType>::InitializeDecoder() {
 template <DemuxerStream::Type StreamType>
 void DecoderSelector<StreamType>::OnDecoderInitializeDone(
     DecoderStatus status) {
+  DCHECK(decoder_);
   DVLOG(2) << __func__ << ": " << decoder_->GetDecoderType()
            << " success=" << static_cast<int>(status.code());
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (!status.is_ok()) {
-    // TODO(tmathmeyer) this was too noisy in media log. Batch all the logs
-    // together and then send them as an informational notice instead of
-    // using NotifyError.
+    // Note: Don't track this decode status, as it is the result of decoder
+    // selection (initialization) failure.
     MEDIA_LOG(INFO, media_log_)
-        << "Failed to initialize " << decoder_->GetDecoderType();
+        << "Cannot select " << decoder_->GetDecoderType() << " for "
+        << DemuxerStream::GetTypeName(StreamType) << " decoding";
 
     // Try the next decoder on the list.
-    decoder_.reset();
-    InitializeDecoder();
+    decoder_ = nullptr;
+    GetAndInitializeNextDecoder();
     return;
   }
 
-  RunSelectDecoderCB();
+  RunSelectDecoderCB(std::move(decoder_));
 }
 
 template <DemuxerStream::Type StreamType>
-void DecoderSelector<StreamType>::ReturnNullDecoder() {
+void DecoderSelector<StreamType>::ReturnSelectionError(DecoderStatus error) {
   DVLOG(1) << __func__ << ": No decoder selected";
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(!error.is_ok());
 
   decrypting_demuxer_stream_.reset();
-  decoder_.reset();
   decoders_.clear();
-  RunSelectDecoderCB();
+  RunSelectDecoderCB(std::move(error));
 }
 
 template <DemuxerStream::Type StreamType>
@@ -380,7 +362,8 @@ void DecoderSelector<StreamType>::OnDecryptingDemuxerStreamInitializeDone(
 
   if (status != PIPELINE_OK) {
     // Since we already tried every potential decoder without DDS, give up.
-    ReturnNullDecoder();
+    ReturnSelectionError(
+        {DecoderStatus::Codes::kUnsupportedEncryptionMode, std::move(status)});
     return;
   }
 
@@ -395,24 +378,26 @@ void DecoderSelector<StreamType>::OnDecryptingDemuxerStreamInitializeDone(
 
   // Try decoder selection again now that DDS is being used.
   CreateDecoders();
-  InitializeDecoder();
+  GetAndInitializeNextDecoder();
 }
 
 template <DemuxerStream::Type StreamType>
-void DecoderSelector<StreamType>::RunSelectDecoderCB() {
+void DecoderSelector<StreamType>::RunSelectDecoderCB(
+    DecoderOrError decoder_or_error) {
   DCHECK(select_decoder_cb_);
   TRACE_EVENT_ASYNC_END2(
       "media", kSelectDecoderTrace, this, "type",
       DemuxerStream::GetTypeName(StreamType), "decoder",
       base::StringPrintf(
           "%s (%s)",
-          decoder_ ? GetDecoderName(decoder_->GetDecoderType()).c_str()
-                   : "null",
+          decoder_or_error.has_value()
+              ? GetDecoderName(decoder_or_error->GetDecoderType()).c_str()
+              : "null",
           decrypting_demuxer_stream_ ? "encrypted" : "unencrypted"));
 
   task_runner_->PostTask(
       FROM_HERE,
-      base::BindOnce(std::move(select_decoder_cb_), std::move(decoder_),
+      base::BindOnce(std::move(select_decoder_cb_), std::move(decoder_or_error),
                      std::move(decrypting_demuxer_stream_)));
 }
 

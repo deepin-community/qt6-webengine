@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,10 @@
 
 #include "mojo/public/cpp/bindings/remote.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/mojom/frame/lifecycle.mojom-blink.h"
 #include "third_party/blink/public/platform/web_audio_device.h"
 #include "third_party/blink/public/platform/web_audio_latency_hint.h"
+#include "third_party/blink/public/platform/web_audio_sink_descriptor.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_union_audiocontextlatencycategory_double.h"
 #include "third_party/blink/renderer/core/core_initializer.h"
 #include "third_party/blink/renderer/core/dom/document.h"
@@ -22,7 +24,8 @@
 namespace blink {
 
 namespace {
-static bool web_audio_device_paused_;
+
+bool web_audio_device_paused_;
 
 class MockWebAudioDeviceForAudioContext : public WebAudioDevice {
  public:
@@ -37,6 +40,11 @@ class MockWebAudioDeviceForAudioContext : public WebAudioDevice {
   void Resume() override { web_audio_device_paused_ = false; }
   double SampleRate() override { return sample_rate_; }
   int FramesPerBuffer() override { return frames_per_buffer_; }
+  int MaxChannelCount() override { return 2; }
+  media::OutputDeviceStatus CreateSinkAndGetDeviceStatus() override {
+    // In this test, we assume the sink creation always succeeds.
+    return media::OUTPUT_DEVICE_STATUS_OK;
+  }
 
  private:
   double sample_rate_;
@@ -46,11 +54,10 @@ class MockWebAudioDeviceForAudioContext : public WebAudioDevice {
 class AudioContextTestPlatform : public TestingPlatformSupport {
  public:
   std::unique_ptr<WebAudioDevice> CreateAudioDevice(
-      unsigned number_of_input_channels,
-      unsigned number_of_channels,
+      const WebAudioSinkDescriptor& sink_descriptor,
+      unsigned number_of_output_channels,
       const WebAudioLatencyHint& latency_hint,
-      WebAudioDevice::RenderCallback*,
-      const WebString& device_id) override {
+      media::AudioRendererSink::RenderCallback*) override {
     double buffer_size = 0;
     const double interactive_size = AudioHardwareBufferSize();
     const double balanced_size = AudioHardwareBufferSize() * 2;
@@ -84,7 +91,7 @@ class AudioContextTestPlatform : public TestingPlatformSupport {
   size_t AudioHardwareBufferSize() override { return 128; }
 };
 
-}  // anonymous namespace
+}  // namespace
 
 class AudioContextTest : public PageTestBase {
  protected:
@@ -197,6 +204,20 @@ TEST_F(AudioContextTest, ExecutionContextPaused) {
   GetFrame().DomWindow()->SetLifecycleState(
       mojom::FrameLifecycleState::kRunning);
   EXPECT_FALSE(web_audio_device_paused_);
+}
+
+// Test initialization/uninitialization of MediaDeviceService.
+TEST_F(AudioContextTest, MediaDevicesService) {
+  AudioContextOptions* options = AudioContextOptions::Create();
+  AudioContext* audio_context =
+      AudioContext::Create(GetDocument(), options, ASSERT_NO_EXCEPTION);
+
+  EXPECT_FALSE(audio_context->is_media_device_service_initialized_);
+  audio_context->InitializeMediaDeviceService();
+  EXPECT_TRUE(audio_context->is_media_device_service_initialized_);
+  audio_context->UninitializeMediaDeviceService();
+  EXPECT_FALSE(audio_context->media_device_service_.is_bound());
+  EXPECT_FALSE(audio_context->media_device_service_receiver_.is_bound());
 }
 
 }  // namespace blink

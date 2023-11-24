@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -33,18 +33,18 @@ void WriteTestNativeHostManifest(const base::FilePath& target_dir,
                                  const base::FilePath& host_path,
                                  bool user_level,
                                  bool supports_native_initiated_connections) {
-  base::Value manifest(base::Value::Type::DICTIONARY);
-  manifest.SetStringKey("name", host_name);
-  manifest.SetStringKey("description", "Native Messaging Echo Test");
-  manifest.SetStringKey("type", "stdio");
-  manifest.SetStringKey("path", host_path.AsUTF8Unsafe());
-  manifest.SetBoolKey("supports_native_initiated_connections",
-                      supports_native_initiated_connections);
+  base::Value::Dict manifest;
+  manifest.Set("name", host_name);
+  manifest.Set("description", "Native Messaging Echo Test");
+  manifest.Set("type", "stdio");
+  manifest.Set("path", host_path.AsUTF8Unsafe());
+  manifest.Set("supports_native_initiated_connections",
+               supports_native_initiated_connections);
 
-  base::Value origins(base::Value::Type::LIST);
+  base::Value::List origins;
   origins.Append(base::StringPrintf(
       "chrome-extension://%s/", ScopedTestNativeMessagingHost::kExtensionId));
-  manifest.SetKey("allowed_origins", std::move(origins));
+  manifest.Set("allowed_origins", std::move(origins));
 
   base::FilePath manifest_path = target_dir.AppendASCII(host_name + ".json");
   JSONFileValueSerializer serializer(manifest_path);

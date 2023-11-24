@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,13 +8,14 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/span.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/memory/raw_ref.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "ipc/ipc_channel_mojo.h"
 #include "mojo/public/cpp/bindings/message.h"
@@ -38,7 +39,7 @@ class ThreadSafeProxy : public mojo::ThreadSafeProxy {
 
   // mojo::ThreadSafeProxy:
   void SendMessage(mojo::Message& message) override {
-    message.SerializeHandles(&group_controller_);
+    message.SerializeHandles(&*group_controller_);
     task_runner_->PostTask(FROM_HERE,
                            base::BindOnce(forwarder_, std::move(message)));
   }
@@ -55,7 +56,7 @@ class ThreadSafeProxy : public mojo::ThreadSafeProxy {
 
   const scoped_refptr<base::SequencedTaskRunner> task_runner_;
   const Forwarder forwarder_;
-  mojo::AssociatedGroupController& group_controller_;
+  const raw_ref<mojo::AssociatedGroupController> group_controller_;
 };
 
 }  // namespace

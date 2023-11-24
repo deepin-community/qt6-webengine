@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -138,6 +138,9 @@ class RendererStartupHelperInterceptor : public RendererStartupHelper,
     default_allowed_hosts_.AddPatterns(default_policy_allowed_hosts);
   }
 
+  void UpdateUserHostRestrictions(URLPatternSet user_blocked_hosts,
+                                  URLPatternSet user_allowed_hosts) override {}
+
   void UpdateTabSpecificPermissions(const std::string& extension_id,
                                     URLPatternSet new_hosts,
                                     int tab_id,
@@ -203,35 +206,33 @@ class RendererStartupHelperTest : public ExtensionsTest {
   }
 
   scoped_refptr<const Extension> CreateExtension(const std::string& id_input) {
-    std::unique_ptr<base::DictionaryValue> manifest =
-        DictionaryBuilder()
-            .Set("name", "extension")
-            .Set("description", "an extension")
-            .Set("manifest_version", 2)
-            .Set("version", "0.1")
-            .Build();
+    base::Value::Dict manifest = DictionaryBuilder()
+                                     .Set("name", "extension")
+                                     .Set("description", "an extension")
+                                     .Set("manifest_version", 2)
+                                     .Set("version", "0.1")
+                                     .Build();
     return CreateExtension(id_input, std::move(manifest));
   }
 
   scoped_refptr<const Extension> CreateTheme(const std::string& id_input) {
-    std::unique_ptr<base::DictionaryValue> manifest =
-        DictionaryBuilder()
-            .Set("name", "theme")
-            .Set("description", "a theme")
-            .Set("theme", DictionaryBuilder().Build())
-            .Set("manifest_version", 2)
-            .Set("version", "0.1")
-            .Build();
+    base::Value::Dict manifest = DictionaryBuilder()
+                                     .Set("name", "theme")
+                                     .Set("description", "a theme")
+                                     .Set("theme", DictionaryBuilder().Build())
+                                     .Set("manifest_version", 2)
+                                     .Set("version", "0.1")
+                                     .Build();
     return CreateExtension(id_input, std::move(manifest));
   }
 
   scoped_refptr<const Extension> CreatePlatformApp(
       const std::string& id_input) {
-    std::unique_ptr<base::Value> background =
+    base::Value::Dict background =
         DictionaryBuilder()
             .Set("scripts", ListBuilder().Append("background.js").Build())
             .Build();
-    std::unique_ptr<base::DictionaryValue> manifest =
+    base::Value::Dict manifest =
         DictionaryBuilder()
             .Set("name", "platform_app")
             .Set("description", "a platform app")
@@ -281,9 +282,8 @@ class RendererStartupHelperTest : public ExtensionsTest {
   scoped_refptr<const Extension> extension_;
 
  private:
-  scoped_refptr<const Extension> CreateExtension(
-      const std::string& id_input,
-      std::unique_ptr<base::DictionaryValue> manifest) {
+  scoped_refptr<const Extension> CreateExtension(const std::string& id_input,
+                                                 base::Value::Dict manifest) {
     return ExtensionBuilder()
         .SetManifest(std::move(manifest))
         .SetID(crx_file::id_util::GenerateId(id_input))

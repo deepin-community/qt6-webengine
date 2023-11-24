@@ -1,15 +1,13 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 import './strings.m.js';
 
-import {assert} from 'chrome://resources/js/assert.m.js';
-import {addWebUIListener} from 'chrome://resources/js/cr.m.js';
-import {getUrlForCss} from 'chrome://resources/js/icon.js';
-import {loadTimeData} from 'chrome://resources/js/load_time_data.m.js';
-import {parseHtmlSubset} from 'chrome://resources/js/parse_html_subset.m.js';
-import {$, appendParam, getRequiredElement} from 'chrome://resources/js/util.m.js';
+import {assert} from 'chrome://resources/js/assert_ts.js';
+import {addWebUiListener} from 'chrome://resources/js/cr.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+import {$, appendParam, getRequiredElement} from 'chrome://resources/js/util_ts.js';
 
 import {AppInfo} from './app_info.js';
 import {APP_LAUNCH, AppsPage} from './apps_page.js';
@@ -69,7 +67,7 @@ function NewTabView() {
 // TODO(dbeam): NewTabView is now the only extender of PageListView; these
 // classes should be merged.
 NewTabView.prototype = {
-  __proto__: PageListView.prototype
+  __proto__: PageListView.prototype,
 };
 
 /**
@@ -112,7 +110,7 @@ function onLoad() {
 
     startTime = Date.now();
 
-    addWebUIListener('theme-changed', () => {
+    addWebUiListener('theme-changed', () => {
       $('themecss').href = 'chrome://theme/css/new_tab_theme.css?' + Date.now();
     });
     chrome.send('observeThemeChanges');

@@ -72,6 +72,8 @@ public:
 
     void FocusThroughTabTraversal(bool reverse) override;
     void OnCapturerCountChanged() override { QT_NOT_YET_IMPLEMENTED }
+    void FullscreenStateChanged(bool) override { }
+    void UpdateWindowControlsOverlay(const gfx::Rect &) override { QT_NOT_YET_IMPLEMENTED }
 
 #if BUILDFLAG(IS_MAC)
     bool CloseTabAfterEventTrackingIfNeeded() override { QT_NOT_YET_IMPLEMENTED return false; }
@@ -80,6 +82,7 @@ public:
     // content::RenderViewHostDelegateView overrides:
     void StartDragging(const content::DropData& drop_data, blink::DragOperationsMask allowed_ops,
                        const gfx::ImageSkia& image, const gfx::Vector2d& image_offset,
+                       const gfx::Rect& drag_obj_rect,
                        const blink::mojom::DragEventSourceInfo &event_info,
                        content::RenderWidgetHostImpl *source_rwh) override;
 

@@ -14,6 +14,10 @@
 namespace openscreen {
 namespace cast {
 
+Environment::PacketConsumer::~PacketConsumer() = default;
+
+Environment::SocketSubscriber::~SocketSubscriber() = default;
+
 Environment::Environment(ClockNowFunctionPtr now_function,
                          TaskRunner* task_runner,
                          const IPEndpoint& local_endpoint)
@@ -86,15 +90,13 @@ int Environment::GetMaxPacketSize() const {
   }
 }
 
-void Environment::SendPacket(absl::Span<const uint8_t> packet) {
+void Environment::SendPacket(ByteView packet) {
   OSP_DCHECK(remote_endpoint_.address);
   OSP_DCHECK_NE(remote_endpoint_.port, 0);
   if (socket_) {
     socket_->SendMessage(packet.data(), packet.size(), remote_endpoint_);
   }
 }
-
-Environment::PacketConsumer::~PacketConsumer() = default;
 
 void Environment::OnBound(UdpSocket* socket) {
   OSP_DCHECK(socket == socket_.get());

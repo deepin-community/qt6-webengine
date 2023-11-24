@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,10 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/values.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/webui/help/version_updater.h"
 #include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
 #include "chrome/browser/upgrade_detector/upgrade_observer.h"
@@ -24,7 +26,6 @@
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 namespace base {
-class DictionaryValue;
 class FilePath;
 class Clock;
 }  // namespace base
@@ -52,9 +53,6 @@ class AboutHandler : public settings::SettingsPageUIHandler,
   // UpgradeObserver implementation.
   void OnUpgradeRecommended() override;
 
-  // Returns the browser version as a string.
-  static std::u16string BuildBrowserVersionString();
-
  protected:
   // Used to test the EOL string displayed in the About details page.
   void set_clock(base::Clock* clock) { clock_ = clock; }
@@ -78,7 +76,8 @@ class AboutHandler : public settings::SettingsPageUIHandler,
   void PromoteUpdater(const base::Value::List& args);
 #endif
 
-  // Opens the feedback dialog. |args| must be empty.
+  // Opens the feedback dialog.
+  // |args| must be empty.
   void HandleOpenFeedbackDialog(const base::Value::List& args);
 
   // Opens the help page. |args| must be empty.
@@ -102,9 +101,11 @@ class AboutHandler : public settings::SettingsPageUIHandler,
 
   // Retrieves OS, ARC and firmware versions.
   void HandleGetVersionInfo(const base::Value::List& args);
-  void OnGetVersionInfoReady(
-      std::string callback_id,
-      std::unique_ptr<base::DictionaryValue> version_info);
+  void OnGetVersionInfoReady(std::string callback_id,
+                             base::Value::Dict version_info);
+
+  // Retrieves the number of firmware updates available.
+  void HandleGetFirmwareUpdateCount(const base::Value::List& args);
 
   // Retrieves channel info.
   void HandleGetChannelInfo(const base::Value::List& args);
@@ -118,6 +119,9 @@ class AboutHandler : public settings::SettingsPageUIHandler,
   void OnGetTargetChannel(std::string callback_id,
                           const std::string& current_channel,
                           const std::string& target_channel);
+
+  // Applies deferred update, triggered by JS.
+  void HandleApplyDeferredUpdate(const base::Value::List& args);
 
   // Checks for and applies update, triggered by JS.
   void HandleRequestUpdate(const base::Value::List& args);
@@ -179,10 +183,23 @@ class AboutHandler : public settings::SettingsPageUIHandler,
 
   // Callbacks for version_updater_->GetEolInfo calls.
   void OnGetEndOfLifeInfo(std::string callback_id,
-                          chromeos::UpdateEngineClient::EolInfo eol_info);
+                          ash::UpdateEngineClient::EolInfo eol_info);
+
+  // Get the managed auto update cros setting.
+  void HandleIsManagedAutoUpdateEnabled(const base::Value::List& args);
+
+  // Get the consumer auto update pref from update_engine.
+  void HandleIsConsumerAutoUpdateEnabled(const base::Value::List& args);
+
+  // Callbacks for version_updater_->IsConsumerAutoUpdateEnabled calls.
+  void OnIsConsumerAutoUpdateEnabled(std::string callback_id,
+                                     std::string feature,
+                                     absl::optional<bool> enabled);
+
+  void HandleSetConsumerAutoUpdate(const base::Value::List& args);
 #endif
 
-  raw_ptr<Profile> profile_;
+  const raw_ptr<Profile> profile_;
 
   // Specialized instance of the VersionUpdater used to update the browser.
   std::unique_ptr<VersionUpdater> version_updater_;
@@ -191,7 +208,7 @@ class AboutHandler : public settings::SettingsPageUIHandler,
   std::unique_ptr<policy::PolicyChangeRegistrar> policy_registrar_;
 
   // If true changes to UpgradeObserver are applied, if false they are ignored.
-  bool apply_changes_from_upgrade_observer_;
+  bool apply_changes_from_upgrade_observer_ = false;
 
   // Override to test the EOL string displayed in the About details page.
   raw_ptr<base::Clock> clock_;

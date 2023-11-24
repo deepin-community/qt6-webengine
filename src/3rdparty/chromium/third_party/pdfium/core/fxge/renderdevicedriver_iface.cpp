@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -81,8 +81,10 @@ bool RenderDeviceDriverIface::SetBitsWithMask(
     BlendMode blend_type) {
   return false;
 }
+
+void RenderDeviceDriverIface::SetGroupKnockout(bool group_knockout) {}
 #endif
 
-#if defined(_SKIA_SUPPORT_) || defined(_SKIA_SUPPORT_PATHS_)
+#ifdef _SKIA_SUPPORT_
 void RenderDeviceDriverIface::Flush() {}
 #endif

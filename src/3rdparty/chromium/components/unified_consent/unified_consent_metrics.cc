@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -93,6 +93,14 @@ bool RecordSyncSetupDataTypesImpl(syncer::SyncUserSettings* sync_settings,
 void RecordSettingsHistogram(PrefService* pref_service) {
   bool is_enabled =
       pref_service->GetBoolean(prefs::kUrlKeyedAnonymizedDataCollectionEnabled);
+  UMA_HISTOGRAM_BOOLEAN(
+      "UnifiedConsent.MakeSearchesAndBrowsingBetter.OnProfileLoad", is_enabled);
+
+  // Continue logging the legacy histogram for a few milestones as it is used
+  // for various internal dashboards and this should provide enough time to
+  // migrate them.
+  // TODO(msarda): Remove this histogram in M111 as it will be obsolete then
+  // and replaced by UnifiedConsent.MakeSearchesAndBrowsingBetter.OnProfileLoad.
   UMA_HISTOGRAM_BOOLEAN(
       "UnifiedConsent.MakeSearchesAndBrowsingBetter.OnStartup", is_enabled);
 }

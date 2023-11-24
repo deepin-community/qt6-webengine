@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_element_definition_options.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
@@ -118,7 +119,8 @@ TEST(CustomElementTest, TestIsValidNamePotentialCustomElementName8BitChar) {
     EXPECT_EQ(Character::IsPotentialCustomElementName8BitChar(ch),
               Character::IsPotentialCustomElementNameChar(ch))
         << "isPotentialCustomElementName8BitChar must agree with "
-        << "isPotentialCustomElementNameChar: 0x" << std::hex << ch;
+        << "isPotentialCustomElementNameChar: 0x" << std::hex
+        << static_cast<uint16_t>(ch);
   }
 }
 
@@ -207,15 +209,15 @@ TEST(CustomElementTest, StateByCreateElement) {
 
 TEST(CustomElementTest,
      CreateElement_TagNameCaseHandlingCreatingCustomElement) {
+  V8TestingScope scope;
   // register a definition
-  auto holder(std::make_unique<DummyPageHolder>());
-  ScriptState* script_state = ToScriptStateForMainWorld(&holder->GetFrame());
+  ScriptState* script_state = scope.GetScriptState();
   CustomElementRegistry* registry =
-      holder->GetFrame().DomWindow()->customElements();
+      scope.GetFrame().DomWindow()->customElements();
   NonThrowableExceptionState should_not_throw;
   {
     CEReactionsScope reactions;
-    TestCustomElementDefinitionBuilder builder;
+    TestCustomElementDefinitionBuilder builder(script_state);
     registry->DefineInternal(script_state, "a-a", builder,
                              ElementDefinitionOptions::Create(),
                              should_not_throw);
@@ -225,7 +227,7 @@ TEST(CustomElementTest,
   EXPECT_NE(nullptr, definition) << "a-a should be registered";
 
   // create an element with an uppercase tag name
-  Document& document = holder->GetDocument();
+  Document& document = scope.GetDocument();
   EXPECT_TRUE(IsA<HTMLDocument>(document))
       << "this test requires a HTML document";
   Element* element = document.CreateElementForBinding("A-A", should_not_throw);

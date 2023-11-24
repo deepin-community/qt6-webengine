@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,6 +12,7 @@
 #include "net/cert/cert_status_flags.h"
 #include "net/cert/cert_verify_result.h"
 #include "net/cert/x509_certificate.h"
+#include "net/quic/quic_context.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/test_data_directory.h"
 #include "net/third_party/quiche/src/quiche/quic/core/crypto/proof_source.h"
@@ -22,8 +23,7 @@
 
 using std::string;
 
-namespace net {
-namespace test {
+namespace net::test {
 namespace {
 
 // TestProofVerifierCallback is a simple callback for a quic::ProofVerifier that
@@ -68,8 +68,8 @@ void RunVerification(quic::ProofVerifier* verifier,
   string error_details;
   std::unique_ptr<quic::ProofVerifyContext> verify_context(
       quic::test::crypto_test_utils::ProofVerifyContextForTesting());
-  std::unique_ptr<TestProofVerifierCallback> callback(
-      new TestProofVerifierCallback(&comp_callback, &ok, &error_details));
+  auto callback = std::make_unique<TestProofVerifierCallback>(
+      &comp_callback, &ok, &error_details);
 
   quic::QuicAsyncStatus status = verifier->VerifyProof(
       hostname, port, server_config, quic_version, chlo_hash, certs, "", proof,
@@ -126,7 +126,7 @@ class ProofTest : public ::testing::TestWithParam<quic::ParsedQuicVersion> {};
 
 INSTANTIATE_TEST_SUITE_P(QuicTransportVersion,
                          ProofTest,
-                         ::testing::ValuesIn(quic::AllSupportedVersions()),
+                         ::testing::ValuesIn(AllSupportedQuicVersions()),
                          ::testing::PrintToStringParamName());
 
 TEST_P(ProofTest, Verify) {
@@ -152,10 +152,9 @@ TEST_P(ProofTest, Verify) {
   quic::QuicSocketAddress server_addr;
   quic::QuicSocketAddress client_addr;
 
-  std::unique_ptr<quic::ProofSource::Callback> cb(
-      new TestCallback(&called, &ok, &chain, &proof));
-  std::unique_ptr<quic::ProofSource::Callback> first_cb(
-      new TestCallback(&first_called, &first_ok, &first_chain, &first_proof));
+  auto cb = std::make_unique<TestCallback>(&called, &ok, &chain, &proof);
+  auto first_cb = std::make_unique<TestCallback>(&first_called, &first_ok,
+                                                 &first_chain, &first_proof);
 
   // GetProof here expects the async method to invoke the callback
   // synchronously.
@@ -290,8 +289,7 @@ TEST_P(ProofTest, UseAfterFree) {
   quic::QuicCryptoProof proof;
   quic::QuicSocketAddress server_addr;
   quic::QuicSocketAddress client_addr;
-  std::unique_ptr<quic::ProofSource::Callback> cb(
-      new TestCallback(&called, &ok, &chain, &proof));
+  auto cb = std::make_unique<TestCallback>(&called, &ok, &chain, &proof);
 
   // GetProof here expects the async method to invoke the callback
   // synchronously.
@@ -311,5 +309,4 @@ TEST_P(ProofTest, UseAfterFree) {
   }
 }
 
-}  // namespace test
-}  // namespace net
+}  // namespace net::test

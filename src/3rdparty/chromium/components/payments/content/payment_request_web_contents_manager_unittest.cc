@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,21 +26,21 @@ class PaymentRequestWebContentsManagerTest : public testing::Test {
   content::WebContents* web_contents() { return web_contents_; }
 
   PaymentRequest* CreateAndReturnPaymentRequest(SPCTransactionMode mode) {
+    manager_->SetSPCTransactionMode(mode);
+
     std::unique_ptr<TestContentPaymentRequestDelegate> delegate =
         std::make_unique<TestContentPaymentRequestDelegate>(
             /*task_executor=*/nullptr, &test_personal_data_manager_);
-    auto display_manager = delegate->GetDisplayManager()->GetWeakPtr();
+    delegate->set_frame_routing_id(
+        web_contents()->GetPrimaryMainFrame()->GetGlobalId());
 
     mojo::PendingRemote<payments::mojom::PaymentRequest> remote;
     mojo::PendingReceiver<payments::mojom::PaymentRequest> receiver =
         remote.InitWithNewPipeAndPassReceiver();
 
     // PaymentRequest is a DocumentService, whose lifetime is managed by the
-    // RenderFrameHost passed in here.
-    return new PaymentRequest(web_contents()->GetMainFrame(),
-                              std::move(delegate), std::move(display_manager),
-                              std::move(receiver), mode,
-                              /*observer_for_testing=*/nullptr);
+    // RenderFrameHost passed into the delegate.
+    return new PaymentRequest(std::move(delegate), std::move(receiver));
   }
 
   // The PaymentRequestWebContentsManager under test.

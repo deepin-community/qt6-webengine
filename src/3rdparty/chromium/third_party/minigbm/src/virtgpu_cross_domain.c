@@ -9,10 +9,10 @@
 #include <sys/mman.h>
 #include <xf86drm.h>
 
+#include "drv_helpers.h"
 #include "drv_priv.h"
 #include "external/virtgpu_cross_domain_protocol.h"
 #include "external/virtgpu_drm.h"
-#include "helpers.h"
 #include "util.h"
 #include "virtgpu.h"
 
@@ -36,6 +36,7 @@ struct cross_domain_private {
 	uint32_t ring_handle;
 	void *ring_addr;
 	struct drv_array *metadata_cache;
+	pthread_mutex_t metadata_cache_lock;
 };
 
 static void cross_domain_release_private(struct driver *drv)
@@ -52,12 +53,16 @@ static void cross_domain_release_private(struct driver *drv)
 
 		ret = drmIoctl(drv->fd, DRM_IOCTL_GEM_CLOSE, &gem_close);
 		if (ret) {
-			drv_log("DRM_IOCTL_GEM_CLOSE failed (handle=%x) error %d\n",
-				priv->ring_handle, ret);
+			drv_loge("DRM_IOCTL_GEM_CLOSE failed (handle=%x) error %d\n",
+				 priv->ring_handle, ret);
 		}
 	}
 
-	drv_array_destroy(priv->metadata_cache);
+	if (priv->metadata_cache)
+		drv_array_destroy(priv->metadata_cache);
+
+	pthread_mutex_destroy(&priv->metadata_cache_lock);
+
 	free(priv);
 }
 
@@ -84,15 +89,18 @@ static void add_combinations(struct driver *drv)
 
 	drv_modify_combination(drv, DRM_FORMAT_YVU420, &metadata, BO_USE_HW_VIDEO_ENCODER);
 	drv_modify_combination(drv, DRM_FORMAT_NV12, &metadata,
-			       BO_USE_HW_VIDEO_DECODER | BO_USE_SCANOUT | BO_USE_HW_VIDEO_ENCODER);
+			       BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE | BO_USE_HW_VIDEO_DECODER |
+				   BO_USE_SCANOUT | BO_USE_HW_VIDEO_ENCODER);
 
 	/*
 	 * R8 format is used for Android's HAL_PIXEL_FORMAT_BLOB and is used for JPEG snapshots
-	 * from camera and input/output from hardware decoder/encoder.
+	 * from camera, input/output from hardware decoder/encoder and sensors, and
+	 * AHBs used as SSBOs/UBOs.
 	 */
 	drv_modify_combination(drv, DRM_FORMAT_R8, &metadata,
 			       BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE | BO_USE_HW_VIDEO_DECODER |
-				   BO_USE_HW_VIDEO_ENCODER);
+				   BO_USE_HW_VIDEO_ENCODER | BO_USE_SENSOR_DIRECT_DATA |
+				   BO_USE_GPU_DATA_BUFFER);
 
 	drv_modify_linear_combinations(drv);
 }
@@ -107,14 +115,14 @@ static int cross_domain_submit_cmd(struct driver *drv, uint32_t *cmd, uint32_t c
 	exec.command = (uint64_t)&cmd[0];
 	exec.size = cmd_size;
 	if (wait) {
-		exec.flags = VIRTGPU_EXECBUF_FENCE_CONTEXT;
+		exec.flags = VIRTGPU_EXECBUF_RING_IDX;
 		exec.bo_handles = (uint64_t)&priv->ring_handle;
 		exec.num_bo_handles = 1;
 	}
 
 	ret = drmIoctl(drv->fd, DRM_IOCTL_VIRTGPU_EXECBUFFER, &exec);
 	if (ret < 0) {
-		drv_log("DRM_IOCTL_VIRTGPU_EXECBUFFER failed with %s\n", strerror(errno));
+		drv_loge("DRM_IOCTL_VIRTGPU_EXECBUFFER failed with %s\n", strerror(errno));
 		return -EINVAL;
 	}
 
@@ -125,7 +133,7 @@ static int cross_domain_submit_cmd(struct driver *drv, uint32_t *cmd, uint32_t c
 	}
 
 	if (ret < 0) {
-		drv_log("DRM_IOCTL_VIRTGPU_WAIT failed with %s\n", strerror(errno));
+		drv_loge("DRM_IOCTL_VIRTGPU_WAIT failed with %s\n", strerror(errno));
 		return ret;
 	}
 
@@ -150,7 +158,7 @@ static int cross_domain_metadata_query(struct driver *drv, struct bo_metadata *m
 	uint32_t plane, remaining_size;
 
 	memset(&cmd_get_reqs, 0, sizeof(cmd_get_reqs));
-	pthread_mutex_lock(&drv->driver_lock);
+	pthread_mutex_lock(&priv->metadata_cache_lock);
 	for (uint32_t i = 0; i < drv_array_size(priv->metadata_cache); i++) {
 		cached_data = (struct bo_metadata *)drv_array_at_idx(priv->metadata_cache, i);
 		if (!metadata_equal(metadata, cached_data))
@@ -185,11 +193,16 @@ static int cross_domain_metadata_query(struct driver *drv, struct bo_metadata *m
 	memcpy(&metadata->offsets, &addr[4], 4 * sizeof(uint32_t));
 	memcpy(&metadata->format_modifier, &addr[8], sizeof(uint64_t));
 	memcpy(&metadata->total_size, &addr[10], sizeof(uint64_t));
-	memcpy(&metadata->blob_id, &addr[12], sizeof(uint64_t));
+	memcpy(&metadata->blob_id, &addr[12], sizeof(uint32_t));
 
-	metadata->map_info = addr[14];
-	metadata->memory_idx = addr[16];
-	metadata->physical_device_idx = addr[17];
+	metadata->map_info = addr[13];
+	metadata->memory_idx = addr[14];
+	metadata->physical_device_idx = addr[15];
+
+	/* Detect buffers, which have no particular stride alignment requirement: */
+	if ((metadata->height == 1) && (metadata->format == DRM_FORMAT_R8)) {
+		metadata->strides[0] = metadata->width;
+	}
 
 	remaining_size = metadata->total_size;
 	for (plane = 0; plane < metadata->num_planes; plane++) {
@@ -203,8 +216,24 @@ static int cross_domain_metadata_query(struct driver *drv, struct bo_metadata *m
 	drv_array_append(priv->metadata_cache, metadata);
 
 out_unlock:
-	pthread_mutex_unlock(&drv->driver_lock);
+	pthread_mutex_unlock(&priv->metadata_cache_lock);
 	return ret;
+}
+
+/* Fill out metadata for guest buffers, used only for CPU access: */
+void cross_domain_get_emulated_metadata(struct bo_metadata *metadata)
+{
+	uint32_t offset = 0;
+
+	for (size_t i = 0; i < metadata->num_planes; i++) {
+		metadata->strides[i] = drv_stride_from_format(metadata->format, metadata->width, i);
+		metadata->sizes[i] = drv_size_from_format(metadata->format, metadata->strides[i],
+							  metadata->height, i);
+		metadata->offsets[i] = offset;
+		offset += metadata->sizes[i];
+	}
+
+	metadata->total_size = offset;
 }
 
 static int cross_domain_init(struct driver *drv)
@@ -234,16 +263,22 @@ static int cross_domain_init(struct driver *drv)
 	if (!params[param_host_visible].value && !params[param_create_guest_handle].value)
 		return -ENOTSUP;
 
-	/*
-	 * crosvm never reports the fake capset.  This is just an extra check to make sure we
-	 * don't use the cross-domain context by accident.  Developers may remove this for
-	 * testing purposes.
-	 */
-	if ((params[param_supported_capset_ids].value & (1 << CAPSET_CROSS_FAKE)) == 0)
-		return -ENOTSUP;
-
 	priv = calloc(1, sizeof(*priv));
+	if (!priv)
+		return -ENOMEM;
+
+	ret = pthread_mutex_init(&priv->metadata_cache_lock, NULL);
+	if (ret) {
+		free(priv);
+		return ret;
+	}
+
 	priv->metadata_cache = drv_array_init(sizeof(struct bo_metadata));
+	if (!priv->metadata_cache) {
+		ret = -ENOMEM;
+		goto free_private;
+	}
+
 	priv->ring_addr = MAP_FAILED;
 	drv->priv = priv;
 
@@ -253,7 +288,7 @@ static int cross_domain_init(struct driver *drv)
 
 	ret = drmIoctl(drv->fd, DRM_IOCTL_VIRTGPU_GET_CAPS, &args);
 	if (ret) {
-		drv_log("DRM_IOCTL_VIRTGPU_GET_CAPS failed with %s\n", strerror(errno));
+		drv_loge("DRM_IOCTL_VIRTGPU_GET_CAPS failed with %s\n", strerror(errno));
 		goto free_private;
 	}
 
@@ -269,14 +304,14 @@ static int cross_domain_init(struct driver *drv)
 	// queries.
 	ctx_set_params[0].param = VIRTGPU_CONTEXT_PARAM_CAPSET_ID;
 	ctx_set_params[0].value = CAPSET_CROSS_DOMAIN;
-	ctx_set_params[1].param = VIRTGPU_CONTEXT_PARAM_NUM_FENCE_CONTEXTS;
+	ctx_set_params[1].param = VIRTGPU_CONTEXT_PARAM_NUM_RINGS;
 	ctx_set_params[1].value = 1;
 
 	init.ctx_set_params = (unsigned long long)&ctx_set_params[0];
 	init.num_params = 2;
 	ret = drmIoctl(drv->fd, DRM_IOCTL_VIRTGPU_CONTEXT_INIT, &init);
 	if (ret) {
-		drv_log("DRM_IOCTL_VIRTGPU_CONTEXT_INIT failed with %s\n", strerror(errno));
+		drv_loge("DRM_IOCTL_VIRTGPU_CONTEXT_INIT failed with %s\n", strerror(errno));
 		goto free_private;
 	}
 
@@ -287,7 +322,7 @@ static int cross_domain_init(struct driver *drv)
 
 	ret = drmIoctl(drv->fd, DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB, &drm_rc_blob);
 	if (ret < 0) {
-		drv_log("DRM_VIRTGPU_RESOURCE_CREATE_BLOB failed with %s\n", strerror(errno));
+		drv_loge("DRM_VIRTGPU_RESOURCE_CREATE_BLOB failed with %s\n", strerror(errno));
 		goto free_private;
 	}
 
@@ -297,7 +332,7 @@ static int cross_domain_init(struct driver *drv)
 	map.handle = priv->ring_handle;
 	ret = drmIoctl(drv->fd, DRM_IOCTL_VIRTGPU_MAP, &map);
 	if (ret < 0) {
-		drv_log("DRM_IOCTL_VIRTGPU_MAP failed with %s\n", strerror(errno));
+		drv_loge("DRM_IOCTL_VIRTGPU_MAP failed with %s\n", strerror(errno));
 		goto free_private;
 	}
 
@@ -305,7 +340,7 @@ static int cross_domain_init(struct driver *drv)
 	    mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, drv->fd, map.offset);
 
 	if (priv->ring_addr == MAP_FAILED) {
-		drv_log("mmap failed with %s\n", strerror(errno));
+		drv_loge("mmap failed with %s\n", strerror(errno));
 		goto free_private;
 	}
 
@@ -338,36 +373,42 @@ static int cross_domain_bo_create(struct bo *bo, uint32_t width, uint32_t height
 	uint32_t blob_flags = VIRTGPU_BLOB_FLAG_USE_SHAREABLE;
 	struct drm_virtgpu_resource_create_blob drm_rc_blob = { 0 };
 
-	ret = cross_domain_metadata_query(bo->drv, &bo->meta);
-	if (ret < 0) {
-		drv_log("Metadata query failed");
-		return ret;
-	}
-
-	if (use_flags & BO_USE_SW_MASK)
+	if (use_flags & (BO_USE_SW_MASK | BO_USE_GPU_DATA_BUFFER))
 		blob_flags |= VIRTGPU_BLOB_FLAG_USE_MAPPABLE;
 
-	if (params[param_cross_device].value && (use_flags & BO_USE_NON_GPU_HW))
-		blob_flags |= VIRTGPU_BLOB_FLAG_USE_CROSS_DEVICE;
-
-	/// It may be possible to have host3d blobs and handles from guest memory at the same time.
-	/// But for the immediate use cases, we will either have one or the other.  For now, just
-	/// prefer guest memory since adding that feature is more involved (requires --udmabuf
-	/// flag to crosvm), so developers would likely test that.
-	if (params[param_create_guest_handle].value) {
+	if (!(use_flags & BO_USE_HW_MASK)) {
+		cross_domain_get_emulated_metadata(&bo->meta);
 		drm_rc_blob.blob_mem = VIRTGPU_BLOB_MEM_GUEST;
-		blob_flags |= VIRTGPU_BLOB_FLAG_CREATE_GUEST_HANDLE;
-	} else if (params[param_host_visible].value) {
-		drm_rc_blob.blob_mem = VIRTGPU_BLOB_MEM_HOST3D;
+	} else {
+		ret = cross_domain_metadata_query(bo->drv, &bo->meta);
+		if (ret < 0) {
+			drv_loge("Metadata query failed");
+			return ret;
+		}
+
+		if (params[param_cross_device].value)
+			blob_flags |= VIRTGPU_BLOB_FLAG_USE_CROSS_DEVICE;
+
+		/// It may be possible to have host3d blobs and handles from guest memory at the
+		/// same time. But for the immediate use cases, we will either have one or the
+		/// other.  For now, just prefer guest memory since adding that feature is more
+		/// involved (requires --udmabuf flag to crosvm), so developers would likely test
+		/// that.
+		if (params[param_create_guest_handle].value) {
+			drm_rc_blob.blob_mem = VIRTGPU_BLOB_MEM_GUEST;
+			blob_flags |= VIRTGPU_BLOB_FLAG_CREATE_GUEST_HANDLE;
+		} else if (params[param_host_visible].value) {
+			drm_rc_blob.blob_mem = VIRTGPU_BLOB_MEM_HOST3D;
+		}
+		drm_rc_blob.blob_id = (uint64_t)bo->meta.blob_id;
 	}
 
 	drm_rc_blob.size = bo->meta.total_size;
 	drm_rc_blob.blob_flags = blob_flags;
-	drm_rc_blob.blob_id = bo->meta.blob_id;
 
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB, &drm_rc_blob);
 	if (ret < 0) {
-		drv_log("DRM_VIRTGPU_RESOURCE_CREATE_BLOB failed with %s\n", strerror(errno));
+		drv_loge("DRM_VIRTGPU_RESOURCE_CREATE_BLOB failed with %s\n", strerror(errno));
 		return -errno;
 	}
 
@@ -385,7 +426,7 @@ static void *cross_domain_bo_map(struct bo *bo, struct vma *vma, size_t plane, u
 	gem_map.handle = bo->handles[0].u32;
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_VIRTGPU_MAP, &gem_map);
 	if (ret) {
-		drv_log("DRM_IOCTL_VIRTGPU_MAP failed with %s\n", strerror(errno));
+		drv_loge("DRM_IOCTL_VIRTGPU_MAP failed with %s\n", strerror(errno));
 		return MAP_FAILED;
 	}
 
@@ -403,5 +444,5 @@ const struct backend virtgpu_cross_domain = {
 	.bo_destroy = drv_gem_bo_destroy,
 	.bo_map = cross_domain_bo_map,
 	.bo_unmap = drv_bo_munmap,
-	.resolve_format = drv_resolve_format_helper,
+	.resolve_format_and_use_flags = drv_resolve_format_and_use_flags_helper,
 };

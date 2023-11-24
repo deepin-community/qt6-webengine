@@ -1,4 +1,4 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -11,11 +11,15 @@ android_library("internal_java") {
   deps = [
     ":java_resources",
     "//base:base_java",
+    "//base:jni_java",
+    "//build/android:build_java",
     "//components/favicon/android:java",
 
     # TODO(crbug/951695): Cyclic dependency. Depend on public only when ready.
     "//chrome/android:chrome_java",
     "//chrome/android/features/keyboard_accessory/public:public_java",
+    "//chrome/browser/autofill/android:java",
+    "//chrome/browser/back_press/android:java",
     "//chrome/browser/feature_engagement:java",
     "//chrome/browser/flags:java",
     "//chrome/browser/fullscreen/android:java",
@@ -35,10 +39,11 @@ android_library("internal_java") {
     "//components/image_fetcher:java",
     "//components/url_formatter/android:url_formatter_java",
     "//content/public/android:content_java",
-    "//third_party/android_deps:android_support_v7_appcompat_java",
     "//third_party/android_deps:material_design_java",
     "//third_party/androidx:androidx_annotation_annotation_java",
+    "//third_party/androidx:androidx_appcompat_appcompat_java",
     "//third_party/androidx:androidx_appcompat_appcompat_resources_java",
+    "//third_party/androidx:androidx_core_core_java",
     "//third_party/androidx:androidx_recyclerview_recyclerview_java",
     "//third_party/androidx:androidx_viewpager_viewpager_java",
     "//ui/android:ui_java",
@@ -62,6 +67,7 @@ android_library("internal_java") {
     "java/src/org/chromium/chrome/browser/keyboard_accessory/all_passwords_bottom_sheet/AllPasswordsBottomSheetViewBinder.java",
     "java/src/org/chromium/chrome/browser/keyboard_accessory/all_passwords_bottom_sheet/AllPasswordsBottomSheetViewHolder.java",
     "java/src/org/chromium/chrome/browser/keyboard_accessory/all_passwords_bottom_sheet/Credential.java",
+    "java/src/org/chromium/chrome/browser/keyboard_accessory/all_passwords_bottom_sheet/CredentialFillRequest.java",
     "java/src/org/chromium/chrome/browser/keyboard_accessory/bar_component/KeyboardAccessoryCoordinator.java",
     "java/src/org/chromium/chrome/browser/keyboard_accessory/bar_component/KeyboardAccessoryIPHUtils.java",
     "java/src/org/chromium/chrome/browser/keyboard_accessory/bar_component/KeyboardAccessoryMediator.java",
@@ -84,9 +90,11 @@ android_library("internal_java") {
     "java/src/org/chromium/chrome/browser/keyboard_accessory/sheet_component/AccessorySheetViewBinder.java",
     "java/src/org/chromium/chrome/browser/keyboard_accessory/sheet_component/NoSwipeViewPager.java",
     "java/src/org/chromium/chrome/browser/keyboard_accessory/sheet_tabs/AccessorySheetTabCoordinator.java",
+    "java/src/org/chromium/chrome/browser/keyboard_accessory/sheet_tabs/AccessorySheetTabItemsModel.java",
     "java/src/org/chromium/chrome/browser/keyboard_accessory/sheet_tabs/AccessorySheetTabMediator.java",
     "java/src/org/chromium/chrome/browser/keyboard_accessory/sheet_tabs/AccessorySheetTabMetricsRecorder.java",
-    "java/src/org/chromium/chrome/browser/keyboard_accessory/sheet_tabs/AccessorySheetTabModel.java",
+    "java/src/org/chromium/chrome/browser/keyboard_accessory/sheet_tabs/AccessorySheetTabProperties.java",
+    "java/src/org/chromium/chrome/browser/keyboard_accessory/sheet_tabs/AccessorySheetTabView.java",
     "java/src/org/chromium/chrome/browser/keyboard_accessory/sheet_tabs/AccessorySheetTabViewBinder.java",
     "java/src/org/chromium/chrome/browser/keyboard_accessory/sheet_tabs/AddressAccessoryInfoView.java",
     "java/src/org/chromium/chrome/browser/keyboard_accessory/sheet_tabs/AddressAccessorySheetCoordinator.java",
@@ -101,11 +109,14 @@ android_library("internal_java") {
     "java/src/org/chromium/chrome/browser/keyboard_accessory/sheet_tabs/PasswordAccessorySheetModernViewBinder.java",
     "java/src/org/chromium/chrome/browser/keyboard_accessory/sheet_tabs/PasswordAccessorySheetViewBinder.java",
     "java/src/org/chromium/chrome/browser/keyboard_accessory/sheet_tabs/PromoCodeAccessoryInfoView.java",
+    "java/src/org/chromium/chrome/browser/keyboard_accessory/tab_layout_component/KeyboardAccessoryButtonGroupView.java",
+    "java/src/org/chromium/chrome/browser/keyboard_accessory/tab_layout_component/KeyboardAccessoryButtonGroupViewBinder.java",
     "java/src/org/chromium/chrome/browser/keyboard_accessory/tab_layout_component/KeyboardAccessoryTabLayoutCoordinator.java",
     "java/src/org/chromium/chrome/browser/keyboard_accessory/tab_layout_component/KeyboardAccessoryTabLayoutMediator.java",
     "java/src/org/chromium/chrome/browser/keyboard_accessory/tab_layout_component/KeyboardAccessoryTabLayoutProperties.java",
     "java/src/org/chromium/chrome/browser/keyboard_accessory/tab_layout_component/KeyboardAccessoryTabLayoutView.java",
     "java/src/org/chromium/chrome/browser/keyboard_accessory/tab_layout_component/KeyboardAccessoryTabLayoutViewBinder.java",
+    "java/src/org/chromium/chrome/browser/keyboard_accessory/utils/InsecureFillingDialogUtils.java",
   ]
   annotation_processor_deps = [ "//base/android/jni_generator:jni_processor" ]
   resources_package = "org.chromium.chrome.browser.keyboard_accessory"
@@ -121,6 +132,7 @@ android_resources("java_resources") {
     "java/res/layout/keyboard_accessory.xml",
     "java/res/layout/keyboard_accessory_action.xml",
     "java/res/layout/keyboard_accessory_action_modern.xml",
+    "java/res/layout/keyboard_accessory_buttons.xml",
     "java/res/layout/keyboard_accessory_chip.xml",
     "java/res/layout/keyboard_accessory_modern.xml",
     "java/res/layout/keyboard_accessory_sheet.xml",

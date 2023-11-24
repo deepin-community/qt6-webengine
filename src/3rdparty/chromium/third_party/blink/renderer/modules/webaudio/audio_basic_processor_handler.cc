@@ -23,14 +23,22 @@
  * DAMAGE.
  */
 
-#include <memory>
 #include "third_party/blink/renderer/modules/webaudio/audio_basic_processor_handler.h"
+
+#include <memory>
+
 #include "third_party/blink/renderer/modules/webaudio/audio_node_input.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node_output.h"
 #include "third_party/blink/renderer/platform/audio/audio_bus.h"
 #include "third_party/blink/renderer/platform/audio/audio_processor.h"
 
 namespace blink {
+
+namespace {
+
+constexpr unsigned kDefaultNumberOfOutputChannels = 1;
+
+}  // namespace
 
 AudioBasicProcessorHandler::AudioBasicProcessorHandler(
     NodeType node_type,
@@ -40,7 +48,7 @@ AudioBasicProcessorHandler::AudioBasicProcessorHandler(
     : AudioHandler(node_type, node, sample_rate),
       processor_(std::move(processor)) {
   AddInput();
-  AddOutput(1);
+  AddOutput(kDefaultNumberOfOutputChannels);
 }
 
 AudioBasicProcessorHandler::~AudioBasicProcessorHandler() {

@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -67,12 +67,13 @@ TEST_F(PolicyProtoDecodersTest, StringPolicy) {
 }
 
 TEST_F(PolicyProtoDecodersTest, StringListPolicy) {
-  std::vector<base::Value> expected_disabled_sync_types;
-  expected_disabled_sync_types.emplace_back(base::Value("bookmarks"));
-  expected_disabled_sync_types.emplace_back(base::Value("readingList"));
+  base::Value::List expected_disabled_sync_types;
+  expected_disabled_sync_types.Append("bookmarks");
+  expected_disabled_sync_types.Append("readingList");
   expected_policy_map_.Set(key::kSyncTypesListDisabled, POLICY_LEVEL_MANDATORY,
                            POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
-                           base::Value(expected_disabled_sync_types), nullptr);
+                           base::Value(std::move(expected_disabled_sync_types)),
+                           nullptr);
 
   auto* disabled_sync_types =
       user_policy_.payload().mutable_synctypeslistdisabled()->mutable_value();
@@ -164,12 +165,12 @@ TEST_F(PolicyProtoDecodersTest, IntegerPolicyWithValueUpperThanMaxLimit) {
 }
 
 TEST_F(PolicyProtoDecodersTest, JsonPolicy) {
-  base::Value jsonPolicy(base::Value::Type::DICTIONARY);
-  jsonPolicy.SetKey("key", base::Value("value"));
+  base::Value::Dict jsonPolicy;
+  jsonPolicy.Set("key", "value");
 
   expected_policy_map_.Set(key::kManagedBookmarks, POLICY_LEVEL_MANDATORY,
                            POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
-                           std::move(jsonPolicy), nullptr);
+                           base::Value(std::move(jsonPolicy)), nullptr);
 
   std::string jsonPolicyStr = R"({
     "key": "value"

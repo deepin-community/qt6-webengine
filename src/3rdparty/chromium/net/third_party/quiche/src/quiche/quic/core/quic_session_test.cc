@@ -38,6 +38,7 @@
 #include "quiche/quic/test_tools/quic_stream_peer.h"
 #include "quiche/quic/test_tools/quic_stream_send_buffer_peer.h"
 #include "quiche/quic/test_tools/quic_test_utils.h"
+#include "quiche/common/platform/api/quiche_logging.h"
 #include "quiche/common/quiche_mem_slice_storage.h"
 
 using spdy::kV3HighestPriority;
@@ -180,6 +181,26 @@ class TestCryptoStream : public QuicCryptoStream, public QuicCryptoHandshaker {
   }
 
   SSL* GetSsl() const override { return nullptr; }
+
+  bool IsCryptoFrameExpectedForEncryptionLevel(
+      EncryptionLevel level) const override {
+    return level != ENCRYPTION_ZERO_RTT;
+  }
+
+  EncryptionLevel GetEncryptionLevelToSendCryptoDataOfSpace(
+      PacketNumberSpace space) const override {
+    switch (space) {
+      case INITIAL_DATA:
+        return ENCRYPTION_INITIAL;
+      case HANDSHAKE_DATA:
+        return ENCRYPTION_HANDSHAKE;
+      case APPLICATION_DATA:
+        return ENCRYPTION_FORWARD_SECURE;
+      default:
+        QUICHE_DCHECK(false);
+        return NUM_ENCRYPTION_LEVELS;
+    }
+  }
 
  private:
   using QuicCryptoStream::session;
@@ -1042,7 +1063,8 @@ TEST_P(QuicSessionTestServer, TestBatchedWrites) {
   // Now let stream 4 do the 2nd of its 3 writes, but add a block for a high
   // priority stream 6.  4 should be preempted.  6 will write but *not* block so
   // will cede back to 4.
-  stream6->SetPriority(spdy::SpdyStreamPrecedence(kV3HighestPriority));
+  stream6->SetPriority(QuicStreamPriority{
+      kV3HighestPriority, QuicStreamPriority::kDefaultIncremental});
   EXPECT_CALL(*stream4, OnCanWrite())
       .WillOnce(Invoke([this, stream4, stream6]() {
         session_.SendLargeFakeData(stream4, 6000);
@@ -2065,6 +2087,23 @@ TEST_P(QuicSessionTestClient, AvailableBidirectionalStreamsClient) {
       &session_, GetNthClientInitiatedBidirectionalId(1)));
 }
 
+TEST_P(QuicSessionTestClient, NewStreamCreationResumesMultiPortProbing) {
+  session_.config()->SetConnectionOptionsToSend({kRVCM});
+  session_.config()->SetClientConnectionOptions({kMPQC});
+  session_.Initialize();
+  connection_->CreateConnectionIdManager();
+  connection_->SetDefaultEncryptionLevel(ENCRYPTION_FORWARD_SECURE);
+  connection_->OnHandshakeComplete();
+  session_.OnConfigNegotiated();
+
+  if (!connection_->connection_migration_use_new_cid()) {
+    return;
+  }
+
+  EXPECT_CALL(*connection_, MaybeProbeMultiPortPath());
+  session_.CreateOutgoingBidirectionalStream();
+}
+
 TEST_P(QuicSessionTestClient, InvalidSessionFlowControlWindowInHandshake) {
   // Test that receipt of an invalid (< default for gQUIC, < current for TLS)
   // session flow control window from the peer results in the connection being
@@ -2483,7 +2522,7 @@ TEST_P(QuicSessionTestServer, RetransmitFrames) {
   EXPECT_CALL(*stream6, RetransmitStreamData(_, _, _, _))
       .WillOnce(Return(true));
   EXPECT_CALL(*send_algorithm, OnApplicationLimited(_));
-  session_.RetransmitFrames(frames, TLP_RETRANSMISSION);
+  session_.RetransmitFrames(frames, PTO_RETRANSMISSION);
 }
 
 // Regression test of b/110082001.
@@ -2954,7 +2993,11 @@ TEST_P(QuicSessionTestServer, WriteBufferedCryptoFrames) {
 
   EXPECT_CALL(*connection_, SendCryptoData(ENCRYPTION_INITIAL, 350, 1000))
       .WillOnce(Return(350));
-  EXPECT_CALL(*connection_, SendCryptoData(ENCRYPTION_ZERO_RTT, 1350, 0))
+  EXPECT_CALL(
+      *connection_,
+      SendCryptoData(crypto_stream->GetEncryptionLevelToSendCryptoDataOfSpace(
+                         QuicUtils::GetPacketNumberSpace(ENCRYPTION_ZERO_RTT)),
+                     1350, 0))
       .WillOnce(Return(1350));
   session_.OnCanWrite();
   EXPECT_FALSE(session_.HasPendingHandshake());
@@ -3028,6 +3071,163 @@ TEST_P(QuicSessionTestServer, IncomingStreamWithServerInitiatedStreamId) {
                         /* fin = */ false, /* offset = */ 0,
                         absl::string_view("foo"));
   session_.OnStreamFrame(frame);
+}
+
+// Regression test for b/235204908.
+TEST_P(QuicSessionTestServer, BlockedFrameCausesWriteError) {
+  CompleteHandshake();
+  MockPacketWriter* writer = static_cast<MockPacketWriter*>(
+      QuicConnectionPeer::GetWriter(session_.connection()));
+  EXPECT_CALL(*writer, WritePacket(_, _, _, _, _))
+      .WillOnce(Return(WriteResult(WRITE_STATUS_OK, 0)));
+  // Set a small connection level flow control limit.
+  const uint64_t kWindow = 36;
+  QuicFlowControllerPeer::SetSendWindowOffset(session_.flow_controller(),
+                                              kWindow);
+  auto stream =
+      session_.GetOrCreateStream(GetNthClientInitiatedBidirectionalId(0));
+  // Try to send more data than the flow control limit allows.
+  const uint64_t kOverflow = 15;
+  std::string body(kWindow + kOverflow, 'a');
+  EXPECT_CALL(*connection_, SendControlFrame(_))
+      .WillOnce(testing::InvokeWithoutArgs([this]() {
+        connection_->ReallyCloseConnection(
+            QUIC_PACKET_WRITE_ERROR, "write error",
+            ConnectionCloseBehavior::SILENT_CLOSE);
+        return false;
+      }));
+  stream->WriteOrBufferData(body, false, nullptr);
+}
+
+TEST_P(QuicSessionTestServer, BufferedCryptoFrameCausesWriteError) {
+  if (!VersionHasIetfQuicFrames(transport_version())) {
+    return;
+  }
+  std::string data(1350, 'a');
+  TestCryptoStream* crypto_stream = session_.GetMutableCryptoStream();
+  // Only consumed 1000 bytes.
+  EXPECT_CALL(*connection_, SendCryptoData(ENCRYPTION_FORWARD_SECURE, 1350, 0))
+      .WillOnce(Return(1000));
+  crypto_stream->WriteCryptoData(ENCRYPTION_FORWARD_SECURE, data);
+  EXPECT_TRUE(session_.HasPendingHandshake());
+  EXPECT_TRUE(session_.WillingAndAbleToWrite());
+
+  EXPECT_CALL(*connection_,
+              SendCryptoData(ENCRYPTION_FORWARD_SECURE, 350, 1000))
+      .WillOnce(Return(0));
+  // Buffer the HANDSHAKE_DONE frame.
+  EXPECT_CALL(*connection_, SendControlFrame(_)).WillOnce(Return(false));
+  CryptoHandshakeMessage msg;
+  session_.GetMutableCryptoStream()->OnHandshakeMessage(msg);
+
+  // Flush both frames.
+  EXPECT_CALL(*connection_,
+              SendCryptoData(ENCRYPTION_FORWARD_SECURE, 350, 1000))
+      .WillOnce(testing::InvokeWithoutArgs([this]() {
+        connection_->ReallyCloseConnection(
+            QUIC_PACKET_WRITE_ERROR, "write error",
+            ConnectionCloseBehavior::SILENT_CLOSE);
+        return 350;
+      }));
+  if (!GetQuicReloadableFlag(
+          quic_no_write_control_frame_upon_connection_close)) {
+    EXPECT_CALL(*connection_, SendControlFrame(_)).WillOnce(Return(false));
+    EXPECT_QUIC_BUG(session_.OnCanWrite(), "Try to write control frame");
+  } else {
+    session_.OnCanWrite();
+  }
+}
+
+TEST_P(QuicSessionTestServer, DonotPtoStreamDataBeforeHandshakeConfirmed) {
+  if (!session_.version().UsesTls()) {
+    return;
+  }
+  EXPECT_NE(HANDSHAKE_CONFIRMED, session_.GetHandshakeState());
+
+  TestCryptoStream* crypto_stream = session_.GetMutableCryptoStream();
+  EXPECT_FALSE(crypto_stream->HasBufferedCryptoFrames());
+  std::string data(1350, 'a');
+  EXPECT_CALL(*connection_, SendCryptoData(ENCRYPTION_INITIAL, 1350, 0))
+      .WillOnce(Return(1000));
+  crypto_stream->WriteCryptoData(ENCRYPTION_INITIAL, data);
+  ASSERT_TRUE(crypto_stream->HasBufferedCryptoFrames());
+
+  TestStream* stream = session_.CreateOutgoingBidirectionalStream();
+
+  session_.MarkConnectionLevelWriteBlocked(stream->id());
+  // Buffered crypto data gets sent.
+  EXPECT_CALL(*connection_, SendCryptoData(ENCRYPTION_INITIAL, _, _))
+      .WillOnce(Return(350));
+  // Verify stream data is not sent on PTO before handshake confirmed.
+  EXPECT_CALL(*stream, OnCanWrite()).Times(0);
+
+  // Fire PTO.
+  QuicConnectionPeer::SetInProbeTimeOut(connection_, true);
+  session_.OnCanWrite();
+  EXPECT_FALSE(crypto_stream->HasBufferedCryptoFrames());
+}
+
+TEST_P(QuicSessionTestServer, SetStatelessResetTokenToSend) {
+  if (!session_.version().HasIetfQuicFrames()) {
+    return;
+  }
+  EXPECT_TRUE(session_.config()->HasStatelessResetTokenToSend());
+}
+
+TEST_P(QuicSessionTestServer,
+       SetServerPreferredAddressAccordingToAddressFamily) {
+  if (!session_.version().HasIetfQuicFrames()) {
+    return;
+  }
+  EXPECT_EQ(quiche::IpAddressFamily::IP_V4,
+            connection_->peer_address().host().address_family());
+  QuicConnectionPeer::SetEffectivePeerAddress(connection_,
+                                              connection_->peer_address());
+  QuicTagVector copt;
+  copt.push_back(kSPAD);
+  QuicConfigPeer::SetReceivedConnectionOptions(session_.config(), copt);
+  QuicSocketAddress preferred_address(QuicIpAddress::Loopback4(), 12345);
+  session_.config()->SetIPv4AlternateServerAddressToSend(preferred_address);
+  session_.config()->SetIPv6AlternateServerAddressToSend(
+      QuicSocketAddress(QuicIpAddress::Loopback6(), 12345));
+
+  connection_->SetDefaultEncryptionLevel(ENCRYPTION_FORWARD_SECURE);
+  session_.OnConfigNegotiated();
+  EXPECT_EQ(QuicSocketAddress(QuicIpAddress::Loopback4(), 12345),
+            session_.config()
+                ->GetPreferredAddressToSend(quiche::IpAddressFamily::IP_V4)
+                .value());
+  EXPECT_FALSE(session_.config()
+                   ->GetPreferredAddressToSend(quiche::IpAddressFamily::IP_V6)
+                   .has_value());
+  EXPECT_EQ(preferred_address,
+            QuicConnectionPeer::GetSentServerPreferredAddress(connection_));
+}
+
+TEST_P(QuicSessionTestServer, NoServerPreferredAddressIfAddressFamilyMismatch) {
+  if (!session_.version().HasIetfQuicFrames()) {
+    return;
+  }
+  EXPECT_EQ(quiche::IpAddressFamily::IP_V4,
+            connection_->peer_address().host().address_family());
+  QuicConnectionPeer::SetEffectivePeerAddress(connection_,
+                                              connection_->peer_address());
+  QuicTagVector copt;
+  copt.push_back(kSPAD);
+  QuicConfigPeer::SetReceivedConnectionOptions(session_.config(), copt);
+  session_.config()->SetIPv6AlternateServerAddressToSend(
+      QuicSocketAddress(QuicIpAddress::Loopback6(), 12345));
+
+  connection_->SetDefaultEncryptionLevel(ENCRYPTION_FORWARD_SECURE);
+  session_.OnConfigNegotiated();
+  EXPECT_FALSE(session_.config()
+                   ->GetPreferredAddressToSend(quiche::IpAddressFamily::IP_V4)
+                   .has_value());
+  EXPECT_FALSE(session_.config()
+                   ->GetPreferredAddressToSend(quiche::IpAddressFamily::IP_V6)
+                   .has_value());
+  EXPECT_FALSE(QuicConnectionPeer::GetSentServerPreferredAddress(connection_)
+                   .IsInitialized());
 }
 
 // A client test class that can be used when the automatic configuration is not

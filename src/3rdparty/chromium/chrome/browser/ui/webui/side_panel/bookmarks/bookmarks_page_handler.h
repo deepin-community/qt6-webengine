@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,6 @@
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 
-class GURL;
 class BookmarksSidePanelUI;
 class ReadingListUI;
 
@@ -27,10 +26,35 @@ class BookmarksPageHandler : public side_panel::mojom::BookmarksPageHandler {
   ~BookmarksPageHandler() override;
 
   // side_panel::mojom::BookmarksPageHandler:
-  void OpenBookmark(const GURL& url,
+  void BookmarkCurrentTabInFolder(int64_t folder_id) override;
+  void ExecuteOpenInNewTabCommand(
+      const std::vector<int64_t>& node_ids,
+      side_panel::mojom::ActionSource source) override;
+  void ExecuteOpenInNewWindowCommand(
+      const std::vector<int64_t>& node_ids,
+      side_panel::mojom::ActionSource source) override;
+  void ExecuteOpenInIncognitoWindowCommand(
+      const std::vector<int64_t>& node_ids,
+      side_panel::mojom::ActionSource source) override;
+  void ExecuteAddToBookmarksBarCommand(
+      int64_t node_id,
+      side_panel::mojom::ActionSource source) override;
+  void ExecuteRemoveFromBookmarksBarCommand(
+      int64_t node_id,
+      side_panel::mojom::ActionSource source) override;
+  void ExecuteDeleteCommand(int64_t node_id,
+                            side_panel::mojom::ActionSource source) override;
+  void ExecuteContextMenuCommand(const std::vector<int64_t>& node_ids,
+                                 side_panel::mojom::ActionSource source,
+                                 int command_id);
+  void OpenBookmark(int64_t node_id,
                     int32_t parent_folder_depth,
-                    ui::mojom::ClickModifiersPtr click_modifiers) override;
-  void ShowContextMenu(const std::string& id, const gfx::Point& point) override;
+                    ui::mojom::ClickModifiersPtr click_modifiers,
+                    side_panel::mojom::ActionSource source) override;
+  void ShowContextMenu(const std::string& id,
+                       const gfx::Point& point,
+                       side_panel::mojom::ActionSource source) override;
+  void ShowUI() override;
 
  private:
   mojo::Receiver<side_panel::mojom::BookmarksPageHandler> receiver_;

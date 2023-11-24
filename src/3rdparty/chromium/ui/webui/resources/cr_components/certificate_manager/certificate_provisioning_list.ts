@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,22 +6,22 @@
  * @fileoverview 'certificate-provisioning-list' is an element that displays a
  * list of certificate provisioning processes.
  */
-import '../../cr_elements/shared_style_css.m.js';
+import 'chrome://resources/cr_elements/cr_shared_style.css.js';
 import 'chrome://resources/polymer/v3_0/iron-flex-layout/iron-flex-layout-classes.js';
 import './certificate_provisioning_details_dialog.js';
 import './certificate_provisioning_entry.js';
 
-import {html, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
-
-import {focusWithoutInk} from '../../js/cr/ui/focus_without_ink.m.js';
-import {I18nMixin} from '../../js/i18n_mixin.js';
-import {WebUIListenerMixin} from '../../js/web_ui_listener_mixin.js';
+import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
+import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
+import {focusWithoutInk} from 'chrome://resources/js/focus_without_ink.js';
+import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {CertificateProvisioningViewDetailsActionEvent} from './certificate_manager_types.js';
 import {CertificateProvisioningBrowserProxyImpl, CertificateProvisioningProcess} from './certificate_provisioning_browser_proxy.js';
+import {getTemplate} from './certificate_provisioning_list.html.js';
 
 const CertificateProvisioningListElementBase =
-    WebUIListenerMixin(I18nMixin(PolymerElement));
+    WebUiListenerMixin(I18nMixin(PolymerElement));
 
 export class CertificateProvisioningListElement extends
     CertificateProvisioningListElementBase {
@@ -30,7 +30,7 @@ export class CertificateProvisioningListElement extends
   }
 
   static get template() {
-    return html`{__html_template__}`;
+    return getTemplate();
   }
 
   static get properties() {
@@ -39,7 +39,7 @@ export class CertificateProvisioningListElement extends
         type: Array,
         value() {
           return [];
-        }
+        },
       },
 
       /**
@@ -51,7 +51,7 @@ export class CertificateProvisioningListElement extends
     };
   }
 
-  private provisioningProcesses_: Array<CertificateProvisioningProcess>;
+  private provisioningProcesses_: CertificateProvisioningProcess[];
   private provisioningDetailsDialogModel_: CertificateProvisioningProcess|null;
   private showProvisioningDetailsDialog_: boolean;
   private previousAnchor_: HTMLElement|null = null;
@@ -62,7 +62,7 @@ export class CertificateProvisioningListElement extends
    * @return Whether |provisioningProcesses| contains at least one entry.
    */
   private hasCertificateProvisioningEntries_(
-      provisioningProcesses: Array<CertificateProvisioningProcess>): boolean {
+      provisioningProcesses: CertificateProvisioningProcess[]): boolean {
     return provisioningProcesses.length !== 0;
   }
 
@@ -71,7 +71,7 @@ export class CertificateProvisioningListElement extends
    *     provisioning processes
    */
   private onCertificateProvisioningProcessesChanged_(
-      certProvisioningProcesses: Array<CertificateProvisioningProcess>) {
+      certProvisioningProcesses: CertificateProvisioningProcess[]) {
     this.provisioningProcesses_ = certProvisioningProcesses;
 
     // If a cert provisioning process details dialog is being shown, update its
@@ -96,7 +96,7 @@ export class CertificateProvisioningListElement extends
 
   override connectedCallback() {
     super.connectedCallback();
-    this.addWebUIListener(
+    this.addWebUiListener(
         'certificate-provisioning-processes-changed',
         this.onCertificateProvisioningProcessesChanged_.bind(this));
     CertificateProvisioningBrowserProxyImpl.getInstance()
@@ -112,6 +112,8 @@ export class CertificateProvisioningListElement extends
           this.previousAnchor_ = detail.anchor;
           this.showProvisioningDetailsDialog_ = true;
           event.stopPropagation();
+          CertificateProvisioningBrowserProxyImpl.getInstance()
+              .refreshCertificateProvisioningProcesses();
         });
   }
 

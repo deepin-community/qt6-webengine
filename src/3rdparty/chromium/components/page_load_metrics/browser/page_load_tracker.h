@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -63,10 +63,18 @@ enum class PageLoadTrackerPageType {
 };
 
 extern const char kErrorEvents[];
-extern const char kPageLoadCompletedAfterAppBackground[];
 extern const char kPageLoadPrerender2Event[];
-extern const char kPageLoadStartedInForeground[];
+extern const char kPageLoadPrerender2VisibilityAtActivation[];
 extern const char kPageLoadTrackerPageType[];
+
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class VisibilityAtActivation {
+  kHidden = 0,
+  kOccluded = 1,
+  kVisible = 2,
+  kMaxValue = kVisible
+};
 
 }  // namespace internal
 
@@ -202,19 +210,22 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client,
   // PageLoadMetricsUpdateDispatcher::Client implementation:
   bool IsPageMainFrame(content::RenderFrameHost* rfh) const override;
   void OnTimingChanged() override;
+  void OnPageInputTimingChanged(uint64_t num_interactions,
+                                uint64_t num_input_events) override;
   void OnSubFrameTimingChanged(content::RenderFrameHost* rfh,
                                const mojom::PageLoadTiming& timing) override;
   void OnSubFrameInputTimingChanged(
       content::RenderFrameHost* rfh,
       const mojom::InputTiming& input_timing_delta) override;
+  void OnPageRenderDataChanged(const mojom::FrameRenderDataUpdate& render_data,
+                               bool is_main_frame) override;
   void OnSubFrameRenderDataChanged(
       content::RenderFrameHost* rfh,
       const mojom::FrameRenderDataUpdate& render_data) override;
   void OnMainFrameMetadataChanged() override;
   void OnSubframeMetadataChanged(content::RenderFrameHost* rfh,
                                  const mojom::FrameMetadata& metadata) override;
-  void OnSubFrameMobileFriendlinessChanged(
-      const blink::MobileFriendliness&) override;
+  void OnSoftNavigationCountChanged(uint32_t soft_navigation_count) override;
   void UpdateFeaturesUsage(
       content::RenderFrameHost* rfh,
       const std::vector<blink::UseCounterFeature>& new_features) override;
@@ -223,9 +234,13 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client,
       const std::vector<mojom::ResourceDataUpdatePtr>& resources) override;
   void UpdateFrameCpuTiming(content::RenderFrameHost* rfh,
                             const mojom::CpuTiming& timing) override;
-  void OnFrameIntersectionUpdate(
+  void OnMainFrameIntersectionRectChanged(
       content::RenderFrameHost* rfh,
-      const mojom::FrameIntersectionUpdate& frame_intersection_update) override;
+      const gfx::Rect& main_frame_intersection_rect) override;
+  void OnMainFrameViewportRectChanged(
+      const gfx::Rect& main_frame_viewport_rect) override;
+  void OnMainFrameImageAdRectsChanged(
+      const base::flat_map<int, gfx::Rect>& main_frame_image_ad_rects) override;
   void SetUpSharedMemoryForSmoothness(
       base::ReadOnlySharedMemoryRegion shared_memory) override;
 
@@ -234,9 +249,12 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client,
   base::TimeTicks GetNavigationStart() const override;
   absl::optional<base::TimeDelta> GetTimeToFirstBackground() const override;
   absl::optional<base::TimeDelta> GetTimeToFirstForeground() const override;
+  PrerenderingState GetPrerenderingState() const override;
+  absl::optional<base::TimeDelta> GetActivationStart() const override;
   const BackForwardCacheRestore& GetBackForwardCacheRestore(
       size_t index) const override;
   bool StartedInForeground() const override;
+  PageVisibility GetVisibilityAtActivation() const override;
   bool WasPrerenderedThenActivatedInForeground() const override;
   const UserInitiatedInfo& GetUserInitiatedInfo() const override;
   const GURL& GetUrl() const override;
@@ -254,8 +272,8 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client,
   const NormalizedResponsivenessMetrics& GetNormalizedResponsivenessMetrics()
       const override;
   const mojom::InputTiming& GetPageInputTiming() const override;
-  const absl::optional<blink::MobileFriendliness>& GetMobileFriendliness()
-      const override;
+  const absl::optional<mojom::SubresourceLoadMetrics>&
+  GetSubresourceLoadMetrics() const override;
   const PageRenderData& GetMainFrameRenderData() const override;
   const ui::ScopedVisibilityTracker& GetVisibilityTracker() const override;
   const ResourceTracker& GetResourceTracker() const override;
@@ -264,6 +282,7 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client,
   const LargestContentfulPaintHandler&
   GetExperimentalLargestContentfulPaintHandler() const override;
   ukm::SourceId GetPageUkmSourceId() const override;
+  uint32_t GetSoftNavigationCount() const override;
   bool IsFirstNavigationInWebContents() const override;
 
   void Redirect(content::NavigationHandle* navigation_handle);
@@ -281,7 +300,7 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client,
   void PageHidden();
   void PageShown();
   void RenderFrameDeleted(content::RenderFrameHost* rfh);
-  void SubFrameDeleted(int frame_tree_node_id);
+  void FrameTreeNodeDeleted(int frame_tree_node_id);
 
   void OnInputEvent(const blink::WebInputEvent& event);
 
@@ -326,11 +345,9 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client,
   // tracking metrics in DidFinishNavigation.
   void StopTracking();
 
-  PageEndReason page_end_reason() const { return page_end_reason_; }
-  base::TimeTicks page_end_time() const { return page_end_time_; }
-
-  void AddObserver(std::unique_ptr<PageLoadMetricsObserver> observer);
-  base::WeakPtr<PageLoadMetricsObserver> FindObserver(char const* name);
+  void AddObserver(std::unique_ptr<PageLoadMetricsObserverInterface> observer);
+  base::WeakPtr<PageLoadMetricsObserverInterface> FindObserver(
+      char const* name);
 
   // If the user performs some abort-like action while we are tracking this page
   // load, notify the tracker. Note that we may not classify this as an abort if
@@ -395,24 +412,30 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client,
   // Called when V8 per-frame memory usage updates are available.
   void OnV8MemoryChanged(const std::vector<MemoryUpdate>& memory_updates);
 
+  // Called when a `SharedStorageWorkletHost` is created.
+  void OnSharedStorageWorkletHostCreated();
+
   // Checks if this tracker is for outermost pages.
   bool IsOutermostTracker() const { return !parent_tracker_; }
 
-  void UpdateMetrics(
-      content::RenderFrameHost* render_frame_host,
-      mojom::PageLoadTimingPtr new_timing,
-      mojom::FrameMetadataPtr new_metadata,
-      const std::vector<blink::UseCounterFeature>& new_features,
-      const std::vector<mojom::ResourceDataUpdatePtr>& resources,
-      mojom::FrameRenderDataUpdatePtr render_data,
-      mojom::CpuTimingPtr new_cpu_timing,
-      mojom::InputTimingPtr input_timing_delta,
-      const absl::optional<blink::MobileFriendliness>& mobile_friendliness);
+  void UpdateMetrics(content::RenderFrameHost* render_frame_host,
+                     mojom::PageLoadTimingPtr new_timing,
+                     mojom::FrameMetadataPtr new_metadata,
+                     const std::vector<blink::UseCounterFeature>& new_features,
+                     const std::vector<mojom::ResourceDataUpdatePtr>& resources,
+                     mojom::FrameRenderDataUpdatePtr render_data,
+                     mojom::CpuTimingPtr new_cpu_timing,
+                     mojom::InputTimingPtr input_timing_delta,
+                     mojom::SubresourceLoadMetricsPtr subresource_load_metrics,
+                     uint32_t soft_navigation_count);
 
   // Set RenderFrameHost for the main frame of the page this tracker instance is
   // bound. This is called on moving the tracker to the active / inactive
   // tracker list after the provisional load is committed.
   void SetPageMainFrame(content::RenderFrameHost* rfh);
+
+  // Gets a bound ukm::SourceId without any check for testing.
+  ukm::SourceId GetPageUkmSourceIdForTesting() const { return source_id_; }
 
   // Obtains a weak pointer for this instance.
   base::WeakPtr<PageLoadTracker> GetWeakPtr();
@@ -437,14 +460,17 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client,
   absl::optional<base::TimeDelta> DurationSinceNavigationStartForTime(
       const absl::optional<base::TimeTicks>& time) const;
 
+  using InvokeCallback =
+      base::RepeatingCallback<PageLoadMetricsObserver::ObservePolicy(
+          PageLoadMetricsObserverInterface*)>;
+  void InvokeAndPruneObservers(const char* trace_name,
+                               InvokeCallback callback,
+                               bool permit_forwarding);
+
   // Whether we stopped tracking this navigation after it was initiated. We may
   // stop tracking a navigation if it doesn't meet the criteria for tracking
   // metrics in DidFinishNavigation.
   bool did_stop_tracking_;
-
-  // Whether the application went into the background when this PageLoadTracker
-  // was active. This is a temporary boolean for UMA tracking.
-  bool app_entered_background_;
 
   // The navigation start in TimeTicks, not the wall time reported by Blink.
   const base::TimeTicks navigation_start_;
@@ -486,10 +512,12 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client,
   absl::optional<base::TimeTicks> first_foreground_time_;
   std::vector<BackForwardCacheRestore> back_forward_cache_restores_;
   const bool started_in_foreground_;
-  bool was_prerendered_then_activated_in_foreground_ = false;
+  PrerenderingState prerendering_state_ = PrerenderingState::kNoPrerendering;
+  // Holds the page's visibility at activation.
+  PageVisibility visibility_at_activation_ = PageVisibility::kNotInitialized;
+  absl::optional<base::TimeDelta> activation_start_ = absl::nullopt;
 
   mojom::PageLoadTimingPtr last_dispatched_merged_page_timing_;
-  blink::MobileFriendliness latest_mobile_friendliness_;
 
   absl::optional<content::GlobalRequestID> navigation_request_id_;
 
@@ -502,12 +530,13 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client,
   // Interface to chrome features. Must outlive the class.
   const raw_ptr<PageLoadMetricsEmbedderInterface> embedder_interface_;
 
-  // Holds active PageLoadMetricsObserver instances bound to the tracking page.
-  std::vector<std::unique_ptr<PageLoadMetricsObserver>> observers_;
+  // Holds active PageLoadMetricsObserverInterface inheritances' instances bound
+  // to the tracking page.
+  std::vector<std::unique_ptr<PageLoadMetricsObserverInterface>> observers_;
 
   // Observer's name pointer to instance map. Can be raw_ptr as the instance is
   // owned `observers` above, and is removed from the map on destruction.
-  base::flat_map<const char*, base::raw_ptr<PageLoadMetricsObserver>>
+  base::flat_map<const char*, base::raw_ptr<PageLoadMetricsObserverInterface>>
       observers_map_;
 
   PageLoadMetricsUpdateDispatcher metrics_update_dispatcher_;
@@ -519,7 +548,7 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client,
   // Holds the RenderFrameHost for the main frame of the page that this tracker
   // instance is bound. Safe to use raw_ptr as the tracker instance is accessed
   // via a map that uses the RenderFrameHost as the key while it's valid.
-  raw_ptr<content::RenderFrameHost> page_main_frame_;
+  raw_ptr<content::RenderFrameHost, DanglingUntriaged> page_main_frame_;
 
   const bool is_first_navigation_in_web_contents_;
 
@@ -527,6 +556,10 @@ class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client,
       largest_contentful_paint_handler_;
   page_load_metrics::LargestContentfulPaintHandler
       experimental_largest_contentful_paint_handler_;
+
+  uint32_t soft_navigation_count_ = 0;
+
+  const internal::PageLoadTrackerPageType page_type_;
 
   const base::WeakPtr<PageLoadTracker> parent_tracker_;
 

@@ -13,9 +13,10 @@
 #if GR_TEST_UTILS
 
 #include "include/core/SkStrokeRec.h"
-#include "include/private/SkMacros.h"
-#include "include/private/SkTemplates.h"
-#include "include/utils/SkRandom.h"
+#include "include/core/SkSurfaceProps.h"
+#include "include/private/base/SkMacros.h"
+#include "include/private/base/SkTemplates.h"
+#include "src/base/SkRandom.h"
 #include "src/core/SkMatrixProvider.h"
 #include "src/core/SkPathEffectBase.h"
 #include "src/gpu/ganesh/GrColor.h"
@@ -63,8 +64,8 @@ public:
     const GrFPArgs& args() const { return fArgs; }
 
 private:
-    SkMatrixProvider fMatrixProvider;
     std::unique_ptr<GrColorInfo> fColorInfoStorage;
+    SkSurfaceProps fSurfaceProps;
     GrFPArgs fArgs;
 };
 
@@ -89,12 +90,12 @@ private:
 
     bool computeFastBounds(SkRect* bounds) const override { return true; }
 
-    int                     fCount;
-    SkAutoTArray<SkScalar>  fIntervals;
-    SkScalar                fPhase;
-    SkScalar                fInitialDashLength;
-    int                     fInitialDashIndex;
-    SkScalar                fIntervalLength;
+    int                                 fCount;
+    skia_private::AutoTArray<SkScalar>  fIntervals;
+    SkScalar                            fPhase;
+    SkScalar                            fInitialDashLength;
+    int                                 fInitialDashIndex;
+    SkScalar                            fIntervalLength;
 };
 
 }  // namespace GrTest

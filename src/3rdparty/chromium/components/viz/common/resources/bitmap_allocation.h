@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,6 @@
 #include "base/memory/read_only_shared_memory_region.h"
 #include "components/viz/common/resources/resource_format.h"
 #include "components/viz/common/viz_common_export.h"
-#include "mojo/public/cpp/system/buffer.h"
 
 namespace gfx {
 class Size;

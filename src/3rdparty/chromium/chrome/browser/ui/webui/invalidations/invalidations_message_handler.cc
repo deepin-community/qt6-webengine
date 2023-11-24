@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "chrome/browser/invalidation/profile_invalidation_provider_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/invalidation/impl/invalidation_logger.h"
@@ -87,7 +87,7 @@ void InvalidationsMessageHandler::UpdateContent(const base::Value::List& args) {
 
 void InvalidationsMessageHandler::OnRegistrationChange(
     const std::set<std::string>& registered_handlers) {
-  base::ListValue list_of_handlers;
+  base::Value::List list_of_handlers;
   for (const auto& registered_handler : registered_handlers) {
     list_of_handlers.Append(registered_handler);
   }
@@ -105,31 +105,29 @@ void InvalidationsMessageHandler::OnStateChange(
 void InvalidationsMessageHandler::OnUpdatedTopics(
     const std::string& handler_name,
     const invalidation::TopicCountMap& topics) {
-  base::ListValue list_of_objects;
+  base::Value::List list_of_objects;
   for (const auto& topic_item : topics) {
-    std::unique_ptr<base::DictionaryValue> dic(new base::DictionaryValue());
-    dic->SetStringKey("name", topic_item.first);
+    base::Value::Dict dict;
+    dict.Set("name", topic_item.first);
     // TODO(crbug.com/1056181): source has been deprecated and after Topic->
     // ObjectID refactoring completely makes no sense. It needs to be cleaned
     // up together with other ObjectID references in js counterpart. Pass 0
     // temporary to avoid changes in js counterpart.
-    dic->SetIntKey("source", 0);
-    dic->SetIntKey("totalCount", topic_item.second);
-    list_of_objects.Append(std::move(dic));
+    dict.Set("source", 0);
+    dict.Set("totalCount", topic_item.second);
+    list_of_objects.Append(std::move(dict));
   }
-  FireWebUIListener("update-ids", base::Value(handler_name), list_of_objects);
+  FireWebUIListener("ids-updated", base::Value(handler_name), list_of_objects);
 }
 void InvalidationsMessageHandler::OnDebugMessage(
-    const base::DictionaryValue& details) {}
+    const base::Value::Dict& details) {}
 
 void InvalidationsMessageHandler::OnInvalidation(
     const invalidation::TopicInvalidationMap& new_invalidations) {
-  std::unique_ptr<base::ListValue> invalidations_list =
-      new_invalidations.ToValue();
-  FireWebUIListener("log-invalidations", *invalidations_list);
+  FireWebUIListener("log-invalidations", new_invalidations.ToValue());
 }
 
 void InvalidationsMessageHandler::OnDetailedStatus(
-    const base::DictionaryValue& network_details) {
+    base::Value::Dict network_details) {
   FireWebUIListener("detailed-status-updated", network_details);
 }

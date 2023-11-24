@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -44,11 +44,6 @@ inline bool PDFCharIsLineEnding(uint8_t c) {
 // nullopt.
 absl::optional<FX_FILESIZE> GetHeaderOffset(
     const RetainPtr<IFX_SeekableReadStream>& pFile);
-
-int32_t GetDirectInteger(const CPDF_Dictionary* pDict, const ByteString& key);
-
-CPDF_Array* GetOrCreateArray(CPDF_Dictionary* dict, const ByteString& key);
-CPDF_Dictionary* GetOrCreateDict(CPDF_Dictionary* dict, const ByteString& key);
 
 ByteString PDF_NameDecode(ByteStringView orig);
 ByteString PDF_NameEncode(const ByteString& orig);

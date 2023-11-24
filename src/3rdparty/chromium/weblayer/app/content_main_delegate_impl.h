@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,7 +16,6 @@ namespace weblayer {
 class ContentBrowserClientImpl;
 class ContentClientImpl;
 class ContentRendererClientImpl;
-class ContentUtilityClientImpl;
 
 class ContentMainDelegateImpl : public content::ContentMainDelegate {
  public:
@@ -28,18 +27,18 @@ class ContentMainDelegateImpl : public content::ContentMainDelegate {
   ~ContentMainDelegateImpl() override;
 
   // ContentMainDelegate implementation:
-  bool BasicStartupComplete(int* exit_code) override;
-  bool ShouldCreateFeatureList() override;
+  absl::optional<int> BasicStartupComplete() override;
+  bool ShouldCreateFeatureList(InvokedIn invoked_in) override;
+  bool ShouldInitializeMojo(InvokedIn invoked_in) override;
   variations::VariationsIdsProvider* CreateVariationsIdsProvider() override;
   void PreSandboxStartup() override;
-  void PostEarlyInitialization(bool is_running_tests) override;
+  absl::optional<int> PostEarlyInitialization(InvokedIn invoked_in) override;
   absl::variant<int, content::MainFunctionParams> RunProcess(
       const std::string& process_type,
       content::MainFunctionParams main_function_params) override;
   content::ContentClient* CreateContentClient() override;
   content::ContentBrowserClient* CreateContentBrowserClient() override;
   content::ContentRendererClient* CreateContentRendererClient() override;
-  content::ContentUtilityClient* CreateContentUtilityClient() override;
 
  private:
   void InitializeResourceBundle();
@@ -47,7 +46,6 @@ class ContentMainDelegateImpl : public content::ContentMainDelegate {
   MainParams params_;
   std::unique_ptr<ContentBrowserClientImpl> browser_client_;
   std::unique_ptr<ContentRendererClientImpl> renderer_client_;
-  std::unique_ptr<ContentUtilityClientImpl> utility_client_;
   std::unique_ptr<ContentClientImpl> content_client_;
 };
 

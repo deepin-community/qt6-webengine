@@ -1,10 +1,12 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "media/mojo/services/gpu_mojo_media_client.h"
 
 #include "base/memory/ptr_util.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "gpu/command_buffer/service/ref_counted_lock.h"
 #include "gpu/config/gpu_finch_features.h"
 #include "media/base/android/android_cdm_factory.h"
@@ -30,7 +32,7 @@ using media::android_mojo_util::CreateProvisionFetcher;
 namespace media {
 
 std::unique_ptr<VideoDecoder> CreatePlatformVideoDecoder(
-    const VideoDecoderTraits& traits) {
+    VideoDecoderTraits& traits) {
   scoped_refptr<gpu::RefCountedLock> ref_counted_lock;
 
   // When this feature is enabled, CodecImage, CodecBufferWaitCorrdinator and
@@ -90,8 +92,13 @@ GetPlatformSupportedVideoDecoderConfigs(
 }
 
 std::unique_ptr<AudioDecoder> CreatePlatformAudioDecoder(
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+    scoped_refptr<base::SequencedTaskRunner> task_runner) {
   return std::make_unique<MediaCodecAudioDecoder>(std::move(task_runner));
+}
+
+std::unique_ptr<AudioEncoder> CreatePlatformAudioEncoder(
+    scoped_refptr<base::SequencedTaskRunner> task_runner) {
+  return nullptr;
 }
 
 std::unique_ptr<CdmFactory> CreatePlatformCdmFactory(

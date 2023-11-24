@@ -1,13 +1,13 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/test/metrics/histogram_tester.h"
 #include "cc/input/main_thread_scrolling_reason.h"
 #include "cc/layers/picture_layer.h"
 #include "cc/trees/property_tree.h"
 #include "cc/trees/scroll_node.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/platform/web_url_loader_mock_factory.h"
 #include "third_party/blink/renderer/core/frame/frame_test_helpers.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/visual_viewport.h"
@@ -22,6 +22,7 @@
 #include "third_party/blink/renderer/platform/testing/find_cc_layer.h"
 #include "third_party/blink/renderer/platform/testing/paint_test_configurations.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
+#include "third_party/blink/renderer/platform/testing/url_loader_mock_factory.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
 
 namespace blink {
@@ -104,13 +105,12 @@ class MainThreadScrollingReasonsTest : public PaintTestConfigurations,
 
  protected:
   String base_url_;
+  frame_test_helpers::WebViewHelper helper_;
 
  private:
   static void ConfigureSettings(WebSettings* settings) {
     settings->SetPreferCompositingToLCDTextEnabled(true);
   }
-
-  frame_test_helpers::WebViewHelper helper_;
 };
 
 INSTANTIATE_PAINT_TEST_SUITE_P(MainThreadScrollingReasonsTest);
@@ -234,6 +234,66 @@ TEST_P(MainThreadScrollingReasonsTest,
       GetMainThreadScrollingReasons(outer_scroll_layer));
 }
 
+TEST_P(MainThreadScrollingReasonsTest, ReportBackgroundAttachmentFixed) {
+  base::HistogramTester histogram_tester;
+  std::string html = R"HTML(
+    <style>
+      body { width: 900px; height: 900px; }
+      #bg { background: url('white-1x1.png') fixed; }
+    </style>
+    <div id=bg>x</div>
+  )HTML";
+
+  WebLocalFrameImpl* frame = helper_.LocalMainFrame();
+  frame_test_helpers::LoadHTMLString(frame, html,
+                                     url_test_helpers::ToKURL("about:blank"));
+
+  helper_.GetLayerTreeHost()->CompositeForTest(base::TimeTicks::Now(), false,
+                                               base::OnceClosure());
+
+  auto CreateEvent = [](WebInputEvent::Type type) {
+    return WebGestureEvent(type, WebInputEvent::kNoModifiers,
+                           base::TimeTicks::Now(),
+                           WebGestureDevice::kTouchscreen);
+  };
+
+  WebGestureEvent scroll_begin =
+      CreateEvent(WebInputEvent::Type::kGestureScrollBegin);
+  WebGestureEvent scroll_update =
+      CreateEvent(WebInputEvent::Type::kGestureScrollUpdate);
+  WebGestureEvent scroll_end =
+      CreateEvent(WebInputEvent::Type::kGestureScrollEnd);
+
+  scroll_begin.SetPositionInWidget(gfx::PointF(100, 100));
+  scroll_update.SetPositionInWidget(gfx::PointF(100, 100));
+  scroll_end.SetPositionInWidget(gfx::PointF(100, 100));
+
+  scroll_update.data.scroll_update.delta_y = -100;
+
+  auto* widget = helper_.GetMainFrameWidget();
+  widget->DispatchThroughCcInputHandler(scroll_begin);
+  widget->DispatchThroughCcInputHandler(scroll_update);
+  widget->DispatchThroughCcInputHandler(scroll_end);
+
+  helper_.GetLayerTreeHost()->CompositeForTest(base::TimeTicks::Now(), false,
+                                               base::OnceClosure());
+
+  uint32_t expected_reason =
+      cc::MainThreadScrollingReason::kHasBackgroundAttachmentFixedObjects;
+  EXPECT_THAT(
+      histogram_tester.GetAllSamples(
+          "Renderer4.MainThreadGestureScrollReason2"),
+      testing::ElementsAre(
+          base::Bucket(
+              base::HistogramBase::Sample(
+                  cc::MainThreadScrollingReason::kScrollingOnMainForAnyReason),
+              1),
+          base::Bucket(base::HistogramBase::Sample(
+                           cc::MainThreadScrollingReason::BucketIndexForTesting(
+                               expected_reason)),
+                       1)));
+}
+
 // Upon resizing the content size, the main thread scrolling reason
 // kHasBackgroundAttachmentFixedObjects should be updated on all frames
 TEST_P(MainThreadScrollingReasonsTest,
@@ -353,10 +413,7 @@ class NonCompositedMainThreadScrollingReasonsTest
     EXPECT_NO_MAIN_THREAD_SCROLLING_REASON(
         scrollable_area2->GetNonCompositedMainThreadScrollingReasons());
 
-    LocalFrameView* frame_view = GetFrame()->View();
-    ASSERT_TRUE(frame_view);
-    EXPECT_NO_MAIN_THREAD_SCROLLING_REASON(
-        frame_view->GetMainThreadScrollingReasons());
+    EXPECT_NO_MAIN_THREAD_SCROLLING_REASON(GetViewMainThreadScrollingReasons());
 
     // Remove class from the scroller 1 would lead to scroll on impl.
 
@@ -365,8 +422,7 @@ class NonCompositedMainThreadScrollingReasonsTest
 
     EXPECT_NO_MAIN_THREAD_SCROLLING_REASON(
         scrollable_area->GetNonCompositedMainThreadScrollingReasons());
-    EXPECT_NO_MAIN_THREAD_SCROLLING_REASON(
-        frame_view->GetMainThreadScrollingReasons());
+    EXPECT_NO_MAIN_THREAD_SCROLLING_REASON(GetViewMainThreadScrollingReasons());
 
     // Add target attribute would again lead to scroll on main thread
     container->classList().Add(style_class);
@@ -374,8 +430,7 @@ class NonCompositedMainThreadScrollingReasonsTest
 
     EXPECT_MAIN_THREAD_SCROLLING_REASON(
         reason, scrollable_area->GetNonCompositedMainThreadScrollingReasons());
-    EXPECT_NO_MAIN_THREAD_SCROLLING_REASON(
-        frame_view->GetMainThreadScrollingReasons());
+    EXPECT_NO_MAIN_THREAD_SCROLLING_REASON(GetViewMainThreadScrollingReasons());
 
     if ((reason & kLCDTextRelatedReasons) &&
         !(reason & ~kLCDTextRelatedReasons)) {
@@ -384,7 +439,7 @@ class NonCompositedMainThreadScrollingReasonsTest
       EXPECT_NO_MAIN_THREAD_SCROLLING_REASON(
           scrollable_area->GetNonCompositedMainThreadScrollingReasons());
       EXPECT_NO_MAIN_THREAD_SCROLLING_REASON(
-          frame_view->GetMainThreadScrollingReasons());
+          GetViewMainThreadScrollingReasons());
     }
   }
 };

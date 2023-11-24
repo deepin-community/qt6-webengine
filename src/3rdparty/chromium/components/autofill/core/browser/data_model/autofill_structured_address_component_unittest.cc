@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,7 +20,6 @@ using base::ASCIIToUTF16;
 using base::UTF8ToUTF16;
 
 namespace autofill {
-namespace structured_address {
 
 using AddressComponentTestValues = std::vector<AddressComponentTestValue>;
 
@@ -263,7 +262,7 @@ class TestNonProperFirstNameAddressComponent : public AddressComponent {
   TestAtomicFirstNameAddressComponent second_name_first_node_{this};
 };
 
-// Tests the merging of two atomic component with |type|, and vales
+// Tests the merging of two atomic component with |type|, and values
 // |older_values| and |newer_values| respectively, and |merge_modes|.
 // If |is_mergeable| it is expected that the two components are mergeable.
 // If |newer_was_more_recently_used| the newer component was also more recently
@@ -1751,5 +1750,4 @@ TEST(AutofillStructuredAddressAddressComponent,
                   MergeMode::kUseBetterOrMostRecentIfDifferent);
 }
 
-}  // namespace structured_address
 }  // namespace autofill

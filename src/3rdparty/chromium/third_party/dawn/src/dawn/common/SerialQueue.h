@@ -15,9 +15,10 @@
 #ifndef SRC_DAWN_COMMON_SERIALQUEUE_H_
 #define SRC_DAWN_COMMON_SERIALQUEUE_H_
 
-#include "dawn/common/SerialStorage.h"
-
+#include <utility>
 #include <vector>
+
+#include "dawn/common/SerialStorage.h"
 
 template <typename Serial, typename Value>
 class SerialQueue;
@@ -79,7 +80,7 @@ template <typename Serial, typename Value>
 void SerialQueue<Serial, Value>::Enqueue(std::vector<Value>&& values, Serial serial) {
     DAWN_ASSERT(values.size() > 0);
     DAWN_ASSERT(this->Empty() || this->mStorage.back().first <= serial);
-    this->mStorage.emplace_back(serial, values);
+    this->mStorage.emplace_back(serial, std::move(values));
 }
 
 #endif  // SRC_DAWN_COMMON_SERIALQUEUE_H_

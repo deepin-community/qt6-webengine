@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -87,6 +87,11 @@ struct BLINK_COMMON_EXPORT VisualProperties {
   // Browser controls params such as top and bottom controls heights, whether
   // controls shrink blink size etc.
   cc::BrowserControlsParams browser_controls_params;
+
+  // If shown and resizing the renderer, returns the height of the virtual
+  // keyboard in physical pixels. Otherwise, returns 0. Always 0 in a
+  // non-outermost main frame.
+  int virtual_keyboard_resize_height_physical_px = 0;
 
   // Whether or not the focused node should be scrolled into view after the
   // resize.

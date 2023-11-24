@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,6 +27,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/power_monitor/power_observer.h"
 #include "base/synchronization/lock.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "media/base/audio_decoder.h"
@@ -38,11 +39,10 @@
 #include "media/base/time_source.h"
 #include "media/filters/audio_renderer_algorithm.h"
 #include "media/filters/decoder_stream.h"
-#include "media/renderers/default_renderer_factory.h"
+#include "media/renderers/renderer_impl_factory.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
-class SingleThreadTaskRunner;
 class TickClock;
 }  // namespace base
 
@@ -75,10 +75,11 @@ class MEDIA_EXPORT AudioRendererImpl
   //
   // |decoders| contains the AudioDecoders to use when initializing.
   AudioRendererImpl(
-      const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
+      const scoped_refptr<base::SequencedTaskRunner>& task_runner,
       AudioRendererSink* sink,
       const CreateAudioDecodersCB& create_audio_decoders_cb,
       MediaLog* media_log,
+      MediaPlayerLoggingID media_player_id,
       SpeechRecognitionClient* speech_recognition_client = nullptr);
 
   AudioRendererImpl(const AudioRendererImpl&) = delete;
@@ -186,7 +187,7 @@ class MEDIA_EXPORT AudioRendererImpl
   // should the filled buffer be played.
   int Render(base::TimeDelta delay,
              base::TimeTicks delay_timestamp,
-             int prior_frames_skipped,
+             const AudioGlitchInfo& glitch_info,
              AudioBus* dest) override;
   void OnRenderError() override;
 
@@ -239,7 +240,7 @@ class MEDIA_EXPORT AudioRendererImpl
   void EnableSpeechRecognition();
   void TranscribeAudio(scoped_refptr<media::AudioBuffer> buffer);
 
-  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
+  scoped_refptr<base::SequencedTaskRunner> task_runner_;
 
   std::unique_ptr<AudioBufferConverter> buffer_converter_;
 
@@ -269,6 +270,8 @@ class MEDIA_EXPORT AudioRendererImpl
   std::unique_ptr<AudioDecoderStream> audio_decoder_stream_;
 
   raw_ptr<MediaLog> media_log_;
+
+  MediaPlayerLoggingID player_id_;
 
   // Cached copy of audio params that the renderer is initialized with.
   AudioParameters audio_parameters_;

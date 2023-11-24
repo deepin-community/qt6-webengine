@@ -1,5 +1,5 @@
 #!/usr/bin/env vpython3
-# Copyright 2021 The Chromium Authors. All rights reserved.
+# Copyright 2021 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -16,16 +16,20 @@ from blinkpy.web_tests.stale_expectation_removal import queries
 from blinkpy.web_tests.stale_expectation_removal import unittest_utils as wt_uu
 from unexpected_passes_common import constants as common_constants
 from unexpected_passes_common import data_types as common_data_types
+from unexpected_passes_common import expectations as common_expectations
+from unexpected_passes_common import unittest_utils as common_uu
 
 
 class ConvertJsonResultToResultObjectUnittest(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         common_data_types.SetResultImplementation(data_types.WebTestResult)
+        common_expectations.ClearInstance()
+        common_uu.RegisterGenericExpectationsImplementation()
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         common_data_types.SetResultImplementation(common_data_types.BaseResult)
 
-    def testDurationIsSet(self):
+    def testDurationIsSet(self) -> None:
         """Tests that the duration is set appropriately on the result."""
         json_result = {
             'id': 'build-1234',
@@ -43,7 +47,7 @@ class ConvertJsonResultToResultObjectUnittest(unittest.TestCase):
 
 
 class GetRelevantExpectationFilesForQueryResultUnittest(unittest.TestCase):
-    def testNoFiles(self):
+    def testNoFiles(self) -> None:
         """Tests that no reported expectation files are handled properly."""
         query_result = {}
         querier = wt_uu.CreateGenericWebTestQuerier()
@@ -51,7 +55,7 @@ class GetRelevantExpectationFilesForQueryResultUnittest(unittest.TestCase):
             querier._GetRelevantExpectationFilesForQueryResult(query_result),
             [])
 
-    def testAbsolutePath(self):
+    def testAbsolutePath(self) -> None:
         """Tests that absolute paths are ignored."""
         query_result = {
             'expectation_files': ['/posix/path', '/c:/windows/path']
@@ -61,7 +65,7 @@ class GetRelevantExpectationFilesForQueryResultUnittest(unittest.TestCase):
             querier._GetRelevantExpectationFilesForQueryResult(query_result),
             [])
 
-    def testRelativePath(self):
+    def testRelativePath(self) -> None:
         """Tests that relative paths are properly reconstructed."""
         query_result = {
             'expectation_files':
@@ -80,25 +84,31 @@ class GetRelevantExpectationFilesForQueryResultUnittest(unittest.TestCase):
 
 @unittest.skipIf(six.PY2, 'Script and unittest are Python 3-only')
 class GetQueryGeneratorForBuilderUnittest(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self._query_patcher = mock.patch(
             'blinkpy.web_tests.stale_expectation_removal.queries.'
             'WebTestBigQueryQuerier._RunBigQueryCommandsForJsonOutput')
         self._query_mock = self._query_patcher.start()
         self.addCleanup(self._query_patcher.stop)
 
-    def testNoLargeQueryMode(self):
+    def testNoLargeQueryMode(self) -> None:
         """Tests that the expected clause is returned in normal mode."""
         querier = wt_uu.CreateGenericWebTestQuerier()
         query_generator = querier._GetQueryGeneratorForBuilder(
-            common_data_types.BuilderEntry('builder', 'builder_type', False))
+            common_data_types.BuilderEntry('builder',
+                                           common_constants.BuilderTypes.CI,
+                                           False))
+        self.assertIsNotNone(query_generator)
         self.assertEqual(len(query_generator.GetClauses()), 1)
         self.assertEqual(query_generator.GetClauses()[0], '')
         self.assertIsInstance(query_generator,
                               queries.WebTestFixedQueryGenerator)
         self._query_mock.assert_not_called()
+        # Make sure that there aren't any issues with getting the queries.
+        q = query_generator.GetQueries()
+        self.assertEqual(len(q), 1)
 
-    def testLargeQueryModeNoTests(self):
+    def testLargeQueryModeNoTests(self) -> None:
         """Tests that a special value is returned if no tests are found."""
         querier = wt_uu.CreateGenericWebTestQuerier(large_query_mode=True)
         self._query_mock.return_value = []
@@ -109,7 +119,7 @@ class GetQueryGeneratorForBuilderUnittest(unittest.TestCase):
         self.assertIsNone(query_generator)
         self._query_mock.assert_called_once()
 
-    def testLargeQueryModeFoundTests(self):
+    def testLargeQueryModeFoundTests(self) -> None:
         """Tests that a clause containing found tests is returned."""
         querier = wt_uu.CreateGenericWebTestQuerier(large_query_mode=True)
         self._query_mock.return_value = [
@@ -124,15 +134,19 @@ class GetQueryGeneratorForBuilderUnittest(unittest.TestCase):
             common_data_types.BuilderEntry('builder',
                                            common_constants.BuilderTypes.CI,
                                            False))
+        self.assertIsNotNone(query_generator)
         self.assertEqual(query_generator.GetClauses(),
                          ['AND test_id IN UNNEST(["foo_test", "bar_test"])'])
         self.assertIsInstance(query_generator,
                               queries.WebTestSplitQueryGenerator)
+        # Make sure that there aren't any issues with getting the queries.
+        q = query_generator.GetQueries()
+        self.assertEqual(len(q), 1)
 
 
 @unittest.skipIf(six.PY2, 'Script and unittest are Python 3-only')
 class GetActiveBuilderQueryUnittest(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.querier = wt_uu.CreateGenericWebTestQuerier()
 
     def testPublicCi(self):
@@ -147,6 +161,8 @@ WITH
         WHERE key = "builder") as builder_name
     FROM
       `chrome-luci-data.chromium.blink_web_tests_ci_test_results` tr
+    WHERE
+      DATE(partition_time) > DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
 
   )
 SELECT DISTINCT builder_name
@@ -156,7 +172,7 @@ FROM builders
             self.querier._GetActiveBuilderQuery(
                 common_constants.BuilderTypes.CI, False), expected_query)
 
-    def testInternalCi(self):
+    def testInternalCi(self) -> None:
         """Tests that the active query for internal CI is as expected."""
         expected_query = """\
 WITH
@@ -168,6 +184,8 @@ WITH
         WHERE key = "builder") as builder_name
     FROM
       `chrome-luci-data.chromium.blink_web_tests_ci_test_results` tr
+    WHERE
+      DATE(partition_time) > DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
     UNION ALL
     SELECT
       (
@@ -176,6 +194,8 @@ WITH
         WHERE key = "builder") as builder_name
     FROM
       `chrome-luci-data.chrome.blink_web_tests_ci_test_results` tr
+    WHERE
+      DATE(partition_time) > DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
   )
 SELECT DISTINCT builder_name
 FROM builders
@@ -184,7 +204,7 @@ FROM builders
             self.querier._GetActiveBuilderQuery(
                 common_constants.BuilderTypes.CI, True), expected_query)
 
-    def testPublicTry(self):
+    def testPublicTry(self) -> None:
         """Tests that the active query for public try is as expected."""
         expected_query = """\
 WITH
@@ -196,6 +216,8 @@ WITH
         WHERE key = "builder") as builder_name
     FROM
       `chrome-luci-data.chromium.blink_web_tests_try_test_results` tr
+    WHERE
+      DATE(partition_time) > DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
 
   )
 SELECT DISTINCT builder_name
@@ -205,7 +227,7 @@ FROM builders
             self.querier._GetActiveBuilderQuery(
                 common_constants.BuilderTypes.TRY, False), expected_query)
 
-    def testInternalTry(self):
+    def testInternalTry(self) -> None:
         """Tests that the active query for internal try is as expected."""
         expected_query = """\
 WITH
@@ -217,6 +239,8 @@ WITH
         WHERE key = "builder") as builder_name
     FROM
       `chrome-luci-data.chromium.blink_web_tests_try_test_results` tr
+    WHERE
+      DATE(partition_time) > DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
     UNION ALL
     SELECT
       (
@@ -225,6 +249,8 @@ WITH
         WHERE key = "builder") as builder_name
     FROM
       `chrome-luci-data.chrome.blink_web_tests_try_test_results` tr
+    WHERE
+      DATE(partition_time) > DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
   )
 SELECT DISTINCT builder_name
 FROM builders
@@ -238,7 +264,7 @@ FROM builders
 class GeneratedQueryUnittest(unittest.TestCase):
     maxDiff = None
 
-    def testPublicCi(self):
+    def testPublicCi(self) -> None:
         """Tests that the generated public CI query is as expected."""
         expected_query = """\
 WITH
@@ -249,7 +275,8 @@ WITH
     FROM
       `chrome-luci-data.chromium.blink_web_tests_ci_test_results` tr
     WHERE
-      exported.realm = "chromium:ci"
+      DATE(partition_time) > DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+      AND exported.realm = "chromium:ci"
       AND STRUCT("builder", @builder_name) IN UNNEST(variant)
     ORDER BY partition_time DESC
     LIMIT @num_builds
@@ -284,7 +311,8 @@ WITH
       `chrome-luci-data.chromium.blink_web_tests_ci_test_results` tr,
       builds b
     WHERE
-      exported.id = build_inv_id
+      DATE(tr.partition_time) > DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+      AND exported.id = build_inv_id
       AND status != "SKIP"
       tfc
   )
@@ -294,13 +322,14 @@ WHERE
   "Failure" IN UNNEST(typ_expectations)
   OR "Crash" IN UNNEST(typ_expectations)
   OR "Timeout" IN UNNEST(typ_expectations)
+  OR "Slow" IN UNNEST(typ_expectations)
 """
         self.assertEqual(
             queries.CI_BQ_QUERY_TEMPLATE.format(builder_project='chromium',
                                                 test_filter_clause='tfc'),
             expected_query)
 
-    def testInternalCi(self):
+    def testInternalCi(self) -> None:
         """Tests that the generated internal CI query is as expected."""
         expected_query = """\
 WITH
@@ -311,7 +340,8 @@ WITH
     FROM
       `chrome-luci-data.chrome.blink_web_tests_ci_test_results` tr
     WHERE
-      exported.realm = "chrome:ci"
+      DATE(partition_time) > DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+      AND exported.realm = "chrome:ci"
       AND STRUCT("builder", @builder_name) IN UNNEST(variant)
     ORDER BY partition_time DESC
     LIMIT @num_builds
@@ -346,7 +376,8 @@ WITH
       `chrome-luci-data.chrome.blink_web_tests_ci_test_results` tr,
       builds b
     WHERE
-      exported.id = build_inv_id
+      DATE(tr.partition_time) > DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+      AND exported.id = build_inv_id
       AND status != "SKIP"
       tfc
   )
@@ -356,13 +387,14 @@ WHERE
   "Failure" IN UNNEST(typ_expectations)
   OR "Crash" IN UNNEST(typ_expectations)
   OR "Timeout" IN UNNEST(typ_expectations)
+  OR "Slow" IN UNNEST(typ_expectations)
 """
         self.assertEqual(
             queries.CI_BQ_QUERY_TEMPLATE.format(builder_project='chrome',
                                                 test_filter_clause='tfc'),
             expected_query)
 
-    def testPublicTry(self):
+    def testPublicTry(self) -> None:
         """Tests that the generated public try query is as expected."""
         expected_query = """\
 WITH
@@ -387,7 +419,8 @@ WITH
       `chrome-luci-data.chromium.blink_web_tests_try_test_results` tr,
       submitted_builds sb
     WHERE
-      exported.realm = "chromium:try"
+      DATE(tr.partition_time) > DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+      AND exported.realm = "chromium:try"
       AND STRUCT("builder", @builder_name) IN UNNEST(variant)
       AND exported.id = sb.id
     ORDER BY partition_time DESC
@@ -423,7 +456,8 @@ WITH
       `chrome-luci-data.chromium.blink_web_tests_try_test_results` tr,
       builds b
     WHERE
-      exported.id = build_inv_id
+      DATE(tr.partition_time) > DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+      AND exported.id = build_inv_id
       AND status != "SKIP"
       tfc
   )
@@ -433,13 +467,14 @@ WHERE
   "Failure" IN UNNEST(typ_expectations)
   OR "Crash" IN UNNEST(typ_expectations)
   OR "Timeout" IN UNNEST(typ_expectations)
+  OR "Slow" IN UNNEST(typ_expectations)
 """
         self.assertEqual(
             queries.TRY_BQ_QUERY_TEMPLATE.format(builder_project='chromium',
                                                  test_filter_clause='tfc'),
             expected_query)
 
-    def testInternalTry(self):
+    def testInternalTry(self) -> None:
         """Tests that the generated internal try query is as expected."""
         expected_query = """\
 WITH
@@ -464,7 +499,8 @@ WITH
       `chrome-luci-data.chrome.blink_web_tests_try_test_results` tr,
       submitted_builds sb
     WHERE
-      exported.realm = "chrome:try"
+      DATE(tr.partition_time) > DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+      AND exported.realm = "chrome:try"
       AND STRUCT("builder", @builder_name) IN UNNEST(variant)
       AND exported.id = sb.id
     ORDER BY partition_time DESC
@@ -500,7 +536,8 @@ WITH
       `chrome-luci-data.chrome.blink_web_tests_try_test_results` tr,
       builds b
     WHERE
-      exported.id = build_inv_id
+      DATE(tr.partition_time) > DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+      AND exported.id = build_inv_id
       AND status != "SKIP"
       tfc
   )
@@ -510,6 +547,7 @@ WHERE
   "Failure" IN UNNEST(typ_expectations)
   OR "Crash" IN UNNEST(typ_expectations)
   OR "Timeout" IN UNNEST(typ_expectations)
+  OR "Slow" IN UNNEST(typ_expectations)
 """
         self.assertEqual(
             queries.TRY_BQ_QUERY_TEMPLATE.format(builder_project='chrome',
@@ -519,7 +557,7 @@ WHERE
 
 @unittest.skipIf(six.PY2, 'Script and unittest are Python 3-only')
 class QueryGeneratorImplUnittest(unittest.TestCase):
-    def testPublicCi(self):
+    def testPublicCi(self) -> None:
         """Tests that public CI builders use the correct query."""
         q = queries.QueryGeneratorImpl(['tfc'],
                                        common_data_types.BuilderEntry(
@@ -531,7 +569,7 @@ class QueryGeneratorImplUnittest(unittest.TestCase):
             builder_project='chromium', test_filter_clause='tfc')
         self.assertEqual(q[0], expected_query)
 
-    def testInternalCi(self):
+    def testInternalCi(self) -> None:
         """Tests that internal CI builders use the correct query."""
         q = queries.QueryGeneratorImpl(['tfc'],
                                        common_data_types.BuilderEntry(
@@ -543,7 +581,7 @@ class QueryGeneratorImplUnittest(unittest.TestCase):
             builder_project='chrome', test_filter_clause='tfc')
         self.assertEqual(q[0], expected_query)
 
-    def testPublicTry(self):
+    def testPublicTry(self) -> None:
         """Tests that public try builders use the correct query."""
         q = queries.QueryGeneratorImpl(['tfc'],
                                        common_data_types.BuilderEntry(
@@ -555,7 +593,7 @@ class QueryGeneratorImplUnittest(unittest.TestCase):
             builder_project='chromium', test_filter_clause='tfc')
         self.assertEqual(q[0], expected_query)
 
-    def testInternalTry(self):
+    def testInternalTry(self) -> None:
         """Tests that internal try builders use the correct query."""
         q = queries.QueryGeneratorImpl(['tfc'],
                                        common_data_types.BuilderEntry(
@@ -567,7 +605,7 @@ class QueryGeneratorImplUnittest(unittest.TestCase):
             builder_project='chrome', test_filter_clause='tfc')
         self.assertEqual(q[0], expected_query)
 
-    def testUnknownBuilderType(self):
+    def testUnknownBuilderType(self) -> None:
         """Tests that an exception is raised for unknown builder types."""
         with self.assertRaises(RuntimeError):
             queries.QueryGeneratorImpl(['tfc'],
@@ -577,13 +615,13 @@ class QueryGeneratorImplUnittest(unittest.TestCase):
 
 
 class StripPrefixFromTestIdUnittest(unittest.TestCase):
-    def testUnknownPrefix(self):
+    def testUnknownPrefix(self) -> None:
         """Tests that an error is raised if an unknown prefix is found."""
         querier = wt_uu.CreateGenericWebTestQuerier()
         with self.assertRaises(RuntimeError):
             querier._StripPrefixFromTestId('foobar')
 
-    def testKnownPrefixes(self):
+    def testKnownPrefixes(self) -> None:
         """Tests that all known prefixes are properly stripped."""
         querier = wt_uu.CreateGenericWebTestQuerier()
         test_ids = [prefix + 'a' for prefix in queries.KNOWN_TEST_ID_PREFIXES]

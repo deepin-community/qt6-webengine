@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,8 @@
 #include <utility>
 #include <vector>
 
-#include "base/callback_forward.h"
 #include "base/compiler_specific.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "build/chromeos_buildflags.h"
@@ -51,12 +51,6 @@ class TestSigninClient : public SigninClient {
   // once there is a unit test that requires it.
   PrefService* GetPrefs() override;
 
-  // Allow or disallow continuation of sign-out depending on value of
-  // |is_signout_allowed_|;
-  void PreSignOut(
-      base::OnceCallback<void(SignoutDecision)> on_signout_decision_reached,
-      signin_metrics::ProfileSignout signout_source_metric) override;
-
   // Wraps the test_url_loader_factory().
   scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory() override;
 
@@ -77,8 +71,6 @@ class TestSigninClient : public SigninClient {
     are_signin_cookies_allowed_ = value;
   }
 
-  void set_is_signout_allowed(bool value) { is_signout_allowed_ = value; }
-
   // When |value| is true, network calls posted through DelayNetworkCall() are
   // delayed indefinitely.
   // When |value| is false, all pending calls are unblocked, and new calls are
@@ -96,7 +88,6 @@ class TestSigninClient : public SigninClient {
   std::unique_ptr<GaiaAuthFetcher> CreateGaiaAuthFetcher(
       GaiaAuthConsumer* consumer,
       gaia::GaiaSource source) override;
-  bool IsNonEnterpriseUser(const std::string& email) override;
 
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
   absl::optional<account_manager::Account> GetInitialPrimaryAccount() override;
@@ -104,6 +95,8 @@ class TestSigninClient : public SigninClient {
 
   void SetInitialPrimaryAccountForTests(const account_manager::Account& account,
                                         const absl::optional<bool>& is_child);
+  void RemoveAccount(const account_manager::AccountKey& account_key) override;
+
   void RemoveAllAccounts() override;
 #endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 
@@ -116,7 +109,6 @@ class TestSigninClient : public SigninClient {
   std::unique_ptr<network::mojom::CookieManager> cookie_manager_;
   bool are_signin_cookies_allowed_;
   bool network_calls_delayed_;
-  bool is_signout_allowed_;
 
   std::vector<base::OnceClosure> delayed_network_calls_;
 

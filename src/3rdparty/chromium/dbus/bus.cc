@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,14 +8,15 @@
 
 #include <memory>
 
-#include "base/bind.h"
 #include "base/files/file_descriptor_watcher_posix.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/threading/scoped_blocking_call.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
@@ -95,7 +96,7 @@ class Watch {
     CHECK(dbus_watch_handle(raw_watch_, flags)) << "Unable to allocate memory";
   }
 
-  DBusWatch* raw_watch_;
+  raw_ptr<DBusWatch> raw_watch_;
   std::unique_ptr<base::FileDescriptorWatcher::Controller> read_watcher_;
   std::unique_ptr<base::FileDescriptorWatcher::Controller> write_watcher_;
 };
@@ -141,7 +142,7 @@ class Timeout {
   // Calls DBus to handle the timeout.
   void HandleTimeout() { CHECK(dbus_timeout_handle(raw_timeout_)); }
 
-  DBusTimeout* raw_timeout_;
+  raw_ptr<DBusTimeout> raw_timeout_;
 
   base::WeakPtrFactory<Timeout> weak_ptr_factory_{this};
 };
@@ -176,8 +177,8 @@ Bus::Bus(const Options& options)
   dbus_threads_init_default();
   // The origin message loop is unnecessary if the client uses synchronous
   // functions only.
-  if (base::SequencedTaskRunnerHandle::IsSet())
-    origin_task_runner_ = base::SequencedTaskRunnerHandle::Get();
+  if (base::SequencedTaskRunner::HasCurrentDefault())
+    origin_task_runner_ = base::SequencedTaskRunner::GetCurrentDefault();
 }
 
 Bus::~Bus() {

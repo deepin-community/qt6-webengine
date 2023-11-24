@@ -7,14 +7,14 @@
  */
 self.SourcesTestRunner = self.SourcesTestRunner || {};
 
-SourcesTestRunner.startDebuggerTest = function(callback, quiet) {
+SourcesTestRunner.startDebuggerTest = async function(callback, quiet) {
   console.assert(TestRunner.debuggerModel.debuggerEnabled(), 'Debugger has to be enabled');
 
   if (quiet !== undefined) {
     SourcesTestRunner.quiet = quiet;
   }
 
-  self.UI.viewManager.showView('sources');
+  await TestRunner.showPanel('sources');
   TestRunner.addSniffer(SDK.DebuggerModel.prototype, 'pausedScript', SourcesTestRunner.pausedScript, true);
   TestRunner.addSniffer(SDK.DebuggerModel.prototype, 'resumedScript', SourcesTestRunner.resumedScript, true);
   TestRunner.safeWrap(callback)();
@@ -291,7 +291,7 @@ SourcesTestRunner.captureStackTraceIntoString = async function(callFrames, async
       const script = location.script();
       const uiLocation = await self.Bindings.debuggerWorkspaceBinding.rawLocationToUILocation(location);
       const isFramework =
-          uiLocation ? self.Bindings.ignoreListManager.isIgnoreListedUISourceCode(uiLocation.uiSourceCode) : false;
+          uiLocation ? self.Bindings.ignoreListManager.isUserIgnoreListedURL(uiLocation.uiSourceCode.url()) : false;
 
       if (options.dropFrameworkCallFrames && isFramework) {
         continue;
@@ -355,10 +355,11 @@ SourcesTestRunner.captureStackTraceIntoString = async function(callFrames, async
 
 SourcesTestRunner.dumpSourceFrameContents = function(sourceFrame) {
   TestRunner.addResult('==Source frame contents start==');
-  const textEditor = sourceFrame.textEditor;
+  const {baseDoc} = sourceFrame;
 
-  for (let i = 0; i < textEditor.linesCount; ++i) {
-    TestRunner.addResult(textEditor.line(i));
+  for (let i = 1; i <= baseDoc.lines; ++i) {
+    const {text} = baseDoc.line(i);
+    TestRunner.addResult(text);
   }
 
   TestRunner.addResult('==Source frame contents end==');
@@ -429,7 +430,7 @@ SourcesTestRunner.showScriptSourcePromise = function(scriptName) {
   return new Promise(resolve => SourcesTestRunner.showScriptSource(scriptName, resolve));
 };
 
-SourcesTestRunner.waitForScriptSource = function(scriptName, callback) {
+SourcesTestRunner.waitForScriptSource = function(scriptName, callback, contentType) {
   const panel = UI.panels.sources;
   const uiSourceCodes = panel.workspace.uiSourceCodes();
 
@@ -438,7 +439,8 @@ SourcesTestRunner.waitForScriptSource = function(scriptName, callback) {
       continue;
     }
 
-    if (uiSourceCodes[i].name() === scriptName) {
+    if (uiSourceCodes[i].name() === scriptName &&
+        (uiSourceCodes[i].contentType() === contentType || contentType === undefined)) {
       callback(uiSourceCodes[i]);
       return;
     }
@@ -446,7 +448,7 @@ SourcesTestRunner.waitForScriptSource = function(scriptName, callback) {
 
   TestRunner.addSniffer(
       Sources.SourcesView.prototype, 'addUISourceCode',
-      SourcesTestRunner.waitForScriptSource.bind(SourcesTestRunner, scriptName, callback));
+      SourcesTestRunner.waitForScriptSource.bind(SourcesTestRunner, scriptName, callback, contentType));
 };
 
 SourcesTestRunner.objectForPopover = function(sourceFrame, lineNumber, columnNumber) {
@@ -489,6 +491,9 @@ SourcesTestRunner.toggleBreakpoint = async function(sourceFrame, lineNumber, dis
 };
 
 SourcesTestRunner.waitBreakpointSidebarPane = function(waitUntilResolved) {
+  if (Root.Runtime.experiments.isEnabled('breakpointView')) {
+    throw new Error('The breakpoint sidebar pane content is only available for the old breakpoint sidebar.');
+  }
   return new Promise(
              resolve =>
                  TestRunner.addSniffer(Sources.JavaScriptBreakpointsSidebarPane.prototype, 'didUpdateForTest', resolve))
@@ -508,6 +513,9 @@ SourcesTestRunner.waitBreakpointSidebarPane = function(waitUntilResolved) {
 };
 
 SourcesTestRunner.breakpointsSidebarPaneContent = function() {
+  if (Root.Runtime.experiments.isEnabled('breakpointView')) {
+    throw new Error('The breakpoint sidebar pane content is only available for the old breakpoint sidebar.');
+  }
   const pane = Sources.JavaScriptBreakpointsSidebarPane.instance();
   const empty = pane.emptyElement;
 
@@ -627,7 +635,7 @@ SourcesTestRunner.queryScripts = function(filter) {
 
 SourcesTestRunner.createScriptMock = function(
     url, startLine, startColumn, isContentScript, source, target, preRegisterCallback) {
-  target = target || self.SDK.targetManager.mainTarget();
+  target = target || self.SDK.targetManager.mainFrameTarget();
   const debuggerModel = target.model(SDK.DebuggerModel);
   const scriptId = String(++SourcesTestRunner.lastScriptId);
   const sourceLineEndings = TestRunner.findLineEndingIndexes(source);

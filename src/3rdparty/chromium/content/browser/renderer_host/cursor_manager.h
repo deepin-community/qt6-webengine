@@ -1,4 +1,4 @@
-// Copyright (c) 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 
 #include "base/memory/raw_ptr.h"
 #include "content/common/content_export.h"
-#include "content/common/cursors/webcursor.h"
+#include "ui/base/cursor/cursor.h"
 
 namespace content {
 
@@ -28,7 +28,7 @@ class CONTENT_EXPORT CursorManager {
 
   // Called for any RenderWidgetHostView that received an UpdateCursor message
   // from its renderer process.
-  void UpdateCursor(RenderWidgetHostViewBase*, const WebCursor&);
+  void UpdateCursor(RenderWidgetHostViewBase*, const ui::Cursor&);
 
   // Called when the mouse moves over a different RenderWidgetHostView.
   void UpdateViewUnderCursor(RenderWidgetHostViewBase*);
@@ -46,15 +46,15 @@ class CONTENT_EXPORT CursorManager {
   // Accessor for browser tests, enabling verification of the cursor_map_.
   // Returns false if the provided View is not in the map, and outputs
   // the cursor otherwise.
-  bool GetCursorForTesting(RenderWidgetHostViewBase*, WebCursor&);
+  bool GetCursorForTesting(RenderWidgetHostViewBase*, ui::Cursor&);
 
  private:
   // Stores the last received cursor from each RenderWidgetHostView.
-  std::map<RenderWidgetHostViewBase*, WebCursor> cursor_map_;
+  std::map<RenderWidgetHostViewBase*, ui::Cursor> cursor_map_;
 
   // The view currently underneath the cursor, which corresponds to the cursor
   // currently displayed.
-  raw_ptr<RenderWidgetHostViewBase> view_under_cursor_;
+  raw_ptr<RenderWidgetHostViewBase, DanglingUntriaged> view_under_cursor_;
 
   // The root view is the target for DisplayCursor calls whenever the active
   // cursor needs to change.

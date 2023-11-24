@@ -1,10 +1,11 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/platform/fonts/font_matching_metrics.h"
 
 #include "base/metrics/histogram_macros.h"
+#include "base/task/single_thread_task_runner.h"
 #include "services/metrics/public/cpp/metrics_utils.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
@@ -32,6 +33,22 @@ HashSet<T> SetIntersection(const HashSet<T>& a, const HashSet<T>& b) {
 }  // namespace
 
 namespace blink {
+
+namespace {
+
+bool IdentifiabilityStudyShouldSampleFonts() {
+  return IdentifiabilityStudySettings::Get()->ShouldSampleAnyType({
+      IdentifiableSurface::Type::kLocalFontLookupByUniqueOrFamilyName,
+      IdentifiableSurface::Type::kLocalFontLookupByUniqueNameOnly,
+      IdentifiableSurface::Type::kLocalFontLookupByFallbackCharacter,
+      IdentifiableSurface::Type::kLocalFontLookupAsLastResort,
+      IdentifiableSurface::Type::kGenericFontLookup,
+      IdentifiableSurface::Type::kLocalFontLoadPostScriptName,
+      IdentifiableSurface::Type::kLocalFontExistenceByUniqueNameOnly,
+  });
+}
+
+}  // namespace
 
 FontMatchingMetrics::FontMatchingMetrics(
     bool top_level,
@@ -116,7 +133,7 @@ void FontMatchingMetrics::ReportLocalFontExistenceByUniqueNameOnly(
 void FontMatchingMetrics::InsertFontHashIntoMap(IdentifiableTokenKey input_key,
                                                 SimpleFontData* font_data,
                                                 TokenToTokenHashMap& hash_map) {
-  DCHECK(IdentifiabilityStudySettings::Get()->IsActive());
+  DCHECK(IdentifiabilityStudyShouldSampleFonts());
   if (hash_map.Contains(input_key))
     return;
   IdentifiableToken output_token(GetHashForFontData(font_data));
@@ -269,7 +286,7 @@ void FontMatchingMetrics::ReportEmojiSegmentGlyphCoverage(
 }
 
 void FontMatchingMetrics::PublishIdentifiabilityMetrics() {
-  if (!IdentifiabilityStudySettings::Get()->IsActive())
+  if (!IdentifiabilityStudyShouldSampleFonts())
     return;
 
   IdentifiabilityMetricBuilder builder(source_id_);
@@ -336,11 +353,6 @@ void FontMatchingMetrics::PublishUkmMetrics() {
           local_fonts_succeeded_.size() + local_fonts_failed_.size(),
           kUkmFontLoadCountBucketSpacing))
       .Record(ukm_recorder_);
-  UMA_HISTOGRAM_COUNTS_10000("Blink.Fonts.FontFamilyMatchAttempts.System",
-                             system_font_families_.size());
-  UMA_HISTOGRAM_COUNTS_10000(
-      "Blink.Fonts.FontMatchAttempts.System",
-      local_fonts_failed_.size() + local_fonts_succeeded_.size());
 }
 
 void FontMatchingMetrics::PublishEmojiGlyphMetrics() {
@@ -354,7 +366,7 @@ void FontMatchingMetrics::PublishEmojiGlyphMetrics() {
 }
 
 void FontMatchingMetrics::OnFontLookup() {
-  DCHECK(IdentifiabilityStudySettings::Get()->IsActive());
+  DCHECK(IdentifiabilityStudyShouldSampleFonts());
   if (!identifiability_metrics_timer_.IsActive()) {
     identifiability_metrics_timer_.StartOneShot(base::Minutes(1), FROM_HERE);
   }

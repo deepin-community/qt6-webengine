@@ -21,6 +21,20 @@ Continue with the appropriate section below.
 
 ## a) Creating a new major version
 
+Make sure that the current master branch builds on
+[LUCI](https://luci-scheduler.appspot.com/jobs/perfetto) by triggering all the
+builds and waiting for their success. If any of the builds fail, fix the failure
+on master before proceeding.
+
+Create an entry in CHANGELOG with the new major version: this usually involves
+renaming the "Unreleased" entry to the version number you chose earlier
+([example](https://r.android.com/2417175)).
+
+Test that the perfetto build tools can parse the CHANGELOG: after building,
+running `perfetto --version` should show your new version number.
+
+Upload the CHANGELOG change and submit it on the master branch.
+
 Create a release branch for the new major version ("v16.x" here):
 
 ```bash
@@ -133,7 +147,7 @@ git push origin vX.Y
 
 7. Within few mins the LUCI scheduler will trigger builds of prebuilt binaries
    on https://luci-scheduler.appspot.com/jobs/perfetto . Wait for all the bots
-   to have completed succesfully and be back into the WAITING state.
+   to have completed successfully and be back into the WAITING state.
 
 8. Run `tools/package-prebuilts-for-github-release vX.Y`. It will pull the
    prebuilts under `/tmp/perfetto-prebuilts-vX.Y`.

@@ -1,6 +1,7 @@
-/* Copyright (c) 2015-2017, 2019-2022 The Khronos Group Inc.
- * Copyright (c) 2015-2017, 2019-2022 Valve Corporation
- * Copyright (c) 2015-2017, 2019-2022 LunarG, Inc.
+/* Copyright (c) 2015-2017, 2019-2023 The Khronos Group Inc.
+ * Copyright (c) 2015-2017, 2019-2023 Valve Corporation
+ * Copyright (c) 2015-2017, 2019-2023 LunarG, Inc.
+ * Modifications Copyright (C) 2022 RasterGrid Kft.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,20 +14,17 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- *
- * Author: Mark Lobodzinski <mark@lunarg.com>
- * Author: Courtney Goeltzenleuchter <courtney@LunarG.com>
- * Author: Dave Houlton <daveh@lunarg.com>
  */
 
 #pragma once
 
 #include <cassert>
 #include <cstddef>
+#include <cstring>
 #include <functional>
-#include <stdbool.h>
 #include <string>
 #include <vector>
+#include <bitset>
 #include <iomanip>
 #include "cast_utils.h"
 #include "vk_format_utils.h"
@@ -152,8 +150,8 @@ Stream &stream_join(Stream &stream, const String &sep, const Collection &values)
 typedef void *dispatch_key;
 static inline dispatch_key get_dispatch_key(const void *object) { return (dispatch_key) * (VkLayerDispatchTable **)object; }
 
-VK_LAYER_EXPORT VkLayerInstanceCreateInfo *get_chain_info(const VkInstanceCreateInfo *pCreateInfo, VkLayerFunction func);
-VK_LAYER_EXPORT VkLayerDeviceCreateInfo *get_chain_info(const VkDeviceCreateInfo *pCreateInfo, VkLayerFunction func);
+VkLayerInstanceCreateInfo *get_chain_info(const VkInstanceCreateInfo *pCreateInfo, VkLayerFunction func);
+VkLayerDeviceCreateInfo *get_chain_info(const VkDeviceCreateInfo *pCreateInfo, VkLayerFunction func);
 
 static inline bool IsPowerOfTwo(unsigned x) { return x && !(x & (x - 1)); }
 
@@ -173,6 +171,43 @@ static inline int MostSignificantBit(uint32_t mask) {
     }
     return -1;
 #endif
+}
+
+static inline int u_ffs(int val) {
+#ifdef WIN32
+    unsigned long bit_pos = 0;
+    if (_BitScanForward(&bit_pos, val) != 0) {
+        bit_pos += 1;
+    }
+    return bit_pos;
+#else
+    return ffs(val);
+#endif
+}
+
+// Returns the 0-based index of the LSB. An input mask of 0 yields -1
+static inline int LeastSignificantBit(uint32_t mask) { return u_ffs(static_cast<int>(mask)) - 1; }
+
+template <typename FlagBits, typename Flags>
+FlagBits LeastSignificantFlag(Flags flags) {
+    const int bit_shift = LeastSignificantBit(flags);
+    assert(bit_shift != -1);
+    return static_cast<FlagBits>(1ull << bit_shift);
+}
+
+// Iterates over all set bits and calls the callback with a bit mask corresponding to each flag.
+// FlagBits and Flags follow Vulkan naming convensions for flag types.
+// An example of a more efficient implementation: https://lemire.me/blog/2018/02/21/iterating-over-set-bits-quickly/
+template <typename FlagBits, typename Flags, typename Callback>
+void IterateFlags(Flags flags, Callback callback) {
+    uint32_t bit_shift = 0;
+    while (flags) {
+        if (flags & 1) {
+            callback(static_cast<FlagBits>(1ull << bit_shift));
+        }
+        flags >>= 1;
+        ++bit_shift;
+    }
 }
 
 static inline uint32_t SampleCountSize(VkSampleCountFlagBits sample_count) {
@@ -206,12 +241,34 @@ static inline uint32_t SampleCountSize(VkSampleCountFlagBits sample_count) {
 }
 
 static inline bool IsImageLayoutReadOnly(VkImageLayout layout) {
-    constexpr std::array<VkImageLayout, 7> read_only_layouts = {
+    constexpr std::array read_only_layouts = {
         VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
         VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL,
         VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL,
         VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
+        VK_IMAGE_LAYOUT_STENCIL_READ_ONLY_OPTIMAL,
+        VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
+    };
+    return std::any_of(read_only_layouts.begin(), read_only_layouts.end(),
+                       [layout](const VkImageLayout read_only_layout) { return layout == read_only_layout; });
+}
+
+static inline bool IsImageLayoutDepthReadOnly(VkImageLayout layout) {
+    constexpr std::array read_only_layouts = {
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+        VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL,
+        VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
+        VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
+    };
+    return std::any_of(read_only_layouts.begin(), read_only_layouts.end(),
+                       [layout](const VkImageLayout read_only_layout) { return layout == read_only_layout; });
+}
+
+static inline bool IsImageLayoutStencilReadOnly(VkImageLayout layout) {
+    constexpr std::array read_only_layouts = {
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+        VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL,
         VK_IMAGE_LAYOUT_STENCIL_READ_ONLY_OPTIMAL,
         VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
     };
@@ -230,7 +287,7 @@ static inline bool IsIdentitySwizzle(VkComponentMapping components) {
     // clang-format on
 }
 
-static inline VkDeviceSize GetIndexAlignment(VkIndexType indexType) {
+static inline uint32_t GetIndexAlignment(VkIndexType indexType) {
     switch (indexType) {
         case VK_INDEX_TYPE_UINT16:
             return 2;
@@ -238,6 +295,8 @@ static inline VkDeviceSize GetIndexAlignment(VkIndexType indexType) {
             return 4;
         case VK_INDEX_TYPE_UINT8_EXT:
             return 1;
+        case VK_INDEX_TYPE_NONE_KHR:  // alias VK_INDEX_TYPE_NONE_NV
+            return 0;
         default:
             // Not a real index type. Express no alignment requirement here; we expect upper layer
             // to have already picked up on the enum being nonsense.
@@ -264,6 +323,39 @@ static inline uint32_t GetPlaneIndex(VkImageAspectFlags aspect) {
     }
 }
 
+// all "advanced blend operation" found in spec
+static inline bool IsAdvanceBlendOperation(const VkBlendOp blend_op) {
+    return (static_cast<int>(blend_op) >= VK_BLEND_OP_ZERO_EXT) && (static_cast<int>(blend_op) <= VK_BLEND_OP_BLUE_EXT);
+}
+
+// Helper for Dual-Source Blending
+static inline bool IsSecondaryColorInputBlendFactor(VkBlendFactor blend_factor) {
+    return (blend_factor == VK_BLEND_FACTOR_SRC1_COLOR || blend_factor == VK_BLEND_FACTOR_ONE_MINUS_SRC1_COLOR ||
+            blend_factor == VK_BLEND_FACTOR_SRC1_ALPHA || blend_factor == VK_BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA);
+}
+
+// Check if size is in range
+static inline bool IsBetweenInclusive(VkDeviceSize value, VkDeviceSize min, VkDeviceSize max) {
+    return (value >= min) && (value <= max);
+}
+
+static inline bool IsBetweenInclusive(const VkExtent2D &value, const VkExtent2D &min, const VkExtent2D &max) {
+    return IsBetweenInclusive(value.width, min.width, max.width) && IsBetweenInclusive(value.height, min.height, max.height);
+}
+
+// Check if value is integer multiple of granularity
+static inline bool IsIntegerMultipleOf(VkDeviceSize value, VkDeviceSize granularity) {
+    if (granularity == 0) {
+        return value == 0;
+    } else {
+        return (value % granularity) == 0;
+    }
+}
+
+static inline bool IsIntegerMultipleOf(const VkOffset2D &value, const VkOffset2D &granularity) {
+    return IsIntegerMultipleOf(value.x, granularity.x) && IsIntegerMultipleOf(value.y, granularity.y);
+}
+
 // Perform a zero-tolerant modulo operation
 static inline VkDeviceSize SafeModulo(VkDeviceSize dividend, VkDeviceSize divisor) {
     VkDeviceSize result = 0;
@@ -281,10 +373,21 @@ static inline VkDeviceSize SafeDivision(VkDeviceSize dividend, VkDeviceSize divi
     return result;
 }
 
+// Only 32 bit fields should need a bit count
+static inline uint32_t GetBitSetCount(uint32_t field) {
+    std::bitset<32> view_bits(field);
+    return static_cast<uint32_t>(view_bits.count());
+}
+
+static inline uint32_t FullMipChainLevels(VkExtent3D extent) {
+    // uint cast applies floor()
+    return 1u + static_cast<uint32_t>(log2(std::max({extent.height, extent.width, extent.depth})));
+}
+
 extern "C" {
 #endif
 
-#define VK_LAYER_API_VERSION VK_MAKE_VERSION(1, 0, VK_HEADER_VERSION)
+#define VK_LAYER_API_VERSION VK_HEADER_VERSION_COMPLETE
 
 typedef enum VkStringErrorFlagBits {
     VK_STRING_ERROR_NONE = 0x00000000,
@@ -293,86 +396,27 @@ typedef enum VkStringErrorFlagBits {
 } VkStringErrorFlagBits;
 typedef VkFlags VkStringErrorFlags;
 
-VK_LAYER_EXPORT void layer_debug_report_actions(debug_report_data *report_data, const VkAllocationCallbacks *pAllocator,
+void layer_debug_report_actions(debug_report_data *report_data, const VkAllocationCallbacks *pAllocator,
                                                 const char *layer_identifier);
 
-VK_LAYER_EXPORT void layer_debug_messenger_actions(debug_report_data *report_data, const VkAllocationCallbacks *pAllocator,
+void layer_debug_messenger_actions(debug_report_data *report_data, const VkAllocationCallbacks *pAllocator,
                                                    const char *layer_identifier);
 
-VK_LAYER_EXPORT VkStringErrorFlags vk_string_validate(const int max_length, const char *char_array);
-VK_LAYER_EXPORT bool white_list(const char *item, const std::set<std::string> &whitelist);
-
-static inline int u_ffs(int val) {
-#ifdef WIN32
-    unsigned long bit_pos = 0;
-    if (_BitScanForward(&bit_pos, val) != 0) {
-        bit_pos += 1;
-    }
-    return bit_pos;
-#else
-    return ffs(val);
-#endif
-}
+VkStringErrorFlags vk_string_validate(const int max_length, const char *char_array);
+bool white_list(const char *item, const std::set<std::string> &whitelist);
 
 #ifdef __cplusplus
 }
 #endif
 
 #ifdef __cplusplus
-// clang sets _MSC_VER to 1800 and _MSC_FULL_VER to 180000000, but we only want to clean up after MSVC.
-#if defined(_MSC_FULL_VER) && !defined(__clang__)
-// Minimum Visual Studio 2015 Update 2, or libc++ with C++17
-// But, before Visual Studio 2017 version 15.7, __cplusplus is not set
-// correctly. See:
-//   https://docs.microsoft.com/en-us/cpp/build/reference/zc-cplusplus?view=msvc-160
-// Also, according to commit e2a6c442cb1e4, SDKs older than NTDDI_WIN10_RS2 do not
-// support shared_mutex.
-#if _MSC_FULL_VER >= 190023918 && NTDDI_VERSION > NTDDI_WIN10_RS2 && (!defined(_LIBCPP_VERSION) || __cplusplus >= 201703)
-#define VVL_USE_SHARED_MUTEX 1
-#endif
-#elif __cplusplus >= 201703
-#define VVL_USE_SHARED_MUTEX 1
-#elif __cplusplus >= 201402
-#define VVL_USE_SHARED_TIMED_MUTEX 1
-#endif
-
-#if defined(VVL_USE_SHARED_MUTEX) || defined(VVL_USE_SHARED_TIMED_MUTEX)
 #include <shared_mutex>
-#endif
 
-class ReadWriteLock {
-  private:
-#if defined(VVL_USE_SHARED_MUTEX)
-    typedef std::shared_mutex Lock;
-#elif defined(VVL_USE_SHARED_TIMED_MUTEX)
-    typedef std::shared_timed_mutex Lock;
-#else
-    typedef std::mutex Lock;
-#endif
-
-  public:
-    void lock() { m_lock.lock(); }
-    bool try_lock() { return m_lock.try_lock(); }
-    void unlock() { m_lock.unlock(); }
-#if defined(VVL_USE_SHARED_MUTEX) || defined(VVL_USE_SHARED_TIMED_MUTEX)
-    void lock_shared() { m_lock.lock_shared(); }
-    bool try_lock_shared() { return m_lock.try_lock_shared(); }
-    void unlock_shared() { m_lock.unlock_shared(); }
-#else
-    void lock_shared() { lock(); }
-    bool try_lock_shared() { return try_lock(); }
-    void unlock_shared() { unlock(); }
-#endif
-  private:
-    Lock m_lock;
-};
-
-#if defined(VVL_USE_SHARED_MUTEX) || defined(VVL_USE_SHARED_TIMED_MUTEX)
-typedef std::shared_lock<ReadWriteLock> ReadLockGuard;
-#else
-typedef std::unique_lock<ReadWriteLock> ReadLockGuard;
-#endif
-typedef std::unique_lock<ReadWriteLock> WriteLockGuard;
+// Aliases to avoid excessive typing. We can't easily auto these away because
+// there are virtual methods in ValidationObject which return lock guards
+// and those cannot use return type deduction.
+typedef std::shared_lock<std::shared_mutex> ReadLockGuard;
+typedef std::unique_lock<std::shared_mutex> WriteLockGuard;
 
 // helper class for the very common case of getting and then locking a command buffer (or other state object)
 template <typename T, typename Guard>
@@ -409,7 +453,7 @@ class LockedSharedPtr : public std::shared_ptr<T> {
 //
 // snapshot: Return an array of elements (key, value pairs) that satisfy an optional
 // predicate. This can be used as a substitute for iterators in exceptional cases.
-template <typename Key, typename T, int BUCKETSLOG2 = 2, typename Hash = layer_data::hash<Key>>
+template <typename Key, typename T, int BUCKETSLOG2 = 2, typename Hash = vvl::hash<Key>>
 class vl_concurrent_unordered_map {
   public:
     template <typename... Args>
@@ -473,7 +517,7 @@ class vl_concurrent_unordered_map {
         ReadLockGuard lock(locks[h].lock);
 
         auto itr = maps[h].find(key);
-        bool found = itr != maps[h].end();
+        const bool found = itr != maps[h].end();
 
         if (found) {
             return FindResult(true, itr->second);
@@ -487,10 +531,10 @@ class vl_concurrent_unordered_map {
         WriteLockGuard lock(locks[h].lock);
 
         auto itr = maps[h].find(key);
-        bool found = itr != maps[h].end();
+        const bool found = itr != maps[h].end();
 
         if (found) {
-            auto ret = std::move(FindResult(true, itr->second));
+            auto ret = FindResult(true, itr->second);
             maps[h].erase(itr);
             return ret;
         } else {
@@ -539,11 +583,11 @@ class vl_concurrent_unordered_map {
   private:
     static const int BUCKETS = (1 << BUCKETSLOG2);
 
-    layer_data::unordered_map<Key, T, Hash> maps[BUCKETS];
+    vvl::unordered_map<Key, T, Hash> maps[BUCKETS];
     struct {
-        mutable ReadWriteLock lock;
+        mutable std::shared_mutex lock;
         // Put each lock on its own cache line to avoid false cache line sharing.
-        char padding[(-int(sizeof(ReadWriteLock))) & 63];
+        char padding[(-int(sizeof(std::shared_mutex))) & 63];
     } locks[BUCKETS];
 
     uint32_t ConcurrentMapHashObject(const Key &object) const {

@@ -26,9 +26,10 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_TRANSFORMS_TRANSFORM_OPERATION_H_
 
 #include "base/memory/scoped_refptr.h"
-#include "third_party/blink/renderer/platform/transforms/transformation_matrix.h"
+#include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/ref_counted.h"
 #include "ui/gfx/geometry/size_f.h"
+#include "ui/gfx/geometry/transform.h"
 
 namespace blink {
 
@@ -68,10 +69,12 @@ class PLATFORM_EXPORT TransformOperation
   TransformOperation& operator=(const TransformOperation&) = delete;
   virtual ~TransformOperation() = default;
 
-  virtual bool operator==(const TransformOperation&) const = 0;
+  bool operator==(const TransformOperation& o) const {
+    return IsSameType(o) && IsEqualAssumingSameType(o);
+  }
   bool operator!=(const TransformOperation& o) const { return !(*this == o); }
 
-  virtual void Apply(TransformationMatrix&,
+  virtual void Apply(gfx::Transform&,
                      const gfx::SizeF& border_box_size) const = 0;
 
   // Implements the accumulative behavior described in
@@ -123,6 +126,9 @@ class PLATFORM_EXPORT TransformOperation
                                                       BoxSizeDependency b) {
     return static_cast<BoxSizeDependency>(a | b);
   }
+
+ protected:
+  virtual bool IsEqualAssumingSameType(const TransformOperation&) const = 0;
 };
 
 }  // namespace blink

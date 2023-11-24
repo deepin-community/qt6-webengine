@@ -1,4 +1,4 @@
-# Copyright 2015 The Chromium Authors. All rights reserved.
+# Copyright 2015 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -7,14 +7,18 @@ import("//build/config/features.gni")
 
 static_library("sync_preferences") {
   sources = [
+    "common_syncable_prefs_database.cc",
+    "common_syncable_prefs_database.h",
     "pref_model_associator.cc",
     "pref_model_associator.h",
+    "pref_model_associator_client.cc",
     "pref_model_associator_client.h",
     "pref_service_syncable.cc",
     "pref_service_syncable.h",
     "pref_service_syncable_factory.cc",
     "pref_service_syncable_factory.h",
     "pref_service_syncable_observer.h",
+    "syncable_prefs_database.h",
     "synced_pref_observer.h",
   ]
 
@@ -66,7 +70,7 @@ source_set("unit_tests") {
     "//components/prefs",
     "//components/prefs:test_support",
     "//components/sync",
-    "//components/sync:test_support_model",
+    "//components/sync:test_support",
     "//testing/gtest",
   ]
 

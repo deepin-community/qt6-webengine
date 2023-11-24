@@ -1,12 +1,15 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef UI_PLATFORM_WINDOW_PLATFORM_WINDOW_DELEGATE_H_
 #define UI_PLATFORM_WINDOW_PLATFORM_WINDOW_DELEGATE_H_
 
+#include <string>
+
 #include "base/component_export.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/geometry/rect.h"
@@ -19,6 +22,7 @@
 namespace gfx {
 class Rect;
 class Size;
+class PointF;
 }  // namespace gfx
 
 class SkPath;
@@ -26,6 +30,7 @@ class SkPath;
 namespace ui {
 
 class Event;
+struct OwnedWindowAnchor;
 
 enum class PlatformWindowState {
   kUnknown,
@@ -33,6 +38,11 @@ enum class PlatformWindowState {
   kMinimized,
   kNormal,
   kFullScreen,
+
+  // Currently, only used by ChromeOS.
+  kSnappedPrimary,
+  kSnappedSecondary,
+  kFloated,
 };
 
 enum class PlatformWindowOcclusionState {
@@ -42,15 +52,21 @@ enum class PlatformWindowOcclusionState {
   kHidden,
 };
 
+enum class PlatformWindowTooltipTrigger {
+  kCursor,
+  kKeyboard,
+};
+
 class COMPONENT_EXPORT(PLATFORM_WINDOW) PlatformWindowDelegate {
  public:
   struct COMPONENT_EXPORT(PLATFORM_WINDOW) BoundsChange {
-    BoundsChange();
-    BoundsChange(const gfx::Rect& bounds);
-    ~BoundsChange();
+    BoundsChange() = delete;
+    constexpr BoundsChange(bool origin_changed)
+        : origin_changed(origin_changed) {}
+    ~BoundsChange() = default;
 
-    // The dimensions of the window, in physical window coordinates.
-    gfx::Rect bounds;
+    // True if the bounds change resulted in the origin change.
+    bool origin_changed : 1;
 
 #if BUILDFLAG(IS_FUCHSIA)
     // The widths of border regions which are obscured by overlapping
@@ -70,6 +86,33 @@ class COMPONENT_EXPORT(PLATFORM_WINDOW) PlatformWindowDelegate {
 #endif  // BUILDFLAG(IS_FUCHSIA)
   };
 
+  // State describes important data about this window, for example data that
+  // needs to be synchronized and acked. We apply this state to the client
+  // (us) and wait for a frame to be produced matching this state. That frame
+  // is identified by the sequence id.
+  // This is used by OnStateChanged and currently only by ozone/wayland.
+  struct COMPONENT_EXPORT(PLATFORM_WINDOW) State {
+    bool operator==(const State& rhs) const {
+      return std::tie(bounds_dip, size_px, window_scale, raster_scale) ==
+             std::tie(rhs.bounds_dip, rhs.size_px, rhs.window_scale,
+                      rhs.raster_scale);
+    }
+
+    // Bounds in DIP.
+    gfx::Rect bounds_dip;
+    // Size in pixels. Note that it's required to keep information in both DIP
+    // and pixels since it is not always possible to convert between them.
+    gfx::Size size_px;
+    // Current scale factor of the output where the window is located at.
+    float window_scale = 1.0;
+    // TODO(crbug.com/1395267): Add window states here.
+
+    // Scale to raster the window at.
+    float raster_scale = 1.0;
+
+    std::string ToString() const;
+  };
+
   PlatformWindowDelegate();
   virtual ~PlatformWindowDelegate();
 
@@ -87,6 +130,20 @@ class COMPONENT_EXPORT(PLATFORM_WINDOW) PlatformWindowDelegate {
   virtual void OnWindowStateChanged(PlatformWindowState old_state,
                                     PlatformWindowState new_state) = 0;
 
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
+  // Notifies the delegate that the tiled state of the window edges has changed.
+  virtual void OnWindowTiledStateChanged(WindowTiledEdges new_tiled_edges);
+#endif
+
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  // TODO(ffred): We should just add kImmersiveFullscreen as a state. However,
+  // that will require more refactoring in other places to understand that
+  // kImmersiveFullscreen is a fullscreen status.
+  // Sets the immersive mode for the window. This will only have an effect on
+  // ChromeOS platforms.
+  virtual void OnImmersiveModeChanged(bool immersive) {}
+#endif
+
   virtual void OnLostCapture() = 0;
 
   virtual void OnAcceleratedWidgetAvailable(gfx::AcceleratedWidget widget) = 0;
@@ -101,7 +158,7 @@ class COMPONENT_EXPORT(PLATFORM_WINDOW) PlatformWindowDelegate {
 
   virtual void OnActivationChanged(bool active) = 0;
 
-  // Requests size constraints for the PlatformWindow.
+  // Requests size constraints for the PlatformWindow in DIP.
   virtual absl::optional<gfx::Size> GetMinimumSizeForWindow();
   virtual absl::optional<gfx::Size> GetMaximumSizeForWindow();
 
@@ -130,14 +187,39 @@ class COMPONENT_EXPORT(PLATFORM_WINDOW) PlatformWindowDelegate {
   virtual void OnOcclusionStateChanged(
       PlatformWindowOcclusionState occlusion_state);
 
+  // Updates state for clients that need sequence point synchronized
+  // PlatformWindowDelegate::State operations. In particular, this requests a
+  // new LocalSurfaceId for the window tree of this platform window. It returns
+  // the new parent ID. Calling code can compare this value with the
+  // gfx::FrameData::seq value to see when viz has produced a frame at or after
+  // the (conceptually) inserted sequence point.
+  virtual int64_t OnStateUpdate(const State& old, const State& latest);
+
   // Returns optional information for owned windows that require anchor for
   // positioning. Useful for such backends as Wayland as it provides flexibility
   // in positioning child windows, which must be repositioned if the originally
   // intended position caused the surface to be constrained.
-  virtual absl::optional<OwnedWindowAnchor> GetOwnedWindowAnchorAndRectInPx();
+  virtual absl::optional<OwnedWindowAnchor> GetOwnedWindowAnchorAndRectInDIP();
 
   // Enables or disables frame rate throttling.
   virtual void SetFrameRateThrottleEnabled(bool enabled);
+
+  // Called when tooltip is shown on server.
+  // `bounds` is in screen coordinates.
+  virtual void OnTooltipShownOnServer(const std::u16string& text,
+                                      const gfx::Rect& bounds);
+
+  // Called when tooltip is hidden on server.
+  virtual void OnTooltipHiddenOnServer();
+
+  // Convert gfx::Rect in pixels to DIP in screen, and vice versa.
+  virtual gfx::Rect ConvertRectToPixels(const gfx::Rect& rect_in_dp) const;
+  virtual gfx::Rect ConvertRectToDIP(const gfx::Rect& rect_in_pixells) const;
+
+  // Convert gfx::Point in screen pixels to dip in the window's local
+  // coordinate.
+  virtual gfx::PointF ConvertScreenPointToLocalDIP(
+      const gfx::Point& screen_in_pixels) const;
 };
 
 }  // namespace ui

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -154,7 +154,7 @@ class VIZ_SERVICE_EXPORT OverlayProcessorUsingStrategy
     gfx::Rect overlay_rect;
     gfx::RectF damage_rect;
     uint32_t damage_index;
-    int damage_area_estimate;
+    float damage_area_estimate;
     bool has_mask_filter;
     int plane_z_order;
     bool is_underlay;
@@ -186,24 +186,6 @@ class VIZ_SERVICE_EXPORT OverlayProcessorUsingStrategy
   // through as a const member because the underlay strategy changes the
   // |primary_plane|'s blending setting.
   bool AttemptWithStrategies(
-      const SkM44& output_color_matrix,
-      const OverlayProcessorInterface::FilterOperationsMap&
-          render_pass_backdrop_filters,
-      DisplayResourceProvider* resource_provider,
-      AggregatedRenderPassList* render_pass_list,
-      SurfaceDamageRectList* surface_damage_rect_list,
-      OverlayProcessorInterface::OutputSurfaceOverlayPlane* primary_plane,
-      OverlayCandidateList* candidates,
-      std::vector<gfx::Rect>* content_bounds);
-
-  // Iterate through a list of strategies and attempt to overlay with each.
-  // Returns true if one of the attempts is successful. Has to be called after
-  // InitializeStrategies(). A |primary_plane| represents the output surface's
-  // buffer that comes from |BufferQueue|. It is passed in here so it could be
-  // pass through to hardware through CheckOverlaySupport. It is not passed
-  // through as a const member because the underlay strategy changes the
-  // |primary_plane|'s blending setting.
-  bool AttemptWithStrategiesPrioritized(
       const SkM44& output_color_matrix,
       const OverlayProcessorInterface::FilterOperationsMap&
           render_pass_backdrop_filters,
@@ -246,7 +228,7 @@ class VIZ_SERVICE_EXPORT OverlayProcessorUsingStrategy
   // heuristic designed to maximize the effectiveness of the limited number
   // of Hardware overlays. Effectiveness here is primarily about power and
   // secondarily about of performance.
-  virtual void SortProposedOverlayCandidatesPrioritized(
+  virtual void SortProposedOverlayCandidates(
       std::vector<OverlayProposedCandidate>* proposed_candidates);
 
   // Used by Android pre-SurfaceControl to notify promotion hints.

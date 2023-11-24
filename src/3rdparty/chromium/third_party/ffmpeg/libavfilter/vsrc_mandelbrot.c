@@ -134,6 +134,9 @@ static av_cold int init(AVFilterContext *ctx)
     s-> next_cache= av_malloc_array(s->cache_allocated, sizeof(*s-> next_cache));
     s-> zyklus    = av_malloc_array(s->maxiter + 16, sizeof(*s->zyklus));
 
+    if (!s->point_cache || !s->next_cache || !s->zyklus)
+        return AVERROR(ENOMEM);
+
     return 0;
 }
 
@@ -392,6 +395,7 @@ static int request_frame(AVFilterLink *link)
 
     picref->sample_aspect_ratio = (AVRational) {1, 1};
     picref->pts = s->pts++;
+    picref->duration = 1;
 
     draw_mandelbrot(link->src, (uint32_t*)picref->data[0], picref->linesize[0]/4, picref->pts);
     return ff_filter_frame(link, picref);

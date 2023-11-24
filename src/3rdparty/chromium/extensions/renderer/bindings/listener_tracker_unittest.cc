@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -43,29 +43,30 @@ TEST(ListenerTrackerTest, UnfilteredListeners) {
 }
 
 TEST(ListenerTrackerTest, FilteredListenersWithMultipleFilters) {
-  std::unique_ptr<base::DictionaryValue> filter1 =
-      DeprecatedDictionaryValueFromString(
-          R"({"url": [{"hostSuffix": "example.com"}]})");
-  std::unique_ptr<base::DictionaryValue> filter2 =
-      DeprecatedDictionaryValueFromString(
-          R"({"url": [{"hostSuffix": "google.com"}]})");
+  base::Value::Dict filter1 =
+      DictValueFromString(R"({"url": [{"hostSuffix": "example.com"}]})");
+  base::Value::Dict filter2 =
+      DictValueFromString(R"({"url": [{"hostSuffix": "google.com"}]})");
 
   ListenerTracker tracker;
   auto [was_first_of_kind, filter_id1] = tracker.AddFilteredListener(
-      kOwner1, kEvent1, filter1->CreateDeepCopy(), kRoutingId);
+      kOwner1, kEvent1, std::make_unique<base::Value::Dict>(filter1.Clone()),
+      kRoutingId);
   EXPECT_TRUE(was_first_of_kind);
   EXPECT_NE(-1, filter_id1);
 
   int filter_id2 = -1;
   std::tie(was_first_of_kind, filter_id2) = tracker.AddFilteredListener(
-      kOwner1, kEvent1, filter1->CreateDeepCopy(), kRoutingId);
+      kOwner1, kEvent1, std::make_unique<base::Value::Dict>(filter1.Clone()),
+      kRoutingId);
   EXPECT_FALSE(was_first_of_kind);
   EXPECT_NE(-1, filter_id2);
   EXPECT_NE(filter_id1, filter_id2);
 
   int filter_id3 = -1;
   std::tie(was_first_of_kind, filter_id3) = tracker.AddFilteredListener(
-      kOwner1, kEvent1, filter2->CreateDeepCopy(), kRoutingId);
+      kOwner1, kEvent1, std::make_unique<base::Value::Dict>(filter2.Clone()),
+      kRoutingId);
   EXPECT_TRUE(was_first_of_kind);
   EXPECT_NE(-1, filter_id3);
 
@@ -73,35 +74,36 @@ TEST(ListenerTrackerTest, FilteredListenersWithMultipleFilters) {
       tracker.RemoveFilteredListener(kOwner1, kEvent1, filter_id1);
   EXPECT_FALSE(was_last_of_kind);
   ASSERT_TRUE(removed_filter);
-  EXPECT_EQ(ValueToString(*removed_filter), ValueToString(*filter1));
+  EXPECT_EQ(ValueToString(*removed_filter), ValueToString(filter1));
 
   std::tie(was_last_of_kind, removed_filter) =
       tracker.RemoveFilteredListener(kOwner1, kEvent1, filter_id2);
   EXPECT_TRUE(was_last_of_kind);
   ASSERT_TRUE(removed_filter);
-  EXPECT_EQ(ValueToString(*removed_filter), ValueToString(*filter1));
+  EXPECT_EQ(ValueToString(*removed_filter), ValueToString(filter1));
 
   std::tie(was_last_of_kind, removed_filter) =
       tracker.RemoveFilteredListener(kOwner1, kEvent1, filter_id3);
   EXPECT_TRUE(was_last_of_kind);
   ASSERT_TRUE(removed_filter);
-  EXPECT_EQ(ValueToString(*removed_filter), ValueToString(*filter2));
+  EXPECT_EQ(ValueToString(*removed_filter), ValueToString(filter2));
 }
 
 TEST(ListenerTrackerTest, FilteredListenersWithMultipleOwners) {
-  std::unique_ptr<base::DictionaryValue> filter =
-      DeprecatedDictionaryValueFromString(
-          R"({"url": [{"hostSuffix": "example.com"}]})");
+  base::Value::Dict filter =
+      DictValueFromString(R"({"url": [{"hostSuffix": "example.com"}]})");
 
   ListenerTracker tracker;
   auto [was_first_of_kind, filter_id1] = tracker.AddFilteredListener(
-      kOwner1, kEvent1, filter->CreateDeepCopy(), kRoutingId);
+      kOwner1, kEvent1, std::make_unique<base::Value::Dict>(filter.Clone()),
+      kRoutingId);
   EXPECT_TRUE(was_first_of_kind);
   EXPECT_NE(-1, filter_id1);
 
   int filter_id2 = -1;
   std::tie(was_first_of_kind, filter_id2) = tracker.AddFilteredListener(
-      kOwner2, kEvent1, filter->CreateDeepCopy(), kRoutingId);
+      kOwner2, kEvent1, std::make_unique<base::Value::Dict>(filter.Clone()),
+      kRoutingId);
   EXPECT_TRUE(was_first_of_kind);
   EXPECT_NE(-1, filter_id2);
   EXPECT_NE(filter_id1, filter_id2);
@@ -110,29 +112,30 @@ TEST(ListenerTrackerTest, FilteredListenersWithMultipleOwners) {
       tracker.RemoveFilteredListener(kOwner1, kEvent1, filter_id1);
   EXPECT_TRUE(was_last_of_kind);
   ASSERT_TRUE(removed_filter);
-  EXPECT_EQ(ValueToString(*removed_filter), ValueToString(*filter));
+  EXPECT_EQ(ValueToString(*removed_filter), ValueToString(filter));
 
   std::tie(was_last_of_kind, removed_filter) =
       tracker.RemoveFilteredListener(kOwner2, kEvent1, filter_id2);
   EXPECT_TRUE(was_last_of_kind);
   ASSERT_TRUE(removed_filter);
-  EXPECT_EQ(ValueToString(*removed_filter), ValueToString(*filter));
+  EXPECT_EQ(ValueToString(*removed_filter), ValueToString(filter));
 }
 
 TEST(ListenerTrackerTest, FilteredListenersWithMultipleEvents) {
-  std::unique_ptr<base::DictionaryValue> filter =
-      DeprecatedDictionaryValueFromString(
-          R"({"url": [{"hostSuffix": "example.com"}]})");
+  base::Value::Dict filter =
+      DictValueFromString(R"({"url": [{"hostSuffix": "example.com"}]})");
 
   ListenerTracker tracker;
   auto [was_first_of_kind, filter_id1] = tracker.AddFilteredListener(
-      kOwner1, kEvent1, filter->CreateDeepCopy(), kRoutingId);
+      kOwner1, kEvent1, std::make_unique<base::Value::Dict>(filter.Clone()),
+      kRoutingId);
   EXPECT_TRUE(was_first_of_kind);
   EXPECT_NE(-1, filter_id1);
 
   int filter_id2 = -1;
   std::tie(was_first_of_kind, filter_id2) = tracker.AddFilteredListener(
-      kOwner1, kEvent2, filter->CreateDeepCopy(), kRoutingId);
+      kOwner1, kEvent2, std::make_unique<base::Value::Dict>(filter.Clone()),
+      kRoutingId);
   EXPECT_TRUE(was_first_of_kind);
   EXPECT_NE(-1, filter_id2);
   EXPECT_NE(filter_id1, filter_id2);
@@ -141,50 +144,51 @@ TEST(ListenerTrackerTest, FilteredListenersWithMultipleEvents) {
       tracker.RemoveFilteredListener(kOwner1, kEvent1, filter_id1);
   EXPECT_TRUE(was_last_of_kind);
   ASSERT_TRUE(removed_filter);
-  EXPECT_EQ(ValueToString(*removed_filter), ValueToString(*filter));
+  EXPECT_EQ(ValueToString(*removed_filter), ValueToString(filter));
 
   std::tie(was_last_of_kind, removed_filter) =
       tracker.RemoveFilteredListener(kOwner1, kEvent2, filter_id2);
   EXPECT_TRUE(was_last_of_kind);
   ASSERT_TRUE(removed_filter);
-  EXPECT_EQ(ValueToString(*removed_filter), ValueToString(*filter));
+  EXPECT_EQ(ValueToString(*removed_filter), ValueToString(filter));
 }
 
 TEST(ListenerTrackerTest, InvalidFilteredListener) {
   ListenerTracker tracker;
 
-  std::unique_ptr<base::DictionaryValue> filter =
-      DeprecatedDictionaryValueFromString(R"({"url": ["Not a dictionary"]})");
   auto [was_first_of_kind, filter_id] = tracker.AddFilteredListener(
-      kOwner1, kEvent1, std::move(filter), kRoutingId);
+      kOwner1, kEvent1,
+      std::make_unique<base::Value::Dict>(
+          DictValueFromString(R"({"url": ["Not a dictionary"]})")),
+      kRoutingId);
   EXPECT_EQ(-1, filter_id);
   EXPECT_FALSE(was_first_of_kind);
 }
 
 TEST(ListenerTrackerTest, GetMatchingFilters) {
-  std::unique_ptr<base::DictionaryValue> filter1 =
-      DeprecatedDictionaryValueFromString(
-          R"({"url": [{"hostSuffix": "example.com"}]})");
-  std::unique_ptr<base::DictionaryValue> filter2 =
-      DeprecatedDictionaryValueFromString(
-          R"({"url": [{"hostContains": "google"}]})");
-  std::unique_ptr<base::DictionaryValue> filter3 =
-      DeprecatedDictionaryValueFromString(
-          R"({"url": [{"hostContains": "example"}]})");
+  base::Value::Dict filter1 =
+      DictValueFromString(R"({"url": [{"hostSuffix": "example.com"}]})");
+  base::Value::Dict filter2 =
+      DictValueFromString(R"({"url": [{"hostContains": "google"}]})");
+  base::Value::Dict filter3 =
+      DictValueFromString(R"({"url": [{"hostContains": "example"}]})");
 
   ListenerTracker tracker;
   auto [was_first_of_kind, filter_id1] = tracker.AddFilteredListener(
-      kOwner1, kEvent1, filter1->CreateDeepCopy(), kRoutingId);
+      kOwner1, kEvent1, std::make_unique<base::Value::Dict>(filter1.Clone()),
+      kRoutingId);
   EXPECT_NE(-1, filter_id1);
 
   int filter_id2 = -1;
   std::tie(was_first_of_kind, filter_id2) = tracker.AddFilteredListener(
-      kOwner1, kEvent1, filter2->CreateDeepCopy(), kRoutingId);
+      kOwner1, kEvent1, std::make_unique<base::Value::Dict>(filter2.Clone()),
+      kRoutingId);
   EXPECT_NE(-1, filter_id2);
 
   int filter_id3 = -1;
   std::tie(was_first_of_kind, filter_id3) = tracker.AddFilteredListener(
-      kOwner2, kEvent1, filter3->CreateDeepCopy(), kRoutingId);
+      kOwner2, kEvent1, std::make_unique<base::Value::Dict>(filter3.Clone()),
+      kRoutingId);
   EXPECT_NE(-1, filter_id3);
 
   mojom::EventFilteringInfoPtr filtering_info =

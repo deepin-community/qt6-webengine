@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -78,21 +78,24 @@ class CORE_EXPORT FindBuffer {
             const String& search_text,
             const blink::FindOptions options);
 
-    class CORE_EXPORT Iterator
-        : public std::iterator<std::forward_iterator_tag, BufferMatchResult> {
+    class CORE_EXPORT Iterator {
       STACK_ALLOCATED();
 
      public:
-      Iterator() = default;
-      Iterator(const FindBuffer& find_buffer,
-               TextSearcherICU* text_searcher,
-               const String& search_text);
+      using iterator_category = std::forward_iterator_tag;
+      using value_type = BufferMatchResult;
+      using difference_type = std::ptrdiff_t;
+      using pointer = BufferMatchResult*;
+      using reference = BufferMatchResult&;
 
-      bool operator==(const Iterator& other) {
+      Iterator() = default;
+      Iterator(const FindBuffer& find_buffer, TextSearcherICU* text_searcher);
+
+      bool operator==(const Iterator& other) const {
         return has_match_ == other.has_match_;
       }
 
-      bool operator!=(const Iterator& other) {
+      bool operator!=(const Iterator& other) const {
         return has_match_ != other.has_match_;
       }
 

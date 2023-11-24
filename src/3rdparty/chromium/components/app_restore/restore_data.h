@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -175,6 +175,10 @@ class COMPONENT_EXPORT(APP_RESTORE) RestoreData {
   // Make all contained window IDs globally unique for a desk template
   // launch. This must be done before launching.
   void MakeWindowIdsUniqueForDeskTemplate();
+
+  // Update the app id for the browser app to lacros if lacros is enabled and is
+  // primary. This must be done before launching.
+  void UpdateBrowserAppIdToLacros();
 
   std::string ToString() const;
 

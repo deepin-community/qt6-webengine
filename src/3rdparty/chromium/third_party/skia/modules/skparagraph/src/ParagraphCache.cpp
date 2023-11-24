@@ -72,8 +72,9 @@ public:
         , fCodeUnitProperties(paragraph->fCodeUnitProperties)
         , fWords(paragraph->fWords)
         , fBidiRegions(paragraph->fBidiRegions)
-        , fUTF8IndexForUTF16Index(paragraph->fUTF8IndexForUTF16Index)
-        , fUTF16IndexForUTF8Index(paragraph->fUTF16IndexForUTF8Index) { }
+        , fHasLineBreaks(paragraph->fHasLineBreaks)
+        , fHasWhitespacesInside(paragraph->fHasWhitespacesInside)
+        , fTrailingSpaces(paragraph->fTrailingSpaces) { }
 
     // Input == key
     ParagraphCacheKey fKey;
@@ -83,11 +84,12 @@ public:
     SkTArray<Cluster, true> fClusters;
     SkTArray<size_t, true> fClustersIndexFromCodeUnit;
     // ICU results
-    SkTArray<CodeUnitFlags> fCodeUnitProperties;
+    SkTArray<SkUnicode::CodeUnitFlags, true> fCodeUnitProperties;
     std::vector<size_t> fWords;
     std::vector<SkUnicode::BidiRegion> fBidiRegions;
-    SkTArray<TextIndex, true> fUTF8IndexForUTF16Index;
-    SkTArray<size_t, true> fUTF16IndexForUTF8Index;
+    bool fHasLineBreaks;
+    bool fHasWhitespacesInside;
+    TextIndex fTrailingSpaces;
 };
 
 uint32_t ParagraphCacheKey::mix(uint32_t hash, uint32_t data) {
@@ -138,6 +140,7 @@ uint32_t ParagraphCacheKey::computeHash() const {
 
     hash = mix(hash, SkGoodHash()(relax(fParagraphStyle.getHeight())));
     hash = mix(hash, SkGoodHash()(fParagraphStyle.getTextDirection()));
+    hash = mix(hash, SkGoodHash()(fParagraphStyle.getReplaceTabCharacters() ? 1 : 0));
 
     auto& strutStyle = fParagraphStyle.getStrutStyle();
     if (strutStyle.getStrutEnabled()) {
@@ -164,7 +167,7 @@ bool ParagraphCacheKey::operator==(const ParagraphCacheKey& other) const {
     if (fText.size() != other.fText.size()) {
         return false;
     }
-    if (fPlaceholders.count() != other.fPlaceholders.count()) {
+    if (fPlaceholders.size() != other.fPlaceholders.size()) {
         return false;
     }
     if (fText != other.fText) {
@@ -186,7 +189,11 @@ bool ParagraphCacheKey::operator==(const ParagraphCacheKey& other) const {
         return false;
     }
 
-    for (size_t i = 0; i < fTextStyles.size(); ++i) {
+    if (!(fParagraphStyle.getReplaceTabCharacters() == other.fParagraphStyle.getReplaceTabCharacters())) {
+        return false;
+    }
+
+    for (int i = 0; i < fTextStyles.size(); ++i) {
         auto& tsa = fTextStyles[i];
         auto& tsb = other.fTextStyles[i];
         if (tsa.fStyle.isPlaceholder()) {
@@ -202,7 +209,7 @@ bool ParagraphCacheKey::operator==(const ParagraphCacheKey& other) const {
             return false;
         }
     }
-    for (size_t i = 0; i < fPlaceholders.size(); ++i) {
+    for (int i = 0; i < fPlaceholders.size(); ++i) {
         auto& tsa = fPlaceholders[i];
         auto& tsb = other.fPlaceholders[i];
         if (tsa.fRange.width() == 0 && tsb.fRange.width() == 0) {
@@ -244,15 +251,16 @@ ParagraphCache::~ParagraphCache() { }
 
 void ParagraphCache::updateTo(ParagraphImpl* paragraph, const Entry* entry) {
 
-    paragraph->fRuns.reset();
+    paragraph->fRuns.clear();
     paragraph->fRuns = entry->fValue->fRuns;
     paragraph->fClusters = entry->fValue->fClusters;
     paragraph->fClustersIndexFromCodeUnit = entry->fValue->fClustersIndexFromCodeUnit;
     paragraph->fCodeUnitProperties = entry->fValue->fCodeUnitProperties;
     paragraph->fWords = entry->fValue->fWords;
     paragraph->fBidiRegions = entry->fValue->fBidiRegions;
-    paragraph->fUTF8IndexForUTF16Index = entry->fValue->fUTF8IndexForUTF16Index;
-    paragraph->fUTF16IndexForUTF8Index = entry->fValue->fUTF16IndexForUTF8Index;
+    paragraph->fHasLineBreaks = entry->fValue->fHasLineBreaks;
+    paragraph->fHasWhitespacesInside = entry->fValue->fHasWhitespacesInside;
+    paragraph->fTrailingSpaces = entry->fValue->fTrailingSpaces;
     for (auto& run : paragraph->fRuns) {
         run.setOwner(paragraph);
     }

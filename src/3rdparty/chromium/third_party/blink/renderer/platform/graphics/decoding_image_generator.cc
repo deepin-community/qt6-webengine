@@ -140,14 +140,13 @@ sk_sp<SkData> DecodingImageGenerator::GetEncodedData() const {
   return data_->GetAsSkData();
 }
 
-bool DecodingImageGenerator::GetPixels(const SkImageInfo& dst_info,
-                                       void* pixels,
-                                       size_t row_bytes,
+bool DecodingImageGenerator::GetPixels(SkPixmap dst_pixmap,
                                        size_t frame_index,
                                        PaintImage::GeneratorClientId client_id,
                                        uint32_t lazy_pixel_ref) {
   TRACE_EVENT2("blink", "DecodingImageGenerator::getPixels", "frame index",
                static_cast<int>(frame_index), "client_id", client_id);
+  const SkImageInfo& dst_info = dst_pixmap.info();
 
   // Implementation only supports decoding to a supported size.
   if (dst_info.dimensions() != GetSupportedDecodeSize(dst_info.dimensions())) {
@@ -157,18 +156,19 @@ bool DecodingImageGenerator::GetPixels(const SkImageInfo& dst_info,
   // Color type can be N32 or F16. Otherwise, decode to N32 and convert to
   // the requested color type from N32.
   SkImageInfo target_info = dst_info;
-  char* memory = static_cast<char*>(pixels);
+  char* memory = static_cast<char*>(dst_pixmap.writable_addr());
   std::unique_ptr<char[]> memory_ref_ptr;
-  size_t adjusted_row_bytes = row_bytes;
+  size_t adjusted_row_bytes = dst_pixmap.rowBytes();
   if ((target_info.colorType() != kN32_SkColorType) &&
       (target_info.colorType() != kRGBA_F16_SkColorType)) {
     target_info = target_info.makeColorType(kN32_SkColorType);
-    // row_bytes is the size of scanline, so it should be >= info.minRowBytes().
-    DCHECK(row_bytes >= dst_info.minRowBytes());
-    // row_bytes must be a multiple of dst_info.bytesPerPixel().
-    DCHECK_EQ(0ul, row_bytes % dst_info.bytesPerPixel());
-    adjusted_row_bytes =
-        target_info.bytesPerPixel() * (row_bytes / dst_info.bytesPerPixel());
+    // dst_info.rowBytes is the size of scanline, so it should be >=
+    // info.minRowBytes().
+    DCHECK(dst_pixmap.rowBytes() >= dst_info.minRowBytes());
+    // dst_info.rowBytes must be a multiple of dst_info.bytesPerPixel().
+    DCHECK_EQ(0ul, dst_pixmap.rowBytes() % dst_info.bytesPerPixel());
+    adjusted_row_bytes = target_info.bytesPerPixel() *
+                         (dst_pixmap.rowBytes() / dst_info.bytesPerPixel());
     memory_ref_ptr.reset(new char[target_info.computeMinByteSize()]);
     memory = memory_ref_ptr.get();
   }
@@ -185,11 +185,12 @@ bool DecodingImageGenerator::GetPixels(const SkImageInfo& dst_info,
 
   const bool needs_color_xform = !ApproximatelyEqualSkColorSpaces(
       decode_color_space, target_info.refColorSpace());
-  ImageDecoder::AlphaOption alpha_option = ImageDecoder::kAlphaPremultiplied;
   if (needs_color_xform && !decode_info.isOpaque()) {
-    alpha_option = ImageDecoder::kAlphaNotPremultiplied;
     decode_info = decode_info.makeAlphaType(kUnpremul_SkAlphaType);
+  } else {
+    DCHECK(decode_info.alphaType() != kUnpremul_SkAlphaType);
   }
+  SkPixmap decode_pixmap(decode_info, memory, adjusted_row_bytes);
 
   bool decoded = false;
   {
@@ -199,7 +200,7 @@ bool DecodingImageGenerator::GetPixels(const SkImageInfo& dst_info,
     ScopedSegmentReaderDataLocker lock_data(data_.get());
     decoded = frame_generator_->DecodeAndScale(
         data_.get(), all_data_received_, static_cast<wtf_size_t>(frame_index),
-        decode_info, memory, adjusted_row_bytes, alpha_option, client_id);
+        decode_pixmap, client_id);
   }
 
   if (decoded && needs_color_xform) {
@@ -216,10 +217,11 @@ bool DecodingImageGenerator::GetPixels(const SkImageInfo& dst_info,
     if (SkColorTypeBytesPerPixel(target_info.colorType()) <=
         SkColorTypeBytesPerPixel(dst_info.colorType())) {
       decoded = SkPixmap{target_info, memory, adjusted_row_bytes}.readPixels(
-          SkPixmap{dst_info, pixels, row_bytes});
+          dst_pixmap);
       DCHECK(decoded);
     } else {  // Do dithering by drawBitmap() if dithering is necessary
-      auto canvas = SkCanvas::MakeRasterDirect(dst_info, pixels, row_bytes);
+      auto canvas = SkCanvas::MakeRasterDirect(
+          dst_pixmap.info(), dst_pixmap.writable_addr(), dst_pixmap.rowBytes());
       DCHECK(canvas);
 
       SkPaint paint;
@@ -251,9 +253,11 @@ bool DecodingImageGenerator::QueryYUVA(
                                        yuva_pixmap_info);
 }
 
-bool DecodingImageGenerator::GetYUVAPlanes(const SkYUVAPixmaps& pixmaps,
-                                           size_t frame_index,
-                                           uint32_t lazy_pixel_ref) {
+bool DecodingImageGenerator::GetYUVAPlanes(
+    const SkYUVAPixmaps& pixmaps,
+    size_t frame_index,
+    uint32_t lazy_pixel_ref,
+    PaintImage::GeneratorClientId client_id) {
   // TODO(crbug.com/943519): YUV decoding does not currently support incremental
   // decoding. See comment in image_frame_generator.h.
   DCHECK(can_yuv_decode_);
@@ -285,7 +289,8 @@ bool DecodingImageGenerator::GetYUVAPlanes(const SkYUVAPixmaps& pixmaps,
   ScopedSegmentReaderDataLocker lock_data(data_.get());
   return frame_generator_->DecodeToYUV(
       data_.get(), static_cast<wtf_size_t>(frame_index),
-      pixmaps.plane(0).colorType(), plane_sizes, plane_addrs, plane_row_bytes);
+      pixmaps.plane(0).colorType(), plane_sizes, plane_addrs, plane_row_bytes,
+      client_id);
 }
 
 SkISize DecodingImageGenerator::GetSupportedDecodeSize(

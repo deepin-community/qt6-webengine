@@ -1,11 +1,11 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/media/android/browser_gpu_video_accelerator_factories.h"
 
-#include "base/bind.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/functional/bind.h"
+#include "base/task/sequenced_task_runner.h"
 #include "content/browser/browser_main_loop.h"
 #include "content/public/browser/android/gpu_video_accelerator_factories_provider.h"
 #include "content/public/common/gpu_stream_constants.h"
@@ -55,7 +55,7 @@ void OnGpuChannelEstablished(
           automatic_flushes, support_locking, support_grcontext,
           gpu::SharedMemoryLimits::ForMailboxContext(), attributes,
           viz::command_buffer_metrics::ContextType::UNKNOWN);
-  context_provider->BindToCurrentThread();
+  context_provider->BindToCurrentSequence();
 
   auto gpu_factories = std::make_unique<BrowserGpuVideoAcceleratorFactories>(
       std::move(context_provider));
@@ -136,8 +136,8 @@ bool BrowserGpuVideoAcceleratorFactories::IsDecoderSupportKnown() {
 
 void BrowserGpuVideoAcceleratorFactories::NotifyDecoderSupportKnown(
     base::OnceClosure callback) {
-  base::SequencedTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                   std::move(callback));
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+                                                           std::move(callback));
 }
 
 std::unique_ptr<media::VideoDecoder>
@@ -210,13 +210,19 @@ bool BrowserGpuVideoAcceleratorFactories::IsEncoderSupportKnown() {
 
 void BrowserGpuVideoAcceleratorFactories::NotifyEncoderSupportKnown(
     base::OnceClosure callback) {
-  base::SequencedTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                   std::move(callback));
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+                                                           std::move(callback));
 }
 
 viz::RasterContextProvider*
 BrowserGpuVideoAcceleratorFactories::GetMediaContextProvider() {
   return context_provider_.get();
+}
+
+const gpu::Capabilities*
+BrowserGpuVideoAcceleratorFactories::ContextCapabilities() {
+  return context_provider_ ? &(context_provider_->ContextCapabilities())
+                           : nullptr;
 }
 
 void BrowserGpuVideoAcceleratorFactories::SetRenderingColorSpace(

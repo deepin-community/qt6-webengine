@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,14 +10,17 @@
 #include "third_party/blink/renderer/core/layout/layout_block_flow.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_item.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_node_data.h"
-#include "third_party/blink/renderer/core/layout/ng/ng_layout_test.h"
+#include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 
 namespace blink {
 
-class LayoutNGTextTest : public NGLayoutTest {
+class LayoutNGTextTest : public RenderingTest {
  protected:
+  static constexpr unsigned kIncludeSnappedWidth = 1;
+
   std::string GetItemsAsString(const LayoutText& layout_text,
-                               int num_glyphs = 0) {
+                               int num_glyphs = 0,
+                               unsigned flags = 0) {
     if (layout_text.NeedsCollectInlines())
       return "LayoutText has NeedsCollectInlines";
     if (!layout_text.HasValidInlineItems())
@@ -48,6 +51,8 @@ class LayoutNGTextTest : public NGLayoutTest {
         if (num_glyphs)
           stream << " #glyphs=" << num_glyphs;
 #endif
+        if (flags & kIncludeSnappedWidth)
+          stream << " width=" << shape_result->SnappedWidth();
       }
       stream << "}" << std::endl;
     }
@@ -69,8 +74,8 @@ TEST_F(LayoutNGTextTest, SetTextWithOffsetAppendBidi) {
   text.appendData(u"\u05D0\u05D1\u05BC\u05D2");
 
   EXPECT_EQ(
-      u8"*{'\u05D0\u05D1\u05BC\u05D2\u05D0\u05D1\u05BC\u05D2', "
-      u8"ShapeResult=0+8 #glyphs=6}\n",
+      "*{'\u05D0\u05D1\u05BC\u05D2\u05D0\u05D1\u05BC\u05D2', "
+      "ShapeResult=0+8 #glyphs=6}\n",
       GetItemsAsString(*text.GetLayoutObject(), 6));
 }
 
@@ -127,17 +132,17 @@ TEST_F(LayoutNGTextTest, SetTextWithOffsetAppendEmojiWithZWJ) {
   Text& text = To<Text>(*GetElementById("target")->firstChild());
   UpdateAllLifecyclePhasesForTest();
   text.appendData(u"\u200D");
-  EXPECT_EQ(u8"*{'\U0001F937\u200D', ShapeResult=0+3 #glyphs=2}\n",
+  EXPECT_EQ("*{'\U0001F937\u200D', ShapeResult=0+3 #glyphs=2}\n",
             GetItemsAsString(*text.GetLayoutObject(), 2));
 
   UpdateAllLifecyclePhasesForTest();
   text.appendData(u"\u2640");
-  EXPECT_EQ(u8"*{'\U0001F937\u200D\u2640', ShapeResult=0+4 #glyphs=1}\n",
+  EXPECT_EQ("*{'\U0001F937\u200D\u2640', ShapeResult=0+4 #glyphs=1}\n",
             GetItemsAsString(*text.GetLayoutObject(), 1));
 
   UpdateAllLifecyclePhasesForTest();
   text.appendData(u"\uFE0F");
-  EXPECT_EQ(u8"*{'\U0001F937\u200D\u2640\uFE0F', ShapeResult=0+5 #glyphs=1}\n",
+  EXPECT_EQ("*{'\U0001F937\u200D\u2640\uFE0F', ShapeResult=0+5 #glyphs=1}\n",
             GetItemsAsString(*text.GetLayoutObject(), 1));
 }
 
@@ -323,6 +328,20 @@ TEST_F(LayoutNGTextTest, SetTextWithOffsetInserBeforetSpace) {
 
   EXPECT_EQ("*{'ab XYZ cd', ShapeResult=0+9}\n",
             GetItemsAsString(*text.GetLayoutObject()));
+}
+
+// https://crbug.com/1391668
+TEST_F(LayoutNGTextTest, SetTextWithOffsetInsertSameCharacters) {
+  LoadAhem();
+  InsertStyleElement("body { font: 10px/15px Ahem; } b { font-size: 50px; }");
+  SetBodyInnerHTML(u"<p><b id=target>a</b>aa</p>");
+  Text& text = To<Text>(*GetElementById("target")->firstChild());
+  text.insertData(0, "aa", ASSERT_NO_EXCEPTION);
+
+  EXPECT_EQ(
+      "*{'aaa', ShapeResult=0+3 width=\"150\"}\n"
+      "{'aa', ShapeResult=3+2 width=\"20\"}\n",
+      GetItemsAsString(*text.GetLayoutObject(), 0, kIncludeSnappedWidth));
 }
 
 TEST_F(LayoutNGTextTest, SetTextWithOffsetNoRelocation) {

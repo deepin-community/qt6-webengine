@@ -1,16 +1,18 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_NG_BOX_FRAGMENT_BUILDER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_NG_BOX_FRAGMENT_BUILDER_H_
 
+#include "base/check_op.h"
 #include "base/dcheck_is_on.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/geometry/box_sides.h"
 #include "third_party/blink/renderer/core/layout/geometry/physical_rect.h"
 #include "third_party/blink/renderer/core/layout/ng/flex/ng_flex_data.h"
+#include "third_party/blink/renderer/core/layout/ng/frame_set_layout_data.h"
 #include "third_party/blink/renderer/core/layout/ng/geometry/ng_box_strut.h"
 #include "third_party/blink/renderer/core/layout/ng/geometry/ng_fragment_geometry.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_fragment_items_builder.h"
@@ -25,6 +27,7 @@
 #include "third_party/blink/renderer/core/layout/ng/table/ng_table_fragment_data.h"
 #include "third_party/blink/renderer/core/style/computed_style_constants.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
 namespace blink {
 
@@ -37,7 +40,7 @@ class CORE_EXPORT NGBoxFragmentBuilder final
  public:
   NGBoxFragmentBuilder(NGLayoutInputNode node,
                        scoped_refptr<const ComputedStyle> style,
-                       const NGConstraintSpace* space,
+                       const NGConstraintSpace& space,
                        WritingDirectionMode writing_direction)
       : NGContainerFragmentBuilder(node,
                                    std::move(style),
@@ -50,10 +53,11 @@ class CORE_EXPORT NGBoxFragmentBuilder final
   // has NGInlineItem but does not have corresponding NGLayoutInputNode.
   NGBoxFragmentBuilder(LayoutObject* layout_object,
                        scoped_refptr<const ComputedStyle> style,
+                       const NGConstraintSpace& space,
                        WritingDirectionMode writing_direction)
       : NGContainerFragmentBuilder(/* node */ nullptr,
                                    std::move(style),
-                                   /* space */ nullptr,
+                                   space,
                                    writing_direction),
         box_type_(NGPhysicalFragment::NGBoxType::kNormalBox),
         is_inline_formatting_context_(true) {
@@ -72,9 +76,9 @@ class CORE_EXPORT NGBoxFragmentBuilder final
         border_padding_ + initial_fragment_geometry.scrollbar;
     original_border_scrollbar_padding_block_start_ =
         border_scrollbar_padding_.block_start;
-    if (space_) {
+    if (node_) {
       child_available_size_ = CalculateChildAvailableSize(
-          *space_, To<NGBlockNode>(node_), size_, border_scrollbar_padding_);
+          space_, To<NGBlockNode>(node_), size_, border_scrollbar_padding_);
     }
   }
 
@@ -178,7 +182,6 @@ class CORE_EXPORT NGBoxFragmentBuilder final
   // its non-anonymous parent (similar to percentages).
   const LogicalSize& ChildAvailableSize() const {
     DCHECK(initial_fragment_geometry_);
-    DCHECK(space_);
     return child_available_size_;
   }
   const NGBlockNode& Node() {
@@ -286,6 +289,8 @@ class CORE_EXPORT NGBoxFragmentBuilder final
   // Specify whether this will be the first fragment generated for the node.
   void SetIsFirstForNode(bool is_first) { is_first_for_node_ = is_first; }
 
+  void SetIsMonolithic(bool b) { is_monolithic_ = b; }
+
   // Set how much of the block-size we've used so far for this box. This will be
   // the sum of the block-size of all previous fragments PLUS the one we're
   // building now.
@@ -320,7 +325,7 @@ class CORE_EXPORT NGBoxFragmentBuilder final
     // We should either do block fragmentation as part of normal layout, or
     // pre-set a break token.
     DCHECK(!did_break_self_);
-    DCHECK(child_break_tokens_.IsEmpty());
+    DCHECK(child_break_tokens_.empty());
 
     break_token_ = break_token;
   }
@@ -338,16 +343,31 @@ class CORE_EXPORT NGBoxFragmentBuilder final
     return previous_break_token_;
   }
 
-  // Return true if we need to break before or inside any child, doesn't matter
-  // if it's in-flow or not. As long as there are only breaks in parallel flows,
-  // we may continue layout, but when we're done, we'll need to create a break
+  // Return true if a break has been inserted, doesn't matter if it's in the
+  // same flow or not. As long as there are only breaks in parallel flows, we
+  // may continue layout, but when we're done, we'll need to create a break
   // token for this fragment nevertheless, so that we re-enter, descend and
   // resume at the broken children in the next fragmentainer.
-  bool HasChildBreakInside() const {
-    if (!child_break_tokens_.IsEmpty())
+  bool HasInsertedChildBreak() const {
+    if (child_break_tokens_.empty())
+      return false;
+    for (const NGBreakToken* child_token : child_break_tokens_) {
+      const auto* block_child_token = DynamicTo<NGBlockBreakToken>(child_token);
+      if (!block_child_token || !block_child_token->IsRepeated())
+        return true;
+    }
+    return false;
+  }
+
+  // Return true if we need to break inside this node, the way things are
+  // currently looking. This should only be called at the end of layout, right
+  // before creating a fragment.
+  bool ShouldBreakInside() const {
+    if (HasInsertedChildBreak())
       return true;
-    // Inline nodes produce a "finished" trailing break token even if we don't
-    // need to block-fragment.
+    // If there's an outgoing inline break-token at this point, and we're about
+    // to finish layout, it means that inline layout needs to continue in the
+    // next fragmentianer.
     if (last_inline_break_token_)
       return true;
     // Grid layout doesn't insert break before tokens, and instead set this bit
@@ -362,28 +382,16 @@ class CORE_EXPORT NGBoxFragmentBuilder final
     return has_inflow_child_break_inside_;
   }
 
-  // Return true if we need to break before or inside any floated child. Floats
-  // are encapsulated by their container if the container establishes a new
-  // block formatting context.
-  bool HasFloatBreakInside() const { return has_float_break_inside_; }
-
   // Report space shortage, i.e. how much more space would have been sufficient
   // to prevent some piece of content from breaking. This information may be
   // used by the column balancer to stretch columns.
-  void PropagateSpaceShortage(LayoutUnit space_shortage) {
-    DCHECK_GT(space_shortage, LayoutUnit());
+  void PropagateSpaceShortage(absl::optional<LayoutUnit> space_shortage);
 
-    // Space shortage should only be reported when we already have a tentative
-    // fragmentainer block-size. It's meaningless to talk about space shortage
-    // in the initial column balancing pass, because then we have no
-    // fragmentainer block-size at all, so who's to tell what's too short or
-    // not?
-    DCHECK(!IsInitialColumnBalancingPass());
-
-    if (minimal_space_shortage_ > space_shortage)
-      minimal_space_shortage_ = space_shortage;
+  absl::optional<LayoutUnit> MinimalSpaceShortage() const {
+    if (minimal_space_shortage_ == kIndefiniteSize)
+      return absl::nullopt;
+    return minimal_space_shortage_;
   }
-  LayoutUnit MinimalSpaceShortage() const { return minimal_space_shortage_; }
 
   void PropagateTallestUnbreakableBlockSize(LayoutUnit unbreakable_block_size) {
     // We should only calculate the block-size of the tallest piece of
@@ -420,6 +428,24 @@ class CORE_EXPORT NGBoxFragmentBuilder final
     previous_break_after_ = break_after;
   }
 
+  void SetStartPageNameIfNeeded(AtomicString name) {
+    if (start_page_name_ == g_null_atom)
+      start_page_name_ = name;
+  }
+  void SetPreviousPageName(AtomicString name) { previous_page_name_ = name; }
+  AtomicString PreviousPageName() const { return previous_page_name_; }
+
+  void SetPageName(const AtomicString name) {
+    if (!name)
+      return;
+    if (page_name_) {
+      DCHECK_EQ(page_name_, name);
+      return;
+    }
+    page_name_ = name;
+  }
+  AtomicString PageName() const { return page_name_; }
+
   // Join/"collapse" the previous (stored) break-after value with the next
   // break-before value, to determine how to deal with breaking between two
   // in-flow siblings.
@@ -444,6 +470,12 @@ class CORE_EXPORT NGBoxFragmentBuilder final
     disable_oof_descendants_propagation_ = true;
   }
 
+  void SetDisableSimplifiedLayout() { disable_simplified_layout = true; }
+
+  void SetIsTruncatedByFragmentationLine() {
+    is_truncated_by_fragmentation_line = true;
+  }
+
   // See |NGPhysicalBoxFragment::InflowBounds|.
   void SetInflowBounds(const LogicalRect& inflow_bounds) {
     DCHECK_NE(box_type_, NGPhysicalBoxFragment::NGBoxType::kInlineBox);
@@ -461,12 +493,6 @@ class CORE_EXPORT NGBoxFragmentBuilder final
   const NGEarlyBreak& EarlyBreak() const {
     DCHECK(early_break_);
     return *early_break_;
-  }
-
-  // Downgrade the break appeal if the specified break appeal is lower than any
-  // found so far.
-  void ClampBreakAppeal(NGBreakAppeal appeal) {
-    break_appeal_ = std::min(break_appeal_, appeal);
   }
 
   // Creates the fragment. Can only be called once.
@@ -552,23 +578,27 @@ class CORE_EXPORT NGBoxFragmentBuilder final
     custom_layout_data_ = std::move(custom_layout_data);
   }
 
-  // Sets the alignment baseline for this fragment.
-  void SetBaseline(LayoutUnit baseline) { baseline_ = baseline; }
-  absl::optional<LayoutUnit> Baseline() const { return baseline_; }
+  // Sets the first baseline for this fragment.
+  void SetFirstBaseline(LayoutUnit baseline) { first_baseline_ = baseline; }
+  absl::optional<LayoutUnit> FirstBaseline() const { return first_baseline_; }
 
   // Sets the last baseline for this fragment.
-  void SetLastBaseline(LayoutUnit baseline) {
-    DCHECK_EQ(space_->BaselineAlgorithmType(),
-              NGBaselineAlgorithmType::kInlineBlock);
-    last_baseline_ = baseline;
-  }
+  void SetLastBaseline(LayoutUnit baseline) { last_baseline_ = baseline; }
   absl::optional<LayoutUnit> LastBaseline() const { return last_baseline_; }
 
-  // The inline block baseline is at the block end margin edge under some
-  // circumstances. This function updates |LastBaseline| in such cases.
-  void SetLastBaselineToBlockEndMarginEdgeIfNeeded();
+  // Sets both the first and last baseline to the same value.
+  void SetBaselines(LayoutUnit baseline) {
+    first_baseline_ = baseline;
+    last_baseline_ = baseline;
+  }
 
-  void SetTableGridRect(const PhysicalRect& table_grid_rect) {
+  // Lets the parent layout algorithm know if it should use the first or last
+  // baseline for the special inline-block baseline algorithm.
+  void SetUseLastBaselineForInlineBaseline() {
+    use_last_baseline_for_inline_baseline_ = true;
+  }
+
+  void SetTableGridRect(const LogicalRect& table_grid_rect) {
     table_grid_rect_ = table_grid_rect;
   }
 
@@ -596,6 +626,13 @@ class CORE_EXPORT NGBoxFragmentBuilder final
     table_cell_column_index_ = table_cell_column_index;
   }
 
+  void SetTableSectionCollapsedBordersGeometry(
+      wtf_size_t start_row_index,
+      Vector<LayoutUnit>&& row_offsets) {
+    table_section_start_row_index_ = start_row_index;
+    table_section_row_offsets_ = std::move(row_offsets);
+  }
+
   void TransferGridLayoutData(
       std::unique_ptr<NGGridLayoutData> grid_layout_data) {
     grid_layout_data_ = std::move(grid_layout_data);
@@ -603,6 +640,9 @@ class CORE_EXPORT NGBoxFragmentBuilder final
   void TransferFlexLayoutData(
       std::unique_ptr<DevtoolsFlexInfo> flex_layout_data) {
     flex_layout_data_ = std::move(flex_layout_data);
+  }
+  void TransferFrameSetLayoutData(std::unique_ptr<FrameSetLayoutData> data) {
+    frame_set_layout_data_ = std::move(data);
   }
 
   const NGGridLayoutData& GridLayoutData() const {
@@ -625,6 +665,7 @@ class CORE_EXPORT NGBoxFragmentBuilder final
   }
 
   // The |NGFragmentItemsBuilder| for the inline formatting context of this box.
+  bool HasItems() const final { return items_builder_; }
   NGFragmentItemsBuilder* ItemsBuilder() { return items_builder_; }
   void SetItemsBuilder(NGFragmentItemsBuilder* builder) {
     items_builder_ = builder;
@@ -671,13 +712,13 @@ class CORE_EXPORT NGBoxFragmentBuilder final
 
   void SetHasForcedBreak() {
     has_forced_break_ = true;
-    minimal_space_shortage_ = LayoutUnit::Max();
+    minimal_space_shortage_ = kIndefiniteSize;
   }
 
   bool HasForcedBreak() const { return has_forced_break_; }
 
   const NGBreakToken* LastChildBreakToken() const {
-    DCHECK(!child_break_tokens_.IsEmpty());
+    DCHECK(!child_break_tokens_.empty());
     return child_break_tokens_.back().Get();
   }
 
@@ -721,10 +762,10 @@ class CORE_EXPORT NGBoxFragmentBuilder final
   bool is_known_to_fit_in_fragmentainer_ = false;
   bool requires_content_before_breaking_ = false;
   bool is_block_size_for_fragmentation_clamped_ = false;
+  bool is_monolithic_ = true;
   bool is_first_for_node_ = true;
   bool did_break_self_ = false;
   bool has_inflow_child_break_inside_ = false;
-  bool has_float_break_inside_ = false;
   bool has_forced_break_ = false;
   bool is_new_fc_ = false;
   bool has_seen_all_children_ = false;
@@ -733,9 +774,12 @@ class CORE_EXPORT NGBoxFragmentBuilder final
   bool is_math_operator_ = false;
   bool is_at_block_end_ = false;
   bool disable_oof_descendants_propagation_ = false;
+  bool disable_simplified_layout = false;
+  bool is_truncated_by_fragmentation_line = false;
+  bool use_last_baseline_for_inline_baseline_ = false;
   LayoutUnit block_offset_for_additional_columns_;
 
-  LayoutUnit minimal_space_shortage_ = LayoutUnit::Max();
+  LayoutUnit minimal_space_shortage_ = kIndefiniteSize;
   LayoutUnit tallest_unbreakable_block_size_ = LayoutUnit::Min();
   LayoutUnit block_size_for_fragmentation_;
 
@@ -746,15 +790,17 @@ class CORE_EXPORT NGBoxFragmentBuilder final
   // The break-after value of the previous in-flow sibling.
   EBreakBetween previous_break_after_ = EBreakBetween::kAuto;
 
-  // The appeal of breaking inside this container.
-  NGBreakAppeal break_appeal_ = kBreakAppealPerfect;
+  AtomicString start_page_name_ = g_null_atom;
+  AtomicString previous_page_name_;
 
-  absl::optional<LayoutUnit> baseline_;
+  AtomicString page_name_;
+
+  absl::optional<LayoutUnit> first_baseline_;
   absl::optional<LayoutUnit> last_baseline_;
   LayoutUnit math_italic_correction_;
 
   // Table specific types.
-  absl::optional<PhysicalRect> table_grid_rect_;
+  absl::optional<LogicalRect> table_grid_rect_;
   NGTableFragmentData::ColumnGeometries table_column_geometries_;
   scoped_refptr<const NGTableBorders> table_collapsed_borders_;
   std::unique_ptr<NGTableFragmentData::CollapsedBordersGeometry>
@@ -763,6 +809,8 @@ class CORE_EXPORT NGBoxFragmentBuilder final
 
   // Table cell specific types.
   absl::optional<wtf_size_t> table_cell_column_index_;
+  wtf_size_t table_section_start_row_index_;
+  Vector<LayoutUnit> table_section_row_offsets_;
 
   NGBlockBreakTokenData* break_token_data_ = nullptr;
 
@@ -770,6 +818,7 @@ class CORE_EXPORT NGBoxFragmentBuilder final
   std::unique_ptr<NGGridLayoutData> grid_layout_data_;
 
   std::unique_ptr<DevtoolsFlexInfo> flex_layout_data_;
+  std::unique_ptr<FrameSetLayoutData> frame_set_layout_data_;
 
   LogicalBoxSides sides_to_include_;
 

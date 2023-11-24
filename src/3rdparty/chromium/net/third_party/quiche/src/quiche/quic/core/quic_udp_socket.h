@@ -9,22 +9,22 @@
 #include <cstdint>
 #include <type_traits>
 
+#include "quiche/quic/core/io/socket.h"
 #include "quiche/quic/core/quic_types.h"
 #include "quiche/quic/core/quic_utils.h"
 #include "quiche/quic/platform/api/quic_ip_address.h"
 #include "quiche/quic/platform/api/quic_socket_address.h"
 
-namespace quic {
-
-#if defined(_WIN32)
-using QuicUdpSocketFd = SOCKET;
-const QuicUdpSocketFd kQuicInvalidSocketFd = INVALID_SOCKET;
-#else
-using QuicUdpSocketFd = int;
-const QuicUdpSocketFd kQuicInvalidSocketFd = -1;
+#ifndef UDP_GRO
+#define UDP_GRO 104
 #endif
 
-const size_t kDefaultUdpPacketControlBufferSize = 512;
+namespace quic {
+
+using QuicUdpSocketFd = SocketFd;
+inline constexpr QuicUdpSocketFd kQuicInvalidSocketFd = kInvalidSocketFd;
+
+inline constexpr size_t kDefaultUdpPacketControlBufferSize = 512;
 
 enum class QuicUdpPacketInfoBit : uint8_t {
   DROPPED_PACKETS = 0,   // Read
@@ -33,8 +33,10 @@ enum class QuicUdpPacketInfoBit : uint8_t {
   PEER_ADDRESS,          // Read & Write
   RECV_TIMESTAMP,        // Read
   TTL,                   // Read & Write
+  ECN,                   // Read
   GOOGLE_PACKET_HEADER,  // Read
   NUM_BITS,
+  IS_GRO,  // Read
 };
 static_assert(static_cast<size_t>(QuicUdpPacketInfoBit::NUM_BITS) <=
                   BitMask64::NumBits(),
@@ -73,6 +75,13 @@ class QUIC_EXPORT_PRIVATE QuicUdpPacketInfo {
     dropped_packets_ = dropped_packets;
     bitmask_.Set(QuicUdpPacketInfoBit::DROPPED_PACKETS);
   }
+
+  void set_gso_size(size_t gso_size) {
+    gso_size_ = gso_size;
+    bitmask_.Set(QuicUdpPacketInfoBit::IS_GRO);
+  }
+
+  size_t gso_size() { return gso_size_; }
 
   const QuicIpAddress& self_v4_ip() const {
     QUICHE_DCHECK(HasValue(QuicUdpPacketInfoBit::V4_SELF_IP));
@@ -142,6 +151,13 @@ class QUIC_EXPORT_PRIVATE QuicUdpPacketInfo {
     bitmask_.Set(QuicUdpPacketInfoBit::GOOGLE_PACKET_HEADER);
   }
 
+  QuicEcnCodepoint ecn_codepoint() const { return ecn_codepoint_; }
+
+  void SetEcnCodepoint(const QuicEcnCodepoint ecn_codepoint) {
+    ecn_codepoint_ = ecn_codepoint;
+    bitmask_.Set(QuicUdpPacketInfoBit::ECN);
+  }
+
  private:
   BitMask64 bitmask_;
   QuicPacketCount dropped_packets_;
@@ -151,6 +167,8 @@ class QUIC_EXPORT_PRIVATE QuicUdpPacketInfo {
   QuicWallTime receive_timestamp_ = QuicWallTime::Zero();
   int ttl_;
   BufferSpan google_packet_headers_;
+  size_t gso_size_ = 0;
+  QuicEcnCodepoint ecn_codepoint_ = ECN_NOT_ECT;
 };
 
 // QuicUdpSocketApi provides a minimal set of apis for sending and receiving
@@ -176,6 +194,12 @@ class QUIC_EXPORT_PRIVATE QuicUdpSocketApi {
   // a random port to bind to. Caller can use QuicSocketAddress::FromSocket(fd)
   // to get the bound random port.
   bool Bind(QuicUdpSocketFd fd, QuicSocketAddress address);
+
+  // Bind |fd| to |interface_name|. Returns true if the setsockopt call
+  // succeeded. Returns false if |interface_name| is empty, its length exceeds
+  // IFNAMSIZ, or setsockopt experienced an error. Only implemented for
+  // non-Android Linux.
+  bool BindInterface(QuicUdpSocketFd fd, const std::string& interface_name);
 
   // Enable receiving of various per-packet information. Return true if the
   // corresponding information can be received on read.

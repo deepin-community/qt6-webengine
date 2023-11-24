@@ -1,10 +1,12 @@
-// Copyright (c) 2010 The Chromium Authors. All rights reserved.
+// Copyright 2010 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/loader/cookie_jar.h"
 
+#include "base/debug/dump_without_crashing.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/strcat.h"
 #include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/core/dom/document.h"
@@ -12,9 +14,21 @@
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
+#include "third_party/blink/renderer/platform/weborigin/kurl_hash.h"
+#include "third_party/blink/renderer/platform/wtf/hash_functions.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
 
 namespace blink {
 namespace {
+
+enum class CookieCacheLookupResult {
+  kCacheMissFirstAccess = 0,
+  kCacheHitAfterGet = 1,
+  kCacheHitAfterSet = 2,
+  kCacheMissAfterGet = 3,
+  kCacheMissAfterSet = 4,
+  kMaxValue = kCacheMissAfterSet,
+};
 
 void LogCookieHistogram(const char* prefix,
                         bool cookie_manager_requested,
@@ -51,17 +65,51 @@ void CookieJar::SetCookie(const String& value) {
 
   base::ElapsedTimer timer;
   bool requested = RequestRestrictedCookieManagerIfNeeded();
-  backend_->SetCookieFromString(
-      cookie_url, document_->SiteForCookies(), document_->TopFrameOrigin(),
-      value,
-      RuntimeEnabledFeatures::PartitionedCookiesEnabled(
-          document_->GetExecutionContext()));
+  bool site_for_cookies_ok = true;
+  bool top_frame_origin_ok = true;
+  backend_->SetCookieFromString(cookie_url, document_->SiteForCookies(),
+                                document_->TopFrameOrigin(),
+                                document_->HasStorageAccess(), value,
+                                &site_for_cookies_ok, &top_frame_origin_ok);
+  last_operation_was_set_ = true;
   LogCookieHistogram("Blink.SetCookieTime.", requested, timer.Elapsed());
 
   // TODO(crbug.com/1276520): Remove after truncating characters are fully
   // deprecated
   if (value.Find(ContainsTruncatingChar) != kNotFound) {
     document_->CountDeprecation(WebFeature::kCookieWithTruncatingChar);
+  }
+
+  static bool reported = false;
+  if (!site_for_cookies_ok) {
+    if (!reported) {
+      reported = true;
+      SCOPED_CRASH_KEY_STRING256("RCM", "document-site_for_cookies",
+                                 document_->SiteForCookies().ToDebugString());
+      SCOPED_CRASH_KEY_STRING256(
+          "RCM", "document-top_frame_origin",
+          document_->TopFrameOrigin()->ToUrlOrigin().GetDebugString());
+      // Only origin here, since url is probably way too sensitive.
+      SCOPED_CRASH_KEY_STRING256(
+          "RCM", "document-origin",
+          url::Origin::Create(GURL(cookie_url)).GetDebugString());
+      base::debug::DumpWithoutCrashing();
+    }
+  }
+  if (!top_frame_origin_ok) {
+    if (!reported) {
+      reported = true;
+      SCOPED_CRASH_KEY_STRING256("RCM", "document-site_for_cookies",
+                                 document_->SiteForCookies().ToDebugString());
+      SCOPED_CRASH_KEY_STRING256(
+          "RCM", "document-top_frame_origin",
+          document_->TopFrameOrigin()->ToUrlOrigin().GetDebugString());
+      // Only origin here, since url is probably way too sensitive.
+      SCOPED_CRASH_KEY_STRING256(
+          "RCM", "document-origin",
+          url::Origin::Create(GURL(cookie_url)).GetDebugString());
+      base::debug::DumpWithoutCrashing();
+    }
   }
 }
 
@@ -75,10 +123,11 @@ String CookieJar::Cookies() {
   String value;
   backend_->GetCookiesString(cookie_url, document_->SiteForCookies(),
                              document_->TopFrameOrigin(),
-                             RuntimeEnabledFeatures::PartitionedCookiesEnabled(
-                                 document_->GetExecutionContext()),
-                             &value);
+                             document_->HasStorageAccess(), &value);
   LogCookieHistogram("Blink.CookiesTime.", requested, timer.Elapsed());
+  UpdateCacheAfterGetRequest(cookie_url, value);
+
+  last_operation_was_set_ = false;
   return value;
 }
 
@@ -91,7 +140,8 @@ bool CookieJar::CookiesEnabled() {
   bool requested = RequestRestrictedCookieManagerIfNeeded();
   bool cookies_enabled = false;
   backend_->CookiesEnabledFor(cookie_url, document_->SiteForCookies(),
-                              document_->TopFrameOrigin(), &cookies_enabled);
+                              document_->TopFrameOrigin(),
+                              document_->HasStorageAccess(), &cookies_enabled);
   LogCookieHistogram("Blink.CookiesEnabledTime.", requested, timer.Elapsed());
   return cookies_enabled;
 }
@@ -113,6 +163,33 @@ bool CookieJar::RequestRestrictedCookieManagerIfNeeded() {
     return true;
   }
   return false;
+}
+
+void CookieJar::UpdateCacheAfterGetRequest(const KURL& cookie_url,
+                                           const String& cookie_string) {
+  absl::optional<unsigned> new_hash =
+      WTF::HashInts(WTF::GetHash(cookie_url),
+                    cookie_string.IsNull() ? 0 : WTF::GetHash(cookie_string));
+
+  CookieCacheLookupResult result =
+      CookieCacheLookupResult::kCacheMissFirstAccess;
+
+  if (last_cookies_hash_.has_value()) {
+    if (last_cookies_hash_ == new_hash) {
+      result = last_operation_was_set_
+                   ? CookieCacheLookupResult::kCacheHitAfterSet
+                   : CookieCacheLookupResult::kCacheHitAfterGet;
+    } else {
+      result = last_operation_was_set_
+                   ? CookieCacheLookupResult::kCacheMissAfterSet
+                   : CookieCacheLookupResult::kCacheMissAfterGet;
+    }
+  }
+
+  UMA_HISTOGRAM_ENUMERATION("Blink.Experimental.Cookies.CacheLookupResult2",
+                            result);
+
+  last_cookies_hash_ = new_hash;
 }
 
 }  // namespace blink

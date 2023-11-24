@@ -1,10 +1,11 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/presentation/presentation_connection.h"
 
 #include <memory>
+#include "base/task/single_thread_task_runner.h"
 #include "third_party/blink/public/mojom/frame/lifecycle.mojom-blink.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
@@ -522,7 +523,7 @@ void PresentationConnection::HandleMessageQueue() {
   if (!target_connection_.is_bound())
     return;
 
-  while (!messages_.IsEmpty() && !blob_loader_) {
+  while (!messages_.empty() && !blob_loader_) {
     Message* message = messages_.front().Get();
     switch (message->type) {
       case kMessageTypeText:
@@ -637,7 +638,7 @@ void PresentationConnection::DidClose(
 }
 
 void PresentationConnection::DidFinishLoadingBlob(DOMArrayBuffer* buffer) {
-  DCHECK(!messages_.IsEmpty());
+  DCHECK(!messages_.empty());
   DCHECK_EQ(messages_.front()->type, kMessageTypeBlob);
   DCHECK(buffer);
   if (!base::CheckedNumeric<wtf_size_t>(buffer->ByteLength()).IsValid()) {
@@ -658,7 +659,7 @@ void PresentationConnection::DidFinishLoadingBlob(DOMArrayBuffer* buffer) {
 }
 
 void PresentationConnection::DidFailLoadingBlob(FileErrorCode error_code) {
-  DCHECK(!messages_.IsEmpty());
+  DCHECK(!messages_.empty());
   DCHECK_EQ(messages_.front()->type, kMessageTypeBlob);
   // TODO(crbug.com/1036565): generate error message?
   // Ignore the current failed blob item and continue with next items.

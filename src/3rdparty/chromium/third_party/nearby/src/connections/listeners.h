@@ -32,10 +32,7 @@
 #include "connections/status.h"
 #include "internal/platform/byte_array.h"
 #include "internal/platform/byte_utils.h"
-#include "internal/platform/listeners.h"
-#include "internal/platform/core_config.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 
@@ -44,14 +41,14 @@ namespace connections {
 // This is not the same as completion of the associated process,
 // which may have many states, and multiple async jobs, and be still ongoing.
 // Progress on the overall process is reported by the associated listener.
-struct DLL_API ResultCallback {
+struct ResultCallback {
   // Callback to access the status of the operation when available.
   // status - result of job execution;
   //   Status::kSuccess, if successful; anything else indicates failure.
-  std::function<void(Status)> result_cb = DefaultCallback<Status>();
+  std::function<void(Status)> result_cb = [](Status) {};
 };
 
-struct DLL_API ConnectionResponseInfo {
+struct ConnectionResponseInfo {
   std::string GetAuthenticationDigits() {
     return ByteUtils::ToFourDigitString(raw_authentication_token);
   }
@@ -63,7 +60,7 @@ struct DLL_API ConnectionResponseInfo {
   bool is_connection_verified = false;
 };
 
-struct DLL_API PayloadProgressInfo {
+struct PayloadProgressInfo {
   std::int64_t payload_id = 0;
   enum class Status {
     kSuccess,
@@ -75,14 +72,14 @@ struct DLL_API PayloadProgressInfo {
   std::int64_t bytes_transferred = 0;
 };
 
-enum class DLL_API DistanceInfo {
+enum class DistanceInfo {
   kUnknown = 1,
   kVeryClose = 2,
   kClose = 3,
   kFar = 4,
 };
 
-struct DLL_API ConnectionListener {
+struct ConnectionListener {
   // A basic encrypted channel has been created between you and the endpoint.
   // Both sides are now asked if they wish to accept or reject the connection
   // before any data can be sent over this channel.
@@ -102,8 +99,7 @@ struct DLL_API ConnectionListener {
   // info -  Other relevant information about the connection.
   std::function<void(const std::string& endpoint_id,
                      const ConnectionResponseInfo& info)>
-      initiated_cb =
-          DefaultCallback<const std::string&, const ConnectionResponseInfo&>();
+      initiated_cb = [](const std::string&, const ConnectionResponseInfo&) {};
 
   // Called after both sides have accepted the connection.
   // Both sides may now send Payloads to each other.
@@ -111,7 +107,7 @@ struct DLL_API ConnectionListener {
   //
   // endpoint_id - The identifier for the remote endpoint.
   std::function<void(const std::string& endpoint_id)> accepted_cb =
-      DefaultCallback<const std::string&>();
+      [](const std::string&) {};
 
   // Called when either side rejected the connection.
   // Payloads can not be exchaged. Call Core::DisconnectFromEndpoint()
@@ -119,24 +115,24 @@ struct DLL_API ConnectionListener {
   //
   // endpoint_id - The identifier for the remote endpoint.
   std::function<void(const std::string& endpoint_id, Status status)>
-      rejected_cb = DefaultCallback<const std::string&, Status>();
+      rejected_cb = [](const std::string&, Status) {};
 
   // Called when a remote endpoint is disconnected or has become unreachable.
   // At this point service (re-)discovery may start again.
   //
   // endpoint_id - The identifier for the remote endpoint.
   std::function<void(const std::string& endpoint_id)> disconnected_cb =
-      DefaultCallback<const std::string&>();
+      [](const std::string&) {};
 
   // Called when the connection's available bandwidth has changed.
   //
   // endpoint_id - The identifier for the remote endpoint.
   // medium      - Medium we upgraded to.
   std::function<void(const std::string& endpoint_id, Medium medium)>
-      bandwidth_changed_cb = DefaultCallback<const std::string&, Medium>();
+      bandwidth_changed_cb = [](const std::string&, Medium) {};
 };
 
-struct DLL_API DiscoveryListener {
+struct DiscoveryListener {
   // Called when a remote endpoint is discovered.
   //
   // endpoint_id   - The ID of the remote endpoint that was discovered.
@@ -145,8 +141,8 @@ struct DLL_API DiscoveryListener {
   std::function<void(const std::string& endpoint_id,
                      const ByteArray& endpoint_info,
                      const std::string& service_id)>
-      endpoint_found_cb = DefaultCallback<const std::string&, const ByteArray&,
-                                          const std::string&>();
+      endpoint_found_cb =
+          [](const std::string&, const ByteArray&, const std::string&) {};
 
   // Called when a remote endpoint is no longer discoverable; only called for
   // endpoints that previously had been passed to {@link
@@ -154,7 +150,7 @@ struct DLL_API DiscoveryListener {
   //
   // endpoint_id - The ID of the remote endpoint that was lost.
   std::function<void(const std::string& endpoint_id)> endpoint_lost_cb =
-      DefaultCallback<const std::string&>();
+      [](const std::string&) {};
 
   // Called when a remote endpoint is found with an updated distance.
   //
@@ -162,11 +158,10 @@ struct DLL_API DiscoveryListener {
   //   endpoint_id - The ID of the remote endpoint that was lost.
   //   info        - The distance info, encoded as enum value.
   std::function<void(const std::string& endpoint_id, DistanceInfo info)>
-      endpoint_distance_changed_cb =
-          DefaultCallback<const std::string&, DistanceInfo>();
+      endpoint_distance_changed_cb = [](const std::string&, DistanceInfo) {};
 };
 
-struct DLL_API PayloadListener {
+struct PayloadListener {
   // Called when a Payload is received from a remote endpoint. Depending
   // on the type of the Payload, all of the data may or may not have been
   // received at the time of this call. Use OnPayloadProgress() to
@@ -176,7 +171,7 @@ struct DLL_API PayloadListener {
   //               payload.
   // payload     - The Payload object received.
   std::function<void(const std::string& endpoint_id, Payload payload)>
-      payload_cb = DefaultCallback<const std::string&, Payload>();
+      payload_cb = [](const std::string&, Payload) {};
 
   // Called with progress information about an active Payload transfer, either
   // incoming or outgoing.
@@ -188,11 +183,10 @@ struct DLL_API PayloadListener {
   std::function<void(const std::string& endpoint_id,
                      const PayloadProgressInfo& info)>
       payload_progress_cb =
-          DefaultCallback<const std::string&, const PayloadProgressInfo&>();
+          [](const std::string&, const PayloadProgressInfo&) {};
 };
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location
 
 #endif  // CORE_LISTENERS_H_

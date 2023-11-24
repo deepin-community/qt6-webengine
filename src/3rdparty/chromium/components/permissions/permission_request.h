@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,12 +7,14 @@
 
 #include <string>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
+#include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/permissions/permission_request_enums.h"
 #include "components/permissions/request_type.h"
+#include "content/public/browser/global_routing_id.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
@@ -37,7 +39,9 @@ class PermissionRequest {
   // If `is_one_time` is true, the decision will last until all tabs of
   // `requesting_origin_` are closed or navigated away from.
   using PermissionDecidedCallback =
-      base::OnceCallback<void(ContentSetting /*result*/, bool /*is_one_time*/)>;
+      base::RepeatingCallback<void(ContentSetting /*result*/,
+                                   bool /*is_one_time*/,
+                                   bool /*is_final_decision*/)>;
 
   // `permission_decided_callback` is called when the permission request is
   // resolved by the user (see comment on PermissionDecidedCallback above).
@@ -57,6 +61,15 @@ class PermissionRequest {
   PermissionRequest(const PermissionRequest&) = delete;
   PermissionRequest& operator=(const PermissionRequest&) = delete;
 
+  enum ChipTextType {
+    LOUD_REQUEST,
+    QUIET_REQUEST,
+    ALLOW_CONFIRMATION,
+    BLOCKED_CONFIRMATION,
+    ACCESSIBILITY_ALLOWED_CONFIRMATION,
+    ACCESSIBILITY_BLOCKED_CONFIRMATION
+  };
+
   virtual ~PermissionRequest();
 
   GURL requesting_origin() const { return requesting_origin_; }
@@ -71,7 +84,14 @@ class PermissionRequest {
   virtual std::u16string GetDialogMessageText() const;
 #endif
 
+  // Returns a weak pointer to this instance.
+  base::WeakPtr<PermissionRequest> GetWeakPtr();
+
 #if !BUILDFLAG(IS_ANDROID)
+  // Returns whether displaying a confirmation chip for the request is
+  // supported.
+  bool IsConfirmationChipSupported();
+
   // Returns prompt icon appropriate for displaying on the chip button in the
   // location bar.
   IconId GetIconForChip();
@@ -82,11 +102,7 @@ class PermissionRequest {
 
   // Returns prompt text appropriate for displaying on the chip button in the
   // location bar.
-  absl::optional<std::u16string> GetRequestChipText() const;
-
-  // Returns prompt text appropriate for displaying on the quiet chip button in
-  // the location bar.
-  absl::optional<std::u16string> GetQuietChipText() const;
+  absl::optional<std::u16string> GetRequestChipText(ChipTextType type) const;
 
   // Returns prompt text appropriate for displaying under the dialog title
   // "[domain] wants to:".
@@ -105,7 +121,7 @@ class PermissionRequest {
   // Called when the user has cancelled the permission request. This
   // corresponds to a denial, but is segregated in case the context needs to
   // be able to distinguish between an active refusal or an implicit refusal.
-  void Cancelled();
+  void Cancelled(bool is_final_decision = true);
 
   // The UI this request was associated with was answered by the user.
   // It is safe for the request to be deleted at this point -- it will receive
@@ -125,7 +141,17 @@ class PermissionRequest {
   // this permission request.
   ContentSettingsType GetContentSettingsType() const;
 
+  void set_requesting_frame_id(content::GlobalRenderFrameHostId id) {
+    request_frame_id_ = id;
+  }
+
+  content::GlobalRenderFrameHostId& get_requesting_frame_id() {
+    return request_frame_id_;
+  }
+
  private:
+  content::GlobalRenderFrameHostId request_frame_id_;
+
   // The origin on whose behalf this permission request is being made.
   GURL requesting_origin_;
 
@@ -141,6 +167,8 @@ class PermissionRequest {
   // Called when the request is no longer in use so it can be deleted by the
   // caller.
   base::OnceClosure delete_callback_;
+
+  base::WeakPtrFactory<PermissionRequest> weak_factory_{this};
 };
 
 }  // namespace permissions

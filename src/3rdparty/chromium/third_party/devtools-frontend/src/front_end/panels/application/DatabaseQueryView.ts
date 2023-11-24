@@ -29,20 +29,21 @@
 
 import * as Common from '../../core/common/common.js';
 import * as i18n from '../../core/i18n/i18n.js';
+import * as Platform from '../../core/platform/platform.js';
 import * as DataGrid from '../../ui/legacy/components/data_grid/data_grid.js';
 import * as UI from '../../ui/legacy/legacy.js';
 
-import type {Database} from './DatabaseModel.js';
+import {type Database} from './DatabaseModel.js';
 
 const UIStrings = {
   /**
-  *@description Data grid name for Database Query data grids
-  */
+   *@description Data grid name for Database Query data grids
+   */
   databaseQuery: 'Database Query',
   /**
-  *@description Aria text for table selected in WebSQL DatabaseQueryView in Application panel
-  *@example {"SELECT * FROM LOGS"} PH1
-  */
+   *@description Aria text for table selected in WebSQL DatabaseQueryView in Application panel
+   *@example {"SELECT * FROM LOGS"} PH1
+   */
   queryS: 'Query: {PH1}',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/application/DatabaseQueryView.ts', UIStrings);
@@ -159,7 +160,7 @@ export class DatabaseQueryView extends Common.ObjectWrapper.eventMixin<EventType
 
     const selectedElement = index >= 0 ? this.queryResults[index] : null;
     const changed = this.lastSelectedElement !== selectedElement;
-    const containerHasFocus = this.queryWrapper === this.element.ownerDocument.deepActiveElement();
+    const containerHasFocus = this.queryWrapper === Platform.DOMUtilities.deepActiveElement(this.element.ownerDocument);
 
     if (selectedElement && (changed || containerHasFocus) && this.element.hasFocus()) {
       if (!selectedElement.hasFocus()) {

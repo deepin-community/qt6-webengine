@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 
 #if BUILDFLAG(IS_ANDROID)
 #include "components/permissions/android/android_permission_util.h"
+#include "components/permissions/android/permissions_reprompt_controller_android.h"
 #include "components/permissions/permission_request_id.h"
 #include "components/permissions/permissions_client.h"
 #include "content/public/browser/web_contents.h"
@@ -29,21 +30,12 @@ WebXrPermissionContext::WebXrPermissionContext(
 
 WebXrPermissionContext::~WebXrPermissionContext() = default;
 
-bool WebXrPermissionContext::IsRestrictedToSecureOrigins() const {
-  return true;
-}
-
 #if BUILDFLAG(IS_ANDROID)
 // There are two other permissions that need to check corresponding OS-level
 // permissions, and they take two different approaches to this. Geolocation only
 // stores the permission ContentSetting if both requests are granted (or if the
-// site permission is "Block"). The media permissions follow something more
-// similar to this approach, first querying and storing the site-specific
-// ContentSetting and then querying for the additional OS permissions as needed.
-// However, this is done in MediaStreamDevicesController, not their permission
-// context. By persisting and then running additional code as needed, we thus
-// mimic that flow, but keep all logic contained into the permission context
-// class.
+// site permission is "Block"). The media permissions are now following the
+// approach found here.
 void WebXrPermissionContext::NotifyPermissionSet(
     const PermissionRequestID& id,
     const GURL& requesting_origin,
@@ -51,15 +43,26 @@ void WebXrPermissionContext::NotifyPermissionSet(
     BrowserPermissionCallback callback,
     bool persist,
     ContentSetting content_setting,
-    bool is_one_time) {
+    bool is_one_time,
+    bool is_final_decision) {
   DCHECK(!is_one_time);
+  DCHECK(is_final_decision);
+
+  // Note that this method calls into base class implementation version of
+  // `NotifyPermissionSet()`, which would call `UpdateTabContext()`.
+  // This is fine, even in cases where we call the base method with a parameter
+  // that does not correspond to user's answer to Chrome-level permission,
+  // because `WebXrPermissionContext` does *not* have a custom implementation
+  // for `UpdateTabContext()` - if it did, we'd need to stop calling into base
+  // class with the parameter not matching user's answer.
+
   // Only AR needs to check for additional permissions, and then only if it was
   // actually allowed.
   if (!(content_settings_type_ == ContentSettingsType::AR &&
         content_setting == ContentSetting::CONTENT_SETTING_ALLOW)) {
     PermissionContextBase::NotifyPermissionSet(
         id, requesting_origin, embedding_origin, std::move(callback), persist,
-        content_setting, is_one_time);
+        content_setting, is_one_time, is_final_decision);
     return;
   }
 
@@ -72,8 +75,7 @@ void WebXrPermissionContext::NotifyPermissionSet(
 
   content::WebContents* web_contents =
       content::WebContents::FromRenderFrameHost(
-          content::RenderFrameHost::FromID(id.render_process_id(),
-                                           id.render_frame_id()));
+          content::RenderFrameHost::FromID(id.global_render_frame_host_id()));
   if (!web_contents) {
     // If we can't get the web contents, we don't know the state of the OS
     // permission, so assume we don't have it.
@@ -107,11 +109,16 @@ void WebXrPermissionContext::NotifyPermissionSet(
 
     case PermissionRepromptState::kShow:
       // Otherwise, prompt the user that we need additional permissions.
-      PermissionsClient::Get()->RepromptForAndroidPermissions(
-          web_contents, permission_type,
-          base::BindOnce(&WebXrPermissionContext::OnAndroidPermissionDecided,
-                         weak_ptr_factory_.GetWeakPtr(), id, requesting_origin,
-                         embedding_origin, std::move(callback)));
+      permissions::PermissionsRepromptControllerAndroid::CreateForWebContents(
+          web_contents);
+      permissions::PermissionsRepromptControllerAndroid::FromWebContents(
+          web_contents)
+          ->RepromptPermissionRequest(
+              permission_type, content_settings_type(),
+              base::BindOnce(
+                  &WebXrPermissionContext::OnAndroidPermissionDecided,
+                  weak_ptr_factory_.GetWeakPtr(), id, requesting_origin,
+                  embedding_origin, std::move(callback)));
       return;
   }
 }
@@ -133,7 +140,17 @@ void WebXrPermissionContext::OnAndroidPermissionDecided(
                                : ContentSetting::CONTENT_SETTING_BLOCK;
   PermissionContextBase::NotifyPermissionSet(
       id, requesting_origin, embedding_origin, std::move(callback),
-      false /*persist*/, setting, /*is_one_time=*/false);
+      false /*persist*/, setting, /*is_one_time=*/false,
+      /*is_final_decision=*/true);
 }
+
+void WebXrPermissionContext::UpdateTabContext(
+    const permissions::PermissionRequestID& id,
+    const GURL& requesting_origin,
+    bool allowed) {
+  // See the comment in `NotifyPermissionSet()` for context on why this method
+  // should be empty.
+}
+
 #endif  // BUILDFLAG(IS_ANDROID)
 }  // namespace permissions

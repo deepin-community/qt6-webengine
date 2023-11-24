@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/types/pass_key.h"
@@ -81,20 +81,18 @@ class ExtensionMessagePort : public MessagePort {
   bool HasFrame(content::RenderFrameHost* rfh) const override;
   bool IsValidPort() override;
   void RevalidatePort() override;
-  void DispatchOnConnect(
-      const std::string& channel_name,
-      std::unique_ptr<base::DictionaryValue> source_tab,
-      int source_frame_id,
-      const ExtensionApiFrameIdMap::DocumentId& source_document_id,
-      int guest_process_id,
-      int guest_render_frame_routing_id,
-      const MessagingEndpoint& source_endpoint,
-      const std::string& target_extension_id,
-      const GURL& source_url,
-      absl::optional<url::Origin> source_origin) override;
+  void DispatchOnConnect(const std::string& channel_name,
+                         absl::optional<base::Value::Dict> source_tab,
+                         const ExtensionApiFrameIdMap::FrameData& source_frame,
+                         int guest_process_id,
+                         int guest_render_frame_routing_id,
+                         const MessagingEndpoint& source_endpoint,
+                         const std::string& target_extension_id,
+                         const GURL& source_url,
+                         absl::optional<url::Origin> source_origin) override;
   void DispatchOnDisconnect(const std::string& error_message) override;
   void DispatchOnMessage(const Message& message) override;
-  void IncrementLazyKeepaliveCount(bool is_for_native_message_connect) override;
+  void IncrementLazyKeepaliveCount(bool should_have_strong_keepalive) override;
   void DecrementLazyKeepaliveCount() override;
   void OpenPort(int process_id, const PortContext& port_context) override;
   void ClosePort(int process_id, int routing_id, int worker_thread_id) override;
@@ -135,9 +133,8 @@ class ExtensionMessagePort : public MessagePort {
   // Builds specific IPCs for a port, with correct frame or worker identifiers.
   std::unique_ptr<IPC::Message> BuildDispatchOnConnectIPC(
       const std::string& channel_name,
-      const base::DictionaryValue* source_tab,
-      int source_frame_id,
-      const ExtensionApiFrameIdMap::DocumentId& source_document_id,
+      const base::Value::Dict* source_tab,
+      const ExtensionApiFrameIdMap::FrameData& source_frame,
       int guest_process_id,
       int guest_render_frame_routing_id,
       const MessagingEndpoint& source_endpoint,
@@ -190,7 +187,7 @@ class ExtensionMessagePort : public MessagePort {
   bool asynchronous_reply_pending_ = false;
 
   // Used in IncrementLazyKeepaliveCount
-  raw_ptr<ExtensionHost> background_host_ptr_ = nullptr;
+  raw_ptr<ExtensionHost, DanglingUntriaged> background_host_ptr_ = nullptr;
   std::unique_ptr<FrameTracker> frame_tracker_;
 };
 

@@ -1,10 +1,11 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 import("//base/trace_event/tracing.gni")
 import("//build/buildflag_header.gni")
 import("//build/config/compiler/compiler.gni")
+import("//build/config/features.gni")
 import("//build/config/nacl/config.gni")
 import("//tools/ipc_fuzzer/ipc_fuzzer.gni")
 
@@ -33,7 +34,6 @@ component("bindings_base") {
   sources = [
     "array_data_view.h",
     "array_traits.h",
-    "array_traits_protobuf.h",
     "array_traits_span.h",
     "array_traits_stl.h",
     "associated_group.h",
@@ -41,6 +41,7 @@ component("bindings_base") {
     "clone_traits.h",
     "connection_group.cc",
     "connection_group.h",
+    "default_construct_traits.h",
     "deprecated_interface_types_forward.h",
     "disconnect_reason.h",
     "enum_traits.h",
@@ -121,7 +122,6 @@ component("bindings_base") {
     ":mojo_buildflags",
     "//base",
     "//mojo/public/cpp/system",
-    "//third_party/protobuf:protobuf_lite",
   ]
 
   if (enable_ipc_fuzzer) {
@@ -170,8 +170,6 @@ component("bindings") {
     "lib/interface_ptr_state.h",
     "lib/interface_serialization.h",
     "lib/message_dispatcher.cc",
-    "lib/message_quota_checker.cc",
-    "lib/message_quota_checker.h",
     "lib/multiplex_router.cc",
     "lib/multiplex_router.h",
     "lib/native_enum_data.h",
@@ -265,7 +263,20 @@ source_set("struct_traits") {
   ]
 }
 
-if (!is_ios) {
+# This is provided as a separate target so other targets can use Mojo bindings
+# without necessarily linking to protobuf.
+source_set("protobuf_support") {
+  public = [
+    "array_traits_protobuf.h",
+    "map_traits_protobuf.h",
+  ]
+  public_deps = [
+    ":bindings",
+    "//third_party/protobuf:protobuf_lite",
+  ]
+}
+
+if (use_blink) {
   component("wtf_support") {
     sources = [
       "array_traits_web_vector.h",

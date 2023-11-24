@@ -58,7 +58,7 @@ const AtomicString& FrameTree::GetName() const {
     if (frame) {
       UseCounter::Count(frame->GetDocument(),
                         WebFeature::kCrossOriginMainFrameNulledNameAccessed);
-      if (!name_.IsEmpty()) {
+      if (!name_.empty()) {
         UseCounter::Count(
             frame->GetDocument(),
             WebFeature::kCrossOriginMainFrameNulledNonEmptyNameAccessed);
@@ -68,7 +68,7 @@ const AtomicString& FrameTree::GetName() const {
 
   if (cross_site_cross_browsing_context_group_set_nulled_name_) {
     auto* frame = DynamicTo<LocalFrame>(this_frame_.Get());
-    if (frame && frame->IsMainFrame() && !name_.IsEmpty()) {
+    if (frame && frame->IsOutermostMainFrame() && !name_.empty()) {
       UseCounter::Count(
           frame->GetDocument(),
           WebFeature::
@@ -109,7 +109,7 @@ void FrameTree::SetName(const AtomicString& name,
   experimental_set_nulled_name_ = false;
 
   auto* frame = DynamicTo<LocalFrame>(this_frame_.Get());
-  if (frame && frame->IsMainFrame() && !name.IsEmpty()) {
+  if (frame && frame->IsOutermostMainFrame() && !name.empty()) {
     // TODO(shuuran): remove this once we have gathered the data
     cross_site_cross_browsing_context_group_set_nulled_name_ = false;
   }
@@ -117,20 +117,20 @@ void FrameTree::SetName(const AtomicString& name,
 }
 
 DISABLE_CFI_PERF
-Frame* FrameTree::Parent(FrameTreeBoundary frame_tree_boundary) const {
-  return this_frame_->Parent(frame_tree_boundary);
+Frame* FrameTree::Parent() const {
+  return this_frame_->Parent();
 }
 
-Frame& FrameTree::Top(FrameTreeBoundary frame_tree_boundary) const {
-  return *this_frame_->Top(frame_tree_boundary);
+Frame& FrameTree::Top() const {
+  return *this_frame_->Top();
 }
 
-Frame* FrameTree::NextSibling(FrameTreeBoundary frame_tree_boundary) const {
-  return this_frame_->NextSibling(frame_tree_boundary);
+Frame* FrameTree::NextSibling() const {
+  return this_frame_->NextSibling();
 }
 
-Frame* FrameTree::FirstChild(FrameTreeBoundary frame_tree_boundary) const {
-  return this_frame_->FirstChild(frame_tree_boundary);
+Frame* FrameTree::FirstChild() const {
+  return this_frame_->FirstChild();
 }
 
 Frame* FrameTree::ScopedChild(unsigned index) const {
@@ -148,7 +148,7 @@ Frame* FrameTree::ScopedChild(unsigned index) const {
 }
 
 Frame* FrameTree::ScopedChild(const AtomicString& name) const {
-  if (name.IsEmpty())
+  if (name.empty())
     return nullptr;
 
   for (Frame* child = FirstChild(); child;
@@ -245,29 +245,22 @@ Frame* FrameTree::FindFrameForNavigationInternal(
   }
 
   if (EqualIgnoringASCIICase(name, "_self") ||
-      EqualIgnoringASCIICase(name, "_current") || name.IsEmpty()) {
+      EqualIgnoringASCIICase(name, "_current") || name.empty()) {
     return this_frame_;
   }
 
   if (EqualIgnoringASCIICase(name, "_top"))
-    return &Top(FrameTreeBoundary::kFenced);
+    return &Top();
 
   // The target _unfencedTop should only be treated as a special name in
   // opaque-ads mode fenced frames.
-  // TODO(crbug.com/1262022): Simplify check when ShadowDOM fenced frames are
-  // eventually removed.
   if (EqualIgnoringASCIICase(name, "_unfencedTop")) {
-    // In ShadowDOM, we can just return the unfenced top frame, because it
-    // exists in the renderer process.
-    if (this_frame_.Get()->IsInShadowDOMOpaqueAdsFencedFrameTree()) {
-      return &Top();
-    }
-    // In MPArch, because the fenced frame tree is isolated in the renderer
-    // process, we instead set a flag that will later indicate to the browser
+    // In fenced frames, we set a flag that will later indicate to the browser
     // that this is an _unfencedTop navigation, and return the current frame
     // so that the renderer-side checks will succeed.
     // TODO(crbug.com/1315802): Refactor MPArch _unfencedTop handling.
-    if (this_frame_.Get()->IsInMPArchOpaqueAdsFencedFrameTree() &&
+    if (this_frame_.Get()->GetFencedFrameMode() ==
+            mojom::blink::FencedFrameMode::kOpaqueAds &&
         request != nullptr) {
       request->SetIsUnfencedTopNavigation(true);
       return this_frame_;
@@ -275,9 +268,7 @@ Frame* FrameTree::FindFrameForNavigationInternal(
   }
 
   if (EqualIgnoringASCIICase(name, "_parent")) {
-    return Parent(FrameTreeBoundary::kFenced)
-               ? Parent(FrameTreeBoundary::kFenced)
-               : this_frame_.Get();
+    return Parent() ? Parent() : this_frame_.Get();
   }
 
   // Since "_blank" should never be any frame's name, the following just amounts
@@ -287,8 +278,7 @@ Frame* FrameTree::FindFrameForNavigationInternal(
 
   // Search subtree starting with this frame first.
   for (Frame* frame = this_frame_; frame;
-       frame = frame->Tree().TraverseNext(this_frame_,
-                                          FrameTreeBoundary::kFenced)) {
+       frame = frame->Tree().TraverseNext(this_frame_)) {
     if (frame->Tree().GetName() == name &&
         To<LocalFrame>(this_frame_.Get())->CanNavigate(*frame, url)) {
       return frame;
@@ -302,10 +292,8 @@ Frame* FrameTree::FindFrameForNavigationInternal(
   if (!page)
     return nullptr;
 
-  for (Frame *top = &this_frame_->Tree().Top(FrameTreeBoundary::kFenced),
-             *frame = top;
-       frame;
-       frame = frame->Tree().TraverseNext(top, FrameTreeBoundary::kFenced)) {
+  for (Frame *top = &this_frame_->Tree().Top(), *frame = top; frame;
+       frame = frame->Tree().TraverseNext(top)) {
     // Skip descendants of this frame that were searched above to avoid
     // showing duplicate console messages if a frame is found by name
     // but access is blocked.
@@ -329,8 +317,7 @@ Frame* FrameTree::FindFrameForNavigationInternal(
     if (other_page == page || other_page->IsClosing())
       continue;
     for (Frame* frame = other_page->MainFrame(); frame;
-         frame =
-             frame->Tree().TraverseNext(nullptr, FrameTreeBoundary::kFenced)) {
+         frame = frame->Tree().TraverseNext(nullptr)) {
       if (frame->Tree().GetName() == name &&
           To<LocalFrame>(this_frame_.Get())->CanNavigate(*frame, url)) {
         return frame;
@@ -365,9 +352,8 @@ bool FrameTree::IsDescendantOf(const Frame* ancestor) const {
 }
 
 DISABLE_CFI_PERF
-Frame* FrameTree::TraverseNext(const Frame* stay_within,
-                               FrameTreeBoundary frame_tree_boundary) const {
-  Frame* child = FirstChild(frame_tree_boundary);
+Frame* FrameTree::TraverseNext(const Frame* stay_within) const {
+  Frame* child = FirstChild();
   if (child) {
     DCHECK(!stay_within || child->Tree().IsDescendantOf(stay_within));
     return child;
@@ -376,20 +362,18 @@ Frame* FrameTree::TraverseNext(const Frame* stay_within,
   if (this_frame_ == stay_within)
     return nullptr;
 
-  Frame* sibling = NextSibling(frame_tree_boundary);
+  Frame* sibling = NextSibling();
   if (sibling) {
     DCHECK(!stay_within || sibling->Tree().IsDescendantOf(stay_within));
     return sibling;
   }
 
   Frame* frame = this_frame_;
-  while (!sibling &&
-         (!stay_within ||
-          frame->Tree().Parent(frame_tree_boundary) != stay_within)) {
-    frame = frame->Tree().Parent(frame_tree_boundary);
+  while (!sibling && (!stay_within || frame->Tree().Parent() != stay_within)) {
+    frame = frame->Tree().Parent();
     if (!frame)
       return nullptr;
-    sibling = frame->Tree().NextSibling(frame_tree_boundary);
+    sibling = frame->Tree().NextSibling();
   }
 
   if (frame) {

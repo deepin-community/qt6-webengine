@@ -16,7 +16,7 @@
 class GrMockTexture : public GrTexture {
 public:
     GrMockTexture(GrMockGpu* gpu,
-                  SkBudgeted budgeted,
+                  skgpu::Budgeted budgeted,
                   SkISize dimensions,
                   GrProtected isProtected,
                   GrMipmapStatus mipmapStatus,
@@ -76,6 +76,8 @@ protected:
     }
 
 private:
+    void onSetLabel() override{}
+
     GrMockTextureInfo fInfo;
 
     using INHERITED = GrTexture;
@@ -84,7 +86,7 @@ private:
 class GrMockRenderTarget : public GrRenderTarget {
 public:
     GrMockRenderTarget(GrMockGpu* gpu,
-                       SkBudgeted budgeted,
+                       skgpu::Budgeted budgeted,
                        SkISize dimensions,
                        int sampleCnt,
                        GrProtected isProtected,
@@ -152,6 +154,8 @@ protected:
             , fInfo(info) {}
 
 private:
+    void onSetLabel() override{}
+
     GrMockRenderTargetInfo fInfo;
 
     using INHERITED = GrRenderTarget;
@@ -161,7 +165,7 @@ class GrMockTextureRenderTarget : public GrMockTexture, public GrMockRenderTarge
 public:
     // Internally created.
     GrMockTextureRenderTarget(GrMockGpu* gpu,
-                              SkBudgeted budgeted,
+                              skgpu::Budgeted budgeted,
                               SkISize dimensions,
                               int sampleCnt,
                               GrProtected isProtected,
@@ -220,6 +224,8 @@ private:
         return GrSurface::ComputeSize(this->backendFormat(), this->dimensions(),
                                       numColorSamples, this->mipmapped());
     }
+
+    void onSetLabel() override{}
 
     // This avoids an inherits via dominance warning on MSVC.
     void computeScratchKey(skgpu::ScratchKey* key) const override {

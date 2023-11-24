@@ -14,7 +14,6 @@
 
 #include "connections/implementation/mediums/mediums.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 
@@ -24,10 +23,17 @@ BluetoothClassic& Mediums::GetBluetoothClassic() { return bluetooth_classic_; }
 
 Ble& Mediums::GetBle() { return ble_; }
 
+BleV2& Mediums::GetBleV2() { return ble_v2_; }
+
+Wifi& Mediums::GetWifi() { return wifi_; }
+
 WifiLan& Mediums::GetWifiLan() { return wifi_lan_; }
+
+WifiHotspot& Mediums::GetWifiHotspot() { return wifi_hotspot_; }
+
+WifiDirect& Mediums::GetWifiDirect() { return wifi_direct_; }
 
 mediums::WebRtc& Mediums::GetWebRtc() { return webrtc_; }
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location

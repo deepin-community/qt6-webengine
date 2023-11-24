@@ -1,10 +1,10 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 #ifndef CONTENT_BROWSER_DEVTOOLS_FRAME_AUTO_ATTACHER_H_
 #define CONTENT_BROWSER_DEVTOOLS_FRAME_AUTO_ATTACHER_H_
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "content/browser/devtools/protocol/target_auto_attacher.h"
 #include "content/browser/devtools/service_worker_devtools_manager.h"
 #include "content/browser/interest_group/debuggable_auction_worklet_tracker.h"

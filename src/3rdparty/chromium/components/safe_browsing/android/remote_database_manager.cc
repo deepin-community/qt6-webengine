@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,24 +8,26 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/timer/elapsed_timer.h"
-#include "components/safe_browsing/android/safe_browsing_api_handler.h"
+#include "components/safe_browsing/android/real_time_url_checks_allowlist.h"
+#include "components/safe_browsing/android/safe_browsing_api_handler_bridge.h"
 #include "components/safe_browsing/core/browser/db/v4_get_hash_protocol_manager.h"
 #include "components/safe_browsing/core/browser/db/v4_protocol_manager_util.h"
+#include "components/safe_browsing/core/common/features.h"
 #include "components/variations/variations_associated_data.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
 using content::BrowserThread;
-
 namespace safe_browsing {
 
+using IsInAllowlistResult = RealTimeUrlChecksAllowlist::IsInAllowlistResult;
 namespace {
 
 // Android field trial for controlling types_to_check.
@@ -57,8 +59,8 @@ class RemoteSafeBrowsingDatabaseManager::ClientRequest {
   }
 
  private:
-  raw_ptr<Client> client_;
-  raw_ptr<RemoteSafeBrowsingDatabaseManager> db_manager_;
+  raw_ptr<Client, DanglingUntriaged> client_;
+  raw_ptr<RemoteSafeBrowsingDatabaseManager, DanglingUntriaged> db_manager_;
   GURL url_;
   base::ElapsedTimer timer_;
   base::WeakPtrFactory<ClientRequest> weak_factory_{this};
@@ -76,8 +78,9 @@ void RemoteSafeBrowsingDatabaseManager::ClientRequest::OnRequestDoneWeak(
     SBThreatType matched_threat_type,
     const ThreatMetadata& metadata) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  if (!req)
+  if (!req) {
     return;  // Previously canceled
+  }
   req->OnRequestDone(matched_threat_type, metadata);
 }
 
@@ -124,7 +127,7 @@ RemoteSafeBrowsingDatabaseManager::RemoteSafeBrowsingDatabaseManager()
     // By default, we check all types except a few.
     static_assert(
         network::mojom::RequestDestination::kMaxValue ==
-            network::mojom::RequestDestination::kFencedframe,
+            network::mojom::RequestDestination::kWebIdentity,
         "Decide if new request destination should be skipped on mobile.");
     for (int t_int = 0;
          t_int <=
@@ -191,31 +194,29 @@ bool RemoteSafeBrowsingDatabaseManager::ChecksAreAlwaysAsync() const {
 bool RemoteSafeBrowsingDatabaseManager::CheckBrowseUrl(
     const GURL& url,
     const SBThreatTypeSet& threat_types,
-    Client* client) {
+    Client* client,
+    MechanismExperimentHashDatabaseCache experiment_cache_selection) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK(!threat_types.empty());
   DCHECK(SBThreatTypeSetIsValidForCheckBrowseUrl(threat_types));
-  if (!enabled_)
+  if (!enabled_) {
     return true;
+  }
 
   bool can_check_url = CanCheckUrl(url);
   UMA_HISTOGRAM_BOOLEAN("SB2.RemoteCall.CanCheckUrl", can_check_url);
-  if (!can_check_url)
+  if (!can_check_url) {
     return true;  // Safe, continue right away.
+  }
 
   std::unique_ptr<ClientRequest> req(new ClientRequest(client, this, url));
 
   DVLOG(1) << "Checking for client " << client << " and URL " << url;
-  SafeBrowsingApiHandler* api_handler = SafeBrowsingApiHandler::GetInstance();
-  // This shouldn't happen since SafeBrowsingResourceThrottle and
-  // SubresourceFilterSafeBrowsingActivationThrottle check IsSupported()
-  // earlier.
-  DCHECK(api_handler) << "SafeBrowsingApiHandler was never constructed";
-
   auto callback =
-      std::make_unique<SafeBrowsingApiHandler::URLCheckCallbackMeta>(
+      std::make_unique<SafeBrowsingApiHandlerBridge::ResponseCallback>(
           base::BindOnce(&ClientRequest::OnRequestDoneWeak, req->GetWeakPtr()));
-  api_handler->StartURLCheck(std::move(callback), url, threat_types);
+  SafeBrowsingApiHandlerBridge::GetInstance().StartURLCheck(std::move(callback),
+                                                            url, threat_types);
 
   current_requests_.push_back(req.release());
 
@@ -243,26 +244,26 @@ bool RemoteSafeBrowsingDatabaseManager::CheckResourceUrl(const GURL& url,
   return true;
 }
 
-AsyncMatch
-RemoteSafeBrowsingDatabaseManager::CheckUrlForHighConfidenceAllowlist(
+bool RemoteSafeBrowsingDatabaseManager::CheckUrlForHighConfidenceAllowlist(
     const GURL& url,
-    Client* client) {
+    const std::string& metric_variation) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  if (!enabled_ || !CanCheckUrl(url))
-    return AsyncMatch::NO_MATCH;
+  if (!enabled_ || !CanCheckUrl(url)) {
+    return false;
+  }
 
-  // TODO(crbug.com/1014202): Make this call async.
-  SafeBrowsingApiHandler* api_handler = SafeBrowsingApiHandler::GetInstance();
-  bool is_match = api_handler->StartHighConfidenceAllowlistCheck(url);
-  return is_match ? AsyncMatch::MATCH : AsyncMatch::NO_MATCH;
-}
+  if (base::FeatureList::IsEnabled(kComponentUpdaterAndroidProtegoAllowlist)) {
+    // SafeBrowsingComponentUpdaterAndroidProtegoAllowlist is enabled.
+    IsInAllowlistResult match_result =
+        RealTimeUrlChecksAllowlist::GetInstance()->IsInAllowlist(url);
+    // Note that if the allowlist is unavailable, we say that is a match.
+    return match_result == IsInAllowlistResult::kInAllowlist ||
+           match_result == IsInAllowlistResult::kAllowlistUnavailable;
+  }
 
-bool RemoteSafeBrowsingDatabaseManager::CheckUrlForAccuracyTips(
-    const GURL& url,
-    Client* client) {
-  NOTREACHED();
-  return true;
+  return SafeBrowsingApiHandlerBridge::GetInstance()
+      .StartHighConfidenceAllowlistCheck(url);
 }
 
 bool RemoteSafeBrowsingDatabaseManager::CheckUrlForSubresourceFilter(
@@ -270,21 +271,17 @@ bool RemoteSafeBrowsingDatabaseManager::CheckUrlForSubresourceFilter(
     Client* client) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  if (!enabled_ || !CanCheckUrl(url))
+  if (!enabled_ || !CanCheckUrl(url)) {
     return true;
+  }
 
   std::unique_ptr<ClientRequest> req(new ClientRequest(client, this, url));
 
   DVLOG(1) << "Checking for client " << client << " and URL " << url;
-  SafeBrowsingApiHandler* api_handler = SafeBrowsingApiHandler::GetInstance();
-  // This shouldn't happen since SafeBrowsingResourceThrottle and
-  // SubresourceFilterSafeBrowsingActivationThrottle check IsSupported()
-  // earlier.
-  DCHECK(api_handler) << "SafeBrowsingApiHandler was never constructed";
   auto callback =
-      std::make_unique<SafeBrowsingApiHandler::URLCheckCallbackMeta>(
+      std::make_unique<SafeBrowsingApiHandlerBridge::ResponseCallback>(
           base::BindOnce(&ClientRequest::OnRequestDoneWeak, req->GetWeakPtr()));
-  api_handler->StartURLCheck(
+  SafeBrowsingApiHandlerBridge::GetInstance().StartURLCheck(
       std::move(callback), url,
       CreateSBThreatTypeSet(
           {SB_THREAT_TYPE_SUBRESOURCE_FILTER, SB_THREAT_TYPE_URL_PHISHING}));
@@ -305,9 +302,9 @@ AsyncMatch RemoteSafeBrowsingDatabaseManager::CheckCsdAllowlistUrl(
     return AsyncMatch::MATCH;
   }
 
-  // TODO(crbug.com/995926): Make this call async
-  SafeBrowsingApiHandler* api_handler = SafeBrowsingApiHandler::GetInstance();
-  bool is_match = api_handler->StartCSDAllowlistCheck(url);
+  // TODO(crbug.com/995926): Make this call async.
+  bool is_match =
+      SafeBrowsingApiHandlerBridge::GetInstance().StartCSDAllowlistCheck(url);
   return is_match ? AsyncMatch::MATCH : AsyncMatch::NO_MATCH;
 }
 
@@ -330,10 +327,6 @@ safe_browsing::ThreatSource RemoteSafeBrowsingDatabaseManager::GetThreatSource()
 
 bool RemoteSafeBrowsingDatabaseManager::IsDownloadProtectionEnabled() const {
   return false;
-}
-
-bool RemoteSafeBrowsingDatabaseManager::IsSupported() const {
-  return SafeBrowsingApiHandler::GetInstance() != nullptr;
 }
 
 void RemoteSafeBrowsingDatabaseManager::StartOnIOThread(

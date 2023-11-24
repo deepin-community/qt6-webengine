@@ -80,7 +80,9 @@ def _CheckNonInclusiveLanguage(input_api, output_api, source_file_filter=None):
     matches = []
     for f in input_api.AffectedFiles(include_deletes=False,
                                      file_filter=source_file_filter):
-        for line_num, line in f.ChangedContents():
+        line_num = 0
+        for line in f.NewContents():
+            line_num += 1
             for reg in NONINCLUSIVE_REGEX_LIST:
                 match = reg.search(line)
                 if match:
@@ -99,21 +101,68 @@ def _CheckNonInclusiveLanguage(input_api, output_api, source_file_filter=None):
 
 def _NonInclusiveFileFilter(file):
     filter_list = [
+        "Doxyfile",  # References to main pages
         "PRESUBMIT.py",  # Non-inclusive language check data
+        "PRESUBMIT.py.tint",  # Non-inclusive language check data
+        "docs/dawn/debug_markers.md",  # External URL
+        "docs/dawn/infra.md",  # Infra settings
         "docs/tint/spirv-input-output-variables.md",  # External URL
-        "test/tint/samples/compute_boids.wgsl ",  # External URL
+        "infra/config/global/generated/cr-buildbucket.cfg",  # Infra settings
+        "infra/config/global/main.star",  # Infra settings
+        "infra/kokoro/windows/build.bat",  # External URL
+        "src/dawn/common/GPUInfo.cpp",  # External URL
+        "src/dawn/native/metal/BackendMTL.mm",  # OSX Constant
+        "src/dawn/native/vulkan/SamplerVk.cpp",  # External URL
+        "src/dawn/native/vulkan/TextureVk.cpp",  # External URL
+        "src/tools/src/cmd/run-cts/main.go",  # Terminal type name
+        "src/dawn/samples/ComputeBoids.cpp",  # External URL
+        "src/dawn/tests/end2end/DepthBiasTests.cpp",  # External URL
+        "src/tint/transform/canonicalize_entry_point_io.cc",  # External URL
+        "test/tint/samples/compute_boids.wgsl",  # External URL
+        "third_party/khronos/KHR/khrplatform.h",  # Third party file
+        "tools/roll-all",  # Branch name
+        "tools/src/container/key.go",  # External URL
+        "go.sum",  # External URL
     ]
-    return file in filter_list
+    return file.LocalPath() not in filter_list
+
+
+def _CheckNoStaleGen(input_api, output_api):
+    results = []
+    try:
+        go = input_api.os_path.join(input_api.change.RepositoryRoot(), "tools",
+                                    "golang", "bin", "go")
+        if input_api.is_windows:
+            go += '.exe'
+        input_api.subprocess.check_call_out(
+            [go, "run", "tools/src/cmd/gen/main.go", "--check-stale"],
+            stdout=input_api.subprocess.PIPE,
+            stderr=input_api.subprocess.PIPE,
+            cwd=input_api.change.RepositoryRoot())
+    except input_api.subprocess.CalledProcessError as e:
+        if input_api.is_committing:
+            results.append(output_api.PresubmitError('%s' % (e, )))
+        else:
+            results.append(output_api.PresubmitPromptWarning('%s' % (e, )))
+    return results
 
 
 def _DoCommonChecks(input_api, output_api):
     results = []
+    results.extend(_CheckNoStaleGen(input_api, output_api))
     results.extend(
         input_api.canned_checks.CheckChangedLUCIConfigs(input_api, output_api))
+
+    result_factory = output_api.PresubmitPromptWarning
+    if input_api.is_committing:
+        result_factory = output_api.PresubmitError
+
     results.extend(
-        input_api.canned_checks.CheckPatchFormatted(input_api,
-                                                    output_api,
-                                                    check_python=True))
+        input_api.canned_checks.CheckPatchFormatted(
+            input_api,
+            output_api,
+            check_python=True,
+            result_factory=result_factory))
     results.extend(
         input_api.canned_checks.CheckChangeHasDescription(
             input_api, output_api))

@@ -40,6 +40,7 @@ class StyleRequest {
 
  public:
   enum RequestType { kForRenderer, kForComputedStyle };
+  enum RulesToInclude { kUAOnly, kAll };
 
   StyleRequest() = default;
 
@@ -48,6 +49,11 @@ class StyleRequest {
   const ComputedStyle* parent_override{nullptr};
   const ComputedStyle* layout_parent_override{nullptr};
   const ComputedStyle* originating_element_style{nullptr};
+  // The styled element may be different from the matched element for SVG <use>
+  // instantiations. In those cases we pass in the element that gets the style
+  // as styled_element while the element matching the rules are the one passed
+  // in the ElementResolveContext.
+  Element* styled_element{nullptr};
   RuleMatchingBehavior matching_behavior{kMatchAllRules};
 
   PseudoId pseudo_id{kPseudoIdNone};
@@ -55,6 +61,7 @@ class StyleRequest {
   ScrollbarPart scrollbar_part{kNoPart};
   CustomScrollbar* scrollbar{nullptr};
   AtomicString pseudo_argument{g_null_atom};
+  RulesToInclude rules_to_include{kAll};
 
   explicit StyleRequest(const ComputedStyle* parent_override)
       : parent_override(parent_override),
@@ -68,7 +75,7 @@ class StyleRequest {
         pseudo_id(pseudo_id),
         pseudo_argument(pseudo_argument) {
     DCHECK(!IsTransitionPseudoElement(pseudo_id) ||
-           pseudo_id == kPseudoIdPageTransition || pseudo_argument);
+           pseudo_id == kPseudoIdViewTransition || pseudo_argument);
   }
 
   StyleRequest(PseudoId pseudo_id,

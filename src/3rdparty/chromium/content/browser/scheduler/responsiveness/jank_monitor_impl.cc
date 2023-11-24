@@ -1,11 +1,11 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/scheduler/responsiveness/jank_monitor_impl.h"
 
-#include "base/callback_helpers.h"
 #include "base/compiler_specific.h"
+#include "base/functional/callback_helpers.h"
 #include "base/observer_list.h"
 #include "base/task/thread_pool.h"
 #include "build/build_config.h"
@@ -310,7 +310,7 @@ JankMonitorImpl::ThreadExecutionState::CheckJankiness() {
   }
 
   // Mark that the target thread is janky and notify the monitor thread.
-  return task_execution_metadata_.back().identifier;
+  return task_execution_metadata_.back().identifier.get();
 }
 
 void JankMonitorImpl::ThreadExecutionState::WillRunTaskOrEvent(
@@ -334,7 +334,8 @@ void JankMonitorImpl::ThreadExecutionState::DidRunTaskOrEvent(
     // in context menus, among others). Simply ignore the mismatches for now.
     // See https://crbug.com/929813 for the details of why the mismatch
     // happens.
-#if (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)) && defined(USE_OZONE)
+#if (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)) && \
+    BUILDFLAG(IS_OZONE)
     task_execution_metadata_.clear();
 #endif
     return;

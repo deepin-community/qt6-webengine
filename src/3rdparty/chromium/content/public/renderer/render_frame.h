@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -50,16 +50,11 @@ class Rect;
 class RectF;
 }  // namespace gfx
 
-namespace network {
-class SharedURLLoaderFactory;
-}  // namespace network
-
 namespace content {
 
 class RenderAccessibility;
 struct RenderFrameMediaPlaybackOptions;
 class RenderFrameVisitor;
-class RenderView;
 struct WebPluginInfo;
 
 // A class that takes a snapshot of the accessibility tree. Accessibility
@@ -99,29 +94,6 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
                                    public IPC::Sender,
                                    public base::SupportsUserData {
  public:
-  // These numeric values are used in UMA logs; do not change them.
-  enum PeripheralContentStatus {
-    // Content is peripheral, and should be throttled, but is not tiny.
-    CONTENT_STATUS_PERIPHERAL = 0,
-    // Content is essential because it's same-origin with the top-level frame.
-    CONTENT_STATUS_ESSENTIAL_SAME_ORIGIN = 1,
-    // Content is essential even though it's cross-origin, because it's large.
-    CONTENT_STATUS_ESSENTIAL_CROSS_ORIGIN_BIG = 2,
-    // Content is essential because there's large content from the same origin.
-    CONTENT_STATUS_ESSENTIAL_CROSS_ORIGIN_ALLOWLISTED = 3,
-    // Content is tiny in size. These are usually blocked.
-    CONTENT_STATUS_TINY = 4,
-    // Deprecated, as now entirely obscured content is treated as tiny.
-    DEPRECATED_CONTENT_STATUS_UNKNOWN_SIZE = 5,
-    // Must be last.
-    CONTENT_STATUS_NUM_ITEMS
-  };
-
-  enum RecordPeripheralDecision {
-    DONT_RECORD_DECISION = 0,
-    RECORD_DECISION = 1
-  };
-
   // Returns the RenderFrame given a WebLocalFrame.
   static RenderFrame* FromWebFrame(blink::WebLocalFrame* web_frame);
 
@@ -130,14 +102,6 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
 
   // Visit all live RenderFrames.
   static void ForEach(RenderFrameVisitor* visitor);
-
-  // Returns the routing ID for |web_frame|, whether it is a WebLocalFrame in
-  // this process or a WebRemoteFrame placeholder for a frame in a different
-  // process.
-  static int GetRoutingIdForWebFrame(blink::WebFrame* web_frame);
-
-  // Returns the RenderView associated with this frame.
-  virtual RenderView* GetRenderView() = 0;
 
   // Returns the RenderFrame associated with the main frame of the WebView.
   // See `blink::WebView::MainFrame()`. Note that this will be null when
@@ -211,13 +175,6 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
   virtual blink::AssociatedInterfaceProvider*
   GetRemoteAssociatedInterfaces() = 0;
 
-#if BUILDFLAG(ENABLE_PLUGINS)
-  // Used by plugins that load data in this RenderFrame to update the loading
-  // notifications.
-  virtual void PluginDidStartLoading() = 0;
-  virtual void PluginDidStopLoading() = 0;
-#endif
-
   // Notifies the browser of text selection changes made.
   virtual void SetSelectedText(const std::u16string& selection_text,
                                size_t offset,
@@ -261,9 +218,6 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
 
   // Set the accessibility mode to force creation of RenderAccessibility.
   virtual void SetAccessibilityModeForTest(ui::AXMode new_mode) = 0;
-
-  virtual scoped_refptr<network::SharedURLLoaderFactory>
-  GetURLLoaderFactory() = 0;
 
   // Per-frame media playback options passed to each WebMediaPlayer.
   virtual const RenderFrameMediaPlaybackOptions&

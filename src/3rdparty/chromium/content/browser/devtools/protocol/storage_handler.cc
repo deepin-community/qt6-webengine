@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,12 +9,15 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
+#include "base/scoped_observation.h"
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
+#include "components/services/storage/privileged/mojom/indexed_db_control.mojom.h"
+#include "components/services/storage/public/cpp/buckets/bucket_locator.h"
 #include "components/services/storage/public/mojom/cache_storage_control.mojom.h"
-#include "components/services/storage/public/mojom/indexed_db_control.mojom.h"
 #include "content/browser/devtools/protocol/browser_handler.h"
+#include "content/browser/devtools/protocol/handler_helpers.h"
 #include "content/browser/devtools/protocol/network.h"
 #include "content/browser/devtools/protocol/network_handler.h"
 #include "content/browser/devtools/protocol/storage.h"
@@ -133,9 +136,7 @@ class StorageHandler::CacheStorageObserver
   CacheStorageObserver(const CacheStorageObserver&) = delete;
   CacheStorageObserver& operator=(const CacheStorageObserver&) = delete;
 
-  ~CacheStorageObserver() override {
-    DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  }
+  ~CacheStorageObserver() override { DCHECK_CURRENTLY_ON(BrowserThread::UI); }
 
   void TrackStorageKey(const blink::StorageKey& storage_key) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -154,9 +155,7 @@ class StorageHandler::CacheStorageObserver
     auto found = storage_keys_.find(storage_key);
     if (found == storage_keys_.end())
       return;
-    // TODO(https://crbug.com/1199077): NotifyCacheStorageListChanged should be
-    // updated to accept `storage_key`'s serialization.
-    owner_->NotifyCacheStorageListChanged(storage_key.origin().Serialize());
+    owner_->NotifyCacheStorageListChanged(storage_key);
   }
 
   void OnCacheContentChanged(const blink::StorageKey& storage_key,
@@ -164,10 +163,7 @@ class StorageHandler::CacheStorageObserver
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     if (storage_keys_.find(storage_key) == storage_keys_.end())
       return;
-    // TODO(https://crbug.com/1199077): NotifyCacheStorageListChanged should be
-    // updated to accept `storage_key`'s serialization.
-    owner_->NotifyCacheStorageContentChanged(storage_key.origin().Serialize(),
-                                             cache_name);
+    owner_->NotifyCacheStorageContentChanged(storage_key, cache_name);
   }
 
  private:
@@ -198,44 +194,49 @@ class StorageHandler::IndexedDBObserver
 
   ~IndexedDBObserver() override { DCHECK_CURRENTLY_ON(BrowserThread::UI); }
 
-  void TrackOrigin(const blink::StorageKey& storage_key) {
+  void TrackStorageKey(const blink::StorageKey& storage_key) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     if (storage_keys_.find(storage_key) != storage_keys_.end())
       return;
     storage_keys_.insert(storage_key);
   }
 
-  void UntrackOrigin(const blink::StorageKey& storage_key) {
+  void UntrackStorageKey(const blink::StorageKey& storage_key) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     storage_keys_.erase(storage_key);
   }
 
-  void OnIndexedDBListChanged(const blink::StorageKey& storage_key) override {
+  void OnIndexedDBListChanged(
+      const storage::BucketLocator& bucket_locator) override {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     if (!owner_)
       return;
-    auto found = storage_keys_.find(storage_key);
+    // TODO(crbug.com/1315371): Allow custom bucket names.
+    auto found = storage_keys_.find(bucket_locator.storage_key);
     if (found == storage_keys_.end())
       return;
-    // TODO(https://crbug.com/1199077): Pass storage key instead once
-    // Chrome DevTools Protocol (CDP) supports it.
-    owner_->NotifyIndexedDBListChanged(storage_key.origin().Serialize());
+
+    owner_->NotifyIndexedDBListChanged(
+        bucket_locator.storage_key.origin().Serialize(),
+        bucket_locator.storage_key.Serialize());
   }
 
   void OnIndexedDBContentChanged(
-      const blink::StorageKey& storage_key,
+      const storage::BucketLocator& bucket_locator,
       const std::u16string& database_name,
       const std::u16string& object_store_name) override {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     if (!owner_)
       return;
-    auto found = storage_keys_.find(storage_key);
+    // TODO(crbug.com/1315371): Allow custom bucket names.
+    auto found = storage_keys_.find(bucket_locator.storage_key);
     if (found == storage_keys_.end())
       return;
-    // TODO(https://crbug.com/1199077): Pass storage key instead once
-    // Chrome DevTools Protocol (CDP) supports it.
-    owner_->NotifyIndexedDBContentChanged(storage_key.origin().Serialize(),
-                                          database_name, object_store_name);
+
+    owner_->NotifyIndexedDBContentChanged(
+        bucket_locator.storage_key.origin().Serialize(),
+        bucket_locator.storage_key.Serialize(), database_name,
+        object_store_name);
   }
 
  private:
@@ -262,10 +263,53 @@ class StorageHandler::IndexedDBObserver
   mojo::Receiver<storage::mojom::IndexedDBObserver> receiver_;
 };
 
+// Observer that listens on the UI thread for shared storage notifications and
+// informs the StorageHandler on the UI thread for origins of interest.
+// Created and used exclusively on the UI thread.
+class StorageHandler::SharedStorageObserver
+    : content::SharedStorageWorkletHostManager::SharedStorageObserverInterface {
+ public:
+  explicit SharedStorageObserver(StorageHandler* owner_storage_handler)
+      : owner_(owner_storage_handler) {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
+    auto* manager = owner_->GetSharedStorageWorkletHostManager();
+    DCHECK(manager);
+    scoped_observation_.Observe(manager);
+  }
+
+  SharedStorageObserver(const SharedStorageObserver&) = delete;
+  SharedStorageObserver& operator=(const SharedStorageObserver&) = delete;
+
+  ~SharedStorageObserver() override { DCHECK_CURRENTLY_ON(BrowserThread::UI); }
+
+  // content::SharedStorageObserverInterface
+  void OnSharedStorageAccessed(
+      const base::Time& access_time,
+      AccessType type,
+      const std::string& main_frame_id,
+      const std::string& owner_origin,
+      const SharedStorageEventParams& params) override {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
+    owner_->NotifySharedStorageAccessed(access_time, type, main_frame_id,
+                                        owner_origin, params);
+  }
+
+  void OnUrnUuidGenerated(const GURL& urn_uuid) override {}
+
+  void OnConfigPopulated(
+      const absl::optional<FencedFrameConfig>& config) override {}
+
+ private:
+  raw_ptr<StorageHandler> const owner_;
+  base::ScopedObservation<
+      content::SharedStorageWorkletHostManager,
+      content::SharedStorageWorkletHostManager::SharedStorageObserverInterface>
+      scoped_observation_{this};
+};
+
 StorageHandler::StorageHandler(bool client_is_trusted)
     : DevToolsDomainHandler(Storage::Metainfo::domainName),
-      client_is_trusted_(client_is_trusted),
-      storage_partition_(nullptr) {}
+      client_is_trusted_(client_is_trusted) {}
 
 StorageHandler::~StorageHandler() {
   DCHECK(!cache_storage_observer_);
@@ -281,6 +325,7 @@ void StorageHandler::SetRenderer(int process_host_id,
                                  RenderFrameHostImpl* frame_host) {
   RenderProcessHost* process = RenderProcessHost::FromID(process_host_id);
   storage_partition_ = process ? process->GetStoragePartition() : nullptr;
+  frame_host_ = frame_host;
 }
 
 Response StorageHandler::Disable() {
@@ -288,6 +333,7 @@ Response StorageHandler::Disable() {
   indexed_db_observer_.reset();
   quota_override_handle_.reset();
   SetInterestGroupTracking(false);
+  shared_storage_observer_.reset();
   return Response::Success();
 }
 
@@ -356,13 +402,26 @@ void StorageHandler::ClearCookies(
                      std::move(callback)));
 }
 
-void StorageHandler::ClearDataForOrigin(
-    const std::string& origin,
-    const std::string& storage_types,
-    std::unique_ptr<ClearDataForOriginCallback> callback) {
-  if (!storage_partition_)
-    return callback->sendFailure(Response::InternalError());
+Response StorageHandler::GetStorageKeyForFrame(
+    const std::string& frame_id,
+    std::string* serialized_storage_key) {
+  if (!frame_host_)
+    return Response::InvalidParams("Frame host not found");
+  FrameTreeNode* node = protocol::FrameTreeNodeFromDevToolsFrameToken(
+      frame_host_->frame_tree_node(), frame_id);
+  if (!node)
+    return Response::InvalidParams("Frame tree node for given frame not found");
+  RenderFrameHostImpl* rfh = node->current_frame_host();
+  if (rfh->storage_key().origin().opaque())
+    return Response::ServerError(
+        "Frame corresponds to an opaque origin and its storage key cannot be "
+        "serialized");
+  *serialized_storage_key = rfh->storage_key().Serialize();
+  return Response::Success();
+}
 
+namespace {
+uint32_t GetRemoveDataMask(const std::string& storage_types) {
   std::vector<std::string> types = base::SplitString(
       storage_types, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
   std::unordered_set<std::string> set(types.begin(), types.end());
@@ -385,8 +444,22 @@ void StorageHandler::ClearDataForOrigin(
     remove_mask |= StoragePartition::REMOVE_DATA_MASK_CACHE_STORAGE;
   if (set.count(Storage::StorageTypeEnum::Interest_groups))
     remove_mask |= StoragePartition::REMOVE_DATA_MASK_INTEREST_GROUPS;
+  if (set.count(Storage::StorageTypeEnum::Shared_storage))
+    remove_mask |= StoragePartition::REMOVE_DATA_MASK_SHARED_STORAGE;
   if (set.count(Storage::StorageTypeEnum::All))
     remove_mask |= StoragePartition::REMOVE_DATA_MASK_ALL;
+  return remove_mask;
+}
+}  // namespace
+
+void StorageHandler::ClearDataForOrigin(
+    const std::string& origin,
+    const std::string& storage_types,
+    std::unique_ptr<ClearDataForOriginCallback> callback) {
+  if (!storage_partition_)
+    return callback->sendFailure(Response::InternalError());
+
+  uint32_t remove_mask = GetRemoveDataMask(storage_types);
 
   if (!remove_mask) {
     return callback->sendFailure(
@@ -395,28 +468,57 @@ void StorageHandler::ClearDataForOrigin(
 
   storage_partition_->ClearData(
       remove_mask, StoragePartition::QUOTA_MANAGED_STORAGE_MASK_ALL,
-      GURL(origin), base::Time(), base::Time::Max(),
+      blink::StorageKey::CreateFirstParty(url::Origin::Create(GURL(origin))),
+      base::Time(), base::Time::Max(),
       base::BindOnce(&ClearDataForOriginCallback::sendSuccess,
                      std::move(callback)));
 }
 
+void StorageHandler::ClearDataForStorageKey(
+    const std::string& storage_key,
+    const std::string& storage_types,
+    std::unique_ptr<ClearDataForStorageKeyCallback> callback) {
+  if (!storage_partition_)
+    return callback->sendFailure(Response::InternalError());
+
+  uint32_t remove_mask = GetRemoveDataMask(storage_types);
+
+  if (!remove_mask) {
+    return callback->sendFailure(
+        Response::InvalidParams("No valid storage type specified"));
+  }
+
+  absl::optional<blink::StorageKey> key =
+      blink::StorageKey::Deserialize(storage_key);
+  if (!key) {
+    return callback->sendFailure(
+        Response::InvalidParams("Unable to deserialize storage key"));
+  }
+  storage_partition_->ClearData(
+      remove_mask, StoragePartition::QUOTA_MANAGED_STORAGE_MASK_ALL, *key,
+      base::Time(), base::Time::Max(),
+      base::BindOnce(&ClearDataForStorageKeyCallback::sendSuccess,
+                     std::move(callback)));
+}
+
 void StorageHandler::GetUsageAndQuota(
-    const String& origin,
+    const String& origin_string,
     std::unique_ptr<GetUsageAndQuotaCallback> callback) {
   if (!storage_partition_)
     return callback->sendFailure(Response::InternalError());
 
-  GURL origin_url(origin);
-  if (!origin_url.is_valid()) {
+  GURL origin_url(origin_string);
+  url::Origin origin = url::Origin::Create(origin_url);
+  if (!origin_url.is_valid() || origin.opaque()) {
     return callback->sendFailure(
-        Response::ServerError(origin + " is not a valid URL"));
+        Response::ServerError(origin_string + " is not a valid URL"));
   }
 
   storage::QuotaManager* manager = storage_partition_->GetQuotaManager();
   GetIOThreadTaskRunner({})->PostTask(
       FROM_HERE,
       base::BindOnce(&GetUsageAndQuotaOnIOThread, base::RetainedRef(manager),
-                     blink::StorageKey(url::Origin::Create(origin_url)),
+                     blink::StorageKey::CreateFirstParty(origin),
                      std::move(callback)));
 }
 
@@ -444,71 +546,126 @@ void StorageHandler::OverrideQuotaForOrigin(
   }
 
   quota_override_handle_->OverrideQuotaForStorageKey(
-      blink::StorageKey(origin),
+      blink::StorageKey::CreateFirstParty(origin),
       quota_size.isJust() ? absl::make_optional(quota_size.fromJust())
                           : absl::nullopt,
       base::BindOnce(&OverrideQuotaForOriginCallback::sendSuccess,
                      std::move(callback)));
 }
 
-// TODO(https://crbug.com/1199077): We should think about how this function
-// should be exposed when migrating to storage keys.
-Response StorageHandler::TrackCacheStorageForOrigin(const std::string& origin) {
+Response StorageHandler::TrackCacheStorageForOrigin(
+    const std::string& origin_string) {
   if (!storage_partition_)
     return Response::InternalError();
 
-  GURL origin_url(origin);
-  if (!origin_url.is_valid())
-    return Response::InvalidParams(origin + " is not a valid URL");
+  GURL origin_url(origin_string);
+  url::Origin origin = url::Origin::Create(origin_url);
+  if (!origin_url.is_valid() || origin.opaque())
+    return Response::InvalidParams(origin_string + " is not a valid URL");
 
   GetCacheStorageObserver()->TrackStorageKey(
-      blink::StorageKey(url::Origin::Create(origin_url)));
+      blink::StorageKey::CreateFirstParty(origin));
   return Response::Success();
 }
 
-// TODO(https://crbug.com/1199077): We should think about how this function
-// should be exposed when migrating to storage keys.
-Response StorageHandler::UntrackCacheStorageForOrigin(
-    const std::string& origin) {
+Response StorageHandler::TrackCacheStorageForStorageKey(
+    const std::string& storage_key) {
   if (!storage_partition_)
     return Response::InternalError();
 
-  GURL origin_url(origin);
-  if (!origin_url.is_valid())
-    return Response::InvalidParams(origin + " is not a valid URL");
+  absl::optional<blink::StorageKey> key =
+      blink::StorageKey::Deserialize(storage_key);
+  if (!key)
+    return Response::InvalidParams("Unable to deserialize storage key");
+
+  GetCacheStorageObserver()->TrackStorageKey(*key);
+  return Response::Success();
+}
+
+Response StorageHandler::UntrackCacheStorageForOrigin(
+    const std::string& origin_string) {
+  if (!storage_partition_)
+    return Response::InternalError();
+
+  GURL origin_url(origin_string);
+  url::Origin origin = url::Origin::Create(origin_url);
+  if (!origin_url.is_valid() || origin.opaque())
+    return Response::InvalidParams(origin_string + " is not a valid URL");
 
   GetCacheStorageObserver()->UntrackStorageKey(
-      blink::StorageKey(url::Origin::Create(origin_url)));
+      blink::StorageKey::CreateFirstParty(origin));
   return Response::Success();
 }
 
-Response StorageHandler::TrackIndexedDBForOrigin(const std::string& origin) {
+Response StorageHandler::UntrackCacheStorageForStorageKey(
+    const std::string& storage_key) {
   if (!storage_partition_)
     return Response::InternalError();
 
-  GURL origin_url(origin);
-  if (!origin_url.is_valid())
-    return Response::InvalidParams(origin + " is not a valid URL");
+  absl::optional<blink::StorageKey> key =
+      blink::StorageKey::Deserialize(storage_key);
+  if (!key)
+    return Response::InvalidParams("Unable to deserialize storage key");
 
-  // TODO(https://crbug.com/1199077): Pass the real StorageKey into this
-  // function once the Chrome DevTools Protocol (CDP) supports StorageKey.
-  GetIndexedDBObserver()->TrackOrigin(
-      blink::StorageKey(url::Origin::Create(origin_url)));
+  GetCacheStorageObserver()->UntrackStorageKey(*key);
   return Response::Success();
 }
 
-Response StorageHandler::UntrackIndexedDBForOrigin(const std::string& origin) {
+Response StorageHandler::TrackIndexedDBForOrigin(
+    const std::string& origin_string) {
   if (!storage_partition_)
     return Response::InternalError();
 
-  GURL origin_url(origin);
-  if (!origin_url.is_valid())
-    return Response::InvalidParams(origin + " is not a valid URL");
+  GURL origin_url(origin_string);
+  url::Origin origin = url::Origin::Create(origin_url);
+  if (!origin_url.is_valid() || origin.opaque())
+    return Response::InvalidParams(origin_string + " is not a valid URL");
 
-  // TODO(https://crbug.com/1199077): Pass the real StorageKey into this
-  // function once the Chrome DevTools Protocol (CDP) supports StorageKey.
-  GetIndexedDBObserver()->UntrackOrigin(
-      blink::StorageKey(url::Origin::Create(origin_url)));
+  GetIndexedDBObserver()->TrackStorageKey(
+      blink::StorageKey::CreateFirstParty(origin));
+  return Response::Success();
+}
+
+Response StorageHandler::TrackIndexedDBForStorageKey(
+    const std::string& storage_key) {
+  if (!storage_partition_)
+    return Response::InternalError();
+
+  absl::optional<blink::StorageKey> key =
+      blink::StorageKey::Deserialize(storage_key);
+  if (!key)
+    return Response::InvalidParams("Unable to deserialize storage key");
+
+  GetIndexedDBObserver()->TrackStorageKey(*key);
+  return Response::Success();
+}
+
+Response StorageHandler::UntrackIndexedDBForOrigin(
+    const std::string& origin_string) {
+  if (!storage_partition_)
+    return Response::InternalError();
+
+  GURL origin_url(origin_string);
+  url::Origin origin = url::Origin::Create(origin_url);
+  if (!origin_url.is_valid() || origin.opaque())
+    return Response::InvalidParams(origin_string + " is not a valid URL");
+
+  GetIndexedDBObserver()->UntrackStorageKey(
+      blink::StorageKey::CreateFirstParty(origin));
+  return Response::Success();
+}
+
+Response StorageHandler::UntrackIndexedDBForStorageKey(
+    const std::string& storage_key) {
+  if (!storage_partition_)
+    return Response::InternalError();
+
+  absl::optional<blink::StorageKey> key =
+      blink::StorageKey::Deserialize(storage_key);
+  if (!key)
+    return Response::InvalidParams("Unable to deserialize storage key");
+
+  GetIndexedDBObserver()->UntrackStorageKey(*key);
   return Response::Success();
 }
 
@@ -535,28 +692,55 @@ StorageHandler::IndexedDBObserver* StorageHandler::GetIndexedDBObserver() {
   return indexed_db_observer_.get();
 }
 
-void StorageHandler::NotifyCacheStorageListChanged(const std::string& origin) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  frontend_->CacheStorageListUpdated(origin);
+SharedStorageWorkletHostManager*
+StorageHandler::GetSharedStorageWorkletHostManager() {
+  DCHECK(storage_partition_);
+  return static_cast<StoragePartitionImpl*>(storage_partition_)
+      ->GetSharedStorageWorkletHostManager();
 }
 
-void StorageHandler::NotifyCacheStorageContentChanged(const std::string& origin,
-                                                      const std::string& name) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  frontend_->CacheStorageContentUpdated(origin, name);
+absl::variant<protocol::Response, storage::SharedStorageManager*>
+StorageHandler::GetSharedStorageManager() {
+  if (!storage_partition_)
+    return Response::InternalError();
+
+  if (auto* manager = static_cast<StoragePartitionImpl*>(storage_partition_)
+                          ->GetSharedStorageManager()) {
+    return manager;
+  }
+  return Response::ServerError("Shared storage is disabled");
 }
 
-void StorageHandler::NotifyIndexedDBListChanged(const std::string& origin) {
+void StorageHandler::NotifyCacheStorageListChanged(
+    const blink::StorageKey& storage_key) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  frontend_->IndexedDBListUpdated(origin);
+  frontend_->CacheStorageListUpdated(storage_key.origin().Serialize(),
+                                     storage_key.Serialize());
+}
+
+void StorageHandler::NotifyCacheStorageContentChanged(
+    const blink::StorageKey& storage_key,
+    const std::string& name) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  frontend_->CacheStorageContentUpdated(storage_key.origin().Serialize(),
+                                        storage_key.Serialize(), name);
+}
+
+void StorageHandler::NotifyIndexedDBListChanged(
+    const std::string& origin,
+    const std::string& storage_key) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  frontend_->IndexedDBListUpdated(origin, storage_key);
 }
 
 void StorageHandler::NotifyIndexedDBContentChanged(
     const std::string& origin,
+    const std::string& storage_key,
     const std::u16string& database_name,
     const std::u16string& object_store_name) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  frontend_->IndexedDBContentUpdated(origin, base::UTF16ToUTF8(database_name),
+  frontend_->IndexedDBContentUpdated(origin, storage_key,
+                                     base::UTF16ToUTF8(database_name),
                                      base::UTF16ToUTF8(object_store_name));
 }
 
@@ -646,12 +830,12 @@ void StorageHandler::ClearTrustTokens(
 
 void StorageHandler::OnInterestGroupAccessed(
     const base::Time& access_time,
-    InterestGroupManagerImpl::InterestGroupObserverInterface::AccessType type,
-    const std::string& owner_origin,
+    InterestGroupManagerImpl::InterestGroupObserver::AccessType type,
+    const url::Origin& owner_origin,
     const std::string& name) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   using AccessType =
-      InterestGroupManagerImpl::InterestGroupObserverInterface::AccessType;
+      InterestGroupManagerImpl::InterestGroupObserver::AccessType;
   std::string type_enum;
   switch (type) {
     case AccessType::kJoin:
@@ -663,6 +847,9 @@ void StorageHandler::OnInterestGroupAccessed(
     case AccessType::kUpdate:
       type_enum = Storage::InterestGroupAccessTypeEnum::Update;
       break;
+    case AccessType::kLoaded:
+      type_enum = Storage::InterestGroupAccessTypeEnum::Loaded;
+      break;
     case AccessType::kBid:
       type_enum = Storage::InterestGroupAccessTypeEnum::Bid;
       break;
@@ -671,7 +858,7 @@ void StorageHandler::OnInterestGroupAccessed(
       break;
   };
   frontend_->InterestGroupAccessed(access_time.ToDoubleT(), type_enum,
-                                   owner_origin, name);
+                                   owner_origin.Serialize(), name);
 }
 
 namespace {
@@ -792,6 +979,402 @@ Response StorageHandler::SetInterestGroupTracking(bool enable) {
     manager->RemoveInterestGroupObserver(this);
   }
   return Response::Success();
+}
+
+namespace {
+
+void SendSharedStorageMetadata(
+    std::unique_ptr<StorageHandler::GetSharedStorageMetadataCallback> callback,
+    storage::SharedStorageManager::MetadataResult metadata) {
+  if (metadata.time_result ==
+      storage::SharedStorageManager::OperationResult::kNotFound) {
+    callback->sendFailure(Response::ServerError("Origin not found."));
+    return;
+  }
+
+  std::string error_message;
+
+  if (metadata.length == -1) {
+    error_message += "Unable to retrieve `length`. ";
+  }
+
+  if (metadata.time_result !=
+      storage::SharedStorageManager::OperationResult::kSuccess) {
+    error_message += "Unable to retrieve `creationTime`. ";
+  }
+
+  if (metadata.budget_result !=
+      storage::SharedStorageManager::OperationResult::kSuccess) {
+    error_message += "Unable to retrieve `remainingBudget`. ";
+  }
+
+  if (!error_message.empty()) {
+    callback->sendFailure(Response::ServerError(error_message));
+    return;
+  }
+
+  auto protocol_metadata =
+      protocol::Storage::SharedStorageMetadata::Create()
+          .SetLength(metadata.length)
+          .SetCreationTime(metadata.creation_time.ToDoubleT())
+          .SetRemainingBudget(metadata.remaining_budget)
+          .Build();
+
+  callback->sendSuccess(std::move(protocol_metadata));
+}
+
+}  // namespace
+
+void StorageHandler::GetSharedStorageMetadata(
+    const std::string& owner_origin_string,
+    std::unique_ptr<GetSharedStorageMetadataCallback> callback) {
+  auto manager_or_response = GetSharedStorageManager();
+  if (absl::holds_alternative<protocol::Response>(manager_or_response)) {
+    callback->sendFailure(absl::get<protocol::Response>(manager_or_response));
+    return;
+  }
+
+  storage::SharedStorageManager* manager =
+      absl::get<storage::SharedStorageManager*>(manager_or_response);
+  DCHECK(manager);
+
+  GURL owner_origin_url(owner_origin_string);
+  if (!owner_origin_url.is_valid()) {
+    callback->sendFailure(Response::InvalidParams("Invalid owner origin"));
+    return;
+  }
+  url::Origin owner_origin = url::Origin::Create(owner_origin_url);
+  DCHECK(!owner_origin.opaque());
+
+  manager->GetMetadata(
+      std::move(owner_origin),
+      base::BindOnce(&SendSharedStorageMetadata, std::move(callback)));
+}
+
+namespace {
+
+void RetrieveSharedStorageEntries(
+    std::unique_ptr<StorageHandler::GetSharedStorageEntriesCallback> callback,
+    storage::SharedStorageManager::EntriesResult entries_result) {
+  if (entries_result.result !=
+      storage::SharedStorageManager::OperationResult::kSuccess) {
+    callback->sendFailure(Response::ServerError("Database error"));
+    return;
+  }
+
+  auto entries = std::make_unique<
+      protocol::Array<protocol::Storage::SharedStorageEntry>>();
+
+  for (const auto& entry : entries_result.entries) {
+    auto protocol_entry = protocol::Storage::SharedStorageEntry::Create()
+                              .SetKey(entry.first)
+                              .SetValue(entry.second)
+                              .Build();
+    entries->push_back(std::move(protocol_entry));
+  }
+
+  callback->sendSuccess(std::move(entries));
+}
+
+}  // namespace
+
+void StorageHandler::GetSharedStorageEntries(
+    const std::string& owner_origin_string,
+    std::unique_ptr<GetSharedStorageEntriesCallback> callback) {
+  auto manager_or_response = GetSharedStorageManager();
+  if (absl::holds_alternative<protocol::Response>(manager_or_response)) {
+    callback->sendFailure(absl::get<protocol::Response>(manager_or_response));
+    return;
+  }
+
+  storage::SharedStorageManager* manager =
+      absl::get<storage::SharedStorageManager*>(manager_or_response);
+  DCHECK(manager);
+
+  GURL owner_origin_url(owner_origin_string);
+  if (!owner_origin_url.is_valid()) {
+    callback->sendFailure(Response::InvalidParams("Invalid owner origin"));
+    return;
+  }
+  url::Origin owner_origin = url::Origin::Create(owner_origin_url);
+  DCHECK(!owner_origin.opaque());
+
+  manager->GetEntriesForDevTools(
+      owner_origin,
+      base::BindOnce(&RetrieveSharedStorageEntries, std::move(callback)));
+}
+
+namespace {
+
+void DispatchSharedStorageSetCallback(
+    std::unique_ptr<Storage::Backend::SetSharedStorageEntryCallback> callback,
+    storage::SharedStorageManager::OperationResult result) {
+  if (result != storage::SharedStorageManager::OperationResult::kSet &&
+      result != storage::SharedStorageManager::OperationResult::kIgnored) {
+    callback->sendFailure(Response::ServerError("Database error"));
+    return;
+  }
+
+  callback->sendSuccess();
+}
+
+}  // namespace
+
+void StorageHandler::SetSharedStorageEntry(
+    const std::string& owner_origin_string,
+    const std::string& key,
+    const std::string& value,
+    Maybe<bool> ignore_if_present,
+    std::unique_ptr<SetSharedStorageEntryCallback> callback) {
+  auto manager_or_response = GetSharedStorageManager();
+  if (absl::holds_alternative<protocol::Response>(manager_or_response)) {
+    callback->sendFailure(absl::get<protocol::Response>(manager_or_response));
+    return;
+  }
+
+  storage::SharedStorageManager* manager =
+      absl::get<storage::SharedStorageManager*>(manager_or_response);
+  DCHECK(manager);
+
+  GURL owner_origin_url(owner_origin_string);
+  if (!owner_origin_url.is_valid()) {
+    callback->sendFailure(Response::InvalidParams("Invalid owner origin"));
+    return;
+  }
+  url::Origin owner_origin = url::Origin::Create(owner_origin_url);
+  DCHECK(!owner_origin.opaque());
+
+  auto set_behavior =
+      ignore_if_present.fromMaybe(false)
+          ? storage::SharedStorageManager::SetBehavior::kIgnoreIfPresent
+          : storage::SharedStorageManager::SetBehavior::kDefault;
+
+  manager->Set(
+      owner_origin, base::UTF8ToUTF16(key), base::UTF8ToUTF16(value),
+      base::BindOnce(&DispatchSharedStorageSetCallback, std::move(callback)),
+      set_behavior);
+}
+
+namespace {
+
+template <typename CallbackType>
+void DispatchSharedStorageCallback(
+    std::unique_ptr<CallbackType> callback,
+    storage::SharedStorageManager::OperationResult result) {
+  if (result != storage::SharedStorageManager::OperationResult::kSuccess) {
+    callback->sendFailure(Response::ServerError("Database error"));
+    return;
+  }
+
+  callback->sendSuccess();
+}
+
+}  // namespace
+
+void StorageHandler::DeleteSharedStorageEntry(
+    const std::string& owner_origin_string,
+    const std::string& key,
+    std::unique_ptr<DeleteSharedStorageEntryCallback> callback) {
+  auto manager_or_response = GetSharedStorageManager();
+  if (absl::holds_alternative<protocol::Response>(manager_or_response)) {
+    callback->sendFailure(absl::get<protocol::Response>(manager_or_response));
+    return;
+  }
+
+  storage::SharedStorageManager* manager =
+      absl::get<storage::SharedStorageManager*>(manager_or_response);
+  DCHECK(manager);
+
+  GURL owner_origin_url(owner_origin_string);
+  if (!owner_origin_url.is_valid()) {
+    callback->sendFailure(Response::InvalidParams("Invalid owner origin"));
+    return;
+  }
+  url::Origin owner_origin = url::Origin::Create(owner_origin_url);
+  DCHECK(!owner_origin.opaque());
+
+  manager->Delete(
+      owner_origin, base::UTF8ToUTF16(key),
+      base::BindOnce(
+          &DispatchSharedStorageCallback<DeleteSharedStorageEntryCallback>,
+          std::move(callback)));
+}
+
+void StorageHandler::ClearSharedStorageEntries(
+    const std::string& owner_origin_string,
+    std::unique_ptr<ClearSharedStorageEntriesCallback> callback) {
+  auto manager_or_response = GetSharedStorageManager();
+  if (absl::holds_alternative<protocol::Response>(manager_or_response)) {
+    callback->sendFailure(absl::get<protocol::Response>(manager_or_response));
+    return;
+  }
+
+  storage::SharedStorageManager* manager =
+      absl::get<storage::SharedStorageManager*>(manager_or_response);
+  DCHECK(manager);
+
+  GURL owner_origin_url(owner_origin_string);
+  if (!owner_origin_url.is_valid()) {
+    callback->sendFailure(Response::InvalidParams("Invalid owner origin"));
+    return;
+  }
+  url::Origin owner_origin = url::Origin::Create(owner_origin_url);
+  DCHECK(!owner_origin.opaque());
+
+  manager->Clear(
+      owner_origin,
+      base::BindOnce(
+          &DispatchSharedStorageCallback<ClearSharedStorageEntriesCallback>,
+          std::move(callback)));
+}
+
+Response StorageHandler::SetSharedStorageTracking(bool enable) {
+  if (enable) {
+    if (!GetSharedStorageWorkletHostManager())
+      return Response::ServerError("Shared storage is disabled.");
+    shared_storage_observer_ = std::make_unique<SharedStorageObserver>(this);
+  } else {
+    shared_storage_observer_.reset();
+  }
+  return Response::Success();
+}
+
+void StorageHandler::ResetSharedStorageBudget(
+    const std::string& owner_origin_string,
+    std::unique_ptr<ResetSharedStorageBudgetCallback> callback) {
+  auto manager_or_response = GetSharedStorageManager();
+  if (absl::holds_alternative<protocol::Response>(manager_or_response)) {
+    callback->sendFailure(absl::get<protocol::Response>(manager_or_response));
+    return;
+  }
+
+  storage::SharedStorageManager* manager =
+      absl::get<storage::SharedStorageManager*>(manager_or_response);
+  DCHECK(manager);
+
+  GURL owner_origin_url(owner_origin_string);
+  if (!owner_origin_url.is_valid()) {
+    callback->sendFailure(Response::InvalidParams("Invalid owner origin"));
+    return;
+  }
+  url::Origin owner_origin = url::Origin::Create(owner_origin_url);
+  DCHECK(!owner_origin.opaque());
+
+  manager->ResetBudgetForDevTools(
+      owner_origin,
+      base::BindOnce(
+          &DispatchSharedStorageCallback<ResetSharedStorageBudgetCallback>,
+          std::move(callback)));
+}
+
+void StorageHandler::NotifySharedStorageAccessed(
+    const base::Time& access_time,
+    SharedStorageWorkletHostManager::SharedStorageObserverInterface::AccessType
+        type,
+    const std::string& main_frame_id,
+    const std::string& owner_origin,
+    const SharedStorageEventParams& params) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  using AccessType = SharedStorageWorkletHostManager::
+      SharedStorageObserverInterface::AccessType;
+  std::string type_enum;
+  switch (type) {
+    case AccessType::kDocumentAddModule:
+      type_enum = Storage::SharedStorageAccessTypeEnum::DocumentAddModule;
+      break;
+    case AccessType::kDocumentSelectURL:
+      type_enum = Storage::SharedStorageAccessTypeEnum::DocumentSelectURL;
+      break;
+    case AccessType::kDocumentRun:
+      type_enum = Storage::SharedStorageAccessTypeEnum::DocumentRun;
+      break;
+    case AccessType::kDocumentSet:
+      type_enum = Storage::SharedStorageAccessTypeEnum::DocumentSet;
+      break;
+    case AccessType::kDocumentAppend:
+      type_enum = Storage::SharedStorageAccessTypeEnum::DocumentAppend;
+      break;
+    case AccessType::kDocumentDelete:
+      type_enum = Storage::SharedStorageAccessTypeEnum::DocumentDelete;
+      break;
+    case AccessType::kDocumentClear:
+      type_enum = Storage::SharedStorageAccessTypeEnum::DocumentClear;
+      break;
+    case AccessType::kWorkletSet:
+      type_enum = Storage::SharedStorageAccessTypeEnum::WorkletSet;
+      break;
+    case AccessType::kWorkletAppend:
+      type_enum = Storage::SharedStorageAccessTypeEnum::WorkletAppend;
+      break;
+    case AccessType::kWorkletDelete:
+      type_enum = Storage::SharedStorageAccessTypeEnum::WorkletDelete;
+      break;
+    case AccessType::kWorkletClear:
+      type_enum = Storage::SharedStorageAccessTypeEnum::WorkletClear;
+      break;
+    case AccessType::kWorkletGet:
+      type_enum = Storage::SharedStorageAccessTypeEnum::WorkletGet;
+      break;
+    case AccessType::kWorkletKeys:
+      type_enum = Storage::SharedStorageAccessTypeEnum::WorkletKeys;
+      break;
+    case AccessType::kWorkletEntries:
+      type_enum = Storage::SharedStorageAccessTypeEnum::WorkletEntries;
+      break;
+    case AccessType::kWorkletLength:
+      type_enum = Storage::SharedStorageAccessTypeEnum::WorkletLength;
+      break;
+    case AccessType::kWorkletRemainingBudget:
+      type_enum = Storage::SharedStorageAccessTypeEnum::WorkletRemainingBudget;
+      break;
+  };
+
+  auto protocol_params =
+      protocol::Storage::SharedStorageAccessParams::Create().Build();
+
+  if (params.script_source_url)
+    protocol_params->SetScriptSourceUrl(*params.script_source_url);
+  if (params.operation_name)
+    protocol_params->SetOperationName(*params.operation_name);
+  if (params.serialized_data)
+    protocol_params->SetSerializedData(*params.serialized_data);
+  if (params.key)
+    protocol_params->SetKey(*params.key);
+  if (params.value)
+    protocol_params->SetValue(*params.value);
+
+  if (params.urls_with_metadata) {
+    auto protocol_urls = std::make_unique<
+        protocol::Array<protocol::Storage::SharedStorageUrlWithMetadata>>();
+
+    for (const auto& url_with_metadata : *params.urls_with_metadata) {
+      auto reporting_metadata = std::make_unique<
+          protocol::Array<protocol::Storage::SharedStorageReportingMetadata>>();
+
+      for (const auto& metadata_pair : url_with_metadata.reporting_metadata) {
+        auto reporting_pair =
+            protocol::Storage::SharedStorageReportingMetadata::Create()
+                .SetEventType(metadata_pair.first)
+                .SetReportingUrl(metadata_pair.second)
+                .Build();
+        reporting_metadata->push_back(std::move(reporting_pair));
+      }
+
+      auto protocol_url =
+          protocol::Storage::SharedStorageUrlWithMetadata::Create()
+              .SetUrl(url_with_metadata.url)
+              .SetReportingMetadata(std::move(reporting_metadata))
+              .Build();
+      protocol_urls->push_back(std::move(protocol_url));
+    }
+
+    protocol_params->SetUrlsWithMetadata(std::move(protocol_urls));
+  }
+
+  frontend_->SharedStorageAccessed(access_time.ToDoubleT(), type_enum,
+                                   main_frame_id, owner_origin,
+                                   std::move(protocol_params));
 }
 
 }  // namespace protocol

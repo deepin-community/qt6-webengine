@@ -1,14 +1,13 @@
-// Copyright (c) 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "net/quic/quic_chromium_packet_reader.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/net_errors.h"
 #include "net/quic/address_utils.h"
 #include "net/third_party/quiche/src/quiche/quic/core/quic_clock.h"
@@ -31,8 +30,6 @@ QuicChromiumPacketReader::QuicChromiumPacketReader(
     const NetLogWithSource& net_log)
     : socket_(socket),
       visitor_(visitor),
-      read_pending_(false),
-      num_packets_read_(0),
       clock_(clock),
       yield_after_packets_(yield_after_packets),
       yield_after_duration_(yield_after_duration),
@@ -40,7 +37,7 @@ QuicChromiumPacketReader::QuicChromiumPacketReader(
       read_buffer_(base::MakeRefCounted<IOBufferWithSize>(kReadBufferSize)),
       net_log_(net_log) {}
 
-QuicChromiumPacketReader::~QuicChromiumPacketReader() {}
+QuicChromiumPacketReader::~QuicChromiumPacketReader() = default;
 
 void QuicChromiumPacketReader::StartReading() {
   for (;;) {
@@ -68,7 +65,7 @@ void QuicChromiumPacketReader::StartReading() {
       // Data was read, process it.
       // Schedule the work through the message loop to 1) prevent infinite
       // recursion and 2) avoid blocking the thread for too long.
-      base::ThreadTaskRunnerHandle::Get()->PostTask(
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
           FROM_HERE, base::BindOnce(&QuicChromiumPacketReader::OnReadComplete,
                                     weak_factory_.GetWeakPtr(), rv));
     } else {

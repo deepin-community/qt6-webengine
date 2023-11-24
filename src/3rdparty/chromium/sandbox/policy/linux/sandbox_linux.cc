@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,17 +18,20 @@
 #include <string>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/files/scoped_file.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/memory/singleton.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/system/sys_info.h"
+#include "base/threading/platform_thread.h"
+#include "base/threading/thread_id_name_manager.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "ppapi/buildflags/buildflags.h"
 #include "sandbox/constants.h"
 #include "sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.h"
@@ -55,6 +58,10 @@
 #if BUILDFLAG(USING_SANITIZER)
 #include <sanitizer/common_interface_defs.h>
 #endif
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+#include "chromeos/ash/components/assistant/buildflags.h"
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 namespace sandbox {
 namespace policy {
@@ -367,9 +374,19 @@ bool SandboxLinux::InitializeSandbox(sandbox::mojom::Sandbox sandbox_type,
       sandbox_failure_fatal = switch_value != "no";
     }
 
-    if (sandbox_failure_fatal) {
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+    CHECK(process_type != switches::kGpuProcess || sandbox_failure_fatal);
+#endif
+
+    if (sandbox_failure_fatal && !IsUnsandboxedSandboxType(sandbox_type)) {
       error_message += " Try waiting for /proc to be updated.";
       LOG(ERROR) << error_message;
+
+      for (const auto& id :
+           base::ThreadIdNameManager::GetInstance()->GetIds()) {
+        LOG(ERROR) << "ThreadId=" << id << " name:"
+                   << base::ThreadIdNameManager::GetInstance()->GetName(id);
+      }
       // This will return if /proc/self eventually reports this process is
       // single-threaded, or crash if it does not after a number of retries.
       ThreadHelpers::AssertSingleThreaded();
@@ -401,6 +418,23 @@ bool SandboxLinux::InitializeSandbox(sandbox::mojom::Sandbox sandbox_type,
       << "opened. This breaks the security of the setuid sandbox.";
 
   InitLibcLocaltimeFunctions();
+
+  bool is_libassistant_sandbox = false;
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(ENABLE_CROS_LIBASSISTANT)
+  // TODO(crbug.com/1312224, b/255771022): re-enable this check on kLibassistant
+  // sandbox when getaddrinfo() can sometimes run in the sandboxed process.
+  if (sandbox_type == sandbox::mojom::Sandbox::kLibassistant)
+    is_libassistant_sandbox = true;
+#endif  // BUILDFLAG(ENABLE_CROS_LIBASSISTANT)
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+
+  if (!IsUnsandboxedSandboxType(sandbox_type) && !is_libassistant_sandbox) {
+    // No sandboxed process should make use of getaddrinfo() as it is impossible
+    // to sandbox (e.g. glibc loads arbitrary third party DNS resolution
+    // libraries).
+    DiscourageGetaddrinfo();
+  }
 
   // Attempt to limit the future size of the address space of the process.
   // Fine to call with multiple threads as we don't use RLIMIT_STACK.
@@ -551,7 +585,7 @@ void SandboxLinux::SealSandbox() {
 void SandboxLinux::CheckForBrokenPromises(
     sandbox::mojom::Sandbox sandbox_type) {
   if (sandbox_type != sandbox::mojom::Sandbox::kRenderer
-#if BUILDFLAG(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PPAPI)
       && sandbox_type != sandbox::mojom::Sandbox::kPpapi
 #endif
   ) {

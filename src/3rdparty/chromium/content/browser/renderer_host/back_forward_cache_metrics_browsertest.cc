@@ -1,9 +1,10 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
@@ -89,7 +90,7 @@ class BackForwardCacheMetricsBrowserTestBase : public ContentBrowserTest,
 
   void GiveItSomeTime() {
     base::RunLoop run_loop;
-    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE, run_loop.QuitClosure(), base::Milliseconds(200));
     run_loop.Run();
   }
@@ -141,11 +142,11 @@ class BackForwardCacheMetricsBrowserTest
     if (GetParam() == BackForwardCacheStatus::kEnabled) {
       // Enable BackForwardCache.
       feature_list_.InitWithFeaturesAndParameters(
-          {{features::kBackForwardCache, {{"enable_same_site", "true"}}},
+          {{features::kBackForwardCache, {}},
            {kBackForwardCacheNoTimeEviction, {}}},
           // Allow BackForwardCache for all devices regardless of their memory.
           {features::kBackForwardCacheMemoryControls});
-      DCHECK(IsSameSiteBackForwardCacheEnabled());
+      DCHECK(IsBackForwardCacheEnabled());
     } else {
       feature_list_.InitAndDisableFeature(features::kBackForwardCache);
       DCHECK(!IsBackForwardCacheEnabled());
@@ -299,12 +300,25 @@ IN_PROC_BROWSER_TEST_P(BackForwardCacheMetricsBrowserTest, CloneAndGoBack) {
 
   // First two new navigations happen in the original tab.
   // The third navigation reloads the tab for the cloned WebContents.
-  // The fourth goes back, but the metrics are not recorded due to it being
-  // cloned and the metrics objects missing.
-  // The last two navigations, however, should have metrics.
+  // The fourth goes back, and records an empty entry because its
+  // NavigationEntry was cloned and the metrics objects was empty.
+  // The last two navigations records non-empty entries.
   EXPECT_THAT(recorder.GetEntries("HistoryNavigation", {last_navigation_id}),
-              testing::ElementsAre(UkmEntry{id5, {{last_navigation_id, id3}}},
+              testing::ElementsAre(UkmEntry{id4, {}},
+                                   UkmEntry{id5, {{last_navigation_id, id3}}},
                                    UkmEntry{id6, {{last_navigation_id, id4}}}));
+
+  // Ensure that for the first navigation, we record "session restored" as one
+  // of the NotRestoredReasons, which is added by the metrics recording code.
+  std::string not_restored_reasons = "BackForwardCache.NotRestoredReasons";
+  std::vector<ukm::TestAutoSetUkmRecorder::HumanReadableUkmMetrics>
+      recorded_not_restored_reasons =
+          recorder.FilteredHumanReadableMetricForEntry("HistoryNavigation",
+                                                       not_restored_reasons);
+  ASSERT_EQ(recorded_not_restored_reasons.size(), 3u);
+  EXPECT_EQ(recorded_not_restored_reasons[0][not_restored_reasons],
+            1 << static_cast<int>(
+                BackForwardCacheMetrics::NotRestoredReason::kSessionRestored));
 }
 
 // Confirms that UKMs are not recorded on reloading.
@@ -317,15 +331,13 @@ IN_PROC_BROWSER_TEST_P(BackForwardCacheMetricsBrowserTest, Reload) {
   EXPECT_TRUE(NavigateToURL(shell(), url1));
   EXPECT_TRUE(NavigateToURL(shell(), url2));
 
-  web_contents()->GetController().GoBack();
-  EXPECT_TRUE(WaitForLoadStop(shell()->web_contents()));
+  ASSERT_TRUE(HistoryGoBack(web_contents()));
 
   web_contents()->GetController().Reload(ReloadType::NORMAL, false);
   EXPECT_TRUE(WaitForLoadStop(shell()->web_contents()));
 
   EXPECT_TRUE(NavigateToURL(shell(), url2));
-  web_contents()->GetController().GoBack();
-  EXPECT_TRUE(WaitForLoadStop(shell()->web_contents()));
+  ASSERT_TRUE(HistoryGoBack(web_contents()));
 
   ASSERT_EQ(navigation_ids_.size(), static_cast<size_t>(6));
   ukm::SourceId id1 = ToSourceId(navigation_ids_[0]);
@@ -355,8 +367,7 @@ IN_PROC_BROWSER_TEST_P(BackForwardCacheMetricsBrowserTest,
   EXPECT_TRUE(NavigateToURL(shell(), url1));
   EXPECT_TRUE(NavigateToURL(shell(), url1_foo));
 
-  web_contents()->GetController().GoBack();
-  EXPECT_TRUE(WaitForLoadStop(shell()->web_contents()));
+  ASSERT_TRUE(HistoryGoBack(web_contents()));
 
   ASSERT_EQ(navigation_ids_.size(), static_cast<size_t>(3));
   std::string last_navigation_id =
@@ -380,8 +391,7 @@ IN_PROC_BROWSER_TEST_P(BackForwardCacheMetricsBrowserTest,
   EXPECT_TRUE(NavigateToURL(shell(), url1_foo));
   EXPECT_TRUE(NavigateToURL(shell(), url2));
 
-  web_contents()->GetController().GoBack();
-  EXPECT_TRUE(WaitForLoadStop(shell()->web_contents()));
+  ASSERT_TRUE(HistoryGoBack(web_contents()));
 
   ASSERT_EQ(navigation_ids_.size(), static_cast<size_t>(4));
   ukm::SourceId id1 = ToSourceId(navigation_ids_[0]);
@@ -584,8 +594,7 @@ IN_PROC_BROWSER_TEST_P(BackForwardCacheMetricsBrowserTest,
   EXPECT_TRUE(NavigateToURL(shell(), url1));
   EXPECT_TRUE(NavigateToURL(shell(), url2));
 
-  web_contents()->GetController().GoBack();
-  EXPECT_TRUE(WaitForLoadStop(web_contents()));
+  ASSERT_TRUE(HistoryGoBack(web_contents()));
 
   // When the page is restored from back/forward cache, there is one navigation
   // corresponding to the bfcache restore. Whereas, when the page is reloaded,
@@ -669,7 +678,7 @@ IN_PROC_BROWSER_TEST_P(BackForwardCacheMetricsBrowserTest, Geolocation) {
   EXPECT_TRUE(NavigateToURL(shell(), url1));
 
   RenderFrameHostImpl* main_frame = static_cast<RenderFrameHostImpl*>(
-      shell()->web_contents()->GetMainFrame());
+      shell()->web_contents()->GetPrimaryMainFrame());
   EXPECT_EQ("success", EvalJs(main_frame, R"(
     new Promise(resolve => {
       navigator.geolocation.getCurrentPosition(
@@ -735,8 +744,7 @@ IN_PROC_BROWSER_TEST_F(RecordBackForwardCacheMetricsWithoutEnabling,
   EXPECT_TRUE(NavigateToURL(shell(), url2));
 
   // 3) Go back to url1 and reload.
-  web_contents()->GetController().GoBack();
-  EXPECT_TRUE(WaitForLoadStop(web_contents()));
+  ASSERT_TRUE(HistoryGoBack(web_contents()));
   web_contents()->GetController().Reload(content::ReloadType::NORMAL, false);
   EXPECT_TRUE(WaitForLoadStop(web_contents()));
 
@@ -820,8 +828,7 @@ IN_PROC_BROWSER_TEST_P(BackForwardCacheMetricsBrowserTest,
   EXPECT_TRUE(NavigateToURL(shell(), url2));
 
   // 3) Go back to url1 and reload.
-  web_contents()->GetController().GoBack();
-  EXPECT_TRUE(WaitForLoadStop(web_contents()));
+  ASSERT_TRUE(HistoryGoBack(web_contents()));
   web_contents()->GetController().Reload(content::ReloadType::NORMAL, false);
   EXPECT_TRUE(WaitForLoadStop(web_contents()));
 
@@ -852,8 +859,7 @@ IN_PROC_BROWSER_TEST_P(BackForwardCacheMetricsBrowserTest,
           2)));
 
   // 5) Go back and navigate to url3.
-  web_contents()->GetController().GoBack();
-  EXPECT_TRUE(WaitForLoadStop(web_contents()));
+  ASSERT_TRUE(HistoryGoBack(web_contents()));
   RenderFrameHostImpl* rfh_url1 =
       web_contents()->GetPrimaryFrameTree().root()->current_frame_host();
 
@@ -864,8 +870,7 @@ IN_PROC_BROWSER_TEST_P(BackForwardCacheMetricsBrowserTest,
 
   // 6) Go back and reload.
   // Ensure that "not served" is recorded.
-  web_contents()->GetController().GoBack();
-  EXPECT_TRUE(WaitForLoadStop(web_contents()));
+  ASSERT_TRUE(HistoryGoBack(web_contents()));
   web_contents()->GetController().Reload(content::ReloadType::NORMAL, false);
   EXPECT_TRUE(WaitForLoadStop(web_contents()));
 
@@ -910,8 +915,7 @@ IN_PROC_BROWSER_TEST_P(BackForwardCacheMetricsBrowserTest,
 
   // 3) Go back to url1 and check if the metrics are recorded. Make sure the
   // page is restored from cache.
-  shell()->web_contents()->GetController().GoBack();
-  EXPECT_TRUE(WaitForLoadStop(shell()->web_contents()));
+  ASSERT_TRUE(HistoryGoBack(web_contents()));
   EXPECT_EQ(rfh_a, current_frame_host());
   EXPECT_EQ(shell()->web_contents()->GetVisibility(), Visibility::VISIBLE);
 
@@ -965,7 +969,7 @@ IN_PROC_BROWSER_TEST_P(BackForwardCacheMetricsPrerenderingBrowserTest,
   prerender_helper()->NavigatePrimaryPage(prerender_url);
   // Makes sure that the page is activated from the prerendering.
   EXPECT_TRUE(host_observer.was_activated());
-  EXPECT_TRUE(WaitForRenderFrameReady(web_contents()->GetMainFrame()));
+  EXPECT_TRUE(WaitForRenderFrameReady(web_contents()->GetPrimaryMainFrame()));
 
   EXPECT_TRUE(NavigateToURL(shell(), url2));
 
@@ -1017,10 +1021,10 @@ IN_PROC_BROWSER_TEST_P(BackForwardCacheMetricsFencedFrameBrowserTest,
   EXPECT_TRUE(NavigateToURL(shell(), url1));
 
   auto* fenced_frame = fenced_frame_test_helper().CreateFencedFrame(
-      web_contents()->GetMainFrame(), fenced_frame_url1);
+      web_contents()->GetPrimaryMainFrame(), fenced_frame_url1);
   NavigationEntryImpl* fenced_frame_entry = FrameTreeNode::From(fenced_frame)
                                                 ->frame_tree()
-                                                ->controller()
+                                                .controller()
                                                 .GetLastCommittedEntry();
   EXPECT_EQ(fenced_frame_entry->back_forward_cache_metrics(), nullptr);
 

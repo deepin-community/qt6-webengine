@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/values.h"
 #include "content/public/browser/browser_thread.h"
 #include "device/bluetooth/bluetooth_adapter.h"
@@ -128,7 +128,7 @@ class BluetoothSocketListenFunction : public BluetoothSocketAsyncApiFunction {
       const absl::optional<std::string>& name,
       device::BluetoothAdapter::CreateServiceCallback callback,
       device::BluetoothAdapter::CreateServiceErrorCallback error_callback) = 0;
-  virtual std::vector<base::Value> CreateResults() = 0;
+  virtual base::Value::List CreateResults() = 0;
 
   virtual int socket_id() const = 0;
   virtual const std::string& uuid() const = 0;
@@ -166,7 +166,7 @@ class BluetoothSocketListenUsingRfcommFunction
                      device::BluetoothAdapter::CreateServiceCallback callback,
                      device::BluetoothAdapter::CreateServiceErrorCallback
                          error_callback) override;
-  std::vector<base::Value> CreateResults() override;
+  base::Value::List CreateResults() override;
 
  protected:
   ~BluetoothSocketListenUsingRfcommFunction() override;
@@ -194,7 +194,7 @@ class BluetoothSocketListenUsingL2capFunction
                      device::BluetoothAdapter::CreateServiceCallback callback,
                      device::BluetoothAdapter::CreateServiceErrorCallback
                          error_callback) override;
-  std::vector<base::Value> CreateResults() override;
+  base::Value::List CreateResults() override;
 
  protected:
   ~BluetoothSocketListenUsingL2capFunction() override;

@@ -1,6 +1,6 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file
+// found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_GRID_NG_GRID_PLACEMENT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_GRID_NG_GRID_PLACEMENT_H_
@@ -28,15 +28,13 @@ class CORE_EXPORT NGGridPlacement {
   NGGridPlacementData RunAutoPlacementAlgorithm(const GridItems& grid_items);
 
   // Helper function to resolve start and end lines of out of flow items.
-  void ResolveOutOfFlowItemGridLines(
+  static void ResolveOutOfFlowItemGridLines(
       const NGGridLayoutTrackCollection& track_collection,
-      const ComputedStyle& out_of_flow_item_style,
+      const NGGridPlacementData& placement_data,
+      const ComputedStyle& grid_style,
+      const ComputedStyle& item_style,
       wtf_size_t* start_line,
-      wtf_size_t* end_line) const;
-
-  wtf_size_t AutoRepetitions(
-      const GridTrackSizingDirection track_direction) const;
-  wtf_size_t StartOffset(const GridTrackSizingDirection track_direction) const;
+      wtf_size_t* end_line);
 
  private:
   enum class CursorMovementBehavior { kAuto, kForceMajorLine, kForceMinorLine };
@@ -55,8 +53,8 @@ class CORE_EXPORT NGGridPlacement {
 
    public:
     PlacedGridItem(const GridArea& position,
-                   const GridTrackSizingDirection major_direction,
-                   const GridTrackSizingDirection minor_direction);
+                   GridTrackSizingDirection major_direction,
+                   GridTrackSizingDirection minor_direction);
 
     bool operator<(const PlacedGridItem& rhs) const {
       return start_ < rhs.start_;
@@ -108,7 +106,7 @@ class CORE_EXPORT NGGridPlacement {
       }
     } ComparePlacedGridItemsByEnd;
 
-    void MoveToNextMajorLine(const bool allow_minor_line_movement);
+    void MoveToNextMajorLine(bool allow_minor_line_movement);
     void UpdateItemsOverlappingMajorLine();
 
     Vector<const PlacedGridItem*, 16> items_overlapping_major_line_;
@@ -156,30 +154,25 @@ class CORE_EXPORT NGGridPlacement {
                              AutoPlacementCursor* placement_cursor) const;
   // After the auto-placement algorithm is done, if we're placing items within a
   // subgrid, clamp their resolved positions to the subgrid's explicit grid.
-  void ClampGridItemsToFitSubgridArea(
-      const GridTrackSizingDirection track_direction);
+  void ClampGridItemsToFitSubgridArea(GridTrackSizingDirection track_direction);
 
-  wtf_size_t AutoRepeatTrackCount(
-      const GridTrackSizingDirection track_direction) const;
-  wtf_size_t SubgridSpanSize(
-      const GridTrackSizingDirection track_direction) const;
+  void ClampMinorMaxToSubgridArea();
 
   bool HasSparsePacking() const;
 
-  // Used to resolve positions using |GridPositionsResolver|.
-  const ComputedStyle& grid_style_;
-
-  PackingBehavior packing_behavior_;
-  NGGridPlacementData placement_data_;
-  GridTrackSizingDirection major_direction_;
-  GridTrackSizingDirection minor_direction_;
+  // The maximum end line for a given direction, not counting implicit tracks.
+  // For subgrids, this gets clamped by the subgrid span size.
+  wtf_size_t IntrinsicEndLine(GridTrackSizingDirection track_direction) const;
 
 #if DCHECK_IS_ON()
   bool auto_placement_algorithm_called_ : 1;
 #endif
 
-  wtf_size_t column_auto_repeat_track_count_;
-  wtf_size_t row_auto_repeat_track_count_;
+  // TODO(kschmi): Replace `NGGridPlacementData` with line resolver.
+  NGGridPlacementData placement_data_;
+  PackingBehavior packing_behavior_;
+  GridTrackSizingDirection major_direction_;
+  GridTrackSizingDirection minor_direction_;
   wtf_size_t minor_max_end_line_;
 };
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,15 +7,15 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/callback_list.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/pattern.h"
 #include "base/strings/string_util.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "net/base/net_errors.h"
 #include "net/cert/cert_status_flags.h"
 #include "net/cert/cert_verify_result.h"
@@ -53,7 +53,7 @@ class MockCertVerifier::MockRequest : public CertVerifier::Request {
   }
 
   void ReturnResultLater(int rv, const CertVerifyResult& result) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&MockRequest::ReturnResult,
                                   weak_factory_.GetWeakPtr(), rv, result));
   }
@@ -81,8 +81,7 @@ class MockCertVerifier::MockRequest : public CertVerifier::Request {
   base::WeakPtrFactory<MockRequest> weak_factory_{this};
 };
 
-MockCertVerifier::MockCertVerifier()
-    : default_result_(ERR_CERT_INVALID), async_(false) {}
+MockCertVerifier::MockCertVerifier() = default;
 
 MockCertVerifier::~MockCertVerifier() {
   // Reset the callbacks for any outstanding MockRequests to fulfill the

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 
 #include <deque>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/gtest_prod_util.h"
 #include "components/webapps/browser/installable/installable_data.h"
 #include "components/webapps/browser/installable/installable_params.h"
@@ -57,9 +57,6 @@ class InstallableTaskQueue {
 
   // Advances to the next task.
   void Next();
-
-  // Clears all tasks from the main and paused list.
-  void Reset();
 
   // Clears all tasks from the main and paused list, and then calls the callback
   // on all of them with the given status code.

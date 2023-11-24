@@ -1,6 +1,6 @@
 /* Copyright (c) 2020 The Khronos Group Inc.
- * Copyright (c) 2020 Valve Corporation
- * Copyright (c) 2020 LunarG, Inc.
+ * Copyright (c) 2020-2023 Valve Corporation
+ * Copyright (c) 2020-2023 LunarG, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,9 +13,6 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- *
- * Author: Mark Lobodzinski <mark@lunarg.com>
- * Author: Mike Schuchardt <mikes@lunarg.com>
  */
 
 #pragma once
@@ -75,8 +72,11 @@
 #define VK_EXT_LAYER_SETTINGS_SPEC_VERSION 1
 #define VK_EXT_LAYER_SETTINGS_EXTENSION_NAME "VK_EXT_layer_settings"
 
-// These stype values were selected to prevent interference with Vulkan spec definitions
-static const uint32_t VK_STRUCTURE_TYPE_INSTANCE_LAYER_SETTINGS_EXT = 3000300003;
+// This extension is exclusively used by VVL, and is NOT intended as a deliverable.
+// The value of the VK_STRUCTURE_TYPE is arbitrary. The only requirement,
+// is that it must not conflict with existing sTypes.
+constexpr VkStructureType VK_STRUCTURE_TYPE_INSTANCE_LAYER_SETTINGS_EXT =
+    static_cast<VkStructureType>(VK_STRUCTURE_TYPE_MAX_ENUM - 1);
 
 typedef enum VkLayerSettingValueTypeEXT {
     VK_LAYER_SETTING_VALUE_TYPE_UINT32_EXT,

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -40,8 +40,8 @@ void FakeTextInputClient::SetCompositionText(
   selection_ = gfx::Range(new_cursor, new_cursor);
 }
 
-uint32_t FakeTextInputClient::ConfirmCompositionText(bool keep_selection) {
-  return UINT32_MAX;
+size_t FakeTextInputClient::ConfirmCompositionText(bool keep_selection) {
+  return std::numeric_limits<size_t>::max();
 }
 
 void FakeTextInputClient::ClearCompositionText() {}
@@ -78,7 +78,11 @@ base::i18n::TextDirection FakeTextInputClient::GetTextDirection() const {
 }
 
 int FakeTextInputClient::GetTextInputFlags() const {
-  return EF_NONE;
+  return flags_;
+}
+
+void FakeTextInputClient::SetFlags(const int flags) {
+  flags_ = flags;
 }
 
 bool FakeTextInputClient::CanComposeInline() const {
@@ -93,7 +97,7 @@ gfx::Rect FakeTextInputClient::GetSelectionBoundingBox() const {
   return {};
 }
 
-bool FakeTextInputClient::GetCompositionCharacterBounds(uint32_t index,
+bool FakeTextInputClient::GetCompositionCharacterBounds(size_t index,
                                                         gfx::Rect* rect) const {
   return false;
 }
@@ -124,9 +128,11 @@ bool FakeTextInputClient::SetEditableSelectionRange(const gfx::Range& range) {
   return false;
 }
 
+#if BUILDFLAG(IS_MAC)
 bool FakeTextInputClient::DeleteRange(const gfx::Range& range) {
   return false;
 }
+#endif
 
 bool FakeTextInputClient::GetTextFromRange(const gfx::Range& range,
                                            std::u16string* text) const {
@@ -174,7 +180,7 @@ bool FakeTextInputClient::SetCompositionFromExistingText(
 }
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 gfx::Range FakeTextInputClient::GetAutocorrectRange() const {
   return autocorrect_range_;
 }

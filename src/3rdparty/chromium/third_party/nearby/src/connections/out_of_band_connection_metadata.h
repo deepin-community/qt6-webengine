@@ -21,12 +21,8 @@
 #include "internal/platform/byte_array.h"
 #include "proto/connections_enums.pb.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
-
-// Feature On/Off switch for mediums.
-using BooleanMediumSelector = MediumSelector<bool>;
 
 // Metadata injected to facilitate out-of-band connections. The medium field is
 // required, and the other fields are only specified for a specific medium.
@@ -55,6 +51,5 @@ struct OutOfBandConnectionMetadata {
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location
 
 #endif  // CORE_OUT_OF_BAND_CONNECTION_METADATA_H_

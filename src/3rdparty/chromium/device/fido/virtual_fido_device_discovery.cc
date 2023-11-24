@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,13 +6,13 @@
 
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
+#include "device/fido/virtual_fido_device_authenticator.h"
 #include "device/fido/virtual_u2f_device.h"
 
-namespace device {
-namespace test {
+namespace device::test {
 
 VirtualFidoDeviceDiscovery::Trace::Trace() = default;
 VirtualFidoDeviceDiscovery::Trace::~Trace() = default;
@@ -38,7 +38,7 @@ VirtualFidoDeviceDiscovery::~VirtualFidoDeviceDiscovery() {
 }
 
 void VirtualFidoDeviceDiscovery::StartInternal() {
-  std::unique_ptr<FidoDevice> device;
+  std::unique_ptr<VirtualFidoDevice> device;
   if (supported_protocol_ == ProtocolVersion::kCtap2) {
     device = std::make_unique<VirtualCtap2Device>(state_, ctap2_config_);
   } else {
@@ -46,8 +46,10 @@ void VirtualFidoDeviceDiscovery::StartInternal() {
   }
 
   id_ = device->GetId();
-  AddDevice(std::move(device));
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
+  auto authenticator =
+      std::make_unique<VirtualFidoDeviceAuthenticator>(std::move(device));
+  AddAuthenticator(std::move(authenticator));
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(&VirtualFidoDeviceDiscovery::NotifyDiscoveryStarted,
                      AsWeakPtr(), true /* success */));
@@ -66,10 +68,9 @@ void VirtualFidoDeviceDiscovery::Disconnect(bool _) {
   RemoveDevice(id_);
 }
 
-bool VirtualFidoDeviceDiscovery::MaybeStop() {
+void VirtualFidoDeviceDiscovery::Stop() {
   trace_->discoveries[trace_index_].is_stopped = true;
-  return FidoDeviceDiscovery::MaybeStop();
+  FidoDeviceDiscovery::Stop();
 }
 
-}  // namespace test
-}  // namespace device
+}  // namespace device::test

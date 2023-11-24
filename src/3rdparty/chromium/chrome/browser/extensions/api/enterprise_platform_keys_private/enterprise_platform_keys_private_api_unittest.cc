@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -92,8 +92,9 @@ class EPKPChallengeMachineKeyTest : public EPKPChallengeKeyTestBase {
 const char EPKPChallengeMachineKeyTest::kFuncArgs[] = "[\"Y2hhbGxlbmdl\"]";
 
 TEST_F(EPKPChallengeMachineKeyTest, ExtensionNotAllowlisted) {
-  base::ListValue empty_allowlist;
-  prefs_->Set(prefs::kAttestationExtensionAllowlist, empty_allowlist);
+  base::Value::List empty_allowlist;
+  prefs_->SetList(prefs::kAttestationExtensionAllowlist,
+                  std::move(empty_allowlist));
 
   EXPECT_EQ(
       ash::attestation::TpmChallengeKeyResult::kExtensionNotAllowedErrorMsg,
@@ -103,9 +104,9 @@ TEST_F(EPKPChallengeMachineKeyTest, ExtensionNotAllowlisted) {
 TEST_F(EPKPChallengeMachineKeyTest, Success) {
   SetMockTpmChallenger();
 
-  base::ListValue allowlist;
+  base::Value::List allowlist;
   allowlist.Append(extension_->id());
-  prefs_->Set(prefs::kAttestationExtensionAllowlist, allowlist);
+  prefs_->SetList(prefs::kAttestationExtensionAllowlist, std::move(allowlist));
 
   std::unique_ptr<base::Value> value(utils::RunFunctionAndReturnSingleResult(
       func_.get(), kFuncArgs, browser(), extensions::api_test_utils::NONE));
@@ -131,8 +132,9 @@ class EPKPChallengeUserKeyTest : public EPKPChallengeKeyTestBase {
 const char EPKPChallengeUserKeyTest::kFuncArgs[] = "[\"Y2hhbGxlbmdl\", true]";
 
 TEST_F(EPKPChallengeUserKeyTest, ExtensionNotAllowlisted) {
-  base::ListValue empty_allowlist;
-  prefs_->Set(prefs::kAttestationExtensionAllowlist, empty_allowlist);
+  base::Value::List empty_allowlist;
+  prefs_->SetList(prefs::kAttestationExtensionAllowlist,
+                  std::move(empty_allowlist));
 
   EXPECT_EQ(
       ash::attestation::TpmChallengeKeyResult::kExtensionNotAllowedErrorMsg,
@@ -142,9 +144,9 @@ TEST_F(EPKPChallengeUserKeyTest, ExtensionNotAllowlisted) {
 TEST_F(EPKPChallengeUserKeyTest, Success) {
   SetMockTpmChallenger();
 
-  base::ListValue allowlist;
+  base::Value::List allowlist;
   allowlist.Append(extension_->id());
-  prefs_->Set(prefs::kAttestationExtensionAllowlist, allowlist);
+  prefs_->SetList(prefs::kAttestationExtensionAllowlist, std::move(allowlist));
 
   std::unique_ptr<base::Value> value(utils::RunFunctionAndReturnSingleResult(
       func_.get(), kFuncArgs, browser(), extensions::api_test_utils::NONE));

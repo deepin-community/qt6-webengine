@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -100,9 +100,9 @@ void AccountsMutatorImpl::InvalidateRefreshTokenForPrimaryAccount(
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   NOTREACHED();
 #endif
-  DCHECK(primary_account_manager_->HasPrimaryAccount(ConsentLevel::kSync));
+  DCHECK(primary_account_manager_->HasPrimaryAccount(ConsentLevel::kSignin));
   CoreAccountInfo primary_account_info =
-      primary_account_manager_->GetPrimaryAccountInfo(ConsentLevel::kSync);
+      primary_account_manager_->GetPrimaryAccountInfo(ConsentLevel::kSignin);
   AddOrUpdateAccount(primary_account_info.gaia, primary_account_info.email,
                      GaiaConstants::kInvalidRefreshToken,
                      primary_account_info.is_under_advanced_protection, source);

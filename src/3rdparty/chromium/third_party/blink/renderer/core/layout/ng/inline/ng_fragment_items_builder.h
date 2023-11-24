@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -79,10 +79,6 @@ class CORE_EXPORT NGFragmentItemsBuilder {
   void AddLine(const NGPhysicalLineBoxFragment& line,
                const LogicalOffset& offset);
 
-  // Add to |NGLogicalLineItems| instance pool. |AcquireLogicalLineItems|
-  // uses pooled instances first if available to avoid memory allocations.
-  void AddLogicalLineItemsPool(NGLogicalLineItems* line_items);
-
   // Add a list marker to the current line.
   void AddListMarker(const NGPhysicalBoxFragment& marker_fragment,
                      const LogicalOffset& offset);
@@ -145,7 +141,11 @@ class CORE_EXPORT NGFragmentItemsBuilder {
 
   // Build a |NGFragmentItems|. The builder cannot build twice because data set
   // to this builder may be cleared.
-  void ToFragmentItems(const PhysicalSize& outer_size, void* data);
+  //
+  // This function returns new size of the container if the container is an
+  // SVG <text>.
+  absl::optional<PhysicalSize> ToFragmentItems(const PhysicalSize& outer_size,
+                                               void* data);
 
  private:
   void MoveCurrentLogicalLineItemsToMap();
@@ -164,7 +164,8 @@ class CORE_EXPORT NGFragmentItemsBuilder {
 
   HeapHashMap<Member<const NGPhysicalFragment>, Member<NGLogicalLineItems>>
       line_items_map_;
-  NGLogicalLineItems* line_items_pool_ = nullptr;
+  NGLogicalLineItems* const line_items_pool_ =
+      MakeGarbageCollected<NGLogicalLineItems>();
 
   NGInlineNode node_;
 

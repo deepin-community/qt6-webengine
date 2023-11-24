@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -33,9 +33,7 @@ class PLATFORM_EXPORT ShapeResultBloberizer {
   struct FillGlyphs;
   struct FillTextEmphasisGlyphs;
 
-  ShapeResultBloberizer(const FontDescription&,
-                        float device_scale_factor,
-                        Type);
+  explicit ShapeResultBloberizer(const FontDescription&, Type);
   ShapeResultBloberizer(const ShapeResultBloberizer&) = delete;
   ShapeResultBloberizer& operator=(const ShapeResultBloberizer&) = delete;
 
@@ -85,7 +83,7 @@ class PLATFORM_EXPORT ShapeResultBloberizer {
            const gfx::Vector2dF& offset,
            unsigned character_index) {
     // cannot mix x-only/xy offsets
-    DCHECK(pending_glyphs_.IsEmpty() || HasPendingVerticalOffsets());
+    DCHECK(pending_glyphs_.empty() || HasPendingVerticalOffsets());
 
     if (UNLIKELY(font_data != pending_font_data_) ||
         UNLIKELY(canvas_rotation != pending_canvas_rotation_)) {
@@ -169,7 +167,6 @@ class PLATFORM_EXPORT ShapeResultBloberizer {
   bool HasPendingVerticalOffsets() const;
 
   const FontDescription& font_description_;
-  const float device_scale_factor_;
   const Type type_;
 
   // Current text blob state.
@@ -204,7 +201,6 @@ class PLATFORM_EXPORT ShapeResultBloberizer {
 struct PLATFORM_EXPORT ShapeResultBloberizer::FillGlyphsNG
     : public ShapeResultBloberizer {
   FillGlyphsNG(const FontDescription&,
-               float device_scale_factor,
                const StringView&,
                unsigned from,
                unsigned to,
@@ -214,7 +210,6 @@ struct PLATFORM_EXPORT ShapeResultBloberizer::FillGlyphsNG
 struct PLATFORM_EXPORT ShapeResultBloberizer::FillTextEmphasisGlyphsNG
     : public ShapeResultBloberizer {
   FillTextEmphasisGlyphsNG(const FontDescription&,
-                           float device_scale_factor,
                            const StringView&,
                            unsigned from,
                            unsigned to,
@@ -225,7 +220,6 @@ struct PLATFORM_EXPORT ShapeResultBloberizer::FillTextEmphasisGlyphsNG
 struct PLATFORM_EXPORT ShapeResultBloberizer::FillGlyphs
     : public ShapeResultBloberizer {
   FillGlyphs(const FontDescription&,
-             float device_scale_factor,
              const TextRunPaintInfo&,
              const ShapeResultBuffer&,
              Type);
@@ -233,7 +227,6 @@ struct PLATFORM_EXPORT ShapeResultBloberizer::FillGlyphs
 struct PLATFORM_EXPORT ShapeResultBloberizer::FillTextEmphasisGlyphs
     : public ShapeResultBloberizer {
   FillTextEmphasisGlyphs(const FontDescription&,
-                         float device_scale_factor,
                          const TextRunPaintInfo&,
                          const ShapeResultBuffer&,
                          const GlyphData& emphasis_data);

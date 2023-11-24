@@ -96,6 +96,41 @@
     Close page
   </message>
 
+  <!-- Enterprise Block interstitial -->
+  <message name="IDS_ENTERPRISE_BLOCK_TITLE" desc="Tab title. Context: the requested URL doesn't pass the filtering rules set by the admin.">
+    Blocked by Admin
+  </message>
+  <message name="IDS_ENTERPRISE_BLOCK_HEADING" desc="Large heading. Context: the error page that's shown when the requested URL doesn't pass the filtering rules set by the admin.">
+    The site ahead is blocked by your organization
+  </message>
+  <message name="IDS_ENTERPRISE_BLOCK_PRIMARY_PARAGRAPH" desc="Main paragraph of an error message. Context: the error page that's shown when the requested URL doesn't pass the filtering rules set by the admin.">
+    Your organization has blocked <ph name="BEGIN_BOLD">&lt;strong&gt;</ph><ph name="DOMAIN">$1<ex>example.com</ex></ph><ph name="END_BOLD">&lt;/strong&gt;</ph> because it violates a policy. <ph name="BEGIN_LEARN_MORE_LINK">&lt;a href="#" id="learn-more-link" aria-label="$2"&gt;</ph>Learn more<ph name="END_LEARN_MORE_LINK">&lt;/a&gt;</ph>
+  </message>
+  <message name="IDS_ENTERPRISE_BLOCK_GO_BACK" desc="The text for the button that takes the user back to safety.">
+    Go back
+  </message>
+
+      <!-- Enterprise Warn interstitial -->
+  <message name="IDS_ENTERPRISE_WARN_TITLE" desc="Tab title. Context: the requested URL doesn't pass the filtering rules set by the admin.">
+    Admin warning
+  </message>
+  <message name="IDS_ENTERPRISE_WARN_HEADING" desc="Large heading. Context: the error page that's shown when the requested URL doesn't pass the filtering rules set by the admin.">
+    The site ahead is flagged by your organization
+  </message>
+  <message name="IDS_ENTERPRISE_WARN_PRIMARY_PARAGRAPH" desc="Main paragraph of an error message. Context: the error page that's shown when the requested URL doesn't pass the filtering rules set by the admin.">
+    Your organization has identified  <ph name="BEGIN_BOLD">&lt;strong&gt;</ph><ph name="DOMAIN">$1<ex>example.com</ex></ph><ph name="END_BOLD">&lt;/strong&gt;</ph> as a site that might violate a policy. <ph name="BEGIN_LEARN_MORE_LINK">&lt;a href="#" id="learn-more-link" aria-label="$2"&gt;</ph>Learn more<ph name="END_LEARN_MORE_LINK">&lt;/a&gt;</ph>
+  </message>
+  <message name="IDS_ENTERPRISE_WARN_GO_BACK" desc="The text for the button that takes the user back to safety.">
+    Go back
+  </message>
+  <message name="IDS_ENTERPRISE_WARN_CONTINUE_TO_SITE" desc="The text for the button that bypasses the warning and continues to site.">
+    Continue to site
+  </message>
+  <message name="IDS_ENTERPRISE_INTERSTITIALS_LEARN_MORE_ACCCESSIBILITY_TEXT" desc="Accessibility text for a 'Learn more' link that links to a help article about why the user was warned/blocked while trying to access a website that violated admin rules.">
+    Learn more about site restrictions in managed browsers
+  </message>
+
+
   <!-- Clock errors -->
   <message name="IDS_CLOCK_ERROR_TITLE" desc="Tab title. Context: the browser can't load a page because the device's clock is wrong.">
     Clock error
@@ -417,51 +452,6 @@
   </message>
   <message name="IDS_BILLING_PROCEED_BUTTON" desc="The text for the billing interstitial proceed button.">
     Proceed
-  </message>
-
-  <!-- Origin Policy Error Interstial -->
-  <message name="IDS_ORIGIN_POLICY_TITLE"
-    desc="Title of the Origin Policy Error interstitial.">
-    Origin Policy Error
-  </message>
-  <message name="IDS_ORIGIN_POLICY_HEADING"
-    desc="The large heading at the top of the Origin Policy Error Interstitial">
-    Blocked according to <ph name="ORIGIN">$2</ph>'s origin policy.
-  </message>
-  <message name="IDS_ORIGIN_POLICY_INFO"
-    desc="The primary explanatory paragraph for the Origin Policy Error interstitial.">
-    The site <ph name="ORIGIN">$2</ph> has requested that an origin policy
-    apply to all requests to it, but this policy cannot presently be applied.
-  </message>
-  <message name="IDS_ORIGIN_POLICY_INFO2" desc="The second paragraph of the text of the Origin Policy Error Interstitial. (Presently intentionally left blank.)" />
-  <message name="IDS_ORIGIN_POLICY_BUTTON"
-    desc="The text for the Origin Policy Error Interstitial button that takes the user back to the previous page">
-    Back to safety
-  </message>
-  <message name="IDS_ORIGIN_POLICY_DETAILS"
-    desc="The text for the Origin Policy Error Interstitial button that contains additional information.">
-    Advanced
-  </message>
-  <message name="IDS_ORIGIN_POLICY_EXPLANATION_CANNOT_LOAD" desc="The text of the Origin Policy Error Interstitial that will be displayed when the user presses the 'Advanced' button for additional information, for the case where the policy was requested but could not be loaded.">
-    The server you are going to, <ph name="ORIGIN">$2</ph>, has requested that
-    an origin policy be applied to all requests to it. But it has now failed to
-    deliver a policy, which prevents the browser from fulfilling your request
-    for <ph name="SITE">$1</ph>. Origin policies can be used by site operators
-    to configure security and other properties for a site.
-  </message>
-  <message name="IDS_ORIGIN_POLICY_EXPLANATION_CANNOT_PARSE_HEADER" desc="The text of the Origin Policy Error Interstitial that will be displayed when the user presses the 'Advanced' button for additional information, for the case where the policy header could not be parsed.">
-    The server you are going to, <ph name="ORIGIN">$2</ph>, has set a header
-    requiring that an origin policy be applied to all requests to it. But
-    the header is malformed, which prevents the browser from fulfilling
-    your request for <ph name="SITE">$1</ph>. Origin policies can be used by
-    site operators to configure security and other properties for a site.
-  </message>
-  <message name="IDS_ORIGIN_POLICY_FINAL_PARAGRAPH"
-    desc="The text of the Origin Policy Error Interstitial that a user can click to proceed to the site, despite the error.">
-    <ph name="BEGIN_LINK">&lt;a href="#" id="proceed-link"&gt;</ph>Proceed to <ph name="SITE">$1<ex>example.com</ex></ph><ph name="END_LINK">&lt;/a&gt;</ph>
-  </message>
-  <message name="IDS_ORIGIN_POLICY_CLOSE" desc="The text of the Origin Policy Error Interstitial that will hide the 'advanced' section again.">
-    Hide advanced
   </message>
 
   <if expr="not is_ios">

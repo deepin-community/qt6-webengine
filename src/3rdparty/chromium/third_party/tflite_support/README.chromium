@@ -1,8 +1,8 @@
 Name: TensorFlow Lite Support
 Short Name: tflite-support
 URL: https://github.com/tensorflow/tflite-support
-Version: 71db695ff9b4118b042892745ae5cdf49420abf8
-Date: 2022/03/09
+Version: 15cf9c5fb28fdd4d83302b5118119f578cd7b9d4
+Date: 2022/11/30
 License: Apache 2.0
 License File: LICENSE
 Security Critical: Yes
@@ -22,34 +22,38 @@ Third party dependencies:
 Modifications:
 01) Use re2::StringPiece instead of absl::string_view in regex_tokenizer.cc
 02) Remove support for sentencepiece tokenization because the required overhead
-isn't worth adding this functionality, esp since no feature team needs it.
+    isn't worth adding this functionality, esp since no feature team needs it.
 03) Remove the ABSL_DEPRECATED annotation from a deprecated struct since this
-is a no-op in chromium builds and upsets clang.
+    is a no-op in chromium builds and upsets clang.
 04) Do not use absl::any since it is not supported in chromium
-05) Remove memory mapped file support in external_file_handler.cc since it is
-only available on POSIX systems.
-06) Remove an unneeded static initializer.
-07) Surface the error from NLClassifier::Classify.
-08) Remove unbuilt files that triggered checkdeps warnings, and fix file perms.
-  * Note that this patch might not apply cleanly, so just do everything that
-  `git cl presubmit` tells you to do.
-09) Run clang-format.
-  * This patch might not apply cleanly, so run `git cl format` and commit the
-  changes.
-10) Check (instead of resetting) the cancel_flag_ before Invoking the model.
+05) Remove an unneeded static initializer.
+06) Check (instead of resetting) the cancel_flag_ before Invoking the model.
+07) Fix minizip path inclusion. Upstream uses contrib/minizip/, but chromium
+    uses third_party/zlib/contrib/minizip/.
+08) Fix unused variable in task_utils.h.
+09) Use SysNSStringToUTF8 to convert NSString.
+10) Set executable bit for common_win.bat.
+11) Fix unused function/field errors on windows.
+12) Remove whitespace tokenizer since it uses the unsafe function `chartorune`.
+13) Remove big testdata files.
+14) Run clang-format.
+    * This patch might not apply cleanly, so run `git cl format` and commit the
+      changes.
+15) Use abs() from std in tflite::task::core::Category
 
 Update Process (internal: http://shortn/_nwz8liqimy):
 1) Run these commands:
-```
-pushd third_party/tflite_support/
-rm -rf src/
-git clone https://github.com/tensorflow/tflite-support/
-mv tflite-support/ src/
-rm -rf src/.git/
-popd
-```
-2) Apply each patch listed above residing in patches/ using `git apply
-third_party/tflite_support/patches/$PATCHFILE`.
-3) Get the build working.
-4) Record the patches made with `git format-patches HEAD -<number of changes>`
 
+  ```
+  pushd third_party/tflite_support/
+  rm -rf src/
+  git clone https://github.com/tensorflow/tflite-support/
+  mv tflite-support/ src/
+  rm -rf src/.git/
+  popd
+  ```
+
+2) Apply each patch listed above residing in patches/ using `git apply
+   third_party/tflite_support/patches/$PATCHFILE`.
+3) Get the build working.
+4) Record the patches made with `git format-patch HEAD -<number of changes>`

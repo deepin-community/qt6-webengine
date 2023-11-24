@@ -53,10 +53,6 @@ void Location::Trace(Visitor* visitor) const {
 }
 
 inline const KURL& Location::Url() const {
-  const KURL& web_bundle_claimed_url = GetDocument()->WebBundleClaimedUrl();
-  if (web_bundle_claimed_url.IsValid()) {
-    return web_bundle_claimed_url;
-  }
   const KURL& url = GetDocument()->Url();
   if (!url.IsValid()) {
     // Use "about:blank" while the page is still loading (before we have a
@@ -103,9 +99,8 @@ DOMStringList* Location::ancestorOrigins() const {
   auto* origins = MakeGarbageCollected<DOMStringList>();
   if (!IsAttached())
     return origins;
-  for (Frame* frame =
-           dom_window_->GetFrame()->Tree().Parent(FrameTreeBoundary::kFenced);
-       frame; frame = frame->Tree().Parent(FrameTreeBoundary::kFenced)) {
+  for (Frame* frame = dom_window_->GetFrame()->Tree().Parent(); frame;
+       frame = frame->Tree().Parent()) {
     origins->Append(
         frame->GetSecurityContext()->GetSecurityOrigin()->ToString());
   }
@@ -270,23 +265,6 @@ void Location::SetLocation(const String& url,
     return;
   }
 
-  // Check the source browsing context's CSP to fulfill the CSP check
-  // requirement of https://html.spec.whatwg.org/C/#navigate for javascript
-  // URLs. Although the spec states we should perform this check on task
-  // execution, there are concerns about the correctness of that statement,
-  // see http://github.com/whatwg/html/issues/2591.
-  if (completed_url.ProtocolIsJavaScript()) {
-    String script_source = DecodeURLEscapeSequences(
-        completed_url.GetString(), DecodeURLMode::kUTF8OrIsomorphic);
-    if (!incumbent_window->GetContentSecurityPolicyForCurrentWorld()
-             ->AllowInline(ContentSecurityPolicy::InlineType::kNavigation,
-                           nullptr /* element */, script_source,
-                           String() /* nonce */, incumbent_window->Url(),
-                           OrdinalNumber::First())) {
-      return;
-    }
-  }
-
   V8DOMActivityLogger* activity_logger =
       V8DOMActivityLogger::CurrentActivityLoggerIfIsolatedWorld();
   if (activity_logger) {
@@ -298,7 +276,11 @@ void Location::SetLocation(const String& url,
     activity_logger->LogEvent("blinkSetAttribute", argv.size(), argv.data());
   }
 
-  FrameLoadRequest request(incumbent_window, ResourceRequest(completed_url));
+  ResourceRequestHead resource_request(completed_url);
+  resource_request.SetHasUserGesture(
+      LocalFrame::HasTransientUserActivation(incumbent_window->GetFrame()));
+
+  FrameLoadRequest request(incumbent_window, resource_request);
   request.SetClientRedirectReason(ClientNavigationReason::kFrameNavigation);
   WebFrameLoadType frame_load_type = WebFrameLoadType::kStandard;
   if (set_location_policy == SetLocationPolicy::kReplaceThisFrame)

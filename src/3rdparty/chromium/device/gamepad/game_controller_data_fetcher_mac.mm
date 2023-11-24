@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,7 +34,8 @@ bool IsSupported(GCController* controller) {
   // avoid double-enumeration.
   if (@available(macOS 10.15, *)) {
     NSString* product_category = [controller productCategory];
-    if ([product_category isEqualToString:@"Xbox One"] ||
+    if ([product_category isEqualToString:@"HID"] ||
+        [product_category isEqualToString:@"Xbox One"] ||
         [product_category isEqualToString:@"DualShock 4"] ||
         [product_category isEqualToString:@"DualSense"] ||
         [product_category isEqualToString:@"Switch Pro Controller"] ||

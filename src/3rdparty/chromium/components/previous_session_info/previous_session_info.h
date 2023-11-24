@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 
 #import <UIKit/UIKit.h>
 
-#include "base/callback_helpers.h"
+#include "base/functional/callback_helpers.h"
 
 #include "url/gurl.h"
 
@@ -28,8 +28,8 @@ extern NSString* const kPreviousSessionInfoRestoringSession;
 // Key in the UserDefaults for an array which contains the ids for the connected
 // scene sessions on the previous run.
 extern NSString* const kPreviousSessionInfoConnectedSceneSessionIDs;
-// Key in the UserDefaults for a dictionary with session info params.
-extern NSString* const kPreviousSessionInfoParams;
+// Prefix key in the UserDefaults for a dictionary with session info params.
+extern NSString* const kPreviousSessionInfoParamsPrefix;
 // Key in the UserDefaults for the memory footprint of the browser process.
 extern NSString* const kPreviousSessionInfoMemoryFootprint;
 // Key in the UserDefaults for the number of open tabs.

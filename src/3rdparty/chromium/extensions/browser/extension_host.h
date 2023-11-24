@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,10 +11,10 @@
 #include <string>
 #include <unordered_map>
 
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/timer/elapsed_timer.h"
 #include "content/public/browser/media_stream_request.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -24,11 +24,15 @@
 #include "extensions/common/mojom/view_type.mojom.h"
 #include "extensions/common/stack_frame.h"
 
+namespace base {
+class ElapsedTimer;
+}  // namespace base
+
 namespace content {
 class BrowserContext;
 class RenderProcessHost;
 class SiteInstance;
-}
+}  // namespace content
 
 namespace extensions {
 class Extension;
@@ -49,6 +53,8 @@ class ExtensionHost : public DeferredStartRenderHost,
                       public ExtensionFunctionDispatcher::Delegate,
                       public ExtensionRegistryObserver {
  public:
+  using CloseHandler = base::OnceCallback<void(ExtensionHost*)>;
+
   ExtensionHost(const Extension* extension,
                 content::SiteInstance* site_instance,
                 const GURL& url,
@@ -75,6 +81,14 @@ class ExtensionHost : public DeferredStartRenderHost,
   content::BrowserContext* browser_context() { return browser_context_; }
 
   mojom::ViewType extension_host_type() const { return extension_host_type_; }
+
+  // Sets the callback responsible for closing the ExtensionHost in response to
+  // a WebContents::CloseContents() call (which is triggered from e.g.
+  // calling `window.close()`). This is done separately from the constructor as
+  // some callsites create an ExtensionHost prior to the object that is
+  // responsible for later closing it, but must be done before `CloseContents()`
+  // can be called.
+  void SetCloseHandler(CloseHandler close_handler);
 
   // Returns the last committed URL of the associated WebContents.
   const GURL& GetLastCommittedURL() const;
@@ -106,6 +120,9 @@ class ExtensionHost : public DeferredStartRenderHost,
   // finished.
   void OnNetworkRequestDone(uint64_t request_id);
 
+  // Returns true if the ExtensionHost is allowed to be navigated.
+  bool ShouldAllowNavigations() const;
+
   // content::WebContentsObserver:
   bool OnMessageReceived(const IPC::Message& message,
                          content::RenderFrameHost* host) override;
@@ -124,7 +141,7 @@ class ExtensionHost : public DeferredStartRenderHost,
                       std::unique_ptr<content::WebContents> new_contents,
                       const GURL& target_url,
                       WindowOpenDisposition disposition,
-                      const gfx::Rect& initial_rect,
+                      const blink::mojom::WindowFeatures& window_features,
                       bool user_gesture,
                       bool* was_blocked) override;
   void CloseContents(content::WebContents* contents) override;
@@ -223,16 +240,13 @@ class ExtensionHost : public DeferredStartRenderHost,
   // The type of view being hosted.
   mojom::ViewType extension_host_type_;
 
-  // Measures how long since the ExtensionHost object was created. This can be
-  // used to measure the responsiveness of UI. For example, it's important to
-  // keep this as low as possible for popups. Contrast this to |load_start_|,
-  // for which a low value does not necessarily mean a responsive UI, as
-  // ExtensionHosts may sit in an ExtensionHostQueue for a long time.
-  base::ElapsedTimer create_start_;
-
   // Measures how long since the initial URL started loading. This timer is
   // started only once the ExtensionHost has exited the ExtensionHostQueue.
   std::unique_ptr<base::ElapsedTimer> load_start_;
+
+  CloseHandler close_handler_;
+  // Whether the close handler has been previously invoked.
+  bool called_close_handler_ = false;
 
   base::ObserverList<ExtensionHostObserver>::Unchecked observer_list_;
 

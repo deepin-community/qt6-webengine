@@ -1,15 +1,14 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/renderer/pepper/pepper_device_enumeration_host_helper.h"
 
-#include "base/bind.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "ipc/ipc_message.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/host/dispatch_host_message.h"
@@ -33,7 +32,7 @@ class PepperDeviceEnumerationHostHelper::ScopedEnumerationRequest
       : callback_(std::move(callback)), requested_(false), sync_call_(false) {
     if (!owner->delegate_) {
       // If no delegate, return an empty list of devices.
-      base::ThreadTaskRunnerHandle::Get()->PostTask(
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
           FROM_HERE,
           base::BindOnce(
               &ScopedEnumerationRequest::EnumerateDevicesCallbackBody,
@@ -66,7 +65,7 @@ class PepperDeviceEnumerationHostHelper::ScopedEnumerationRequest
   void EnumerateDevicesCallbackBody(
       const std::vector<ppapi::DeviceRefData>& devices) {
     if (sync_call_) {
-      base::ThreadTaskRunnerHandle::Get()->PostTask(
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
           FROM_HERE,
           base::BindOnce(
               &ScopedEnumerationRequest::EnumerateDevicesCallbackBody,

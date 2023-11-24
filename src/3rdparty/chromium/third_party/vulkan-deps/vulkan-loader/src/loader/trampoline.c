@@ -1,8 +1,8 @@
 /*
  *
- * Copyright (c) 2015-2022 The Khronos Group Inc.
- * Copyright (c) 2015-2022 Valve Corporation
- * Copyright (c) 2015-2022 LunarG, Inc.
+ * Copyright (c) 2015-2023 The Khronos Group Inc.
+ * Copyright (c) 2015-2023 Valve Corporation
+ * Copyright (c) 2015-2023 LunarG, Inc.
  * Copyright (C) 2015 Google Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,7 +38,7 @@
 
 // Trampoline entrypoints are in this file for core Vulkan commands
 
-/* vkGetInstanceProcAddr: Get global level or instance level entrypoint addressess.
+/* vkGetInstanceProcAddr: Get global level or instance level entrypoint addresses.
  * @param instance
  * @param pName
  * @return
@@ -55,7 +55,7 @@
  *
  * Note:
  * Vulkan header updated 1.2.193 changed the behavior of vkGetInstanceProcAddr for global entrypoints. They used to always be
- * returned regardless of the value of the instance paramtere. The spec was amended in this version to only allow querying global
+ * returned regardless of the value of the instance parameter. The spec was amended in this version to only allow querying global
  * level entrypoints with a NULL instance. However, as to not break old applications, the new behavior is only applied if the
  * instance passed in is both valid and minor version is greater than 1.2, which was when this change in behavior occurred. Only
  * instances with a newer version will get the new behavior.
@@ -160,21 +160,19 @@ LOADER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceExtensionPropert
 
     // Get the implicit layers
     struct loader_layer_list layers;
-    memset(&layers, 0, sizeof(layers));
-    loader_scan_for_implicit_layers(NULL, &layers);
-
-    // We'll need to save the dl handles so we can close them later
-    loader_platform_dl_handle *libs = malloc(sizeof(loader_platform_dl_handle) * layers.count);
-    if (libs == NULL && layers.count > 0) {
-        return VK_ERROR_OUT_OF_HOST_MEMORY;
-    }
-    memset(libs, 0, sizeof(loader_platform_dl_handle) * layers.count);
+    loader_platform_dl_handle *libs = NULL;
     size_t lib_count = 0;
+    memset(&layers, 0, sizeof(layers));
+
+    res = loader_scan_for_implicit_layers(NULL, &layers, &libs);
+    if (VK_SUCCESS != res) {
+        return res;
+    }
 
     // Prepend layers onto the chain if they implement this entry point
     for (uint32_t i = 0; i < layers.count; ++i) {
-        if (!loader_implicit_layer_is_enabled(NULL, layers.list + i) ||
-            layers.list[i].pre_instance_functions.enumerate_instance_extension_properties[0] == '\0') {
+        // Skip this layer if it doesn't expose the entry-point
+        if (layers.list[i].pre_instance_functions.enumerate_instance_extension_properties[0] == '\0') {
             continue;
         }
 
@@ -195,7 +193,8 @@ LOADER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceExtensionPropert
             continue;
         }
 
-        VkEnumerateInstanceExtensionPropertiesChain *chain_link = malloc(sizeof(VkEnumerateInstanceExtensionPropertiesChain));
+        VkEnumerateInstanceExtensionPropertiesChain *chain_link =
+            loader_alloc(NULL, sizeof(VkEnumerateInstanceExtensionPropertiesChain), VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
         if (chain_link == NULL) {
             res = VK_ERROR_OUT_OF_HOST_MEMORY;
             break;
@@ -222,14 +221,14 @@ LOADER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceExtensionPropert
     while (chain_head != &chain_tail) {
         VkEnumerateInstanceExtensionPropertiesChain *holder = chain_head;
         chain_head = (VkEnumerateInstanceExtensionPropertiesChain *)chain_head->pNextLink;
-        free(holder);
+        loader_free(NULL, holder);
     }
 
     // Close the dl handles
     for (size_t i = 0; i < lib_count; ++i) {
         loader_platform_close_library(libs[i]);
     }
-    free(libs);
+    loader_free(NULL, libs);
 
     return res;
 }
@@ -254,24 +253,17 @@ LOADER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceLayerProperties(
 
     // Get the implicit layers
     struct loader_layer_list layers;
-    memset(&layers, 0, sizeof(layers));
-    loader_scan_for_implicit_layers(NULL, &layers);
-
-    // We'll need to save the dl handles so we can close them later
-    loader_platform_dl_handle *libs = malloc(sizeof(loader_platform_dl_handle) * layers.count);
-    memset(libs, 0, sizeof(loader_platform_dl_handle) * layers.count);
-    if (libs == NULL && layers.count > 0) {
-        return VK_ERROR_OUT_OF_HOST_MEMORY;
-    }
+    loader_platform_dl_handle *libs = NULL;
     size_t lib_count = 0;
+    memset(&layers, 0, sizeof(layers));
+
+    res = loader_scan_for_implicit_layers(NULL, &layers, &libs);
+    if (VK_SUCCESS != res) {
+        return res;
+    }
 
     // Prepend layers onto the chain if they implement this entry point
     for (uint32_t i = 0; i < layers.count; ++i) {
-        if (!loader_implicit_layer_is_enabled(NULL, layers.list + i) ||
-            layers.list[i].pre_instance_functions.enumerate_instance_layer_properties[0] == '\0') {
-            continue;
-        }
-
         loader_platform_dl_handle layer_lib = loader_platform_open_library(layers.list[i].lib_name);
         if (layer_lib == NULL) {
             loader_log(NULL, VULKAN_LOADER_WARN_BIT, 0, "%s: Unable to load implicit layer library \"%s\"", __FUNCTION__,
@@ -289,7 +281,8 @@ LOADER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceLayerProperties(
             continue;
         }
 
-        VkEnumerateInstanceLayerPropertiesChain *chain_link = malloc(sizeof(VkEnumerateInstanceLayerPropertiesChain));
+        VkEnumerateInstanceLayerPropertiesChain *chain_link =
+            loader_alloc(NULL, sizeof(VkEnumerateInstanceLayerPropertiesChain), VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
         if (chain_link == NULL) {
             res = VK_ERROR_OUT_OF_HOST_MEMORY;
             break;
@@ -316,14 +309,14 @@ LOADER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceLayerProperties(
     while (chain_head != &chain_tail) {
         VkEnumerateInstanceLayerPropertiesChain *holder = chain_head;
         chain_head = (VkEnumerateInstanceLayerPropertiesChain *)chain_head->pNextLink;
-        free(holder);
+        loader_free(NULL, holder);
     }
 
     // Close the dl handles
     for (size_t i = 0; i < lib_count; ++i) {
         loader_platform_close_library(libs[i]);
     }
-    free(libs);
+    loader_free(NULL, libs);
 
     return res;
 }
@@ -355,21 +348,19 @@ LOADER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceVersion(uint32_t
 
     // Get the implicit layers
     struct loader_layer_list layers;
-    memset(&layers, 0, sizeof(layers));
-    loader_scan_for_implicit_layers(NULL, &layers);
-
-    // We'll need to save the dl handles so we can close them later
-    loader_platform_dl_handle *libs = malloc(sizeof(loader_platform_dl_handle) * layers.count);
-    if (libs == NULL && layers.count > 0) {
-        return VK_ERROR_OUT_OF_HOST_MEMORY;
-    }
-    memset(libs, 0, sizeof(loader_platform_dl_handle) * layers.count);
+    loader_platform_dl_handle *libs = NULL;
     size_t lib_count = 0;
+    memset(&layers, 0, sizeof(layers));
+
+    res = loader_scan_for_implicit_layers(NULL, &layers, &libs);
+    if (VK_SUCCESS != res) {
+        return res;
+    }
 
     // Prepend layers onto the chain if they implement this entry point
     for (uint32_t i = 0; i < layers.count; ++i) {
-        if (!loader_implicit_layer_is_enabled(NULL, layers.list + i) ||
-            layers.list[i].pre_instance_functions.enumerate_instance_version[0] == '\0') {
+        // Skip this layer if it doesn't expose the entry-point
+        if (layers.list[i].pre_instance_functions.enumerate_instance_version[0] == '\0') {
             continue;
         }
 
@@ -388,7 +379,8 @@ LOADER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceVersion(uint32_t
             continue;
         }
 
-        VkEnumerateInstanceVersionChain *chain_link = malloc(sizeof(VkEnumerateInstanceVersionChain));
+        VkEnumerateInstanceVersionChain *chain_link =
+            loader_alloc(NULL, sizeof(VkEnumerateInstanceVersionChain), VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
         if (chain_link == NULL) {
             res = VK_ERROR_OUT_OF_HOST_MEMORY;
             break;
@@ -415,14 +407,14 @@ LOADER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceVersion(uint32_t
     while (chain_head != &chain_tail) {
         VkEnumerateInstanceVersionChain *holder = chain_head;
         chain_head = (VkEnumerateInstanceVersionChain *)chain_head->pNextLink;
-        free(holder);
+        loader_free(NULL, holder);
     }
 
     // Close the dl handles
     for (size_t i = 0; i < lib_count; ++i) {
         loader_platform_close_library(libs[i]);
     }
-    free(libs);
+    loader_free(NULL, libs);
 
     return res;
 }
@@ -431,7 +423,6 @@ LOADER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCr
                                                               const VkAllocationCallbacks *pAllocator, VkInstance *pInstance) {
     struct loader_instance *ptr_instance = NULL;
     VkInstance created_instance = VK_NULL_HANDLE;
-    bool loaderLocked = false;
     VkResult res = VK_ERROR_INITIALIZATION_FAILED;
 
     LOADER_PLATFORM_THREAD_ONCE(&once_init, loader_initialize);
@@ -447,16 +438,8 @@ LOADER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCr
         goto out;
     }
 
-#if (DEBUG_DISABLE_APP_ALLOCATORS == 1)
-    {
-#else
-    if (pAllocator) {
-        ptr_instance = (struct loader_instance *)pAllocator->pfnAllocation(pAllocator->pUserData, sizeof(struct loader_instance),
-                                                                           sizeof(int *), VK_SYSTEM_ALLOCATION_SCOPE_INSTANCE);
-    } else {
-#endif
-        ptr_instance = (struct loader_instance *)malloc(sizeof(struct loader_instance));
-    }
+    ptr_instance =
+        (struct loader_instance *)loader_calloc(pAllocator, sizeof(struct loader_instance), VK_SYSTEM_ALLOCATION_SCOPE_INSTANCE);
 
     VkInstanceCreateInfo ici = *pCreateInfo;
 
@@ -466,8 +449,6 @@ LOADER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCr
     }
 
     loader_platform_thread_lock_mutex(&loader_lock);
-    loaderLocked = true;
-    memset(ptr_instance, 0, sizeof(struct loader_instance));
     if (pAllocator) {
         ptr_instance->alloc_callbacks = *pAllocator;
     }
@@ -478,8 +459,25 @@ LOADER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCr
         ptr_instance->app_api_version = LOADER_VERSION_1_0_0;
     } else {
         ptr_instance->app_api_version = loader_make_version(pCreateInfo->pApplicationInfo->apiVersion);
-        // zero out the patch version since we don't actually want to compare with it
-        ptr_instance->app_api_version.patch = 0;
+    }
+
+    // Look for one or more VK_EXT_debug_report or VK_EXT_debug_utils create info structures
+    // and setup a callback(s) for each one found.
+
+    // Handle cases of VK_EXT_debug_utils
+    // Setup the temporary messenger(s) here to catch early issues:
+    res = util_CreateDebugUtilsMessengers(ptr_instance, pCreateInfo->pNext, pAllocator);
+    if (VK_ERROR_OUT_OF_HOST_MEMORY == res) {
+        // Failure of setting up one or more of the messenger.
+        goto out;
+    }
+
+    // Handle cases of VK_EXT_debug_report
+    // Setup the temporary callback(s) here to catch early issues:
+    res = util_CreateDebugReportCallbacks(ptr_instance, pCreateInfo->pNext, pAllocator);
+    if (VK_ERROR_OUT_OF_HOST_MEMORY == res) {
+        // Failure of setting up one or more of the callback.
+        goto out;
     }
 
     // Check the VkInstanceCreateInfoFlags wether to allow the portability enumeration flag
@@ -491,47 +489,6 @@ LOADER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCr
                 loader_log(ptr_instance, VULKAN_LOADER_INFO_BIT, 0,
                            "Portability enumeration bit was set, enumerating portability drivers.");
             }
-        }
-    }
-
-    // Look for one or more VK_EXT_debug_report or VK_EXT_debug_utils create info structures
-    // and setup a callback(s) for each one found.
-    ptr_instance->num_tmp_report_callbacks = 0;
-    ptr_instance->tmp_report_create_infos = NULL;
-    ptr_instance->tmp_report_callbacks = NULL;
-    ptr_instance->num_tmp_messengers = 0;
-    ptr_instance->tmp_messenger_create_infos = NULL;
-    ptr_instance->tmp_messengers = NULL;
-
-    // Handle cases of VK_EXT_debug_utils
-    if (util_CopyDebugUtilsMessengerCreateInfos(pCreateInfo->pNext, pAllocator, &ptr_instance->num_tmp_messengers,
-                                                &ptr_instance->tmp_messenger_create_infos, &ptr_instance->tmp_messengers)) {
-        // One or more were found, but allocation failed.  Therefore, clean up and fail this function:
-        res = VK_ERROR_OUT_OF_HOST_MEMORY;
-        goto out;
-    } else if (ptr_instance->num_tmp_messengers > 0) {
-        // Setup the temporary messenger(s) here to catch early issues:
-        if (util_CreateDebugUtilsMessengers(ptr_instance, pAllocator, ptr_instance->num_tmp_messengers,
-                                            ptr_instance->tmp_messenger_create_infos, ptr_instance->tmp_messengers)) {
-            // Failure of setting up one or more of the messenger.  Therefore, clean up and fail this function:
-            res = VK_ERROR_OUT_OF_HOST_MEMORY;
-            goto out;
-        }
-    }
-
-    // Handle cases of VK_EXT_debug_report
-    if (util_CopyDebugReportCreateInfos(pCreateInfo->pNext, pAllocator, &ptr_instance->num_tmp_report_callbacks,
-                                        &ptr_instance->tmp_report_create_infos, &ptr_instance->tmp_report_callbacks)) {
-        // One or more were found, but allocation failed.  Therefore, clean up and fail this function:
-        res = VK_ERROR_OUT_OF_HOST_MEMORY;
-        goto out;
-    } else if (ptr_instance->num_tmp_report_callbacks > 0) {
-        // Setup the temporary callback(s) here to catch early issues:
-        if (util_CreateDebugReportCallbacks(ptr_instance, pAllocator, ptr_instance->num_tmp_report_callbacks,
-                                            ptr_instance->tmp_report_create_infos, ptr_instance->tmp_report_callbacks)) {
-            // Failure of setting up one or more of the callback.  Therefore, clean up and fail this function:
-            res = VK_ERROR_OUT_OF_HOST_MEMORY;
-            goto out;
         }
     }
 
@@ -550,7 +507,10 @@ LOADER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCr
     // enabledLayerCount == 0 and VK_INSTANCE_LAYERS is unset. For now always
     // get layer list via loader_scan_for_layers().
     memset(&ptr_instance->instance_layer_list, 0, sizeof(ptr_instance->instance_layer_list));
-    loader_scan_for_layers(ptr_instance, &ptr_instance->instance_layer_list);
+    res = loader_scan_for_layers(ptr_instance, &ptr_instance->instance_layer_list);
+    if (VK_SUCCESS != res) {
+        goto out;
+    }
 
     // Validate the app requested layers to be enabled
     if (pCreateInfo->enabledLayerCount > 0) {
@@ -561,20 +521,25 @@ LOADER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCr
         }
     }
 
-    // Scan/discover all ICD libraries
-    memset(&ptr_instance->icd_tramp_list, 0, sizeof(ptr_instance->icd_tramp_list));
-    res = loader_icd_scan(ptr_instance, &ptr_instance->icd_tramp_list);
-    if (res == VK_SUCCESS && ptr_instance->icd_tramp_list.count == 0) {
-        // No drivers found
-        loader_log(ptr_instance, VULKAN_LOADER_ERROR_BIT | VULKAN_LOADER_DRIVER_BIT, 0, "vkCreateInstance: Found no drivers!");
-        res = VK_ERROR_INCOMPATIBLE_DRIVER;
+    // Scan/discover all System and Environment Variable ICD libraries
+    bool skipped_portability_drivers = false;
+    res = loader_icd_scan(ptr_instance, &ptr_instance->icd_tramp_list, pCreateInfo, &skipped_portability_drivers);
+    if (res == VK_ERROR_OUT_OF_HOST_MEMORY) {
         goto out;
     }
-    if (res != VK_SUCCESS) {
-        if (res != VK_ERROR_OUT_OF_HOST_MEMORY && ptr_instance->icd_tramp_list.count == 0) {
-            loader_log(ptr_instance, VULKAN_LOADER_ERROR_BIT | VULKAN_LOADER_DRIVER_BIT, 0, "vkCreateInstance: Found no drivers!");
-            res = VK_ERROR_INCOMPATIBLE_DRIVER;
+
+    if (ptr_instance->icd_tramp_list.count == 0) {
+        // No drivers found
+        if (skipped_portability_drivers) {
+            loader_log(
+                ptr_instance, VULKAN_LOADER_ERROR_BIT | VULKAN_LOADER_DRIVER_BIT, 0,
+                "vkCreateInstance: Found drivers that contain devices which support the portability subset, but the "
+                "portability enumeration bit was not set! Applications that wish to enumerate portability drivers must set the "
+                "VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR bit in the VkInstanceCreateInfo flags and "
+                "enable the VK_KHR_portability_enumeration instance extension.");
         }
+        loader_log(ptr_instance, VULKAN_LOADER_ERROR_BIT | VULKAN_LOADER_DRIVER_BIT, 0, "vkCreateInstance: Found no drivers!");
+        res = VK_ERROR_INCOMPATIBLE_DRIVER;
         goto out;
     }
 
@@ -598,8 +563,10 @@ LOADER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCr
     }
     memcpy(&ptr_instance->disp->layer_inst_disp, &instance_disp, sizeof(instance_disp));
 
+    loader_platform_thread_lock_mutex(&loader_global_instance_list_lock);
     ptr_instance->next = loader.instances;
     loader.instances = ptr_instance;
+    loader_platform_thread_unlock_mutex(&loader_global_instance_list_lock);
 
     // Activate any layers on instance chain
     res = loader_enable_instance_layers(ptr_instance, &ici, &ptr_instance->instance_layer_list);
@@ -618,7 +585,7 @@ LOADER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCr
         // This is why we don't clear inside of these function calls.
         // The clearing should actually be handled by the overall memset of the pInstance structure above.
         wsi_create_instance(ptr_instance, &ici);
-        debug_utils_CreateInstance(ptr_instance, &ici);
+        check_for_enabled_debug_extensions(ptr_instance, &ici);
         extensions_create_instance(ptr_instance, &ici);
 
         *pInstance = (VkInstance)ptr_instance;
@@ -637,26 +604,16 @@ out:
 
     if (NULL != ptr_instance) {
         if (res != VK_SUCCESS) {
+            loader_platform_thread_lock_mutex(&loader_global_instance_list_lock);
+            // error path, should clean everything up
             if (loader.instances == ptr_instance) {
                 loader.instances = ptr_instance->next;
             }
-            if (NULL != ptr_instance->disp) {
-                loader_instance_heap_free(ptr_instance, ptr_instance->disp);
-            }
-            if (ptr_instance->num_tmp_report_callbacks > 0) {
-                // Remove temporary VK_EXT_debug_report items
-                util_DestroyDebugReportCallbacks(ptr_instance, pAllocator, ptr_instance->num_tmp_report_callbacks,
-                                                 ptr_instance->tmp_report_callbacks);
-                util_FreeDebugReportCreateInfos(pAllocator, ptr_instance->tmp_report_create_infos,
-                                                ptr_instance->tmp_report_callbacks);
-            }
-            if (ptr_instance->num_tmp_messengers > 0) {
-                // Remove temporary VK_EXT_debug_utils items
-                util_DestroyDebugUtilsMessengers(ptr_instance, pAllocator, ptr_instance->num_tmp_messengers,
-                                                 ptr_instance->tmp_messengers);
-                util_FreeDebugUtilsMessengerCreateInfos(pAllocator, ptr_instance->tmp_messenger_create_infos,
-                                                        ptr_instance->tmp_messengers);
-            }
+            loader_platform_thread_unlock_mutex(&loader_global_instance_list_lock);
+
+            loader_instance_heap_free(ptr_instance, ptr_instance->disp);
+            // Remove any created VK_EXT_debug_report or VK_EXT_debug_utils items
+            destroy_debug_callbacks_chain(ptr_instance, pAllocator);
 
             if (NULL != ptr_instance->expanded_activated_layer_list.list) {
                 loader_deactivate_layers(ptr_instance, NULL, &ptr_instance->expanded_activated_layer_list);
@@ -669,18 +626,24 @@ out:
             loader_scanned_icd_clear(ptr_instance, &ptr_instance->icd_tramp_list);
             loader_destroy_generic_list(ptr_instance, (struct loader_generic_list *)&ptr_instance->ext_list);
 
+            // Free any icd_terms that were created.
+            // If an OOM occurs from a layer, terminator_CreateInstance won't be reached where this kind of
+            // cleanup normally occurs
+            struct loader_icd_term *icd_term = NULL;
+            while (NULL != ptr_instance->icd_terms) {
+                icd_term = ptr_instance->icd_terms;
+                ptr_instance->icd_terms = icd_term->next;
+                loader_icd_destroy(ptr_instance, icd_term, pAllocator);
+            }
+
             loader_instance_heap_free(ptr_instance, ptr_instance);
         } else {
-            // Remove temporary VK_EXT_debug_report or VK_EXT_debug_utils items
-            util_DestroyDebugUtilsMessengers(ptr_instance, pAllocator, ptr_instance->num_tmp_messengers,
-                                             ptr_instance->tmp_messengers);
-            util_DestroyDebugReportCallbacks(ptr_instance, pAllocator, ptr_instance->num_tmp_report_callbacks,
-                                             ptr_instance->tmp_report_callbacks);
+            // success path, swap out created debug callbacks out so they aren't used until instance destruction
+            ptr_instance->InstanceCreationDeletionDebugFunctionHead = ptr_instance->DbgFunctionHead;
+            ptr_instance->DbgFunctionHead = NULL;
         }
-
-        if (loaderLocked) {
-            loader_platform_thread_unlock_mutex(&loader_lock);
-        }
+        // Only unlock when ptr_instance isn't NULL, as if it is, the above code didn't make it to when loader_lock was locked.
+        loader_platform_thread_unlock_mutex(&loader_lock);
     }
 
     return res;
@@ -689,8 +652,6 @@ out:
 LOADER_EXPORT VKAPI_ATTR void VKAPI_CALL vkDestroyInstance(VkInstance instance, const VkAllocationCallbacks *pAllocator) {
     const VkLayerInstanceDispatchTable *disp;
     struct loader_instance *ptr_instance = NULL;
-    bool callback_setup = false;
-    bool messenger_setup = false;
 
     if (instance == VK_NULL_HANDLE) {
         return;
@@ -709,21 +670,12 @@ LOADER_EXPORT VKAPI_ATTR void VKAPI_CALL vkDestroyInstance(VkInstance instance, 
         ptr_instance->alloc_callbacks = *pAllocator;
     }
 
-    if (ptr_instance->num_tmp_messengers > 0) {
-        // Setup the temporary VK_EXT_debug_utils messenger(s) here to catch cleanup issues:
-        if (!util_CreateDebugUtilsMessengers(ptr_instance, pAllocator, ptr_instance->num_tmp_messengers,
-                                             ptr_instance->tmp_messenger_create_infos, ptr_instance->tmp_messengers)) {
-            messenger_setup = true;
-        }
-    }
+    // Remove any callbacks that weren't cleaned up by the application
+    destroy_debug_callbacks_chain(ptr_instance, pAllocator);
 
-    if (ptr_instance->num_tmp_report_callbacks > 0) {
-        // Setup the temporary VK_EXT_debug_report callback(s) here to catch cleanup issues:
-        if (!util_CreateDebugReportCallbacks(ptr_instance, pAllocator, ptr_instance->num_tmp_report_callbacks,
-                                             ptr_instance->tmp_report_create_infos, ptr_instance->tmp_report_callbacks)) {
-            callback_setup = true;
-        }
-    }
+    // Swap in the debug callbacks created during instance creation
+    ptr_instance->DbgFunctionHead = ptr_instance->InstanceCreationDeletionDebugFunctionHead;
+    ptr_instance->InstanceCreationDeletionDebugFunctionHead = NULL;
 
     disp = loader_get_instance_layer_dispatch(instance);
     disp->DestroyInstance(ptr_instance->instance, pAllocator);
@@ -742,29 +694,15 @@ LOADER_EXPORT VKAPI_ATTR void VKAPI_CALL vkDestroyInstance(VkInstance instance, 
         loader_instance_heap_free(ptr_instance, ptr_instance->phys_devs_tramp);
     }
 
-    if (messenger_setup) {
-        loader_log(ptr_instance, VULKAN_LOADER_INFO_BIT, 0,
-                   "vkDestroyInstance: destroying temporary instance debug util messenger");
-
-        util_DestroyDebugUtilsMessengers(ptr_instance, pAllocator, ptr_instance->num_tmp_messengers, ptr_instance->tmp_messengers);
-        util_FreeDebugUtilsMessengerCreateInfos(pAllocator, ptr_instance->tmp_messenger_create_infos, ptr_instance->tmp_messengers);
-    }
-
-    if (callback_setup) {
-        loader_log(ptr_instance, VULKAN_LOADER_INFO_BIT, 0,
-                   "vkDestroyInstance: destroying temporary instance debug report callback");
-
-        util_DestroyDebugReportCallbacks(ptr_instance, pAllocator, ptr_instance->num_tmp_report_callbacks,
-                                         ptr_instance->tmp_report_callbacks);
-        util_FreeDebugReportCreateInfos(pAllocator, ptr_instance->tmp_report_create_infos, ptr_instance->tmp_report_callbacks);
-    }
+    // Destroy the debug callbacks created during instance creation
+    destroy_debug_callbacks_chain(ptr_instance, pAllocator);
 
     loader_instance_heap_free(ptr_instance, ptr_instance->disp);
     loader_instance_heap_free(ptr_instance, ptr_instance);
     loader_platform_thread_unlock_mutex(&loader_lock);
 
-    // Unload preloaded layers, so if vkEnumerateInstanceExtensionProperties or vkCreateInstance is called again, the ICD's are up
-    // to date
+    // Unload preloaded layers, so if vkEnumerateInstanceExtensionProperties or vkCreateInstance is called again, the ICD's are
+    // up to date
     loader_unload_preloaded_icds();
 }
 
@@ -856,9 +794,9 @@ LOADER_EXPORT VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceProperties(VkPhysica
     const VkLayerInstanceDispatchTable *disp;
     VkPhysicalDevice unwrapped_phys_dev = loader_unwrap_physical_device(physicalDevice);
     if (VK_NULL_HANDLE == unwrapped_phys_dev) {
-        loader_log(
-            NULL, VULKAN_LOADER_ERROR_BIT | VULKAN_LOADER_VALIDATION_BIT, 0,
-            "vkGetPhysicalDeviceProperties: Invalid physicalDevice [VUID-vkGetPhysicalDeviceProperties-physicalDevice-parameter]");
+        loader_log(NULL, VULKAN_LOADER_ERROR_BIT | VULKAN_LOADER_VALIDATION_BIT, 0,
+                   "vkGetPhysicalDeviceProperties: Invalid physicalDevice "
+                   "[VUID-vkGetPhysicalDeviceProperties-physicalDevice-parameter]");
         abort(); /* Intentionally fail so user can correct issue. */
     }
     disp = loader_get_instance_layer_dispatch(physicalDevice);
@@ -2194,7 +2132,7 @@ LOADER_EXPORT VKAPI_ATTR void VKAPI_CALL vkCmdCopyImage(VkCommandBuffer commandB
     const VkLayerDispatchTable *disp = loader_get_dispatch(commandBuffer);
     if (NULL == disp) {
         loader_log(NULL, VULKAN_LOADER_ERROR_BIT | VULKAN_LOADER_VALIDATION_BIT, 0,
-                   "vkCmdCopyImage: Invalid commandBuffer [VUID-vkCmdCopyImage-devcommandBufferice-parameter]");
+                   "vkCmdCopyImage: Invalid commandBuffer [VUID-vkCmdCopyImage-commandBuffer-parameter]");
         abort(); /* Intentionally fail so user can correct issue. */
     }
 
@@ -2993,9 +2931,9 @@ LOADER_EXPORT VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndexedIndirectCount(VkCommand
                                                                        uint32_t stride) {
     const VkLayerDispatchTable *disp = loader_get_dispatch(commandBuffer);
     if (NULL == disp) {
-        loader_log(
-            NULL, VULKAN_LOADER_ERROR_BIT | VULKAN_LOADER_VALIDATION_BIT, 0,
-            "vkCmdDrawIndexedIndirectCount: Invalid commandBuffer [VUID-vkCmdDrawIndexedIndirectCount-commandBuffer-parameter]");
+        loader_log(NULL, VULKAN_LOADER_ERROR_BIT | VULKAN_LOADER_VALIDATION_BIT, 0,
+                   "vkCmdDrawIndexedIndirectCount: Invalid commandBuffer "
+                   "[VUID-vkCmdDrawIndexedIndirectCount-commandBuffer-parameter]");
         abort(); /* Intentionally fail so user can correct issue. */
     }
     disp->CmdDrawIndexedIndirectCount(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
@@ -3058,9 +2996,9 @@ LOADER_EXPORT VKAPI_ATTR uint64_t VKAPI_CALL
 vkGetDeviceMemoryOpaqueCaptureAddress(VkDevice device, const VkDeviceMemoryOpaqueCaptureAddressInfo *pInfo) {
     const VkLayerDispatchTable *disp = loader_get_dispatch(device);
     if (NULL == disp) {
-        loader_log(
-            NULL, VULKAN_LOADER_ERROR_BIT | VULKAN_LOADER_VALIDATION_BIT, 0,
-            "vkGetDeviceMemoryOpaqueCaptureAddress: Invalid device [VUID-vkGetDeviceMemoryOpaqueCaptureAddress-device-parameter]");
+        loader_log(NULL, VULKAN_LOADER_ERROR_BIT | VULKAN_LOADER_VALIDATION_BIT, 0,
+                   "vkGetDeviceMemoryOpaqueCaptureAddress: Invalid device "
+                   "[VUID-vkGetDeviceMemoryOpaqueCaptureAddress-device-parameter]");
         abort(); /* Intentionally fail so user can correct issue. */
     }
     return disp->GetDeviceMemoryOpaqueCaptureAddress(device, pInfo);

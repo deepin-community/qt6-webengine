@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #define CORE_FPDFAPI_RENDER_CPDF_RENDERSTATUS_H_
 
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "core/fpdfapi/page/cpdf_clippath.h"
@@ -26,7 +27,6 @@ class CFX_RenderDevice;
 class CPDF_Color;
 class CPDF_Font;
 class CPDF_FormObject;
-class CPDF_ImageCacheEntry;
 class CPDF_ImageObject;
 class CPDF_ImageRenderer;
 class CPDF_Object;
@@ -51,8 +51,8 @@ class CPDF_RenderStatus {
   void SetOptions(const CPDF_RenderOptions& options) { m_Options = options; }
   void SetDeviceMatrix(const CFX_Matrix& matrix) { m_DeviceMatrix = matrix; }
   void SetStopObject(const CPDF_PageObject* pStopObj) { m_pStopObj = pStopObj; }
-  void SetFormResource(const CPDF_Dictionary* pRes) {
-    m_pFormResource.Reset(pRes);
+  void SetFormResource(RetainPtr<const CPDF_Dictionary> pRes) {
+    m_pFormResource = std::move(pRes);
   }
   void SetType3Char(CPDF_Type3Char* pType3Char) { m_pType3Char = pType3Char; }
   void SetFillColor(FX_ARGB color) { m_T3FillColor = color; }
@@ -84,7 +84,7 @@ class CPDF_RenderStatus {
   bool GetDropObjects() const { return m_bDropObjects; }
   bool IsPrint() const { return m_bPrint; }
   bool IsStopped() const { return m_bStopped; }
-  CPDF_RenderContext* GetContext() const { return m_pContext.Get(); }
+  CPDF_RenderContext* GetContext() const { return m_pContext; }
   const CPDF_Dictionary* GetFormResource() const {
     return m_pFormResource.Get();
   }
@@ -99,16 +99,16 @@ class CPDF_RenderStatus {
 #endif
 
   RetainPtr<CPDF_TransferFunc> GetTransferFunc(
-      const CPDF_Object* pObject) const;
+      RetainPtr<const CPDF_Object> pObject) const;
 
   FX_ARGB GetFillArgb(CPDF_PageObject* pObj) const;
   FX_ARGB GetFillArgbForType3(CPDF_PageObject* pObj) const;
 
-  void DrawTilingPattern(CPDF_TilingPattern* pPattern,
+  void DrawTilingPattern(CPDF_TilingPattern* pattern,
                          CPDF_PageObject* pPageObj,
                          const CFX_Matrix& mtObj2Device,
                          bool stroke);
-  void DrawShadingPattern(CPDF_ShadingPattern* pPattern,
+  void DrawShadingPattern(CPDF_ShadingPattern* pattern,
                           const CPDF_PageObject* pPageObj,
                           const CFX_Matrix& mtObj2Device,
                           bool stroke);
@@ -167,7 +167,7 @@ class CPDF_RenderStatus {
                    const CFX_Matrix& mtObj2Device);
   FX_RECT GetClippedBBox(const FX_RECT& rect) const;
   RetainPtr<CFX_DIBitmap> GetBackdrop(const CPDF_PageObject* pObj,
-                                      const FX_RECT& rect,
+                                      const FX_RECT& bbox,
                                       bool bBackAlphaRequired);
   RetainPtr<CFX_DIBitmap> LoadSMask(CPDF_Dictionary* pSMaskDict,
                                     FX_RECT* pClipRect,

@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,6 @@
 #define BASE_SYNCHRONIZATION_LOCK_H_
 
 #include "base/base_export.h"
-#include "base/check_op.h"
 #include "base/dcheck_is_on.h"
 #include "base/synchronization/lock_impl.h"
 #include "base/thread_annotations.h"
@@ -43,6 +42,7 @@ class LOCKABLE BASE_EXPORT Lock {
 
   // Null implementation if not debug.
   void AssertAcquired() const ASSERT_EXCLUSIVE_LOCK() {}
+  void AssertNotHeld() const {}
 #else
   Lock();
   ~Lock();
@@ -68,6 +68,7 @@ class LOCKABLE BASE_EXPORT Lock {
   }
 
   void AssertAcquired() const ASSERT_EXCLUSIVE_LOCK();
+  void AssertNotHeld() const;
 #endif  // DCHECK_IS_ON()
 
   // Whether Lock mitigates priority inversion when used from different thread

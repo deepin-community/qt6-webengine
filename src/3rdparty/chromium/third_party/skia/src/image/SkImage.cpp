@@ -5,18 +5,29 @@
  * found in the LICENSE file.
  */
 
+#include "include/core/SkImage.h"
+
 #include "include/core/SkBitmap.h"
+#include "include/core/SkColorSpace.h"
+#include "include/core/SkColorType.h"
 #include "include/core/SkData.h"
+#include "include/core/SkEncodedImageFormat.h"
 #include "include/core/SkImageEncoder.h"
-#include "include/core/SkImageFilter.h"
 #include "include/core/SkImageGenerator.h"
+#include "include/core/SkMatrix.h"
 #include "include/core/SkPicture.h"
-#include "include/core/SkSurface.h"
+#include "include/core/SkPixmap.h"
+#include "include/core/SkPoint.h"
+#include "include/core/SkSamplingOptions.h"
+#include "include/core/SkSurfaceProps.h"
+#include "include/core/SkTileMode.h"
+#include "include/core/SkTypes.h"
 #include "src/core/SkBitmapCache.h"
-#include "src/core/SkCachedData.h"
 #include "src/core/SkColorSpacePriv.h"
 #include "src/core/SkImageFilterCache.h"
+#include "src/core/SkImageFilterTypes.h"
 #include "src/core/SkImageFilter_Base.h"
+#include "src/core/SkImageInfoPriv.h"
 #include "src/core/SkImagePriv.h"
 #include "src/core/SkMipmap.h"
 #include "src/core/SkMipmapBuilder.h"
@@ -24,24 +35,42 @@
 #include "src/core/SkSamplingPriv.h"
 #include "src/core/SkSpecialImage.h"
 #include "src/image/SkImage_Base.h"
-#include "src/image/SkReadPixelsRec.h"
 #include "src/image/SkRescaleAndReadPixels.h"
 #include "src/shaders/SkImageShader.h"
 
 #if SK_SUPPORT_GPU
 #include "include/gpu/GrBackendSurface.h"
-#include "include/gpu/GrContextThreadSafeProxy.h"
 #include "include/gpu/GrDirectContext.h"
-#include "src/gpu/ganesh/GrDirectContextPriv.h"
+#include "include/gpu/GrRecordingContext.h"
+#include "include/private/gpu/ganesh/GrImageContext.h"
+#include "src/gpu/ResourceKey.h"
+#include "src/gpu/SkBackingFit.h"
+#include "src/gpu/ganesh/GrCaps.h"
 #include "src/gpu/ganesh/GrFragmentProcessor.h"
 #include "src/gpu/ganesh/GrImageContextPriv.h"
 #include "src/gpu/ganesh/GrProxyProvider.h"
 #include "src/gpu/ganesh/GrRecordingContextPriv.h"
+#include "src/gpu/ganesh/GrSamplerState.h"
+#include "src/gpu/ganesh/GrSurfaceProxy.h"
+#include "src/gpu/ganesh/GrSurfaceProxyView.h"
+#include "src/gpu/ganesh/GrTextureProxy.h"
 #include "src/gpu/ganesh/SkGr.h"
 #include "src/gpu/ganesh/effects/GrBicubicEffect.h"
 #include "src/gpu/ganesh/effects/GrTextureEffect.h"
-#include "src/image/SkImage_Gpu.h"
+enum class GrColorType;
 #endif
+
+#ifdef SK_GRAPHITE_ENABLED
+#include "src/gpu/graphite/Image_Graphite.h"
+#include "src/gpu/graphite/Log.h"
+#endif
+
+#include <atomic>
+#include <string_view>
+#include <tuple>
+#include <utility>
+
+class SkShader;
 
 SkImage::SkImage(const SkImageInfo& info, uint32_t uniqueID)
         : fInfo(info)
@@ -142,11 +171,51 @@ SkColorSpace* SkImage::colorSpace() const { return fInfo.colorSpace(); }
 
 sk_sp<SkColorSpace> SkImage::refColorSpace() const { return fInfo.refColorSpace(); }
 
+sk_sp<SkShader> SkImage::makeShader(const SkSamplingOptions& sampling, const SkMatrix& lm) const {
+    return SkImageShader::Make(sk_ref_sp(const_cast<SkImage*>(this)),
+                               SkTileMode::kClamp, SkTileMode::kClamp,
+                               sampling, &lm);
+}
+
+sk_sp<SkShader> SkImage::makeShader(const SkSamplingOptions& sampling, const SkMatrix* lm) const {
+    return SkImageShader::Make(sk_ref_sp(const_cast<SkImage*>(this)),
+                               SkTileMode::kClamp, SkTileMode::kClamp,
+                               sampling, lm);
+}
+
+sk_sp<SkShader> SkImage::makeShader(SkTileMode tmx, SkTileMode tmy,
+                                    const SkSamplingOptions& sampling,
+                                    const SkMatrix& lm) const {
+    return SkImageShader::Make(sk_ref_sp(const_cast<SkImage*>(this)), tmx, tmy,
+                               sampling, &lm);
+}
+
 sk_sp<SkShader> SkImage::makeShader(SkTileMode tmx, SkTileMode tmy,
                                     const SkSamplingOptions& sampling,
                                     const SkMatrix* localMatrix) const {
     return SkImageShader::Make(sk_ref_sp(const_cast<SkImage*>(this)), tmx, tmy,
                                sampling, localMatrix);
+}
+
+sk_sp<SkShader> SkImage::makeRawShader(SkTileMode tmx, SkTileMode tmy,
+                                       const SkSamplingOptions& sampling,
+                                       const SkMatrix& lm) const {
+    return SkImageShader::MakeRaw(sk_ref_sp(const_cast<SkImage*>(this)), tmx, tmy,
+                                  sampling, &lm);
+}
+
+sk_sp<SkShader> SkImage::makeRawShader(const SkSamplingOptions& sampling,
+                                       const SkMatrix& lm) const {
+    return SkImageShader::MakeRaw(sk_ref_sp(const_cast<SkImage*>(this)),
+                                  SkTileMode::kClamp, SkTileMode::kClamp,
+                                  sampling, &lm);
+}
+
+sk_sp<SkShader> SkImage::makeRawShader(const SkSamplingOptions& sampling,
+                                       const SkMatrix* localMatrix) const {
+    return SkImageShader::MakeRaw(sk_ref_sp(const_cast<SkImage*>(this)),
+                                  SkTileMode::kClamp, SkTileMode::kClamp,
+                                  sampling, localMatrix);
 }
 
 sk_sp<SkShader> SkImage::makeRawShader(SkTileMode tmx, SkTileMode tmy,
@@ -261,7 +330,7 @@ bool SkImage::isValid(GrRecordingContext* rContext) const {
 ///////////////////////////////////////////////////////////////////////////////
 
 SkImage_Base::SkImage_Base(const SkImageInfo& info, uint32_t uniqueID)
-        : INHERITED(info, uniqueID), fAddedToRasterCache(false) {}
+        : SkImage(info, uniqueID), fAddedToRasterCache(false) {}
 
 SkImage_Base::~SkImage_Base() {
     if (fAddedToRasterCache.load()) {
@@ -270,7 +339,7 @@ SkImage_Base::~SkImage_Base() {
 }
 
 void SkImage_Base::onAsyncRescaleAndReadPixels(const SkImageInfo& info,
-                                               const SkIRect& origSrcRect,
+                                               SkIRect origSrcRect,
                                                RescaleGamma rescaleGamma,
                                                RescaleMode rescaleMode,
                                                ReadPixelsCallback callback,
@@ -297,8 +366,8 @@ void SkImage_Base::onAsyncRescaleAndReadPixels(const SkImageInfo& info,
 
 void SkImage_Base::onAsyncRescaleAndReadPixelsYUV420(SkYUVColorSpace,
                                                      sk_sp<SkColorSpace> dstColorSpace,
-                                                     const SkIRect& srcRect,
-                                                     const SkISize& dstSize,
+                                                     SkIRect srcRect,
+                                                     SkISize dstSize,
                                                      RescaleGamma,
                                                      RescaleMode,
                                                      ReadPixelsCallback callback,
@@ -389,10 +458,20 @@ std::unique_ptr<GrFragmentProcessor> SkImage_Base::MakeFragmentProcessorFromView
                                      GrBicubicEffect::Direction::kXY,
                                      *rContext->priv().caps());
     }
-    if (view.proxy()->asTextureProxy()->mipmapped() == GrMipmapped::kNo) {
+    if (sampling.isAniso()) {
+        if (!rContext->priv().caps()->anisoSupport()) {
+            // Fallback to linear
+            sampling = SkSamplingPriv::AnisoFallback(view.mipmapped() == GrMipmapped::kYes);
+        }
+    } else if (view.mipmapped() == GrMipmapped::kNo) {
         sampling = SkSamplingOptions(sampling.filter);
     }
-    GrSamplerState sampler(wmx, wmy, sampling.filter, sampling.mipmap);
+    GrSamplerState sampler;
+    if (sampling.isAniso()) {
+        sampler = GrSamplerState::Aniso(wmx, wmy, sampling.maxAniso, view.mipmapped());
+    } else {
+        sampler = GrSamplerState(wmx, wmy, sampling.filter, sampling.mipmap);
+    }
     if (subset) {
         if (domain) {
             return GrTextureEffect::MakeSubset(std::move(view),
@@ -454,20 +533,83 @@ GrBackendTexture SkImage_Base::onGetBackendTexture(bool flushPendingGrContextIO,
     return GrBackendTexture(); // invalid
 }
 
+GrSurfaceProxyView SkImage_Base::CopyView(GrRecordingContext* context,
+                                                 GrSurfaceProxyView src,
+                                                 GrMipmapped mipmapped,
+                                                 GrImageTexGenPolicy policy,
+                                                 std::string_view label) {
+    skgpu::Budgeted budgeted = policy == GrImageTexGenPolicy::kNew_Uncached_Budgeted
+                                       ? skgpu::Budgeted::kYes
+                                       : skgpu::Budgeted::kNo;
+    return GrSurfaceProxyView::Copy(context,
+                                    std::move(src),
+                                    mipmapped,
+                                    SkBackingFit::kExact,
+                                    budgeted,
+                                    /*label=*/label);
+}
+
 #endif // SK_SUPPORT_GPU
 
 #ifdef SK_GRAPHITE_ENABLED
 std::tuple<skgpu::graphite::TextureProxyView, SkColorType> SkImage_Base::asView(
-        skgpu::graphite::Recorder* recorder, skgpu::graphite::Mipmapped mipmapped,
-        SkBudgeted budgeted) const {
+        skgpu::graphite::Recorder* recorder,
+        skgpu::Mipmapped mipmapped) const {
     if (!recorder) {
         return {};
     }
-    if (this->dimensions().area() <= 1) {
-        mipmapped = skgpu::graphite::Mipmapped::kNo;
+
+    if (!as_IB(this)->isGraphiteBacked()) {
+        return {};
     }
-    return this->onAsView(recorder, mipmapped, budgeted);
+
+    auto image = reinterpret_cast<const skgpu::graphite::Image*>(this);
+
+    if (this->dimensions().area() <= 1) {
+        mipmapped = skgpu::Mipmapped::kNo;
+    }
+
+    if (mipmapped == skgpu::Mipmapped::kYes &&
+        image->textureProxyView().proxy()->mipmapped() != skgpu::Mipmapped::kYes) {
+        SKGPU_LOG_W("Graphite does not auto-generate mipmap levels");
+        return {};
+    }
+
+    SkColorType ct = this->colorType();
+    return { image->textureProxyView(), ct };
 }
+
+sk_sp<SkImage> SkImage::makeColorSpace(sk_sp<SkColorSpace> targetColorSpace,
+                                       skgpu::graphite::Recorder* recorder,
+                                       RequiredImageProperties requiredProps) const {
+    return this->makeColorTypeAndColorSpace(this->colorType(), std::move(targetColorSpace),
+                                            recorder, requiredProps);
+}
+
+sk_sp<SkImage> SkImage::makeColorTypeAndColorSpace(SkColorType targetColorType,
+                                                   sk_sp<SkColorSpace> targetColorSpace,
+                                                   skgpu::graphite::Recorder* recorder,
+                                                   RequiredImageProperties requiredProps) const {
+    if (kUnknown_SkColorType == targetColorType || !targetColorSpace) {
+        return nullptr;
+    }
+
+    SkColorType colorType = this->colorType();
+    SkColorSpace* colorSpace = this->colorSpace();
+    if (!colorSpace) {
+        colorSpace = sk_srgb_singleton();
+    }
+    if (colorType == targetColorType &&
+        (SkColorSpace::Equals(colorSpace, targetColorSpace.get()) || this->isAlphaOnly())) {
+        return sk_ref_sp(const_cast<SkImage*>(this));
+    }
+
+    return as_IB(this)->onMakeColorTypeAndColorSpace(targetColorType,
+                                                     std::move(targetColorSpace),
+                                                     recorder,
+                                                     requiredProps);
+}
+
 #endif // SK_GRAPHITE_ENABLED
 
 GrDirectContext* SkImage_Base::directContext() const {
@@ -528,9 +670,16 @@ bool SkImage_Base::onAsLegacyBitmap(GrDirectContext* dContext, SkBitmap* bitmap)
 sk_sp<SkImage> SkImage::MakeFromPicture(sk_sp<SkPicture> picture, const SkISize& dimensions,
                                         const SkMatrix* matrix, const SkPaint* paint,
                                         BitDepth bitDepth, sk_sp<SkColorSpace> colorSpace) {
+    return SkImage::MakeFromPicture(picture, dimensions, matrix, paint, bitDepth, colorSpace, {});
+}
+
+sk_sp<SkImage> SkImage::MakeFromPicture(sk_sp<SkPicture> picture, const SkISize& dimensions,
+                                        const SkMatrix* matrix, const SkPaint* paint,
+                                        BitDepth bitDepth, sk_sp<SkColorSpace> colorSpace,
+                                        SkSurfaceProps props) {
     return MakeFromGenerator(SkImageGenerator::MakeFromPicture(dimensions, std::move(picture),
                                                                matrix, paint, bitDepth,
-                                                               std::move(colorSpace)));
+                                                               std::move(colorSpace), props));
 }
 
 sk_sp<SkImage> SkImage::makeWithFilter(GrRecordingContext* rContext, const SkImageFilter* filter,

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,8 +9,8 @@
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/containers/queue.h"
+#include "base/functional/callback.h"
 #include "base/observer_list.h"
 #include "base/timer/timer.h"
 #include "ui/display/fake/fake_display_export.h"
@@ -31,14 +31,14 @@ namespace display {
 //   native_mode[#other_modes][^dpi][/options]
 //
 // native_mode: the native display mode, with format:
-//   HxW[%R]
-//     H: display height in pixels [int]
+//   WxH[%R]
 //     W: display width in pixels [int]
+//     H: display height in pixels [int]
 //     R: display refresh rate [float]
 //
 // other_modes: list of other of display modes, with format:
-//   #HxW[%R][:HxW[%R]]
-//     H,W,R: same meaning as in native_mode.
+//   #WxH[%R][:WxH[%R]]
+//     W,H,R: same meaning as in native_mode.
 //   Note: The first mode is delimited with '#' and any subsequent modes are
 //         delimited with ':'.
 //
@@ -88,7 +88,11 @@ class FAKE_DISPLAY_EXPORT FakeDisplayDelegate : public NativeDisplayDelegate,
   void GetDisplays(GetDisplaysCallback callback) override;
   void Configure(
       const std::vector<display::DisplayConfigurationParams>& config_requests,
-      ConfigureCallback callback) override;
+      ConfigureCallback callback,
+      uint32_t modeset_flag) override;
+  void SetHdcpKeyProp(int64_t display_id,
+                      const std::string& key,
+                      SetHdcpKeyPropCallback callback) override;
   void GetHDCPState(const DisplaySnapshot& output,
                     GetHDCPStateCallback callback) override;
   void SetHDCPState(const DisplaySnapshot& output,

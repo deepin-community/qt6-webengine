@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 #include <memory>
 #include <utility>
 
-#include "base/callback_helpers.h"
+#include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
 #include "components/viz/common/quads/solid_color_draw_quad.h"
 #include "components/viz/common/quads/surface_draw_quad.h"
@@ -131,7 +131,7 @@ CompositorFrame FuzzerBrowserProcess::BuildBrowserUICompositorFrame(
                gfx::Rect(kBrowserSize), gfx::Transform());
 
   auto* renderer_sqs = pass->CreateAndAppendSharedQuadState();
-  renderer_sqs->SetAll(gfx::Transform(1.0, 0.0, 0.0, 1.0, 0, 80),
+  renderer_sqs->SetAll(gfx::Transform::MakeTranslation(0, 80),
                        gfx::Rect(kRendererFrameSize),
                        gfx::Rect(kRendererFrameSize),
                        /*mask_filter_info=*/gfx::MaskFilterInfo(),
@@ -142,7 +142,7 @@ CompositorFrame FuzzerBrowserProcess::BuildBrowserUICompositorFrame(
   surface_quad->SetNew(renderer_sqs, gfx::Rect(kRendererFrameSize),
                        gfx::Rect(kRendererFrameSize),
                        SurfaceRange(absl::nullopt, renderer_surface_id),
-                       SK_ColorWHITE,
+                       SkColors::kWhite,
                        /*stretch_content_to_fill_bounds=*/false);
 
   auto* toolbar_sqs = pass->CreateAndAppendSharedQuadState();
@@ -153,7 +153,7 @@ CompositorFrame FuzzerBrowserProcess::BuildBrowserUICompositorFrame(
       /*sorting_context_id=*/0);
   auto* color_quad = pass->CreateAndAppendDrawQuad<SolidColorDrawQuad>();
   color_quad->SetNew(toolbar_sqs, gfx::Rect(kTopBarSize),
-                     gfx::Rect(kTopBarSize), SK_ColorLTGRAY,
+                     gfx::Rect(kTopBarSize), SkColors::kLtGray,
                      /*force_antialiasing_off=*/false);
   frame.render_pass_list.push_back(std::move(pass));
 

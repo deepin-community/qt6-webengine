@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,18 +10,18 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/containers/contains.h"
 #include "base/containers/queue.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "base/time/time.h"
 #include "base/values.h"
-#include "chromeos/login/login_state/login_state.h"
+#include "chromeos/ash/components/login/login_state/login_state.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
@@ -105,9 +105,8 @@ class TestEventRouter : public extensions::EventRouter {
         extensions::api::lock_screen_data::OnDataItemsAvailable::kEventName) {
       return;
     }
-    ASSERT_TRUE(event->event_args);
-    ASSERT_TRUE(!event->event_args->GetListDeprecated().empty());
-    const base::Value& arg_value = event->event_args->GetListDeprecated()[0];
+    ASSERT_TRUE(!event->event_args.empty());
+    const base::Value& arg_value = event->event_args[0];
 
     std::unique_ptr<extensions::api::lock_screen_data::DataItemsAvailableEvent>
         event_args = extensions::api::lock_screen_data::
@@ -187,18 +186,17 @@ class ItemRegistry {
   void RunCallback(DataItem::RegisteredValuesCallback callback) {
     std::move(callback).Run(
         fail_ ? OperationResult::kFailed : OperationResult::kSuccess,
-        ItemsToValue());
+        ItemsToDict());
   }
 
-  std::unique_ptr<base::DictionaryValue> ItemsToValue() {
+  base::Value::Dict ItemsToDict() {
     if (fail_)
-      return nullptr;
+      return base::Value::Dict();
 
-    std::unique_ptr<base::DictionaryValue> result =
-        std::make_unique<base::DictionaryValue>();
+    base::Value::Dict result;
 
     for (const std::string& item_id : items_)
-      result->SetKey(item_id, base::Value(base::Value::Type::DICTIONARY));
+      result.Set(item_id, base::Value::Dict());
 
     return result;
   }
@@ -473,10 +471,10 @@ class LockScreenItemStorageTest : public ExtensionsTest {
     user_prefs::UserPrefs::Set(browser_context(), &testing_pref_service_);
     extensions_browser_client()->set_lock_screen_context(&lock_screen_context_);
 
-    chromeos::LoginState::Initialize();
-    chromeos::LoginState::Get()->SetLoggedInStateAndPrimaryUser(
-        chromeos::LoginState::LOGGED_IN_ACTIVE,
-        chromeos::LoginState::LOGGED_IN_USER_REGULAR, kTestUserIdHash);
+    ash::LoginState::Initialize();
+    ash::LoginState::Get()->SetLoggedInStateAndPrimaryUser(
+        ash::LoginState::LOGGED_IN_ACTIVE,
+        ash::LoginState::LOGGED_IN_USER_REGULAR, kTestUserIdHash);
 
     extension_ = CreateTestExtension(kTestExtensionId);
     item_registry_ = std::make_unique<ItemRegistry>(extension()->id());
@@ -512,7 +510,7 @@ class LockScreenItemStorageTest : public ExtensionsTest {
     item_registry_.reset();
     LockScreenItemStorage::SetItemProvidersForTesting(nullptr, nullptr,
                                                       nullptr);
-    chromeos::LoginState::Shutdown();
+    ash::LoginState::Shutdown();
     ExtensionsTest::TearDown();
   }
 
@@ -605,15 +603,15 @@ class LockScreenItemStorageTest : public ExtensionsTest {
       ASSERT_TRUE(state.storage_version == 1 || state.storage_version == 2)
           << "Failed to init local state " << state.extension_id;
 
-      DictionaryPrefUpdate update(&local_state_, "lockScreenDataItems");
+      ScopedDictPrefUpdate update(&local_state_, "lockScreenDataItems");
+      base::Value::Dict* user_dict = update->EnsureDict(kTestUserIdHash);
       if (state.storage_version == 1) {
-        update->SetPath({kTestUserIdHash, state.extension_id},
-                        base::Value(state.item_count));
+        user_dict->Set(state.extension_id, state.item_count);
       } else {
-        base::Value info(base::Value::Type::DICTIONARY);
-        info.SetKey("item_count", base::Value(state.item_count));
-        info.SetKey("storage_version", base::Value(2));
-        update->SetPath({kTestUserIdHash, state.extension_id}, std::move(info));
+        base::Value::Dict info;
+        info.Set("item_count", state.item_count);
+        info.Set("storage_version", 2);
+        user_dict->Set(state.extension_id, std::move(info));
       }
     }
   }
@@ -748,7 +746,8 @@ class LockScreenItemStorageTest : public ExtensionsTest {
   void GetRegisteredItems(const std::string& extension_id,
                           DataItem::RegisteredValuesCallback callback) {
     if (extension()->id() != extension_id) {
-      std::move(callback).Run(OperationResult::kUnknownExtension, nullptr);
+      std::move(callback).Run(OperationResult::kUnknownExtension,
+                              base::Value::Dict());
       return;
     }
     item_registry_->HandleGetRequest(std::move(callback));

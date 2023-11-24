@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,7 +15,7 @@
 #include <string>
 
 #include "base/base_export.h"
-#include "base/callback.h"
+#include "base/functional/callback.h"
 
 namespace sys {
 class OutgoingDirectory;
@@ -26,7 +26,7 @@ namespace base {
 // Implementation of the legacy sys.ServiceProvider interface which delegates
 // requests to an underlying fuchsia.io.Directory of services.
 // TODO(https://crbug.com/1065707): Remove this when it is no longer required
-// by the //fuchsia/base AgentImpl.
+// by //fuchsia_web/runners/common/modular/agent_impl.h.
 class BASE_EXPORT ServiceProviderImpl : public ::fuchsia::sys::ServiceProvider {
  public:
   // Constructor that creates ServiceProvider for public services in the

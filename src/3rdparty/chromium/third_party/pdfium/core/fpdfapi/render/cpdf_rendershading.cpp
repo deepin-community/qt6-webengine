@@ -1,4 +1,4 @@
-// Copyright 2019 PDFium Authors. All rights reserved.
+// Copyright 2019 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,6 +26,7 @@
 #include "core/fpdfapi/render/cpdf_renderoptions.h"
 #include "core/fxcrt/fx_safe_types.h"
 #include "core/fxcrt/fx_system.h"
+#include "core/fxcrt/span_util.h"
 #include "core/fxge/cfx_defaultrenderdevice.h"
 #include "core/fxge/cfx_fillrenderoptions.h"
 #include "core/fxge/cfx_path.h"
@@ -102,20 +103,20 @@ void DrawAxialShading(const RetainPtr<CFX_DIBitmap>& pBitmap,
   if (total_results == 0)
     return;
 
-  const CPDF_Array* pCoords = pDict->GetArrayFor("Coords");
+  RetainPtr<const CPDF_Array> pCoords = pDict->GetArrayFor("Coords");
   if (!pCoords)
     return;
 
-  float start_x = pCoords->GetNumberAt(0);
-  float start_y = pCoords->GetNumberAt(1);
-  float end_x = pCoords->GetNumberAt(2);
-  float end_y = pCoords->GetNumberAt(3);
+  float start_x = pCoords->GetFloatAt(0);
+  float start_y = pCoords->GetFloatAt(1);
+  float end_x = pCoords->GetFloatAt(2);
+  float end_y = pCoords->GetFloatAt(3);
   float t_min = 0;
   float t_max = 1.0f;
-  const CPDF_Array* pArray = pDict->GetArrayFor("Domain");
+  RetainPtr<const CPDF_Array> pArray = pDict->GetArrayFor("Domain");
   if (pArray) {
-    t_min = pArray->GetNumberAt(0);
-    t_max = pArray->GetNumberAt(1);
+    t_min = pArray->GetFloatAt(0);
+    t_max = pArray->GetFloatAt(1);
   }
   pArray = pDict->GetArrayFor("Extend");
   const bool bStartExtend = pArray && pArray->GetBooleanAt(0, false);
@@ -169,22 +170,22 @@ void DrawRadialShading(const RetainPtr<CFX_DIBitmap>& pBitmap,
   if (total_results == 0)
     return;
 
-  const CPDF_Array* pCoords = pDict->GetArrayFor("Coords");
+  RetainPtr<const CPDF_Array> pCoords = pDict->GetArrayFor("Coords");
   if (!pCoords)
     return;
 
-  float start_x = pCoords->GetNumberAt(0);
-  float start_y = pCoords->GetNumberAt(1);
-  float start_r = pCoords->GetNumberAt(2);
-  float end_x = pCoords->GetNumberAt(3);
-  float end_y = pCoords->GetNumberAt(4);
-  float end_r = pCoords->GetNumberAt(5);
+  float start_x = pCoords->GetFloatAt(0);
+  float start_y = pCoords->GetFloatAt(1);
+  float start_r = pCoords->GetFloatAt(2);
+  float end_x = pCoords->GetFloatAt(3);
+  float end_y = pCoords->GetFloatAt(4);
+  float end_r = pCoords->GetFloatAt(5);
   float t_min = 0;
   float t_max = 1.0f;
-  const CPDF_Array* pArray = pDict->GetArrayFor("Domain");
+  RetainPtr<const CPDF_Array> pArray = pDict->GetArrayFor("Domain");
   if (pArray) {
-    t_min = pArray->GetNumberAt(0);
-    t_max = pArray->GetNumberAt(1);
+    t_min = pArray->GetFloatAt(0);
+    t_max = pArray->GetFloatAt(1);
   }
   pArray = pDict->GetArrayFor("Extend");
   const bool bStartExtend = pArray && pArray->GetBooleanAt(0, false);
@@ -265,16 +266,16 @@ void DrawFuncShading(const RetainPtr<CFX_DIBitmap>& pBitmap,
   if (total_results == 0)
     return;
 
-  const CPDF_Array* pDomain = pDict->GetArrayFor("Domain");
+  RetainPtr<const CPDF_Array> pDomain = pDict->GetArrayFor("Domain");
   float xmin = 0.0f;
   float ymin = 0.0f;
   float xmax = 1.0f;
   float ymax = 1.0f;
   if (pDomain) {
-    xmin = pDomain->GetNumberAt(0);
-    xmax = pDomain->GetNumberAt(1);
-    ymin = pDomain->GetNumberAt(2);
-    ymax = pDomain->GetNumberAt(3);
+    xmin = pDomain->GetFloatAt(0);
+    xmax = pDomain->GetFloatAt(1);
+    ymin = pDomain->GetFloatAt(2);
+    ymax = pDomain->GetFloatAt(3);
   }
   CFX_Matrix mtDomain2Target = pDict->GetMatrixFor("Matrix");
   CFX_Matrix matrix =
@@ -416,19 +417,19 @@ void DrawGouraud(const RetainPtr<CFX_DIBitmap>& pBitmap,
 void DrawFreeGouraudShading(
     const RetainPtr<CFX_DIBitmap>& pBitmap,
     const CFX_Matrix& mtObject2Bitmap,
-    const CPDF_Stream* pShadingStream,
+    RetainPtr<const CPDF_Stream> pShadingStream,
     const std::vector<std::unique_ptr<CPDF_Function>>& funcs,
-    const RetainPtr<CPDF_ColorSpace>& pCS,
+    RetainPtr<CPDF_ColorSpace> pCS,
     int alpha) {
   DCHECK_EQ(pBitmap->GetFormat(), FXDIB_Format::kArgb);
 
   CPDF_MeshStream stream(kFreeFormGouraudTriangleMeshShading, funcs,
-                         pShadingStream, pCS);
+                         std::move(pShadingStream), std::move(pCS));
   if (!stream.Load())
     return;
 
   CPDF_MeshVertex triangle[3];
-  while (!stream.BitStream()->IsEOF()) {
+  while (!stream.IsEOF()) {
     CPDF_MeshVertex vertex;
     uint32_t flag;
     if (!stream.ReadVertex(mtObject2Bitmap, &vertex, &flag))
@@ -455,9 +456,9 @@ void DrawFreeGouraudShading(
 void DrawLatticeGouraudShading(
     const RetainPtr<CFX_DIBitmap>& pBitmap,
     const CFX_Matrix& mtObject2Bitmap,
-    const CPDF_Stream* pShadingStream,
+    RetainPtr<const CPDF_Stream> pShadingStream,
     const std::vector<std::unique_ptr<CPDF_Function>>& funcs,
-    const RetainPtr<CPDF_ColorSpace>& pCS,
+    RetainPtr<CPDF_ColorSpace> pCS,
     int alpha) {
   DCHECK_EQ(pBitmap->GetFormat(), FXDIB_Format::kArgb);
 
@@ -466,7 +467,7 @@ void DrawLatticeGouraudShading(
     return;
 
   CPDF_MeshStream stream(kLatticeFormGouraudTriangleMeshShading, funcs,
-                         pShadingStream, pCS);
+                         std::move(pShadingStream), std::move(pCS));
   if (!stream.Load())
     return;
 
@@ -776,9 +777,9 @@ void DrawCoonPatchMeshes(
     ShadingType type,
     const RetainPtr<CFX_DIBitmap>& pBitmap,
     const CFX_Matrix& mtObject2Bitmap,
-    const CPDF_Stream* pShadingStream,
+    RetainPtr<const CPDF_Stream> pShadingStream,
     const std::vector<std::unique_ptr<CPDF_Function>>& funcs,
-    const RetainPtr<CPDF_ColorSpace>& pCS,
+    RetainPtr<CPDF_ColorSpace> pCS,
     bool bNoPathSmooth,
     int alpha) {
   DCHECK_EQ(pBitmap->GetFormat(), FXDIB_Format::kArgb);
@@ -786,8 +787,10 @@ void DrawCoonPatchMeshes(
          type == kTensorProductPatchMeshShading);
 
   CFX_DefaultRenderDevice device;
-  device.Attach(pBitmap, false, nullptr, false);
-  CPDF_MeshStream stream(type, funcs, pShadingStream, pCS);
+  device.Attach(pBitmap);
+
+  CPDF_MeshStream stream(type, funcs, std::move(pShadingStream),
+                         std::move(pCS));
   if (!stream.Load())
     return;
 
@@ -804,7 +807,7 @@ void DrawCoonPatchMeshes(
 
   CFX_PointF coords[16];
   int point_count = type == kTensorProductPatchMeshShading ? 16 : 12;
-  while (!stream.BitStream()->IsEOF()) {
+  while (!stream.IsEOF()) {
     if (!stream.CanReadFlag())
       break;
     uint32_t flag = stream.ReadFlag();
@@ -818,11 +821,12 @@ void DrawCoonPatchMeshes(
       for (i = 0; i < 4; i++) {
         tempCoords[i] = coords[(flag * 3 + i) % 12];
       }
-      memcpy(coords, tempCoords, sizeof(tempCoords));
-      CoonColor tempColors[2];
-      tempColors[0] = patch.patch_colors[flag];
-      tempColors[1] = patch.patch_colors[(flag + 1) % 4];
-      memcpy(patch.patch_colors, tempColors, sizeof(CoonColor) * 2);
+      fxcrt::spancpy(pdfium::make_span(coords), pdfium::make_span(tempCoords));
+      CoonColor tempColors[2] = {
+          tempColors[0] = patch.patch_colors[flag],
+          tempColors[1] = patch.patch_colors[(flag + 1) % 4]};
+      fxcrt::spancpy(pdfium::make_span(patch.patch_colors),
+                     pdfium::make_span(tempColors));
     }
     for (i = iStartPoint; i < point_count; i++) {
       if (!stream.CanReadCoords())
@@ -843,7 +847,8 @@ void DrawCoonPatchMeshes(
       patch.patch_colors[i].comp[1] = static_cast<int32_t>(g * 255);
       patch.patch_colors[i].comp[2] = static_cast<int32_t>(b * 255);
     }
-    CFX_FloatRect bbox = CFX_FloatRect::GetBBox(coords, point_count);
+    CFX_FloatRect bbox =
+        CFX_FloatRect::GetBBox(pdfium::make_span(coords).first(point_count));
     if (bbox.right <= 0 || bbox.left >= (float)pBitmap->GetWidth() ||
         bbox.top <= 0 || bbox.bottom >= (float)pBitmap->GetHeight()) {
       continue;
@@ -875,18 +880,18 @@ void CPDF_RenderShading::Draw(CFX_RenderDevice* pDevice,
                               const FX_RECT& clip_rect,
                               int alpha,
                               const CPDF_RenderOptions& options) {
-  const auto& funcs = pPattern->GetFuncs();
-  const CPDF_Dictionary* pDict = pPattern->GetShadingObject()->GetDict();
   RetainPtr<CPDF_ColorSpace> pColorSpace = pPattern->GetCS();
   if (!pColorSpace)
     return;
 
   FX_ARGB background = 0;
+  RetainPtr<const CPDF_Dictionary> pDict =
+      pPattern->GetShadingObject()->GetDict();
   if (!pPattern->IsShadingObject() && pDict->KeyExist("Background")) {
-    const CPDF_Array* pBackColor = pDict->GetArrayFor("Background");
+    RetainPtr<const CPDF_Array> pBackColor = pDict->GetArrayFor("Background");
     if (pBackColor && pBackColor->size() >= pColorSpace->CountComponents()) {
-      std::vector<float> comps =
-          ReadArrayElementsToVector(pBackColor, pColorSpace->CountComponents());
+      std::vector<float> comps = ReadArrayElementsToVector(
+          pBackColor.Get(), pColorSpace->CountComponents());
 
       float R = 0.0f;
       float G = 0.0f;
@@ -904,39 +909,44 @@ void CPDF_RenderShading::Draw(CFX_RenderDevice* pDevice,
   }
   bool bAlphaMode = options.ColorModeIs(CPDF_RenderOptions::kAlpha);
   if (pDevice->GetDeviceCaps(FXDC_RENDER_CAPS) & FXRC_SHADING &&
-      pDevice->GetDeviceDriver()->DrawShading(
-          pPattern, &mtMatrix, clip_rect_bbox, alpha, bAlphaMode)) {
+      pDevice->DrawShading(pPattern, &mtMatrix, clip_rect_bbox, alpha,
+                           bAlphaMode)) {
     return;
   }
   CPDF_DeviceBuffer buffer(pContext, pDevice, clip_rect_bbox, pCurObj, 150);
   if (!buffer.Initialize())
     return;
 
-  CFX_Matrix FinalMatrix = mtMatrix * buffer.GetMatrix();
   RetainPtr<CFX_DIBitmap> pBitmap = buffer.GetBitmap();
-  if (!pBitmap->GetBuffer())
+  if (pBitmap->GetBuffer().empty())
     return;
 
   pBitmap->Clear(background);
+  const CFX_Matrix final_matrix = mtMatrix * buffer.GetMatrix();
+  const auto& funcs = pPattern->GetFuncs();
   switch (pPattern->GetShadingType()) {
     case kInvalidShading:
     case kMaxShading:
       return;
     case kFunctionBasedShading:
-      DrawFuncShading(pBitmap, FinalMatrix, pDict, funcs, pColorSpace, alpha);
+      DrawFuncShading(pBitmap, final_matrix, pDict.Get(), funcs, pColorSpace,
+                      alpha);
       break;
     case kAxialShading:
-      DrawAxialShading(pBitmap, FinalMatrix, pDict, funcs, pColorSpace, alpha);
+      DrawAxialShading(pBitmap, final_matrix, pDict.Get(), funcs, pColorSpace,
+                       alpha);
       break;
     case kRadialShading:
-      DrawRadialShading(pBitmap, FinalMatrix, pDict, funcs, pColorSpace, alpha);
+      DrawRadialShading(pBitmap, final_matrix, pDict.Get(), funcs, pColorSpace,
+                        alpha);
       break;
     case kFreeFormGouraudTriangleMeshShading: {
       // The shading object can be a stream or a dictionary. We do not handle
       // the case of dictionary at the moment.
-      const CPDF_Stream* pStream = ToStream(pPattern->GetShadingObject());
+      RetainPtr<const CPDF_Stream> pStream =
+          ToStream(pPattern->GetShadingObject());
       if (pStream) {
-        DrawFreeGouraudShading(pBitmap, FinalMatrix, pStream, funcs,
+        DrawFreeGouraudShading(pBitmap, final_matrix, std::move(pStream), funcs,
                                pColorSpace, alpha);
       }
       break;
@@ -944,10 +954,11 @@ void CPDF_RenderShading::Draw(CFX_RenderDevice* pDevice,
     case kLatticeFormGouraudTriangleMeshShading: {
       // The shading object can be a stream or a dictionary. We do not handle
       // the case of dictionary at the moment.
-      const CPDF_Stream* pStream = ToStream(pPattern->GetShadingObject());
+      RetainPtr<const CPDF_Stream> pStream =
+          ToStream(pPattern->GetShadingObject());
       if (pStream) {
-        DrawLatticeGouraudShading(pBitmap, FinalMatrix, pStream, funcs,
-                                  pColorSpace, alpha);
+        DrawLatticeGouraudShading(pBitmap, final_matrix, std::move(pStream),
+                                  funcs, pColorSpace, alpha);
       }
       break;
     }
@@ -955,10 +966,11 @@ void CPDF_RenderShading::Draw(CFX_RenderDevice* pDevice,
     case kTensorProductPatchMeshShading: {
       // The shading object can be a stream or a dictionary. We do not handle
       // the case of dictionary at the moment.
-      const CPDF_Stream* pStream = ToStream(pPattern->GetShadingObject());
+      RetainPtr<const CPDF_Stream> pStream =
+          ToStream(pPattern->GetShadingObject());
       if (pStream) {
-        DrawCoonPatchMeshes(pPattern->GetShadingType(), pBitmap, FinalMatrix,
-                            pStream, funcs, pColorSpace,
+        DrawCoonPatchMeshes(pPattern->GetShadingType(), pBitmap, final_matrix,
+                            std::move(pStream), funcs, pColorSpace,
                             options.GetOptions().bNoPathSmooth, alpha);
       }
       break;

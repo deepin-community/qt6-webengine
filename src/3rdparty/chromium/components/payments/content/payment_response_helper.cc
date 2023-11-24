@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/address_normalizer.h"
@@ -126,7 +126,7 @@ mojom::PayerDetailPtr PaymentResponseHelper::GeneratePayerDetail(
     } else {
       DCHECK(selected_contact_profile);
       payer->name = base::UTF16ToUTF8(
-          selected_contact_profile->GetInfo(autofill::NAME_FULL, app_locale_));
+          selected_contact_profile->GetInfo(autofill::NAME_FULL, *app_locale_));
     }
   }
   if (spec_->request_payer_email()) {
@@ -150,10 +150,10 @@ mojom::PayerDetailPtr PaymentResponseHelper::GeneratePayerDetail(
       // https://w3c.github.io/payment-request/#paymentrequest-updated-algorithm
       const std::string original_number =
           base::UTF16ToUTF8(selected_contact_profile->GetInfo(
-              autofill::PHONE_HOME_WHOLE_NUMBER, app_locale_));
+              autofill::PHONE_HOME_WHOLE_NUMBER, *app_locale_));
 
       const std::string default_region_code =
-          autofill::AutofillCountry::CountryCodeForLocale(app_locale_);
+          autofill::AutofillCountry::CountryCodeForLocale(*app_locale_);
       payer->phone = autofill::i18n::FormatPhoneForResponse(
           original_number, default_region_code);
     }
@@ -171,14 +171,7 @@ void PaymentResponseHelper::GeneratePaymentResponse() {
 
   mojom::PaymentResponsePtr payment_response = mojom::PaymentResponse::New();
 
-  // Make sure that we return the method name that the merchant specified for
-  // this app: cards can be either specified through their name (e.g., "visa")
-  // or through basic-card's supportedNetworks.
-  payment_response->method_name =
-      base::FeatureList::IsEnabled(::features::kPaymentRequestBasicCard) &&
-              spec_->IsMethodSupportedThroughBasicCard(method_name_)
-          ? methods::kBasicCard
-          : method_name_;
+  payment_response->method_name = method_name_;
   payment_response->stringified_details = stringified_details_;
 
   // Shipping Address section
@@ -191,7 +184,7 @@ void PaymentResponseHelper::GeneratePaymentResponse() {
     } else {
       payment_response->shipping_address =
           data_util::GetPaymentAddressFromAutofillProfile(shipping_address_,
-                                                          app_locale_);
+                                                          *app_locale_);
       payment_response->shipping_option = spec_->selected_shipping_option()->id;
     }
   }

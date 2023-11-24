@@ -19,15 +19,13 @@
 
 #include "connections/listeners.h"
 #include "internal/platform/byte_array.h"
-#include "internal/platform/core_config.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 
 // Used by Discovery in Core::RequestConnection().
 // Used by Advertising in Core::StartAdvertising().
-struct DLL_API ConnectionRequestInfo {
+struct ConnectionRequestInfo {
   // endpoint_info - Identifing information about this endpoint (eg. name,
   //                 device type).
   // listener      - A set of callbacks notified when remote endpoints request a
@@ -38,6 +36,5 @@ struct DLL_API ConnectionRequestInfo {
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location
 
 #endif  // CORE_PARAMS_H_

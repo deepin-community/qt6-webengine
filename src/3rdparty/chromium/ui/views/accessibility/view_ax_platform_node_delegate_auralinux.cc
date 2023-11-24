@@ -1,21 +1,22 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ui/views/accessibility/view_ax_platform_node_delegate_auralinux.h"
 
-#include <algorithm>
 #include <memory>
 #include <vector>
 
 #include "base/containers/contains.h"
+#include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
+#include "base/ranges/algorithm.h"
 #include "base/scoped_multi_source_observation.h"
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/accessibility/platform/ax_platform_node_auralinux.h"
-#include "ui/accessibility/platform/ax_platform_node_delegate_base.h"
+#include "ui/accessibility/platform/ax_platform_node_delegate.h"
 #include "ui/aura/window.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/views/accessibility/views_utilities_aura.h"
@@ -63,7 +64,7 @@ Widget* GetToplevelWidgetIncludingTransientWindows(Widget* widget) {
 // object. Every time we create an accessibility object for a View, we add its
 // top-level widget to a vector so we can return the list of all top-level
 // windows as children of this application object.
-class AuraLinuxApplication : public ui::AXPlatformNodeDelegateBase,
+class AuraLinuxApplication : public ui::AXPlatformNodeDelegate,
                              public WidgetObserver,
                              public aura::WindowObserver {
  public:
@@ -110,7 +111,7 @@ class AuraLinuxApplication : public ui::AXPlatformNodeDelegateBase,
     if (window && window_observations_.IsObservingSource(window))
       window_observations_.RemoveObservation(window);
 
-    auto iter = std::find(widgets_.begin(), widgets_.end(), widget);
+    auto iter = base::ranges::find(widgets_, widget);
     if (iter != widgets_.end())
       widgets_.erase(iter);
   }
@@ -140,18 +141,16 @@ class AuraLinuxApplication : public ui::AXPlatformNodeDelegateBase,
     // retrieved.
     if (data_.GetStringAttribute(ax::mojom::StringAttribute::kName).empty() &&
         ViewsDelegate::GetInstance()) {
-      data_.SetName(ViewsDelegate::GetInstance()->GetApplicationName());
+      data_.SetNameChecked(ViewsDelegate::GetInstance()->GetApplicationName());
     }
 
     return data_;
   }
 
-  int GetChildCount() const override {
-    return static_cast<int>(widgets_.size());
-  }
+  size_t GetChildCount() const override { return widgets_.size(); }
 
-  gfx::NativeViewAccessible ChildAtIndex(int index) override {
-    if (index < 0 || index >= GetChildCount())
+  gfx::NativeViewAccessible ChildAtIndex(size_t index) override {
+    if (index >= GetChildCount())
       return nullptr;
 
     Widget* widget = widgets_[index];
@@ -185,7 +184,7 @@ class AuraLinuxApplication : public ui::AXPlatformNodeDelegateBase,
 
   // TODO(nektar): Make this into a const pointer so that it can't be set
   // outside the class's constructor.
-  ui::AXPlatformNode* ax_platform_node_;
+  raw_ptr<ui::AXPlatformNode> ax_platform_node_;
   ui::AXUniqueId unique_id_;
   mutable ui::AXNodeData data_;
   std::vector<Widget*> widgets_;

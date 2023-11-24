@@ -1,4 +1,4 @@
-// Copyright (c) 2006-2008 The Chromium Authors. All rights reserved.
+// Copyright 2006-2008 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -103,11 +103,11 @@ class LowLevelPolicy {
 
  private:
   struct RuleNode {
-    const PolicyRule* rule;
+    raw_ptr<const PolicyRule, DanglingUntriaged> rule;
     IpcTag service;
   };
   std::list<RuleNode> rules_;
-  raw_ptr<PolicyGlobal> policy_store_;
+  raw_ptr<PolicyGlobal, DanglingUntriaged> policy_store_;
 };
 
 // There are 'if' rules and 'if not' comparisons
@@ -140,7 +140,7 @@ class PolicyRule {
   // string: is the desired matching pattern.
   // match_opts: if the pattern matching is case sensitive or not.
   bool AddStringMatch(RuleType rule_type,
-                      int16_t parameter,
+                      uint8_t parameter,
                       const wchar_t* string,
                       StringMatchOptions match_opts);
 
@@ -150,7 +150,7 @@ class PolicyRule {
   // number: the value to compare the input to.
   // comparison_op: the comparison kind (equal, logical and, etc).
   bool AddNumberMatch(RuleType rule_type,
-                      int16_t parameter,
+                      uint8_t parameter,
                       uint32_t number,
                       RuleOp comparison_op);
 
@@ -168,7 +168,7 @@ class PolicyRule {
   // in AddStringMatch.
   bool GenStringOpcode(RuleType rule_type,
                        StringMatchOptions match_opts,
-                       uint16_t parameter,
+                       uint8_t parameter,
                        int state,
                        bool last_call,
                        int* skip_count,

@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,12 +7,12 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "components/feedback/feedback_report.h"
@@ -45,7 +45,7 @@ bool IsKeyExempt(const std::string& key) {
 }
 
 // Runs the Redaction tool over the entris of |response|.
-void Redact(feedback::RedactionTool* redactor, SystemLogsResponse* response) {
+void Redact(redaction::RedactionTool* redactor, SystemLogsResponse* response) {
   for (auto& element : *response) {
     if (!IsKeyExempt(element.first))
       element.second = redactor->Redact(element.second);
@@ -80,7 +80,7 @@ SystemLogsFetcher::SystemLogsFetcher(
                     {base::TaskPriority::USER_VISIBLE,
                      base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN})
               : nullptr),
-      redactor_(scrub_data ? std::make_unique<feedback::RedactionTool>(
+      redactor_(scrub_data ? std::make_unique<redaction::RedactionTool>(
                                  first_party_extension_ids)
                            : nullptr) {}
 
@@ -231,7 +231,7 @@ void SystemLogsFetcher::RunCallbackAndDeleteSoon() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!callback_.is_null());
   std::move(callback_).Run(std::move(response_));
-  base::SequencedTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
+  base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE, this);
 }
 
 }  // namespace system_logs

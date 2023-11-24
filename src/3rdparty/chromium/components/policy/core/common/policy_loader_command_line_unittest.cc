@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,7 +23,8 @@ class PolicyLoaderCommandLineTest : public ::testing::Test {
   void LoadAndVerifyPolicies(PolicyLoaderCommandLine* loader,
                              const base::Value& expected_policies) {
     DCHECK(expected_policies.is_dict());
-    std::unique_ptr<PolicyBundle> bundle = loader->Load();
+    std::unique_ptr<PolicyBundle> bundle =
+        std::make_unique<PolicyBundle>(loader->Load());
     PolicyMap& map =
         bundle->Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()));
     EXPECT_EQ(expected_policies.DictSize(), map.size());
@@ -50,21 +51,21 @@ class PolicyLoaderCommandLineTest : public ::testing::Test {
 
 TEST_F(PolicyLoaderCommandLineTest, NoSwitch) {
   LoadAndVerifyPolicies(CreatePolicyLoader().get(),
-                        base::Value(base::Value::Type::DICTIONARY));
+                        base::Value(base::Value::Type::DICT));
 }
 
 TEST_F(PolicyLoaderCommandLineTest, InvalidSwitch) {
   SetCommandLinePolicy("a");
   LoadAndVerifyPolicies(CreatePolicyLoader().get(),
-                        base::Value(base::Value::Type::DICTIONARY));
+                        base::Value(base::Value::Type::DICT));
 
   SetCommandLinePolicy("a:b");
   LoadAndVerifyPolicies(CreatePolicyLoader().get(),
-                        base::Value(base::Value::Type::DICTIONARY));
+                        base::Value(base::Value::Type::DICT));
 
   SetCommandLinePolicy("[a]");
   LoadAndVerifyPolicies(CreatePolicyLoader().get(),
-                        base::Value(base::Value::Type::DICTIONARY));
+                        base::Value(base::Value::Type::DICT));
 }
 
 TEST_F(PolicyLoaderCommandLineTest, ParseSwitchValue) {
@@ -75,22 +76,23 @@ TEST_F(PolicyLoaderCommandLineTest, ParseSwitchValue) {
     "list_policy": [1,2],
     "dict_policy": {"k1":1, "k2": {"k3":true}}
   })");
-  base::Value policies(base::Value::Type::DICTIONARY);
-  policies.SetIntKey("int_policy", 42);
-  policies.SetStringKey("string_policy", "string");
-  policies.SetBoolKey("bool_policy", true);
+  base::Value::Dict policies;
+  policies.Set("int_policy", 42);
+  policies.Set("string_policy", "string");
+  policies.Set("bool_policy", true);
 
   // list policy
-  base::Value::ListStorage list_storage;
-  list_storage.emplace_back(1);
-  list_storage.emplace_back(2);
-  policies.SetKey("list_policy", base::Value(list_storage));
+  base::Value::List list;
+  list.Append(1);
+  list.Append(2);
+  policies.Set("list_policy", std::move(list));
 
   // dict policy
-  policies.SetIntPath({"dict_policy.k1"}, 1);
-  policies.SetBoolPath({"dict_policy.k2.k3"}, true);
+  policies.SetByDottedPath("dict_policy.k1", 1);
+  policies.SetByDottedPath("dict_policy.k2.k3", true);
 
-  LoadAndVerifyPolicies(CreatePolicyLoader().get(), policies);
+  LoadAndVerifyPolicies(CreatePolicyLoader().get(),
+                        base::Value(std::move(policies)));
 }
 
 }  // namespace policy

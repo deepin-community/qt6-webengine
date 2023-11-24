@@ -1,11 +1,11 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "media/video/fake_video_encode_accelerator.h"
 
-#include "base/bind.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/task/sequenced_task_runner.h"
@@ -40,6 +40,7 @@ FakeVideoEncodeAccelerator::GetSupportedProfiles() {
   profile.max_resolution.SetSize(1920, 1088);
   profile.max_framerate_numerator = 30;
   profile.max_framerate_denominator = 1;
+  profile.rate_control_modes = media::VideoEncodeAccelerator::kConstantMode;
 
   profile.profile = media::H264PROFILE_MAIN;
   profiles.push_back(profile);
@@ -112,6 +113,19 @@ void FakeVideoEncodeAccelerator::SetWillInitializationSucceed(
 void FakeVideoEncodeAccelerator::SetWillEncodingSucceed(
     bool will_encoding_succeed) {
   will_encoding_succeed_ = will_encoding_succeed;
+}
+
+void FakeVideoEncodeAccelerator::NotifyEncoderInfoChange(
+    const VideoEncoderInfo& info) {
+  task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&FakeVideoEncodeAccelerator::DoNotifyEncoderInfoChange,
+                     weak_this_factory_.GetWeakPtr(), info));
+}
+
+void FakeVideoEncodeAccelerator::DoNotifyEncoderInfoChange(
+    const VideoEncoderInfo& info) {
+  client_->NotifyEncoderInfoChange(info);
 }
 
 void FakeVideoEncodeAccelerator::DoRequireBitstreamBuffers(

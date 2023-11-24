@@ -113,9 +113,17 @@ bool AXMenuListOption::OnNativeClickAction() {
     GetElement()->AccessKeyAction(
         SimulatedClickCreationScope::kFromAccessibility);
 
+    // It's possible that the call to `AccessKeyAction` right above modified the
+    // tree structure (e.g., by collapsing the list of options and removing them
+    // from the tree), effectively detaching the current node from the tree. In
+    // this case, `ParentObject` will now return nullptr.
+    AXObject* parent = ParentObject();
+    if (!parent)
+      return false;
+
     // Calling OnNativeClickAction on the parent select element will toggle
     // it open or closed.
-    return ParentObject()->OnNativeClickAction();
+    return parent->OnNativeClickAction();
   }
 
   return AXNodeObject::OnNativeClickAction();
@@ -129,6 +137,9 @@ bool AXMenuListOption::OnNativeSetSelectedAction(bool b) {
   return true;
 }
 
+// TODO(aleventhal) This override could go away, but it will cause a lot of
+// test changes, as invisible options inside of a collapsed <select> will become
+// ignored since they have no layout object.
 bool AXMenuListOption::ComputeAccessibilityIsIgnored(
     IgnoredReasons* ignored_reasons) const {
   if (IsDetached()) {
@@ -140,7 +151,14 @@ bool AXMenuListOption::ComputeAccessibilityIsIgnored(
           html_names::kHiddenAttr))
     return true;
 
-  return AccessibilityIsIgnoredByDefault(ignored_reasons);
+  if (IsAriaHidden()) {
+    if (ignored_reasons) {
+      ComputeIsAriaHidden(ignored_reasons);
+    }
+    return true;
+  }
+
+  return ParentObject()->ComputeAccessibilityIsIgnored(ignored_reasons);
 }
 
 void AXMenuListOption::GetRelativeBounds(

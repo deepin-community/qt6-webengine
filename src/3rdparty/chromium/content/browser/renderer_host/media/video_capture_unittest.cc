@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,13 +8,12 @@
 #include <memory>
 #include <string>
 
-#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "content/browser/renderer_host/media/fake_video_capture_provider.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
@@ -69,7 +68,7 @@ void VideoInputDevicesEnumerated(base::OnceClosure quit_closure,
 // video_capture_host. This is an arbitrary value.
 const base::UnguessableToken& DeviceId() {
   static const base::UnguessableToken device_id(
-      base::UnguessableToken::Deserialize(555, 555));
+      base::UnguessableToken::CreateForTesting(555, 555));
   return device_id;
 }
 
@@ -98,7 +97,7 @@ class VideoCaptureTest : public testing::Test,
             std::make_unique<media::TestAudioThread>())),
         audio_system_(
             std::make_unique<media::AudioSystemImpl>(audio_manager_.get())),
-        task_runner_(base::ThreadTaskRunnerHandle::Get()) {}
+        task_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()) {}
 
   VideoCaptureTest(const VideoCaptureTest&) = delete;
   VideoCaptureTest& operator=(const VideoCaptureTest&) = delete;
@@ -109,8 +108,7 @@ class VideoCaptureTest : public testing::Test,
     SetBrowserClientForTesting(&browser_client_);
 
     media_stream_manager_ = std::make_unique<MediaStreamManager>(
-        audio_system_.get(), audio_manager_->GetTaskRunner(),
-        std::make_unique<FakeVideoCaptureProvider>());
+        audio_system_.get(), std::make_unique<FakeVideoCaptureProvider>());
     media_stream_manager_->UseFakeUIFactoryForTests(base::BindRepeating(
         &VideoCaptureTest::CreateFakeUI, base::Unretained(this)));
 
@@ -187,7 +185,7 @@ class VideoCaptureTest : public testing::Test,
  protected:
   // media::mojom::VideoCaptureObserver implementation.
   void OnStateChanged(media::mojom::VideoCaptureResultPtr result) override {
-    if (result->which() == media::mojom::VideoCaptureResult::Tag::STATE)
+    if (result->which() == media::mojom::VideoCaptureResult::Tag::kState)
       DoOnStateChanged(result->get_state());
     else
       DoOnVideoCaptureError(result->get_error_code());
@@ -207,6 +205,7 @@ class VideoCaptureTest : public testing::Test,
   }
   MOCK_METHOD1(DoOnBufferReady, void(int32_t));
   MOCK_METHOD1(OnBufferDestroyed, void(int32_t));
+  MOCK_METHOD1(OnNewCropVersion, void(uint32_t));
 
   void StartCapture() {
     base::RunLoop run_loop;
@@ -234,11 +233,9 @@ class VideoCaptureTest : public testing::Test,
     params.requested_format = media::VideoCaptureFormat(
         gfx::Size(352, 288), 30, media::PIXEL_FORMAT_I420);
 
-    EXPECT_CALL(
-        *this,
-        DoOnVideoCaptureError(
-            media::VideoCaptureError::
-                kVideoCaptureControllerInvalidOrUnsupportedVideoCaptureParametersRequested))
+    EXPECT_CALL(*this,
+                DoOnVideoCaptureError(
+                    media::VideoCaptureError::kVideoCaptureControllerInvalid))
         .Times(1);
     host_->Start(DeviceId(), base::UnguessableToken(), params,
                  observer_receiver_.BindNewPipeAndPassRemote());

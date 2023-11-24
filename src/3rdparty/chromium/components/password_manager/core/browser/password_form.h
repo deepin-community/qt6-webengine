@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -66,19 +66,30 @@ bool operator==(const InsecurityMetadata& lhs, const InsecurityMetadata& rhs);
 struct PasswordNote {
   PasswordNote();
   PasswordNote(std::u16string value, base::Time date_created);
+  PasswordNote(std::u16string unique_display_name,
+               std::u16string value,
+               base::Time date_created,
+               bool hide_by_default);
   PasswordNote(const PasswordNote& rhs);
   PasswordNote(PasswordNote&& rhs);
   PasswordNote& operator=(const PasswordNote& rhs);
   PasswordNote& operator=(PasswordNote&& rhs);
   ~PasswordNote();
 
+  // The name displayed in the UI labeling this note. Currently unused and added
+  // for future compatibility.
+  std::u16string unique_display_name;
   // The value of the note.
   std::u16string value;
   // The date when the note was created.
   base::Time date_created;
+  // Whether the value of the note will be hidden by default in the UI similar
+  // to password values. Currently unused and added for future compatibility.
+  bool hide_by_default = false;
 };
 
 bool operator==(const PasswordNote& lhs, const PasswordNote& rhs);
+bool operator!=(const PasswordNote& lhs, const PasswordNote& rhs);
 
 // The PasswordForm struct encapsulates information about a login form,
 // which can be an HTML form or a dialog with username/password text fields.
@@ -122,13 +133,17 @@ struct PasswordForm {
   // Always append new types at the end. This enum is converted to int and
   // stored in password store backends, so it is important to keep each
   // value assigned to the same integer.
+  //
+  // This might contain non-enum values: coming from clients that have a shorter
+  // list of Type.
   enum class Type {
     kFormSubmission = 0,
     kGenerated = 1,
     kApi = 2,
     kManuallyAdded = 3,
+    kImported = 4,
     kMinValue = kFormSubmission,
-    kMaxValue = kManuallyAdded,
+    kMaxValue = kImported,
   };
 
   // Enum to keep track of what information has been sent to the server about
@@ -140,6 +155,13 @@ struct PasswordForm {
     kMinValue = kNoSignalSent,
     kMaxValue = kNegativeSignalSent,
   };
+
+  // The primary key of the password record in the logins database. This is only
+  // set when the credentials has been read from the login database. Password
+  // forms parsed from the web, or manually added in settings don't have this
+  // field set. Also credentials read from sources other than logins database
+  // (e.g. credential manager on Android) don't have this field set.
+  absl::optional<FormPrimaryKey> primary_key;
 
   Scheme scheme = Scheme::kHtml;
 
@@ -155,8 +177,6 @@ struct PasswordForm {
   // This is the primary data used by the PasswordManager to decide (in longest
   // matching prefix fashion) whether or not a given PasswordForm result from
   // the database is a good fit for a particular form on a page.
-  //
-  // This should not be empty except for Android based credentials.
   GURL url;
 
   // The action target of the form; like |url|, consists of the scheme, host,
@@ -299,13 +319,15 @@ struct PasswordForm {
   bool blocked_by_user = false;
 
   // The form type.
+  // This might contain non-enum values: coming from clients that have a shorter
+  // list of Type.
   Type type = Type::kFormSubmission;
 
   // The number of times that this username/password has been used to
-  // authenticate the user.
+  // authenticate the user in an HTML form.
   //
   // When parsing an HTML form, this is not used.
-  int times_used = 0;
+  int times_used_in_html_form = 0;
 
   // Autofill representation of this form. Used to communicate with the
   // Autofill servers if necessary. Currently this is only used to help
@@ -395,20 +417,25 @@ struct PasswordForm {
   // to its metadata (e.g. time it was discovered, whether alerts are muted).
   base::flat_map<InsecureType, InsecurityMetadata> password_issues;
 
-  // Attached note to the credential.
-  PasswordNote note;
+  // Attached notes to the credential.
+  std::vector<PasswordNote> notes;
 
   // Email address of the last sync account this password was associated with.
   // This field is non empty only if the password is NOT currently associated
   // with a syncing account AND it was associated with one in the past.
   std::string previously_associated_sync_account_email;
 
-  // Return true if we consider this form to be a signup form. It's based on
-  // local heuristics and may be inaccurate.
+  // Returns true if this form is considered to be a login form, i.e. it has
+  // a username field, a password field and no new password field. It's based
+  // on heuristics and may be inaccurate.
+  bool IsLikelyLoginForm() const;
+
+  // Returns true if we consider this form to be a signup form. It's based on
+  // heuristics and may be inaccurate.
   bool IsLikelySignupForm() const;
 
-  // Return true if we consider this form to be a change password form and not
-  // a signup form. It's based on local heuristics and may be inaccurate.
+  // Returns true if we consider this form to be a change password form and not
+  // a signup form. It's based on heuristics and may be inaccurate.
   bool IsLikelyChangePasswordForm() const;
 
   // Returns true if current password element is set.
@@ -436,9 +463,12 @@ struct PasswordForm {
   // Returns true when |password_value| or |new_password_value| are non-empty.
   bool HasNonEmptyPasswordValue() const;
 
-  // Utility method to check whether the form represents an insecure credential
-  // of insecure type `type`.
-  bool IsInsecureCredential(InsecureType insecure_type) const;
+  // Returns the value of the note with an empty `unique_display_name`,
+  // otherwise returns an nullopt.
+  absl::optional<std::u16string> GetNoteWithEmptyUniqueDisplayName() const;
+
+  // Updates the note with an empty `unique_display_name`.
+  void SetNoteWithEmptyUniqueDisplayName(const std::u16string& new_note_value);
 
   PasswordForm();
   PasswordForm(const PasswordForm& other);

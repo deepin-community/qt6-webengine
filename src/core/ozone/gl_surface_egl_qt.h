@@ -6,15 +6,16 @@
 
 #include "gl_surface_qt.h"
 #include <EGL/egl.h>
-#include <EGL/eglext.h>
 
 namespace gl {
 
+class GLDisplayEGL;
+
 class GLSurfaceEGLQt: public GLSurfaceQt {
 public:
-    explicit GLSurfaceEGLQt(const gfx::Size& size);
+    explicit GLSurfaceEGLQt(gl::GLDisplayEGL *display, const gfx::Size& size);
 
-    static bool InitializeOneOff();
+    static gl::GLDisplay *InitializeOneOff(gl::GpuPreference preference);
     static bool InitializeExtensionSettingsOneOff();
 
     bool Initialize(GLSurfaceFormat format) override;
@@ -42,7 +43,7 @@ private:
 
 class GLSurfacelessQtEGL : public GLSurfaceQt {
 public:
-    explicit GLSurfacelessQtEGL(const gfx::Size& size);
+    explicit GLSurfacelessQtEGL(gl::GLDisplayEGL *display, const gfx::Size& size);
 
 public:
     bool Initialize(GLSurfaceFormat format) override;

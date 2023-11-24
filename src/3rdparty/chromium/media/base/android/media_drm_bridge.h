@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,8 +13,8 @@
 #include <vector>
 
 #include "base/android/scoped_java_ref.h"
-#include "base/callback.h"
-#include "base/memory/ref_counted.h"
+#include "base/functional/callback.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/sequenced_task_runner_helpers.h"
 #include "media/base/android/android_util.h"
@@ -65,10 +65,6 @@ class MEDIA_EXPORT MediaDrmBridge : public ContentDecryptionModule,
   static bool IsKeySystemSupportedWithType(
       const std::string& key_system,
       const std::string& container_mime_type);
-
-  // Whether per-origin provisioning (setting "origin" property on MediaDrm) is
-  // supported or not. If false, per-device provisioning is used.
-  static bool IsPerOriginProvisioningSupported();
 
   // Returns true if this device supports per-application provisioning, false
   // otherwise.

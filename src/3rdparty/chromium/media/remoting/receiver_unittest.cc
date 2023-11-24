@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 
 #include "base/check.h"
 #include "base/memory/raw_ptr.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/gmock_callback_support.h"
 #include "base/test/task_environment.h"
 #include "components/cast_streaming/public/remoting_proto_enum_utils.h"
@@ -275,7 +276,7 @@ class ReceiverTest : public ::testing::Test {
     mock_renderer_ = renderer.get();
     receiver_ = std::make_unique<Receiver>(
         receiver_renderer_handle_, sender_renderer_handle_, mock_controller_,
-        base::ThreadTaskRunnerHandle::Get(), std::move(renderer),
+        base::SingleThreadTaskRunner::GetCurrentDefault(), std::move(renderer),
         base::BindOnce(&ReceiverTest::OnAcquireRendererDone,
                        weak_factory_.GetWeakPtr()));
   }

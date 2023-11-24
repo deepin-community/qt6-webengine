@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,8 @@
 #include <map>
 #include <memory>
 
-#include "base/callback_forward.h"
+#include "base/containers/flat_set.h"
+#include "base/functional/callback_forward.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
@@ -144,6 +145,10 @@ class PlatformSensor : public base::RefCountedThreadSafe<PlatformSensor> {
   bool UpdateSharedBuffer(const SensorReading& reading,
                           bool do_significance_check);
 
+  // Check if multiple instances of PlatformSensor can exist at once. It weas
+  // first suggested in crbug.com/1383180.
+  static base::flat_set<mojom::SensorType>& GetInitializedSensors();
+
   scoped_refptr<base::SequencedTaskRunner> main_task_runner_;
 
   raw_ptr<SensorReadingSharedBuffer>
@@ -153,7 +158,9 @@ class PlatformSensor : public base::RefCountedThreadSafe<PlatformSensor> {
   raw_ptr<PlatformSensorProvider> provider_;
   bool is_active_ = false;
   absl::optional<SensorReading> last_raw_reading_ GUARDED_BY(lock_);
-  mutable base::Lock lock_;  // Protect last_raw_reading_.
+  absl::optional<SensorReading> last_rounded_reading_ GUARDED_BY(lock_);
+  // Protect last_raw_reading_ & last_rounded_reading_.
+  mutable base::Lock lock_;
   base::WeakPtrFactory<PlatformSensor> weak_factory_{this};
 };
 

@@ -15,18 +15,20 @@
 #ifndef PLATFORM_PUBLIC_WIFI_LAN_H_
 #define PLATFORM_PUBLIC_WIFI_LAN_H_
 
+#include <memory>
+#include <string>
+#include <utility>
+
 #include "absl/container/flat_hash_map.h"
+#include "internal/platform/cancellation_flag.h"
 #include "internal/platform/implementation/platform.h"
 #include "internal/platform/implementation/wifi_lan.h"
-#include "internal/platform/byte_array.h"
-#include "internal/platform/cancellation_flag.h"
 #include "internal/platform/input_stream.h"
-#include "internal/platform/nsd_service_info.h"
-#include "internal/platform/output_stream.h"
 #include "internal/platform/logging.h"
 #include "internal/platform/mutex.h"
+#include "internal/platform/nsd_service_info.h"
+#include "internal/platform/output_stream.h"
 
-namespace location {
 namespace nearby {
 
 class WifiLanSocket final {
@@ -126,12 +128,12 @@ class WifiLanMedium {
   using Platform = api::ImplementationPlatform;
 
   struct DiscoveredServiceCallback {
-    std::function<void(NsdServiceInfo service_info,
-                       const std::string& service_type)>
+    absl::AnyInvocable<void(NsdServiceInfo service_info,
+                            const std::string& service_type)>
         service_discovered_cb =
             DefaultCallback<NsdServiceInfo, const std::string&>();
-    std::function<void(NsdServiceInfo service_info,
-                       const std::string& service_type)>
+    absl::AnyInvocable<void(NsdServiceInfo service_info,
+                            const std::string& service_type)>
         service_lost_cb = DefaultCallback<NsdServiceInfo, const std::string&>();
   };
 
@@ -192,19 +194,31 @@ class WifiLanMedium {
     return impl_->GetDynamicPortRange();
   }
 
-  bool IsValid() const { return impl_ != nullptr; }
+  // Both SW and HW support WifiLan Medium
+  bool IsValid() const {
+    // When impl_ is not nullptr, it means platform layer SW is implemented for
+    // this Medium
+    if (impl_ == nullptr) return false;
+    // A network connection to a primary router exist, also implied that HW is
+    // existed and enabled.
+    return impl_->IsNetworkConnected();
+  }
 
   api::WifiLanMedium& GetImpl() { return *impl_; }
 
  private:
   Mutex mutex_;
   std::unique_ptr<api::WifiLanMedium> impl_;
+
+  // Used to keep the map from service type to discovery callback.
   absl::flat_hash_map<std::string, std::unique_ptr<DiscoveryCallbackInfo>>
-      discovery_callbacks_ ABSL_GUARDED_BY(mutex_);
-  absl::flat_hash_set<std::string> discovery_services_ ABSL_GUARDED_BY(mutex_);
+      service_type_to_callback_map_ ABSL_GUARDED_BY(mutex_);
+
+  // Used to keep the map from service type to services with the type.
+  absl::flat_hash_map<std::string, absl::flat_hash_set<std::string>>
+      service_type_to_services_map_ ABSL_GUARDED_BY(mutex_);
 };
 
 }  // namespace nearby
-}  // namespace location
 
 #endif  // PLATFORM_PUBLIC_WIFI_LAN_H_

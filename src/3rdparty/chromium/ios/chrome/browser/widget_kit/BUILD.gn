@@ -1,4 +1,4 @@
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -33,6 +33,7 @@ if (ios_enable_widget_kit_extension) {
     sources = [
       "user_defaults_widget_store.swift",
       "widget_metrics_logger.swift",
+      "widget_timelines_updater.swift",
     ]
 
     frameworks = [

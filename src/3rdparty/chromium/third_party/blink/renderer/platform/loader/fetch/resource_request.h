@@ -36,12 +36,11 @@
 #include "net/cookies/site_for_cookies.h"
 #include "net/filter/source_stream.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
-#include "services/network/public/mojom/chunked_data_pipe_getter.mojom-blink.h"
+#include "services/network/public/mojom/chunked_data_pipe_getter.mojom-blink-forward.h"
 #include "services/network/public/mojom/cors.mojom-blink-forward.h"
-#include "services/network/public/mojom/fetch_api.mojom-blink-forward.h"
+#include "services/network/public/mojom/fetch_api.mojom-blink.h"
 #include "services/network/public/mojom/ip_address_space.mojom-blink-forward.h"
 #include "services/network/public/mojom/trust_tokens.mojom-blink.h"
-#include "services/network/public/mojom/url_loader.mojom-blink.h"
 #include "services/network/public/mojom/web_bundle_handle.mojom-blink.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink-forward.h"
@@ -193,6 +192,11 @@ class PLATFORM_EXPORT ResourceRequestHead {
     SetHttpHeaderField(http_names::kContentType, http_content_type);
   }
 
+  bool IsFormSubmission() const { return is_form_submission_; }
+  void SetFormSubmission(bool is_form_submission) {
+    is_form_submission_ = is_form_submission;
+  }
+
   void SetReferrerPolicy(network::mojom::ReferrerPolicy referrer_policy) {
     referrer_policy_ = referrer_policy;
   }
@@ -239,6 +243,13 @@ class PLATFORM_EXPORT ResourceRequestHead {
 
   bool IsConditional() const;
 
+  // Incremental property of HTTP Extensible Priorities which specifies that
+  // responses can be delivered concurrently if they are the same priority on
+  // a connection that supports multiplexing (HTTP/3 primarily).
+  // https://www.rfc-editor.org/rfc/rfc9218
+  bool PriorityIncremental() const;
+  void SetPriorityIncremental(bool);
+
   // Whether the associated ResourceHandleClient needs to be notified of
   // upload progress made for that resource.
   bool ReportUploadProgress() const { return report_upload_progress_; }
@@ -269,6 +280,13 @@ class PLATFORM_EXPORT ResourceRequestHead {
   // True if the request can work after the fetch group is terminated.
   bool GetKeepalive() const { return keepalive_; }
   void SetKeepalive(bool keepalive) { keepalive_ = keepalive; }
+
+  // True if the request should be considered for computing and attaching the
+  // topics headers.
+  bool GetBrowsingTopics() const { return browsing_topics_; }
+  void SetBrowsingTopics(bool browsing_topics) {
+    browsing_topics_ = browsing_topics;
+  }
 
   // True if service workers should not get events for the request.
   bool GetSkipServiceWorker() const { return skip_service_worker_; }
@@ -307,6 +325,14 @@ class PLATFORM_EXPORT ResourceRequestHead {
 
   network::mojom::RequestMode GetMode() const { return mode_; }
   void SetMode(network::mojom::RequestMode mode) { mode_ = mode; }
+
+  network::mojom::IPAddressSpace GetTargetAddressSpace() const {
+    return target_address_space_;
+  }
+  void SetTargetAddressSpace(
+      network::mojom::IPAddressSpace target_address_space) {
+    target_address_space_ = target_address_space;
+  }
 
   // A resource request's fetch_priority_hint_ is a developer-set priority
   // hint that differs from priority_. It is used in
@@ -458,23 +484,11 @@ class PLATFORM_EXPORT ResourceRequestHead {
   void SetInspectorId(uint64_t inspector_id) { inspector_id_ = inspector_id; }
   uint64_t InspectorId() const { return inspector_id_; }
 
-  // Temporary for metrics. True if the request was initiated by a stylesheet
-  // that is not origin-clean:
-  // https://drafts.csswg.org/cssom-1/#concept-css-style-sheet-origin-clean-flag
-  //
-  // TODO(crbug.com/898497): Remove this when there is enough data.
   bool IsFromOriginDirtyStyleSheet() const {
     return is_from_origin_dirty_style_sheet_;
   }
   void SetFromOriginDirtyStyleSheet(bool dirty) {
     is_from_origin_dirty_style_sheet_ = dirty;
-  }
-
-  bool IsSignedExchangePrefetchCacheEnabled() const {
-    return is_signed_exchange_prefetch_cache_enabled_;
-  }
-  void SetSignedExchangePrefetchCacheEnabled(bool enabled) {
-    is_signed_exchange_prefetch_cache_enabled_ = enabled;
   }
 
   bool IsFetchLikeAPI() const { return is_fetch_like_api_; }
@@ -507,13 +521,6 @@ class PLATFORM_EXPORT ResourceRequestHead {
   // |url|,
   bool CanDisplay(const KURL&) const;
 
-  void SetAllowHTTP1ForStreamingUpload(bool allow) {
-    allowHTTP1ForStreamingUpload_ = allow;
-  }
-  bool AllowHTTP1ForStreamingUpload() const {
-    return allowHTTP1ForStreamingUpload_;
-  }
-
   // The original destination of a request passed through by a service worker.
   network::mojom::RequestDestination GetOriginalDestination() const {
     return original_destination_;
@@ -538,6 +545,11 @@ class PLATFORM_EXPORT ResourceRequestHead {
   RenderBlockingBehavior GetRenderBlockingBehavior() const {
     return render_blocking_behavior_;
   }
+
+  void SetHasStorageAccess(bool has_storage_access) {
+    has_storage_access_ = has_storage_access;
+  }
+  bool GetHasStorageAccess() const { return has_storage_access_; }
 
  private:
   const CacheControlHeader& GetCacheControlHeader() const;
@@ -564,11 +576,14 @@ class PLATFORM_EXPORT ResourceRequestHead {
   bool download_to_blob_ : 1;
   bool use_stream_on_response_ : 1;
   bool keepalive_ : 1;
+  bool browsing_topics_ : 1;
   bool allow_stale_response_ : 1;
   mojom::blink::FetchCacheMode cache_mode_;
   bool skip_service_worker_ : 1;
   bool download_to_cache_only_ : 1;
   bool site_for_cookies_set_ : 1;
+  bool is_form_submission_ : 1;
+  bool priority_incremental_ : 1;
   ResourceLoadPriority initial_priority_;
   ResourceLoadPriority priority_;
   int intra_priority_value_;
@@ -585,6 +600,7 @@ class PLATFORM_EXPORT ResourceRequestHead {
   network::mojom::CorsPreflightPolicy cors_preflight_policy_;
   absl::optional<RedirectInfo> redirect_info_;
   absl::optional<network::mojom::blink::TrustTokenParams> trust_token_params_;
+  network::mojom::IPAddressSpace target_address_space_;
 
   absl::optional<String> suggested_filename_;
 
@@ -618,8 +634,6 @@ class PLATFORM_EXPORT ResourceRequestHead {
 
   bool is_from_origin_dirty_style_sheet_ = false;
 
-  bool is_signed_exchange_prefetch_cache_enabled_ = false;
-
   bool is_fetch_like_api_ = false;
 
   bool is_favicon_ = false;
@@ -629,8 +643,6 @@ class PLATFORM_EXPORT ResourceRequestHead {
   // the request under the cross-origin's partition. Furthermore, its reuse from
   // the prefetch cache will be restricted to top-level-navigations.
   bool prefetch_maybe_for_top_level_navigation_ = false;
-
-  bool allowHTTP1ForStreamingUpload_ = false;
 
   // This is used when fetching preload header requests from cross-origin
   // prefetch responses. The browser process uses this token to ensure the
@@ -656,6 +668,8 @@ class PLATFORM_EXPORT ResourceRequestHead {
   scoped_refptr<
       base::RefCountedData<base::flat_set<net::SourceStream::SourceType>>>
       devtools_accepted_stream_types_;
+
+  bool has_storage_access_ = false;
 };
 
 class PLATFORM_EXPORT ResourceRequestBody {
@@ -697,7 +711,7 @@ class PLATFORM_EXPORT ResourceRequestBody {
 // A ResourceRequest is a "request" object for ResourceLoader. Conceptually
 // it is https://fetch.spec.whatwg.org/#concept-request, but it contains
 // a lot of blink specific fields. WebURLRequest is the "public version"
-// of this class and WebURLLoader needs it. See WebURLRequest and
+// of this class and URLLoader needs it. See WebURLRequest and
 // WrappedResourceRequest.
 //
 // This class is thread-bound. Do not copy/pass an instance across threads.

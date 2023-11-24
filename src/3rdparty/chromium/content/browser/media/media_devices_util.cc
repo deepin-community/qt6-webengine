@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,11 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_tokenizer.h"
+#include "content/browser/renderer_host/frame_tree.h"
 #include "content/browser/renderer_host/frame_tree_node.h"
 #include "content/browser/renderer_host/render_frame_host_delegate.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
@@ -158,7 +159,7 @@ MediaDeviceSaltAndOrigin GetMediaDeviceSaltAndOrigin(int render_process_id,
     site_for_cookies = frame_host->ComputeSiteForCookies();
     top_level_origin = frame_host->frame_tree_node()
                            ->frame_tree()
-                           ->GetMainFrame()
+                           .GetMainFrame()
                            ->GetLastCommittedOrigin();
     frame_salt = frame_host->GetMediaDeviceIDSaltBase();
     has_focus = frame_host->GetView() && frame_host->GetView()->HasFocus();
@@ -207,11 +208,14 @@ blink::WebMediaDeviceInfo TranslateMediaDeviceInfo(
                                     device_info.device_id)
           : std::string(),
       has_permission ? device_info.label : std::string(),
-      device_info.group_id.empty()
-          ? std::string()
-          : GetHMACForMediaDeviceID(salt_and_origin.group_id_salt,
+      (!base::FeatureList::IsEnabled(
+           features::kEnumerateDevicesHideDeviceIDs) ||
+       has_permission) &&
+              !device_info.group_id.empty()
+          ? GetHMACForMediaDeviceID(salt_and_origin.group_id_salt,
                                     salt_and_origin.origin,
-                                    device_info.group_id),
+                                    device_info.group_id)
+          : std::string(),
       has_permission ? device_info.video_control_support
                      : media::VideoCaptureControlSupport(),
       has_permission ? device_info.video_facing

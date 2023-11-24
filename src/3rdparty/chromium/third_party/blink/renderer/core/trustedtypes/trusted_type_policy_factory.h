@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -50,19 +50,13 @@ class CORE_EXPORT TrustedTypePolicyFactory final
   TrustedScript* emptyScript() const;
 
   String getPropertyType(const String& tagName,
-                         const String& propertyName) const;
-  String getPropertyType(const String& tagName,
                          const String& propertyName,
                          const String& elementNS) const;
-  String getAttributeType(const String& tagName,
-                          const String& attributeName) const;
-  String getAttributeType(const String& tagName,
-                          const String& attributeName,
-                          const String& tagNS) const;
   String getAttributeType(const String& tagName,
                           const String& attributeName,
                           const String& tagNS,
                           const String& attributeNS) const;
+
   ScriptValue getTypeMapping(ScriptState*) const;
   ScriptValue getTypeMapping(ScriptState*, const String& ns) const;
 
@@ -74,6 +68,13 @@ class CORE_EXPORT TrustedTypePolicyFactory final
   const AtomicString& InterfaceName() const override;
   ExecutionContext* GetExecutionContext() const override;
   void Trace(Visitor*) const override;
+
+  // Check whether a given attribute is considered an event handler.
+  //
+  // This function is largely unrelated to the TrustedTypePolicyFactory, but
+  // it reuses the data from getTypeMapping, which is why we have defined it
+  // here.
+  static bool IsEventHandlerAttributeName(const AtomicString& attributeName);
 
  private:
   const WrapperTypeInfo* GetWrapperTypeInfoFromScriptValue(ScriptState*,

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 #include <memory>
 #include <string>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/extensions/api/settings_private/prefs_util.h"
 #include "chrome/common/extensions/api/settings_private.h"
@@ -43,10 +43,10 @@ class SettingsPrivateDelegate : public KeyedService {
                                                   const base::Value* value);
 
   // Gets the value of the pref with the given |name|.
-  virtual std::unique_ptr<base::Value> GetPref(const std::string& name);
+  base::Value GetPref(const std::string& name);
 
   // Gets the values of all allowlisted prefs.
-  virtual std::unique_ptr<base::Value> GetAllPrefs();
+  virtual base::Value::List GetAllPrefs();
 
   // Gets the value.
   virtual std::unique_ptr<base::Value> GetDefaultZoom();

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,16 +6,33 @@
 
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_registry_simple.h"
-#include "components/prefs/pref_service.h"
 
 namespace prefs {
+
+const char kPrivacySandboxM1ConsentDecisionMade[] =
+    "privacy_sandbox.m1.consent_decision_made";
+
+const char kPrivacySandboxM1EEANoticeAcknowledged[] =
+    "privacy_sandbox.m1.eea_notice_acknowledged";
+
+const char kPrivacySandboxM1RowNoticeAcknowledged[] =
+    "privacy_sandbox.m1.row_notice_acknowledged";
+
+const char kPrivacySandboxM1PromptSuppressed[] =
+    "privacy_sandbox.m1.prompt_suppressed";
+
+const char kPrivacySandboxM1TopicsEnabled[] =
+    "privacy_sandbox.m1.topics_enabled";
+
+const char kPrivacySandboxM1FledgeEnabled[] =
+    "privacy_sandbox.m1.fledge_enabled";
+
+const char kPrivacySandboxM1AdMeasurementEnabled[] =
+    "privacy_sandbox.m1.ad_measurement_enabled";
 
 const char kPrivacySandboxApisEnabled[] = "privacy_sandbox.apis_enabled";
 
 const char kPrivacySandboxApisEnabledV2[] = "privacy_sandbox.apis_enabled_v2";
-
-const char kPrivacySandboxApisEnabledV2Init[] =
-    "privacy_sandbox.apis_enabled_v2_init";
 
 const char kPrivacySandboxManuallyControlled[] =
     "privacy_sandbox.manually_controlled";
@@ -23,18 +40,10 @@ const char kPrivacySandboxManuallyControlled[] =
 const char kPrivacySandboxManuallyControlledV2[] =
     "privacy_sandbox.manually_controlled_v2";
 
-const char kPrivacySandboxPreferencesReconciled[] =
-    "privacy_sandbox.preferences_reconciled";
-
 const char kPrivacySandboxPageViewed[] = "privacy_sandbox.page_viewed";
-
-const char kPrivacySandboxFlocDataAccessibleSince[] =
-    "privacy_sandbox.floc_data_accessible_since";
 
 const char kPrivacySandboxTopicsDataAccessibleSince[] =
     "privacy_sandbox.topics_data_accessible_since";
-
-extern const char kPrivacySandboxFlocEnabled[] = "privacy_sandbox.floc_enabled";
 
 const char kPrivacySandboxBlockedTopics[] = "privacy_sandbox.blocked_topics";
 
@@ -65,6 +74,27 @@ extern const char kPrivacySandboxNoConfirmationManuallyControlled[] =
 extern const char kPrivacySandboxDisabledInsufficientConfirmation[] =
     "privacy_sandbox.disabled_insufficient_confirmation";
 
+extern const char kPrivacySandboxFirstPartySetsDataAccessAllowedInitialized[] =
+    "privacy_sandbox.first_party_sets_data_access_allowed_initialized";
+
+extern const char kPrivacySandboxFirstPartySetsEnabled[] =
+    "privacy_sandbox.first_party_sets_enabled";
+
+extern const char kPrivacySandboxTopicsConsentGiven[] =
+    "privacy_sandbox.topics_consent.consent_given";
+
+extern const char kPrivacySandboxTopicsConsentLastUpdateTime[] =
+    "privacy_sandbox.topics_consent.last_update_time";
+
+extern const char kPrivacySandboxTopicsConsentLastUpdateReason[] =
+    "privacy_sandbox.topics_consent.last_update_reason";
+
+extern const char kPrivacySandboxTopicsConsentTextAtLastUpdate[] =
+    "privacy_sandbox.topics_consent.text_at_last_update";
+
+extern const char kPrivacySandboxAntiAbuseInitialized[] =
+    "privacy_sandbox.anti_abuse_initialized";
+
 }  // namespace prefs
 
 namespace privacy_sandbox {
@@ -74,22 +104,26 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
       prefs::kPrivacySandboxApisEnabled, true,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterBooleanPref(prefs::kPrivacySandboxApisEnabledV2, false);
-  registry->RegisterBooleanPref(prefs::kPrivacySandboxApisEnabledV2Init, false);
+  registry->RegisterBooleanPref(prefs::kPrivacySandboxM1ConsentDecisionMade,
+                                false);
+  registry->RegisterBooleanPref(prefs::kPrivacySandboxM1EEANoticeAcknowledged,
+                                false);
+  registry->RegisterBooleanPref(prefs::kPrivacySandboxM1RowNoticeAcknowledged,
+                                false);
+  registry->RegisterIntegerPref(prefs::kPrivacySandboxM1PromptSuppressed, 0);
+  registry->RegisterBooleanPref(prefs::kPrivacySandboxM1TopicsEnabled, false);
+  registry->RegisterBooleanPref(prefs::kPrivacySandboxM1FledgeEnabled, false);
+  registry->RegisterBooleanPref(prefs::kPrivacySandboxM1AdMeasurementEnabled,
+                                false);
+
   registry->RegisterBooleanPref(
       prefs::kPrivacySandboxManuallyControlled, false,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterBooleanPref(prefs::kPrivacySandboxManuallyControlledV2,
                                 false);
-  registry->RegisterBooleanPref(prefs::kPrivacySandboxPreferencesReconciled,
-                                false);
   registry->RegisterBooleanPref(prefs::kPrivacySandboxPageViewed, false);
-  registry->RegisterTimePref(prefs::kPrivacySandboxFlocDataAccessibleSince,
-                             base::Time());
   registry->RegisterTimePref(prefs::kPrivacySandboxTopicsDataAccessibleSince,
                              base::Time());
-  registry->RegisterBooleanPref(
-      prefs::kPrivacySandboxFlocEnabled, true,
-      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterListPref(prefs::kPrivacySandboxBlockedTopics);
   registry->RegisterDictionaryPref(prefs::kPrivacySandboxFledgeJoinBlocked);
   registry->RegisterBooleanPref(prefs::kPrivacySandboxNoticeDisplayed, false);
@@ -107,6 +141,23 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
       prefs::kPrivacySandboxNoConfirmationManuallyControlled, false);
   registry->RegisterBooleanPref(
       prefs::kPrivacySandboxDisabledInsufficientConfirmation, false);
+  registry->RegisterBooleanPref(
+      prefs::kPrivacySandboxFirstPartySetsDataAccessAllowedInitialized, false);
+  registry->RegisterBooleanPref(
+      prefs::kPrivacySandboxFirstPartySetsEnabled, true,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+
+  registry->RegisterBooleanPref(prefs::kPrivacySandboxTopicsConsentGiven,
+                                false);
+  registry->RegisterTimePref(prefs::kPrivacySandboxTopicsConsentLastUpdateTime,
+                             base::Time());
+  registry->RegisterIntegerPref(
+      prefs::kPrivacySandboxTopicsConsentLastUpdateReason,
+      static_cast<int>(TopicsConsentUpdateSource::kDefaultValue));
+  registry->RegisterStringPref(
+      prefs::kPrivacySandboxTopicsConsentTextAtLastUpdate, "");
+  registry->RegisterBooleanPref(prefs::kPrivacySandboxAntiAbuseInitialized,
+                                false);
 }
 
 }  // namespace privacy_sandbox

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -82,10 +82,9 @@ namespace test {
 ScopedSetSupportedResourceScaleFactors::ScopedSetSupportedResourceScaleFactors(
     const std::vector<ResourceScaleFactor>& new_scale_factors) {
   if (g_supported_resource_scale_factors) {
-    original_scale_factors_ = new std::vector<ResourceScaleFactor>(
-        *g_supported_resource_scale_factors);
-  } else {
-    original_scale_factors_ = nullptr;
+    original_scale_factors_ =
+        std::make_unique<std::vector<ResourceScaleFactor>>(
+            *g_supported_resource_scale_factors);
   }
   SetSupportedResourceScaleFactors(new_scale_factors);
 }
@@ -94,7 +93,6 @@ ScopedSetSupportedResourceScaleFactors::
     ~ScopedSetSupportedResourceScaleFactors() {
   if (original_scale_factors_) {
     SetSupportedResourceScaleFactors(*original_scale_factors_);
-    delete original_scale_factors_;
   } else {
     delete g_supported_resource_scale_factors;
     g_supported_resource_scale_factors = nullptr;

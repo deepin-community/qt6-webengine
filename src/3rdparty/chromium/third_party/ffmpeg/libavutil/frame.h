@@ -209,6 +209,11 @@ enum AVFrameSideDataType {
      * volume transform - CUVA 005.1-2021.
      */
     AV_FRAME_DATA_DYNAMIC_HDR_VIVID,
+
+    /**
+     * Ambient viewing environment metadata, as defined by H.274.
+     */
+    AV_FRAME_DATA_AMBIENT_VIEWING_ENVIRONMENT,
 };
 
 enum AVActiveFormatDescription {
@@ -604,13 +609,18 @@ typedef struct AVFrame {
      */
     int64_t pkt_pos;
 
+#if FF_API_PKT_DURATION
     /**
      * duration of the corresponding packet, expressed in
      * AVStream->time_base units, 0 if unknown.
      * - encoding: unused
      * - decoding: Read by user.
+     *
+     * @deprecated use duration instead
      */
+    attribute_deprecated
     int64_t pkt_duration;
+#endif
 
     /**
      * metadata.
@@ -702,6 +712,11 @@ typedef struct AVFrame {
      * Channel layout of the audio data.
      */
     AVChannelLayout ch_layout;
+
+    /**
+     * Duration of the frame, in the same units as pts. 0 if unknown.
+     */
+    int64_t duration;
 } AVFrame;
 
 
@@ -818,7 +833,8 @@ int av_frame_is_writable(AVFrame *frame);
  * Ensure that the frame data is writable, avoiding data copy if possible.
  *
  * Do nothing if the frame is writable, allocate new buffers and copy the data
- * if it is not.
+ * if it is not. Non-refcounted frames behave as non-writable, i.e. a copy
+ * is always made.
  *
  * @return 0 on success, a negative AVERROR on error.
  *
@@ -853,6 +869,7 @@ int av_frame_copy_props(AVFrame *dst, const AVFrame *src);
 /**
  * Get the buffer reference a given data plane is stored in.
  *
+ * @param frame the frame to get the plane's buffer from
  * @param plane index of the data plane of interest in frame->extended_data.
  *
  * @return the buffer reference that contains the plane or NULL if the input

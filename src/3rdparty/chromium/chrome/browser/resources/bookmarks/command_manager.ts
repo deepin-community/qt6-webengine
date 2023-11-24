@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,31 +7,31 @@
  * shortcuts.
  */
 import 'chrome://resources/cr_elements/cr_action_menu/cr_action_menu.js';
-import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.m.js';
-import 'chrome://resources/cr_elements/cr_button/cr_button.m.js';
-import 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.m.js';
-import 'chrome://resources/cr_elements/shared_vars_css.m.js';
-import 'chrome://resources/polymer/v3_0/iron-a11y-keys-behavior/iron-a11y-keys-behavior.js';
+import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
+import 'chrome://resources/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.js';
+import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
 import './edit_dialog.js';
-import './shared_style.js';
+import './shared_style.css.js';
 import './strings.m.js';
 import './edit_dialog.js';
 
 import {CrActionMenuElement} from 'chrome://resources/cr_elements/cr_action_menu/cr_action_menu.js';
-import {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_dialog.m.js';
-import {CrLazyRenderElement} from 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.m.js';
+import {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
+import {CrLazyRenderElement} from 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.js';
 import {getToastManager} from 'chrome://resources/cr_elements/cr_toast/cr_toast_manager.js';
 import {assert, assertNotReached} from 'chrome://resources/js/assert_ts.js';
-import {isMac} from 'chrome://resources/js/cr.m.js';
-import {KeyboardShortcutList} from 'chrome://resources/js/cr/ui/keyboard_shortcut_list.m.js';
-import {EventTracker} from 'chrome://resources/js/event_tracker.m.js';
-import {loadTimeData} from 'chrome://resources/js/load_time_data.m.js';
+import {EventTracker} from 'chrome://resources/js/event_tracker.js';
+import {KeyboardShortcutList} from 'chrome://resources/js/keyboard_shortcut_list.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+import {isMac} from 'chrome://resources/js/platform.js';
 import {PluralStringProxyImpl} from 'chrome://resources/js/plural_string_proxy.js';
 import {IronA11yAnnouncer} from 'chrome://resources/polymer/v3_0/iron-a11y-announcer/iron-a11y-announcer.js';
 import {afterNextRender, flush, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {deselectItems, selectAll, selectFolder} from './actions.js';
 import {highlightUpdatedItems, trackUpdatedItems} from './api_listener.js';
+import {BookmarkManagerApiProxyImpl} from './bookmark_manager_api_proxy.js';
 import {BrowserProxy, BrowserProxyImpl} from './browser_proxy.js';
 import {getTemplate} from './command_manager.html.js';
 import {Command, IncognitoAvailability, MenuSource, OPEN_CONFIRMATION_LIMIT, ROOT_NODE_ID} from './constants.js';
@@ -127,15 +127,15 @@ export class BookmarksCommandManagerElement extends
     this.addShortcut_(Command.COPY, 'Ctrl|c', 'Meta|c');
     this.addShortcut_(Command.PASTE, 'Ctrl|v', 'Meta|v');
 
-    this.eventTracker_.add(document, 'open-command-menu', e =>
+    this.eventTracker_.add(document, 'open-command-menu', (e: Event) =>
                            this.onOpenCommandMenu_(
                                e as CustomEvent<OpenCommandMenuDetail>));
-    this.eventTracker_.add(document, 'keydown', e =>
+    this.eventTracker_.add(document, 'keydown', (e: Event) =>
                            this.onKeydown_(e as KeyboardEvent));
 
     const addDocumentListenerForCommand = (eventName: string,
                                            command: Command) => {
-      this.eventTracker_.add(document, eventName, e => {
+      this.eventTracker_.add(document, eventName, (e: Event) => {
         if ((e.composedPath()[0] as HTMLElement).tagName === 'INPUT') {
           return;
         }
@@ -164,6 +164,10 @@ export class BookmarksCommandManagerElement extends
 
   getMenuIdsForTesting(): Set<string> {
     return this.menuIds_;
+  }
+
+  getMenuSourceForTesting(): MenuSource {
+    return this.menuSource_;
   }
 
   /**
@@ -243,7 +247,7 @@ export class BookmarksCommandManagerElement extends
     }
   }
 
-  isCommandVisible_(command: Command, itemIds: Set<string>): boolean {
+  private isCommandVisible_(command: Command, itemIds: Set<string>): boolean {
     switch (command) {
       case Command.EDIT:
         return itemIds.size === 1 && this.globalCanEdit_;
@@ -285,9 +289,9 @@ export class BookmarksCommandManagerElement extends
         });
       case Command.OPEN_NEW_TAB:
       case Command.OPEN_NEW_WINDOW:
-        return this.expandUrls_(itemIds).length > 0;
+        return this.expandIds_(itemIds).length > 0;
       case Command.OPEN_INCOGNITO:
-        return this.expandUrls_(itemIds).length > 0 &&
+        return this.expandIds_(itemIds).length > 0 &&
             state.prefs.incognitoAvailability !==
             IncognitoAvailability.DISABLED;
       case Command.SORT:
@@ -324,7 +328,7 @@ export class BookmarksCommandManagerElement extends
       }
       case Command.COPY: {
         const idList = Array.from(itemIds);
-        chrome.bookmarkManagerPrivate.copy(idList, () => {
+        BookmarkManagerApiProxyImpl.getInstance().copy(idList).then(() => {
           let labelPromise: Promise<string>;
           if (idList.length === 1) {
             labelPromise =
@@ -362,9 +366,10 @@ export class BookmarksCommandManagerElement extends
               'toastItemsDeleted', idList.length);
         }
 
-        chrome.bookmarkManagerPrivate.removeTrees(idList, () => {
-          this.showTitleToast_(labelPromise, title, true);
-        });
+        BookmarkManagerApiProxyImpl.getInstance().removeTrees(idList).then(
+            () => {
+              this.showTitleToast_(labelPromise, title, true);
+            });
         break;
       }
       case Command.UNDO:
@@ -377,14 +382,14 @@ export class BookmarksCommandManagerElement extends
       case Command.OPEN_NEW_TAB:
       case Command.OPEN_NEW_WINDOW:
       case Command.OPEN_INCOGNITO:
-        this.openUrls_(this.expandUrls_(itemIds), command);
+        this.openBookmarkIds_(this.expandIds_(itemIds), command);
         break;
       case Command.OPEN:
         if (this.isFolder_(itemIds)) {
           const folderId = Array.from(itemIds)[0]!;
           this.dispatch(selectFolder(folderId, state.nodes));
         } else {
-          this.openUrls_(this.expandUrls_(itemIds), command);
+          this.openBookmarkIds_(Array.from(itemIds), command);
         }
         break;
       case Command.SELECT_ALL:
@@ -397,22 +402,22 @@ export class BookmarksCommandManagerElement extends
         this.dispatchEvent(new CustomEvent('iron-announce', {
           bubbles: true,
           composed: true,
-          detail: {text: loadTimeData.getString('itemsUnselected')}
+          detail: {text: loadTimeData.getString('itemsUnselected')},
         }));
         break;
       case Command.CUT:
-        chrome.bookmarkManagerPrivate.cut(Array.from(itemIds));
+        BookmarkManagerApiProxyImpl.getInstance().cut(Array.from(itemIds));
         break;
       case Command.PASTE:
         const selectedFolder = state.selectedFolder;
         const selectedItems = state.selection.items;
         trackUpdatedItems();
-        chrome.bookmarkManagerPrivate.paste(
-            selectedFolder, Array.from(selectedItems), highlightUpdatedItems);
+        BookmarkManagerApiProxyImpl.getInstance()
+            .paste(selectedFolder, Array.from(selectedItems))
+            .then(highlightUpdatedItems);
         break;
       case Command.SORT:
         chrome.bookmarkManagerPrivate.sortChildren(state.selectedFolder);
-        getToastManager().querySelector('dom-if')!.if = true;
         getToastManager().show(loadTimeData.getString('toastFolderSorted'));
         break;
       case Command.ADD_BOOKMARK:
@@ -422,10 +427,10 @@ export class BookmarksCommandManagerElement extends
         this.$.editDialog.get().showAddDialog(true, state.selectedFolder);
         break;
       case Command.IMPORT:
-        chrome.bookmarks.import();
+        chrome.bookmarkManagerPrivate.import();
         break;
       case Command.EXPORT:
-        chrome.bookmarks.export();
+        chrome.bookmarkManagerPrivate.export();
         break;
       case Command.HELP_CENTER:
         window.open('https://support.google.com/chrome/?p=bookmarks');
@@ -437,7 +442,7 @@ export class BookmarksCommandManagerElement extends
         itemIds, 'BookmarkManager.CommandExecuted', command);
   }
 
-  handleKeyEvent(e: Event, itemIds: Set<string>): boolean {
+  handleKeyEvent(e: KeyboardEvent, itemIds: Set<string>): boolean {
     for (const commandTuple of this.shortcuts_) {
       const command = commandTuple[0] as Command;
       const shortcut = commandTuple[1] as KeyboardShortcutList;
@@ -491,71 +496,74 @@ export class BookmarksCommandManagerElement extends
   }
 
   /**
-   * Open the given |urls| in response to a |command|. May show a confirmation
+   * Open the given |ids| in response to a |command|. May show a confirmation
    * dialog before opening large numbers of URLs.
    */
-  private openUrls_(urls: Array<string>, command: Command) {
+  private openBookmarkIds_(ids: string[], command: Command) {
     assert(
         command === Command.OPEN || command === Command.OPEN_NEW_TAB ||
         command === Command.OPEN_NEW_WINDOW ||
         command === Command.OPEN_INCOGNITO);
 
-    if (urls.length === 0) {
+    if (ids.length === 0) {
       return;
     }
 
-    const openUrlsCallback = function() {
+    const openBookmarkIdsCallback = function() {
       const incognito = command === Command.OPEN_INCOGNITO;
       if (command === Command.OPEN_NEW_WINDOW || incognito) {
-        chrome.windows.create({url: urls, incognito: incognito});
+        BookmarkManagerApiProxyImpl.getInstance().openInNewWindow(
+            ids, incognito);
       } else {
         if (command === Command.OPEN) {
-          chrome.tabs.create({url: urls.shift(), active: true});
+          BookmarkManagerApiProxyImpl.getInstance().openInNewTab(
+              ids.shift()!, /*active=*/ true);
         }
-        urls.forEach(function(url) {
-          chrome.tabs.create({url: url, active: false});
+        ids.forEach(function(id) {
+          BookmarkManagerApiProxyImpl.getInstance().openInNewTab(
+              id, /*active=*/ false);
         });
       }
     };
 
-    if (urls.length <= OPEN_CONFIRMATION_LIMIT) {
-      openUrlsCallback();
+    if (ids.length <= OPEN_CONFIRMATION_LIMIT) {
+      openBookmarkIdsCallback();
       return;
     }
 
-    this.confirmOpenCallback_ = openUrlsCallback;
+    this.confirmOpenCallback_ = openBookmarkIdsCallback;
     const dialog = this.$.openDialog.get();
     dialog.querySelector('[slot=body]')!.textContent =
-        loadTimeData.getStringF('openDialogBody', urls.length);
+        loadTimeData.getStringF('openDialogBody', ids.length);
 
     DialogFocusManager.getInstance().showDialog(this.$.openDialog.get());
   }
 
   /**
-   * Returns all URLs in the given set of nodes and their immediate children.
+   * Returns all ids in the given set of nodes and their immediate children.
    * Note that these will be ordered by insertion order into the |itemIds|
-   * set, and that it is possible to duplicate a URL by passing in both the
+   * set, and that it is possible to duplicate a id by passing in both the
    * parent ID and child ID.
    */
-  private expandUrls_(itemIds: Set<string>): string[] {
-    const urls: string[] = [];
+  private expandIds_(itemIds: Set<string>): string[] {
+    const result: string[] = [];
     const nodes = this.getState().nodes;
 
-    itemIds.forEach(function(id) {
-      const node = nodes[id]!;
+    itemIds.forEach(function(itemId) {
+      const node = nodes[itemId]!;
       if (node.url) {
-        urls.push(node.url);
+        result.push(node.id);
       } else {
-        node.children!.forEach(function(childId) {
-          const childNode = nodes[childId]!;
-          if (childNode.url) {
-            urls.push(childNode.url);
+        node.children!.forEach(function(child) {
+          const childNode = nodes[child]!;
+          if (childNode.id && childNode.url) {
+            result.push(childNode.id);
           }
         });
       }
     });
 
-    return urls;
+    return result;
   }
 
   private containsMatchingNode_(
@@ -654,30 +662,16 @@ export class BookmarksCommandManagerElement extends
     const multipleNodes = this.menuIds_.size > 1 ||
         this.containsMatchingNode_(this.menuIds_, node => !node.url);
 
-    const urls = this.expandUrls_(this.menuIds_);
-    if (urls.length === 0) {
-      return loadTimeData.getStringF(case0, urls.length);
+    const ids = this.expandIds_(this.menuIds_);
+    if (ids.length === 0) {
+      return loadTimeData.getStringF(case0, ids.length);
     }
 
-    if (urls.length === 1 && !multipleNodes) {
+    if (ids.length === 1 && !multipleNodes) {
       return loadTimeData.getString(case1);
     }
 
-    return loadTimeData.getStringF(caseOther, urls.length);
-  }
-
-  private getCommandSublabel_(command: Command): string {
-    const multipleNodes = this.menuIds_.size > 1 ||
-        this.containsMatchingNode_(this.menuIds_, function(node) {
-          return !node.url;
-        });
-    switch (command) {
-      case Command.OPEN_NEW_TAB:
-        const urls = this.expandUrls_(this.menuIds_);
-        return multipleNodes && urls.length > 0 ? String(urls.length) : '';
-      default:
-        return '';
-    }
+    return loadTimeData.getStringF(caseOther, ids.length);
   }
 
   private computeMenuCommands_(): Command[] {
@@ -760,17 +754,14 @@ export class BookmarksCommandManagerElement extends
           result.collapsible = !!p.arg;
           return result;
         });
-    getToastManager().querySelector('dom-if')!.if = canUndo;
-    getToastManager().showForStringPieces(pieces);
+    getToastManager().showForStringPieces(pieces, /*hideSlotted*/ !canUndo);
   }
 
   private updateCanPaste_(targetId: string): Promise<void> {
-    return new Promise(resolve => {
-      chrome.bookmarkManagerPrivate.canPaste(`${targetId}`, result => {
-        this.canPaste_ = result;
-        resolve();
-      });
-    });
+    return BookmarkManagerApiProxyImpl.getInstance().canPaste(targetId).then(
+        result => {
+          this.canPaste_ = result;
+        });
   }
 
   ////////////////////////////////////////////////////////////////////////////
@@ -800,7 +791,7 @@ export class BookmarksCommandManagerElement extends
     this.closeCommandMenu();
   }
 
-  private onKeydown_(e: Event) {
+  private onKeydown_(e: KeyboardEvent) {
     const path = e.composedPath();
     if ((path[0] as HTMLElement).tagName === 'INPUT') {
       return;

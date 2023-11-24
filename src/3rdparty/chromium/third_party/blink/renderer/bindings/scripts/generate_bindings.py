@@ -1,4 +1,4 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """
@@ -82,6 +82,7 @@ def main():
         'interface': bind_gen.generate_interfaces,
         'namespace': bind_gen.generate_namespaces,
         'observable_array': bind_gen.generate_observable_arrays,
+        'sync_iterator': bind_gen.generate_sync_iterators,
         'typedef': bind_gen.generate_typedefs,
         'union': bind_gen.generate_unions,
     }

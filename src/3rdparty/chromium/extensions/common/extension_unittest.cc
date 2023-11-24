@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -28,7 +28,7 @@ std::string GetVersionTooHighWarning(int max_version, int supplied_version) {
 }
 
 testing::AssertionResult RunManifestVersionSuccess(
-    std::unique_ptr<base::DictionaryValue> manifest,
+    base::Value::Dict manifest,
     Manifest::Type expected_type,
     int expected_manifest_version,
     base::StringPiece expected_warning = "",
@@ -36,7 +36,7 @@ testing::AssertionResult RunManifestVersionSuccess(
     ManifestLocation manifest_location = ManifestLocation::kInternal) {
   std::string error;
   scoped_refptr<const Extension> extension = Extension::Create(
-      base::FilePath(), manifest_location, *manifest, custom_flag, &error);
+      base::FilePath(), manifest_location, manifest, custom_flag, &error);
   if (!extension) {
     return testing::AssertionFailure()
            << "Extension creation failed: " << error;
@@ -70,12 +70,12 @@ testing::AssertionResult RunManifestVersionSuccess(
 }
 
 testing::AssertionResult RunManifestVersionFailure(
-    std::unique_ptr<base::DictionaryValue> manifest,
+    base::Value::Dict manifest,
     Extension::InitFromValueFlags custom_flag = Extension::NO_FLAGS) {
   std::string error;
   scoped_refptr<const Extension> extension =
-      Extension::Create(base::FilePath(), ManifestLocation::kInternal,
-                        *manifest, custom_flag, &error);
+      Extension::Create(base::FilePath(), ManifestLocation::kInternal, manifest,
+                        custom_flag, &error);
   if (extension)
     return testing::AssertionFailure() << "Extension creation succeeded.";
 
@@ -83,13 +83,13 @@ testing::AssertionResult RunManifestVersionFailure(
 }
 
 testing::AssertionResult RunCreationWithFlags(
-    const base::DictionaryValue* manifest,
+    const base::Value::Dict& manifest,
     mojom::ManifestLocation location,
     Manifest::Type expected_type,
     Extension::InitFromValueFlags custom_flag = Extension::NO_FLAGS) {
   std::string error;
   scoped_refptr<const Extension> extension = Extension::Create(
-      base::FilePath(), location, *manifest, custom_flag, &error);
+      base::FilePath(), location, manifest, custom_flag, &error);
   if (!extension) {
     return testing::AssertionFailure()
            << "Extension creation failed: " << error;
@@ -255,14 +255,14 @@ TEST(ExtensionTest, LoginScreenFlag) {
       .Set("version", "0.1")
       .Set("description", "An awesome extension")
       .Set("manifest_version", 2);
-  std::unique_ptr<base::DictionaryValue> manifest = builder.Build();
+  base::Value::Dict manifest = builder.Build();
 
-  EXPECT_TRUE(
-      RunCreationWithFlags(manifest.get(), ManifestLocation::kExternalPolicy,
-                           Manifest::TYPE_EXTENSION, Extension::NO_FLAGS));
-  EXPECT_TRUE(RunCreationWithFlags(
-      manifest.get(), ManifestLocation::kExternalPolicy,
-      Manifest::TYPE_LOGIN_SCREEN_EXTENSION, Extension::FOR_LOGIN_SCREEN));
+  EXPECT_TRUE(RunCreationWithFlags(manifest, ManifestLocation::kExternalPolicy,
+                                   Manifest::TYPE_EXTENSION,
+                                   Extension::NO_FLAGS));
+  EXPECT_TRUE(RunCreationWithFlags(manifest, ManifestLocation::kExternalPolicy,
+                                   Manifest::TYPE_LOGIN_SCREEN_EXTENSION,
+                                   Extension::FOR_LOGIN_SCREEN));
 }
 
 }  // namespace extensions

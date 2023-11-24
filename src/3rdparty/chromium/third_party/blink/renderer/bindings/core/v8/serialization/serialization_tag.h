@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -75,8 +75,14 @@ enum SerializationTag {
   kReadableStreamTransferTag = 'r',   // index:uint32_t
   kTransformStreamTransferTag = 'm',  // index:uint32_t
   kWritableStreamTransferTag = 'w',   // index:uint32_t
-  kMediaStreamTrack = 's',  // session_id.high:uint64_t, session_id.low:uint64_t
-  kDOMPointTag = 'Q',       // x:Double, y:Double, z:Double, w:Double
+  kMediaStreamTrack =
+      's',  // trackImplSubtype:Uint32Enum, session_id.high:uint64_t,
+            // session_id.low:uint64_t, transfer_id.high:uint64_t,
+            // transfer_id.low:uint64_t, kind:WebCoreString, id:WebCoreString,
+            // label:WebCoreString, enabled:byte, muted:byte,
+            // contentHint:Uint32Enum, readyState:Uint32Enum
+            // If trackImplSubtype=BrowserCapture: cropVersion:uint32_t
+  kDOMPointTag = 'Q',          // x:Double, y:Double, z:Double, w:Double
   kDOMPointReadOnlyTag = 'W',  // x:Double, y:Double, z:Double, w:Double
   kDOMRectTag = 'E',          // x:Double, y:Double, width:Double, height:Double
   kDOMRectReadOnlyTag = 'R',  // x:Double, y:Double, width:Double, height:Double
@@ -110,6 +116,10 @@ enum SerializationTag {
   kEncodedAudioChunkTag = 'y',  // uint32_t -> transferred chunk
   kEncodedVideoChunkTag = 'z',  // uint32_t -> transferred chunk
 
+  kCropTargetTag = 'c',  // crop_id:WebCoreString
+
+  kMediaSourceHandleTag = 'S',  // uint32_t -> transferred MediaSourceHandle
+
   // The following tags were used by the Shape Detection API implementation
   // between M71 and M81. During these milestones, the API was always behind
   // a flag. Usage was removed in https://crrev.com/c/2040378.
@@ -118,7 +128,13 @@ enum SerializationTag {
   kDeprecatedDetectedTextTag = 't',
 
   kDOMExceptionTag = 'x',  // name:String,message:String,stack:String
-  kVersionTag = 0xFF       // version:uint32_t -> Uses this as the file version.
+  kTrailerOffsetTag =
+      0xFE,  // offset:uint64_t (fixed width, network order) from buffer start
+             // size:uint32_t (fixed width, network order)
+  kVersionTag = 0xFF,  // version:uint32_t -> Uses this as the file version.
+
+  // Tags used in trailers.
+  kTrailerRequiresInterfacesTag = 0xA0,
 };
 
 }  // namespace blink

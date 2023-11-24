@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,10 @@
 
 #include <utility>
 
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/idle/idle_manager.mojom-blink.h"
 #include "third_party/blink/public/mojom/permissions_policy/permissions_policy.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
@@ -144,41 +146,46 @@ ScriptPromise IdleDetector::start(ScriptState* script_state,
     threshold_ = threshold;
   }
 
-  if (options->hasSignal()) {
-    signal_ = options->signal();
-    signal_->AddAlgorithm(
+  signal_ = options->getSignalOr(nullptr);
+  if (signal_) {
+    if (signal_->aborted()) {
+      return ScriptPromise::Reject(script_state, signal_->reason(script_state));
+    }
+    // If there was a previous algorithm, it should have been removed when we
+    // reached the "stopped" state.
+    DCHECK(!abort_handle_);
+    abort_handle_ = signal_->AddAlgorithm(
         MakeGarbageCollected<StartAbortAlgorithm>(this, signal_));
-  }
-
-  if (signal_ && signal_->aborted()) {
-    return ScriptPromise::Reject(script_state, signal_->reason(script_state));
   }
 
   mojo::PendingRemote<mojom::blink::IdleMonitor> remote;
   receiver_.Bind(remote.InitWithNewPipeAndPassReceiver(), task_runner_);
-  receiver_.set_disconnect_handler(WTF::Bind(
+  receiver_.set_disconnect_handler(WTF::BindOnce(
       &IdleDetector::OnMonitorDisconnected, WrapWeakPersistent(this)));
 
   resolver_ = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = resolver_->Promise();
   IdleManager::From(context)->AddMonitor(
       std::move(remote),
-      WTF::Bind(&IdleDetector::OnAddMonitor, WrapWeakPersistent(this),
-                WrapPersistent(resolver_.Get())));
+      WTF::BindOnce(&IdleDetector::OnAddMonitor, WrapWeakPersistent(this),
+                    WrapPersistent(resolver_.Get())));
   return promise;
 }
 
 void IdleDetector::SetTaskRunnerForTesting(
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+    const base::TickClock* tick_clock) {
   task_runner_ = std::move(task_runner);
-  timer_.MoveToNewTaskRunner(task_runner_);
+  timer_.SetTaskRunnerForTesting(task_runner_, tick_clock);
 }
 
 void IdleDetector::Abort(AbortSignal* signal) {
-  // There is no RemoveAlgorithm() method on AbortSignal so compare the signal
-  // bound to this callback to the one last passed to start().
-  if (signal_ != signal)
-    return;
+  if (!base::FeatureList::IsEnabled(features::kAbortSignalHandleBasedRemoval)) {
+    // There is no RemoveAlgorithm() method on AbortSignal so compare the signal
+    // bound to this callback to the one last passed to start().
+    if (signal_ != signal)
+      return;
+  }
 
   if (resolver_) {
     ScriptState* script_state = resolver_->GetScriptState();
@@ -190,6 +197,7 @@ void IdleDetector::Abort(AbortSignal* signal) {
   }
 
   resolver_ = nullptr;
+  abort_handle_ = nullptr;
   has_state_ = false;
   receiver_.reset();
 }
@@ -206,7 +214,13 @@ void IdleDetector::OnMonitorDisconnected() {
         DOMExceptionCode::kNotSupportedError, "Idle detection not available."));
   }
 
+  if (abort_handle_) {
+    DCHECK(signal_);
+    signal_->RemoveAlgorithm(abort_handle_);
+  }
+
   resolver_ = nullptr;
+  abort_handle_ = nullptr;
   has_state_ = false;
   receiver_.reset();
 }
@@ -307,6 +321,7 @@ void IdleDetector::DispatchUserIdleEvent(TimerBase*) {
 void IdleDetector::Trace(Visitor* visitor) const {
   visitor->Trace(timer_);
   visitor->Trace(signal_);
+  visitor->Trace(abort_handle_);
   visitor->Trace(resolver_);
   visitor->Trace(receiver_);
   EventTargetWithInlineData::Trace(visitor);

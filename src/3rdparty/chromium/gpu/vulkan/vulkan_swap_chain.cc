@@ -1,17 +1,17 @@
-// Copyright (c) 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "gpu/vulkan/vulkan_swap_chain.h"
 
-#include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/debug/crash_logging.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "gpu/vulkan/vulkan_device_queue.h"
 #include "gpu/vulkan/vulkan_fence_helper.h"
 #include "gpu/vulkan/vulkan_function_pointers.h"
@@ -58,6 +58,7 @@ bool VulkanSwapChain::Initialize(
     uint32_t min_image_count,
     VkImageUsageFlags image_usage_flags,
     VkSurfaceTransformFlagBitsKHR pre_transform,
+    VkCompositeAlphaFlagBitsKHR composite_alpha,
     std::unique_ptr<VulkanSwapChain> old_swap_chain) {
   base::AutoLock auto_lock(lock_);
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
@@ -70,7 +71,7 @@ bool VulkanSwapChain::Initialize(
   device_queue_->GetFenceHelper()->ProcessCleanupTasks();
   return InitializeSwapChain(surface, surface_format, image_size,
                              min_image_count, image_usage_flags, pre_transform,
-                             std::move(old_swap_chain)) &&
+                             composite_alpha, std::move(old_swap_chain)) &&
          InitializeSwapImages(surface_format) && AcquireNextImage();
 }
 
@@ -128,7 +129,7 @@ void VulkanSwapChain::PostSubBufferAsync(
   DCHECK(!has_pending_post_sub_buffer_);
 
   if (UNLIKELY(!PresentBuffer(rect))) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(std::move(callback), gfx::SwapResult::SWAP_FAILED));
     return;
@@ -153,7 +154,8 @@ void VulkanSwapChain::PostSubBufferAsync(
             self->has_pending_post_sub_buffer_ = false;
             self->condition_variable_.Signal();
           },
-          base::Unretained(this), base::ThreadTaskRunnerHandle::Get(),
+          base::Unretained(this),
+          base::SingleThreadTaskRunner::GetCurrentDefault(),
           std::move(callback)));
 }
 
@@ -164,28 +166,31 @@ bool VulkanSwapChain::InitializeSwapChain(
     uint32_t min_image_count,
     VkImageUsageFlags image_usage_flags,
     VkSurfaceTransformFlagBitsKHR pre_transform,
+    VkCompositeAlphaFlagBitsKHR composite_alpha,
     std::unique_ptr<VulkanSwapChain> old_swap_chain) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   VkDevice device = device_queue_->GetVulkanDevice();
   VkResult result = VK_SUCCESS;
 
-  VkSwapchainCreateInfoKHR swap_chain_create_info = { VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR };
-      swap_chain_create_info.flags = 0;
-      swap_chain_create_info.surface = surface;
-      swap_chain_create_info.minImageCount = min_image_count;
-      swap_chain_create_info.imageFormat = surface_format.format;
-      swap_chain_create_info.imageColorSpace = surface_format.colorSpace;
-      swap_chain_create_info.imageExtent = {static_cast<uint32_t>(image_size.width()),
-                                            static_cast<uint32_t>(image_size.height())};
-      swap_chain_create_info.imageArrayLayers = 1;
-      swap_chain_create_info.imageUsage = image_usage_flags;
-      swap_chain_create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-      swap_chain_create_info.preTransform = pre_transform;
-      swap_chain_create_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-      swap_chain_create_info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
-      swap_chain_create_info.clipped = VK_TRUE;
-      swap_chain_create_info.oldSwapchain = VK_NULL_HANDLE;
+  VkSwapchainCreateInfoKHR swap_chain_create_info = {
+      .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+      .flags = 0,
+      .surface = surface,
+      .minImageCount = min_image_count,
+      .imageFormat = surface_format.format,
+      .imageColorSpace = surface_format.colorSpace,
+      .imageExtent = {static_cast<uint32_t>(image_size.width()),
+                      static_cast<uint32_t>(image_size.height())},
+      .imageArrayLayers = 1,
+      .imageUsage = image_usage_flags,
+      .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+      .preTransform = pre_transform,
+      .compositeAlpha = composite_alpha,
+      .presentMode = VK_PRESENT_MODE_FIFO_KHR,
+      .clipped = VK_TRUE,
+      .oldSwapchain = VK_NULL_HANDLE,
+  };
 
   if (LIKELY(old_swap_chain)) {
     base::AutoLock auto_lock(old_swap_chain->lock_);
@@ -359,28 +364,32 @@ bool VulkanSwapChain::PresentBuffer(const gfx::Rect& rect) {
   DCHECK(current_image_data.present_semaphore != VK_NULL_HANDLE);
 
   VkRectLayerKHR rect_layer = {
-      /*.offset =*/ {rect.x(), rect.y()},
-      /*.extent =*/ {static_cast<uint32_t>(rect.width()),
-                     static_cast<uint32_t>(rect.height())},
-      /*.layer =*/ 0
+      .offset = {rect.x(), rect.y()},
+      .extent = {static_cast<uint32_t>(rect.width()),
+                 static_cast<uint32_t>(rect.height())},
+      .layer = 0,
   };
 
   VkPresentRegionKHR present_region = {
-      /* .rectangleCount = */ 1,
-      /* .pRectangles = */ &rect_layer,
+      .rectangleCount = 1,
+      .pRectangles = &rect_layer,
   };
 
-  VkPresentRegionsKHR present_regions = { VK_STRUCTURE_TYPE_PRESENT_REGIONS_KHR };
-      present_regions.swapchainCount = 1;
-      present_regions.pRegions = &present_region;
+  VkPresentRegionsKHR present_regions = {
+      .sType = VK_STRUCTURE_TYPE_PRESENT_REGIONS_KHR,
+      .swapchainCount = 1,
+      .pRegions = &present_region,
+  };
 
-  VkPresentInfoKHR present_info = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
-      present_info.pNext = is_incremental_present_supported_ ? &present_regions : nullptr;
-      present_info.waitSemaphoreCount = 1;
-      present_info.pWaitSemaphores = &current_image_data.present_semaphore;
-      present_info.swapchainCount = 1;
-      present_info.pSwapchains = &swap_chain_;
-      present_info.pImageIndices = &acquired_image_.value();
+  VkPresentInfoKHR present_info = {
+      .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+      .pNext = is_incremental_present_supported_ ? &present_regions : nullptr,
+      .waitSemaphoreCount = 1,
+      .pWaitSemaphores = &current_image_data.present_semaphore,
+      .swapchainCount = 1,
+      .pSwapchains = &swap_chain_,
+      .pImageIndices = &acquired_image_.value(),
+  };
 
   VkQueue queue = device_queue_->GetVulkanQueue();
   auto result = [&](){
@@ -419,17 +428,16 @@ bool VulkanSwapChain::AcquireNextImage() {
     return false;
 
   uint32_t next_image;
-  VkResult result;
-  {
+  auto result = [&]{
     base::ScopedBlockingCall scoped_blocking_call(
         FROM_HERE, base::BlockingType::MAY_BLOCK);
     static auto* kCrashKey = base::debug::AllocateCrashKeyString(
         "inside_acquire_next_image", base::debug::CrashKeySize::Size32);
     base::debug::ScopedCrashKeyString scoped_crash_key(kCrashKey, "1");
-    result = vkAcquireNextImageKHR(device, swap_chain_, acquire_next_image_timeout_ns_,
+    return vkAcquireNextImageKHR(device, swap_chain_, acquire_next_image_timeout_ns_,
                           acquire_semaphore, /*fence=*/VK_NULL_HANDLE,
                           &next_image);
-  }
+  }();
 
   if (UNLIKELY(result == VK_TIMEOUT)) {
     LOG(ERROR) << "vkAcquireNextImageKHR() hangs.";

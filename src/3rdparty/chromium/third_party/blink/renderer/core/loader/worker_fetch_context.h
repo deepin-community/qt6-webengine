@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,11 +11,12 @@
 #include "third_party/blink/public/mojom/loader/content_security_notifier.mojom-blink.h"
 #include "third_party/blink/public/mojom/loader/request_context_frame_type.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_object.mojom-blink-forward.h"
-#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/loader/base_fetch_context.h"
+#include "third_party/blink/renderer/platform/heap/cross_thread_persistent.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader_options.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
+#include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
 namespace blink {
 
@@ -64,6 +65,7 @@ class WorkerFetchContext final : public BaseFetchContext {
       override;
   bool ShouldBlockFetchByMixedContentCheck(
       mojom::blink::RequestContextType request_context,
+      network::mojom::blink::IPAddressSpace target_address_space,
       const absl::optional<ResourceRequest::RedirectInfo>& redirect_info,
       const KURL& url,
       ReportingDisposition reporting_disposition,
@@ -72,7 +74,6 @@ class WorkerFetchContext final : public BaseFetchContext {
                                                  const KURL&) const override;
   const KURL& Url() const override;
   ContentSecurityPolicy* GetContentSecurityPolicy() const override;
-  void AddConsoleMessage(ConsoleMessage*) const override;
 
   // FetchContext implementation:
   void PrepareRequest(ResourceRequest&,
@@ -80,14 +81,12 @@ class WorkerFetchContext final : public BaseFetchContext {
                       WebScopedVirtualTimePauser&,
                       ResourceType) override;
   void AddAdditionalRequestHeaders(ResourceRequest&) override;
-  void AddResourceTiming(const ResourceTimingInfo&) override;
+  void AddResourceTiming(mojom::blink::ResourceTimingInfoPtr,
+                         const AtomicString& initiator_type) override;
   void PopulateResourceRequest(ResourceType,
-                               const ClientHintsPreferences&,
                                const FetchParameters::ResourceWidth&,
                                ResourceRequest&,
                                const ResourceLoaderOptions&) override;
-  mojo::PendingReceiver<mojom::blink::WorkerTimingContainer>
-  TakePendingWorkerTimingReceiver(int request_id) override;
 
   std::unique_ptr<ResourceLoadInfoNotifierWrapper>
   CreateResourceLoadInfoNotifierWrapper() override;

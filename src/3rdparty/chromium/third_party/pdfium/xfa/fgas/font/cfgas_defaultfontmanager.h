@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,7 +14,7 @@ class CFGAS_GEFont;
 
 class CFGAS_DefaultFontManager {
  public:
-  static RetainPtr<CFGAS_GEFont> GetFont(WideStringView wsFontFamily,
+  static RetainPtr<CFGAS_GEFont> GetFont(WideString wsFontName,
                                          uint32_t dwFontStyles);
   static RetainPtr<CFGAS_GEFont> GetDefaultFont(uint32_t dwFontStyles);
 

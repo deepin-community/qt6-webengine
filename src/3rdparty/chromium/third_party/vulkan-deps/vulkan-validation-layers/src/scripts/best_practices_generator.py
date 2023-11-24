@@ -1,8 +1,8 @@
 #!/usr/bin/python3 -i
 #
-# Copyright (c) 2015-2022 The Khronos Group Inc.
-# Copyright (c) 2015-2022 Valve Corporation
-# Copyright (c) 2015-2022 LunarG, Inc.
+# Copyright (c) 2015-2023 The Khronos Group Inc.
+# Copyright (c) 2015-2023 Valve Corporation
+# Copyright (c) 2015-2023 LunarG, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,9 +15,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
-# Author: Mark Lobodzinski <mark@lunarg.com>
-# Author: Nadav Geva <nadav.geva@amd.com>
 
 import os,re,sys,string,json
 import xml.etree.ElementTree as etree
@@ -154,9 +151,9 @@ class BestPracticesOutputGenerator(OutputGenerator):
         copyright += '\n'
         copyright += '/***************************************************************************\n'
         copyright += ' *\n'
-        copyright += ' * Copyright (c) 2015-2022 The Khronos Group Inc.\n'
-        copyright += ' * Copyright (c) 2015-2022 Valve Corporation\n'
-        copyright += ' * Copyright (c) 2015-2022 LunarG, Inc.\n'
+        copyright += ' * Copyright (c) 2015-2023 The Khronos Group Inc.\n'
+        copyright += ' * Copyright (c) 2015-2023 Valve Corporation\n'
+        copyright += ' * Copyright (c) 2015-2023 LunarG, Inc.\n'
         copyright += ' *\n'
         copyright += ' * Licensed under the Apache License, Version 2.0 (the "License");\n'
         copyright += ' * you may not use this file except in compliance with the License.\n'
@@ -169,15 +166,11 @@ class BestPracticesOutputGenerator(OutputGenerator):
         copyright += ' * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n'
         copyright += ' * See the License for the specific language governing permissions and\n'
         copyright += ' * limitations under the License.\n'
-        copyright += ' *\n'
-        copyright += ' * Author: Mark Lobodzinski <mark@lunarg.com>\n'
-        copyright += ' * Author: Nadav Geva <nadav.geva@amd.com>\n'
-        copyright += ' *\n'
         copyright += ' ****************************************************************************/\n'
         self.otwrite('both', copyright)
         self.newline()
         self.otwrite('cpp', '#include "chassis.h"')
-        self.otwrite('cpp', '#include "best_practices_validation.h"')
+        self.otwrite('cpp', '#include "best_practices/best_practices_validation.h"')
     #
     # Now that the data is all collected and complete, generate and output the object validation routines
     def endFile(self):
@@ -195,7 +188,7 @@ class BestPracticesOutputGenerator(OutputGenerator):
                 self.otwrite('both', '\n')
 
             # Output data structure containing extension deprecation data
-            ext_deprecation_data = 'const layer_data::unordered_map<std::string, DeprecationData>  deprecated_extensions = {\n'
+            ext_deprecation_data = 'const vvl::unordered_map<std::string, DeprecationData>  deprecated_extensions = {\n'
             for ext in sorted(self.extension_info):
                 ext_data = self.extension_info[ext]
                 reason = ext_data[0]
@@ -206,7 +199,7 @@ class BestPracticesOutputGenerator(OutputGenerator):
             self.otwrite('hdr', ext_deprecation_data)
 
             # Output data structure containing extension special use data
-            ext_specialuse_data = 'const layer_data::unordered_map<std::string, std::string> special_use_extensions = {\n'
+            ext_specialuse_data = 'const vvl::unordered_map<std::string, std::string> special_use_extensions = {\n'
             for ext in sorted(self.extension_info):
                 spec_use_data = self.extension_info[ext]
                 special_uses = spec_use_data[2]
@@ -279,7 +272,10 @@ class BestPracticesOutputGenerator(OutputGenerator):
             success_codes = cmdinfo.elem.attrib.get('successcodes')
             success_codes = success_codes.replace('VK_SUCCESS,','')
             success_codes = success_codes.replace('VK_SUCCESS','')
-            if error_codes is None and success_codes == '':
+            # Treat empty string as 'None' for consistency with 'error_codes'
+            if success_codes == '':
+                success_codes = None
+            if error_codes is None and success_codes is None:
                 return
             if self.featureExtraProtect is not None:
                 self.otwrite('both', '#ifdef %s\n' % self.featureExtraProtect)
@@ -300,15 +296,15 @@ class BestPracticesOutputGenerator(OutputGenerator):
             if cmdname in self.manual_postcallrecord_list:
                 intercept += '    ManualPostCallRecord'+cmdname[2:] + '(' + params_text
             intercept += '    if (result != VK_SUCCESS) {\n'
+            error_input   = '{}'
+            success_input = '{}'
             if error_codes is not None:
-                intercept += '        static const std::vector<VkResult> error_codes = {%s};\n' % error_codes
-            else:
-                intercept += '        static const std::vector<VkResult> error_codes = {};\n'
+                intercept += '        constexpr std::array error_codes = {%s};\n' % error_codes
+                error_input = 'error_codes'
             if success_codes is not None:
-                intercept += '        static const std::vector<VkResult> success_codes = {%s};\n' % success_codes
-            else:
-                intercept += '        static const std::vector<VkResult> success_codes = {};\n'
-            intercept += '        ValidateReturnCodes("%s", result, error_codes, success_codes);\n' % cmdname
+                intercept += '        constexpr std::array success_codes = {%s};\n' % success_codes
+                success_input = 'success_codes'
+            intercept += '        ValidateReturnCodes("%s", result, %s, %s);\n' % (cmdname, error_input, success_input)
             intercept += '    }\n'
             intercept += '}\n'
             self.otwrite('cpp', intercept)

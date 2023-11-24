@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,11 +13,11 @@
 #include "components/viz/service/display_embedder/output_presenter.h"
 #include "components/viz/service/viz_service_export.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
-#include "gpu/command_buffer/service/shared_image_factory.h"
+#include "gpu/command_buffer/service/shared_image/shared_image_factory.h"
 #include "ui/gfx/ca_layer_result.h"
 
 namespace gl {
-class GLSurface;
+class Presenter;
 }  // namespace gl
 
 namespace viz {
@@ -26,20 +26,13 @@ class VIZ_SERVICE_EXPORT OutputPresenterGL : public OutputPresenter {
  public:
   static const uint32_t kDefaultSharedImageUsage;
 
-  static std::unique_ptr<OutputPresenterGL> Create(
-      SkiaOutputSurfaceDependency* deps,
-      gpu::SharedImageFactory* factory,
-      gpu::SharedImageRepresentationFactory* representation_factory);
-
   OutputPresenterGL(
-      scoped_refptr<gl::GLSurface> gl_surface,
+      scoped_refptr<gl::Presenter> presenter,
       SkiaOutputSurfaceDependency* deps,
       gpu::SharedImageFactory* factory,
       gpu::SharedImageRepresentationFactory* representation_factory,
       uint32_t shared_image_usage = kDefaultSharedImageUsage);
   ~OutputPresenterGL() override;
-
-  gl::GLSurface* gl_surface() { return gl_surface_.get(); }
 
   // OutputPresenter implementation:
   void InitializeCapabilities(OutputSurface::Capabilities* capabilities) final;
@@ -54,27 +47,32 @@ class VIZ_SERVICE_EXPORT OutputPresenterGL : public OutputPresenter {
   std::unique_ptr<Image> AllocateSingleImage(gfx::ColorSpace color_space,
                                              gfx::Size image_size) final;
   void SwapBuffers(SwapCompletionCallback completion_callback,
-                   BufferPresentedCallback presentation_callback) final;
+                   BufferPresentedCallback presentation_callback,
+                   gfx::FrameData data) final;
   void PostSubBuffer(const gfx::Rect& rect,
                      SwapCompletionCallback completion_callback,
-                     BufferPresentedCallback presentation_callback) final;
+                     BufferPresentedCallback presentation_callback,
+                     gfx::FrameData data) final;
   void CommitOverlayPlanes(SwapCompletionCallback completion_callback,
-                           BufferPresentedCallback presentation_callback) final;
+                           BufferPresentedCallback presentation_callback,
+                           gfx::FrameData data) final;
   void SchedulePrimaryPlane(
       const OverlayProcessorInterface::OutputSurfaceOverlayPlane& plane,
       Image* image,
       bool is_submitted) final;
-  void ScheduleOneOverlay(const OverlayCandidate& overlay,
-                          ScopedOverlayAccess* access) final;
-  void ScheduleOverlays(SkiaOutputSurface::OverlayList overlays,
-                        std::vector<ScopedOverlayAccess*> accesses) final;
-
-#if BUILDFLAG(IS_MAC)
+  void ScheduleOverlayPlane(
+      const OutputPresenter::OverlayPlaneCandidate& overlay_plane_candidate,
+      ScopedOverlayAccess* access,
+      std::unique_ptr<gfx::GpuFence> acquire_fence) final;
+  bool SupportsGpuVSync() const final;
+  void SetGpuVSyncEnabled(bool enabled) final;
+  void SetVSyncDisplayID(int64_t display_id) final;
+#if BUILDFLAG(IS_APPLE)
   void SetCALayerErrorCode(gfx::CALayerResult ca_layer_error_code) final;
 #endif
 
  private:
-  scoped_refptr<gl::GLSurface> gl_surface_;
+  scoped_refptr<gl::Presenter> presenter_;
   raw_ptr<SkiaOutputSurfaceDependency> dependency_;
   const bool supports_async_swap_;
 
@@ -86,7 +84,7 @@ class VIZ_SERVICE_EXPORT OutputPresenterGL : public OutputPresenter {
       shared_image_representation_factory_;
   uint32_t shared_image_usage_;
 
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_APPLE)
   gfx::CALayerResult ca_layer_error_code_ = gfx::kCALayerSuccess;
 #endif
 };

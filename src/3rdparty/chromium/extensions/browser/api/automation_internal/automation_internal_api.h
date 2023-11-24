@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -59,17 +59,6 @@ class AutomationInternalPerformActionFunction : public ExtensionFunction {
   ExtensionFunction::ResponseAction Run() override;
 
  private:
-  // Helper function to convert extension action to ax action.
-  // |extension_id| can be the empty string.
-  // |data| is an out param.
-  static Result ConvertToAXActionData(
-      const ui::AXTreeID& tree_id,
-      int32_t automation_node_id,
-      const std::string& action_type,
-      int request_id,
-      const base::DictionaryValue& additional_properties,
-      const std::string& extension_id,
-      ui::AXActionData* data);
 };
 
 class AutomationInternalEnableTreeFunction : public ExtensionFunction {
@@ -95,6 +84,15 @@ class AutomationInternalEnableDesktopFunction : public ExtensionFunction {
                              AUTOMATIONINTERNAL_ENABLEDESKTOP)
  protected:
   ~AutomationInternalEnableDesktopFunction() override = default;
+
+  ResponseAction Run() override;
+};
+
+class AutomationInternalDisableDesktopFunction : public ExtensionFunction {
+  DECLARE_EXTENSION_FUNCTION("automationInternal.disableDesktop",
+                             AUTOMATIONINTERNAL_DISABLEDESKTOP)
+ protected:
+  ~AutomationInternalDisableDesktopFunction() override = default;
 
   ResponseAction Run() override;
 };

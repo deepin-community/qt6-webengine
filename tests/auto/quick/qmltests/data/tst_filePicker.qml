@@ -98,7 +98,7 @@ TestWebEngineView {
 
             function acceptedFileHandler(request) {
                 request.accepted = true;
-                request.dialogAccept(row.input);
+                request.dialogAccept([row.input]);
                 finished = true;
             }
 
@@ -146,7 +146,7 @@ TestWebEngineView {
             FilePickerParams.selectedFilesUrl.push(Qt.resolvedUrl("../data"))
 
             keyClick(Qt.Key_Enter) // Focus is on the button. Open FileDialog.
-            tryCompare(FilePickerParams, "filePickerOpened", true)
+            tryCompare(FilePickerParams, "directoryPickerOpened", true)
             // Check that the title is a file list (eg. "test1.html,test2.html")
             tryVerify(function() { return webEngineView.title.match("^([^,]+,)+[^,]+$"); })
 
@@ -253,7 +253,7 @@ TestWebEngineView {
 
             function acceptedFileHandler(request) {
                 request.accepted = true;
-                request.dialogAccept(row.input);
+                request.dialogAccept([row.input]);
                 finished = true;
             }
 

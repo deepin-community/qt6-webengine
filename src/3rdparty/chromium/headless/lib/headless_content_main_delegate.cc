@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,6 +16,7 @@
 #include "base/files/file_util.h"
 #include "base/lazy_instance.h"
 #include "base/path_service.h"
+#include "base/process/current_process.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/trace_event/trace_event.h"
@@ -29,12 +30,15 @@
 #include "content/public/common/main_function_params.h"
 #include "content/public/common/profiling.h"
 #include "gpu/config/gpu_switches.h"
+#include "headless/lib/browser/command_line_handler.h"
 #include "headless/lib/browser/headless_browser_impl.h"
 #include "headless/lib/browser/headless_content_browser_client.h"
 #include "headless/lib/headless_crash_reporter_client.h"
 #include "headless/lib/renderer/headless_content_renderer_client.h"
 #include "headless/lib/utility/headless_content_utility_client.h"
+#include "headless/public/switches.h"
 #include "sandbox/policy/switches.h"
+#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/public/common/switches.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -44,8 +48,8 @@
 #include "ui/ozone/public/ozone_switches.h"
 
 #if defined(HEADLESS_USE_EMBEDDED_RESOURCES)
-#include "headless/embedded_resource_pack_data.h"
-#include "headless/embedded_resource_pack_strings.h"
+#include "headless/embedded_resource_pack_data.h"     // nogncheck
+#include "headless/embedded_resource_pack_strings.h"  // nogncheck
 #endif
 
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
@@ -63,8 +67,7 @@
 namespace headless {
 
 namespace features {
-const base::Feature kVirtualTime{"VirtualTime",
-                                 base::FEATURE_DISABLED_BY_DEFAULT};
+BASE_FEATURE(kVirtualTime, "VirtualTime", base::FEATURE_DISABLED_BY_DEFAULT);
 }
 
 const base::FilePath::CharType kDefaultProfileName[] =
@@ -157,16 +160,6 @@ void InitApplicationLocale(const base::CommandLine& command_line) {
 HeadlessContentMainDelegate::HeadlessContentMainDelegate(
     std::unique_ptr<HeadlessBrowserImpl> browser)
     : browser_(std::move(browser)) {
-  Init();
-}
-
-HeadlessContentMainDelegate::HeadlessContentMainDelegate(
-    HeadlessBrowser::Options options)
-    : options_(std::make_unique<HeadlessBrowser::Options>(std::move(options))) {
-  Init();
-}
-
-void HeadlessContentMainDelegate::Init() {
   DCHECK(!g_current_headless_content_main_delegate);
   g_current_headless_content_main_delegate = this;
 }
@@ -176,37 +169,28 @@ HeadlessContentMainDelegate::~HeadlessContentMainDelegate() {
   g_current_headless_content_main_delegate = nullptr;
 }
 
-bool HeadlessContentMainDelegate::BasicStartupComplete(int* exit_code) {
+absl::optional<int> HeadlessContentMainDelegate::BasicStartupComplete() {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
 
   // Make sure all processes know that we're in headless mode.
   if (!command_line->HasSwitch(::switches::kHeadless))
     command_line->AppendSwitch(::switches::kHeadless);
 
-  if (options()->single_process_mode)
-    command_line->AppendSwitch(::switches::kSingleProcess);
-
-  if (options()->disable_sandbox)
-    command_line->AppendSwitch(sandbox::policy::switches::kNoSandbox);
-
-  if (!options()->enable_resource_scheduler)
-    command_line->AppendSwitch(::switches::kDisableResourceScheduler);
-
-#if defined(USE_OZONE)
+  // Use software rendering by default, but don't mess with gl and angle
+  // switches if user is overriding them.
+  if (!command_line->HasSwitch(::switches::kUseGL) &&
+      !command_line->HasSwitch(::switches::kUseANGLE) &&
+      !command_line->HasSwitch(switches::kEnableGPU)) {
+    command_line->AppendSwitchASCII(::switches::kUseGL,
+                                    gl::kGLImplementationANGLEName);
+    command_line->AppendSwitchASCII(
+        ::switches::kUseANGLE, gl::kANGLEImplementationSwiftShaderForWebGLName);
+  }
+#if BUILDFLAG(IS_OZONE)
   // The headless backend is automatically chosen for a headless build, but also
   // adding it here allows us to run in a non-headless build too.
   command_line->AppendSwitchASCII(::switches::kOzonePlatform, "headless");
 #endif
-
-  if (!command_line->HasSwitch(::switches::kUseGL) &&
-      !options()->gl_implementation.empty()) {
-    command_line->AppendSwitchASCII(::switches::kUseGL,
-                                    options()->gl_implementation);
-    if (!options()->angle_implementation.empty()) {
-      command_line->AppendSwitchASCII(::switches::kUseANGLE,
-                                      options()->angle_implementation);
-    }
-  }
 
   // When running headless there is no need to suppress input until content
   // is ready for display (because it isn't displayed to users). Nor is it
@@ -221,7 +205,7 @@ bool HeadlessContentMainDelegate::BasicStartupComplete(int* exit_code) {
 #endif
 
   content::Profiling::ProcessStarted();
-  return false;
+  return absl::nullopt;
 }
 
 void HeadlessContentMainDelegate::InitLogging(
@@ -271,9 +255,10 @@ void HeadlessContentMainDelegate::InitLogging(
 
 // In release builds we should log into the user profile directory.
 #ifdef NDEBUG
-  if (!options()->user_data_dir.empty()) {
-    log_path = options()->user_data_dir;
-    log_path = log_path.Append(kDefaultProfileName);
+  base::FilePath user_data_dir =
+      command_line.GetSwitchValuePath(switches::kUserDataDir);
+  if (!user_data_dir.empty()) {
+    log_path = user_data_dir.Append(kDefaultProfileName);
     base::CreateDirectory(log_path);
     log_path = log_path.Append(log_filename);
   }
@@ -315,11 +300,19 @@ void HeadlessContentMainDelegate::InitLogging(
 
 void HeadlessContentMainDelegate::InitCrashReporter(
     const base::CommandLine& command_line) {
-  if (!options()->enable_crash_reporter
+  const std::string process_type =
+      command_line.GetSwitchValueASCII(::switches::kProcessType);
+  bool enable_crash_reporter =
+      process_type.empty() &&
+      command_line.HasSwitch(switches::kEnableCrashReporter) &&
+      !command_line.HasSwitch(switches::kDisableCrashReporter);
+
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-      && !command_line.HasSwitch(crash_reporter::switches::kCrashpadHandlerPid)
+  enable_crash_reporter |=
+      command_line.HasSwitch(crash_reporter::switches::kCrashpadHandlerPid);
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-  ) {
+
+  if (!enable_crash_reporter) {
     return;
   }
 
@@ -331,11 +324,9 @@ void HeadlessContentMainDelegate::InitCrashReporter(
   crash_reporter::SetCrashReporterClient(g_headless_crash_client.Pointer());
   crash_reporter::InitializeCrashKeys();
 
-  const std::string process_type =
-      command_line.GetSwitchValueASCII(::switches::kProcessType);
-  if (process_type != switches::kZygoteProcess) {
+  if (process_type != ::switches::kZygoteProcess) {
     g_headless_crash_client.Pointer()->set_crash_dumps_dir(
-        options()->crash_dumps_dir);
+        command_line.GetSwitchValuePath(switches::kCrashDumpsDir));
 #if !BUILDFLAG(IS_WIN)
     crash_reporter::InitializeCrashpad(process_type.empty(), process_type);
 #endif  // !BUILDFLAG(IS_WIN)
@@ -377,8 +368,8 @@ HeadlessContentMainDelegate::RunProcess(
   if (!process_type.empty())
     return std::move(main_function_params);
 
-  base::trace_event::TraceLog::GetInstance()->set_process_name(
-      "HeadlessBrowser");
+  base::CurrentProcess::GetInstance().SetProcessType(
+      base::CurrentProcessType::PROCESS_BROWSER);
   base::trace_event::TraceLog::GetInstance()->SetProcessSortIndex(
       kTraceEventBrowserProcessSortIndex);
 
@@ -437,10 +428,19 @@ HeadlessContentMainDelegate* HeadlessContentMainDelegate::GetInstance() {
   return g_current_headless_content_main_delegate;
 }
 
-HeadlessBrowser::Options* HeadlessContentMainDelegate::options() {
-  if (browser_)
-    return browser_->options();
-  return options_.get();
+absl::optional<int> HeadlessContentMainDelegate::PreBrowserMain() {
+  HeadlessBrowser::Options::Builder builder;
+
+  if (!HandleCommandLineSwitches(*base::CommandLine::ForCurrentProcess(),
+                                 builder)) {
+    return EXIT_FAILURE;
+  }
+  browser_->SetOptions(builder.Build());
+
+#if BUILDFLAG(IS_MAC)
+  PlatformPreBrowserMain();
+#endif
+  return absl::nullopt;
 }
 
 content::ContentClient* HeadlessContentMainDelegate::CreateContentClient() {
@@ -449,6 +449,7 @@ content::ContentClient* HeadlessContentMainDelegate::CreateContentClient() {
 
 content::ContentBrowserClient*
 HeadlessContentMainDelegate::CreateContentBrowserClient() {
+  DCHECK(browser_);
   browser_client_ =
       std::make_unique<HeadlessContentBrowserClient>(browser_.get());
   return browser_client_.get();
@@ -462,13 +463,15 @@ HeadlessContentMainDelegate::CreateContentRendererClient() {
 
 content::ContentUtilityClient*
 HeadlessContentMainDelegate::CreateContentUtilityClient() {
-  utility_client_ =
-      std::make_unique<HeadlessContentUtilityClient>(options()->user_agent);
+  utility_client_ = std::make_unique<HeadlessContentUtilityClient>();
   return utility_client_.get();
 }
 
-void HeadlessContentMainDelegate::PostEarlyInitialization(
-    bool is_running_tests) {
+absl::optional<int> HeadlessContentMainDelegate::PostEarlyInitialization(
+    InvokedIn invoked_in) {
+  if (absl::holds_alternative<InvokedInChildProcess>(invoked_in))
+    return absl::nullopt;
+
   if (base::FeatureList::IsEnabled(features::kVirtualTime)) {
     // Only pass viz flags into the virtual time mode.
     const char* const switches[] = {
@@ -493,6 +496,8 @@ void HeadlessContentMainDelegate::PostEarlyInitialization(
     for (const auto* flag : switches)
       base::CommandLine::ForCurrentProcess()->AppendSwitch(flag);
   }
+
+  return absl::nullopt;
 }
 
 }  // namespace headless

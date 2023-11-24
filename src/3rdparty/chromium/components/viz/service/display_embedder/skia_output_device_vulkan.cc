@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,7 +14,7 @@
 #include "components/viz/common/gpu/vulkan_context_provider.h"
 #include "gpu/command_buffer/service/memory_tracking.h"
 #include "gpu/config/gpu_finch_features.h"
-#include "gpu/ipc/common/gpu_surface_lookup.h"
+#include "gpu/vulkan/vulkan_fence_helper.h"
 #include "gpu/vulkan/vulkan_function_pointers.h"
 #include "gpu/vulkan/vulkan_implementation.h"
 #include "gpu/vulkan/vulkan_surface.h"
@@ -26,7 +26,9 @@
 #include "ui/gfx/presentation_feedback.h"
 
 #if BUILDFLAG(IS_ANDROID)
-#include <android/native_window_jni.h>
+#include "gpu/ipc/common/gpu_surface_lookup.h"
+#include "ui/gl/android/scoped_a_native_window.h"
+#include "ui/gl/android/scoped_java_surface.h"
 #endif
 
 namespace viz {
@@ -68,13 +70,9 @@ SkiaOutputDeviceVulkan::~SkiaOutputDeviceVulkan() {
   if (UNLIKELY(!vulkan_surface_))
     return;
 
-  {
-    base::ScopedBlockingCall scoped_blocking_call(
-        FROM_HERE, base::BlockingType::MAY_BLOCK);
-    vkQueueWaitIdle(context_provider_->GetDeviceQueue()->GetVulkanQueue());
-  }
-
-  vulkan_surface_->Destroy();
+  auto* fence_helper = context_provider_->GetDeviceQueue()->GetFenceHelper();
+  fence_helper->EnqueueVulkanObjectCleanupForSubmittedWork(
+      std::move(vulkan_surface_));
 }
 
 #if BUILDFLAG(IS_WIN)
@@ -263,15 +261,16 @@ bool SkiaOutputDeviceVulkan::Initialize() {
   gfx::AcceleratedWidget accelerated_widget = gfx::kNullAcceleratedWidget;
 #if BUILDFLAG(IS_ANDROID)
   bool can_be_used_with_surface_control = false;
-  accelerated_widget =
-      gpu::GpuSurfaceLookup::GetInstance()->AcquireNativeWidget(
+  auto surface_variant =
+      gpu::GpuSurfaceLookup::GetInstance()->AcquireJavaSurface(
           surface_handle_, &can_be_used_with_surface_control);
-  base::ScopedClosureRunner release_runner(base::BindOnce(
-      [](gfx::AcceleratedWidget widget) {
-        if (widget)
-          ANativeWindow_release(widget);
-      },
-      accelerated_widget));
+  // Should only reach here if surface control is disabled. In which case
+  // browser should not be sending ScopedJavaSurfaceControl variant.
+  CHECK(absl::holds_alternative<gl::ScopedJavaSurface>(surface_variant));
+  gl::ScopedJavaSurface& scoped_java_surface =
+      absl::get<gl::ScopedJavaSurface>(surface_variant);
+  gl::ScopedANativeWindow window(scoped_java_surface);
+  accelerated_widget = window.a_native_window();
 #else
   accelerated_widget = surface_handle_;
 #endif
@@ -286,6 +285,7 @@ bool SkiaOutputDeviceVulkan::Initialize() {
                                            gpu::VulkanSurface::FORMAT_RGBA_32);
   if (UNLIKELY(!result)) {
     LOG(ERROR) << "Failed to initialize vulkan surface.";
+    vulkan_surface->Destroy();
     return false;
   }
   vulkan_surface_ = std::move(vulkan_surface);

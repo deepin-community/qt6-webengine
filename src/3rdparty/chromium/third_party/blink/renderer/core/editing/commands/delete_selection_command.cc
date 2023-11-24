@@ -25,6 +25,7 @@
 
 #include "third_party/blink/renderer/core/editing/commands/delete_selection_command.h"
 
+#include "base/ranges/algorithm.h"
 #include "build/build_config.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
@@ -320,8 +321,11 @@ void DeleteSelectionCommand::InitializePositionData(
   // to the selection
   leading_whitespace_ = LeadingCollapsibleWhitespacePosition(
       upstream_start_, selection_to_delete_.Affinity());
-  trailing_whitespace_ = TrailingWhitespacePosition(
-      downstream_end_, kNotConsiderNonCollapsibleWhitespace);
+  trailing_whitespace_ =
+      IsEditablePosition(downstream_end_)
+          ? TrailingWhitespacePosition(downstream_end_,
+                                       kNotConsiderNonCollapsibleWhitespace)
+          : Position();
 
   if (options_.IsSmartDelete()) {
     // skip smart delete if the selection to delete already starts or ends with
@@ -477,7 +481,7 @@ bool DeleteSelectionCommand::HandleSpecialCaseBRDelete(
 static Position FirstEditablePositionInNode(Node* node) {
   DCHECK(node);
   Node* next = node;
-  while (next && !HasEditableStyle(*next))
+  while (next && !IsEditable(*next))
     next = NodeTraversal::Next(*next, node);
   return next ? FirstPositionInOrBeforeNode(*next) : Position();
 }
@@ -494,7 +498,7 @@ void DeleteSelectionCommand::RemoveNode(
                                     node->IsDescendantOf(end_root_.Get()))) {
     // If a node is not in both the start and end editable roots, remove it only
     // if its inside an editable region.
-    if (!HasEditableStyle(*node->parentNode())) {
+    if (!IsEditable(*node->parentNode())) {
       // Don't remove non-editable atomic nodes.
       if (!node->hasChildren())
         return;
@@ -583,7 +587,7 @@ void DeleteSelectionCommand::RemoveCompletelySelectedNodes(
   }
 
   // Update leading, trailing whitespace position.
-  if (!nodes_to_be_removed.IsEmpty()) {
+  if (!nodes_to_be_removed.empty()) {
     leading_whitespace_ = ComputePositionForNodeRemoval(
         leading_whitespace_, *(nodes_to_be_removed[0].Get()));
     trailing_whitespace_ = ComputePositionForNodeRemoval(
@@ -594,9 +598,8 @@ void DeleteSelectionCommand::RemoveCompletelySelectedNodes(
   // Check if place holder is needed before actually removing nodes because
   // this requires document.NeedsLayoutTreeUpdate() returning false.
   if (!need_placeholder_) {
-    need_placeholder_ = std::any_of(
-        nodes_to_be_removed.begin(), nodes_to_be_removed.end(),
-        [&](Node* node) {
+    need_placeholder_ =
+        base::ranges::any_of(nodes_to_be_removed, [&](Node* node) {
           if (node == start_block_) {
             VisiblePosition previous = PreviousPositionOf(
                 VisiblePosition::FirstPositionInNode(*start_block_.Get()));
@@ -625,7 +628,7 @@ void DeleteSelectionCommand::RemoveCompletelySelectedNodes(
           node_to_be_removed->IsDescendantOf(end_root_.Get()))) {
       // If a node is not in both the start and end editable roots, remove it
       // only if its inside an editable region.
-      if (!HasEditableStyle(*node_to_be_removed->parentNode())) {
+      if (!IsEditable(*node_to_be_removed->parentNode())) {
         // Don't remove non-editable atomic nodes.
         if (!node_to_be_removed->hasChildren())
           continue;

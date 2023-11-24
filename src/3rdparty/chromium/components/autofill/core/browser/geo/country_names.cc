@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -47,6 +47,8 @@ std::map<std::string, std::string> GetCommonNames() {
   common_names.insert(std::make_pair("UK", "GB"));
   common_names.insert(std::make_pair("BRASIL", "BR"));
   common_names.insert(std::make_pair("DEUTSCHLAND", "DE"));
+  // For some reason this is not provided by ICU:
+  common_names.insert(std::make_pair("CZECH REPUBLIC", "CZ"));
 #if BUILDFLAG(IS_IOS)
   // iOS uses the Foundation API to get the localized display name, in which
   // "China" is named "Chine mainland".

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,9 @@
 
 #include "base/json/json_reader.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_mock_time_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -25,13 +25,6 @@
 #include "services/network/test/test_url_loader_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-// TODO(crbug.com/961023): Fix memory leaks in tests and re-enable on LSAN.
-#ifdef LEAK_SANITIZER
-#define MAYBE_BuildRequestAuthenticated DISABLED_BuildRequestAuthenticated
-#else
-#define MAYBE_BuildRequestAuthenticated BuildRequestAuthenticated
-#endif
 
 namespace ntp_snippets {
 
@@ -52,15 +45,14 @@ MATCHER_P(EqualsJSON, json, "equals JSON") {
     return false;
   }
 
-  base::JSONReader::ValueWithError actual =
-      base::JSONReader::ReadAndReturnValueWithError(arg);
-  if (!actual.value) {
-    *result_listener << "input:" << actual.error_line << ":"
-                     << actual.error_column << ": "
-                     << "parse error: " << actual.error_message;
+  auto actual = base::JSONReader::ReadAndReturnValueWithError(arg);
+  if (!actual.has_value()) {
+    *result_listener << "input:" << actual.error().line << ":"
+                     << actual.error().column << ": "
+                     << "parse error: " << actual.error().message;
     return false;
   }
-  return *expected == *actual.value;
+  return *expected == *actual;
 }
 
 }  // namespace
@@ -70,8 +62,9 @@ class JsonRequestTest : public testing::Test {
   JsonRequestTest()
       : pref_service_(std::make_unique<TestingPrefServiceSimple>()),
         mock_task_runner_(new base::TestMockTimeTaskRunner()),
-        mock_runner_handle_(
-            std::make_unique<base::ThreadTaskRunnerHandle>(mock_task_runner_)),
+        mock_runner_handle_(std::make_unique<
+                            base::SingleThreadTaskRunner::CurrentDefaultHandle>(
+            mock_task_runner_)),
         test_shared_loader_factory_(
             base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
                 &test_url_loader_factory_)) {
@@ -122,12 +115,13 @@ class JsonRequestTest : public testing::Test {
       variations::VariationsIdsProvider::Mode::kUseSignedInState};
   std::unique_ptr<TestingPrefServiceSimple> pref_service_;
   scoped_refptr<base::TestMockTimeTaskRunner> mock_task_runner_;
-  std::unique_ptr<base::ThreadTaskRunnerHandle> mock_runner_handle_;
+  std::unique_ptr<base::SingleThreadTaskRunner::CurrentDefaultHandle>
+      mock_runner_handle_;
   network::TestURLLoaderFactory test_url_loader_factory_;
   scoped_refptr<network::SharedURLLoaderFactory> test_shared_loader_factory_;
 };
 
-TEST_F(JsonRequestTest, MAYBE_BuildRequestAuthenticated) {
+TEST_F(JsonRequestTest, BuildRequestAuthenticated) {
   JsonRequest::Builder builder = CreateMinimalBuilder();
   RequestParams params;
   params.excluded_ids = {"1234567890"};

@@ -91,12 +91,10 @@ struct TestDoubleHashTraits : HashTraits<double> {
   static const unsigned kMinimumTableSize = 8;
 };
 
-using DoubleHashMap =
-    HashMap<double, int64_t, DefaultHash<double>::Hash, TestDoubleHashTraits>;
+using DoubleHashMap = HashMap<double, int64_t, TestDoubleHashTraits>;
 
 int BucketForKey(double key) {
-  return DefaultHash<double>::Hash::GetHash(key) &
-         (TestDoubleHashTraits::kMinimumTableSize - 1);
+  return WTF::GetHash(key) & (TestDoubleHashTraits::kMinimumTableSize - 1);
 }
 
 TEST(HashMapTest, DoubleHashCollisions) {
@@ -180,7 +178,7 @@ TEST(HashMapTest, RefPtrAsKey) {
   map.erase(raw_ptr);
   EXPECT_EQ(1, DummyRefCounted::ref_invokes_count_);
   EXPECT_TRUE(is_deleted);
-  EXPECT_TRUE(map.IsEmpty());
+  EXPECT_TRUE(map.empty());
 }
 
 TEST(HashMaptest, RemoveAdd) {
@@ -205,7 +203,7 @@ TEST(HashMaptest, RemoveAdd) {
   map.erase(1);
   EXPECT_EQ(1, DummyRefCounted::ref_invokes_count_);
   EXPECT_TRUE(is_deleted);
-  EXPECT_TRUE(map.IsEmpty());
+  EXPECT_TRUE(map.empty());
 
   // Add and remove until the deleted slot is reused.
   for (int i = 1; i < 100; i++) {
@@ -582,7 +580,7 @@ HashMap<int, int> ReturnOneTwoThreeMap() {
 
 TEST(HashMapTest, InitializerList) {
   HashMap<int, int> empty({});
-  EXPECT_TRUE(empty.IsEmpty());
+  EXPECT_TRUE(empty.empty());
 
   HashMap<int, int> one({{1, 11}});
   EXPECT_EQ(one.size(), 1u);
@@ -604,7 +602,7 @@ TEST(HashMapTest, InitializerList) {
   one_two_three.insert(9999, 99999);
 
   empty = {};
-  EXPECT_TRUE(empty.IsEmpty());
+  EXPECT_TRUE(empty.empty());
 
   one = {{1, 11}};
   EXPECT_EQ(one.size(), 1u);
@@ -627,16 +625,16 @@ TEST(HashMapTest, InitializerList) {
 }
 
 TEST(HashMapTest, IsValidKey) {
-  static_assert(DefaultHash<int>::Hash::safe_to_compare_to_empty_or_deleted,
+  static_assert(HashTraits<int>::kSafeToCompareToEmptyOrDeleted,
                 "type should be comparable to empty or deleted");
-  static_assert(DefaultHash<int*>::Hash::safe_to_compare_to_empty_or_deleted,
-                "type should be comparable to empty or deleted");
-  static_assert(DefaultHash<scoped_refptr<DummyRefCounted>>::Hash::
-                    safe_to_compare_to_empty_or_deleted,
+  static_assert(HashTraits<int*>::kSafeToCompareToEmptyOrDeleted,
                 "type should be comparable to empty or deleted");
   static_assert(
-      !DefaultHash<AtomicString>::Hash::safe_to_compare_to_empty_or_deleted,
-      "type should not be comparable to empty or deleted");
+      HashTraits<
+          scoped_refptr<DummyRefCounted>>::kSafeToCompareToEmptyOrDeleted,
+      "type should be comparable to empty or deleted");
+  static_assert(!HashTraits<AtomicString>::kSafeToCompareToEmptyOrDeleted,
+                "type should not be comparable to empty or deleted");
 
   EXPECT_FALSE((HashMap<int, int>::IsValidKey(0)));
   EXPECT_FALSE((HashMap<int, int>::IsValidKey(-1)));

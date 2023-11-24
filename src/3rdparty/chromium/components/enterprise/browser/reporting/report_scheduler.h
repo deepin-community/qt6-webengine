@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <memory>
 #include <string>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
@@ -42,6 +42,7 @@ class ReportScheduler {
     kTriggerTimer = 1U << 0,       // The periodic timer expired.
     kTriggerUpdate = 1U << 1,      // An update was detected.
     kTriggerNewVersion = 1U << 2,  // A new version is running.
+    kTriggerManual = 1U << 3,      // Trigger manually.
     // Pending extension requests updated, with encrypted realtime pipeline.
     kTriggerExtensionRequestRealTime = 1U << 4,
   };
@@ -124,6 +125,8 @@ class ReportScheduler {
 
   void OnDMTokenUpdated();
 
+  void UploadFullReport(base::OnceClosure on_report_uploaded);
+
  private:
   // Observes CloudReportingEnabled policy.
   void RegisterPrefObserver();
@@ -198,6 +201,8 @@ class ReportScheduler {
 
   std::string reporting_pref_name_;
   ReportType full_report_type_;
+
+  base::OnceClosure on_manual_report_uploaded_;
 
   base::WeakPtrFactory<ReportScheduler> weak_ptr_factory_{this};
 };

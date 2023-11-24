@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,15 +9,16 @@
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/json/json_writer.h"
+#include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "media/base/media_switches.h"
 #include "media/base/test_data_util.h"
 #include "media/gpu/buildflags.h"
 #include "media/gpu/test/video.h"
+#include "media/gpu/test/video_player/decoder_listener.h"
+#include "media/gpu/test/video_player/decoder_wrapper.h"
 #include "media/gpu/test/video_player/frame_renderer_dummy.h"
-#include "media/gpu/test/video_player/video_decoder_client.h"
-#include "media/gpu/test/video_player/video_player.h"
 #include "media/gpu/test/video_player/video_player_test_environment.h"
 #include "sandbox/linux/services/resource_limits.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -34,6 +35,7 @@ constexpr const char* usage_msg =
     R"(usage: video_decode_accelerator_perf_tests
            [-v=<level>] [--vmodule=<config>] [--output_folder]
            ([--use-legacy]|[--use_vd_vda]) [--linear_output]
+           [--use-gl=<backend>] [--ozone-platform=<platform>]
            [--disable_vaapi_lock]
            [--gtest_help] [--help]
            [<video path>] [<video metadata path>]
@@ -68,6 +70,12 @@ The following arguments are supported:
                         processor internally. This flag only works in
                         conjunction with --use_vd_vda.
                         Disabled by default.
+  --use-gl              specify which GPU backend to use, possible values
+                        include desktop (GLX), egl (GLES w/ ANGLE), and
+                        swiftshader (software rendering)
+  --ozone-platform      specify which Ozone platform to use, possible values
+                        depend on build configuration but normally include
+                        x11, drm, wayland, and headless
   --disable_vaapi_lock  disable the global VA-API lock if applicable,
                         i.e., only on devices that use the VA-API with a libva
                         backend that's known to be thread-safe and only in
@@ -173,7 +181,7 @@ class PerformanceEvaluator : public VideoFrameProcessor {
 
   // Frame renderer used to get the dropped frame rate, owned by the creator of
   // the performance evaluator.
-  const FrameRendererDummy* const frame_renderer_;
+  const raw_ptr<const FrameRendererDummy> frame_renderer_;
 };
 
 void PerformanceEvaluator::ProcessVideoFrame(
@@ -257,54 +265,46 @@ void PerformanceEvaluator::WriteMetricsToFile() const {
   output_folder_path = base::MakeAbsoluteFilePath(output_folder_path);
 
   // Write performance metrics to json.
-  base::Value metrics(base::Value::Type::DICTIONARY);
-  metrics.SetKey(
-      "FramesDecoded",
-      base::Value(base::checked_cast<int>(perf_metrics_.frames_decoded_)));
-  metrics.SetKey("TotalDurationMs",
-                 base::Value(perf_metrics_.total_duration_.InMillisecondsF()));
-  metrics.SetKey("FPS", base::Value(perf_metrics_.frames_per_second_));
-  metrics.SetKey(
-      "FramesDropped",
-      base::Value(base::checked_cast<int>(perf_metrics_.frames_dropped_)));
-  metrics.SetKey("DroppedFramePercentage",
-                 base::Value(perf_metrics_.dropped_frame_percentage_));
-  metrics.SetKey("FrameDeliveryTimeAverage",
-                 base::Value(perf_metrics_.delivery_time_stats_.avg_ms_));
-  metrics.SetKey(
-      "FrameDeliveryTimePercentile25",
-      base::Value(perf_metrics_.delivery_time_stats_.percentile_25_ms_));
-  metrics.SetKey(
-      "FrameDeliveryTimePercentile50",
-      base::Value(perf_metrics_.delivery_time_stats_.percentile_50_ms_));
-  metrics.SetKey(
-      "FrameDeliveryTimePercentile75",
-      base::Value(perf_metrics_.delivery_time_stats_.percentile_75_ms_));
-  metrics.SetKey("FrameDecodeTimeAverage",
-                 base::Value(perf_metrics_.decode_time_stats_.avg_ms_));
-  metrics.SetKey(
-      "FrameDecodeTimePercentile25",
-      base::Value(perf_metrics_.decode_time_stats_.percentile_25_ms_));
-  metrics.SetKey(
-      "FrameDecodeTimePercentile50",
-      base::Value(perf_metrics_.decode_time_stats_.percentile_50_ms_));
-  metrics.SetKey(
-      "FrameDecodeTimePercentile75",
-      base::Value(perf_metrics_.decode_time_stats_.percentile_75_ms_));
+  base::Value::Dict metrics;
+  metrics.Set("FramesDecoded",
+              base::checked_cast<int>(perf_metrics_.frames_decoded_));
+  metrics.Set("TotalDurationMs",
+              perf_metrics_.total_duration_.InMillisecondsF());
+  metrics.Set("FPS", perf_metrics_.frames_per_second_);
+  metrics.Set("FramesDropped",
+              base::checked_cast<int>(perf_metrics_.frames_dropped_));
+  metrics.Set("DroppedFramePercentage",
+              perf_metrics_.dropped_frame_percentage_);
+  metrics.Set("FrameDeliveryTimeAverage",
+              perf_metrics_.delivery_time_stats_.avg_ms_);
+  metrics.Set("FrameDeliveryTimePercentile25",
+              perf_metrics_.delivery_time_stats_.percentile_25_ms_);
+  metrics.Set("FrameDeliveryTimePercentile50",
+              perf_metrics_.delivery_time_stats_.percentile_50_ms_);
+  metrics.Set("FrameDeliveryTimePercentile75",
+              perf_metrics_.delivery_time_stats_.percentile_75_ms_);
+  metrics.Set("FrameDecodeTimeAverage",
+              perf_metrics_.decode_time_stats_.avg_ms_);
+  metrics.Set("FrameDecodeTimePercentile25",
+              perf_metrics_.decode_time_stats_.percentile_25_ms_);
+  metrics.Set("FrameDecodeTimePercentile50",
+              perf_metrics_.decode_time_stats_.percentile_50_ms_);
+  metrics.Set("FrameDecodeTimePercentile75",
+              perf_metrics_.decode_time_stats_.percentile_75_ms_);
 
   // Write frame delivery times to json.
-  base::Value delivery_times(base::Value::Type::LIST);
+  base::Value::List delivery_times;
   for (double frame_delivery_time : frame_delivery_times_) {
     delivery_times.Append(frame_delivery_time);
   }
-  metrics.SetKey("FrameDeliveryTimes", std::move(delivery_times));
+  metrics.Set("FrameDeliveryTimes", std::move(delivery_times));
 
   // Write frame decodes times to json.
-  base::Value decode_times(base::Value::Type::LIST);
+  base::Value::List decode_times;
   for (double frame_decode_time : frame_decode_times_) {
     decode_times.Append(frame_decode_time);
   }
-  metrics.SetKey("FrameDecodeTimes", std::move(decode_times));
+  metrics.Set("FrameDecodeTimes", std::move(decode_times));
 
   // Write json to file.
   std::string metrics_str;
@@ -330,9 +330,10 @@ class VideoDecoderTest : public ::testing::Test {
   // which the video player will simulate rendering frames, if 0 no rendering is
   // simulated. The |vsync_rate| is used during simulated rendering, if 0 Vsync
   // is disabled.
-  std::unique_ptr<VideoPlayer> CreateVideoPlayer(const Video* video,
-                                                 uint32_t render_frame_rate = 0,
-                                                 uint32_t vsync_rate = 0) {
+  std::unique_ptr<DecoderListener> CreateDecoderListener(
+      const Video* video,
+      uint32_t render_frame_rate = 0,
+      uint32_t vsync_rate = 0) {
     LOG_ASSERT(video);
 
     // Create dummy frame renderer, simulates rendering at specified frame rate.
@@ -352,13 +353,12 @@ class VideoDecoderTest : public ::testing::Test {
     frame_processors.push_back(std::move(performance_evaluator));
 
     // Use the new VD-based video decoders if requested.
-    VideoDecoderClientConfig config;
+    DecoderWrapperConfig config;
     config.implementation = g_env->GetDecoderImplementation();
     config.linear_output = g_env->ShouldOutputLinearBuffers();
 
-    auto video_player = VideoPlayer::Create(
-        config, g_env->GetGpuMemoryBufferFactory(), std::move(frame_renderer),
-        std::move(frame_processors));
+    auto video_player = DecoderListener::Create(
+        config, std::move(frame_renderer), std::move(frame_processors));
     LOG_ASSERT(video_player);
     LOG_ASSERT(video_player->Initialize(video));
 
@@ -368,7 +368,7 @@ class VideoDecoderTest : public ::testing::Test {
     return video_player;
   }
 
-  PerformanceEvaluator* performance_evaluator_;
+  raw_ptr<PerformanceEvaluator> performance_evaluator_;
 };
 
 }  // namespace
@@ -377,7 +377,7 @@ class VideoDecoderTest : public ::testing::Test {
 // will decode a video as fast as possible, and gives an idea about the maximum
 // output of the decoder.
 TEST_F(VideoDecoderTest, MeasureUncappedPerformance) {
-  auto tvp = CreateVideoPlayer(g_env->Video());
+  auto tvp = CreateDecoderListener(g_env->Video());
 
   performance_evaluator_->StartMeasuring();
   tvp->Play();
@@ -393,7 +393,8 @@ TEST_F(VideoDecoderTest, MeasureUncappedPerformance) {
 // will simulate rendering the video at its actual frame rate, and will
 // calculate the number of frames that were dropped. Vsync is enabled at 60 FPS.
 TEST_F(VideoDecoderTest, MeasureCappedPerformance) {
-  auto tvp = CreateVideoPlayer(g_env->Video(), g_env->Video()->FrameRate(), 60);
+  auto tvp =
+      CreateDecoderListener(g_env->Video(), g_env->Video()->FrameRate(), 60);
 
   performance_evaluator_->StartMeasuring();
   tvp->Play();
@@ -419,9 +420,9 @@ TEST_F(VideoDecoderTest, MeasureUncappedPerformance_TenConcurrentDecoders) {
 
   constexpr size_t kNumConcurrentDecoders = 10;
 
-  std::vector<std::unique_ptr<VideoPlayer>> players(kNumConcurrentDecoders);
+  std::vector<std::unique_ptr<DecoderListener>> players(kNumConcurrentDecoders);
   for (auto&& player : players) {
-    player = CreateVideoPlayer(g_env->Video());
+    player = CreateDecoderListener(g_env->Video());
     // Increase the timeout for older machines that cannot decode as
     // efficiently.
     player->SetEventWaitTimeout(kMultipleDecodersTimeout);
@@ -470,12 +471,8 @@ int main(int argc, char** argv) {
   bool use_legacy = false;
   bool use_vd_vda = false;
   bool linear_output = false;
-  std::vector<base::Feature> disabled_features;
-  std::vector<base::Feature> enabled_features;
-
-#if defined(ARCH_CPU_ARM_FAMILY)
-  enabled_features.push_back(media::kPreferLibYuvImageProcessor);
-#endif  // defined(ARCH_CPU_ARM_FAMILY)
+  std::vector<base::test::FeatureRef> disabled_features;
+  std::vector<base::test::FeatureRef> enabled_features;
 
   media::test::DecoderImplementation implementation =
       media::test::DecoderImplementation::kVD;
@@ -483,6 +480,8 @@ int main(int argc, char** argv) {
   for (base::CommandLine::SwitchMap::const_iterator it = switches.begin();
        it != switches.end(); ++it) {
     if (it->first.find("gtest_") == 0 ||               // Handled by GoogleTest
+        it->first == "ozone-platform" ||               // Handled by Chrome
+        it->first == "use-gl" ||                       // Handled by Chrome
         it->first == "v" || it->first == "vmodule") {  // Handled by Chrome
       continue;
     }

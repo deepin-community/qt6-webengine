@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include "base/unguessable_token.h"
 #include "services/network/public/mojom/blocked_by_response_reason.mojom-forward.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/blink/public/mojom/devtools/inspector_issue.mojom-blink.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/dom_node_ids.h"
@@ -36,11 +37,6 @@ class InspectorIssue;
 }
 }  // namespace protocol
 
-enum class DeprecationIssueType {
-  kDeprecationExample,
-  kUntranslated,
-};
-
 enum class RendererCorsIssueCode {
   kDisallowedByMode,
   kCorsDisabledScheme,
@@ -49,11 +45,16 @@ enum class RendererCorsIssueCode {
 
 enum class AttributionReportingIssueType {
   kPermissionPolicyDisabled,
-  kInvalidAttributionSourceEventId,
-  kAttributionSourceUntrustworthyOrigin,
-  kAttributionUntrustworthyOrigin,
-  kInvalidAttributionSourceExpiry,
-  kInvalidAttributionSourcePriority,
+  kPermissionPolicyNotDelegated,
+  kUntrustworthyReportingOrigin,
+  kInsecureContext,
+  kInvalidRegisterSourceHeader,
+  kInvalidRegisterTriggerHeader,
+  kInvalidEligibleHeader,
+  kTooManyConcurrentRequests,
+  kSourceAndTriggerHeaders,
+  kSourceIgnored,
+  kTriggerIgnored,
 };
 
 enum class SharedArrayBufferIssueType {
@@ -112,21 +113,12 @@ class CORE_EXPORT AuditsIssue {
                               WTF::String initiator_origin,
                               WTF::String failedParameter,
                               absl::optional<base::UnguessableToken> issue_id);
-  // Reports an Attribution Reporting API issue to DevTools.
-  // |reporting_execution_context| is the current execution context in which the
-  // issue happens and is reported in (the "target" in DevTools terms).
-  // |offending_frame_token| is the offending frame that triggered the issue.
-  // |offending_frame_token| does not necessarly correspond to
-  // |reporting_execution_context|, e.g. when an impression click in an iframe
-  // is blocked due to an insecure main frame.
-  static void ReportAttributionIssue(
-      ExecutionContext* reporting_execution_context,
-      AttributionReportingIssueType type,
-      const absl::optional<base::UnguessableToken>& offending_frame_token =
-          absl::nullopt,
-      Element* element = nullptr,
-      const absl::optional<String>& request_id = absl::nullopt,
-      const absl::optional<String>& invalid_parameter = absl::nullopt);
+
+  static void ReportAttributionIssue(ExecutionContext* execution_context,
+                                     AttributionReportingIssueType type,
+                                     Element* element,
+                                     const String& request_id,
+                                     const String& invalid_parameter);
 
   static void ReportNavigatorUserAgentAccess(
       ExecutionContext* execution_context,
@@ -140,11 +132,8 @@ class CORE_EXPORT AuditsIssue {
   // Reports a Deprecation issue to DevTools.
   // `execution_context` is used to extract the affected frame and source.
   // `type` is the enum used to differentiate messages.
-  // `legacy_message` and `legacy_type` are for untranslated deprecations.
   static void ReportDeprecationIssue(ExecutionContext* execution_context,
-                                     const DeprecationIssueType& type,
-                                     const String& legacy_message,
-                                     const String& legacy_type);
+                                     String type);
 
   static void ReportClientHintIssue(LocalDOMWindow* local_dom_window,
                                     ClientHintIssueReason reason);
@@ -172,6 +161,10 @@ class CORE_EXPORT AuditsIssue {
       Element* element,
       SourceLocation* source_location,
       absl::optional<base::UnguessableToken> issue_id);
+
+  static void ReportGenericIssue(LocalFrame* frame,
+                                 mojom::blink::GenericIssueErrorType error_type,
+                                 int violating_node_id);
 
  private:
   explicit AuditsIssue(std::unique_ptr<protocol::Audits::InspectorIssue> issue);

@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,22 +7,29 @@
 
 #include <vector>
 
-#include "base/callback_forward.h"
+#include "base/containers/flat_set.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/sequence_checker.h"
 #include "base/thread_annotations.h"
 #include "base/time/time.h"
-#include "content/browser/attribution_reporting/attribution_storage.h"
 #include "content/browser/attribution_reporting/stored_source.h"
 #include "content/common/content_export.h"
+#include "content/public/browser/attribution_data_model.h"
+#include "content/public/browser/storage_partition.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
+
+namespace attribution_reporting {
+class SuitableOrigin;
+}  // namespace attribution_reporting
+
+namespace net {
+class SchemefulSite;
+}  // namespace net
 
 namespace sql {
 class Database;
 }  // namespace sql
-
-namespace url {
-class Origin;
-}  // namespace url
 
 namespace content {
 
@@ -51,10 +58,10 @@ class CONTENT_EXPORT RateLimitTable {
   };
 
   explicit RateLimitTable(const AttributionStorageDelegate* delegate);
-  RateLimitTable(const RateLimitTable& other) = delete;
-  RateLimitTable& operator=(const RateLimitTable& other) = delete;
-  RateLimitTable(RateLimitTable&& other) = delete;
-  RateLimitTable& operator=(RateLimitTable&& other) = delete;
+  RateLimitTable(const RateLimitTable&) = delete;
+  RateLimitTable& operator=(const RateLimitTable&) = delete;
+  RateLimitTable(RateLimitTable&&) = delete;
+  RateLimitTable& operator=(RateLimitTable&&) = delete;
   ~RateLimitTable();
 
   // Creates the table in |db| if it doesn't exist.
@@ -74,6 +81,10 @@ class CONTENT_EXPORT RateLimitTable {
       sql::Database* db,
       const StorableSource& source);
 
+  [[nodiscard]] RateLimitResult SourceAllowedForDestinationLimit(
+      sql::Database* db,
+      const StorableSource& source);
+
   [[nodiscard]] RateLimitResult AttributionAllowedForReportingOriginLimit(
       sql::Database* db,
       const AttributionInfo& attribution_info);
@@ -90,24 +101,31 @@ class CONTENT_EXPORT RateLimitTable {
       sql::Database* db,
       base::Time delete_begin,
       base::Time delete_end,
-      base::RepeatingCallback<bool(const url::Origin&)> filter);
+      StoragePartition::StorageKeyMatcherFunction filter);
   // Returns false on failure.
   [[nodiscard]] bool ClearDataForSourceIds(
       sql::Database* db,
       const std::vector<StoredSource::Id>& source_ids);
 
+  void AppendRateLimitDataKeys(
+      sql::Database* db,
+      std::vector<AttributionDataModel::DataKey>& keys);
+
  private:
-  [[nodiscard]] bool AddRateLimit(sql::Database* db,
-                                  Scope scope,
-                                  const StoredSource& source,
-                                  base::Time time)
+  [[nodiscard]] bool AddRateLimit(
+      sql::Database* db,
+      const StoredSource& source,
+      absl::optional<base::Time> trigger_time,
+      const attribution_reporting::SuitableOrigin& context_origin)
       VALID_CONTEXT_REQUIRED(sequence_checker_);
 
   [[nodiscard]] RateLimitResult AllowedForReportingOriginLimit(
       sql::Database* db,
       Scope scope,
       const CommonSourceInfo& common_info,
-      base::Time time) VALID_CONTEXT_REQUIRED(sequence_checker_);
+      base::Time time,
+      const base::flat_set<net::SchemefulSite>& destination_sites)
+      VALID_CONTEXT_REQUIRED(sequence_checker_);
 
   // Returns false on failure.
   [[nodiscard]] bool ClearAllDataInRange(sql::Database* db,

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,10 +14,10 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/containers/buffer_iterator.h"
 #include "base/containers/circular_deque.h"
 #include "base/containers/span.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/mac/mach_logging.h"
 #include "base/mac/scoped_mach_msg_destroy.h"
@@ -25,6 +25,7 @@
 #include "base/mac/scoped_mach_vm.h"
 #include "base/message_loop/message_pump_for_io.h"
 #include "base/task/current_thread.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/thread_annotations.h"
 #include "base/trace_event/typed_macros.h"
 
@@ -158,6 +159,21 @@ class ChannelMac : public Channel,
     return true;
   }
 
+  bool GetReadPlatformHandlesForIpcz(
+      size_t num_handles,
+      std::vector<PlatformHandle>& handles) override {
+    if (incoming_handles_.size() != num_handles) {
+      // ChannelMac messages are transmitted all at once or not at all, so this
+      // method should always be invoked with the exact, correct number of
+      // handles already in `incoming_handles_`.
+      return false;
+    }
+
+    DCHECK(handles.empty());
+    incoming_handles_.swap(handles);
+    return true;
+  }
+
  private:
   ~ChannelMac() override = default;
 
@@ -281,7 +297,7 @@ class ChannelMac : public Channel,
   // Acquires the peer's send right from the handshake message sent via
   // SendHandshake(). After this, bi-directional communication is established
   // and this Channel can send to its peer any pending messages.
-  bool ReceiveHandshake(base::BufferIterator<const char> buffer) {
+  bool ReceiveHandshake(base::BufferIterator<char>& buffer) {
     if (handshake_done_) {
       OnError(Error::kReceivedMalformedData);
       return false;
@@ -316,11 +332,6 @@ class ChannelMac : public Channel,
     SendPendingMessagesLocked();
 
     return true;
-  }
-
-  void SendPendingMessages() {
-    base::AutoLock lock(write_lock_);
-    SendPendingMessagesLocked();
   }
 
   void SendPendingMessagesLocked() EXCLUSIVE_LOCKS_REQUIRED(write_lock_) {
@@ -455,11 +466,18 @@ class ChannelMac : public Channel,
       if (kr == MACH_SEND_TIMED_OUT) {
         // The kernel message queue for the peer's receive port is full, so the
         // send timed out. Since the send buffer contains a fully serialized
-        // message, set a flag to indicate this condition and arrange to try
-        // sending it again.
+        // message, set a flag to indicate this condition.
         send_buffer_contains_message_ = true;
-        io_task_runner_->PostTask(
-            FROM_HERE, base::BindOnce(&ChannelMac::SendPendingMessages, this));
+        if (!is_retry_scheduled_) {
+          // Arrange to retry sending the message again. Set a flag to ensure
+          // that this does not build up a flood of tasks to retry it, which
+          // could happen if Write() is called (potentially from a different
+          // thread), and the receiver's queue is still blocked.
+          io_task_runner_->PostTask(
+              FROM_HERE,
+              base::BindOnce(&ChannelMac::RetrySendPendingMessages, this));
+          is_retry_scheduled_ = true;
+        }
       } else {
         // If the message failed to send for other reasons, destroy it.
         send_buffer_contains_message_ = false;
@@ -482,6 +500,12 @@ class ChannelMac : public Channel,
     return true;
   }
 
+  void RetrySendPendingMessages() {
+    base::AutoLock lock(write_lock_);
+    is_retry_scheduled_ = false;
+    SendPendingMessagesLocked();
+  }
+
   // base::CurrentThread::DestructionObserver:
   void WillDestroyCurrentMessageLoop() override {
     DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
@@ -495,8 +519,8 @@ class ChannelMac : public Channel,
 
     DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
 
-    base::BufferIterator<const char> buffer(
-        reinterpret_cast<const char*>(receive_buffer_.address()),
+    base::BufferIterator<char> buffer(
+        reinterpret_cast<char*>(receive_buffer_.address()),
         receive_buffer_.size());
     auto* header = buffer.MutableObject<mach_msg_header_t>();
     *header = mach_msg_header_t{};
@@ -720,6 +744,10 @@ class ChannelMac : public Channel,
   // be sent. If this is true, then other calls to Write() queue messages onto
   // |pending_messages_|.
   bool send_buffer_contains_message_ GUARDED_BY(write_lock_) = false;
+  // If |send_buffer_contains_message_| is true, this boolean tracks whether
+  // a task to RetrySendPendingMessages() has been posted. There should only be
+  // one retry task in-flight at once.
+  bool is_retry_scheduled_ GUARDED_BY(write_lock_) = false;
   // When |handshake_done_| is false or |send_buffer_contains_message_| is true,
   // calls to Write() will enqueue messages here.
   base::circular_deque<MessagePtr> pending_messages_ GUARDED_BY(write_lock_);

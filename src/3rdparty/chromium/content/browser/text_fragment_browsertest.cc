@@ -1,7 +1,8 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_timeouts.h"
@@ -87,13 +88,13 @@ class TextFragmentAnchorBrowserTest : public ContentBrowserTest {
 
   void WaitForPageLoad(WebContents* contents) {
     EXPECT_TRUE(WaitForLoadStop(contents));
-    EXPECT_TRUE(WaitForRenderFrameReady(contents->GetMainFrame()));
+    EXPECT_TRUE(WaitForRenderFrameReady(contents->GetPrimaryMainFrame()));
   }
 
   RenderWidgetHostImpl* GetWidgetHost() {
     return RenderWidgetHostImpl::From(shell()
                                           ->web_contents()
-                                          ->GetMainFrame()
+                                          ->GetPrimaryMainFrame()
                                           ->GetRenderViewHost()
                                           ->GetWidget());
   }
@@ -261,7 +262,7 @@ IN_PROC_BROWSER_TEST_F(TextFragmentAnchorBrowserTest, UserGestureConsumed) {
 
     // Wait a short amount of time to ensure the page does not scroll.
     base::RunLoop run_loop;
-    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE, run_loop.QuitClosure(), TestTimeouts::tiny_timeout());
     run_loop.Run();
     EXPECT_DID_SCROLL(false);
@@ -309,7 +310,7 @@ IN_PROC_BROWSER_TEST_F(TextFragmentAnchorBrowserTest,
 
   // Wait a short amount of time to ensure the page does not scroll.
   base::RunLoop run_loop;
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE, run_loop.QuitClosure(), TestTimeouts::tiny_timeout());
   run_loop.Run();
 
@@ -487,7 +488,7 @@ IN_PROC_BROWSER_TEST_F(TextFragmentAnchorBrowserTest,
     observer.Wait();
     EXPECT_EQ(new_url, main_contents->GetLastCommittedURL());
     base::RunLoop run_loop;
-    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE, run_loop.QuitClosure(), TestTimeouts::tiny_timeout());
     run_loop.Run();
     EXPECT_DID_SCROLL(false);
@@ -666,7 +667,7 @@ IN_PROC_BROWSER_TEST_F(TextFragmentAnchorBrowserTest, EnabledByDocumentPolicy) {
 
   EXPECT_TRUE(navigation_manager.WaitForResponse());
   navigation_manager.ResumeNavigation();
-  navigation_manager.WaitForNavigationFinished();
+  ASSERT_TRUE(navigation_manager.WaitForNavigationFinished());
 
   WaitForPageLoad(main_contents);
   frame_observer.WaitForScrollOffsetAtTop(
@@ -711,22 +712,24 @@ IN_PROC_BROWSER_TEST_F(TextFragmentAnchorBrowserTest,
 
   EXPECT_TRUE(navigation_manager.WaitForResponse());
   navigation_manager.ResumeNavigation();
-  navigation_manager.WaitForNavigationFinished();
+  ASSERT_TRUE(navigation_manager.WaitForNavigationFinished());
 
   WaitForPageLoad(main_contents);
   // Wait a short amount of time to ensure the page does not scroll.
   base::RunLoop run_loop;
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE, run_loop.QuitClosure(), TestTimeouts::tiny_timeout());
   run_loop.Run();
   EXPECT_DID_SCROLL(false);
 }
 
-// Test that Tab key press puts focus from the start of selection.
+// Test that Tab key press puts focus from the start of the text directive that
+// was scrolled into view.
 IN_PROC_BROWSER_TEST_F(TextFragmentAnchorBrowserTest, TabFocus) {
   ASSERT_TRUE(embedded_test_server()->Start());
-  GURL url(embedded_test_server()->GetURL(
-      "/scrollable_page_with_anchor.html#:~:text=text"));
+  GURL url(
+      embedded_test_server()->GetURL("/scrollable_page_with_anchor.html#:~:"
+                                     "text=nonexistent&text=text&text=more"));
   WebContents* main_contents = shell()->web_contents();
   RenderFrameSubmissionObserver frame_observer(main_contents);
   EXPECT_TRUE(NavigateToURL(shell(), url));
@@ -734,7 +737,7 @@ IN_PROC_BROWSER_TEST_F(TextFragmentAnchorBrowserTest, TabFocus) {
   frame_observer.WaitForScrollOffsetAtTop(
       /*expected_scroll_offset_at_top=*/false);
 
-  DOMMessageQueue msg_queue;
+  DOMMessageQueue msg_queue(main_contents);
   SimulateKeyPress(main_contents, ui::DomKey::TAB, ui::DomCode::TAB,
                    ui::VKEY_TAB, false, false, false, false);
 
@@ -805,7 +808,7 @@ class ForceLoadAtTopBrowserTest : public TextFragmentAnchorBrowserTest {
 
     ASSERT_TRUE(navigation_manager.WaitForResponse());
     navigation_manager.ResumeNavigation();
-    navigation_manager.WaitForNavigationFinished();
+    ASSERT_TRUE(navigation_manager.WaitForNavigationFinished());
 
     WaitForPageLoad(shell()->web_contents());
   }
@@ -835,7 +838,7 @@ IN_PROC_BROWSER_TEST_F(ForceLoadAtTopBrowserTest, ScrollRestorationDisabled) {
 
   // Wait a short amount of time to ensure the page does not scroll.
   base::RunLoop run_loop;
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE, run_loop.QuitClosure(), TestTimeouts::tiny_timeout());
   run_loop.Run();
   RunUntilInputProcessed(GetWidgetHost());
@@ -849,7 +852,7 @@ IN_PROC_BROWSER_TEST_F(ForceLoadAtTopBrowserTest, FragmentAnchorDisabled) {
 
   // Wait a short amount of time to ensure the page does not scroll.
   base::RunLoop run_loop;
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE, run_loop.QuitClosure(), TestTimeouts::tiny_timeout());
   run_loop.Run();
   RunUntilInputProcessed(GetWidgetHost());
@@ -880,7 +883,7 @@ IN_PROC_BROWSER_TEST_F(ForceLoadAtTopBrowserTest, TextFragmentAnchorDisabled) {
 
   // Wait a short amount of time to ensure the page does not scroll.
   base::RunLoop run_loop;
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE, run_loop.QuitClosure(), TestTimeouts::tiny_timeout());
   run_loop.Run();
   RunUntilInputProcessed(GetWidgetHost());

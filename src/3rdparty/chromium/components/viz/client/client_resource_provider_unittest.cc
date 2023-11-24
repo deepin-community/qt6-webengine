@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,10 @@
 
 #include <algorithm>
 #include <memory>
+#include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/test/gtest_util.h"
 #include "components/viz/common/resources/release_callback.h"
 #include "components/viz/common/resources/returned_resource.h"
@@ -28,7 +29,7 @@ class ClientResourceProviderTest : public testing::TestWithParam<bool> {
   ClientResourceProviderTest()
       : use_gpu_(GetParam()),
         context_provider_(TestContextProvider::Create()),
-        bound_(context_provider_->BindToCurrentThread()) {
+        bound_(context_provider_->BindToCurrentSequence()) {
     DCHECK_EQ(bound_, gpu::ContextResult::kSuccess);
   }
 
@@ -508,16 +509,16 @@ TEST_P(ClientResourceProviderTest, ReturnedSyncTokensArePassedToClient) {
 
   auto* sii = context_provider()->SharedImageInterface();
   gpu::Mailbox mailbox = sii->CreateSharedImage(
-      ResourceFormat::RGBA_8888, gfx::Size(1, 1), gfx::ColorSpace(),
+      SinglePlaneFormat::kRGBA_8888, gfx::Size(1, 1), gfx::ColorSpace(),
       kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType,
-      gpu::SHARED_IMAGE_USAGE_GLES2 | gpu::SHARED_IMAGE_USAGE_DISPLAY,
+      gpu::SHARED_IMAGE_USAGE_GLES2 | gpu::SHARED_IMAGE_USAGE_DISPLAY_READ,
       gpu::kNullSurfaceHandle);
   gpu::SyncToken sync_token = sii->GenUnverifiedSyncToken();
 
   constexpr gfx::Size size(64, 64);
-  auto tran = TransferableResource::MakeGL(mailbox, GL_LINEAR, GL_TEXTURE_2D,
-                                           sync_token, size,
-                                           false /* is_overlay_candidate */);
+  auto tran = TransferableResource::MakeGpu(mailbox, GL_LINEAR, GL_TEXTURE_2D,
+                                            sync_token, size, RGBA_8888,
+                                            false /* is_overlay_candidate */);
   ResourceId resource = provider().ImportResource(
       tran, base::BindOnce(&MockReleaseCallback::Released,
                            base::Unretained(&release)));
@@ -539,7 +540,7 @@ TEST_P(ClientResourceProviderTest, ReturnedSyncTokensArePassedToClient) {
   context_provider()->ContextGL()->WaitSyncTokenCHROMIUM(
       list[0].mailbox_holder.sync_token.GetConstData());
   unsigned other_texture =
-      context_provider()->ContextGL()->CreateAndConsumeTextureCHROMIUM(
+      context_provider()->ContextGL()->CreateAndTexStorage2DSharedImageCHROMIUM(
           mailbox.name);
   // Then delete it and make a new SyncToken.
   context_provider()->ContextGL()->DeleteTextures(1, &other_texture);

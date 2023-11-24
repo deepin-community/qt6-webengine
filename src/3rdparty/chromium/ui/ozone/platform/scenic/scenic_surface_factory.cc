@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,11 +8,13 @@
 #include <lib/zx/event.h>
 #include <memory>
 
-#include "base/bind.h"
 #include "base/containers/contains.h"
 #include "base/fuchsia/fuchsia_logging.h"
 #include "base/fuchsia/process_context.h"
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
+#include "base/task/single_thread_task_runner.h"
+#include "gpu/vulkan/vulkan_device_queue.h"
 #include "third_party/angle/src/common/fuchsia_egl/fuchsia_egl.h"
 #include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/gfx/native_pixmap.h"
@@ -26,10 +28,7 @@
 #include "ui/ozone/platform/scenic/scenic_window_canvas.h"
 #include "ui/ozone/platform/scenic/scenic_window_manager.h"
 #include "ui/ozone/platform/scenic/sysmem_buffer_collection.h"
-
-#if BUILDFLAG(ENABLE_VULKAN)
 #include "ui/ozone/platform/scenic/vulkan_implementation_scenic.h"
-#endif
 
 namespace ui {
 
@@ -56,18 +55,21 @@ class GLOzoneEGLScenic : public GLOzoneEGL {
 
   // GLOzone:
   scoped_refptr<gl::GLSurface> CreateViewGLSurface(
+      gl::GLDisplay* display,
       gfx::AcceleratedWidget window) override {
     // GL rendering to Flatland views is not supported. This function is
     // used only for unittests. Return an off-screen surface, so the tests pass.
     // TODO(crbug.com/1271760): Use Vulkan in unittests and remove this hack.
-    return gl::InitializeGLSurface(
-        base::MakeRefCounted<gl::SurfacelessEGL>(gfx::Size(100, 100)));
+    return gl::InitializeGLSurface(base::MakeRefCounted<gl::SurfacelessEGL>(
+        display->GetAs<gl::GLDisplayEGL>(), gfx::Size(100, 100)));
   }
 
   scoped_refptr<gl::GLSurface> CreateOffscreenGLSurface(
+      gl::GLDisplay* display,
       const gfx::Size& size) override {
     return gl::InitializeGLSurface(
-        base::MakeRefCounted<gl::SurfacelessEGL>(size));
+        base::MakeRefCounted<gl::PbufferGLSurfaceEGL>(
+            display->GetAs<gl::GLDisplayEGL>(), size));
   }
 
   gl::EGLDisplayPlatform GetNativeDisplay() override {
@@ -104,7 +106,7 @@ void ScenicSurfaceFactory::Initialize(
   base::AutoLock lock(surface_lock_);
   DCHECK(surface_map_.empty());
 
-  main_thread_task_runner_ = base::ThreadTaskRunnerHandle::Get();
+  main_thread_task_runner_ = base::SingleThreadTaskRunner::GetCurrentDefault();
   DCHECK(main_thread_task_runner_);
 
   DCHECK(!gpu_host_);
@@ -130,7 +132,6 @@ std::vector<gl::GLImplementationParts>
 ScenicSurfaceFactory::GetAllowedGLImplementations() {
   return std::vector<gl::GLImplementationParts>{
       gl::GLImplementationParts(gl::kGLImplementationEGLANGLE),
-      gl::GLImplementationParts(gl::ANGLEImplementation::kSwiftShader),
       gl::GLImplementationParts(gl::kGLImplementationEGLGLES2),
       gl::GLImplementationParts(gl::kGLImplementationStubGL),
   };
@@ -168,13 +169,14 @@ std::unique_ptr<SurfaceOzoneCanvas> ScenicSurfaceFactory::CreateCanvasForWidget(
 
 scoped_refptr<gfx::NativePixmap> ScenicSurfaceFactory::CreateNativePixmap(
     gfx::AcceleratedWidget widget,
-    VkDevice vk_device,
+    gpu::VulkanDeviceQueue* device_queue,
     gfx::Size size,
     gfx::BufferFormat format,
     gfx::BufferUsage usage,
     absl::optional<gfx::Size> framebuffer_size) {
   DCHECK(!framebuffer_size || framebuffer_size == size);
 
+  VkDevice vk_device = device_queue->GetVulkanDevice();
   if (widget != gfx::kNullAcceleratedWidget &&
       usage == gfx::BufferUsage::SCANOUT) {
     // The usage SCANOUT is for a primary plane buffer.
@@ -183,23 +185,19 @@ scoped_refptr<gfx::NativePixmap> ScenicSurfaceFactory::CreateNativePixmap(
     return surface->AllocatePrimaryPlanePixmap(vk_device, size, format);
   }
 
-  auto collection = sysmem_buffer_manager_.CreateCollection(vk_device, size,
-                                                            format, usage, 1);
-  if (!collection)
-    return nullptr;
-
-  return collection->CreateNativePixmap(0);
+  return sysmem_buffer_manager_.CreateNativePixmap(vk_device, size, format,
+                                                   usage);
 }
 
 void ScenicSurfaceFactory::CreateNativePixmapAsync(
     gfx::AcceleratedWidget widget,
-    VkDevice vk_device,
+    gpu::VulkanDeviceQueue* device_queue,
     gfx::Size size,
     gfx::BufferFormat format,
     gfx::BufferUsage usage,
     NativePixmapCallback callback) {
   std::move(callback).Run(
-      CreateNativePixmap(widget, vk_device, size, format, usage));
+      CreateNativePixmap(widget, device_queue, size, format, usage));
 }
 
 scoped_refptr<gfx::NativePixmap>
@@ -208,22 +206,33 @@ ScenicSurfaceFactory::CreateNativePixmapFromHandle(
     gfx::Size size,
     gfx::BufferFormat format,
     gfx::NativePixmapHandle handle) {
-  auto collection = sysmem_buffer_manager_.GetCollectionById(
-      handle.buffer_collection_id.value());
+  auto collection = sysmem_buffer_manager_.GetCollectionByHandle(
+      handle.buffer_collection_handle);
   if (!collection)
     return nullptr;
 
-  return collection->CreateNativePixmap(handle.buffer_index);
+  return collection->CreateNativePixmap(std::move(handle), size);
 }
 
-#if BUILDFLAG(ENABLE_VULKAN)
 std::unique_ptr<gpu::VulkanImplementation>
 ScenicSurfaceFactory::CreateVulkanImplementation(bool use_swiftshader,
                                                  bool allow_protected_memory) {
   return std::make_unique<ui::VulkanImplementationScenic>(
-      this, &sysmem_buffer_manager_, allow_protected_memory);
+      this, &sysmem_buffer_manager_, use_swiftshader, allow_protected_memory);
 }
-#endif
+
+std::vector<gfx::BufferFormat>
+ScenicSurfaceFactory::GetSupportedFormatsForTexturing() const {
+  return {
+      gfx::BufferFormat::R_8,
+      gfx::BufferFormat::RG_88,
+      gfx::BufferFormat::RGBA_8888,
+      gfx::BufferFormat::RGBX_8888,
+      gfx::BufferFormat::BGRA_8888,
+      gfx::BufferFormat::BGRX_8888,
+      gfx::BufferFormat::YUV_420_BIPLANAR,
+  };
+}
 
 void ScenicSurfaceFactory::AddSurface(gfx::AcceleratedWidget widget,
                                       ScenicSurface* surface) {

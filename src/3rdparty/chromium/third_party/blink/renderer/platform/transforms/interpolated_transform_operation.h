@@ -51,12 +51,13 @@ class PLATFORM_EXPORT InterpolatedTransformOperation final
         new InterpolatedTransformOperation(from, to, starting_index, progress));
   }
 
+ protected:
+  bool IsEqualAssumingSameType(const TransformOperation&) const override;
+
  private:
   OperationType GetType() const override { return kInterpolated; }
 
-  bool operator==(const TransformOperation&) const override;
-  void Apply(TransformationMatrix&,
-             const gfx::SizeF& border_box_size) const override;
+  void Apply(gfx::Transform&, const gfx::SizeF& border_box_size) const override;
 
   scoped_refptr<TransformOperation> Accumulate(
       const TransformOperation&) override {

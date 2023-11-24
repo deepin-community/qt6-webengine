@@ -1,11 +1,14 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "device/fido/large_blob.h"
+
+#include <algorithm>
 #include <ostream>
 
-#include "device/fido/large_blob.h"
 #include "base/containers/span.h"
+#include "base/ranges/algorithm.h"
 #include "components/cbor/reader.h"
 #include "components/cbor/writer.h"
 #include "crypto/aead.h"
@@ -27,14 +30,27 @@ std::array<uint8_t, kAssociatedDataLength> GenerateLargeBlobAdditionalData(
   std::array<uint8_t, kAssociatedDataLength> additional_data;
   const std::array<uint8_t, 8>& size_array =
       fido_parsing_utils::Uint64LittleEndian(size);
-  std::copy(kLargeBlobADPrefix.begin(), kLargeBlobADPrefix.end(),
-            additional_data.begin());
-  std::copy(size_array.begin(), size_array.end(),
-            additional_data.begin() + kLargeBlobADPrefix.size());
+  base::ranges::copy(kLargeBlobADPrefix, additional_data.begin());
+  base::ranges::copy(size_array,
+                     additional_data.begin() + kLargeBlobADPrefix.size());
   return additional_data;
 }
 
 }  // namespace
+
+LargeBlob::LargeBlob(std::vector<uint8_t> compressed_data,
+                     uint64_t original_size)
+    : compressed_data(std::move(compressed_data)),
+      original_size(original_size) {}
+LargeBlob::~LargeBlob() = default;
+LargeBlob::LargeBlob(const LargeBlob&) = default;
+LargeBlob& LargeBlob::operator=(const LargeBlob&) = default;
+LargeBlob::LargeBlob(LargeBlob&&) = default;
+LargeBlob& LargeBlob::operator=(LargeBlob&&) = default;
+bool LargeBlob::operator==(const LargeBlob& other) const {
+  return other.compressed_data == compressed_data &&
+         other.original_size == original_size;
+}
 
 LargeBlobArrayFragment::LargeBlobArrayFragment(const std::vector<uint8_t> bytes,
                                                const size_t offset)
@@ -201,15 +217,15 @@ LargeBlobData::LargeBlobData(
     base::span<const uint8_t, kLargeBlobArrayNonceLength> nonce,
     int64_t orig_size)
     : ciphertext_(std::move(ciphertext)), orig_size_(std::move(orig_size)) {
-  std::copy(nonce.begin(), nonce.end(), nonce_.begin());
+  base::ranges::copy(nonce, nonce_.begin());
 }
-LargeBlobData::LargeBlobData(LargeBlobKey key, base::span<const uint8_t> blob) {
-  orig_size_ = blob.size();
+LargeBlobData::LargeBlobData(LargeBlobKey key, LargeBlob large_blob)
+    : orig_size_(large_blob.original_size) {
   crypto::Aead aead(crypto::Aead::AeadAlgorithm::AES_256_GCM);
   aead.Init(key);
   crypto::RandBytes(nonce_);
-  ciphertext_ =
-      aead.Seal(blob, nonce_, GenerateLargeBlobAdditionalData(orig_size_));
+  ciphertext_ = aead.Seal(large_blob.compressed_data, nonce_,
+                          GenerateLargeBlobAdditionalData(orig_size_));
 }
 LargeBlobData::LargeBlobData(LargeBlobData&&) = default;
 LargeBlobData& LargeBlobData::operator=(LargeBlobData&&) = default;
@@ -220,20 +236,23 @@ bool LargeBlobData::operator==(const LargeBlobData& other) const {
          orig_size_ == other.orig_size_;
 }
 
-absl::optional<std::vector<uint8_t>> LargeBlobData::Decrypt(
-    LargeBlobKey key) const {
+absl::optional<LargeBlob> LargeBlobData::Decrypt(LargeBlobKey key) const {
   crypto::Aead aead(crypto::Aead::AeadAlgorithm::AES_256_GCM);
   aead.Init(key);
-  return aead.Open(ciphertext_, nonce_,
-                   GenerateLargeBlobAdditionalData(orig_size_));
+  absl::optional<std::vector<uint8_t>> compressed_data = aead.Open(
+      ciphertext_, nonce_, GenerateLargeBlobAdditionalData(orig_size_));
+  if (!compressed_data) {
+    return absl::nullopt;
+  }
+  return LargeBlob(*compressed_data, orig_size_);
 }
 
-cbor::Value::MapValue LargeBlobData::AsCBOR() const {
+cbor::Value LargeBlobData::AsCBOR() const {
   cbor::Value::MapValue map;
   map.emplace(static_cast<int>(LargeBlobDataKeys::kCiphertext), ciphertext_);
   map.emplace(static_cast<int>(LargeBlobDataKeys::kNonce), nonce_);
   map.emplace(static_cast<int>(LargeBlobDataKeys::kOrigSize), orig_size_);
-  return map;
+  return cbor::Value(map);
 }
 
 LargeBlobArrayReader::LargeBlobArrayReader() = default;
@@ -244,7 +263,7 @@ void LargeBlobArrayReader::Append(const std::vector<uint8_t>& fragment) {
   bytes_.insert(bytes_.end(), fragment.begin(), fragment.end());
 }
 
-absl::optional<std::vector<LargeBlobData>> LargeBlobArrayReader::Materialize() {
+absl::optional<cbor::Value::ArrayValue> LargeBlobArrayReader::Materialize() {
   if (!VerifyLargeBlobArrayIntegrity(bytes_)) {
     return absl::nullopt;
   }
@@ -256,28 +275,18 @@ absl::optional<std::vector<LargeBlobData>> LargeBlobArrayReader::Materialize() {
     return absl::nullopt;
   }
 
-  std::vector<LargeBlobData> large_blob_array;
+  cbor::Value::ArrayValue large_blob_array;
   const cbor::Value::ArrayValue& array = cbor->GetArray();
   for (const cbor::Value& value : array) {
-    absl::optional<LargeBlobData> large_blob_data = LargeBlobData::Parse(value);
-    if (!large_blob_data) {
-      continue;
-    }
-
-    large_blob_array.emplace_back(std::move(*large_blob_data));
+    large_blob_array.push_back(value.Clone());
   }
 
   return large_blob_array;
 }
 
 LargeBlobArrayWriter::LargeBlobArrayWriter(
-    const std::vector<LargeBlobData>& large_blob_array) {
-  cbor::Value::ArrayValue array;
-  for (const LargeBlobData& large_blob_data : large_blob_array) {
-    array.emplace_back(large_blob_data.AsCBOR());
-  }
-  bytes_ = *cbor::Writer::Write(cbor::Value(array));
-
+    cbor::Value::ArrayValue large_blob_array) {
+  bytes_ = *cbor::Writer::Write(cbor::Value(std::move(large_blob_array)));
   std::array<uint8_t, crypto::kSHA256Length> large_blob_hash =
       crypto::SHA256Hash(bytes_);
   bytes_.insert(bytes_.end(), large_blob_hash.begin(),

@@ -1,4 +1,4 @@
-// Copyright (c) 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,14 +10,17 @@
 #include <atomic>
 #include <memory>
 
-#include "base/allocator/buildflags.h"
+#include "base/allocator/partition_allocator/partition_alloc_buildflags.h"
 #include "base/base_export.h"
 #include "base/no_destructor.h"
 
 #if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 #include "base/allocator/partition_allocator/partition_alloc.h"
+
+#if BUILDFLAG(USE_STARSCAN)
 #include "base/allocator/partition_allocator/starscan/metadata_allocator.h"
 #endif
+#endif  // BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 
 // This file contains allocation/deallocation functions for memory that doesn't
 // need to be scanned by PCScan. Such memory should only contain "data" objects,
@@ -44,23 +47,32 @@ class BASE_EXPORT NonScannableAllocatorImpl final {
 
   // Returns PartitionRoot corresponding to the allocator, or nullptr if the
   // allocator is not enabled.
-  ThreadSafePartitionRoot* root() {
-    if (!allocator_.get())
+  partition_alloc::ThreadSafePartitionRoot* root() {
+#if BUILDFLAG(USE_STARSCAN)
+    if (!allocator_.get()) {
       return nullptr;
+    }
     return allocator_->root();
+#else
+    return nullptr;
+#endif  // BUILDFLAG(USE_STARSCAN)
   }
 
   void NotifyPCScanEnabled();
 
  private:
-  template <typename, typename>
+  template <typename>
   friend class base::NoDestructor;
 
   NonScannableAllocatorImpl();
   ~NonScannableAllocatorImpl();
 
-  std::unique_ptr<base::PartitionAllocator, PCScanMetadataDeleter> allocator_;
+#if BUILDFLAG(USE_STARSCAN)
+  std::unique_ptr<partition_alloc::PartitionAllocator,
+                  partition_alloc::internal::PCScanMetadataDeleter>
+      allocator_;
   std::atomic_bool pcscan_enabled_{false};
+#endif  // BUILDFLAG(USE_STARSCAN)
 };
 
 extern template class NonScannableAllocatorImpl<true>;

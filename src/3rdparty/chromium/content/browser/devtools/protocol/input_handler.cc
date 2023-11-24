@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,11 +9,11 @@
 #include <memory>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
 #include "content/browser/devtools/devtools_agent_host_impl.h"
 #include "content/browser/devtools/protocol/native_input_event_builder.h"
@@ -28,14 +28,12 @@
 #include "content/common/input/synthetic_pinch_gesture_params.h"
 #include "content/common/input/synthetic_smooth_scroll_gesture_params.h"
 #include "content/common/input/synthetic_tap_gesture_params.h"
-#include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
 #include "third_party/blink/public/common/page/page_zoom.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/blink/web_input_event_traits.h"
 #include "ui/events/gesture_detection/gesture_provider_config_helper.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
-#include "ui/gfx/geometry/point.h"
 #include "ui/gfx/range/range.h"
 
 namespace content {
@@ -704,29 +702,41 @@ void InputHandler::ImeSetComposition(
     Maybe<int> replacement_end,
     std::unique_ptr<ImeSetCompositionCallback> callback) {
   std::u16string text16 = base::UTF8ToUTF16(text);
-  if (!host_ || !host_->GetRenderWidgetHost()) {
+  if (!host_ || !host_->GetRenderWidgetHost() || !web_contents_) {
     callback->sendFailure(Response::InternalError());
     return;
   }
+  // Currently no DevTools target for Prerender.
+  if (host_->GetLifecycleState() ==
+      RenderFrameHost::LifecycleState::kPrerendering) {
+    NOTREACHED();
+  }
+  // Portal cannot be focused.
+  if (web_contents_->IsPortal()) {
+    callback->sendFailure(
+        Response::InvalidRequest("A Portal cannot be focused."));
+    return;
+  }
 
+  // |RenderFrameHostImpl::GetRenderWidgetHost| returns the RWHImpl of the
+  // nearest local root of |host_|.
   RenderWidgetHostImpl* widget_host = host_->GetRenderWidgetHost();
-  if (!host_->GetParent() && widget_host->delegate()) {
+  if (widget_host->delegate()) {
     RenderWidgetHostImpl* target_host =
         widget_host->delegate()->GetFocusedRenderWidgetHost(widget_host);
     if (target_host)
       widget_host = target_host;
   }
 
-  // If replacement start and end are not specified, then they are -1,
+  // If replacement start and end are not specified, then the range is invalid,
   // so no replacing will be done.
-  int replacement_start_out = -1;
-  int replacement_end_out = -1;
+  gfx::Range replacement_range = gfx::Range::InvalidRange();
 
   // Check if replacement_start and end parameters were passed in
   if (replacement_start.isJust()) {
-    replacement_start_out = replacement_start.fromJust();
+    replacement_range.set_start(replacement_start.fromJust());
     if (replacement_end.isJust()) {
-      replacement_end_out = replacement_end.fromJust();
+      replacement_range.set_end(replacement_end.fromJust());
     } else {
       callback->sendFailure(Response::InvalidParams(
           "Either both replacement start/end are specified or neither."));
@@ -740,9 +750,8 @@ void InputHandler::ImeSetComposition(
   widget_host->Focus();
 
   widget_host->GetWidgetInputHandler()->ImeSetComposition(
-      text16, std::vector<ui::ImeTextSpan>(),
-      gfx::Range(replacement_start_out, replacement_end_out), selection_start,
-      selection_end, std::move(closure));
+      text16, std::vector<ui::ImeTextSpan>(), replacement_range,
+      selection_start, selection_end, std::move(closure));
 }
 
 void InputHandler::DispatchMouseEvent(
@@ -1374,7 +1383,8 @@ void InputHandler::DispatchSyntheticPointerActionTouch(
   }
   std::unique_ptr<SyntheticPointerAction> synthetic_gesture =
       std::make_unique<SyntheticPointerAction>(action_list_params);
-  synthetic_gesture->SetSyntheticPointerDriver(synthetic_pointer_driver_.get());
+  synthetic_gesture->SetSyntheticPointerDriver(
+      synthetic_pointer_driver_->AsWeakPtr());
 
   RenderWidgetHostViewBase* root_view = GetRootView();
   if (!root_view) {
@@ -1617,8 +1627,7 @@ void InputHandler::SynthesizeScrollGesture(
 
   SyntheticSmoothScrollGestureParams gesture_params;
   gesture_params.from_devtools_debugger = true;
-  const bool kDefaultPreventFling = true;
-  const int kDefaultSpeed = 800;
+  gesture_params.granularity = ui::ScrollGranularity::kScrollByPrecisePixel;
 
   gesture_params.anchor = CssPixelsToPointF(x, y, ScaleFactor());
   if (!PointIsWithinContents(gesture_params.anchor)) {
@@ -1626,6 +1635,8 @@ void InputHandler::SynthesizeScrollGesture(
     return;
   }
 
+  const bool kDefaultPreventFling = true;
+  const int kDefaultSpeed = 800;
   gesture_params.prevent_fling =
       prevent_fling.fromMaybe(kDefaultPreventFling);
   gesture_params.speed_in_pixels_s = speed.fromMaybe(kDefaultSpeed);
@@ -1697,7 +1708,7 @@ void InputHandler::OnScrollFinished(
   }
 
   if (repeat_count > 0) {
-    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE,
         base::BindOnce(&InputHandler::SynthesizeRepeatingScroll,
                        weak_factory_.GetWeakPtr(), gesture_params,

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,17 +10,17 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/cxx17_backports.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "components/component_updater/component_updater_service_internal.h"
 #include "components/prefs/testing_pref_service.h"
@@ -45,7 +45,7 @@ using ::testing::Unused;
 
 namespace component_updater {
 
-class MockInstaller : public CrxInstaller {
+class MockInstaller : public update_client::CrxInstaller {
  public:
   MockInstaller() = default;
   MOCK_METHOD1(OnUpdateError, void(int error));
@@ -69,11 +69,12 @@ class MockUpdateClient : public UpdateClient {
 
   MOCK_METHOD1(AddObserver, void(Observer* observer));
   MOCK_METHOD1(RemoveObserver, void(Observer* observer));
-  MOCK_METHOD4(Install,
-               void(const std::string& id,
-                    CrxDataCallback crx_data_callback,
-                    CrxStateChangeCallback crx_state_change_callback,
-                    Callback callback));
+  MOCK_METHOD4(
+      Install,
+      base::RepeatingClosure(const std::string& id,
+                             CrxDataCallback crx_data_callback,
+                             CrxStateChangeCallback crx_state_change_callback,
+                             Callback callback));
   MOCK_METHOD5(Update,
                void(const std::vector<std::string>& ids,
                     CrxDataCallback crx_data_callback,
@@ -118,11 +119,12 @@ class LoopHandler {
   explicit LoopHandler(int max_cnt, base::OnceClosure quit_closure)
       : max_cnt_(max_cnt), quit_closure_(std::move(quit_closure)) {}
 
-  void OnInstall(const std::string&,
-                 UpdateClient::CrxDataCallback,
-                 UpdateClient::CrxStateChangeCallback,
-                 Callback callback) {
+  base::RepeatingClosure OnInstall(const std::string&,
+                                   UpdateClient::CrxDataCallback,
+                                   UpdateClient::CrxStateChangeCallback,
+                                   Callback callback) {
     Handle(std::move(callback));
+    return base::DoNothing();
   }
 
   void OnUpdate(const std::vector<std::string>&,
@@ -138,8 +140,8 @@ class LoopHandler {
   void Handle(Callback callback) {
     ++cnt_;
     if (cnt_ >= max_cnt_) {
-      base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                    std::move(quit_closure_));
+      base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+          FROM_HERE, std::move(quit_closure_));
     }
     std::move(callback).Run(update_client::Error::NONE);
   }

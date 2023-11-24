@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -51,6 +51,14 @@ class EntropyState final {
   // value, but instead returns |kLowEntropySourceNotSet|, if there is none. See
   // the |old_low_entropy_source_| comment for more info.
   int GetOldLowEntropySource();
+
+  // The argument used to generate a non-identifying entropy source. We want no
+  // more than 13 bits of entropy, so use this max to return a number in the
+  // range [0, 7999] as the entropy source (12.97 bits of entropy).
+  //
+  // The value should be kept consistent with
+  // LowEntropySource.MAX_LOW_ENTROPY_SIZE in Java.
+  static constexpr int kMaxLowEntropySize = 8000;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(EntropyStateTest, LowEntropySourceNotReset);

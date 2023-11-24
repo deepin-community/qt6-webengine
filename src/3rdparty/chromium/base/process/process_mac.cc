@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include <mach/mach.h>
 #include <stddef.h>
+#include <sys/resource.h>
 #include <sys/sysctl.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -20,9 +21,11 @@
 
 namespace base {
 
-// Enables backgrounding hidden renderers on Mac.
-const Feature kMacAllowBackgroundingProcesses{"MacAllowBackgroundingProcesses",
-                                              FEATURE_DISABLED_BY_DEFAULT};
+// Enables setting the task role of every child process to
+// TASK_DEFAULT_APPLICATION.
+BASE_FEATURE(kMacSetDefaultTaskRole,
+             "MacSetDefaultTaskRole",
+             FEATURE_DISABLED_BY_DEFAULT);
 
 Time Process::CreationTime() const {
   int mib[] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, Pid()};
@@ -38,12 +41,12 @@ Time Process::CreationTime() const {
 }
 
 bool Process::CanBackgroundProcesses() {
-  return FeatureList::IsEnabled(kMacAllowBackgroundingProcesses);
+  return true;
 }
 
 bool Process::IsProcessBackgrounded(PortProvider* port_provider) const {
   DCHECK(IsValid());
-  if (port_provider == nullptr || !CanBackgroundProcesses())
+  if (port_provider == nullptr)
     return false;
 
   mach_port_t task_port = port_provider->TaskForPid(Pid());
@@ -94,6 +97,19 @@ bool Process::SetProcessBackgrounded(PortProvider* port_provider,
   }
 
   return true;
+}
+
+// static
+void Process::SetCurrentTaskDefaultRole() {
+  if (!base::FeatureList::IsEnabled(kMacSetDefaultTaskRole)) {
+    return;
+  }
+
+  task_category_policy category_policy;
+  category_policy.role = TASK_DEFAULT_APPLICATION;
+  task_policy_set(mach_task_self(), TASK_CATEGORY_POLICY,
+                  reinterpret_cast<task_policy_t>(&category_policy),
+                  TASK_CATEGORY_POLICY_COUNT);
 }
 
 }  // namespace base

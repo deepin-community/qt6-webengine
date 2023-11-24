@@ -1,4 +1,4 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -31,8 +31,6 @@ source_set("renderer") {
   ]
 
   deps = [
-    "//android_webview:generate_aw_resources",
-    "//android_webview:generate_aw_strings",
     "//android_webview/common",
     "//android_webview/common:mojom",
     "//base",
@@ -43,6 +41,7 @@ source_set("renderer") {
     "//components/content_capture/renderer",
     "//components/js_injection/common",
     "//components/js_injection/renderer",
+    "//components/network_hints/renderer",
     "//components/page_load_metrics/renderer",
     "//components/power_scheduler",
     "//components/resources",
@@ -64,7 +63,7 @@ source_set("renderer") {
     "//url",
   ]
 
-  if (enable_basic_printing) {
+  if (enable_printing) {
     deps += [
       "//components/printing/common",
       "//components/printing/renderer",

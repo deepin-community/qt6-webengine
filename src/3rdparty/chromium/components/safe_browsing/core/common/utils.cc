@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 #include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/stl_util.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
@@ -51,7 +51,7 @@ std::string ShortURLForReporting(const GURL& url) {
 ChromeUserPopulation::ProfileManagementStatus GetProfileManagementStatus(
     const policy::BrowserPolicyConnector* bpc) {
 #if BUILDFLAG(IS_WIN)
-  if (base::IsMachineExternallyManaged())
+  if (base::IsManagedDevice())
     return ChromeUserPopulation::ENTERPRISE_MANAGED;
   else
     return ChromeUserPopulation::NOT_MANAGED;
@@ -92,18 +92,14 @@ base::TimeDelta GetDelayFromPref(PrefService* prefs, const char* pref_name) {
 }
 
 bool CanGetReputationOfUrl(const GURL& url) {
+  // net::IsLocalhost(url) includes: "//localhost/", "//127.0.0.1/"
   if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS() || net::IsLocalhost(url)) {
     return false;
   }
   const std::string hostname = url.host();
   // A valid hostname should be longer than 3 characters and have at least 1
   // dot.
-  if (hostname.size() < 4 || base::STLCount(hostname, '.') < 1) {
-    return false;
-  }
-
-  if (net::IsLocalhost(url)) {
-    // Includes: "//localhost/", "//127.0.0.1/"
+  if (hostname.size() < 4 || base::ranges::count(hostname, '.') < 1) {
     return false;
   }
 

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,9 +12,9 @@
 #include "content/public/common/zygote/zygote_buildflags.h"
 #include "sandbox/policy/mojom/sandbox.mojom.h"
 
-#if BUILDFLAG(USE_ZYGOTE_HANDLE)
-#include "content/common/zygote/zygote_handle_impl_linux.h"
-#endif  // BUILDFLAG(USE_ZYGOTE_HANDLE)
+#if BUILDFLAG(USE_ZYGOTE)
+#include "content/public/common/zygote/zygote_handle.h"
+#endif  // BUILDFLAG(USE_ZYGOTE)
 
 #if BUILDFLAG(IS_WIN)
 #include "sandbox/win/src/sandbox_policy.h"
@@ -32,6 +32,7 @@ class UtilitySandboxedProcessLauncherDelegate
   sandbox::mojom::Sandbox GetSandboxType() override;
 
 #if BUILDFLAG(IS_WIN)
+  std::string GetSandboxTag() override;
   bool GetAppContainerId(std::string* appcontainer_id) override;
   bool DisableDefaultPolicy() override;
   bool ShouldLaunchElevated() override;
@@ -40,18 +41,27 @@ class UtilitySandboxedProcessLauncherDelegate
   bool CetCompatible() override;
 #endif  // BUILDFLAG(IS_WIN)
 
-#if BUILDFLAG(USE_ZYGOTE_HANDLE)
-  ZygoteHandle GetZygote() override;
-#endif  // BUILDFLAG(USE_ZYGOTE_HANDLE)
+#if BUILDFLAG(USE_ZYGOTE)
+  ZygoteCommunication* GetZygote() override;
+#endif  // BUILDFLAG(USE_ZYGOTE)
 
 #if BUILDFLAG(IS_POSIX)
   base::EnvironmentMap GetEnvironment() override;
 #endif  // BUILDFLAG(IS_POSIX)
 
+#if BUILDFLAG(USE_ZYGOTE)
+  void SetZygote(ZygoteCommunication* handle);
+#endif  // BUILDFLAG(USE_ZYGOTE_HANDLE)
+
  private:
 #if BUILDFLAG(IS_POSIX)
   base::EnvironmentMap env_;
 #endif  // BUILDFLAG(IS_POSIX)
+
+#if BUILDFLAG(USE_ZYGOTE)
+  absl::optional<raw_ptr<ZygoteCommunication>> zygote_;
+#endif  // BUILDFLAG(USE_ZYGOTE)
+
   sandbox::mojom::Sandbox sandbox_type_;
   base::CommandLine cmd_line_;
 };

@@ -1,9 +1,10 @@
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 source_set("menu") {
   sources = [
+    "action_factory+protected.h",
     "action_factory.h",
     "action_factory.mm",
     "browser_action_factory.h",
@@ -21,7 +22,6 @@ source_set("menu") {
     "resources:delete",
     "resources:download",
     "resources:edit",
-    "resources:hide_preview",
     "resources:lens_icon",
     "resources:mark_read",
     "resources:move_folder",
@@ -31,23 +31,25 @@ source_set("menu") {
     "resources:open_in_incognito",
     "resources:open_in_new_tab",
     "resources:open_new_window",
+    "resources:pin",
     "resources:read_later",
     "resources:remove",
     "resources:search_image",
     "resources:select",
     "resources:share",
-    "resources:show_preview",
+    "resources:unpin",
     "//base",
     "//components/open_from_clipboard",
     "//components/prefs",
     "//components/search_engines",
     "//ios/chrome/app/strings",
-    "//ios/chrome/browser:pref_names",
     "//ios/chrome/browser/browser_state",
     "//ios/chrome/browser/policy:policy_util",
+    "//ios/chrome/browser/prefs:pref_names",
     "//ios/chrome/browser/search_engines",
     "//ios/chrome/browser/ui:feature_flags",
     "//ios/chrome/browser/ui/commands",
+    "//ios/chrome/browser/ui/icons:symbols",
     "//ios/chrome/browser/ui/incognito_reauth:incognito_reauth_scene_agent",
     "//ios/chrome/browser/ui/main:scene_state_header",
     "//ios/chrome/browser/ui/util",
@@ -59,12 +61,15 @@ source_set("menu") {
   ]
 }
 
-source_set("context_menu_delegate") {
+source_set("tab_context_menu_delegate") {
   configs += [ "//build/config/compiler:enable_arc" ]
 
   sources = [ "tab_context_menu_delegate.h" ]
 
-  deps = [ "//ios/chrome/browser/ui/activity_services" ]
+  deps = [
+    "//ios/chrome/browser/ui/sharing",
+    "//ios/chrome/browser/ui/sharing:public",
+  ]
 }
 
 source_set("unit_tests") {
@@ -97,16 +102,19 @@ source_set("unit_tests") {
     "resources:search_image",
     "resources:select",
     "resources:share",
+    "resources:unpin",
     "//base",
     "//base/test:test_support",
     "//components/sync_preferences:test_support",
     "//ios/chrome/app/strings",
-    "//ios/chrome/browser",
     "//ios/chrome/browser/browser_state:test_support",
     "//ios/chrome/browser/main:test_support",
     "//ios/chrome/browser/policy:policy_util",
+    "//ios/chrome/browser/prefs:pref_names",
     "//ios/chrome/browser/sessions:test_support",
+    "//ios/chrome/browser/ui:feature_flags",
     "//ios/chrome/browser/ui/commands",
+    "//ios/chrome/browser/ui/icons:symbols",
     "//ios/chrome/browser/ui/main:scene_state_header",
     "//ios/chrome/browser/url_loading",
     "//ios/chrome/browser/window_activities",

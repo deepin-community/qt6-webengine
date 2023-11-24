@@ -1,8 +1,8 @@
 Name: Mako Templates for Python
 Short Name: python-mako
 URL: https://www.makotemplates.org
-Version: 1.1.4
-Date: Junuary 15, 2021
+Version: 1.2.4
+Date: November 15, 2022
 License: MIT
 License File: NOT_SHIPPED
 Security Critical: no
@@ -10,9 +10,11 @@ Security Critical: no
 Description:
 Template engine in Python, used for code generation in Blink.
 
-Source: https://files.pythonhosted.org/packages/5c/db/2d2d88b924aa4674a080aae83b59ea19d593250bfe5ed789947c21736785/Mako-1.1.4.tar.gz
-SHA-512: 4844c1d6c8d0d474b4ca4e1b31d3557747fc7e30f70a1976163a26b46b1b45c4c96ca6101fbef252b4e3bb4a61635d2a2c6d1c2933fde5b82bb1a1306f31ff84
-SHA-256: 17831f0b7087c313c0ffae2bcbbd3c1d5ba9eeac9c38f2eb7b50e8c99fe9d5ab
+Source: https://files.pythonhosted.org/packages/05/5f/2ba6e026d33a0e6ddc1dddf9958677f76f5f80c236bd65309d280b166d3e/Mako-1.2.4.tar.gz
+SHA-256: d60a3903dc3bb01a18ad6a89cdbe2e4eadc69c0bc8ef1e3773ba53d44c3f7a34
 
 Local Modifications:
-There is no modification except for adding DIR_METADATA, OWNERS, README.chromium, and .gitattributes files.
+* add DIR_METADATA, OWNERS, README.chromium, and .gitattributes files in this directory.
+* run following commands to pass PRESUBMIT.
+  $ rm -rf mako/doc/ mako/examples/ mako/Mako.egg-info mako/PKG-INFO
+  $ chmod -x mako/mako/cmd.py

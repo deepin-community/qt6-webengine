@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,17 +7,19 @@
 #include <set>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/containers/contains.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
+#include "components/file_access/scoped_file_access_delegate.h"
 #include "components/services/app_service/public/cpp/file_handler.h"
 #include "components/services/app_service/public/cpp/file_handler_info.h"
 #include "content/public/browser/browser_context.h"
@@ -214,15 +216,28 @@ void WritableFileChecker::Check() {
       continue;
     }
 #endif
-    base::ThreadPool::PostTaskAndReplyWithResult(
-        FROM_HERE, {base::TaskPriority::USER_BLOCKING, base::MayBlock()},
-        base::BindOnce(&PrepareNativeLocalFileForWritableApp, path,
-                       is_directory),
-        base::BindOnce(&WritableFileChecker::OnPrepareFileDone, this, path));
+    base::TaskTraits traits = {base::TaskPriority::USER_BLOCKING,
+                               base::MayBlock()};
+    base::OnceCallback<bool()> task = base::BindOnce(
+        &PrepareNativeLocalFileForWritableApp, path, is_directory);
+    base::OnceCallback<void(bool)> reply = base::BindOnce(
+        &WritableFileChecker::OnPrepareFileDone, base::RetainedRef(this), path);
+
+    // If ChromeOS dlp is used (dlp policies are configured) we have to gain dlp
+    // file access rights for `path` by the dlp daemon to be able to access the
+    // file in PrepareNativeLocalFileForWritableApp.
+    if (file_access::ScopedFileAccessDelegate::HasInstance()) {
+      file_access::ScopedFileAccessDelegate::Get()
+          ->AccessScopedPostTaskAndReplyWithResult(
+              path, FROM_HERE, traits, std::move(task), std::move(reply));
+    } else {
+      base::ThreadPool::PostTaskAndReplyWithResult(
+          FROM_HERE, traits, std::move(task), std::move(reply));
+    }
   }
 }
 
-WritableFileChecker::~WritableFileChecker() {}
+WritableFileChecker::~WritableFileChecker() = default;
 
 void WritableFileChecker::TaskDone() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
@@ -296,13 +311,13 @@ const apps::FileHandlerInfo* FileHandlerForId(const Extension& app,
                                               const std::string& handler_id) {
   const FileHandlersInfo* file_handlers = FileHandlers::GetFileHandlers(&app);
   if (!file_handlers)
-    return NULL;
+    return nullptr;
 
-  for (auto i = file_handlers->cbegin(); i != file_handlers->cend(); i++) {
-    if (i->id == handler_id)
-      return &*i;
+  for (const auto& file_handler : *file_handlers) {
+    if (file_handler.id == handler_id)
+      return &file_handler;
   }
-  return NULL;
+  return nullptr;
 }
 
 std::vector<FileHandlerMatch> FindFileHandlerMatchesForEntries(
@@ -406,11 +421,11 @@ bool WebAppFileHandlerCanHandleEntry(const apps::FileHandler& handler,
          WebAppFileHandlerCanHandleFileWithExtension(handler, entry.path);
 }
 
-GrantedFileEntry CreateFileEntry(content::BrowserContext* context,
-                                 const Extension* extension,
-                                 int renderer_id,
-                                 const base::FilePath& path,
-                                 bool is_directory) {
+GrantedFileEntry CreateFileEntryWithPermissions(int renderer_id,
+                                                const base::FilePath& path,
+                                                bool can_write,
+                                                bool can_create,
+                                                bool can_delete) {
   GrantedFileEntry result;
   storage::IsolatedContext* isolated_context =
       storage::IsolatedContext::GetInstance();
@@ -425,17 +440,31 @@ GrantedFileEntry CreateFileEntry(content::BrowserContext* context,
   content::ChildProcessSecurityPolicy* policy =
       content::ChildProcessSecurityPolicy::GetInstance();
   policy->GrantReadFileSystem(renderer_id, result.filesystem_id);
-  if (HasFileSystemWritePermission(extension)) {
-    if (is_directory) {
-      policy->GrantCreateReadWriteFileSystem(renderer_id, result.filesystem_id);
-    } else {
-      policy->GrantWriteFileSystem(renderer_id, result.filesystem_id);
-      policy->GrantDeleteFromFileSystem(renderer_id, result.filesystem_id);
-    }
+  if (can_create) {
+    DCHECK(can_write);
+    policy->GrantCreateReadWriteFileSystem(renderer_id, result.filesystem_id);
+  } else if (can_write) {
+    policy->GrantWriteFileSystem(renderer_id, result.filesystem_id);
+  }
+  if (can_delete) {
+    DCHECK(can_write);
+    policy->GrantDeleteFromFileSystem(renderer_id, result.filesystem_id);
   }
 
   result.id = result.filesystem_id + ":" + result.registered_name;
   return result;
+}
+
+GrantedFileEntry CreateFileEntry(content::BrowserContext* /* context */,
+                                 const Extension* extension,
+                                 int renderer_id,
+                                 const base::FilePath& path,
+                                 bool is_directory) {
+  bool can_write = HasFileSystemWritePermission(extension);
+  return CreateFileEntryWithPermissions(
+      renderer_id, path, can_write,
+      /* can_create */ can_write && is_directory,
+      /* can_delete */ can_write && !is_directory);
 }
 
 void PrepareFilesForWritableApp(

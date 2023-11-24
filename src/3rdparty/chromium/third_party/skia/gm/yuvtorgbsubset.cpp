@@ -19,12 +19,13 @@
 #include "include/core/SkYUVAInfo.h"
 #include "include/core/SkYUVAPixmaps.h"
 #include "src/core/SkCanvasPriv.h"
+#include "src/gpu/ganesh/GrRecordingContextPriv.h"
 #include "src/gpu/ganesh/GrSamplerState.h"
 #include "src/gpu/ganesh/GrTextureProxy.h"
 #include "src/gpu/ganesh/GrYUVATextureProxies.h"
 #include "src/gpu/ganesh/SkGr.h"
+#include "src/gpu/ganesh/SurfaceDrawContext.h"
 #include "src/gpu/ganesh/effects/GrYUVtoRGBEffect.h"
-#include "src/gpu/ganesh/v1/SurfaceDrawContext_v1.h"
 
 #include <memory>
 #include <utility>
@@ -82,7 +83,8 @@ protected:
         bitmaps[2].writePixels(innerVPM, 1, 1);
     }
 
-    DrawResult onGpuSetup(GrDirectContext* context, SkString* errorMsg) override {
+    DrawResult onGpuSetup(SkCanvas* canvas, SkString* errorMsg) override {
+        auto context = GrAsDirectContext(canvas->recordingContext());
         if (!context) {
             return DrawResult::kSkip;
         }
@@ -95,7 +97,9 @@ protected:
             SkBitmap bitmap;
             bitmap.installPixels(fPixmaps.plane(i));
             bitmap.setImmutable();
-            views[i] = std::get<0>(GrMakeCachedBitmapProxyView(context, bitmap, GrMipmapped::kNo));
+            views[i] = std::get<0>(
+                    GrMakeCachedBitmapProxyView(context, bitmap, /*label=*/"DrawResult_GpuSetup",
+                    GrMipmapped::kNo));
             if (!views[i]) {
                 *errorMsg = "Failed to create proxy";
                 return context->abandoned() ? DrawResult::kSkip : DrawResult::kFail;
@@ -131,7 +135,7 @@ protected:
 
         SkScalar y = kTestPad;
         // Rows are filter modes.
-        for (uint32_t i = 0; i < SK_ARRAY_COUNT(kFilters); ++i) {
+        for (uint32_t i = 0; i < std::size(kFilters); ++i) {
             SkScalar x = kTestPad;
             // Columns are non-subsetted followed by subsetted with each WrapMode in a row
             for (uint32_t j = 0; j < GrSamplerState::kWrapModeCount + 1; ++j) {

@@ -1,14 +1,16 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/mirroring/browser/single_client_video_capture_host.h"
 
-#include "base/bind.h"
-#include "base/callback_forward.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/unsafe_shared_memory_region.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/test/task_environment.h"
 #include "base/token.h"
 #include "media/capture/mojom/video_capture_types.mojom.h"
@@ -83,7 +85,7 @@ class FakeDeviceLauncher final : public content::VideoCaptureDeviceLauncher {
               kVideoCaptureControllerInvalidOrUnsupportedVideoCaptureParametersRequested);
       return;
     }
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&FakeDeviceLauncher::OnDeviceLaunched,
                                   weak_factory_.GetWeakPtr(), receiver,
                                   callbacks, std::move(done_cb)));
@@ -156,10 +158,12 @@ class MockVideoCaptureObserver final
     OnBufferDestroyedCall(buffer_id);
   }
 
+  MOCK_METHOD1(OnNewCropVersion, void(uint32_t crop_version));
+
   MOCK_METHOD1(OnStateChangedCall, void(media::mojom::VideoCaptureState state));
   MOCK_METHOD1(OnVideoCaptureErrorCall, void(media::VideoCaptureError error));
   void OnStateChanged(media::mojom::VideoCaptureResultPtr result) override {
-    if (result->which() == media::mojom::VideoCaptureResult::Tag::STATE)
+    if (result->which() == media::mojom::VideoCaptureResult::Tag::kState)
       OnStateChangedCall(result->get_state());
     else
       OnVideoCaptureErrorCall(result->get_error_code());
@@ -254,9 +258,8 @@ class SingleClientVideoCaptureHostTest : public ::testing::Test {
     EXPECT_CALL(*consumer_, OnBufferCreatedCall(expected_buffer_context_id))
         .WillOnce(InvokeWithoutArgs(&run_loop, &base::RunLoop::Quit));
     media::mojom::VideoBufferHandlePtr stub_buffer_handle =
-        media::mojom::VideoBufferHandle::New();
-    stub_buffer_handle->set_shared_buffer_handle(
-        mojo::SharedBufferHandle::Create(10));
+        media::mojom::VideoBufferHandle::NewUnsafeShmemRegion(
+            base::UnsafeSharedMemoryRegion::Create(10));
     frame_receiver_->OnNewBuffer(buffer_id, std::move(stub_buffer_handle));
     run_loop.Run();
   }

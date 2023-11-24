@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2023 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,10 @@
 // Please run the closure compiler before committing changes.
 // See https://chromium.googlesource.com/chromium/src/+/main/docs/closure_compilation.md
 
-/** @fileoverview Externs generated from namespace: automation */
+/**
+ * @fileoverview Externs generated from namespace: automation
+ * @externs
+ */
 
 /** @const */
 chrome.automation = {};
@@ -27,6 +30,7 @@ chrome.automation.EventType = {
   ATOMIC_CHANGED: 'atomicChanged',
   AUTO_COMPLETE_CHANGED: 'autoCompleteChanged',
   AUTOCORRECTION_OCCURED: 'autocorrectionOccured',
+  AUTOFILL_AVAILABILITY_CHANGED: 'autofillAvailabilityChanged',
   BLUR: 'blur',
   BUSY_CHANGED: 'busyChanged',
   CARET_BOUNDS_CHANGED: 'caretBoundsChanged',
@@ -81,7 +85,6 @@ chrome.automation.EventType = {
   MEDIA_STOPPED_PLAYING: 'mediaStoppedPlaying',
   MENU_END: 'menuEnd',
   MENU_ITEM_SELECTED: 'menuItemSelected',
-  MENU_LIST_ITEM_SELECTED: 'menuListItemSelected',
   MENU_LIST_VALUE_CHANGED: 'menuListValueChanged',
   MENU_POPUP_END: 'menuPopupEnd',
   MENU_POPUP_START: 'menuPopupStart',
@@ -120,7 +123,6 @@ chrome.automation.EventType = {
   SELECTED_VALUE_CHANGED: 'selectedValueChanged',
   SELECTION: 'selection',
   SELECTION_ADD: 'selectionAdd',
-  SELECTION_IN_TEXT_FIELD_CHANGED: 'selectionInTextFieldChanged',
   SELECTION_REMOVE: 'selectionRemove',
   SET_SIZE_CHANGED: 'setSizeChanged',
   SHOW: 'show',
@@ -166,6 +168,7 @@ chrome.automation.RoleType = {
   COLUMN_HEADER: 'columnHeader',
   COMBO_BOX_GROUPING: 'comboBoxGrouping',
   COMBO_BOX_MENU_BUTTON: 'comboBoxMenuButton',
+  COMBO_BOX_SELECT: 'comboBoxSelect',
   COMMENT: 'comment',
   COMPLEMENTARY: 'complementary',
   CONTENT_DELETION: 'contentDeletion',
@@ -403,9 +406,9 @@ chrome.automation.ActionType = {
   INCREMENT: 'increment',
   INTERNAL_INVALIDATE_TREE: 'internalInvalidateTree',
   LOAD_INLINE_TEXT_BOXES: 'loadInlineTextBoxes',
+  LONG_CLICK: 'longClick',
   REPLACE_SELECTED_TEXT: 'replaceSelectedText',
   RESUME_MEDIA: 'resumeMedia',
-  RUN_SCREEN_AI: 'runScreenAi',
   SCROLL_BACKWARD: 'scrollBackward',
   SCROLL_DOWN: 'scrollDown',
   SCROLL_FORWARD: 'scrollForward',
@@ -414,6 +417,7 @@ chrome.automation.ActionType = {
   SCROLL_UP: 'scrollUp',
   SCROLL_TO_MAKE_VISIBLE: 'scrollToMakeVisible',
   SCROLL_TO_POINT: 'scrollToPoint',
+  SCROLL_TO_POSITION_AT_ROW_COLUMN: 'scrollToPositionAtRowColumn',
   SET_ACCESSIBILITY_FOCUS: 'setAccessibilityFocus',
   SET_SCROLL_OFFSET: 'setScrollOffset',
   SET_SELECTION: 'setSelection',
@@ -445,7 +449,6 @@ chrome.automation.TreeChangeType = {
  * @see https://developer.chrome.com/extensions/automation#type-NameFromType
  */
 chrome.automation.NameFromType = {
-  UNINITIALIZED: 'uninitialized',
   ATTRIBUTE: 'attribute',
   ATTRIBUTE_EXPLICITLY_EMPTY: 'attributeExplicitlyEmpty',
   CAPTION: 'caption',
@@ -462,7 +465,9 @@ chrome.automation.NameFromType = {
  */
 chrome.automation.DescriptionFromType = {
   ARIA_DESCRIPTION: 'ariaDescription',
+  ATTRIBUTE_EXPLICITLY_EMPTY: 'attributeExplicitlyEmpty',
   BUTTON_LABEL: 'buttonLabel',
+  POPOVER_ATTRIBUTE: 'popoverAttribute',
   RELATED_ELEMENT: 'relatedElement',
   RUBY_ANNOTATION: 'rubyAnnotation',
   SUMMARY: 'summary',
@@ -655,6 +660,16 @@ chrome.automation.SortDirectionType = {
   ASCENDING: 'ascending',
   DESCENDING: 'descending',
   OTHER: 'other',
+};
+
+/**
+ * @enum {string}
+ * @see https://developer.chrome.com/extensions/automation#type-PositionType
+ */
+chrome.automation.PositionType = {
+  NULL: 'null',
+  TEXT: 'text',
+  TREE: 'tree',
 };
 
 /**
@@ -1198,7 +1213,7 @@ chrome.automation.AutomationNode.prototype.state;
 
 /**
  * The rendered location (as a bounding box) of this node in global screen coordinates.
- * @type {(!chrome.automation.Rect|undefined)}
+ * @type {!chrome.automation.Rect}
  * @see https://developer.chrome.com/extensions/automation#type-location
  */
 chrome.automation.AutomationNode.prototype.location;
@@ -1268,6 +1283,20 @@ chrome.automation.AutomationNode.prototype.roleDescription;
  * @see https://developer.chrome.com/extensions/automation#type-name
  */
 chrome.automation.AutomationNode.prototype.name;
+
+/**
+ * Explains what will happen when the doDefault action is performed.
+ * @type {(string|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-doDefaultLabel
+ */
+chrome.automation.AutomationNode.prototype.doDefaultLabel;
+
+/**
+ * Explains what will happen when the long click action is performed.
+ * @type {(string|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-longClickLabel
+ */
+chrome.automation.AutomationNode.prototype.longClickLabel;
 
 /**
  * The tooltip of the node, if any.
@@ -2193,6 +2222,18 @@ chrome.automation.AutomationNode.prototype.previousFocus;
 chrome.automation.AutomationNode.prototype.nextFocus;
 
 /**
+ * @type {(!chrome.automation.AutomationNode|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-previousWindowFocus
+ */
+chrome.automation.AutomationNode.prototype.previousWindowFocus;
+
+/**
+ * @type {(!chrome.automation.AutomationNode|undefined)}
+ * @see https://developer.chrome.com/extensions/automation#type-nextWindowFocus
+ */
+chrome.automation.AutomationNode.prototype.nextWindowFocus;
+
+/**
  * The index of this node in its parent node's list of children. If this is the root node, this will be undefined.
  * @type {(number|undefined)}
  * @see https://developer.chrome.com/extensions/automation#type-indexInParent
@@ -2205,6 +2246,13 @@ chrome.automation.AutomationNode.prototype.indexInParent;
  * @see https://developer.chrome.com/extensions/automation#type-sortDirection
  */
 chrome.automation.AutomationNode.prototype.sortDirection;
+
+/**
+ * Explicitly set to true when this node is clickable.
+ * @type {boolean}
+ * @see https://developer.chrome.com/extensions/automation#type-clickable
+ */
+chrome.automation.AutomationNode.prototype.clickable;
 
 /**
  * Does the default action based on this node's role. This is generally the same
@@ -2338,6 +2386,12 @@ chrome.automation.AutomationNode.prototype.stopDuckingMedia = function() {};
  * @see https://developer.chrome.com/extensions/automation#method-suspendMedia
  */
 chrome.automation.AutomationNode.prototype.suspendMedia = function() {};
+
+/**
+ * Simulates long click on node.
+ * @see https://developer.chrome.com/extensions/automation#method-longClick
+ */
+chrome.automation.AutomationNode.prototype.longClick = function() {};
 
 /**
  * Scrolls this scrollable container backward.
@@ -2490,12 +2544,13 @@ chrome.automation.AutomationNode.prototype.languageAnnotationForStringAttribute 
 
 /**
  * Creates a position object backed by Chrome's accessibility position support.
+ * @param {!chrome.automation.PositionType} type
  * @param {number} offset
  * @param {boolean=} isUpstream
  * @return {!chrome.automation.AutomationPosition}
  * @see https://developer.chrome.com/extensions/automation#method-createPosition
  */
-chrome.automation.AutomationNode.prototype.createPosition = function(offset, isUpstream) {};
+chrome.automation.AutomationNode.prototype.createPosition = function(type, offset, isUpstream) {};
 
 
 /**

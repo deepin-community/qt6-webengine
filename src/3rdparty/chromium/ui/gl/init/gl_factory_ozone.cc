@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,6 +15,7 @@
 #include "ui/gl/gl_surface.h"
 #include "ui/gl/gl_surface_stub.h"
 #include "ui/gl/init/ozone_util.h"
+#include "ui/gl/presenter.h"
 
 namespace gl {
 namespace init {
@@ -58,11 +59,12 @@ scoped_refptr<GLContext> CreateGLContext(GLShareGroup* share_group,
   return nullptr;
 }
 
-scoped_refptr<GLSurface> CreateViewGLSurface(gfx::AcceleratedWidget window) {
+scoped_refptr<GLSurface> CreateViewGLSurface(GLDisplay* display,
+                                             gfx::AcceleratedWidget window) {
   TRACE_EVENT0("gpu", "gl::init::CreateViewGLSurface");
 
   if (HasGLOzone())
-    return GetGLOzone()->CreateViewGLSurface(window);
+    return GetGLOzone()->CreateViewGLSurface(display, window);
 
   switch (GetGLImplementation()) {
     case kGLImplementationMockGL:
@@ -75,14 +77,17 @@ scoped_refptr<GLSurface> CreateViewGLSurface(gfx::AcceleratedWidget window) {
   return nullptr;
 }
 
-scoped_refptr<GLSurface> CreateSurfacelessViewGLSurface(
+scoped_refptr<Presenter> CreateSurfacelessViewGLSurface(
+    GLDisplay* display,
     gfx::AcceleratedWidget window) {
   TRACE_EVENT0("gpu", "gl::init::CreateSurfacelessViewGLSurface");
-  return HasGLOzone() ? GetGLOzone()->CreateSurfacelessViewGLSurface(window)
-                      : nullptr;
+  return HasGLOzone()
+             ? GetGLOzone()->CreateSurfacelessViewGLSurface(display, window)
+             : nullptr;
 }
 
 scoped_refptr<GLSurface> CreateOffscreenGLSurfaceWithFormat(
+    GLDisplay* display,
     const gfx::Size& size,
     GLSurfaceFormat format) {
   TRACE_EVENT0("gpu", "gl::init::CreateOffscreenGLSurface");
@@ -93,7 +98,7 @@ scoped_refptr<GLSurface> CreateOffscreenGLSurfaceWithFormat(
   }
 
   if (HasGLOzone())
-    return GetGLOzone()->CreateOffscreenGLSurface(size);
+    return GetGLOzone()->CreateOffscreenGLSurface(display, size);
 
   switch (GetGLImplementation()) {
     case kGLImplementationMockGL:
@@ -120,9 +125,9 @@ void SetDisabledExtensionsPlatform(const std::string& disabled_extensions) {
   }
 }
 
-bool InitializeExtensionSettingsOneOffPlatform() {
+bool InitializeExtensionSettingsOneOffPlatform(GLDisplay* display) {
   if (HasGLOzone())
-    return GetGLOzone()->InitializeExtensionSettingsOneOffPlatform();
+    return GetGLOzone()->InitializeExtensionSettingsOneOffPlatform(display);
 
   switch (GetGLImplementation()) {
     case kGLImplementationMockGL:

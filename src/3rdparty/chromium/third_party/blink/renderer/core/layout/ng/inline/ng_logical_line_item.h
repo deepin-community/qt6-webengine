@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -141,6 +141,13 @@ struct NGLogicalLineItem {
         bfc_offset(bfc_offset),
         bidi_level(bidi_level) {}
 
+  bool IsFloating() const {
+    return layout_result && layout_result->PhysicalFragment().IsFloating();
+  }
+  bool IsInitialLetterBox() const {
+    return layout_result &&
+           layout_result->PhysicalFragment().IsInitialLetterBox();
+  }
   bool IsInlineBox() const {
     return layout_result && layout_result->PhysicalFragment().IsInlineBox();
   }
@@ -203,8 +210,6 @@ struct NGLogicalLineItem {
 
   void Trace(Visitor*) const;
 
-  Member<const NGLayoutResult> layout_result;
-
   // Data to create a text fragment from.
   // |inline_item| is null only for ellipsis items.
   const NGInlineItem* inline_item = nullptr;
@@ -213,6 +218,8 @@ struct NGLogicalLineItem {
 
   // Data to create a generated text fragment.
   String text_content;
+
+  Member<const NGLayoutResult> layout_result;
 
   // Ellipsis does not have |NGInlineItem|, but built from |LayoutObject| and
   // |NGStyleVariant|.
@@ -271,7 +278,7 @@ class CORE_EXPORT NGLogicalLineItems
 
   wtf_size_t size() const { return children_.size(); }
   void clear() { children_.clear(); }
-  bool IsEmpty() const { return children_.IsEmpty(); }
+  bool IsEmpty() const { return children_.empty(); }
   void ReserveInitialCapacity(unsigned capacity) {
     children_.ReserveInitialCapacity(capacity);
   }

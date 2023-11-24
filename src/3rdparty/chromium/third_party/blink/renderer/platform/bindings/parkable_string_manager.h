@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,7 @@
 #include "base/feature_list.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "base/trace_event/memory_dump_provider.h"
 #include "third_party/blink/renderer/platform/bindings/parkable_string.h"
@@ -48,6 +49,11 @@ class PLATFORM_EXPORT ParkableStringManagerDumpProvider
 // Manages all the ParkableStrings, and parks eligible strings after the
 // renderer has been backgrounded.
 // Main Thread only.
+// When a `ParkableString` is unparked on a background thread, a task is posted
+// to the main thread to update the entries in the manager. Hence, it is
+// possible to temporarily have an unparked `ParkableString` inaccessible
+// through `unparked_strings_`. This can cause aging of the string to be
+// delayed or a variation on the sizes recorded in 'ComputeStatistics()`.
 class PLATFORM_EXPORT ParkableStringManager {
   USING_FAST_MALLOC(ParkableStringManager);
 
@@ -83,24 +89,60 @@ class PLATFORM_EXPORT ParkableStringManager {
   constexpr static base::TimeDelta kFirstParkingDelay{base::Seconds(60)};
 
   static const char* kAllocatorDumpName;
+
+  // Compares not the pointers, but the arrays. Uses pointers to save space.
+  struct SecureDigestHashTraits
+      : GenericHashTraits<const ParkableStringImpl::SecureDigest*> {
+    static unsigned GetHash(const ParkableStringImpl::SecureDigest* digest) {
+      // The first bytes of the hash are as good as anything else.
+      return *reinterpret_cast<const unsigned*>(digest->data());
+    }
+
+    static bool Equal(const ParkableStringImpl::SecureDigest* const a,
+                      const ParkableStringImpl::SecureDigest* const b) {
+      return a == b ||
+             std::equal(a->data(), a->data() + ParkableStringImpl::kDigestSize,
+                        b->data());
+    }
+
+    static constexpr bool kSafeToCompareToEmptyOrDeleted = false;
+  };
+
   // Relies on secure hash equality for deduplication. If one day SHA256 becomes
   // insecure, then this would need to be updated to a more robust hash.
-  struct SecureDigestHash;
   using StringMap = WTF::HashMap<const ParkableStringImpl::SecureDigest*,
                                  ParkableStringImpl*,
-                                 SecureDigestHash>;
+                                 SecureDigestHashTraits>;
+
+  bool IsOnParkedMapForTesting(ParkableStringImpl* string);
+  bool IsOnDiskMapForTesting(ParkableStringImpl* string);
 
  private:
   friend class ParkableString;
   friend class ParkableStringImpl;
 
-  scoped_refptr<ParkableStringImpl> Add(scoped_refptr<StringImpl>&&);
-  void Remove(ParkableStringImpl*);
+  scoped_refptr<ParkableStringImpl> Add(
+      scoped_refptr<StringImpl>&&,
+      std::unique_ptr<ParkableStringImpl::SecureDigest> digest);
+
+  void RemoveOnMainThread(ParkableStringImpl* string);
+  // If on a background thread, posts a `RemoveOnMainThread` task to the Main
+  // thread. Calls `RemoveOnMainThread` otherwise.
+  void Remove(ParkableStringImpl* string);
 
   void OnParked(ParkableStringImpl*);
   void OnWrittenToDisk(ParkableStringImpl*);
-  void OnReadFromDisk(ParkableStringImpl*);
-  void OnUnparked(ParkableStringImpl*);
+  void OnUnparked(ParkableStringImpl*, bool);
+
+  // If on a background thread, posts a `CompleteUnparkOnMainThread` task to
+  // the Main thread. Calls `CompleteUnparkOnMainThread` otherwise.
+  void CompleteUnpark(ParkableStringImpl* string,
+                      base::TimeDelta elapsed,
+                      base::TimeDelta disk_elapsed);
+
+  void CompleteUnparkOnMainThread(ParkableStringImpl* string,
+                                  base::TimeDelta elapsed,
+                                  base::TimeDelta disk_elapsed);
 
   void ParkAll(ParkableStringImpl::ParkingMode mode);
   void RecordStatisticsAfter5Minutes() const;
@@ -134,12 +176,22 @@ class PLATFORM_EXPORT ParkableStringManager {
     allocator_for_testing_ = std::move(allocator);
   }
 
+  void SetTaskRunnerForTesting(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+    task_runner_ = std::move(task_runner);
+  }
+
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner() {
+    return task_runner_;
+  }
+
+  void AssertRemoved(ParkableStringImpl* string);
   void ResetForTesting();
   ParkableStringManager();
 
-  bool has_pending_aging_task_;
-  bool has_posted_unparking_time_accounting_task_;
-  bool did_register_memory_pressure_listener_;
+  bool has_pending_aging_task_ = false;
+  bool has_posted_unparking_time_accounting_task_ = false;
+  bool did_register_memory_pressure_listener_ = false;
   base::TimeDelta total_unparking_time_;
   base::TimeDelta total_parking_thread_time_;
   base::TimeDelta total_disk_read_time_;
@@ -151,6 +203,7 @@ class PLATFORM_EXPORT ParkableStringManager {
 
   bool first_string_aging_was_delayed_ = false;
 
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   std::unique_ptr<DiskDataAllocator> allocator_for_testing_;
 
   friend class ParkableStringTest;

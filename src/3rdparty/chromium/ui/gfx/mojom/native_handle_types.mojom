@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,13 +23,14 @@ struct NativePixmapPlane {
 struct NativePixmapHandle {
   array<NativePixmapPlane> planes;
 
-  [EnableIf=is_linux]
-  uint64 modifier;
-  [EnableIf=is_chromeos_ash]
+  [EnableIf=is_linux_or_chromeos_ash]
   uint64 modifier;
 
+  [EnableIf=is_linux_or_chromeos_ash]
+  bool supports_zero_copy_webgpu_import;
+
   [EnableIf=is_fuchsia]
-  mojo_base.mojom.UnguessableToken? buffer_collection_id;
+  handle<platform> buffer_collection_handle;
   [EnableIf=is_fuchsia]
   uint32 buffer_index;
   [EnableIf=is_fuchsia]
@@ -81,7 +82,7 @@ union GpuMemoryBufferPlatformHandle {
   [EnableIf=supports_native_pixmap]
   NativePixmapHandle native_pixmap_handle;
 
-  [EnableIf=is_mac]
+  [EnableIf=is_apple]
   handle<platform> mach_port;
 
   [EnableIf=is_win]

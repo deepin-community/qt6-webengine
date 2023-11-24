@@ -12,9 +12,11 @@
 #include "src/gpu/ganesh/GrProgramInfo.h"
 #include "src/gpu/ganesh/GrRenderTarget.h"
 #include "src/gpu/ganesh/GrStencilSettings.h"
+#include "src/gpu/ganesh/TestFormatColorTypeCombination.h"
 
 GrDawnCaps::GrDawnCaps(const GrContextOptions& contextOptions) : INHERITED(contextOptions) {
     fMipmapSupport = true;
+    fAnisoSupport = true;
     fBufferMapThreshold = SK_MaxS32;  // FIXME: get this from Dawn?
     fShaderCaps = std::make_unique<GrShaderCaps>();
     fMaxTextureSize = fMaxRenderTargetSize = 8192; // FIXME
@@ -24,6 +26,9 @@ GrDawnCaps::GrDawnCaps(const GrContextOptions& contextOptions) : INHERITED(conte
     fDynamicStateArrayGeometryProcessorTextureSupport = true;
     fTwoSidedStencilRefsAndMasksMustMatch = true;
 
+    // WebGPU zero-initializes resources. https://www.w3.org/TR/webgpu/#security-uninitialized
+    fBuffersAreInitiallyZero = true;
+
     fShaderCaps->fFlatInterpolationSupport = true;
     fShaderCaps->fIntegerSupport = true;
     // FIXME: each fragment sampler takes two binding slots in Dawn (sampler + texture). Limit to
@@ -31,6 +36,13 @@ GrDawnCaps::GrDawnCaps(const GrContextOptions& contextOptions) : INHERITED(conte
     // non-texture bindings. Eventually, we may be able to increase kMaxBindingsPerGroup in Dawn.
     fShaderCaps->fMaxFragmentSamplers = 6;
     fShaderCaps->fShaderDerivativeSupport = true;
+    fShaderCaps->fExplicitTextureLodSupport = true;
+
+    // We haven't yet implemented GrGpu::transferFromBufferToBuffer for Dawn but GrDawnBuffer uses
+    // transfers to implement buffer mapping and updates and transfers must be 4 byte aligned.
+    fTransferFromBufferToBufferAlignment = 4;
+    // Buffer updates are sometimes implemented through transfers in GrDawnBuffer.
+    fBufferUpdateDataPreserveAlignment = 4;
 
     this->finishInitialization(contextOptions);
 }
@@ -152,14 +164,14 @@ bool GrDawnCaps::onAreColorTypeAndFormatCompatible(GrColorType ct,
 
 // FIXME: taken from GrVkPipelineState; refactor.
 static uint32_t get_blend_info_key(const GrPipeline& pipeline) {
-    GrXferProcessor::BlendInfo blendInfo = pipeline.getXferProcessor().getBlendInfo();
+    skgpu::BlendInfo blendInfo = pipeline.getXferProcessor().getBlendInfo();
 
     static const uint32_t kBlendWriteShift = 1;
     static const uint32_t kBlendCoeffShift = 5;
     static_assert((int)skgpu::BlendCoeff::kLast < (1 << kBlendCoeffShift));
     static_assert((int)skgpu::BlendEquation::kFirstAdvanced - 1 < 4);
 
-    uint32_t key = blendInfo.fWriteColor;
+    uint32_t key = blendInfo.fWritesColor;
     key |= ((int)blendInfo.fSrcBlend << kBlendWriteShift);
     key |= ((int)blendInfo.fDstBlend << (kBlendWriteShift + kBlendCoeffShift));
     key |= ((int)blendInfo.fEquation << (kBlendWriteShift + 2 * kBlendCoeffShift));
@@ -198,8 +210,8 @@ GrProgramDesc GrDawnCaps::makeDesc(GrRenderTarget* rt,
 }
 
 #if GR_TEST_UTILS
-std::vector<GrCaps::TestFormatColorTypeCombination> GrDawnCaps::getTestingCombinations() const {
-    std::vector<GrCaps::TestFormatColorTypeCombination> combos = {
+std::vector<GrTest::TestFormatColorTypeCombination> GrDawnCaps::getTestingCombinations() const {
+    std::vector<GrTest::TestFormatColorTypeCombination> combos = {
         { GrColorType::kAlpha_8,   GrBackendFormat::MakeDawn(wgpu::TextureFormat::R8Unorm)    },
         { GrColorType::kRGBA_8888, GrBackendFormat::MakeDawn(wgpu::TextureFormat::RGBA8Unorm) },
         { GrColorType::kRGBA_8888, GrBackendFormat::MakeDawn(wgpu::TextureFormat::BGRA8Unorm) },
@@ -210,7 +222,7 @@ std::vector<GrCaps::TestFormatColorTypeCombination> GrDawnCaps::getTestingCombin
     };
 
 #ifdef SK_DEBUG
-    for (const GrCaps::TestFormatColorTypeCombination& combo : combos) {
+    for (const GrTest::TestFormatColorTypeCombination& combo : combos) {
         SkASSERT(this->onAreColorTypeAndFormatCompatible(combo.fColorType, combo.fFormat));
     }
 #endif

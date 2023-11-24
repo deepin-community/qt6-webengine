@@ -1,10 +1,13 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/ml/ml_context.h"
 
+#include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
+#include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/modules/ml/ml.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 
 namespace blink {
 
@@ -45,6 +48,44 @@ void MLContext::Trace(Visitor* visitor) const {
   visitor->Trace(ml_);
 
   ScriptWrappable::Trace(visitor);
+}
+
+ScriptPromise MLContext::compute(ScriptState* script_state,
+                                 MLGraph* graph,
+                                 const MLNamedArrayBufferViews& inputs,
+                                 const MLNamedArrayBufferViews& outputs,
+                                 ExceptionState& exception_state) {
+  if (!script_state->ContextIsValid()) {
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      "Invalid script state");
+    return ScriptPromise();
+  }
+
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
+  auto promise = resolver->Promise();
+
+  if (graph->Context() != this) {
+    resolver->Reject(MakeGarbageCollected<DOMException>(
+        DOMExceptionCode::kDataError,
+        "The graph isn't built within this context."));
+  } else {
+    graph->ComputeAsync(inputs, outputs, resolver, exception_state);
+  }
+
+  return promise;
+}
+
+void MLContext::computeSync(MLGraph* graph,
+                            const MLNamedArrayBufferViews& inputs,
+                            const MLNamedArrayBufferViews& outputs,
+                            ExceptionState& exception_state) {
+  if (graph->Context() != this) {
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kDataError,
+        "The graph isn't built within this context.");
+    return;
+  }
+  graph->ComputeSync(inputs, outputs, exception_state);
 }
 
 }  // namespace blink

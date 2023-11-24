@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,11 @@
 
 #include <stdint.h>
 
+#include <type_traits>
 #include <utility>
 
 #include "base/compiler_specific.h"
+#include "base/task/sequenced_task_runner.h"
 #include "build/build_config.h"
 #include "mojo/public/cpp/bindings/lib/multiplex_router.h"
 #include "mojo/public/cpp/bindings/scoped_interface_endpoint_handle.h"
@@ -40,12 +42,13 @@ class PendingAssociatedReceiver {
 #if !BUILDFLAG(IS_NACL)
   // Move conversion operator for custom receiver types. Only participates in
   // overload resolution if a typesafe conversion is supported.
-  template <typename T,
-            std::enable_if_t<std::is_same<
-                PendingAssociatedReceiver<Interface>,
-                absl::result_of_t<decltype (&PendingAssociatedReceiverConverter<
-                                           T>::template To<Interface>)(T&&)>>::
-                                 value>* = nullptr>
+  template <
+      typename T,
+      std::enable_if_t<std::is_same<
+          PendingAssociatedReceiver<Interface>,
+          std::invoke_result_t<decltype(&PendingAssociatedReceiverConverter<
+                                        T>::template To<Interface>),
+                               T&&>>::value>* = nullptr>
   PendingAssociatedReceiver(T&& other)
       : PendingAssociatedReceiver(
             PendingAssociatedReceiverConverter<T>::template To<Interface>(
@@ -99,11 +102,11 @@ class PendingAssociatedReceiver {
     scoped_refptr<internal::MultiplexRouter> router0 =
         internal::MultiplexRouter::CreateAndStartReceiving(
             std::move(pipe.handle0), internal::MultiplexRouter::MULTI_INTERFACE,
-            false, base::SequencedTaskRunnerHandle::Get());
+            false, base::SequencedTaskRunner::GetCurrentDefault());
     scoped_refptr<internal::MultiplexRouter> router1 =
         internal::MultiplexRouter::CreateAndStartReceiving(
             std::move(pipe.handle1), internal::MultiplexRouter::MULTI_INTERFACE,
-            true, base::SequencedTaskRunnerHandle::Get());
+            true, base::SequencedTaskRunner::GetCurrentDefault());
 
     InterfaceId id = router1->AssociateInterface(PassHandle());
     set_handle(router0->CreateLocalEndpointHandle(id));

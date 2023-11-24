@@ -23,7 +23,10 @@ RenderTargetVk::RenderTargetVk()
     reset();
 }
 
-RenderTargetVk::~RenderTargetVk() {}
+RenderTargetVk::~RenderTargetVk()
+{
+    ASSERT(mFramebufferCacheManager.empty());
+}
 
 RenderTargetVk::RenderTargetVk(RenderTargetVk &&other)
     : mImage(other.mImage),
@@ -32,7 +35,8 @@ RenderTargetVk::RenderTargetVk(RenderTargetVk &&other)
       mResolveImageViews(other.mResolveImageViews),
       mLevelIndexGL(other.mLevelIndexGL),
       mLayerIndex(other.mLayerIndex),
-      mLayerCount(other.mLayerCount)
+      mLayerCount(other.mLayerCount),
+      mFramebufferCacheManager(other.mFramebufferCacheManager)
 {
     other.reset();
 }
@@ -112,7 +116,7 @@ void RenderTargetVk::onColorResolve(ContextVk *contextVk, uint32_t framebufferLa
     ASSERT(mResolveImage == nullptr);
 
     contextVk->onImageRenderPassWrite(mLevelIndexGL, mLayerIndex, framebufferLayerCount,
-                                      VK_IMAGE_ASPECT_COLOR_BIT, vk::ImageLayout::ColorAttachment,
+                                      VK_IMAGE_ASPECT_COLOR_BIT, vk::ImageLayout::ColorWrite,
                                       mImage);
 }
 

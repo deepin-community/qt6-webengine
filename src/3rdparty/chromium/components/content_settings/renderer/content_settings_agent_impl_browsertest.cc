@@ -1,11 +1,11 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <stddef.h>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
 #include "base/values.h"
 #include "components/content_settings/core/common/content_settings.h"
@@ -13,12 +13,14 @@
 #include "components/content_settings/renderer/content_settings_agent_impl.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/renderer/render_frame.h"
-#include "content/public/renderer/render_view.h"
 #include "content/public/test/render_view_test.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "net/cookies/site_for_cookies.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
+#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/mojom/loader/code_cache.mojom.h"
+#include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/test/test_web_frame_content_dumper.h"
 #include "third_party/blink/public/web/web_view.h"
 #include "url/gurl.h"
@@ -176,14 +178,60 @@ class ContentSettingsAgentImplBrowserTest : public content::RenderViewTest {
     RenderViewTest::SetUp();
 
     // Set up a fake url loader factory to ensure that script loader can create
-    // a WebURLLoader.
-    CreateFakeWebURLLoaderFactory();
+    // a URLLoader.
+    CreateFakeURLLoaderFactory();
 
     // Unbind the ContentSettingsAgent interface that would be registered by
     // the ContentSettingsAgentImpl created when the render frame is created.
     GetMainRenderFrame()->GetAssociatedInterfaceRegistry()->RemoveInterface(
         mojom::ContentSettingsAgent::Name_);
+
+    // Bind a FakeCodeCacheHost which handles FetchCachedCode() method, because
+    // script loading is blocked until the callback of FetchCachedCode() is
+    // called.
+    GetMainRenderFrame()->GetBrowserInterfaceBroker()->SetBinderForTesting(
+        blink::mojom::CodeCacheHost::Name_,
+        base::BindRepeating(
+            &ContentSettingsAgentImplBrowserTest::OnCodeCacheHostRequest,
+            base::Unretained(this)));
   }
+
+ private:
+  class FakeCodeCacheHost : public blink::mojom::CodeCacheHost {
+   public:
+    explicit FakeCodeCacheHost(
+        mojo::PendingReceiver<blink::mojom::CodeCacheHost> receiver) {
+      receiver_.Bind(std::move(receiver));
+    }
+
+    void DidGenerateCacheableMetadata(blink::mojom::CodeCacheType cache_type,
+                                      const GURL& url,
+                                      base::Time expected_response_time,
+                                      mojo_base::BigBuffer data) override {}
+    void FetchCachedCode(blink::mojom::CodeCacheType cache_type,
+                         const GURL& url,
+                         FetchCachedCodeCallback callback) override {
+      std::move(callback).Run(base::Time(), std::vector<uint8_t>());
+    }
+    void ClearCodeCacheEntry(blink::mojom::CodeCacheType cache_type,
+                             const GURL& url) override {}
+    void DidGenerateCacheableMetadataInCacheStorage(
+        const GURL& url,
+        base::Time expected_response_time,
+        mojo_base::BigBuffer data,
+        const url::Origin& cache_storage_origin,
+        const std::string& cache_storage_cache_name) override {}
+
+   private:
+    mojo::Receiver<blink::mojom::CodeCacheHost> receiver_{this};
+  };
+
+  void OnCodeCacheHostRequest(mojo::ScopedMessagePipeHandle handle) {
+    fake_code_cache_host_ = std::make_unique<FakeCodeCacheHost>(
+        mojo::PendingReceiver<blink::mojom::CodeCacheHost>(std::move(handle)));
+  }
+
+  std::unique_ptr<FakeCodeCacheHost> fake_code_cache_host_;
 };
 
 TEST_F(ContentSettingsAgentImplBrowserTest, AllowlistedSchemes) {
@@ -589,6 +637,14 @@ TEST_F(ContentSettingsAgentImplBrowserTest, MixedAutoupgradesDisabledByRules) {
   agent->SetRendererContentSettingRulesForTest(content_setting_rules);
 
   EXPECT_FALSE(agent->ShouldAutoupgradeMixedContent());
+}
+
+TEST_F(ContentSettingsAgentImplBrowserTest, MixedAutoupgradesNoSettingsSet) {
+  MockContentSettingsAgentImpl mock_agent(GetMainRenderFrame());
+
+  ContentSettingsAgentImpl* agent =
+      ContentSettingsAgentImpl::Get(GetMainRenderFrame());
+  EXPECT_TRUE(agent->ShouldAutoupgradeMixedContent());
 }
 
 TEST_F(ContentSettingsAgentImplBrowserTest, ContentSettingsAllowedAutoDark) {

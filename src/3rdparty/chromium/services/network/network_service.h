@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -28,10 +28,13 @@
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "net/base/address_list.h"
 #include "net/base/schemeful_site.h"
 #include "net/dns/host_resolver.h"
+#include "net/dns/host_resolver_manager.h"
 #include "net/dns/public/dns_over_https_config.h"
 #include "net/dns/public/secure_dns_mode.h"
+#include "net/first_party_sets/global_first_party_sets.h"
 #include "net/http/transport_security_state.h"
 #include "net/log/net_log.h"
 #include "net/log/trace_net_log_observer.h"
@@ -47,8 +50,10 @@
 #include "services/network/public/mojom/network_change_manager.mojom.h"
 #include "services/network/public/mojom/network_quality_estimator_manager.mojom.h"
 #include "services/network/public/mojom/network_service.mojom.h"
+#include "services/network/public/mojom/system_dns_resolution.mojom.h"
 #include "services/network/public/mojom/trust_tokens.mojom.h"
 #include "services/network/public/mojom/url_loader_network_service_observer.mojom.h"
+#include "services/network/restricted_cookie_manager.h"
 #include "services/network/trust_tokens/trust_token_key_commitments.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
@@ -109,7 +114,8 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkService
   // `net::NetworkChangeNotifier` from future changes to the real configuration,
   // ensuring that our fake configuration will not be clobbered by network
   // changes that occur while tests run.
-  void ReplaceSystemDnsConfigForTesting();
+  // Once this is finished, `replace_cb` will run.
+  void ReplaceSystemDnsConfigForTesting(base::OnceClosure replace_cb);
 
   void SetTestDohConfigForTesting(net::SecureDnsMode secure_dns_mode,
                                   const net::DnsOverHttpsConfig& doh_config);
@@ -137,12 +143,9 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkService
 
   // mojom::NetworkService implementation:
   void SetParams(mojom::NetworkServiceParamsPtr params) override;
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  void ReinitializeLogging(mojom::LoggingSettingsPtr settings) override;
-#endif
   void StartNetLog(base::File file,
                    net::NetLogCaptureMode capture_mode,
-                   base::Value constants) override;
+                   base::Value::Dict constants) override;
   void AttachNetLogProxy(
       mojo::PendingRemote<mojom::NetLogProxySource> proxy_source,
       mojo::PendingReceiver<mojom::NetLogProxySink>) override;
@@ -212,11 +215,9 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkService
 #if BUILDFLAG(IS_ANDROID)
   void DumpWithoutCrashing(base::Time dump_request_time) override;
 #endif
-  void BindTestInterface(
+  void BindTestInterfaceForTesting(
       mojo::PendingReceiver<mojom::NetworkServiceTest> receiver) override;
-  void SetFirstPartySets(
-      const base::flat_map<net::SchemefulSite, net::SchemefulSite>& sets)
-      override;
+  void SetFirstPartySets(net::GlobalFirstPartySets sets) override;
   void SetExplicitlyAllowedPorts(const std::vector<uint16_t>& ports) override;
 
   // Returns an HttpAuthHandlerFactory for the given NetworkContext.
@@ -253,7 +254,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkService
   }
 #endif
 
-  FirstPartySetsManager* first_party_sets() const {
+  FirstPartySetsManager* first_party_sets_manager() const {
     return first_party_sets_manager_.get();
   }
 
@@ -304,6 +305,10 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkService
   mojom::URLLoaderNetworkServiceObserver*
   GetDefaultURLLoaderNetworkServiceObserver();
 
+  RestrictedCookieManager::UmaMetricsUpdater* metrics_updater() const {
+    return metrics_updater_.get();
+  }
+
   static NetworkService* GetNetworkServiceForTesting();
 
  private:
@@ -320,6 +325,9 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkService
   // Sets First-Party Set data after having read it from a file.
   void OnReadFirstPartySetsFile(const std::string& raw_sets);
 
+  void SetSystemDnsResolver(
+      mojo::PendingRemote<mojom::SystemDnsResolver> override_remote);
+
   bool initialized_ = false;
 
   enum class FunctionTag : uint8_t {
@@ -327,6 +335,8 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkService
     ConfigureStubHostResolver,
     SetTestDohConfigForTesting,
   };
+
+  std::unique_ptr<RestrictedCookieManager::UmaMetricsUpdater> metrics_updater_;
 
   FunctionTag dns_config_overrides_set_by_ = FunctionTag::None;
 

@@ -16,11 +16,11 @@
 
 #include "src/trace_processor/importers/proto/stack_profile_tracker.h"
 
-#include "src/trace_processor/importers/proto/profiler_util.h"
-#include "src/trace_processor/types/trace_processor_context.h"
-
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/string_utils.h"
+#include "src/trace_processor/importers/proto/profiler_util.h"
+#include "src/trace_processor/types/trace_processor_context.h"
+#include "src/trace_processor/util/stack_traces_util.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -58,6 +58,11 @@ base::Optional<MappingId> SequenceStackProfileTracker::AddMapping(
       break;
     path += "/" + *opt_str;
   }
+  // When path strings just have single full path(like Chrome does), the mapping
+  // path gets an extra '/' prepended, strip the extra '/'.
+  if(base::StartsWith(path, "//")) {
+    path = path.substr(1);
+  }
 
   auto opt_build_id = FindAndInternString(mapping.build_id, intern_lookup,
                                           InternedStringType::kBuildId);
@@ -75,7 +80,7 @@ base::Optional<MappingId> SequenceStackProfileTracker::AddMapping(
     // identifier which is already in Hex and doesn't need conversion.
     // TODO(b/148109467): Remove workaround once all active Chrome versions
     // write raw bytes instead of a string as build_id.
-    if (raw_build_id_str.size() == 33) {
+    if (util::IsHexModuleId(raw_build_id_str)) {
       build_id = raw_build_id;
     } else {
       std::string hex_build_id =

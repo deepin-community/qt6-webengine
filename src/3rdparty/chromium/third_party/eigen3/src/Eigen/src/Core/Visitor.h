@@ -23,8 +23,10 @@ template<typename Visitor, typename Derived, int UnrollCount>
 struct visitor_impl<Visitor, Derived, UnrollCount, false>
 {
   enum {
-    col = (UnrollCount-1) / Derived::RowsAtCompileTime,
-    row = (UnrollCount-1) % Derived::RowsAtCompileTime
+    col = Derived::IsRowMajor ? (UnrollCount-1) % Derived::ColsAtCompileTime
+                              : (UnrollCount-1) / Derived::RowsAtCompileTime,
+    row = Derived::IsRowMajor ? (UnrollCount-1) / Derived::ColsAtCompileTime
+                              : (UnrollCount-1) % Derived::RowsAtCompileTime
   };
 
   EIGEN_DEVICE_FUNC
@@ -60,11 +62,25 @@ struct visitor_impl<Visitor, Derived, Dynamic, /*Vectorize=*/false>
   static inline void run(const Derived& mat, Visitor& visitor)
   {
     visitor.init(mat.coeff(0,0), 0, 0);
-    for(Index i = 1; i < mat.rows(); ++i)
-      visitor(mat.coeff(i, 0), i, 0);
-    for(Index j = 1; j < mat.cols(); ++j)
-      for(Index i = 0; i < mat.rows(); ++i)
-        visitor(mat.coeff(i, j), i, j);
+    if (Derived::IsRowMajor) {
+      for(Index i = 1; i < mat.cols(); ++i) {
+          visitor(mat.coeff(0, i), 0, i);
+      }
+      for(Index j = 1; j < mat.rows(); ++j) {
+        for(Index i = 0; i < mat.cols(); ++i) {
+          visitor(mat.coeff(j, i), j, i);
+        }
+      }
+    } else {
+      for(Index i = 1; i < mat.rows(); ++i) {
+          visitor(mat.coeff(i, 0), i, 0);
+      }
+      for(Index j = 1; j < mat.cols(); ++j) {
+        for(Index i = 0; i < mat.rows(); ++i) {
+          visitor(mat.coeff(i, j), i, j);
+        }
+      }
+    }
   }
 };
 
@@ -114,6 +130,7 @@ public:
     PacketAccess = Evaluator::Flags & PacketAccessBit,
     IsRowMajor = XprType::IsRowMajor,
     RowsAtCompileTime = XprType::RowsAtCompileTime,
+    ColsAtCompileTime = XprType::ColsAtCompileTime,
     CoeffReadCost = Evaluator::CoeffReadCost
   };
 
@@ -122,8 +139,8 @@ public:
   explicit visitor_evaluator(const XprType &xpr) : m_evaluator(xpr), m_xpr(xpr) { }
 
   typedef typename XprType::Scalar Scalar;
-  typedef typename internal::remove_const<typename XprType::CoeffReturnType>::type CoeffReturnType;
-  typedef typename internal::remove_const<typename XprType::PacketReturnType>::type PacketReturnType;
+  typedef std::remove_const_t<typename XprType::CoeffReturnType> CoeffReturnType;
+  typedef std::remove_const_t<typename XprType::PacketReturnType> PacketReturnType;
 
   EIGEN_DEVICE_FUNC EIGEN_CONSTEXPR Index rows() const EIGEN_NOEXCEPT { return m_xpr.rows(); }
   EIGEN_DEVICE_FUNC EIGEN_CONSTEXPR Index cols() const EIGEN_NOEXCEPT { return m_xpr.cols(); }
@@ -277,7 +294,7 @@ struct minmax_coeff_visitor<Derived, is_min, PropagateNumbers> : coeff_visitor<D
       Packet mask = pcmp_eq(pset1<Packet>(value), p);
       Index max_idx = PacketSize - static_cast<Index>(predux_max(pand(range, mask)));
       this->res = value;
-      this->row = Derived::IsRowMajor ? i : i + max_idx;;
+      this->row = Derived::IsRowMajor ? i : i + max_idx;
       this->col = Derived::IsRowMajor ? j + max_idx : j;
     }
   }
@@ -325,7 +342,7 @@ template<typename Scalar, bool is_min, int NaNPropagation>
 struct functor_traits<minmax_coeff_visitor<Scalar, is_min, NaNPropagation> > {
   enum {
     Cost = NumTraits<Scalar>::AddCost,
-    PacketAccess = true
+    PacketAccess = packet_traits<Scalar>::HasCmp
   };
 };
 

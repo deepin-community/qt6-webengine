@@ -9,9 +9,12 @@
 #define skgpu_graphite_ResourceTypes_DEFINED
 
 #include "include/gpu/graphite/GraphiteTypes.h"
-#include "src/gpu/graphite/EnumBitMask.h"
+#include "include/private/base/SkTo.h"
+#include "src/core/SkEnumBitMask.h"
 
 namespace skgpu::graphite {
+
+class Buffer;
 
 /**
  * Is the Texture renderable or not
@@ -27,19 +30,37 @@ enum class DepthStencilFlags : int {
     kStencil = 0b010,
     kDepthStencil = kDepth | kStencil,
 };
-SKGPU_MAKE_MASK_OPS(DepthStencilFlags);
+SK_MAKE_BITMASK_OPS(DepthStencilFlags);
 
 /**
  * What a GPU buffer will be used for
  */
-enum class BufferType {
+enum class BufferType : int {
     kVertex,
     kIndex,
     kXferCpuToGpu,
     kXferGpuToCpu,
     kUniform,
+    kStorage,
+
+    // GPU-only buffer types
+    kIndirect,
+    kVertexStorage,
+    kIndexStorage,
+
+    kLast = kIndexStorage,
 };
-static const int kBufferTypeCount = static_cast<int>(BufferType::kUniform) + 1;
+static const int kBufferTypeCount = static_cast<int>(BufferType::kLast) + 1;
+
+/**
+ * Data layout requirements on host-shareable buffer contents.
+ */
+enum class Layout {
+    kInvalid = 0,
+    kStd140,
+    kStd430,
+    kMetal,
+};
 
 /**
  * When creating the memory for a resource should we use a memory type that prioritizes the
@@ -49,6 +70,15 @@ static const int kBufferTypeCount = static_cast<int>(BufferType::kUniform) + 1;
 enum class PrioritizeGpuReads : bool {
     kNo = false,
     kYes = true,
+};
+
+/**
+ * Must the contents of the Resource be preserved af a render pass or can a more efficient
+ * representation be chosen when supported by hardware.
+ */
+enum class Discardable : bool {
+    kNo = false,
+    kYes = true
 };
 
 enum class Ownership {
@@ -76,6 +106,23 @@ enum class LastRemovedRef {
     kUsage,
     kCommandBuffer,
     kCache,
+};
+
+/*
+ * Struct that can be passed into bind buffer calls on the CommandBuffer. The ownership of the
+ * buffer and its usage in command submission must be tracked by the caller (e.g. as with
+ * buffers created by DrawBufferManager).
+ */
+struct BindBufferInfo {
+    const Buffer* fBuffer = nullptr;
+    size_t fOffset = 0;
+
+    operator bool() const { return SkToBool(fBuffer); }
+
+    bool operator==(const BindBufferInfo& o) const {
+        return fBuffer == o.fBuffer && (!fBuffer || fOffset == o.fOffset);
+    }
+    bool operator!=(const BindBufferInfo& o) const { return !(*this == o); }
 };
 
 };  // namespace skgpu::graphite

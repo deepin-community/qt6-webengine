@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -45,8 +45,6 @@ namespace sandbox {
 #define SOCK_NONBLOCK O_NONBLOCK
 #endif
 
-#define CASES SANDBOX_BPF_DSL_CASES
-
 namespace {
 
 #if !defined(__i386__)
@@ -64,20 +62,20 @@ BoolExpr RestrictSocketArguments(const Arg<int>& domain,
 #endif  // !defined(__i386__)
 
 ResultExpr RestrictAndroidIoctl(bool allow_userfaultfd_ioctls) {
-  const Arg<int> request(1);
+  const Arg<unsigned int> request(1);
 
   // There is no way at runtime to test if the system is running with
   // BINDER_IPC_32BIT. Instead, compute the corresponding bitness' ioctl
   // request number, so that either are allowed in the case of mixed-bitness
   // systems.
 #ifdef BINDER_IPC_32BIT
-  const int kBinderWriteRead32 = BINDER_WRITE_READ;
-  const int kBinderWriteRead64 =
+  const unsigned int kBinderWriteRead32 = BINDER_WRITE_READ;
+  const unsigned int kBinderWriteRead64 =
       (BINDER_WRITE_READ & ~IOCSIZE_MASK) |
       ((sizeof(binder_write_read) * 2) << _IOC_SIZESHIFT);
 #else
-  const int kBinderWriteRead64 = BINDER_WRITE_READ;
-  const int kBinderWriteRead32 =
+  const unsigned int kBinderWriteRead64 = BINDER_WRITE_READ;
+  const unsigned int kBinderWriteRead32 =
       (BINDER_WRITE_READ & ~IOCSIZE_MASK) |
       ((sizeof(binder_write_read) / 2) << _IOC_SIZESHIFT);
 #endif
@@ -90,11 +88,11 @@ ResultExpr RestrictAndroidIoctl(bool allow_userfaultfd_ioctls) {
   // https://cs.android.com/android/platform/superproject/+/android-7.0.0_r1:external/kernel-headers/original/uapi/linux/android_alarm.h;l=57.
   // The size is a `struct timespec`, which has a different width on 32- and
   // 64-bit systems, so handle both.
-  const int kAndroidAlarmGetTimeElapsedRealtime32 = 0x40086134;
-  const int kAndroidAlarmGetTimeElapsedRealtime64 = 0x40106134;
+  const unsigned int kAndroidAlarmGetTimeElapsedRealtime32 = 0x40086134;
+  const unsigned int kAndroidAlarmGetTimeElapsedRealtime64 = 0x40106134;
 
   return Switch(request)
-      .CASES((
+      .Cases({
                  // Android shared memory.
                  ASHMEM_SET_NAME, ASHMEM_GET_NAME, ASHMEM_SET_SIZE,
                  ASHMEM_GET_SIZE, ASHMEM_SET_PROT_MASK, ASHMEM_GET_PROT_MASK,
@@ -102,32 +100,31 @@ ResultExpr RestrictAndroidIoctl(bool allow_userfaultfd_ioctls) {
                  // Binder.
                  kBinderWriteRead32, kBinderWriteRead64, BINDER_SET_MAX_THREADS,
                  BINDER_THREAD_EXIT, BINDER_VERSION,
-                 BINDER_ENABLE_ONEWAY_SPAM_DETECTION),
+                 BINDER_ENABLE_ONEWAY_SPAM_DETECTION},
              Allow())
-      .CASES((
+      .Cases({
                  // userfaultfd ART GC (https://crbug.com/1300653).
                  UFFDIO_REGISTER, UFFDIO_UNREGISTER, UFFDIO_WAKE, UFFDIO_COPY,
-                 UFFDIO_ZEROPAGE, UFFDIO_CONTINUE),
+                 UFFDIO_ZEROPAGE, UFFDIO_CONTINUE},
              If(BoolConst(allow_userfaultfd_ioctls), Allow())
                  .Else(RestrictIoctl()))
-      .CASES((
+      .Cases({
                  // Deprecated Android /dev/alarm interface.
                  kAndroidAlarmGetTimeElapsedRealtime32,
                  kAndroidAlarmGetTimeElapsedRealtime64,
                  // Linux Network Block Device requests observed in the field
                  // https://crbug.com/1314105.
-                 NBD_CLEAR_SOCK, NBD_SET_BLKSIZE),
+                 NBD_CLEAR_SOCK, NBD_SET_BLKSIZE},
              Error(EINVAL))
       .Default(RestrictIoctl());
 }
 
 }  // namespace
 
-BaselinePolicyAndroid::BaselinePolicyAndroid()
-    : BaselinePolicy() {}
+BaselinePolicyAndroid::BaselinePolicyAndroid() = default;
 
 BaselinePolicyAndroid::BaselinePolicyAndroid(const RuntimeOptions& options)
-    : BaselinePolicy(), options_(options) {}
+    : options_(options) {}
 
 BaselinePolicyAndroid::~BaselinePolicyAndroid() {}
 
@@ -153,6 +150,11 @@ ResultExpr BaselinePolicyAndroid::EvaluateSyscall(int sysno) const {
     (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
     case __NR_fstatat64:
     case __NR_fstatfs64:
+#endif
+#if defined(__arm__) || defined(__aarch64__)
+    // getcpu() is allowed on ARM chips because it is used in
+    // //third_party/cpuinfo/ on those chips.
+    case __NR_getcpu:
 #endif
 #if defined(__i386__) || defined(__arm__) || defined(__mips__)
     case __NR_getdents:
@@ -212,13 +214,7 @@ ResultExpr BaselinePolicyAndroid::EvaluateSyscall(int sysno) const {
       break;
   }
 
-  // sched_getaffinity() and sched_setaffinity() are required for an
-  // experiment to schedule all Chromium threads onto LITTLE cores
-  // (crbug.com/1111789). Should be removed or reconsidered once
-  // the experiment is complete.
   if (sysno == __NR_sched_setaffinity || sysno == __NR_sched_getaffinity) {
-    if (options_.allow_sched_affinity)
-      return Allow();
     return Error(EPERM);
   }
 
@@ -300,10 +296,10 @@ ResultExpr BaselinePolicyAndroid::EvaluateSyscall(int sysno) const {
     // The baseline policy allows other socketcall sub-calls.
     const Arg<int> socketcall(0);
     return Switch(socketcall)
-        .CASES((SYS_CONNECT,
+        .Cases({SYS_CONNECT,
                 SYS_SOCKET,
                 SYS_SETSOCKOPT,
-                SYS_GETSOCKOPT),
+                SYS_GETSOCKOPT},
                Allow())
         .Default(BaselinePolicy::EvaluateSyscall(sysno));
   }

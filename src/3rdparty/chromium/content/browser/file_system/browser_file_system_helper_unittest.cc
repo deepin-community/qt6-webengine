@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,6 +19,7 @@
 #include "content/public/test/test_utils.h"
 #include "net/base/filename_util.h"
 #include "storage/browser/file_system/external_mount_points.h"
+#include "storage/browser/file_system/file_system_backend.h"
 #include "storage/browser/file_system/file_system_options.h"
 #include "storage/browser/file_system/file_system_url.h"
 #include "storage/browser/file_system/isolated_context.h"
@@ -59,8 +60,9 @@ TEST(BrowserFileSystemHelperTest,
       storage::FileSystemMountOption(), mount_path));
   storage::FileSystemURL original_file =
       external_mount_points->CreateExternalFileSystemURL(
-          blink::StorageKey(url::Origin::Create(kSensitiveOrigin)), kMountName,
-          kTestPath);
+          blink::StorageKey::CreateFirstParty(
+              url::Origin::Create(kSensitiveOrigin)),
+          kMountName, kTestPath);
   EXPECT_TRUE(original_file.is_valid());
   EXPECT_EQ(kSensitiveOrigin, original_file.origin().GetURL());
 
@@ -75,8 +77,7 @@ TEST(BrowserFileSystemHelperTest,
       /*quota_manager_proxy=*/nullptr,
       std::vector<std::unique_ptr<storage::FileSystemBackend>>(),
       std::vector<storage::URLRequestAutoMountHandler>(),
-      /*partition_path=*/base::FilePath(),
-      /*bucket_base_path=*/base::FilePath(), file_system_options);
+      /*partition_path=*/base::FilePath(), file_system_options);
 
   // Prepare content::DropData containing |file_system_url|.
   DropData::FileSystemFileInfo filesystem_file_info;

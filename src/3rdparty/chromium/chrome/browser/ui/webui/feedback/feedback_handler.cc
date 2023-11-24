@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 #include <memory>
 #include <string>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/strings/strcat.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -55,40 +55,47 @@ FeedbackHandler::FeedbackHandler(const FeedbackDialog* dialog)
 FeedbackHandler::~FeedbackHandler() = default;
 
 void FeedbackHandler::RegisterMessages() {
-  web_ui()->RegisterDeprecatedMessageCallback(
+  web_ui()->RegisterMessageCallback(
       "showDialog", base::BindRepeating(&FeedbackHandler::HandleShowDialog,
                                         base::Unretained(this)));
 #if BUILDFLAG(IS_CHROMEOS)
-  web_ui()->RegisterDeprecatedMessageCallback(
+  web_ui()->RegisterMessageCallback(
       "showAssistantLogsInfo",
       base::BindRepeating(&FeedbackHandler::HandleShowAssistantLogsInfo,
                           base::Unretained(this)));
-  web_ui()->RegisterDeprecatedMessageCallback(
+  web_ui()->RegisterMessageCallback(
       "showBluetoothLogsInfo",
       base::BindRepeating(&FeedbackHandler::HandleShowBluetoothLogsInfo,
                           base::Unretained(this)));
 #endif  // BUILDFLAG(IS_CHROMEOS)
-  web_ui()->RegisterDeprecatedMessageCallback(
+
+  web_ui()->RegisterMessageCallback(
+      "showAutofillMetadataInfo",
+      base::BindRepeating(&FeedbackHandler::HandleShowAutofillMetadataInfo,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
       "showSystemInfo",
       base::BindRepeating(&FeedbackHandler::HandleShowSystemInfo,
                           base::Unretained(this)));
-  web_ui()->RegisterDeprecatedMessageCallback(
+  web_ui()->RegisterMessageCallback(
       "showMetrics", base::BindRepeating(&FeedbackHandler::HandleShowMetrics,
                                          base::Unretained(this)));
 }
 
-void FeedbackHandler::HandleShowDialog(const base::ListValue* args) {
+void FeedbackHandler::HandleShowDialog(const base::Value::List& args) {
   dialog_->Show();
 }
 
 #if BUILDFLAG(IS_CHROMEOS)
-void FeedbackHandler::HandleShowAssistantLogsInfo(const base::ListValue* args) {
+void FeedbackHandler::HandleShowAssistantLogsInfo(
+    const base::Value::List& args) {
   ShowChildPage(Profile::FromWebUI(web_ui()), dialog_,
                 ChildPageURL("html/assistant_logs_info.html"), std::u16string(),
                 /*dialog_width=*/400, /*dialog_height=*/120,
                 /*can_resize=*/false, /*can_minimize=*/false);
 }
-void FeedbackHandler::HandleShowBluetoothLogsInfo(const base::ListValue* args) {
+void FeedbackHandler::HandleShowBluetoothLogsInfo(
+    const base::Value::List& args) {
   ShowChildPage(Profile::FromWebUI(web_ui()), dialog_,
                 ChildPageURL("html/bluetooth_logs_info.html"), std::u16string(),
                 /*dialog_width=*/400, /*dialog_height=*/120,
@@ -96,13 +103,18 @@ void FeedbackHandler::HandleShowBluetoothLogsInfo(const base::ListValue* args) {
 }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
-void FeedbackHandler::HandleShowSystemInfo(const base::ListValue* args) {
+void FeedbackHandler::HandleShowAutofillMetadataInfo(
+    const base::Value::List& args) {
+  // TODO(crbug.com/1407646): Introduce autofill metadata child page.
+}
+
+void FeedbackHandler::HandleShowSystemInfo(const base::Value::List& args) {
   ShowChildPage(Profile::FromWebUI(web_ui()), dialog_,
                 ChildPageURL("html/sys_info.html"),
                 l10n_util::GetStringUTF16(IDS_FEEDBACK_SYSINFO_PAGE_TITLE));
 }
 
-void FeedbackHandler::HandleShowMetrics(const base::ListValue* args) {
+void FeedbackHandler::HandleShowMetrics(const base::Value::List& args) {
   ShowChildPage(Profile::FromWebUI(web_ui()), dialog_,
                 GURL("chrome://histograms"), std::u16string());
 }

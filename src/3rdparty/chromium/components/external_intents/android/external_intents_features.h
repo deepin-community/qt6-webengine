@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,12 @@
 
 namespace external_intents {
 
-// Alphabetical:
-extern const base::Feature kIntentBlockExternalFormRedirectsNoGesture;
-
+BASE_DECLARE_FEATURE(kExternalNavigationDebugLogs);
+BASE_DECLARE_FEATURE(kExternalNavigationSubframeRedirects);
+BASE_DECLARE_FEATURE(kBlockSubframeIntentToSelf);
+BASE_DECLARE_FEATURE(kBlockFrameRenavigations);
+BASE_DECLARE_FEATURE(kDoNotRequireSpecializedCCTHandler);
+BASE_DECLARE_FEATURE(kBlockIntentsToSelf);
 }  // namespace external_intents
 
 #endif  // COMPONENTS_EXTERNAL_INTENTS_ANDROID_EXTERNAL_INTENTS_FEATURES_H_

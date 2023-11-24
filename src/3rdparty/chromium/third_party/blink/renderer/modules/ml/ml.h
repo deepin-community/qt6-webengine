@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,9 @@
 #include "components/ml/mojom/ml_service.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
-#include "third_party/blink/renderer/core/frame/navigator.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/modules/ml/ml_context.h"
+#include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/member.h"
 #include "third_party/blink/renderer/platform/heap/visitor.h"
@@ -23,7 +24,8 @@ class ScriptState;
 
 // This class represents the "Machine Learning" object "navigator.ml" and will
 // be shared between the Model Loader API and WebNN API.
-class ML final : public ScriptWrappable {
+class MODULES_EXPORT ML final : public ScriptWrappable,
+                                public ExecutionContextClient {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -45,6 +47,9 @@ class ML final : public ScriptWrappable {
   ScriptPromise createContext(ScriptState* state,
                               MLContextOptions* option,
                               ExceptionState& exception_state);
+  MLContext* createContextSync(ScriptState* script_state,
+                               MLContextOptions* options,
+                               ExceptionState& exception_state);
 
  private:
   // Binds the Mojo connection to browser process if needed.
@@ -53,8 +58,6 @@ class ML final : public ScriptWrappable {
   // Otherwise returns true.
   bool BootstrapMojoConnectionIfNeeded(ScriptState* script_state,
                                        ExceptionState& exception_state);
-
-  Member<ExecutionContext> execution_context_;
 
   HeapMojoRemote<ml::model_loader::mojom::blink::MLService> remote_service_;
 };

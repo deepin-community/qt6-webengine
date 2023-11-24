@@ -1,7 +1,8 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
@@ -23,10 +24,6 @@
 #include "ui/base/base_window.h"
 #include "ui/gfx/geometry/rect.h"
 
-#if BUILDFLAG(IS_WIN)
-#include "ui/base/win/shell.h"
-#endif
-
 namespace extensions {
 
 using AppWindowApiTest = PlatformAppBrowserTest;
@@ -34,7 +31,7 @@ using ExperimentalAppWindowApiTest = ExperimentalPlatformAppBrowserTest;
 
 // Tests chrome.app.window.setIcon.
 IN_PROC_BROWSER_TEST_F(ExperimentalAppWindowApiTest, SetIcon) {
-  ExtensionTestMessageListener listener("ready", true);
+  ExtensionTestMessageListener listener("ready", ReplyBehavior::kWillReply);
 
   // Launch the app and wait for it to be ready.
   LoadAndLaunchPlatformApp("windows_api_set_icon", &listener);
@@ -130,7 +127,7 @@ IN_PROC_BROWSER_TEST_F(AppWindowApiTest, SetShapeNoPerm) {
 }
 
 // Fails on Ozone/X11.  https://crbug.com/1109112
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
 #define MAYBE_AlphaEnabledHasPermissions DISABLED_AlphaEnabledHasPermissions
 #else
 #define MAYBE_AlphaEnabledHasPermissions AlphaEnabledHasPermissions
@@ -146,12 +143,6 @@ IN_PROC_BROWSER_TEST_F(AppWindowApiTest, MAYBE_AlphaEnabledHasPermissions) {
 // of lacros-chrome is complete.
 #if defined(USE_AURA) && !(BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))
   test_dir = kHasAlphaDir;
-
-#if BUILDFLAG(IS_WIN)
-  if (!ui::win::IsAeroGlassEnabled()) {
-    test_dir = kNoAlphaDir;
-  }
-#endif  // BUILDFLAG(IS_WIN)
 #endif  // USE_AURA && !(OS_LINUX || IS_CHROMEOS_LACROS)
 
   EXPECT_TRUE(RunExtensionTest(test_dir, {.launch_as_platform_app = true}))
@@ -210,7 +201,7 @@ IN_PROC_BROWSER_TEST_F(AppWindowApiTest, OpeningAbsoluteURLs) {
       (*app_windows.begin())->web_contents();
   EXPECT_EQ(GURL("chrome://version"),
             app_window_contents->GetLastCommittedURL());
-  EXPECT_FALSE(app_window_contents->GetMainFrame()->IsErrorDocument());
+  EXPECT_FALSE(app_window_contents->GetPrimaryMainFrame()->IsErrorDocument());
 }
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)

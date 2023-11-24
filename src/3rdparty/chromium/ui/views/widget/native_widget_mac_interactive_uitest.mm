@@ -1,8 +1,10 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ui/views/widget/native_widget_mac.h"
+
+#include "base/memory/raw_ptr.h"
 
 #import <Cocoa/Cocoa.h>
 
@@ -17,8 +19,7 @@
 #include "ui/views/test/test_widget_observer.h"
 #include "ui/views/test/widget_test.h"
 
-namespace views {
-namespace test {
+namespace views::test {
 
 // Tests for NativeWidgetMac that rely on global window manager state, and can
 // not be parallelized.
@@ -68,7 +69,7 @@ class NativeWidgetMacInteractiveUITest::Observer : public TestWidgetObserver {
   }
 
  private:
-  NativeWidgetMacInteractiveUITest* parent_;
+  raw_ptr<NativeWidgetMacInteractiveUITest> parent_;
 };
 
 // Test that showing a window causes it to attain global keyWindow status.
@@ -379,5 +380,4 @@ INSTANTIATE_TEST_SUITE_P(NativeWidgetMacInteractiveUITestInstance,
                          NativeWidgetMacInteractiveUITest,
                          ::testing::Bool());
 
-}  // namespace test
-}  // namespace views
+}  // namespace views::test

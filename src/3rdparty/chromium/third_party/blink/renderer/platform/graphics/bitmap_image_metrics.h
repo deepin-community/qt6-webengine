@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -35,8 +35,8 @@ class PLATFORM_EXPORT BitmapImageMetrics {
     kICO = 5,
     kBMP = 6,
     kAVIF = 7,
-    kJXL = 8,
-    kMaxValue = kJXL,
+    kREMOVED_JXL = 8,
+    kMaxValue = kREMOVED_JXL,
   };
 
   // Categories for the JPEG color space histogram. Synced with 'JpegColorSpace'

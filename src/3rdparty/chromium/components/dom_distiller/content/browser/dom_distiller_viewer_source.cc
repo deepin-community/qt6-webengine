@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/metrics/histogram_macros.h"
@@ -16,7 +16,6 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "components/back_forward_cache/back_forward_cache_disable.h"
 #include "components/dom_distiller/content/browser/distiller_javascript_utils.h"
@@ -110,7 +109,7 @@ void DomDistillerViewerSource::RequestViewerHandle::SendJavaScript(
   } else {
     DCHECK(buffer_.empty());
     if (web_contents()) {
-      RunIsolatedJavaScript(web_contents()->GetMainFrame(), buffer);
+      RunIsolatedJavaScript(web_contents()->GetPrimaryMainFrame(), buffer);
     }
   }
 }
@@ -154,7 +153,8 @@ void DomDistillerViewerSource::RequestViewerHandle::Cancel() {
 
   // Schedule the Viewer for deletion. Ensures distillation is cancelled, and
   // any pending data stored in |buffer_| is released.
-  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
+  base::SingleThreadTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE,
+                                                                this);
 }
 
 void DomDistillerViewerSource::RequestViewerHandle::DOMContentLoaded(
@@ -186,16 +186,16 @@ void DomDistillerViewerSource::RequestViewerHandle::DOMContentLoaded(
   // No SendJavaScript() calls allowed before |buffer_| is run and cleared.
   waiting_for_page_ready_ = false;
   if (!buffer_.empty()) {
-    RunIsolatedJavaScript(web_contents()->GetMainFrame(), buffer_);
+    RunIsolatedJavaScript(web_contents()->GetPrimaryMainFrame(), buffer_);
     buffer_.clear();
   }
   // No need to Cancel() here.
 }
 
 DomDistillerViewerSource::DomDistillerViewerSource(
-    DomDistillerServiceInterface* dom_distiller_service,
-    const std::string& scheme)
-    : scheme_(scheme), dom_distiller_service_(dom_distiller_service) {}
+    DomDistillerServiceInterface* dom_distiller_service)
+    : scheme_(kDomDistillerScheme),
+      dom_distiller_service_(dom_distiller_service) {}
 
 DomDistillerViewerSource::~DomDistillerViewerSource() = default;
 
@@ -221,12 +221,14 @@ void DomDistillerViewerSource::StartDataRequest(
 #endif  // !BUILDFLAG(IS_ANDROID)
   if (kViewerCssPath == path) {
     std::string css = viewer::GetCss();
-    std::move(callback).Run(base::RefCountedString::TakeString(&css));
+    std::move(callback).Run(
+        base::MakeRefCounted<base::RefCountedString>(std::move(css)));
     return;
   }
   if (kViewerLoadingImagePath == path) {
     std::string image = viewer::GetLoadingImage();
-    std::move(callback).Run(base::RefCountedString::TakeString(&image));
+    std::move(callback).Run(
+        base::MakeRefCounted<base::RefCountedString>(std::move(image)));
     return;
   }
   if (base::StartsWith(path, kViewerSaveFontScalingPath,
@@ -276,11 +278,12 @@ void DomDistillerViewerSource::StartDataRequest(
   }
 
   // Place template on the page.
-  std::move(callback).Run(
-      base::RefCountedString::TakeString(&unsafe_page_html));
+  std::move(callback).Run(base::MakeRefCounted<base::RefCountedString>(
+      std::move(unsafe_page_html)));
 }
 
-std::string DomDistillerViewerSource::GetMimeType(const std::string& path) {
+std::string DomDistillerViewerSource::GetMimeType(const GURL& url) {
+  const base::StringPiece path = url.path_piece().substr(1);
   if (kViewerCssPath == path)
     return "text/css";
   if (kViewerLoadingImagePath == path)

@@ -11,14 +11,14 @@
 
 #include "absl/strings/string_view.h"
 #include "quiche/common/platform/api/quiche_export.h"
-#include "quiche/spdy/core/spdy_header_block.h"
+#include "quiche/spdy/core/http2_header_block.h"
 #include "quiche/spdy/core/spdy_headers_handler_interface.h"
 
 namespace spdy {
 
 // RecordingHeadersHandler copies the headers emitted from the deframer, and
 // when needed can forward events to another wrapped handler.
-class QUICHE_EXPORT_PRIVATE RecordingHeadersHandler
+class QUICHE_EXPORT RecordingHeadersHandler
     : public SpdyHeadersHandlerInterface {
  public:
   explicit RecordingHeadersHandler(

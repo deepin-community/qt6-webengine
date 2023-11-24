@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 #include <string>
 #include <tuple>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/values.h"
 #include "components/policy/core/browser/configuration_policy_handler.h"
 #include "components/policy/core/browser/policy_conversions_client.h"
@@ -80,14 +80,14 @@ class ConfigurationPolicyHandlerListTest : public ::testing::Test {
         policies_, &prefs_, &errors_, &deprecated_policies_, &future_policies_);
   }
 
-  void CreateHandlerList(bool allow_all_future_policies = false) {
+  void CreateHandlerList(bool are_future_policies_allowed_by_default = false) {
     handler_list_ = std::make_unique<ConfigurationPolicyHandlerList>(
         ConfigurationPolicyHandlerList::
             PopulatePolicyHandlerParametersCallback(),
         base::BindRepeating(
             &ConfigurationPolicyHandlerListTest::GetPolicyDetails,
             base::Unretained(this)),
-        allow_all_future_policies);
+        are_future_policies_allowed_by_default);
   }
 
   PrefValueMap* prefs() { return &prefs_; }
@@ -148,10 +148,10 @@ TEST_F(ConfigurationPolicyHandlerListTest, ApplySettingsWithFuturePolicy) {
                       /* in_deprecated */ false, /* in_future */ true);
 
   // Whitelist a different policy.
-  base::Value::ListStorage enabled_future_policies;
-  enabled_future_policies.push_back(base::Value(kPolicyName2));
+  base::Value::List enabled_future_policies;
+  enabled_future_policies.Append(kPolicyName2);
   AddPolicy(key::kEnableExperimentalPolicies, /* is_cloud */ true,
-            base::Value(enabled_future_policies));
+            base::Value(enabled_future_policies.Clone()));
 
   ApplySettings();
 
@@ -159,9 +159,9 @@ TEST_F(ConfigurationPolicyHandlerListTest, ApplySettingsWithFuturePolicy) {
                       /* in_deprecated */ false, /* in_future */ true);
 
   // Whitelist the policy.
-  enabled_future_policies.push_back(base::Value(kPolicyName));
+  enabled_future_policies.Append(base::Value(kPolicyName));
   AddPolicy(key::kEnableExperimentalPolicies, /* is_cloud */ true,
-            base::Value(enabled_future_policies));
+            base::Value(std::move(enabled_future_policies)));
 
   ApplySettings();
 

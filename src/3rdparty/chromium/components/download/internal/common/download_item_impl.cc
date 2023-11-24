@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,19 +27,20 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
+#include "base/functional/bind.h"
 #include "base/guid.h"
 #include "base/json/string_escape.h"
 #include "base/logging.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/observer_list.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task/task_runner_util.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/trace_event/memory_usage_estimator.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
@@ -56,12 +57,12 @@
 #include "components/download/public/common/download_ukm_helper.h"
 #include "components/download/public/common/download_url_parameters.h"
 #include "components/download/public/common/download_utils.h"
-#include "components/enterprise/common/download_item_reroute_info.h"
 #include "net/base/network_change_notifier.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/referrer_policy.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
 #if BUILDFLAG(IS_ANDROID)
@@ -330,8 +331,6 @@ DownloadItemImpl::DownloadItemImpl(
     base::Time last_access_time,
     bool transient,
     const std::vector<DownloadItem::ReceivedSlice>& received_slices,
-    const DownloadItemRerouteInfo& reroute_info,
-    absl::optional<DownloadSchedule> download_schedule,
     int64_t range_request_from,
     int64_t range_request_to,
     std::unique_ptr<DownloadEntry> download_entry)
@@ -376,9 +375,7 @@ DownloadItemImpl::DownloadItemImpl(
       last_modified_time_(last_modified),
       etag_(etag),
       received_slices_(received_slices),
-      is_updating_observers_(false),
-      download_schedule_(std::move(download_schedule)),
-      reroute_info_(reroute_info) {
+      is_updating_observers_(false) {
   delegate_->Attach();
   DCHECK(state_ == COMPLETE_INTERNAL || state_ == INTERRUPTED_INTERNAL ||
          state_ == CANCELLED_INTERNAL);
@@ -391,7 +388,7 @@ DownloadItemImpl::DownloadItemImpl(
     ukm_download_id_ = download_entry->ukm_download_id;
     bytes_wasted_ = download_entry->bytes_wasted;
   } else {
-    ukm_download_id_ = GetUniqueDownloadId();
+    ukm_download_id_ = ukm::NoURLSourceId();
   }
   Init(false /* not actively downloading */, TYPE_HISTORY_IMPORT);
 }
@@ -454,7 +451,6 @@ DownloadItemImpl::DownloadItemImpl(
     const base::FilePath& path,
     const GURL& url,
     const std::string& mime_type,
-
     DownloadJob::CancelRequestCallback cancel_request_callback)
     : request_info_(url),
       guid_(base::GenerateGUID()),
@@ -537,31 +533,14 @@ void DownloadItemImpl::ValidateDangerousDownload() {
   MaybeCompleteDownload();
 }
 
-void DownloadItemImpl::ValidateMixedContentDownload() {
+void DownloadItemImpl::ValidateInsecureDownload() {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(!IsDone());
-  DCHECK(IsMixedContent());
+  DCHECK(IsInsecure());
 
   DVLOG(20) << __func__ << "() download=" << DebugString(true);
 
-  mixed_content_status_ = MixedContentStatus::VALIDATED;
-
-  UpdateObservers();  // TODO(asanka): This is potentially unsafe. The download
-                      // may not be in a consistent state or around at all after
-                      // invoking observers, but we keep it here because it is
-                      // used in ValidateDangerousDownload(), too.
-                      // http://crbug.com/586610
-
-  MaybeCompleteDownload();
-}
-
-void DownloadItemImpl::AcceptIncognitoWarning() {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  DCHECK(!incognito_warning_accepted_);
-
-  DVLOG(20) << __func__ << "() download=" << DebugString(true);
-
-  incognito_warning_accepted_ = true;
+  insecure_download_status_ = InsecureDownloadStatus::VALIDATED;
 
   UpdateObservers();  // TODO(asanka): This is potentially unsafe. The download
                       // may not be in a consistent state or around at all after
@@ -581,8 +560,8 @@ void DownloadItemImpl::StealDangerousDownload(bool delete_file_afterward,
 
   if (delete_file_afterward) {
     if (download_file_) {
-      base::PostTaskAndReplyWithResult(
-          GetDownloadTaskRunner().get(), FROM_HERE,
+      GetDownloadTaskRunner()->PostTaskAndReplyWithResult(
+          FROM_HERE,
           base::BindOnce(&DownloadFileDetach, std::move(download_file_)),
           std::move(callback));
     } else {
@@ -592,8 +571,8 @@ void DownloadItemImpl::StealDangerousDownload(bool delete_file_afterward,
     Remove();
     // Download item has now been deleted.
   } else if (download_file_) {
-    base::PostTaskAndReplyWithResult(
-        GetDownloadTaskRunner().get(), FROM_HERE,
+    GetDownloadTaskRunner()->PostTaskAndReplyWithResult(
+        FROM_HERE,
         base::BindOnce(&MakeCopyOfDownloadFile, download_file_.get()),
         std::move(callback));
   } else {
@@ -691,14 +670,11 @@ void DownloadItemImpl::UpdateResumptionInfo(bool user_resume) {
   ++auto_resume_count_;
   if (user_resume)
     auto_resume_count_ = 0;
-  download_schedule_ = absl::nullopt;
-  RecordDownloadLaterEvent(DownloadLaterEvent::kScheduleRemoved);
 }
 
 void DownloadItemImpl::Cancel(bool user_cancel) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DVLOG(20) << __func__ << "() download = " << DebugString(true);
-  download_schedule_ = absl::nullopt;
   InterruptAndDiscardPartialState(
       user_cancel ? DOWNLOAD_INTERRUPT_REASON_USER_CANCELED
                   : DOWNLOAD_INTERRUPT_REASON_USER_SHUTDOWN);
@@ -790,7 +766,7 @@ void DownloadItemImpl::Rename(const base::FilePath& display_name,
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   if (display_name.IsAbsolute()) {
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&DownloadItemImpl::RenameDownloadedFileDone,
                                   weak_ptr_factory_.GetWeakPtr(),
                                   std::move(callback), GetFullPath(),
@@ -798,8 +774,8 @@ void DownloadItemImpl::Rename(const base::FilePath& display_name,
     return;
   }
 
-  base::PostTaskAndReplyWithResult(
-      GetDownloadTaskRunner().get(), FROM_HERE,
+  GetDownloadTaskRunner()->PostTaskAndReplyWithResult(
+      FROM_HERE,
       base::BindOnce(&download::RenameDownloadedFile, GetFullPath(),
                      display_name),
       base::BindOnce(&DownloadItemImpl::RenameDownloadedFileDone,
@@ -875,6 +851,10 @@ int64_t DownloadItemImpl::GetBytesWasted() const {
 
 int32_t DownloadItemImpl::GetAutoResumeCount() const {
   return auto_resume_count_;
+}
+
+bool DownloadItemImpl::IsOffTheRecord() const {
+  return delegate_->IsOffTheRecord();
 }
 
 const GURL& DownloadItemImpl::GetURL() const {
@@ -1006,7 +986,7 @@ void DownloadItemImpl::DeleteFile(base::OnceCallback<void(bool)> callback) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (GetState() != DownloadItem::COMPLETE) {
     // Pass a null WeakPtr so it doesn't call OnDownloadedFileRemoved.
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&DeleteDownloadedFileDone,
                                   base::WeakPtr<DownloadItemImpl>(),
                                   std::move(callback), false));
@@ -1014,32 +994,20 @@ void DownloadItemImpl::DeleteFile(base::OnceCallback<void(bool)> callback) {
   }
   if (GetFullPath().empty() || file_externally_removed_) {
     // Pass a null WeakPtr so it doesn't call OnDownloadedFileRemoved.
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&DeleteDownloadedFileDone,
                                   base::WeakPtr<DownloadItemImpl>(),
                                   std::move(callback), true));
     return;
   }
-  base::PostTaskAndReplyWithResult(
-      GetDownloadTaskRunner().get(), FROM_HERE,
-      base::BindOnce(&DeleteDownloadedFile, GetFullPath()),
+  GetDownloadTaskRunner()->PostTaskAndReplyWithResult(
+      FROM_HERE, base::BindOnce(&DeleteDownloadedFile, GetFullPath()),
       base::BindOnce(&DeleteDownloadedFileDone, weak_ptr_factory_.GetWeakPtr(),
                      std::move(callback)));
 }
 
 DownloadFile* DownloadItemImpl::GetDownloadFile() {
   return download_file_.get();
-}
-
-DownloadItemRenameHandler* DownloadItemImpl::GetRenameHandler() {
-  if (!rename_handler_) {
-    rename_handler_ = delegate_->GetRenameHandlerForDownload(this);
-  }
-  return rename_handler_.get();
-}
-
-const DownloadItemRerouteInfo& DownloadItemImpl::GetRerouteInfo() const {
-  return reroute_info_;
 }
 
 bool DownloadItemImpl::IsDangerous() const {
@@ -1057,24 +1025,19 @@ bool DownloadItemImpl::IsDangerous() const {
          danger_type_ == DOWNLOAD_DANGER_TYPE_DANGEROUS_ACCOUNT_COMPROMISE;
 }
 
-bool DownloadItemImpl::IsMixedContent() const {
-  return mixed_content_status_ == MixedContentStatus::WARN ||
-         mixed_content_status_ == MixedContentStatus::BLOCK ||
-         mixed_content_status_ == MixedContentStatus::SILENT_BLOCK;
-}
-
-bool DownloadItemImpl::ShouldShowIncognitoWarning() const {
-  return base::FeatureList::IsEnabled(features::kIncognitoDownloadsWarning) &&
-         delegate_->IsOffTheRecord() && !incognito_warning_accepted_;
+bool DownloadItemImpl::IsInsecure() const {
+  return insecure_download_status_ == InsecureDownloadStatus::WARN ||
+         insecure_download_status_ == InsecureDownloadStatus::BLOCK ||
+         insecure_download_status_ == InsecureDownloadStatus::SILENT_BLOCK;
 }
 
 DownloadDangerType DownloadItemImpl::GetDangerType() const {
   return danger_type_;
 }
 
-DownloadItem::MixedContentStatus DownloadItemImpl::GetMixedContentStatus()
-    const {
-  return mixed_content_status_;
+DownloadItem::InsecureDownloadStatus
+DownloadItemImpl::GetInsecureDownloadStatus() const {
+  return insecure_download_status_;
 }
 
 bool DownloadItemImpl::TimeRemaining(base::TimeDelta* remaining) const {
@@ -1187,11 +1150,6 @@ DownloadItem::DownloadCreationType DownloadItemImpl::GetDownloadCreationType()
   return download_type_;
 }
 
-const absl::optional<DownloadSchedule>& DownloadItemImpl::GetDownloadSchedule()
-    const {
-  return download_schedule_;
-}
-
 ::network::mojom::CredentialsMode DownloadItemImpl::GetCredentialsMode() const {
   return request_info_.credentials_mode;
 }
@@ -1232,28 +1190,6 @@ void DownloadItemImpl::OnAsyncScanningCompleted(
             << " download=" << DebugString(true);
   SetDangerType(danger_type);
   UpdateObservers();
-}
-
-void DownloadItemImpl::OnDownloadScheduleChanged(
-    absl::optional<DownloadSchedule> schedule) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  if (!base::FeatureList::IsEnabled(features::kDownloadLater) ||
-      state_ != INTERRUPTED_INTERNAL) {
-    return;
-  }
-
-  RecordDownloadLaterEvent(DownloadLaterEvent::kScheduleChanged);
-
-  SwapDownloadSchedule(std::move(schedule));
-
-  // Need to start later, don't proceed and ping observers.
-  if (ShouldDownloadLater()) {
-    UpdateObservers();
-    return;
-  }
-
-  // Download now. allow_metered_ will be updated afterward.
-  Resume(true /*user_resume*/);
 }
 
 void DownloadItemImpl::SetOpenWhenComplete(bool open) {
@@ -1313,8 +1249,6 @@ std::string DownloadItemImpl::DebugString(bool verbose) const {
         "\"\n\t"
         " target_path = \"%" PRFilePath
         "\"\n\t"
-        " rereoute_info = '%s'"
-        "\""
         " referrer = \"%s\""
         " serialized_embedder_download_data = \"%s\"",
         GetTotalBytes(), GetReceivedBytes(),
@@ -1324,7 +1258,7 @@ std::string DownloadItemImpl::DebugString(bool verbose) const {
         GetLastModifiedTime().c_str(), GetETag().c_str(),
         download_file_ ? "true" : "false", url_list.c_str(),
         GetFullPath().value().c_str(), GetTargetFilePath().value().c_str(),
-        reroute_info_.DebugString().c_str(), GetReferrerUrl().spec().c_str(),
+        GetReferrerUrl().spec().c_str(),
         GetSerializedEmbedderDownloadData().c_str());
   } else {
     description += base::StringPrintf(" url = \"%s\"", url_list.c_str());
@@ -1588,7 +1522,7 @@ void DownloadItemImpl::Init(bool active,
         "download", "DownloadItemActive",
         TRACE_ID_WITH_SCOPE("DownloadItemActive", download_id_),
         "download_item", std::move(active_data));
-    ukm_download_id_ = GetUniqueDownloadId();
+    ukm_download_id_ = ukm::NoURLSourceId();
   } else {
     TRACE_EVENT_INSTANT1("download", "DownloadItemActive",
                          TRACE_EVENT_SCOPE_THREAD, "download_item",
@@ -1664,7 +1598,7 @@ void DownloadItemImpl::Start(
     // We're posting the call to DetermineDownloadTarget() instead of calling it
     // directly to ensure that OnDownloadTargetDetermined() is not called
     // synchronously. See crbug.com/1209856 for more details.
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&DownloadItemImpl::DetermineDownloadTarget,
                                   weak_ptr_factory_.GetWeakPtr()));
     return;
@@ -1756,10 +1690,10 @@ void DownloadItemImpl::OnDownloadTargetDetermined(
     const base::FilePath& target_path,
     TargetDisposition disposition,
     DownloadDangerType danger_type,
-    MixedContentStatus mixed_content_status,
+    InsecureDownloadStatus insecure_download_status,
     const base::FilePath& intermediate_path,
     const base::FilePath& display_name,
-    absl::optional<DownloadSchedule> download_schedule,
+    const std::string& mime_type,
     DownloadInterruptReason interrupt_reason) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (state_ == CANCELLED_INTERNAL)
@@ -1782,10 +1716,6 @@ void DownloadItemImpl::OnDownloadTargetDetermined(
     return;
   }
 
-  if (download_schedule)
-    RecordDownloadLaterEvent(DownloadLaterEvent::kScheduleAdded);
-  SwapDownloadSchedule(std::move(download_schedule));
-
   // There were no other pending errors, and we just failed to determined the
   // download target. The target path, if it is non-empty, should be considered
   // suspect. The safe option here is to interrupt the download without doing an
@@ -1802,9 +1732,11 @@ void DownloadItemImpl::OnDownloadTargetDetermined(
   destination_info_.target_path = target_path;
   destination_info_.target_disposition = disposition;
   SetDangerType(danger_type);
-  mixed_content_status_ = mixed_content_status;
+  insecure_download_status_ = insecure_download_status;
   if (!display_name.empty())
     SetDisplayName(display_name);
+  if (!mime_type.empty())
+    mime_type_ = mime_type;
 
   // This was an interrupted download that was looking for a filename. Resolve
   // early without performing the intermediate rename. If there is a
@@ -1901,62 +1833,12 @@ void DownloadItemImpl::OnTargetResolved() {
     return;
   }
 
-  // The download will be started later, interrupt it for now.
-  if (MaybeDownloadLater()) {
-    UpdateObservers();
-    return;
-  }
-
-  download_schedule_ = absl::nullopt;
-
   TransitionTo(IN_PROGRESS_INTERNAL);
   // TODO(asanka): Calling UpdateObservers() prior to MaybeCompleteDownload() is
   // not safe. The download could be in an underminate state after invoking
   // observers. http://crbug.com/586610
   UpdateObservers();
   MaybeCompleteDownload();
-}
-
-bool DownloadItemImpl::MaybeDownloadLater() {
-  if (!base::FeatureList::IsEnabled(features::kDownloadLater) ||
-      !download_schedule_.has_value()) {
-    return false;
-  }
-
-  if (ShouldDownloadLater()) {
-    // TODO(xingliu): Maybe add a new interrupt reason for download later
-    // feature.
-    InterruptWithPartialState(GetReceivedBytes(), std::move(hash_state_),
-                              DOWNLOAD_INTERRUPT_REASON_CRASH);
-    return true;
-  }
-
-  return false;
-}
-
-bool DownloadItemImpl::ShouldDownloadLater() const {
-  // No schedule, just proceed.
-  if (!download_schedule_)
-    return false;
-
-  bool network_type_ok = !download_schedule_->only_on_wifi() ||
-                         !delegate_->IsActiveNetworkMetered();
-  bool should_start_later =
-      download_schedule_->start_time().has_value() &&
-      download_schedule_->start_time() > base::Time::Now();
-
-  // Don't proceed if network requirement is not met or has a scheduled start
-  // time.
-  return !network_type_ok || should_start_later;
-}
-
-void DownloadItemImpl::SwapDownloadSchedule(
-    absl::optional<DownloadSchedule> download_schedule) {
-  if (!base::FeatureList::IsEnabled(features::kDownloadLater))
-    return;
-  download_schedule_ = std::move(download_schedule);
-  if (download_schedule_)
-    allow_metered_ = !download_schedule_->only_on_wifi();
 }
 
 // When SavePackage downloads MHTML to GData (see
@@ -2004,15 +1886,6 @@ void DownloadItemImpl::OnDownloadCompleting() {
       base::BindOnce(&DownloadItemImpl::OnDownloadRenamedToFinalName,
                      weak_ptr_factory_.GetWeakPtr());
 
-  // If an alternate rename handler is specified, use it instead.
-  if (!is_temporary_ && GetRenameHandler()) {
-    auto update_callback =
-        base::BindRepeating(&DownloadItemImpl::OnRenameHandlerUpdate,
-                            weak_ptr_factory_.GetWeakPtr());
-    GetRenameHandler()->Start(update_callback, std::move(rename_callback));
-    return;
-  }
-
 #if BUILDFLAG(IS_ANDROID)
   if (GetTargetFilePath().IsContentUri()) {
     GetDownloadTaskRunner()->PostTask(
@@ -2039,17 +1912,6 @@ void DownloadItemImpl::OnDownloadCompleting() {
                      delegate_->IsOffTheRecord() ? GURL() : GetURL(),
                      delegate_->IsOffTheRecord() ? GURL() : GetReferrerUrl(),
                      std::move(quarantine), std::move(rename_callback)));
-}
-
-void DownloadItemImpl::OnRenameHandlerUpdate(
-    const DownloadItemRenameProgressUpdate& update) {
-  TRACE_EVENT_INSTANT1("download", "DownloadItemRenameProgressUpdated",
-                       TRACE_EVENT_SCOPE_THREAD, "new_file_name",
-                       update.target_file_name);
-  DCHECK_EQ(state_, IN_PROGRESS_INTERNAL);
-  destination_info_.target_path = update.target_file_name;
-  reroute_info_ = update.reroute_info;
-  UpdateObservers();
 }
 
 void DownloadItemImpl::OnDownloadRenamedToFinalName(
@@ -2142,6 +2004,14 @@ void DownloadItemImpl::Completed() {
     }
   }
 
+  // TODO(crbug.com/1372476): Remove these histograms after debugging.
+  if (!IsTemporary()) {
+    base::UmaHistogramBoolean("Download.Complete.IsOpenWhenCompleteSet",
+                              GetOpenWhenComplete());
+    base::UmaHistogramBoolean(
+        "Download.Complete.IsShouldOpenFileBasedOnExtensionSet",
+        ShouldOpenFileBasedOnExtension());
+  }
   if (auto_opened_) {
     // If it was already handled by the delegate, do nothing.
   } else if (GetOpenWhenComplete() || ShouldOpenFileBasedOnExtension() ||
@@ -2398,14 +2268,10 @@ bool DownloadItemImpl::IsDownloadReadyForCompletion(
   if (IsDangerous())
     return false;
 
-  // If the download is mixed content, but not yet validated, it's not ready for
+  // If the download is insecure, but not yet validated, it's not ready for
   // completion.
-  if (IsMixedContent())
+  if (IsInsecure())
     return false;
-
-  if (ShouldShowIncognitoWarning()) {
-    return false;
-  }
 
   // Check for consistency before invoking delegate. Since there are no pending
   // target determination calls and the download is in progress, both the target
@@ -2570,9 +2436,6 @@ void DownloadItemImpl::SetFullPath(const base::FilePath& new_path) {
 void DownloadItemImpl::AutoResumeIfValid() {
   DVLOG(20) << __func__ << "() " << DebugString(true);
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-
-  if (download_schedule_.has_value())
-    return;
 
   ResumeMode mode = GetResumeMode();
   if (mode != ResumeMode::IMMEDIATE_RESTART &&

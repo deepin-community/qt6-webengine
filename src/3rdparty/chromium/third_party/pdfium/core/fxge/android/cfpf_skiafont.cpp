@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,7 +13,7 @@
 #include "core/fxcrt/fx_system.h"
 #include "core/fxge/android/cfpf_skiafontmgr.h"
 #include "core/fxge/android/cfpf_skiapathfont.h"
-#include "core/fxge/fx_freetype.h"
+#include "core/fxge/freetype/fx_freetype.h"
 #include "third_party/base/numerics/safe_conversions.h"
 
 #define FPF_EM_ADJUST(em, a) (em == 0 ? (a) : (a)*1000 / em)

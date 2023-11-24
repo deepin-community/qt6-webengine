@@ -1,3 +1,5 @@
+# mypy: allow-untyped-defs
+
 import argparse
 import json
 import logging
@@ -78,6 +80,10 @@ def parse_args(argv, commands=load_commands()):
     for command, props in commands.items():
         subparsers.add_parser(command, help=props["help"], add_help=False)
 
+    if not argv:
+        parser.print_help()
+        return None, None
+
     args, extra = parser.parse_known_args(argv)
 
     return args, extra
@@ -100,7 +106,7 @@ def import_command(prog, command, props):
     script = getattr(mod, props["script"])
     if props["parser"] is not None:
         parser = getattr(mod, props["parser"])()
-        parser.prog = "%s %s" % (os.path.basename(prog), command)
+        parser.prog = f"{os.path.basename(prog)} {command}"
     else:
         parser = None
 
@@ -117,11 +123,17 @@ def create_complete_parser():
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers()
 
+    # We should already be in a virtual environment from the top-level
+    # `wpt build-docs` command but we need to look up the environment to
+    # find out where it's located.
+    venv_path = os.environ["VIRTUAL_ENV"]
+    venv = virtualenv.Virtualenv(venv_path, True)
+
     for command in commands:
         props = commands[command]
 
-        if props["virtualenv"]:
-            setup_virtualenv(None, False, props)
+        for path in props.get("requirements", []):
+            venv.install_requirements(path)
 
         subparser = import_command('wpt', command, props)[1]
         if not subparser:
@@ -180,6 +192,9 @@ def main(prog=None, argv=None):
     commands = load_commands()
 
     main_args, command_args = parse_args(argv, commands)
+
+    if not main_args:
+        return
 
     command = main_args.command
     props = commands[command]

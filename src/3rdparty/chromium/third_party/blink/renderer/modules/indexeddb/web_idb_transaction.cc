@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "base/format_macros.h"
+#include "base/task/sequenced_task_runner.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom-blink.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_database_error.h"
@@ -75,8 +76,8 @@ void WebIDBTransaction::Put(int64_t object_store_id,
   callbacks->SetState(nullptr, transaction_id_);
   transaction_->Put(object_store_id, std::move(value), std::move(primary_key),
                     put_mode, std::move(index_keys),
-                    WTF::Bind(&WebIDBTransaction::PutCallback,
-                              WTF::Unretained(this), std::move(callbacks)));
+                    WTF::BindOnce(&WebIDBTransaction::PutCallback,
+                                  WTF::Unretained(this), std::move(callbacks)));
 }
 
 void WebIDBTransaction::PutCallback(

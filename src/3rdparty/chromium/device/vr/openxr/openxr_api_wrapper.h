@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,7 @@
 #include <memory>
 #include <vector>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
@@ -21,6 +21,7 @@
 #include "device/vr/openxr/openxr_view_configuration.h"
 #include "device/vr/public/mojom/vr_service.mojom.h"
 #include "device/vr/vr_export.h"
+#include "device/vr/windows/compositor_base.h"
 #include "third_party/openxr/src/include/openxr/openxr.h"
 #include "third_party/openxr/src/include/openxr/openxr_platform.h"
 
@@ -40,7 +41,7 @@ class VRTestHook;
 class ServiceTestHook;
 
 using SessionStartedCallback = base::OnceCallback<void(XrResult result)>;
-using SessionEndedCallback = base::RepeatingCallback<void()>;
+using SessionEndedCallback = base::RepeatingCallback<void(ExitXrPresentReason)>;
 using VisibilityChangedCallback =
     base::RepeatingCallback<void(mojom::XRVisibilityState)>;
 
@@ -160,7 +161,7 @@ class OpenXrApiWrapper {
   void CreateSharedMailboxes();
   void ReleaseColorSwapchainImages();
 
-  static mojom::XREye GetEyeFromIndex(int i);
+  void SetXrSessionState(XrSessionState new_state);
 
   // The session is running only after xrBeginSession and before xrEndSession.
   // It is not considered running after creation but before xrBeginSession.
@@ -178,6 +179,9 @@ class OpenXrApiWrapper {
   std::unique_ptr<OpenXRInputHelper> input_helper_;
 
   // OpenXR objects
+
+  // Tracks the session state throughout the lifetime of the Wrapper.
+  XrSessionState session_state_ = XR_SESSION_STATE_UNKNOWN;
 
   // These objects are initialized on successful initialization.
   XrInstance instance_;
@@ -222,9 +226,6 @@ class OpenXrApiWrapper {
   OpenXrViewConfiguration primary_view_config_;
   std::unordered_map<XrViewConfigurationType, OpenXrViewConfiguration>
       secondary_view_configs_;
-
-  // Location that describes the viewer (aka. head) pose.
-  XrSpaceLocation local_from_viewer_;
 
   std::unique_ptr<OpenXrAnchorManager> anchor_manager_;
   std::unique_ptr<OpenXRSceneUnderstandingManager> scene_understanding_manager_;

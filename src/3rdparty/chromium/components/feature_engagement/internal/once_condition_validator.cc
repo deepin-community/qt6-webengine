@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,6 +17,7 @@ OnceConditionValidator::~OnceConditionValidator() = default;
 ConditionValidator::Result OnceConditionValidator::MeetsConditions(
     const base::Feature& feature,
     const FeatureConfig& config,
+    const std::vector<GroupConfig>& group_configs,
     const EventModel& event_model,
     const AvailabilityModel& availability_model,
     const DisplayLockController& display_lock_controller,
@@ -25,7 +26,8 @@ ConditionValidator::Result OnceConditionValidator::MeetsConditions(
   ConditionValidator::Result result(true);
   result.event_model_ready_ok = event_model.IsReady();
 
-  result.currently_showing_ok = currently_showing_feature_.empty();
+  result.currently_showing_ok =
+      allows_multiple_features_ || currently_showing_features_.empty();
 
   result.config_ok = config.valid;
 
@@ -55,15 +57,18 @@ void OnceConditionValidator::NotifyIsShowing(
     const base::Feature& feature,
     const FeatureConfig& config,
     const std::vector<std::string>& all_feature_names) {
-  DCHECK(currently_showing_feature_.empty());
+  DCHECK(allows_multiple_features_ || currently_showing_features_.empty());
+  DCHECK(currently_showing_features_.find(feature.name) ==
+         currently_showing_features_.end());
   DCHECK(shown_features_.find(feature.name) == shown_features_.end());
   shown_features_.insert(feature.name);
-  currently_showing_feature_ = feature.name;
+  currently_showing_features_.insert(feature.name);
 }
 
 void OnceConditionValidator::NotifyDismissed(const base::Feature& feature) {
-  DCHECK(feature.name == currently_showing_feature_);
-  currently_showing_feature_.clear();
+  DCHECK(currently_showing_features_.find(feature.name) !=
+         currently_showing_features_.end());
+  currently_showing_features_.erase(feature.name);
 }
 
 void OnceConditionValidator::SetPriorityNotification(
@@ -74,6 +79,11 @@ void OnceConditionValidator::SetPriorityNotification(
 absl::optional<std::string>
 OnceConditionValidator::GetPendingPriorityNotification() {
   return pending_priority_notification_;
+}
+
+void OnceConditionValidator::AllowMultipleFeaturesForTesting(
+    bool allows_multiple_features) {
+  allows_multiple_features_ = allows_multiple_features;
 }
 
 }  // namespace feature_engagement

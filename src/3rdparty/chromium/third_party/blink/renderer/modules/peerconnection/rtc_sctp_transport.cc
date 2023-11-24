@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 #include <limits>
 #include <memory>
 
+#include "base/task/single_thread_task_runner.h"
 #include "media/media_buildflags.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
@@ -84,7 +85,7 @@ RTCSctpTransport::RTCSctpTransport(
       current_state_(webrtc::SctpTransportState::kNew),
       native_transport_(native_transport),
       proxy_(CreateProxy(context,
-                         native_transport,
+                         native_transport.get(),
                          this,
                          main_thread,
                          worker_thread)) {}

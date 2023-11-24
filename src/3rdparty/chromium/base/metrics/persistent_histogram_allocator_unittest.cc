@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -168,25 +168,25 @@ TEST_F(PersistentHistogramAllocatorTest, CreateWithFile) {
   const size_t temp_size = 64 << 10;  // 64 KiB
 
   // Test creation of a new file.
-  GlobalHistogramAllocator::ReleaseForTesting();
+  DestroyPersistentHistogramAllocator();
   GlobalHistogramAllocator::CreateWithFile(temp_file, temp_size, 0, temp_name);
   EXPECT_EQ(std::string(temp_name),
             GlobalHistogramAllocator::Get()->memory_allocator()->Name());
 
   // Test re-open of a possibly-existing file.
-  GlobalHistogramAllocator::ReleaseForTesting();
+  DestroyPersistentHistogramAllocator();
   GlobalHistogramAllocator::CreateWithFile(temp_file, temp_size, 0, "");
   EXPECT_EQ(std::string(temp_name),
             GlobalHistogramAllocator::Get()->memory_allocator()->Name());
 
   // Test re-open of an known-existing file.
-  GlobalHistogramAllocator::ReleaseForTesting();
+  DestroyPersistentHistogramAllocator();
   GlobalHistogramAllocator::CreateWithFile(temp_file, 0, 0, "");
   EXPECT_EQ(std::string(temp_name),
             GlobalHistogramAllocator::Get()->memory_allocator()->Name());
 
   // Final release so file and temp-dir can be removed.
-  GlobalHistogramAllocator::ReleaseForTesting();
+  DestroyPersistentHistogramAllocator();
 }
 
 TEST_F(PersistentHistogramAllocatorTest, CreateSpareFile) {

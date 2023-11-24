@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,8 @@
 
 #include <memory>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "content/browser/android/scoped_surface_request_manager.h"
 #include "content/browser/media/android/media_player_renderer_web_contents_observer.h"
 #include "content/browser/media/android/media_resource_getter_impl.h"
@@ -204,6 +204,10 @@ void MediaPlayerRenderer::UpdateVolume() {
 
 base::TimeDelta MediaPlayerRenderer::GetMediaTime() {
   return media_player_->GetCurrentTime();
+}
+
+media::RendererType MediaPlayerRenderer::GetRendererType() {
+  return media::RendererType::kMediaPlayer;
 }
 
 media::MediaResourceGetter* MediaPlayerRenderer::GetMediaResourceGetter() {

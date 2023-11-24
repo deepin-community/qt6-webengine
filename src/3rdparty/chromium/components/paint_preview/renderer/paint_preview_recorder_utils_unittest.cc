@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -41,10 +41,9 @@ namespace paint_preview {
 
 namespace {
 
-sk_sp<cc::PaintRecord> AddLink(const std::string& link, const SkRect& rect) {
+cc::PaintRecord AddLink(const std::string& link, const SkRect& rect) {
   cc::PaintRecorder link_recorder;
-  cc::PaintCanvas* link_canvas = link_recorder.beginRecording(
-      rect.x() + rect.width(), rect.y() + rect.height());
+  cc::PaintCanvas* link_canvas = link_recorder.beginRecording();
   link_canvas->Annotate(cc::PaintCanvas::AnnotationType::URL, rect,
                         SkData::MakeWithCString(link.c_str()));
   return link_recorder.finishRecordingAsPicture();
@@ -62,17 +61,17 @@ TEST(PaintPreviewRecorderUtilsTest, TestParseGlyphs) {
 
   cc::PaintFlags flags;
   cc::PaintRecorder outer_recorder;
-  cc::PaintCanvas* outer_canvas = outer_recorder.beginRecording(100, 100);
+  cc::PaintCanvas* outer_canvas = outer_recorder.beginRecording();
   outer_canvas->drawTextBlob(blob_1, 10, 10, flags);
   cc::PaintRecorder inner_recorder;
-  cc::PaintCanvas* inner_canvas = inner_recorder.beginRecording(50, 50);
+  cc::PaintCanvas* inner_canvas = inner_recorder.beginRecording();
   inner_canvas->drawTextBlob(blob_2, 15, 20, flags);
   outer_canvas->drawPicture(inner_recorder.finishRecordingAsPicture());
   auto record = outer_recorder.finishRecordingAsPicture();
 
   PaintPreviewTracker tracker(base::UnguessableToken::Create(),
                               base::UnguessableToken::Create(), true);
-  PreProcessPaintOpBuffer(record.get(), &tracker);
+  PaintRecordToSkPicture(std::move(record), &tracker, gfx::Rect(100, 100));
   auto* usage_map = tracker.GetTypefaceUsageMap();
   EXPECT_TRUE(usage_map->count(typeface->uniqueID()));
   EXPECT_TRUE(
@@ -92,7 +91,7 @@ TEST(PaintPreviewRecorderUtilsTest, TestParseGlyphs) {
 TEST(PaintPreviewRecorderUtilsTest, TestParseLinks) {
   cc::PaintFlags flags;
   cc::PaintRecorder outer_recorder;
-  cc::PaintCanvas* outer_canvas = outer_recorder.beginRecording(500, 500);
+  cc::PaintCanvas* outer_canvas = outer_recorder.beginRecording();
 
   outer_canvas->save();
   outer_canvas->translate(10, 20);
@@ -102,14 +101,14 @@ TEST(PaintPreviewRecorderUtilsTest, TestParseLinks) {
   outer_canvas->restore();
 
   outer_canvas->save();
-  outer_canvas->concat(SkMatrix::Translate(40, 50));
+  outer_canvas->translate(40, 50);
   outer_canvas->scale(2, 4);
   std::string link_2 = "http://www.bar.com/";
   SkRect rect_2 = SkRect::MakeXYWH(1, 2, 3, 4);
   outer_canvas->drawPicture(AddLink(link_2, rect_2));
 
   cc::PaintRecorder inner_recorder;
-  cc::PaintCanvas* inner_canvas = inner_recorder.beginRecording(500, 500);
+  cc::PaintCanvas* inner_canvas = inner_recorder.beginRecording();
   inner_canvas->rotate(20);
   std::string link_3 = "http://www.baz.com/";
   SkRect rect_3 = SkRect::MakeXYWH(5, 7, 9, 13);
@@ -119,21 +118,20 @@ TEST(PaintPreviewRecorderUtilsTest, TestParseLinks) {
   outer_canvas->restore();
 
   outer_canvas->save();
-  outer_canvas->translate(20, 50);
-  outer_canvas->setMatrix(SkMatrix::Translate(10, 30));
+  outer_canvas->setMatrix(SkM44::Translate(10, 30));
   std::string link_4 = "http://www.example.com/";
   SkRect rect_4 = SkRect::MakeXYWH(10, 30, 40, 50);
   outer_canvas->drawPicture(AddLink(link_4, rect_4));
   outer_canvas->restore();
 
-  outer_canvas->saveLayer(&rect_1, nullptr);
-  outer_canvas->saveLayerAlpha(&rect_1, 8);
+  outer_canvas->saveLayer(rect_1, cc::PaintFlags());
+  outer_canvas->saveLayerAlphaf(0.2f);
   outer_canvas->restoreToCount(1);
   auto record = outer_recorder.finishRecordingAsPicture();
 
   PaintPreviewTracker tracker(base::UnguessableToken::Create(),
                               base::UnguessableToken::Create(), true);
-  PreProcessPaintOpBuffer(record.get(), &tracker);
+  PaintRecordToSkPicture(std::move(record), &tracker, gfx::Rect(100, 100));
 
   std::vector<mojom::LinkDataPtr> links;
   tracker.MoveLinks(&links);
@@ -172,7 +170,7 @@ TEST(PaintPreviewRecorderUtilsTest, TestTransformSubframeRects) {
 
   cc::PaintFlags flags;
   cc::PaintRecorder recorder;
-  cc::PaintCanvas* canvas = recorder.beginRecording(500, 500);
+  cc::PaintCanvas* canvas = recorder.beginRecording();
   canvas->save();
   canvas->translate(10, 20);
   canvas->recordCustomData(old_id);
@@ -188,7 +186,7 @@ TEST(PaintPreviewRecorderUtilsTest, TestTransformSubframeRects) {
   EXPECT_EQ(rect.width(), old_cull_rect.width());
   EXPECT_EQ(rect.height(), old_cull_rect.height());
 
-  PreProcessPaintOpBuffer(record.get(), &tracker);
+  PaintRecordToSkPicture(std::move(record), &tracker, gfx::Rect(100, 100));
 
   auto* picture_ctx = tracker.GetPictureSerializationContext();
   ASSERT_EQ(picture_ctx->content_id_to_transformed_clip.size(), 1U);
@@ -218,7 +216,7 @@ class PaintPreviewRecorderUtilsSerializeAsSkPictureTest
   void SetUp() override {
     base::DiscardableMemoryAllocator::SetInstance(&test_allocator_);
 
-    canvas = recorder.beginRecording(dimensions.width(), dimensions.width());
+    canvas = recorder.beginRecording();
     cc::PaintFlags flags;
     canvas->drawRect(SkRect::MakeWH(dimensions.width(), dimensions.height()),
                      flags);
@@ -231,9 +229,8 @@ class PaintPreviewRecorderUtilsSerializeAsSkPictureTest
   absl::optional<SerializedRecording> SerializeAsSkPicture(
       absl::optional<size_t> max_capture_size,
       size_t* serialized_size) {
-    auto recording = recorder.finishRecordingAsPicture();
-    PreProcessPaintOpBuffer(recording.get(), &tracker);
-    auto skp = PaintRecordToSkPicture(recording, &tracker, dimensions);
+    auto skp = PaintRecordToSkPicture(recorder.finishRecordingAsPicture(),
+                                      &tracker, dimensions);
     if (!skp)
       return absl::nullopt;
 
@@ -316,7 +313,7 @@ TEST_P(PaintPreviewRecorderUtilsSerializeAsSkPictureTest, RoundtripWithImage) {
     SkBitmap bitmap;
     bitmap.allocN32Pixels(dimensions.width(), dimensions.height());
     SkCanvas sk_canvas(bitmap);
-    sk_canvas.drawColor(SK_ColorRED);
+    sk_canvas.drawColor(SkColors::kRed);
     cc::PaintImage paint_image = cc::PaintImage::CreateFromBitmap(bitmap);
     ASSERT_FALSE(paint_image.IsLazyGenerated());
     ASSERT_FALSE(paint_image.IsPaintWorklet());
@@ -365,7 +362,7 @@ TEST_P(PaintPreviewRecorderUtilsSerializeAsSkPictureTest,
     SkBitmap bitmap;
     bitmap.allocN32Pixels(dimensions.width(), dimensions.height());
     SkCanvas sk_canvas(bitmap);
-    sk_canvas.drawColor(SK_ColorRED);
+    sk_canvas.drawColor(SkColors::kRed);
     cc::PaintImage paint_image =
         cc::PaintImageBuilder::WithDefault()
             .set_id(cc::PaintImage::GetNextId())
@@ -397,7 +394,7 @@ TEST_P(PaintPreviewRecorderUtilsSerializeAsSkPictureTest,
     SkBitmap bitmap;
     bitmap.allocN32Pixels(dimensions.width(), dimensions.height());
     SkCanvas sk_canvas(bitmap);
-    sk_canvas.drawColor(SK_ColorRED);
+    sk_canvas.drawColor(SkColors::kRed);
     auto sk_image = SkImage::MakeFromBitmap(bitmap);
     auto data = sk_image->encodeToData();
     auto lazy_sk_image = SkImage::MakeFromEncoded(data);
@@ -434,9 +431,8 @@ TEST_P(PaintPreviewRecorderUtilsSerializeAsSkPictureTest,
        RoundtripWithLazyImage) {
   {
     cc::PaintRecorder inner_recorder;
-    cc::PaintCanvas* inner_canvas =
-        inner_recorder.beginRecording(dimensions.width(), dimensions.width());
-    inner_canvas->drawColor(SK_ColorRED);
+    cc::PaintCanvas* inner_canvas = inner_recorder.beginRecording();
+    inner_canvas->drawColor(SkColors::kRed);
     cc::PaintImage paint_image =
         cc::PaintImageBuilder::WithDefault()
             .set_id(1)

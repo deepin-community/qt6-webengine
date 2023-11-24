@@ -9,10 +9,11 @@
 #define GrBezierEffect_DEFINED
 
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
-#include "src/core/SkArenaAlloc.h"
+#include "src/base/SkArenaAlloc.h"
 #include "src/gpu/ganesh/GrCaps.h"
 #include "src/gpu/ganesh/GrGeometryProcessor.h"
 #include "src/gpu/ganesh/GrProcessor.h"
+#include "src/gpu/ganesh/GrProcessorUnitTest.h"
 
 /**
  * Shader is based off of Loop-Blinn Quadratic GPU Rendering
@@ -65,7 +66,7 @@ public:
                                      const SkMatrix& localMatrix,
                                      bool usesLocalCoords,
                                      uint8_t coverage = 0xff) {
-        if (!caps.shaderCaps()->shaderDerivativeSupport()) {
+        if (!caps.shaderCaps()->fShaderDerivativeSupport) {
             return nullptr;
         }
 
@@ -127,7 +128,7 @@ public:
                                      const SkMatrix& localMatrix,
                                      bool usesLocalCoords,
                                      uint8_t coverage = 0xff) {
-        if (!caps.shaderCaps()->shaderDerivativeSupport()) {
+        if (!caps.shaderCaps()->fShaderDerivativeSupport) {
             return nullptr;
         }
 

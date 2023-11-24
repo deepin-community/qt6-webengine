@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -45,7 +45,7 @@
 #include "base/mac/foundation_util.h"
 #endif
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
 #include "ui/ozone/public/ozone_platform.h"           // nogncheck
 #include "ui/ozone/public/platform_gl_egl_utility.h"  // nogncheck
 #endif
@@ -73,9 +73,9 @@ namespace {
 #define EGL_FEATURE_CONDITION_ANGLE 0x3468
 #endif /* EGL_ANGLE_feature_control */
 
-scoped_refptr<gl::GLSurface> InitializeGLSurface() {
+scoped_refptr<gl::GLSurface> InitializeGLSurface(gl::GLDisplay* display) {
   scoped_refptr<gl::GLSurface> surface(
-      gl::init::CreateOffscreenGLSurface(gfx::Size()));
+      gl::init::CreateOffscreenGLSurface(display, gfx::Size()));
   if (!surface.get()) {
     LOG(ERROR) << "gl::GLContext::CreateOffscreenGLSurface failed";
     return nullptr;
@@ -199,6 +199,52 @@ void AddTogglesToDawnInfoList(dawn::native::Instance* instance,
 }
 #endif
 
+std::string GetDisplayTypeString(gl::DisplayType type) {
+  switch (type) {
+    case gl::DEFAULT:
+      return "DEFAULT";
+    case gl::SWIFT_SHADER:
+      return "SWIFT_SHADER";
+    case gl::ANGLE_WARP:
+      return "ANGLE_WARP";
+    case gl::ANGLE_D3D9:
+      return "ANGLE_D3D9";
+    case gl::ANGLE_D3D11:
+      return "ANGLE_D3D11";
+    case gl::ANGLE_OPENGL:
+      return "ANGLE_OPENGL";
+    case gl::ANGLE_OPENGLES:
+      return "ANGLE_OPENGLES";
+    case gl::ANGLE_NULL:
+      return "ANGLE_NULL";
+    case gl::ANGLE_D3D11_NULL:
+      return "ANGLE_D3D11_NULL";
+    case gl::ANGLE_OPENGL_NULL:
+      return "ANGLE_OPENGL_NULL";
+    case gl::ANGLE_OPENGLES_NULL:
+      return "ANGLE_OPENGLES_NULL";
+    case gl::ANGLE_VULKAN:
+      return "ANGLE_VULKAN";
+    case gl::ANGLE_VULKAN_NULL:
+      return "ANGLE_VULKAN_NULL";
+    case gl::ANGLE_D3D11on12:
+      return "ANGLE_D3D11on12";
+    case gl::ANGLE_SWIFTSHADER:
+      return "ANGLE_SWIFTSHADER";
+    case gl::ANGLE_OPENGL_EGL:
+      return "ANGLE_OPENGL_EGL";
+    case gl::ANGLE_OPENGLES_EGL:
+      return "ANGLE_OPENGLES_EGL";
+    case gl::ANGLE_METAL:
+      return "ANGLE_METAL";
+    case gl::ANGLE_METAL_NULL:
+      return "ANGLE_METAL_NULL";
+    default:
+      NOTREACHED();
+      return "";
+  }
+}
+
 #if BUILDFLAG(USE_DAWN)
 void ForceDawnTogglesForWebGPU(
     bool enable_unsafe_webgpu,
@@ -289,21 +335,27 @@ bool CollectBasicGraphicsInfo(const base::CommandLine* command_line,
   if (CollectGraphicsDeviceInfoFromCommandLine(command_line, gpu_info))
     return true;
 
+  // We can't check if passthrough is supported yet because GL may not be
+  // initialized.
   gpu_info->passthrough_cmd_decoder =
-      gl::UsePassthroughCommandDecoder(command_line) &&
-      gl::PassthroughCommandDecoderSupported();
+      gl::UsePassthroughCommandDecoder(command_line);
 
   bool fallback_to_software = false;
   absl::optional<gl::GLImplementationParts> implementation =
       gl::GetRequestedGLImplementationFromCommandLine(command_line,
                                                       &fallback_to_software);
 
-  // If GL is disabled then we don't need GPUInfo.
-  if (implementation == gl::kGLImplementationDisabled) {
-    gpu_info->gl_vendor = "Disabled";
-    gpu_info->gl_renderer = "Disabled";
-    gpu_info->gl_version = "Disabled";
-    return true;
+  if (implementation.has_value()) {
+    gpu_info->gl_implementation = implementation->GLString();
+    gpu_info->angle_implementation = implementation->ANGLEString();
+
+    // If GL is disabled then we don't need GPUInfo.
+    if (implementation == gl::kGLImplementationDisabled) {
+      gpu_info->gl_vendor = "Disabled";
+      gpu_info->gl_renderer = "Disabled";
+      gpu_info->gl_version = "Disabled";
+      return true;
+    }
   }
 
   if (implementation == gl::GetSoftwareGLImplementation()) {
@@ -333,11 +385,18 @@ bool CollectBasicGraphicsInfo(const base::CommandLine* command_line,
   return CollectBasicGraphicsInfo(gpu_info);
 }
 
-bool CollectGraphicsInfoGL(GPUInfo* gpu_info) {
+bool CollectGraphicsInfoGL(GPUInfo* gpu_info, gl::GLDisplay* display) {
   TRACE_EVENT0("startup", "gpu_info_collector::CollectGraphicsInfoGL");
-  DCHECK_NE(gl::GetGLImplementation(), gl::kGLImplementationNone);
+  gl::GLImplementationParts implementation = gl::GetGLImplementationParts();
+  DCHECK_NE(implementation, gl::kGLImplementationNone);
+  gl::GLDisplayEGL* egl_display = display->GetAs<gl::GLDisplayEGL>();
 
-  scoped_refptr<gl::GLSurface> surface(InitializeGLSurface());
+  // Now that we can check GL extensions, update passthrough support info.
+  if (!gl::PassthroughCommandDecoderSupported()) {
+    gpu_info->passthrough_cmd_decoder = false;
+  }
+
+  scoped_refptr<gl::GLSurface> surface(InitializeGLSurface(display));
   if (!surface.get()) {
     LOG(ERROR) << "Could not create surface for info collection.";
     return false;
@@ -349,6 +408,12 @@ bool CollectGraphicsInfoGL(GPUInfo* gpu_info) {
     return false;
   }
 
+  gpu_info->gl_implementation = implementation.GLString();
+  gpu_info->angle_implementation = implementation.ANGLEString();
+  if (egl_display) {
+    gpu_info->display_type =
+        GetDisplayTypeString(egl_display->GetDisplayType());
+  }
   gpu_info->gl_renderer = GetGLString(GL_RENDERER);
   gpu_info->gl_vendor = GetGLString(GL_VENDOR);
   gpu_info->gl_version = GetGLString(GL_VERSION);
@@ -381,9 +446,9 @@ bool CollectGraphicsInfoGL(GPUInfo* gpu_info) {
 
 #if BUILDFLAG(IS_ANDROID)
   gpu_info->can_support_threaded_texture_mailbox =
-      gl::GLSurfaceEGL::HasEGLExtension("EGL_KHR_fence_sync") &&
-      gl::GLSurfaceEGL::HasEGLExtension("EGL_KHR_image_base") &&
-      gl::GLSurfaceEGL::HasEGLExtension("EGL_KHR_gl_texture_2D_image") &&
+      egl_display->ext->b_EGL_KHR_fence_sync &&
+      egl_display->ext->b_EGL_KHR_image_base &&
+      egl_display->ext->b_EGL_KHR_gl_texture_2D_image &&
       gfx::HasExtension(extension_set, "GL_OES_EGL_image");
 #else
   gl::GLWindowSystemBindingInfo window_system_binding_info;
@@ -557,8 +622,8 @@ bool CollectGpuExtraInfo(gfx::GpuExtraInfo* gpu_extra_info,
                          const GpuPreferences& prefs) {
   // Populate the list of ANGLE features by querying the functions exposed by
   // EGL_ANGLE_feature_control if it's available.
-  if (gl::GLSurfaceEGL::IsANGLEFeatureControlSupported()) {
-    EGLDisplay display = gl::GLSurfaceEGL::GetHardwareDisplay();
+  if (gl::g_driver_egl.client_ext.b_EGL_ANGLE_feature_control) {
+    EGLDisplay display = gl::GLSurfaceEGL::GetGLDisplayEGL()->GetDisplay();
     EGLAttrib feature_count = 0;
     eglQueryDisplayAttribANGLE(display, EGL_FEATURE_COUNT_ANGLE,
                                &feature_count);
@@ -579,7 +644,7 @@ bool CollectGpuExtraInfo(gfx::GpuExtraInfo* gpu_extra_info,
     }
   }
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
   if (const auto* const egl_utility =
           ui::OzonePlatform::GetInstance()->GetPlatformGLEGLUtility()) {
     egl_utility->CollectGpuExtraInfo(prefs.enable_native_gpu_memory_buffers,

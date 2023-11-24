@@ -1,7 +1,8 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/features.gni")
 import("//build/config/nacl/config.gni")
 import("//ppapi/buildflags/buildflags.gni")
 import("//tools/grit/grit_rule.gni")
@@ -12,7 +13,7 @@ config("content_implementation") {
   configs = [ "//build/config/compiler:wexit_time_destructors" ]
 }
 
-assert(!is_ios, "Chromium/iOS shouldn't use anything in //content")
+assert(use_blink, "Chromium without blink shouldn't use anything in //content")
 
 # When targets depend on, e.g. //content/public/browser, what happens? To
 # facilitate the complexity here, the "public" targets are groups that forward
@@ -69,7 +70,7 @@ content_shared_components = [
   "//content/public/utility:utility_sources",
 ]
 
-if (enable_plugins) {
+if (enable_ppapi) {
   content_shared_components += [ "//content/ppapi_plugin:ppapi_plugin_sources" ]
 }
 
@@ -94,13 +95,18 @@ grit("content_resources") {
     "content_resources.pak",
   ]
   deps = [
-    "//gpu/ipc/common:vulkan_interface_webui_js",
+    "//components/ukm/debug:build_ts",
+    "//content/browser/resources/histograms:build_ts",
+    "//gpu/ipc/common:vulkan_interface_js__generator",
+    "//ui/base/accelerators/mojom:mojom_js__generator",
     "//ui/base/mojom:mojom_js",
+    "//ui/events/mojom:mojom_js__generator",
     "//ui/gfx/geometry/mojom:mojom_js",
     "//ui/gfx/image/mojom:mojom_js",
     "//ui/gfx/range/mojom:mojom_js",
-    "//url/mojom:url_mojom_origin_js",
-    "//url/mojom:url_mojom_origin_webui_js",
+    "//ui/latency/mojom:mojom_js__generator",
+    "//url/mojom:url_mojom_gurl_js__generator",
+    "//url/mojom:url_mojom_origin_js__generator",
   ]
 }
 
@@ -112,10 +118,8 @@ grit("dev_ui_content_resources") {
     "dev_ui_content_resources.pak",
   ]
   deps = [
-    "//content/browser/attribution_reporting:mojo_bindings_webui_js",
-    "//content/browser/prerender:mojo_bindings_webui_js",
-    "//content/browser/process_internals:mojo_bindings_webui_js",
-    "//storage/browser/quota:mojo_bindings_webui_js",
+    "//content/browser/resources/gpu:html_wrapper_files",
+    "//content/browser/resources/process:build_ts",
   ]
 }
 

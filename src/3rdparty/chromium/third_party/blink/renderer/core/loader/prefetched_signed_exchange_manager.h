@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,12 +19,11 @@ namespace blink {
 
 class AlternateSignedExchangeResourceInfo;
 class LocalFrame;
-class WebURLLoader;
+class URLLoader;
 class WebURLRequest;
 
-// For SignedExchangeSubresourcePrefetch feature. This class holds the
-// prefetched signed exchange info and will returns loaders for matching
-// requests.
+// This class holds the prefetched signed exchange info and will returns
+// loaders for matching requests.
 class PrefetchedSignedExchangeManager final
     : public GarbageCollected<PrefetchedSignedExchangeManager> {
  public:
@@ -62,8 +61,7 @@ class PrefetchedSignedExchangeManager final
   //
   // The returned loader doesn't start loading until
   // StartPrefetchedLinkHeaderPreloads() will be called.
-  std::unique_ptr<WebURLLoader> MaybeCreateURLLoader(
-      const WebURLRequest& request);
+  std::unique_ptr<URLLoader> MaybeCreateURLLoader(const WebURLRequest& request);
 
   // If the all loaders which have been created by MaybeCreateURLLoader() have
   // a matching "alternate" link header in the outer response and the matching
@@ -84,9 +82,9 @@ class PrefetchedSignedExchangeManager final
   class PrefetchedSignedExchangeLoader;
 
   void TriggerLoad();
-  std::unique_ptr<WebURLLoader> CreateDefaultURLLoader(
+  std::unique_ptr<URLLoader> CreateDefaultURLLoader(
       const WebURLRequest& request);
-  std::unique_ptr<WebURLLoader> CreatePrefetchedSignedExchangeURLLoader(
+  std::unique_ptr<URLLoader> CreatePrefetchedSignedExchangeURLLoader(
       const WebURLRequest& request,
       mojo::PendingRemote<network::mojom::blink::URLLoaderFactory>
           loader_factory);

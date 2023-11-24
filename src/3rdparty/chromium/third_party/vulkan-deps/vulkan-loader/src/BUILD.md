@@ -4,33 +4,63 @@ Instructions for building this repository on Linux, Windows, and MacOS.
 
 ## Table Of Contents
 
-- [Contributing to the Repository](#contributing-to-the-repository)
-- [Repository Content](#repository-content)
-  - [Installed Files](#installed-files)
-- [Repository Set-Up](#repository-set-up)
-  - [Display Drivers](#display-drivers)
-  - [Download the Repository](#download-the-repository)
-  - [Repository Dependencies](#repository-dependencies)
-  - [Build and Install Directories](#build-and-install-directories)
-  - [Building Dependent Repositories with Known-Good Revisions](#building-dependent-repositories-with-known-good-revisions)
-  - [Generated source code](#generated-source-code)
-  - [Build Options](#build-options)
-- [Building On Windows](#building-on-windows)
-  - [Windows Development Environment Requirements](#windows-development-environment-requirements)
-  - [Windows Build - Microsoft Visual Studio](#windows-build---microsoft-visual-studio)
-  - [Windows Notes](#windows-notes)
-    - [CMake Visual Studio Generators](#cmake-visual-studio-generators)
-    - [Using The Vulkan Loader Library in this Repository on Windows](#using-the-vulkan-loader-library-in-this-repository-on-windows)
-- [Building On Linux](#building-on-linux)
-  - [Linux Development Environment Requirements](#linux-development-environment-requirements)
-  - [Linux Build](#linux-build)
-- [Building on MacOS](#building-on-macos)
-  - [MacOS Development Environment Requirements](#macos-development-environment-requirements)
-  - [Clone the Repository](#clone-the-repository)
-  - [MacOS build](#macos-build)
-- [Building on Fuchsia](#building-on-fuchsia)
-- [Building on QNX](#building-on-qnx)
-  - [SDK Symbols](#sdk-symbols)
+- [Build Instructions](#build-instructions)
+  - [Table Of Contents](#table-of-contents)
+  - [Contributing to the Repository](#contributing-to-the-repository)
+  - [Repository Content](#repository-content)
+    - [Installed Files](#installed-files)
+  - [Repository Set-Up](#repository-set-up)
+    - [Display Drivers](#display-drivers)
+    - [Download the Repository](#download-the-repository)
+    - [Repository Dependencies](#repository-dependencies)
+      - [Vulkan-Headers](#vulkan-headers)
+      - [Test Dependencies](#test-dependencies)
+    - [Build and Install Directories](#build-and-install-directories)
+    - [Building Dependent Repositories with Known-Good Revisions](#building-dependent-repositories-with-known-good-revisions)
+      - [Manually](#manually)
+        - [Notes About the Manual Option](#notes-about-the-manual-option)
+      - [Automatically](#automatically)
+        - [Notes About the Automatic Option](#notes-about-the-automatic-option)
+    - [Generated source code](#generated-source-code)
+    - [Build Options](#build-options)
+  - [Building On Windows](#building-on-windows)
+    - [Windows Development Environment Requirements](#windows-development-environment-requirements)
+    - [Windows Build - Microsoft Visual Studio](#windows-build---microsoft-visual-studio)
+      - [Windows Quick Start](#windows-quick-start)
+      - [Use `CMake` to Create the Visual Studio Project Files](#use-cmake-to-create-the-visual-studio-project-files)
+      - [Build the Solution From the Command Line](#build-the-solution-from-the-command-line)
+      - [Build the Solution With Visual Studio](#build-the-solution-with-visual-studio)
+      - [Windows Install Target](#windows-install-target)
+    - [Windows Notes](#windows-notes)
+      - [Using The Vulkan Loader Library in this Repository on Windows](#using-the-vulkan-loader-library-in-this-repository-on-windows)
+  - [Building On Linux](#building-on-linux)
+    - [Linux Development Environment Requirements](#linux-development-environment-requirements)
+      - [Required Package List](#required-package-list)
+    - [Linux Build](#linux-build)
+      - [Linux Quick Start](#linux-quick-start)
+      - [Use CMake to Create the Make Files](#use-cmake-to-create-the-make-files)
+      - [Build the Project](#build-the-project)
+    - [Linux Notes](#linux-notes)
+      - [Using The Vulkan Loader Library in this Repository on Linux](#using-the-vulkan-loader-library-in-this-repository-on-linux)
+      - [WSI Support Build Options](#wsi-support-build-options)
+      - [Linux Install to System Directories](#linux-install-to-system-directories)
+      - [Linux 32-bit support](#linux-32-bit-support)
+  - [Building on MacOS](#building-on-macos)
+    - [MacOS Development Environment Requirements](#macos-development-environment-requirements)
+    - [Clone the Repository](#clone-the-repository)
+    - [MacOS build](#macos-build)
+      - [CMake Generators](#cmake-generators)
+      - [Building with the Unix Makefiles Generator](#building-with-the-unix-makefiles-generator)
+      - [Building with the Xcode Generator](#building-with-the-xcode-generator)
+    - [Using the new macOS loader](#using-the-new-macos-loader)
+  - [Building on Fuchsia](#building-on-fuchsia)
+  - [Building on QNX](#building-on-qnx)
+    - [SDK Symbols](#sdk-symbols)
+  - [Cross Compilation](#cross-compilation)
+    - [Unknown function handling which requires explicit assembly implementations](#unknown-function-handling-which-requires-explicit-assembly-implementations)
+      - [Platforms which fully support unknown function handling](#platforms-which-fully-support-unknown-function-handling)
+    - [Link Time Optimization](#link-time-optimization)
+  - [Tests](#tests)
 
 
 ## Contributing to the Repository
@@ -52,9 +82,6 @@ indicated by *install_dir*:
 
 - *install_dir*`/lib` : The Vulkan loader library
 - *install_dir*`/bin` : The Vulkan loader library DLL (Windows)
-
-The `uninstall` target can be used to remove the above files from the install
-directory.
 
 ## Repository Set-Up
 
@@ -220,20 +247,38 @@ on/off options currently supported by this repository:
 | BUILD_WSI_DIRECTFB_SUPPORT   | Linux    | `OFF`   | Build the loader with the DirectFB entry points enabled. Without this, the DirectFB headers should not be needed, but the extension `VK_EXT_directfb_surface` won't be available. |
 | BUILD_WSI_SCREEN_QNX_SUPPORT | QNX      | `OFF`   | Build the loader with the QNX Screen entry points enabled. Without this the extension `VK_QNX_screen_surface` won't be available.                                                 |
 | ENABLE_WIN10_ONECORE         | Windows  | `OFF`   | Link the loader to the [OneCore](https://msdn.microsoft.com/en-us/library/windows/desktop/mt654039.aspx) umbrella library, instead of the standard Win32 ones.                    |
-| USE_CCACHE                   | Linux    | `OFF`   | Enable caching with the CCache program.                                                                                                                                           |
 | USE_GAS                      | Linux    | `ON`    | Controls whether to build assembly files with the GNU assembler, else fallback to C code.                                                                                         |
 | USE_MASM                     | Windows  | `ON`    | Controls whether to build assembly files with MS assembler, else fallback to C code                                                                                               |
 | BUILD_STATIC_LOADER          | macOS    | `OFF`   | This allows the loader to be built as a static library on macOS. Not tested, use at your own risk.                                                                                |
 The following is a table of all string options currently supported by this repository:
 
-| Option                      | Platform    | Default                       | Description                                                                                                                                          |
-| --------------------------- | ----------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CMAKE_OSX_DEPLOYMENT_TARGET | MacOS       | `10.12`                       | The minimum version of MacOS for loader deployment.                                                                                                  |
-| FALLBACK_CONFIG_DIRS        | Linux/MacOS | `/etc/xdg`                    | Configuration path(s) to use instead of `XDG_CONFIG_DIRS` if that environment variable is unavailable. The default setting is freedesktop compliant. |
-| FALLBACK_DATA_DIRS          | Linux/MacOS | `/usr/local/share:/usr/share` | Configuration path(s) to use instead of `XDG_DATA_DIRS` if that environment variable is unavailable. The default setting is freedesktop compliant.   |
-| BUILD_DLL_VERSIONINFO       | Windows     | `""` (empty string)           | Allows setting the Windows specific version information for the Loader DLL. Format is "major.minor.patch.build".                                     |
+| Option                | Platform    | Default                       | Description                                                                                                                                          |
+| --------------------- | ----------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| FALLBACK_CONFIG_DIRS  | Linux/MacOS | `/etc/xdg`                    | Configuration path(s) to use instead of `XDG_CONFIG_DIRS` if that environment variable is unavailable. The default setting is freedesktop compliant. |
+| FALLBACK_DATA_DIRS    | Linux/MacOS | `/usr/local/share:/usr/share` | Configuration path(s) to use instead of `XDG_DATA_DIRS` if that environment variable is unavailable. The default setting is freedesktop compliant.   |
+| BUILD_DLL_VERSIONINFO | Windows     | `""` (empty string)           | Allows setting the Windows specific version information for the Loader DLL. Format is "major.minor.patch.build".                                     |
 
 These variables should be set using the `-D` option when invoking CMake to generate the native platform files.
+
+### CCACHE
+
+There are 2 methods to enable CCACHE:
+
+1.) Set environment variables
+
+```bash
+# Requires CMake 3.17 (https://cmake.org/cmake/help/latest/envvar/CMAKE_LANG_COMPILER_LAUNCHER.html)
+export CMAKE_CXX_COMPILER_LAUNCHER=/usr/bin/ccache
+export CMAKE_C_COMPILER_LAUNCHER=/usr/bin/ccache
+```
+
+2.) Pass in cache variables
+
+```
+cmake ... -D CMAKE_CXX_COMPILER_LAUNCHER=/usr/bin/ccache -D CMAKE_C_COMPILER_LAUNCHER=/usr/bin/ccache
+```
+
+
 
 ## Building On Windows
 
@@ -243,12 +288,11 @@ These variables should be set using the `-D` option when invoking CMake to gener
   - Any Personal Computer version supported by Microsoft
 - Microsoft [Visual Studio](https://www.visualstudio.com/)
   - Versions
-    - [2015](https://www.visualstudio.com/vs/older-downloads/)
-    - [2017](https://www.visualstudio.com/vs/older-downloads/)
-    - [2019](https://www.visualstudio.com/vs/downloads/)
+    - [2022](https://www.visualstudio.com/vs/downloads/)
+    - [2017 & 2019](https://www.visualstudio.com/vs/older-downloads/)
   - The Community Edition of each of the above versions is sufficient, as
     well as any more capable edition.
-- [CMake 3.10.2](https://cmake.org/files/v3.10/cmake-3.10.2-win64-x64.zip) is recommended.
+- [CMake 3.17.2](https://cmake.org/files/v3.17/cmake-3.17.2-win64-x64.zip) is recommended.
   - Use the installer option to add CMake to the system PATH
 - Git Client Support
   - [Git for Windows](http://git-scm.com/download/win) is a popular solution
@@ -271,17 +315,13 @@ Open a developer command prompt and enter:
     cd Vulkan-Loader
     mkdir build
     cd build
-    cmake -A x64 -DVULKAN_HEADERS_INSTALL_DIR=absolute_path_to_install_dir ..
+    cmake -A x64 -DUPDATE_DEPS=ON ..
     cmake --build .
 
 The above commands instruct CMake to find and use the default Visual Studio
 installation to generate a Visual Studio solution and projects for the x64
 architecture. The second CMake command builds the Debug (default)
 configuration of the solution.
-
-Note that if you do not wish to use a developer command prompt, you may either
-run either `vcvars64.bat` or `vcvars32.bat` to set the required environment
-variables.
 
 #### Use `CMake` to Create the Visual Studio Project Files
 
@@ -291,26 +331,25 @@ create a build directory and generate the Visual Studio project files:
     cd Vulkan-Loader
     mkdir build
     cd build
-    cmake -A x64 -DVULKAN_HEADERS_INSTALL_DIR=absolute_path_to_install_dir ..
+    cmake -DUPDATE_DEPS=ON -G "Visual Studio 16 2019" -A x64 ..
 
 > Note: The `..` parameter tells `cmake` the location of the top of the
 > repository. If you place your build directory someplace else, you'll need to
-> specify the location of the repository top differently.
+> specify the location of the repository differently.
 
-The `-A` option is used to select either the "Win32" or "x64" architecture.
+The `-G` option is used to select the generator
 
-If a generator for a specific version of Visual Studio is required, you can
-specify it for Visual Studio 2015, for example, with:
+Supported Visual Studio generators:
+* `Visual Studio 17 2022`
+* `Visual Studio 16 2019`
+* `Visual Studio 15 2017`
 
-    64-bit: -G "Visual Studio 14 2015 Win64"
-    32-bit: -G "Visual Studio 14 2015"
-
-See this [list](#cmake-visual-studio-generators) of other possible generators
-for Visual Studio.
+The `-A` option is used to select either the "Win32", "x64", or "ARM64 architecture.
 
 When generating the project files, the absolute path to a Vulkan-Headers
-install directory must be provided. This can be done by setting the
-`VULKAN_HEADERS_INSTALL_DIR` environment variable or by setting the
+install directory must be provided. This can be done automatically by the
+`-DUPDATE_DEPS=ON` option, by directly setting the
+`VULKAN_HEADERS_INSTALL_DIR` environment variable, or by setting the
 `VULKAN_HEADERS_INSTALL_DIR` CMake variable with the `-D` CMake option. In
 either case, the variable should point to the installation directory of a
 Vulkan-Headers repository built with the install target.
@@ -347,8 +386,8 @@ the primary build artifacts to a specific location using a "bin, include, lib"
 style directory structure. This may be useful for collecting the artifacts and
 providing them to another project that is dependent on them.
 
-The default location is `$CMAKE_BINARY_DIR\install`, but can be changed with
-the `CMAKE_INSTALL_PREFIX` variable when first generating the project build
+The default location is `$CMAKE_CURRENT_BINARY_DIR\install`, but can be changed
+with the `CMAKE_INSTALL_PREFIX` variable when first generating the project build
 files with CMake.
 
 You can build the install target from the command line with:
@@ -357,47 +396,8 @@ You can build the install target from the command line with:
 
 or build the `INSTALL` target from the Visual Studio solution explorer.
 
-### Windows Tests
-
-The Vulkan-Loader repository contains some simple unit tests for the loader
-but no other test clients.
-
-To run the loader test script, open a Powershell Console, change to the
-`build\tests` directory, and run:
-
-For Release builds:
-
-    .\run_all_tests.ps1
-
-For Debug builds:
-
-    .\run_all_tests.ps1 -Debug
-
-This script will run the following tests:
-
-- `vk_loader_validation_tests`:
-  Vulkan loader handle wrapping, allocation callback, and loader/layer interface tests
-
-You can also change to either `build\tests\Debug` or `build\tests\Release`
-(depending on which one you built) and run the executable tests (`*.exe`)
-files from there.
 
 ### Windows Notes
-
-#### CMake Visual Studio Generators
-
-The chosen generator should match one of the Visual Studio versions that you
-have installed. Generator strings that correspond to versions of Visual Studio
-include:
-
-| Build Platform               | 64-bit Generator              | 32-bit Generator        |
-| ---------------------------- | ----------------------------- | ----------------------- |
-| Microsoft Visual Studio 2015 | "Visual Studio 14 2015 Win64" | "Visual Studio 14 2015" |
-| Microsoft Visual Studio 2017 | "Visual Studio 15 2017 Win64" | "Visual Studio 15 2017" |
-| Microsoft Visual Studio 2019 | "Visual Studio 16 2019"       | "Visual Studio 16 2019" |
-
-Note that with Visual Studio 2019, the architecture will need to be specified with the `-A`
-flag for 64-bit builds.
 
 #### Using The Vulkan Loader Library in this Repository on Windows
 
@@ -408,14 +408,13 @@ directory as the program. The projects in this solution copy the Vulkan loader
 library and the "googletest" libraries to the `build\tests\Debug` or the
 `build\tests\Release` directory, which is where the
 `vk_loader_validation_test.exe` executable is found, depending on what
-configuration you built. (The loader validation tests use the "googletest"
-testing framework.)
+configuration you built.
 
 Other techniques include placing the library in a system folder
 (C:\Windows\System32) or in a directory that appears in the `PATH` environment
 variable.
 
-See the `LoaderAndLayerInterface` document in the `loader` folder in this
+See the documentation in the `docs` folder in this
 repository for more information on how the loader finds driver libraries and
 layer libraries. The document also describes both how ICDs and layers should
 be packaged, and how developers can point to ICDs and layers within their
@@ -426,12 +425,12 @@ builds.
 ### Linux Development Environment Requirements
 
 This repository has been built and tested on the two most recent Ubuntu LTS
-versions. Currently, the oldest supported version is Ubuntu 16.04, meaning
+versions. Currently, the oldest supported version is Ubuntu 18.04, meaning
 that the minimum officially supported C++11 compiler version is GCC 5.4.0,
 although earlier versions may work. It should be straightforward to adapt this
 repository to other Linux distributions.
 
-[CMake 3.10.2](https://cmake.org/files/v3.10/cmake-3.10.2-Linux-x86_64.tar.gz) is recommended.
+[CMake 3.17.2](https://cmake.org/files/v3.17/cmake-3.17.2-Linux-x86_64.tar.gz) is recommended.
 
 #### Required Package List
 
@@ -448,7 +447,7 @@ CMake with the `--build` option or `make` to build from the command line.
     cd Vulkan-Loader
     mkdir build
     cd build
-    cmake -DVULKAN_HEADERS_INSTALL_DIR=absolute_path_to_install_dir ..
+    cmake -DUPDATE_DEPS=ON ..
     make
 
 See below for the details.
@@ -472,8 +471,9 @@ create a build directory and generate the make files.
 Use `-DCMAKE_BUILD_TYPE` to specify a Debug or Release build.
 
 When generating the project files, the absolute path to a Vulkan-Headers
-install directory must be provided. This can be done by setting the
-`VULKAN_HEADERS_INSTALL_DIR` environment variable or by setting the
+install directory must be provided. This can be done automatically by the
+`-DUPDATE_DEPS=ON` option, by directly setting the
+`VULKAN_HEADERS_INSTALL_DIR` environment variable, or by setting the
 `VULKAN_HEADERS_INSTALL_DIR` CMake variable with the `-D` CMake option. In
 either case, the variable should point to the installation directory of a
 Vulkan-Headers repository built with the install target.
@@ -496,20 +496,11 @@ You can also use
 
     cmake --build .
 
-If your build system supports ccache, you can enable that via CMake option
-`-DUSE_CCACHE=On`
-
 ### Linux Notes
 
 #### Using The Vulkan Loader Library in this Repository on Linux
 
-The `vk_loader_validation_tests` executable is linked with an RPATH setting to
-allow it to find the Vulkan loader library in the repository's build
-directory. This allows the test executable to run and find this Vulkan loader
-library without installing the loader library to a directory searched by the
-system loader or in the `LD_LIBRARY_PATH`.
-
-If you want to test a Vulkan application that is not built within this
+If you want to run a Vulkan application that is not built within this
 repository with the loader you just built from this repository, you can direct
 the application to load it from your build directory:
 
@@ -582,26 +573,6 @@ Vulkan loader from the build directory, `build` in this example. This means
 that even after installing the loader to the system directories, these
 executables still use the loader from the build directory.
 
-#### Linux Uninstall
-
-To uninstall the files from the system directories, you can execute:
-
-    sudo make uninstall
-
-#### Linux Tests
-
-The Vulkan-Loader repository contains some simple unit tests for the loader
-but no other test clients.
-
-To run the loader test script, change to the `build/tests` directory, and run:
-
-    ./run_all_tests.sh
-
-This script will run the following tests:
-
-- `vk_loader_validation_tests`: Vulkan loader handle wrapping, allocation
-  callback, and loader/layer interface tests
-
 #### Linux 32-bit support
 
 Usage of this repository's contents in 32-bit Linux environments is not
@@ -634,14 +605,11 @@ Finally, rebuild the repository using `cmake` and `make`, as explained above.
 
 ### MacOS Development Environment Requirements
 
-Tested on OSX version 10.12.6
+Tested on OSX version 10.12
+
+NOTE: To force the OSX version set the environment variable [MACOSX_DEPLOYMENT_TARGET](https://cmake.org/cmake/help/latest/envvar/MACOSX_DEPLOYMENT_TARGET.html) when building VVL and it's dependencies.
 
 Setup Homebrew and components
-
-- Follow instructions on [brew.sh](http://brew.sh) to get Homebrew installed.
-
-      /usr/bin/ruby -e "$(curl -fsSL \
-          https://raw.githubusercontent.com/Homebrew/install/master/install)"
 
 - Ensure Homebrew is at the beginning of your PATH:
 
@@ -659,31 +627,23 @@ Clone the Vulkan-ValidationLayers repository:
 
 ### MacOS build
 
-[CMake 3.10.2](https://cmake.org/files/v3.10/cmake-3.10.2-Darwin-x86_64.tar.gz) is recommended.
-
-#### CMake Generators
-
-This repository uses CMake to generate build or project files that are then
-used to build the repository. The CMake generators explicitly supported in
-this repository are:
-
-- Unix Makefiles
-- Xcode
+[CMake 3.17.2](https://cmake.org/files/v3.17/cmake-3.17.2-Darwin-x86_64.tar.gz) is recommended.
 
 #### Building with the Unix Makefiles Generator
 
 This generator is the default generator.
 
 When generating the project files, the absolute path to a Vulkan-Headers
-install directory must be provided. This can be done by setting the
-`VULKAN_HEADERS_INSTALL_DIR` environment variable or by setting the
+install directory must be provided. This can be done automatically by the
+`-DUPDATE_DEPS=ON` option, by directly setting the
+`VULKAN_HEADERS_INSTALL_DIR` environment variable, or by setting the
 `VULKAN_HEADERS_INSTALL_DIR` CMake variable with the `-D` CMake option. In
 either case, the variable should point to the installation directory of a
 Vulkan-Headers repository built with the install target.
 
     mkdir build
     cd build
-    cmake -DVULKAN_HEADERS_INSTALL_DIR=absolute_path_to_install_dir -DCMAKE_BUILD_TYPE=Debug ..
+    cmake -DUPDATE_DEPS=ON -DVULKAN_HEADERS_INSTALL_DIR=absolute_path_to_install_dir -DCMAKE_BUILD_TYPE=Debug ..
     make
 
 To speed up the build on a multi-core machine, use the `-j` option for `make`
@@ -710,23 +670,6 @@ can direct the application to load it from your build directory:
 
     export DYLD_LIBRARY_PATH=<path to your repository>/build/loader
 
-### MacOS Tests
-
-The Vulkan-Loader repository contains some simple unit tests for the loader
-but no other test clients.
-
-Before you run these tests, you will need to clone and build the
-[MoltenVK](https://github.com/KhronosGroup/MoltenVK) repository.
-
-You will also need to direct your new loader to the MoltenVK ICD:
-
-    export VK_DRIVER_FILES=<path to MoltenVK repository>/Package/Latest/MoltenVK/macOS/MoltenVK_icd.json
-
-To run the loader test script, change to the `build/tests` directory in your
-Vulkan-Loader repository, and run:
-
-    ./vk_loader_validation_tests
-
 ## Building on Fuchsia
 
 Fuchsia uses the project's GN build system to integrate with the Fuchsia platform build.
@@ -744,3 +687,40 @@ It will build the ICD loader for all CPU targets supported by QNX.
 
 The Vulkan Loader is a component of the Fuchsia SDK, so it must explicitly declare its exported symbols in
 the file vulkan.symbols.api; see [SDK](https://fuchsia.dev/fuchsia-src/development/sdk).
+
+## Cross Compilation
+
+While this repo is capable of cross compilation, there are a handful of caveats.
+
+### Unknown function handling which requires explicit assembly implementations
+
+Unknown function handling is only fully supported on select platforms due to the
+need for assembly in the implementation. Other platforms will need to disable
+assembly by setting `USE_GAS` or `USE_MASM` to `OFF`.
+#### Platforms which fully support unknown function handling
+
+* 64 bit Windows (x64)
+* 32 bit Windows (x86)
+* 64 bit Linux (x64)
+* 32 bit Linux (x86)
+* 64 bit Arm (aarch64)
+
+Platforms not listed will use a fallback C Code path that relies on tail-call optimization to work.
+No guarantees are made about the use of the fallback code paths.
+
+### Link Time Optimization
+
+When cross compiling, the use of Link Time Optimization (LTO) and unknown function handling
+is not supported. Either LTO needs to be turned off, or the assembly should be disabled.
+
+## Tests
+
+To build tests, make sure that the `BUILD_TESTS` option is set to true. Using
+the command line, this looks like `-DBUILD_TESTS=ON`.
+
+This project is configured to run with `ctest`, which makes it easy to run the
+tests. To run the tests, change the directory to that of the build direction, and
+execute `ctest`.
+
+More details can be found in the [README.md](./tests/README.md) for the tests
+directory of this project.

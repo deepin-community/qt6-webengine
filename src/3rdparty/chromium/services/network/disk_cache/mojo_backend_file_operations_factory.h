@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <memory>
 
 #include "base/component_export.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "net/disk_cache/disk_cache.h"
@@ -32,6 +32,8 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) MojoBackendFileOperationsFactory final
   // BackendFileOperationsFactory implementation:
   std::unique_ptr<disk_cache::BackendFileOperations> Create(
       scoped_refptr<base::SequencedTaskRunner> task_runner) override;
+  std::unique_ptr<disk_cache::UnboundBackendFileOperations> CreateUnbound()
+      override;
 
  private:
   ~MojoBackendFileOperationsFactory() override;

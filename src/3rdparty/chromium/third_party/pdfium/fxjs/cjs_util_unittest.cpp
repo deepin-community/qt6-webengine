@@ -1,11 +1,12 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "fxjs/cjs_util.h"
 
+#include <iterator>
+
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/base/cxx17_backports.h"
 
 TEST(CJS_Util, ParseDataType) {
   struct ParseDataTypeCase {
@@ -105,7 +106,7 @@ TEST(CJS_Util, ParseDataType) {
       {L"%10s", CJS_Util::DataType::kString},
   };
 
-  for (size_t i = 0; i < pdfium::size(cases); i++) {
+  for (size_t i = 0; i < std::size(cases); i++) {
     WideString input(cases[i].input_string);
     EXPECT_EQ(cases[i].expected, CJS_Util::ParseDataType(&input))
         << cases[i].input_string;

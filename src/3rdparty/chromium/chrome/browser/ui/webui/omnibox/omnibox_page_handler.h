@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,9 +15,9 @@
 #include "base/time/time.h"
 #include "chrome/browser/ui/webui/omnibox/omnibox.mojom.h"
 #include "components/omnibox/browser/autocomplete_controller.h"
+#include "components/omnibox/browser/autocomplete_controller_emitter.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match.h"
-#include "components/omnibox/browser/omnibox_controller_emitter.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
@@ -93,7 +93,7 @@ class OmniboxPageHandler : public AutocompleteController::Observer,
 
   mojo::Receiver<mojom::OmniboxPageHandler> receiver_;
 
-  base::ScopedObservation<OmniboxControllerEmitter,
+  base::ScopedObservation<AutocompleteControllerEmitter,
                           AutocompleteController::Observer>
       observation_{this};
 

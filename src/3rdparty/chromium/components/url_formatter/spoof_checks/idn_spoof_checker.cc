@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,6 +22,7 @@
 #include "third_party/icu/source/i18n/unicode/regex.h"
 #include "third_party/icu/source/i18n/unicode/translit.h"
 #include "third_party/icu/source/i18n/unicode/uspoof.h"
+#include "url/url_features.h"
 
 namespace url_formatter {
 
@@ -149,6 +150,12 @@ IDNSpoofChecker::HuffmanTrieParams g_trie_params{
     kTopDomainsHuffmanTree, sizeof(kTopDomainsHuffmanTree), kTopDomainsTrie,
     kTopDomainsTrieBits, kTopDomainsRootPosition};
 
+// Allow these common words that are whole script confusables. They aren't
+// confusable with any words in Latin scripts.
+const char16_t* kAllowedWholeScriptConfusableWords[] = {
+    u"секс",  u"как",   u"коса",    u"курс",    u"парк",
+    u"такий", u"укроп", u"сахарок", u"покраска"};
+
 }  // namespace
 
 IDNSpoofChecker::WholeScriptConfusable::WholeScriptConfusable(
@@ -222,7 +229,7 @@ IDNSpoofChecker::IDNSpoofChecker() {
        {"am"}},
       {// Cyrillic
        "[[:Cyrl:]]",
-       "[аысԁеԍһіюјӏорԗԛѕԝхуъьҽпгѵѡ]",
+       "[аысԁеԍһіюкјӏорԗԛѕԝхуъьҽпгѵѡ]",
        // TLDs containing most of the Cyrillic domains.
        {"bg", "by", "kz", "pyc", "ru", "su", "ua", "uz"}},
       {// Ethiopic (Ge'ez). Variants of these characters such as ሁ and ሡ could
@@ -317,10 +324,12 @@ IDNSpoofChecker::IDNSpoofChecker() {
 
   // These characters are, or look like, digits. A domain label entirely made of
   // digit-lookalikes or digits is blocked.
+  // IMPORTANT: When you add a new character here, make sure to add it to
+  // extra_confusable_mapper_ in skeleton_generator.cc too.
   digits_ = icu::UnicodeSet(UNICODE_STRING_SIMPLE("[0-9]"), status);
   digits_.freeze();
   digit_lookalikes_ = icu::UnicodeSet(
-      icu::UnicodeString::fromUTF8("[θ२২੨੨૨೩೭շзҙӡउওਤ੩૩౩ဒვპੜ੫丩ㄐճ৪੪୫૭୨౨]"),
+      icu::UnicodeString::fromUTF8("[θ२২੨੨૨೩೭շзҙӡउওਤ੩૩౩ဒვპੜკ੫丩ㄐճ৪੪୫૭୨౨]"),
       status);
   digit_lookalikes_.freeze();
 
@@ -373,8 +382,10 @@ IDNSpoofChecker::Result IDNSpoofChecker::SafeToDisplayAsUnicode(
   // chosen. On the other hand, 'fu<sharp-s>' typed or copy and pasted
   // as Unicode would be canonicalized to 'fuss' by GURL and is displayed as
   // such. See http://crbug.com/595263 .
-  if (deviation_characters_.containsSome(label_string))
+  if (!url::IsUsingIDNA2008NonTransitional() &&
+      deviation_characters_.containsSome(label_string)) {
     return Result::kDeviationCharacters;
+  }
 
   // Disallow Icelandic confusables for domains outside Iceland's ccTLD (.is).
   if (label_string.length() > 1 && top_level_domain != "is" &&
@@ -412,11 +423,13 @@ IDNSpoofChecker::Result IDNSpoofChecker::SafeToDisplayAsUnicode(
     for (auto const& script : wholescriptconfusables_) {
       if (IsLabelWholeScriptConfusableForScript(*script, label_string) &&
           !IsWholeScriptConfusableAllowedForTLD(*script, top_level_domain,
-                                                top_level_domain_unicode)) {
+                                                top_level_domain_unicode) &&
+          !base::Contains(kAllowedWholeScriptConfusableWords, label)) {
         return Result::kWholeScriptConfusable;
       }
     }
     // Disallow domains that contain only numbers and number-spoofs.
+    // This check is reached if domain characters come from single script.
     if (IsDigitLookalike(label_string))
       return Result::kDigitLookalikes;
 
@@ -424,6 +437,10 @@ IDNSpoofChecker::Result IDNSpoofChecker::SafeToDisplayAsUnicode(
   }
 
   // Disallow domains that contain only numbers and number-spoofs.
+  // This check is reached if domain characters are from different scripts.
+  // This is generally rare. An example case when it would return true is when
+  // the domain contains Latin + Japanese characters that are also digit
+  // lookalikes.
   if (IsDigitLookalike(label_string))
     return Result::kDigitLookalikes;
 
@@ -604,6 +621,23 @@ std::u16string IDNSpoofChecker::MaybeRemoveDiacritics(
              : hostname;
 }
 
+IDNA2008DeviationCharacter IDNSpoofChecker::GetDeviationCharacter(
+    base::StringPiece16 hostname) const {
+  if (hostname.find(u"\u00df") != base::StringPiece16::npos) {
+    return IDNA2008DeviationCharacter::kEszett;
+  }
+  if (hostname.find(u"\u03c2") != base::StringPiece16::npos) {
+    return IDNA2008DeviationCharacter::kGreekFinalSigma;
+  }
+  if (hostname.find(u"\u200d") != base::StringPiece16::npos) {
+    return IDNA2008DeviationCharacter::kZeroWidthJoiner;
+  }
+  if (hostname.find(u"\u200c") != base::StringPiece16::npos) {
+    return IDNA2008DeviationCharacter::kZeroWidthNonJoiner;
+  }
+  return IDNA2008DeviationCharacter::kNone;
+}
+
 void IDNSpoofChecker::SetAllowedUnicodeSet(UErrorCode* status) {
   if (U_FAILURE(*status))
     return;
@@ -685,6 +719,15 @@ void IDNSpoofChecker::SetAllowedUnicodeSet(UErrorCode* status) {
   allowed_set.remove(0x1F00u, 0x1FFFu);  // Greek Extended
   allowed_set.remove(0xA640u, 0xA69Fu);  // Cyrillic Extended-B
   allowed_set.remove(0xA720u, 0xA7FFu);  // Latin Extended-D
+
+#if U_ICU_VERSION_MAJOR_NUM < 72
+  // Unicode 15 changes ZWJ and ZWNJ from allowed to restricted. Restrict them
+  // in lower versions too. This only relevant in Non-Transitional Mode as
+  // Transitional Mode maps these characters out.
+  // TODO(crbug.com/1386204): Remove these after ICU 72 is rolled out.
+  allowed_set.remove(0x200Cu);  // Zero Width Non-Joiner
+  allowed_set.remove(0x200Du);  // Zero Width Joiner
+#endif
 
   uspoof_setAllowedUnicodeSet(checker_, &allowed_set, status);
 }

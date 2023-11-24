@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #import <CoreMedia/CoreMedia.h>
 #import <CoreVideo/CoreVideo.h>
 
+#include "base/feature_list.h"
 #include "base/mac/scoped_nsobject.h"
 #include "media/capture/video/video_capture_device_descriptor.h"
 #include "media/capture/video_capture_types.h"
@@ -32,6 +33,10 @@ base::scoped_nsobject<NSDictionary> GetVideoCaptureDeviceNames();
 
 gfx::Size CAPTURE_EXPORT GetPixelBufferSize(CVPixelBufferRef pixel_buffer);
 gfx::Size CAPTURE_EXPORT GetSampleBufferSize(CMSampleBufferRef sample_buffer);
+
+// When enabled, we use an AVCaptureDeviceDiscoverySession for enumerating
+// cameras, instead of the deprecated [AVDeviceCapture devices].
+CAPTURE_EXPORT BASE_DECLARE_FEATURE(kUseAVCaptureDeviceDiscoverySession);
 
 }  // namespace media
 

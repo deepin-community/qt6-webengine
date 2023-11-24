@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,6 +12,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/types/optional_util.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/common/extensions/api/scripting.h"
@@ -19,7 +20,6 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
-#include "extensions/browser/api/extension_types_utils.h"
 #include "extensions/browser/api/scripting/scripting_constants.h"
 #include "extensions/browser/extension_api_frame_id_map.h"
 #include "extensions/browser/extension_file_task_runner.h"
@@ -40,6 +40,7 @@
 #include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "extensions/common/utils/content_script_utils.h"
+#include "extensions/common/utils/extension_types_utils.h"
 
 namespace extensions {
 
@@ -50,6 +51,9 @@ constexpr char kDuplicateFileSpecifiedError[] =
     "Duplicate file specified: '*'.";
 constexpr char kExactlyOneOfCssAndFilesError[] =
     "Exactly one of 'css' and 'files' must be specified.";
+constexpr char kFilesExceededSizeLimitError[] =
+    "Scripts could not be loaded because '*' exceeds the maximum script size "
+    "or the extension's maximum total script size.";
 
 // Note: CSS always injects as soon as possible, so we default to
 // document_start. Because of tab loading, there's no guarantee this will
@@ -182,12 +186,8 @@ bool GetFileResources(const std::vector<std::string>& files,
     }
 
     // ExtensionResource doesn't implement an operator==.
-    auto existing = base::ranges::find_if(
-        resources, [&resource](const ExtensionResource& other) {
-          return resource.relative_path() == other.relative_path();
-        });
-
-    if (existing != resources.end()) {
+    if (base::Contains(resources, resource.relative_path(),
+                       &ExtensionResource::relative_path)) {
       // Disallow duplicates. Note that we could allow this, if we wanted (and
       // there *might* be reason to with JS injection, to perform an operation
       // twice?). However, this matches content script behavior, and injecting
@@ -257,6 +257,7 @@ bool CheckAndLoadFiles(std::vector<std::string> files,
 
   LoadAndLocalizeResources(
       extension, resources, requires_localization,
+      script_parsing::GetMaxScriptLength(),
       base::BindOnce(&CheckLoadedResources, std::move(files),
                      std::move(callback)));
   return true;
@@ -474,17 +475,19 @@ std::unique_ptr<UserScript> ParseUserScript(
 
   DCHECK(content_script.matches);
   if (!script_parsing::ParseMatchPatterns(
-          *content_script.matches, content_script.exclude_matches.get(),
-          definition_index, extension.creation_flags(),
-          scripting::kScriptsCanExecuteEverywhere, valid_schemes,
-          scripting::kAllUrlsIncludesChromeUrls, result.get(), error,
+          *content_script.matches,
+          base::OptionalToPtr(content_script.exclude_matches), definition_index,
+          extension.creation_flags(), scripting::kScriptsCanExecuteEverywhere,
+          valid_schemes, scripting::kAllUrlsIncludesChromeUrls, result.get(),
+          error,
           /*wants_file_access=*/nullptr)) {
     return nullptr;
   }
 
   if (!script_parsing::ParseFileSources(
-          &extension, content_script.js.get(), content_script.css.get(),
-          definition_index, result.get(), error)) {
+          &extension, base::OptionalToPtr(content_script.js),
+          base::OptionalToPtr(content_script.css), definition_index,
+          result.get(), error)) {
     return nullptr;
   }
 
@@ -502,8 +505,18 @@ ValidateContentScriptsResult ValidateParsedScriptsOnFileThread(
   // Validate that claimed script resources actually exist, and are UTF-8
   // encoded.
   std::string error;
-  bool are_script_files_valid =
-      script_parsing::ValidateFileSources(*scripts, symlink_policy, &error);
+  std::vector<InstallWarning> warnings;
+  bool are_script_files_valid = script_parsing::ValidateFileSources(
+      *scripts, symlink_policy, &error, &warnings);
+
+  // Script files over the per script/extension limit are recorded as warnings.
+  // However, for the scripting API we should treat "install warnings" as
+  // errors by turning this call into a no-op and returning an error.
+  if (!warnings.empty() && error.empty()) {
+    error = ErrorUtils::FormatErrorMessage(kFilesExceededSizeLimitError,
+                                           warnings[0].specific);
+    are_script_files_valid = false;
+  }
 
   return std::make_pair(std::move(scripts), are_script_files_valid
                                                 ? absl::nullopt
@@ -517,13 +530,13 @@ api::scripting::RegisteredContentScript CreateRegisteredContentScriptInfo(
   api::scripting::RegisteredContentScript script_info;
   script_info.id = script.id();
 
-  script_info.matches = std::make_unique<std::vector<std::string>>();
+  script_info.matches.emplace();
   script_info.matches->reserve(script.url_patterns().size());
   for (const URLPattern& pattern : script.url_patterns())
     script_info.matches->push_back(pattern.GetAsString());
 
   if (!script.exclude_url_patterns().is_empty()) {
-    script_info.exclude_matches = std::make_unique<std::vector<std::string>>();
+    script_info.exclude_matches.emplace();
     script_info.exclude_matches->reserve(script.exclude_url_patterns().size());
     for (const URLPattern& pattern : script.exclude_url_patterns())
       script_info.exclude_matches->push_back(pattern.GetAsString());
@@ -532,23 +545,22 @@ api::scripting::RegisteredContentScript CreateRegisteredContentScriptInfo(
   // File paths may be normalized in the returned object and can differ slightly
   // compared to what was originally passed into registerContentScripts.
   if (!script.js_scripts().empty()) {
-    script_info.js = std::make_unique<std::vector<std::string>>();
+    script_info.js.emplace();
     script_info.js->reserve(script.js_scripts().size());
     for (const auto& js_script : script.js_scripts())
       script_info.js->push_back(js_script->relative_path().AsUTF8Unsafe());
   }
 
   if (!script.css_scripts().empty()) {
-    script_info.css = std::make_unique<std::vector<std::string>>();
+    script_info.css.emplace();
     script_info.css->reserve(script.css_scripts().size());
     for (const auto& css_script : script.css_scripts())
       script_info.css->push_back(css_script->relative_path().AsUTF8Unsafe());
   }
 
-  script_info.all_frames = std::make_unique<bool>(script.match_all_frames());
-  script_info.match_origin_as_fallback =
-      std::make_unique<bool>(script.match_origin_as_fallback() ==
-                             MatchOriginAsFallbackBehavior::kAlways);
+  script_info.all_frames = script.match_all_frames();
+  script_info.match_origin_as_fallback = script.match_origin_as_fallback() ==
+                                         MatchOriginAsFallbackBehavior::kAlways;
   script_info.run_at = ConvertRunLocationForAPI(script.run_location());
   script_info.world = ConvertExecutionWorldForAPI(script.execution_world());
 
@@ -616,9 +628,8 @@ ExtensionFunction::ResponseAction ScriptingExecuteScriptFunction::Run() {
     std::vector<std::string> string_args;
     string_args.reserve(injection_.args->size());
     for (const auto& arg : *injection_.args) {
-      DCHECK(arg);
       std::string json;
-      if (!base::JSONWriter::Write(*arg, &json))
+      if (!base::JSONWriter::Write(arg, &json))
         return RespondNow(Error("Unserializable argument passed."));
       string_args.push_back(std::move(json));
     }
@@ -682,10 +693,12 @@ bool ScriptingExecuteScriptFunction::Execute(
           : mojom::RunLocation::kDocumentIdle;
   script_executor->ExecuteScript(
       mojom::HostID(mojom::HostID::HostType::kExtensions, extension()->id()),
-      mojom::CodeInjection::NewJs(
-          mojom::JSInjection::New(std::move(sources), execution_world,
-                                  /*wants_result=*/true, user_gesture(),
-                                  /*wait_for_promise=*/true)),
+      mojom::CodeInjection::NewJs(mojom::JSInjection::New(
+          std::move(sources), execution_world,
+          blink::mojom::WantResultOption::kWantResult,
+          user_gesture() ? blink::mojom::UserActivationOption::kActivate
+                         : blink::mojom::UserActivationOption::kDoNotActivate,
+          blink::mojom::PromiseResultOption::kAwait)),
       frame_scope, frame_ids, ScriptExecutor::MATCH_ABOUT_BLANK, run_location,
       ScriptExecutor::DEFAULT_PROCESS,
       /* webview_src */ GURL(),
@@ -711,8 +724,7 @@ void ScriptingExecuteScriptFunction::OnScriptExecuted(
     if (!result.error.empty())
       continue;
     api::scripting::InjectionResult injection_result;
-    injection_result.result =
-        base::Value::ToUniquePtrValue(std::move(result.value));
+    injection_result.result = std::move(result.value);
     injection_result.frame_id = result.frame_id;
     if (result.document_id)
       injection_result.document_id = result.document_id.ToString();
@@ -980,8 +992,8 @@ ScriptingRegisterContentScriptsFunction::Run() {
   // made immediately following this one.
   loader->AddPendingDynamicScriptIDs(std::move(new_script_ids));
 
-  base::PostTaskAndReplyWithResult(
-      GetExtensionFileTaskRunner().get(), FROM_HERE,
+  GetExtensionFileTaskRunner()->PostTaskAndReplyWithResult(
+      FROM_HERE,
       base::BindOnce(&ValidateParsedScriptsOnFileThread,
                      script_parsing::GetSymlinkPolicy(extension()),
                      std::move(parsed_scripts)),
@@ -1043,7 +1055,8 @@ ScriptingGetRegisteredContentScriptsFunction::Run() {
       api::scripting::GetRegisteredContentScripts::Params::Create(args()));
   EXTENSION_FUNCTION_VALIDATE(params);
 
-  const api::scripting::ContentScriptFilter* filter = params->filter.get();
+  const absl::optional<api::scripting::ContentScriptFilter>& filter =
+      params->filter;
   std::set<std::string> id_filter;
   if (filter && filter->ids) {
     id_filter.insert(std::make_move_iterator(filter->ids->begin()),
@@ -1062,8 +1075,8 @@ ScriptingGetRegisteredContentScriptsFunction::Run() {
   for (const std::unique_ptr<UserScript>& script : dynamic_scripts) {
     if (id_filter.empty() || base::Contains(id_filter, script->id())) {
       auto registered_script = CreateRegisteredContentScriptInfo(*script);
-      registered_script.persist_across_sessions = std::make_unique<bool>(
-          base::Contains(persistent_script_ids, script->id()));
+      registered_script.persist_across_sessions =
+          base::Contains(persistent_script_ids, script->id());
       script_infos.push_back(std::move(registered_script));
     }
   }
@@ -1083,7 +1096,7 @@ ScriptingUnregisterContentScriptsFunction::Run() {
   auto params(api::scripting::UnregisterContentScripts::Params::Create(args()));
   EXTENSION_FUNCTION_VALIDATE(params);
 
-  std::unique_ptr<api::scripting::ContentScriptFilter>& filter = params->filter;
+  absl::optional<api::scripting::ContentScriptFilter>& filter = params->filter;
   std::set<std::string> ids_to_remove;
 
   ExtensionUserScriptLoader* loader =
@@ -1242,8 +1255,8 @@ ExtensionFunction::ResponseAction ScriptingUpdateContentScriptsFunction::Run() {
   // made immediately following this one.
   loader->AddPendingDynamicScriptIDs(std::move(ids_to_update));
 
-  base::PostTaskAndReplyWithResult(
-      GetExtensionFileTaskRunner().get(), FROM_HERE,
+  GetExtensionFileTaskRunner()->PostTaskAndReplyWithResult(
+      FROM_HERE,
       base::BindOnce(&ValidateParsedScriptsOnFileThread,
                      script_parsing::GetSymlinkPolicy(extension()),
                      std::move(parsed_scripts)),

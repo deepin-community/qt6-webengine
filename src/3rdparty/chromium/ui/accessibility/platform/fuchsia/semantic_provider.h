@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 
 #include <fuchsia/accessibility/semantics/cpp/fidl.h>
 
-#include "ui/accessibility/ax_export.h"
+#include "base/component_export.h"
 
 namespace ui {
 
@@ -17,7 +17,7 @@ namespace ui {
 // Fuchsia semantic tree in a valid state, they are committed. Please see
 // |fuchsia.accessibility.semantics| API for more documentation on valid
 // semantic trees.
-class AX_EXPORT AXFuchsiaSemanticProvider {
+class COMPONENT_EXPORT(AX_PLATFORM) AXFuchsiaSemanticProvider {
  public:
   // Fuchsia root node id.
   static constexpr uint32_t kFuchsiaRootNodeId = 0u;
@@ -78,9 +78,11 @@ class AX_EXPORT AXFuchsiaSemanticProvider {
   // Returns true if there are pending updates or deletions to be made.
   virtual bool HasPendingUpdates() const = 0;
 
-  // TODO(abrusher): Push updates to the semantic provider, rather than polling.
   // Returns the pixel scale.
   virtual float GetPixelScale() const = 0;
+
+  // Sets the pixel scale.
+  virtual void SetPixelScale(float pixel_scale) = 0;
 };
 
 }  // namespace ui

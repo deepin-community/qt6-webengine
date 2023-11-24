@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "components/viz/common/quads/compositor_frame_transition_directive.h"
 #include "components/viz/service/display_embedder/server_shared_bitmap_manager.h"
 #include "components/viz/service/surfaces/surface_saved_frame.h"
@@ -20,9 +20,10 @@ namespace {
 
 std::unique_ptr<SurfaceSavedFrame> CreateFrameWithResult() {
   CompositorFrameTransitionDirective directive(
-      1, CompositorFrameTransitionDirective::Type::kSave);
+      NavigationID::Null(), 1, CompositorFrameTransitionDirective::Type::kSave);
   auto frame = std::make_unique<SurfaceSavedFrame>(
-      std::move(directive), base::BindRepeating([](uint32_t sequence_id) {}));
+      std::move(directive),
+      base::BindRepeating([](const CompositorFrameTransitionDirective&) {}));
   frame->CompleteSavedFrameForTesting();
   return frame;
 }

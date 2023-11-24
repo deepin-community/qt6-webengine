@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,9 +12,9 @@
 #include <string>
 #include <unordered_map>
 
-#include "base/callback_forward.h"
 #include "base/compiler_specific.h"
 #include "base/containers/linked_list.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/memory_pressure_listener.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -140,7 +140,7 @@ class NET_EXPORT_PRIVATE MemBackendImpl final : public Backend {
   void OnMemoryPressure(
       base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level);
 
-  raw_ptr<base::Clock> custom_clock_for_testing_;  // usually nullptr.
+  raw_ptr<base::Clock> custom_clock_for_testing_ = nullptr;  // usually nullptr.
 
   EntryMap entries_;
 
@@ -148,8 +148,8 @@ class NET_EXPORT_PRIVATE MemBackendImpl final : public Backend {
   // most recently used.
   base::LinkedList<MemEntryImpl> lru_list_;
 
-  int32_t max_size_;      // Maximum data size for this instance.
-  int32_t current_size_;
+  int32_t max_size_ = 0;  // Maximum data size for this instance.
+  int32_t current_size_ = 0;
 
   raw_ptr<net::NetLog> net_log_;
   base::OnceClosure post_cleanup_callback_;

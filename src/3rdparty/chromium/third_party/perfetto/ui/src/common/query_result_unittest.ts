@@ -73,7 +73,7 @@ test('QueryResult.BigNumbers', () => {
   ];
   const batch = QueryResultProto.CellsBatch.create({
     cells: new Array<number>(numAndExpectedStr.length).fill(T.CELL_VARINT),
-    varintCells: numAndExpectedStr.map(x => x[0]) as number[],
+    varintCells: numAndExpectedStr.map((x) => x[0]) as number[],
     isLastBatch: true,
   });
   const resProto = QueryResultProto.create({
@@ -87,7 +87,7 @@ test('QueryResult.BigNumbers', () => {
   for (const iter = qr.iter({n: NUM}); iter.valid(); iter.next()) {
     actual.push(BigInt(iter.n).toString());
   }
-  expect(actual).toEqual(numAndExpectedStr.map(x => x[1]) as string[]);
+  expect(actual).toEqual(numAndExpectedStr.map((x) => x[1]) as string[]);
 });
 
 test('QueryResult.Floats', () => {
@@ -128,7 +128,7 @@ test('QueryResult.Strings', () => {
     '',
     'hello world',
     'In einem Bächlein helle da schoß in froher Eil',
-    '色は匂へど散りぬるを我が世誰ぞ常ならん有為の奥山今日越えて浅き夢見じ酔ひもせず'
+    '色は匂へど散りぬるを我が世誰ぞ常ならん有為の奥山今日越えて浅き夢見じ酔ひもせず',
   ];
   const batch = QueryResultProto.CellsBatch.create({
     cells: new Array<number>(strings.length).fill(T.CELL_STRING),
@@ -269,7 +269,7 @@ test('QueryResult.DuplicateColumnNames', () => {
       T.CELL_STRING,
       T.CELL_FLOAT64,
       T.CELL_STRING,
-      T.CELL_STRING
+      T.CELL_STRING,
     ],
     varintCells: [42],
     stringCells: ['a', 'b', 'c'].join('\0'),
@@ -299,4 +299,46 @@ test('QueryResult.DuplicateColumnNames', () => {
     expect(iter.valid()).toBe(false);
   }
   expect(() => qr.iter({x_3: NUM})).toThrowError(/\bx_3\b.*not found/);
+});
+
+
+test('QueryResult.WaitMoreRows', async () => {
+  const batchA = QueryResultProto.CellsBatch.create({
+    cells: [T.CELL_VARINT],
+    varintCells: [42],
+    isLastBatch: false,
+  });
+  const resProtoA = QueryResultProto.create({
+    columnNames: ['a_int'],
+    batch: [batchA],
+  });
+
+  const qr = createQueryResult({query: 'Some query'});
+  qr.appendResultBatch(QueryResultProto.encode(resProtoA).finish());
+
+  const batchB = QueryResultProto.CellsBatch.create({
+    cells: [T.CELL_VARINT],
+    varintCells: [43],
+    isLastBatch: true,
+  });
+  const resProtoB = QueryResultProto.create({
+    columnNames: [],
+    batch: [batchB],
+  });
+
+  const waitPromise = qr.waitMoreRows();
+  const appendPromise = new Promise<void>((resolve, _) => {
+    setTimeout(() => {
+      qr.appendResultBatch(QueryResultProto.encode(resProtoB).finish());
+      resolve();
+    }, 0);
+  });
+
+  expect(qr.isComplete()).toBe(false);
+  expect(qr.numRows()).toBe(1);
+
+  await Promise.all([waitPromise, appendPromise]);
+
+  expect(qr.isComplete()).toBe(true);
+  expect(qr.numRows()).toBe(2);
 });

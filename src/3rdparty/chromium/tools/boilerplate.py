@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -17,8 +17,7 @@ import os.path
 import sys
 
 LINES = [
-    'Copyright %d The Chromium Authors. All rights reserved.' %
-        date.today().year,
+    f'Copyright {date.today().year} The Chromium Authors',
     'Use of this source code is governed by a BSD-style license that can be',
     'found in the LICENSE file.'
 ]
@@ -29,17 +28,19 @@ NO_COMPILE_LINES = [
 ]
 
 EXTENSIONS_TO_COMMENTS = {
-    'h': '//',
     'cc': '//',
-    'nc': '//',
-    'mm': '//',
-    'js': '//',
-    'py': '#',
     'gn': '#',
     'gni': '#',
+    'h': '//',
+    'js': '//',
+    'mm': '//',
     'mojom': '//',
+    'nc': '//',
+    'proto': '//',
+    'py': '#',
+    'swift': '//',
+    'ts': '//',
     'typemap': '#',
-    "swift": "//",
 }
 
 
@@ -156,6 +157,14 @@ def Main():
 
     if os.path.exists(f):
       print('A file at path %s already exists' % f, file=sys.stderr)
+      return 2
+
+    # TODO(crbug.com/1375793): Remove this check.
+    if _IsIOSFile(f) and f.endswith('.js'):
+      print(
+          'Invalid file type for %s. (Please use \'.ts\' for new iOS scripts.)'
+          % f,
+          file=sys.stderr)
       return 2
 
   for f in files:

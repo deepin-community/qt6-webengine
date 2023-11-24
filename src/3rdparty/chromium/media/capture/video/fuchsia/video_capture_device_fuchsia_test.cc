@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -71,11 +71,6 @@ class HeapBufferHandleProvider final
     return {};
   }
 
-  mojo::ScopedSharedBufferHandle DuplicateAsMojoBuffer() override {
-    NOTREACHED();
-    return {};
-  }
-
   std::unique_ptr<VideoCaptureBufferHandle> GetHandleForInProcessAccess()
       override {
     return std::make_unique<HeapBufferHandle>(data_.size(), data_.data());
@@ -107,6 +102,8 @@ class TestVideoCaptureClient final : public VideoCaptureDevice::Client {
 
  private:
   // VideoCaptureDevice::Client implementation.
+  void OnCaptureConfigurationChanged() override {}
+
   void OnStarted() final {
     EXPECT_FALSE(started_);
     started_ = true;
@@ -167,7 +164,8 @@ class TestVideoCaptureClient final : public VideoCaptureDevice::Client {
       CapturedExternalVideoBuffer buffer,
       std::vector<CapturedExternalVideoBuffer> scaled_buffers,
       base::TimeTicks reference_time,
-      base::TimeDelta timestamp) override {
+      base::TimeDelta timestamp,
+      gfx::Rect visible_rect) override {
     NOTREACHED();
   }
   void OnIncomingCapturedBuffer(Buffer buffer,

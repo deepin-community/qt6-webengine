@@ -1,10 +1,11 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "cc/trees/draw_property_utils.h"
 
 #include <stddef.h>
+
 #include <algorithm>
 #include <utility>
 #include <vector>
@@ -14,7 +15,9 @@
 #include "base/containers/stack.h"
 #include "base/logging.h"
 #include "base/notreached.h"
+#include "base/ranges/algorithm.h"
 #include "build/build_config.h"
+#include "cc/base/features.h"
 #include "cc/base/math_util.h"
 #include "cc/layers/draw_properties.h"
 #include "cc/layers/layer.h"
@@ -28,8 +31,8 @@
 #include "cc/trees/property_tree_builder.h"
 #include "cc/trees/scroll_node.h"
 #include "cc/trees/transform_node.h"
-#include "components/viz/common/display/de_jelly.h"
-#include "components/viz/common/shared_element_resource_id.h"
+#include "cc/trees/viewport_property_ids.h"
+#include "components/viz/common/view_transition_element_resource_id.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 
 namespace cc {
@@ -59,8 +62,8 @@ void PostConcatSurfaceContentsScale(const EffectNode* effect_node,
     return;
   }
   DCHECK(effect_node->HasRenderSurface());
-  transform->matrix().postScale(effect_node->surface_contents_scale.x(),
-                                effect_node->surface_contents_scale.y(), 1.f);
+  transform->PostScale(effect_node->surface_contents_scale.x(),
+                       effect_node->surface_contents_scale.y());
 }
 
 bool ConvertRectBetweenSurfaceSpaces(const PropertyTrees* property_trees,
@@ -160,58 +163,65 @@ ConditionalClip ComputeCurrentClip(const ClipNode* clip_node,
   return ConditionalClip{true /* is_clipped */, current_clip};
 }
 
+bool ExpandClipForPixelMovingFilter(const PropertyTrees* property_trees,
+                                    int target_id,
+                                    const EffectNode* filter_node,
+                                    gfx::RectF* clip_rect) {
+  // Bring the accumulated clip to the space of the pixel-moving filter.
+  gfx::RectF clip_rect_in_mapping_space;
+  bool success = ConvertRectBetweenSurfaceSpaces(property_trees, target_id,
+                                                 filter_node->id, *clip_rect,
+                                                 &clip_rect_in_mapping_space);
+  // If transform is not invertible, no clip will be applied.
+  if (!success)
+    return false;
+
+  // Do the expansion.
+  SkMatrix filter_draw_matrix =
+      SkMatrix::Scale(filter_node->surface_contents_scale.x(),
+                      filter_node->surface_contents_scale.y());
+  gfx::RectF mapped_clip_in_mapping_space(filter_node->filters.MapRect(
+      ToEnclosingClipRect(clip_rect_in_mapping_space), filter_draw_matrix));
+
+  // Put the expanded clip back into the original target space.
+  gfx::RectF original_clip_rect = *clip_rect;
+  success = ConvertRectBetweenSurfaceSpaces(
+      property_trees, filter_node->id, target_id, mapped_clip_in_mapping_space,
+      clip_rect);
+  // If transform is not invertible, no clip will be applied.
+  if (!success)
+    return false;
+
+  // Ensure the clip is expanded in the target space, in case that the
+  // mapped accumulated_clip doesn't contain the original.
+  clip_rect->Union(original_clip_rect);
+  return true;
+}
+
 bool ApplyClipNodeToAccumulatedClip(const PropertyTrees* property_trees,
                                     bool include_expanding_clips,
                                     int target_id,
                                     int target_transform_id,
                                     const ClipNode* clip_node,
                                     gfx::RectF* accumulated_clip) {
-  switch (clip_node->clip_type) {
-    case ClipNode::ClipType::APPLIES_LOCAL_CLIP: {
-      ConditionalClip current_clip = ComputeCurrentClip(
-          clip_node, property_trees, target_transform_id, target_id);
-
-      // If transform is not invertible, no clip will be applied.
-      if (!current_clip.is_clipped)
-        return false;
-
-      *accumulated_clip =
-          gfx::IntersectRects(*accumulated_clip, current_clip.clip_rect);
+  if (!clip_node->AppliesLocalClip()) {
+    if (!include_expanding_clips)
       return true;
-    }
-    case ClipNode::ClipType::EXPANDS_CLIP: {
-      if (!include_expanding_clips)
-        return true;
-
-      // Bring the accumulated clip to the space of the expanding effect.
-      const EffectNode* expanding_effect_node =
-          property_trees->effect_tree().Node(
-              clip_node->clip_expander->target_effect_id());
-      gfx::RectF accumulated_clip_rect_in_expanding_space;
-      bool success = ConvertRectBetweenSurfaceSpaces(
-          property_trees, target_id, expanding_effect_node->id,
-          *accumulated_clip, &accumulated_clip_rect_in_expanding_space);
-      // If transform is not invertible, no clip will be applied.
-      if (!success)
-        return false;
-
-      // Do the expansion.
-      gfx::RectF expanded_clip_in_expanding_space =
-          gfx::RectF(clip_node->clip_expander->MapRect(
-              ToEnclosingClipRect(accumulated_clip_rect_in_expanding_space),
-              property_trees));
-
-      // Put the expanded clip back into the original target space.
-      success = ConvertRectBetweenSurfaceSpaces(
-          property_trees, expanding_effect_node->id, target_id,
-          expanded_clip_in_expanding_space, accumulated_clip);
-      // If transform is not invertible, no clip will be applied.
-      if (!success)
-        return false;
-      return true;
-    }
+    const EffectNode* filter_node =
+        property_trees->effect_tree().Node(clip_node->pixel_moving_filter_id);
+    DCHECK(filter_node);
+    return ExpandClipForPixelMovingFilter(property_trees, target_id,
+                                          filter_node, accumulated_clip);
   }
-  NOTREACHED();
+
+  ConditionalClip current_clip = ComputeCurrentClip(
+      clip_node, property_trees, target_transform_id, target_id);
+
+  // If transform is not invertible, no clip will be applied.
+  if (!current_clip.is_clipped)
+    return false;
+
+  accumulated_clip->Intersect(current_clip.clip_rect);
   return true;
 }
 
@@ -292,13 +302,12 @@ ConditionalClip ComputeAccumulatedClip(PropertyTrees* property_trees,
   } else {
     // No cache hit or the cached clip has no clip to apply. We need to find
     // the first clip that applies clip as there is no clip to expand.
-    while (clip_node->clip_type != ClipNode::ClipType::APPLIES_LOCAL_CLIP &&
-           parent_chain.size() > 0) {
+    while (!clip_node->AppliesLocalClip() && parent_chain.size() > 0) {
       clip_node = parent_chain.top();
       parent_chain.pop();
     }
 
-    if (clip_node->clip_type != ClipNode::ClipType::APPLIES_LOCAL_CLIP) {
+    if (!clip_node->AppliesLocalClip()) {
       // No clip to apply.
       cached_data->clip = unclipped;
       return unclipped;
@@ -442,7 +451,7 @@ bool IsTransformToRootOf3DRenderingContextBackFaceVisible(
   if (transform_tree_index != root_id)
     property_trees->transform_tree().CombineTransformsBetween(
         transform_tree_index, root_id, &to_3d_root);
-  to_3d_root.PreconcatTransform(root_node->to_parent);
+  to_3d_root.PreConcat(root_node->to_parent);
   return to_3d_root.IsBackFaceVisible();
 }
 
@@ -497,14 +506,9 @@ bool LayerNeedsUpdate(LayerType* layer,
         !HasSingularTransform(backface_transform_id, tree) &&
         draw_property_utils::IsLayerBackFaceVisible(
             layer, backface_transform_id, property_trees)) {
-      UMA_HISTOGRAM_BOOLEAN(
-          "Compositing.Renderer.LayerUpdateSkippedDueToBackface", true);
       return false;
     }
   }
-
-  UMA_HISTOGRAM_BOOLEAN("Compositing.Renderer.LayerUpdateSkippedDueToBackface",
-                        false);
 
   return true;
 }
@@ -554,7 +558,7 @@ void SetSurfaceIsClipped(const ClipTree& clip_tree,
     // If the clips between the render surface and its target only expand the
     // clips and do not apply any new clip, we need not clip the render surface.
     const ClipNode* clip_node = clip_tree.Node(render_surface->ClipTreeIndex());
-    is_clipped = clip_node->clip_type != ClipNode::ClipType::EXPANDS_CLIP;
+    is_clipped = clip_node->AppliesLocalClip();
   }
   render_surface->SetIsClipped(is_clipped);
 }
@@ -593,10 +597,11 @@ float LayerDrawOpacity(const LayerImpl* layer, const EffectTree& tree) {
 template <typename LayerType>
 gfx::Transform ScreenSpaceTransformInternal(LayerType* layer,
                                             const TransformTree& tree) {
-  gfx::Transform xform(1, 0, 0, 1, layer->offset_to_transform_parent().x(),
-                       layer->offset_to_transform_parent().y());
+  gfx::Transform xform =
+      gfx::Transform::MakeTranslation(layer->offset_to_transform_parent().x(),
+                                      layer->offset_to_transform_parent().y());
   gfx::Transform ssxform = tree.ToScreen(layer->transform_tree_index());
-  xform.ConcatTransform(ssxform);
+  xform.PostConcat(ssxform);
   return xform;
 }
 
@@ -700,13 +705,6 @@ gfx::Rect LayerVisibleRect(PropertyTrees* property_trees, LayerImpl* layer) {
   clip_in_layer_space.Offset(-layer->offset_to_transform_parent());
 
   gfx::Rect visible_rect = ToEnclosingClipRect(clip_in_layer_space);
-  if (layer->layer_tree_impl()->settings().allow_de_jelly_effect) {
-    float padding_amount = viz::MaxDeJellyHeight();
-    if (layer->IsAffectedByPageScale()) {
-      padding_amount /= layer->layer_tree_impl()->current_page_scale_factor();
-    }
-    visible_rect.Inset(gfx::Insets::VH(-padding_amount, 0.0f));
-  }
   visible_rect.Intersect(layer_content_rect);
   return visible_rect;
 }
@@ -775,10 +773,10 @@ std::pair<gfx::MaskFilterInfo, bool> GetMaskFilterInfoPair(
 
   auto result =
       std::make_pair(node->mask_filter_info, node->is_fast_rounded_corner);
-
-  if (!result.first.Transform(to_target))
+  result.first.ApplyTransform(to_target);
+  if (result.first.IsEmpty()) {
     return kEmptyMaskFilterInfoPair;
-
+  }
   return result;
 }
 
@@ -846,8 +844,8 @@ void ComputeClips(PropertyTrees* property_trees) {
     bool success = ApplyClipNodeToAccumulatedClip(
         property_trees, include_expanding_clips, target_effect_id,
         target_transform_id, clip_node, &accumulated_clip);
-    DCHECK(success);
-    clip_node->cached_accumulated_rect_in_screen_space = accumulated_clip;
+    if (success)
+      clip_node->cached_accumulated_rect_in_screen_space = accumulated_clip;
   }
   clip_tree->set_needs_update(false);
 }
@@ -999,11 +997,11 @@ void ComputeInitialRenderSurfaceList(LayerTreeImpl* layer_tree_impl,
     bool skip_layer = !is_root && (skip_draw_properties_computation ||
                                    skip_for_invertibility);
 
-    TransformNode* transform_noe =
+    TransformNode* transform_node =
         property_trees->transform_tree_mutable().Node(
             layer->transform_tree_index());
     const bool has_will_change_transform_hint =
-        transform_noe && transform_noe->will_change_transform;
+        transform_node && transform_node->will_change_transform;
     // Raster layers that are animated but currently have a non-invertible
     // matrix, or layers that have a will-change transform hint and might
     // animate to not be backface visible soon.
@@ -1150,43 +1148,33 @@ void RecordRenderSurfaceReasonsForTracing(
 void UpdateElasticOverscroll(
     PropertyTrees* property_trees,
     TransformNode* overscroll_elasticity_transform_node,
-    ElementId overscroll_elasticity_effect_element_id,
     const gfx::Vector2dF& elastic_overscroll,
     const ScrollNode* inner_viewport) {
-#if BUILDFLAG(IS_ANDROID)
-  // On android, elastic overscroll is implemented by stretching the content
-  // from the overscrolled edge.
-  if (!overscroll_elasticity_effect_element_id &&
-      !overscroll_elasticity_transform_node) {
+  if (!overscroll_elasticity_transform_node) {
     DCHECK(elastic_overscroll.IsZero());
     return;
   }
-  if (overscroll_elasticity_effect_element_id) {
-    if (elastic_overscroll.IsZero() || !inner_viewport) {
-      property_trees->effect_tree_mutable().OnFilterAnimated(
-          overscroll_elasticity_effect_element_id, FilterOperations());
-      return;
-    }
-    // The inner viewport container size takes into account the size change as a
-    // result of the top controls, see ScrollTree::container_bounds.
-    gfx::Size scroller_size =
-        property_trees->scroll_tree().container_bounds(inner_viewport->id);
-
-    property_trees->effect_tree_mutable().OnFilterAnimated(
-        overscroll_elasticity_effect_element_id,
-        FilterOperations(
-            std::vector<FilterOperation>({FilterOperation::CreateStretchFilter(
-                -elastic_overscroll.x() / scroller_size.width(),
-                -elastic_overscroll.y() / scroller_size.height())})));
+#if BUILDFLAG(IS_ANDROID)
+  if (inner_viewport && property_trees->scroll_tree()
+                            .container_bounds(inner_viewport->id)
+                            .IsEmpty()) {
+    // Avoid divide by 0. Animation should not be visible for an empty viewport
+    // anyway.
     return;
   }
 
-  // If there is no overscroll elasticity effect node, we apply a stretch
-  // transform.
+  // On android, elastic overscroll is implemented by stretching the content
+  // from the overscrolled edge by applying a stretch transform
   overscroll_elasticity_transform_node->local.MakeIdentity();
   overscroll_elasticity_transform_node->origin.SetPoint(0.f, 0.f, 0.f);
-  overscroll_elasticity_transform_node->to_screen_is_potentially_animated =
-      !elastic_overscroll.IsZero();
+  if (base::FeatureList::IsEnabled(
+          features::kAvoidRasterDuringElasticOverscroll)) {
+    overscroll_elasticity_transform_node->has_potential_animation =
+        !elastic_overscroll.IsZero();
+  } else {
+    overscroll_elasticity_transform_node->to_screen_is_potentially_animated =
+        !elastic_overscroll.IsZero();
+  }
 
   if (!elastic_overscroll.IsZero() && inner_viewport) {
     // The inner viewport container size takes into account the size change as a
@@ -1211,11 +1199,8 @@ void UpdateElasticOverscroll(
   }
   overscroll_elasticity_transform_node->needs_local_transform_update = true;
   property_trees->transform_tree_mutable().set_needs_update(true);
+
 #else  // BUILDFLAG(IS_ANDROID)
-  if (!overscroll_elasticity_transform_node) {
-    DCHECK(elastic_overscroll.IsZero());
-    return;
-  }
 
   // On other platforms, we modify the translation offset to match the
   // overscroll amount.
@@ -1238,7 +1223,6 @@ void ComputeDrawPropertiesOfVisibleLayers(const LayerImplList* layer_list,
   for (LayerImpl* layer : *layer_list) {
     const TransformNode* transform_node =
         property_trees->transform_tree().Node(layer->transform_tree_index());
-
     layer->draw_properties().screen_space_transform =
         ScreenSpaceTransformInternal(layer, property_trees->transform_tree());
     layer->draw_properties().target_space_transform = DrawTransform(
@@ -1258,6 +1242,7 @@ void ComputeDrawPropertiesOfVisibleLayers(const LayerImplList* layer_list,
   for (LayerImpl* layer : *layer_list) {
     layer->draw_properties().opacity =
         LayerDrawOpacity(layer, property_trees->effect_tree());
+
     RenderSurfaceImpl* render_target = layer->render_target();
     int lca_clip_id = LowestCommonAncestor(layer->clip_tree_index(),
                                            render_target->ClipTreeIndex(),
@@ -1295,6 +1280,13 @@ void ComputeDrawPropertiesOfVisibleLayers(const LayerImplList* layer_list,
     layer->draw_properties().visible_drawable_content_rect =
         LayerDrawableContentRect(layer, visible_bounds_in_target_space,
                                  layer->draw_properties().clip_rect);
+  }
+
+  // Make sure that the layers push their properties. This isn't necessary for
+  // picture layers that always push their properties, but is important for
+  // other layers to invalidate the active tree.
+  for (LayerImpl* layer : *layer_list) {
+    layer->SetNeedsPushProperties();
   }
 }
 
@@ -1425,7 +1417,8 @@ void FindLayersThatNeedUpdates(LayerTreeImpl* layer_tree_impl,
   }
 }
 
-void ComputeTransforms(TransformTree* transform_tree) {
+void ComputeTransforms(TransformTree* transform_tree,
+                       const ViewportPropertyIds& viewport_property_ids) {
   if (!transform_tree->needs_update()) {
 #if DCHECK_IS_ON()
     // If the transform tree does not need an update, no TransformNode should
@@ -1439,7 +1432,7 @@ void ComputeTransforms(TransformTree* transform_tree) {
   }
   for (int i = kContentsRootPropertyNodeId;
        i < static_cast<int>(transform_tree->size()); ++i)
-    transform_tree->UpdateTransforms(i);
+    transform_tree->UpdateTransforms(i, &viewport_property_ids);
   transform_tree->set_needs_update(false);
 }
 
@@ -1460,14 +1453,16 @@ void UpdatePropertyTrees(LayerTreeHost* layer_tree_host) {
     property_trees->clip_tree_mutable().set_needs_update(true);
     property_trees->effect_tree_mutable().set_needs_update(true);
   }
-  ComputeTransforms(&property_trees->transform_tree_mutable());
+
+  ComputeTransforms(&property_trees->transform_tree_mutable(),
+                    layer_tree_host->viewport_property_ids());
   ComputeEffects(&property_trees->effect_tree_mutable());
   // Computation of clips uses ToScreen which is updated while computing
   // transforms. So, ComputeTransforms should be before ComputeClips.
   ComputeClips(property_trees);
 }
 
-void UpdatePropertyTreesAndRenderSurfaces(LayerImpl* root_layer,
+void UpdatePropertyTreesAndRenderSurfaces(LayerTreeImpl* layer_tree_impl,
                                           PropertyTrees* property_trees) {
   if (property_trees->transform_tree().needs_update()) {
     property_trees->clip_tree_mutable().set_needs_update(true);
@@ -1475,7 +1470,8 @@ void UpdatePropertyTreesAndRenderSurfaces(LayerImpl* root_layer,
   }
   UpdateRenderTarget(&property_trees->effect_tree_mutable());
 
-  ComputeTransforms(&property_trees->transform_tree_mutable());
+  ComputeTransforms(&property_trees->transform_tree_mutable(),
+                    layer_tree_impl->viewport_property_ids());
   ComputeEffects(&property_trees->effect_tree_mutable());
   // Computation of clips uses ToScreen which is updated while computing
   // transforms. So, ComputeTransforms should be before ComputeClips.
@@ -1544,19 +1540,17 @@ void CalculateDrawProperties(
   UpdatePageScaleFactor(property_trees,
                         layer_tree_impl->PageScaleTransformNode(),
                         layer_tree_impl->current_page_scale_factor());
-  UpdateElasticOverscroll(
-      property_trees, layer_tree_impl->OverscrollElasticityTransformNode(),
-      layer_tree_impl->OverscrollElasticityEffectElementId(),
-      layer_tree_impl->current_elastic_overscroll(),
-      layer_tree_impl->InnerViewportScrollNode());
+  UpdateElasticOverscroll(property_trees,
+                          layer_tree_impl->OverscrollElasticityTransformNode(),
+                          layer_tree_impl->current_elastic_overscroll(),
+                          layer_tree_impl->InnerViewportScrollNode());
   // Similarly, the device viewport and device transform are shared
   // by both trees.
   property_trees->clip_tree_mutable().SetViewportClip(
       gfx::RectF(layer_tree_impl->GetDeviceViewport()));
   property_trees->transform_tree_mutable().SetRootScaleAndTransform(
       layer_tree_impl->device_scale_factor(), layer_tree_impl->DrawTransform());
-  UpdatePropertyTreesAndRenderSurfaces(layer_tree_impl->root_layer(),
-                                       property_trees);
+  UpdatePropertyTreesAndRenderSurfaces(layer_tree_impl, property_trees);
 
   {
     TRACE_EVENT0("cc", "draw_property_utils::FindLayersThatNeedUpdates");
@@ -1614,10 +1608,9 @@ bool LogDoubleBackgroundBlur(const LayerTreeImpl& layer_tree_impl,
           gfx::Rect screen_space_rect = MathUtil::MapEnclosingClippedRect(
               render_surface->screen_space_transform(),
               render_surface->content_rect());
-          auto it = std::find_if(
-              rects.begin(), rects.end(),
-              [&screen_space_rect](
-                  const std::pair<const LayerImpl*, gfx::Rect>& r) {
+          auto it = base::ranges::find_if(
+              rects, [&screen_space_rect](
+                         const std::pair<const LayerImpl*, gfx::Rect>& r) {
                 return r.second.Intersects(screen_space_rect);
               });
           if (rects.end() == it) {

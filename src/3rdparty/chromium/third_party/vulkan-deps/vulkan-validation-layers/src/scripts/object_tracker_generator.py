@@ -1,9 +1,9 @@
 #!/usr/bin/python3 -i
 #
-# Copyright (c) 2015-2022 The Khronos Group Inc.
-# Copyright (c) 2015-2022 Valve Corporation
-# Copyright (c) 2015-2022 LunarG, Inc.
-# Copyright (c) 2015-2022 Google Inc.
+# Copyright (c) 2015-2023 The Khronos Group Inc.
+# Copyright (c) 2015-2023 Valve Corporation
+# Copyright (c) 2015-2023 LunarG, Inc.
+# Copyright (c) 2015-2023 Google Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,9 +16,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
-# Author: Mark Lobodzinski <mark@lunarg.com>
-# Author: Dave Houlton <daveh@lunarg.com>
 
 import os,re,sys,string,json
 import xml.etree.ElementTree as etree
@@ -147,6 +144,7 @@ class ObjectTrackerOutputGenerator(OutputGenerator):
             'vkCreateInstance',
             'vkCreateDevice',
             'vkEnumeratePhysicalDevices',
+            #'vkEnumeratePhysicalDeviceGroups',
             'vkGetPhysicalDeviceQueueFamilyProperties',
             'vkGetPhysicalDeviceQueueFamilyProperties2',
             'vkGetPhysicalDeviceQueueFamilyProperties2KHR',
@@ -181,6 +179,8 @@ class ObjectTrackerOutputGenerator(OutputGenerator):
             'vkCmdBuildAccelerationStructuresIndirectKHR',
             'vkBuildAccelerationStructuresKHR',
             'vkCreateRayTracingPipelinesKHR',
+            'vkExportMetalObjectsEXT',
+            'vkGetDescriptorEXT',
             ]
         # These VUIDS are not implicit, but are best handled in this layer. Codegen for vkDestroy calls will generate a key
         # which is translated here into a good VU.  Saves ~40 checks.
@@ -226,6 +226,10 @@ class ObjectTrackerOutputGenerator(OutputGenerator):
             "VkComputePipelineCreateInfo-basePipelineHandle": "\"VUID-VkComputePipelineCreateInfo-flags-00697\"",
             "VkRayTracingPipelineCreateInfoNV-basePipelineHandle": "\"VUID-VkRayTracingPipelineCreateInfoNV-flags-03421\"",
 			"VkRayTracingPipelineCreateInfoKHR-basePipelineHandle": "\"VUID-VkRayTracingPipelineCreateInfoKHR-flags-03421\"",
+            "VkVideoSessionKHR-videoSession-compatalloc": "\"VUID-vkDestroyVideoSessionKHR-videoSession-07193\"",
+            "VkVideoSessionKHR-videoSession-nullalloc": "\"VUID-vkDestroyVideoSessionKHR-videoSession-07194\"",
+            "VkVideoSessionParametersKHR-videoSessionParameters-compatalloc": "\"VUID-vkDestroyVideoSessionParametersKHR-videoSessionParameters-07213\"",
+            "VkVideoSessionParametersKHR-videoSessionParameters-nullalloc": "\"VUID-vkDestroyVideoSessionParametersKHR-videoSessionParameters-07214\"",
             "VkAccelerationStructureKHR-accelerationStructure-compatalloc": "\"VUID-vkDestroyAccelerationStructureKHR-accelerationStructure-02443\"",
             "VkAccelerationStructureKHR-accelerationStructure-nullalloc": "\"VUID-vkDestroyAccelerationStructureKHR-accelerationStructure-02444\"",
             "VkAccelerationStructureNV-accelerationStructure-compatalloc": "\"VUID-vkDestroyAccelerationStructureNV-accelerationStructure-03753\"",
@@ -392,6 +396,9 @@ class ObjectTrackerOutputGenerator(OutputGenerator):
         self.type_categories = GetTypeCategories(self.registry.tree)
         self.is_aliased_type = GetHandleAliased(self.registry.tree)
 
+        # Fix the parent of VkSwapchainKHR
+        self.handle_parents['VkSwapchainKHR'] = 'VkDevice'
+
         header_file = (genOpts.filename == 'object_tracker.h')
         source_file = (genOpts.filename == 'object_tracker.cpp')
 
@@ -422,10 +429,10 @@ class ObjectTrackerOutputGenerator(OutputGenerator):
         copyright += '\n'
         copyright += '/***************************************************************************\n'
         copyright += ' *\n'
-        copyright += ' * Copyright (c) 2015-2022 The Khronos Group Inc.\n'
-        copyright += ' * Copyright (c) 2015-2022 Valve Corporation\n'
-        copyright += ' * Copyright (c) 2015-2022 LunarG, Inc.\n'
-        copyright += ' * Copyright (c) 2015-2022 Google Inc.\n'
+        copyright += ' * Copyright (c) 2015-2023 The Khronos Group Inc.\n'
+        copyright += ' * Copyright (c) 2015-2023 Valve Corporation\n'
+        copyright += ' * Copyright (c) 2015-2023 LunarG, Inc.\n'
+        copyright += ' * Copyright (c) 2015-2023 Google Inc.\n'
         copyright += ' *\n'
         copyright += ' * Licensed under the Apache License, Version 2.0 (the "License");\n'
         copyright += ' * you may not use this file except in compliance with the License.\n'
@@ -438,17 +445,13 @@ class ObjectTrackerOutputGenerator(OutputGenerator):
         copyright += ' * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n'
         copyright += ' * See the License for the specific language governing permissions and\n'
         copyright += ' * limitations under the License.\n'
-        copyright += ' *\n'
-        copyright += ' * Author: Mark Lobodzinski <mark@lunarg.com>\n'
-        copyright += ' * Author: Dave Houlton <daveh@lunarg.com>\n'
-        copyright += ' *\n'
         copyright += ' ****************************************************************************/\n'
         self.otwrite('both', copyright)
         self.newline()
         self.otwrite('cpp', '#include "chassis.h"')
         self.otwrite('cpp', '#include "object_lifetime_validation.h"')
         self.newline()
-        self.otwrite('cpp', 'ReadLockGuard ObjectLifetimes::ReadLock() { return ReadLockGuard(validation_object_mutex, std::defer_lock); }')
+        self.otwrite('cpp', 'ReadLockGuard ObjectLifetimes::ReadLock() const { return ReadLockGuard(validation_object_mutex, std::defer_lock); }')
         self.otwrite('cpp', 'WriteLockGuard ObjectLifetimes::WriteLock() { return WriteLockGuard(validation_object_mutex, std::defer_lock); }')
 
 
@@ -743,6 +746,13 @@ class ObjectTrackerOutputGenerator(OutputGenerator):
                 indent = self.decIndent(indent)
                 create_obj_code += '%s}\n' % indent
             indent = self.decIndent(indent)
+        # Physical device groups are not handles, but a set of handles, they need to be tracked as well
+        elif handle_type.text == 'VkPhysicalDeviceGroupProperties':
+            create_obj_code += f"""{indent}if ({cmd_info[-1].name}) {{
+{indent}{indent}for (uint32_t device_group_index = 0; device_group_index < *{cmd_info[-2].name}; device_group_index++) {{
+{indent}{indent}{indent}PostCallRecordEnumeratePhysicalDevices({cmd_info[0].name}, &{cmd_info[-1].name}[device_group_index].physicalDeviceCount, {cmd_info[-1].name}[device_group_index].physicalDevices, VK_SUCCESS);
+{indent}{indent}}}
+{indent}}}\n"""
 
         return create_obj_code
 
@@ -832,6 +842,8 @@ class ObjectTrackerOutputGenerator(OutputGenerator):
                 manual_vuid_index = parent_name + '-' + obj_name
                 param_vuid = self.manual_vuids.get(manual_vuid_index, "kVUIDUndefined")
             pre_call_code += '%s%sskip |= ValidateObject(%s%s, %s, %s, %s, %s);\n' % (bonus_indent, indent, prefix, obj_name, self.GetVulkanObjType(obj_type), null_allowed, param_vuid, parent_vuid)
+            if 'pSampler' in obj_name:
+                pre_call_code = ''
         return pre_call_code
     #
     # first_level_param indicates if elements are passed directly into the function else they're below a ptr/struct
@@ -1008,7 +1020,7 @@ class ObjectTrackerOutputGenerator(OutputGenerator):
             (pre_call_validate, pre_call_record, post_call_record) = self.generate_wrapping_code(cmdinfo.elem)
 
             feature_extra_protect = cmddata.extra_protect
-            if (feature_extra_protect is not None):
+            if (feature_extra_protect is not None and not (cmdname in self.no_autogen_list and 'object_tracker.cpp' in self.genOpts.filename)):
                 self.appendSection('command', '')
                 self.appendSection('command', '#ifdef '+ feature_extra_protect)
                 self.prototypes += [ '#ifdef %s' % feature_extra_protect ]
@@ -1079,9 +1091,13 @@ class ObjectTrackerOutputGenerator(OutputGenerator):
 
                     if result_type.text == 'VkResult':
                         post_cr_func_decl = post_cr_func_decl.replace(')', ',\n    VkResult                                    result)')
+                        failure_condition = 'result != VK_SUCCESS'
+                        # VK_INCOMPLETE is considered a success
+                        if 'EnumeratePhysicalDeviceGroups' in cmdname:
+                            failure_condition += ' && result != VK_INCOMPLETE'
                         # The two createpipelines APIs may create on failure -- skip the success result check
                         if 'CreateGraphicsPipelines' not in cmdname and 'CreateComputePipelines' not in cmdname and 'CreateRayTracingPipelines' not in cmdname:
-                            post_cr_func_decl = post_cr_func_decl.replace('{', '{\n    if (result != VK_SUCCESS) return;')
+                            post_cr_func_decl = post_cr_func_decl.replace('{', '{\n    if (%s) return;' % failure_condition)
                     elif result_type.text == 'VkDeviceAddress':
                         post_cr_func_decl = post_cr_func_decl.replace(')', ',\n    VkDeviceAddress                             result)')
                     self.appendSection('command', post_cr_func_decl)
@@ -1089,6 +1105,6 @@ class ObjectTrackerOutputGenerator(OutputGenerator):
                     self.appendSection('command', post_call_record)
                     self.appendSection('command', '}')
 
-            if (feature_extra_protect is not None):
+            if (feature_extra_protect is not None and not (cmdname in self.no_autogen_list and 'object_tracker.cpp' in self.genOpts.filename)):
                 self.appendSection('command', '#endif // '+ feature_extra_protect)
                 self.prototypes += [ '#endif' ]

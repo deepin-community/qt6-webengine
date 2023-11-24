@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,9 @@
 #include "sql/statement.h"
 
 namespace content {
+
+using MediaLicenseStorageHostOpenError =
+    MediaLicenseStorageHost::MediaLicenseStorageHostOpenError;
 
 namespace {
 
@@ -25,21 +28,19 @@ MediaLicenseDatabase::MediaLicenseDatabase(const base::FilePath& path)
       // bytes) and that we'll typically only be pulling one file at a time
       // (playback), specify a large page size to allow inner nodes can pack
       // many keys, to keep the index B-tree flat.
-      db_(sql::DatabaseOptions(/*.exclusive_locking =*/ true,
-                               /*.page_size =*/ 32768,
-                               /*.cache_size =*/ 8)) {}
+      db_(sql::DatabaseOptions{.exclusive_locking = true,
+                               .page_size = 32768,
+                               .cache_size = 8}) {}
 
-bool MediaLicenseDatabase::OpenFile(const media::CdmType& cdm_type,
-                                    const std::string& file_name) {
+MediaLicenseStorageHostOpenError MediaLicenseDatabase::OpenFile(
+    const media::CdmType& cdm_type,
+    const std::string& file_name) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
-  if (!OpenDatabase())
-    return false;
 
   // The media license code doesn't distinguish between an empty file and a
   // file which does not exist, so don't bother inserting an empty row into
   // the database.
-  return true;
+  return OpenDatabase();
 }
 
 absl::optional<std::vector<uint8_t>> MediaLicenseDatabase::ReadFile(
@@ -47,15 +48,16 @@ absl::optional<std::vector<uint8_t>> MediaLicenseDatabase::ReadFile(
     const std::string& file_name) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  if (!OpenDatabase())
+  if (OpenDatabase() != MediaLicenseStorageHostOpenError::kOk) {
     return absl::nullopt;
+  }
 
   static constexpr char kSelectSql[] =
       "SELECT data FROM licenses WHERE cdm_type=? AND file_name=?";
   DCHECK(db_.IsSQLValid(kSelectSql));
 
   sql::Statement statement(db_.GetCachedStatement(SQL_FROM_HERE, kSelectSql));
-  statement.BindString(0, cdm_type.id.ToString());
+  statement.BindString(0, cdm_type.ToString());
   statement.BindString(1, file_name);
 
   if (!statement.Step()) {
@@ -80,8 +82,9 @@ bool MediaLicenseDatabase::WriteFile(const media::CdmType& cdm_type,
                                      const std::vector<uint8_t>& data) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  if (!OpenDatabase())
+  if (OpenDatabase() != MediaLicenseStorageHostOpenError::kOk) {
     return false;
+  }
 
   static constexpr char kInsertSql[] =
       // clang-format off
@@ -91,7 +94,7 @@ bool MediaLicenseDatabase::WriteFile(const media::CdmType& cdm_type,
   DCHECK(db_.IsSQLValid(kInsertSql));
 
   sql::Statement statement(db_.GetCachedStatement(SQL_FROM_HERE, kInsertSql));
-  statement.BindString(0, cdm_type.id.ToString());
+  statement.BindString(0, cdm_type.ToString());
   statement.BindString(1, file_name);
   statement.BindBlob(2, data);
   bool success = statement.Run();
@@ -106,15 +109,16 @@ bool MediaLicenseDatabase::DeleteFile(const media::CdmType& cdm_type,
                                       const std::string& file_name) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  if (!OpenDatabase())
+  if (OpenDatabase() != MediaLicenseStorageHostOpenError::kOk) {
     return false;
+  }
 
   static constexpr char kDeleteSql[] =
       "DELETE FROM licenses WHERE cdm_type=? AND file_name=?";
   DCHECK(db_.IsSQLValid(kDeleteSql));
 
   sql::Statement statement(db_.GetCachedStatement(SQL_FROM_HERE, kDeleteSql));
-  statement.BindString(0, cdm_type.id.ToString());
+  statement.BindString(0, cdm_type.ToString());
   statement.BindString(1, file_name);
   bool success = statement.Run();
 
@@ -139,13 +143,22 @@ bool MediaLicenseDatabase::ClearDatabase() {
 }
 
 // Opens and sets up a database if one is not already set up.
-bool MediaLicenseDatabase::OpenDatabase(bool is_retry) {
+MediaLicenseStorageHostOpenError MediaLicenseDatabase::OpenDatabase(
+    bool is_retry) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (db_.is_open())
-    return true;
+    return MediaLicenseStorageHostOpenError::kOk;
 
   bool success = false;
+
+  // If this is not the first call to `OpenDatabase()` because we are re-trying
+  // initialization, then the error callback will have previously been set.
+  db_.reset_error_callback();
+
+  // base::Unretained is safe becase |db_| is owned by |this|
+  db_.set_error_callback(base::BindRepeating(
+      &MediaLicenseDatabase::OnDatabaseOpenError, base::Unretained(this)));
   if (path_.empty()) {
     success = db_.OpenInMemory();
   } else {
@@ -154,7 +167,7 @@ bool MediaLicenseDatabase::OpenDatabase(bool is_retry) {
     if (!base::CreateDirectoryAndGetError(path_.DirName(), &error)) {
       DVLOG(1) << "Failed to open CDM database: "
                << base::File::ErrorToString(error);
-      return false;
+      return MediaLicenseStorageHostOpenError::kBucketNotFound;
     }
     DCHECK_EQ(error, base::File::Error::FILE_OK);
 
@@ -163,7 +176,7 @@ bool MediaLicenseDatabase::OpenDatabase(bool is_retry) {
 
   if (!success) {
     DVLOG(1) << "Failed to open CDM database: " << db_.GetErrorMessage();
-    return false;
+    return MediaLicenseStorageHostOpenError::kDatabaseOpenError;
   }
 
   sql::MetaTable meta_table;
@@ -172,7 +185,8 @@ bool MediaLicenseDatabase::OpenDatabase(bool is_retry) {
     // Wipe the database and start over. If we've already wiped the database and
     // are still failing, just return false.
     db_.Raze();
-    return is_retry ? false : OpenDatabase(/*is_retry=*/true);
+    return is_retry ? MediaLicenseStorageHostOpenError::kDatabaseRazeError
+                    : OpenDatabase(/*is_retry=*/true);
   }
 
   if (meta_table.GetCompatibleVersionNumber() > kVersionNumber) {
@@ -183,7 +197,8 @@ bool MediaLicenseDatabase::OpenDatabase(bool is_retry) {
              << kVersionNumber << ", GetCompatibleVersionNumber="
              << meta_table.GetCompatibleVersionNumber();
     db_.Raze();
-    return is_retry ? false : OpenDatabase(/*is_retry=*/true);
+    return is_retry ? MediaLicenseStorageHostOpenError::kDatabaseRazeError
+                    : OpenDatabase(/*is_retry=*/true);
   }
 
   // Set up the table.
@@ -199,10 +214,22 @@ bool MediaLicenseDatabase::OpenDatabase(bool is_retry) {
 
   if (!db_.Execute(kCreateTableSql)) {
     DVLOG(1) << "Failed to execute " << kCreateTableSql;
-    return false;
+    return MediaLicenseStorageHostOpenError::kSQLExecutionError;
   }
 
-  return true;
+  return MediaLicenseStorageHostOpenError::kOk;
+}
+
+void MediaLicenseDatabase::OnDatabaseOpenError(int error,
+                                               sql::Statement* stmt) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  // This histogram is only logged when the db is closed because we want to only
+  // log errors which prevent the db from opening.
+  if (!db_.is_open()) {
+    sql::UmaHistogramSqliteResult(
+        "Media.EME.MediaLicenseDatabaseOpenSQLiteError", error);
+  }
 }
 
 }  // namespace content

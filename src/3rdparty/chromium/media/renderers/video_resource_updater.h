@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/trace_event/memory_dump_provider.h"
 #include "base/unguessable_token.h"
@@ -22,6 +22,7 @@
 #include "components/viz/common/resources/transferable_resource.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
 #include "media/base/media_export.h"
+#include "media/base/video_frame.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -29,10 +30,6 @@ namespace gfx {
 class Rect;
 class Transform;
 }  // namespace gfx
-
-namespace gpu {
-class SharedImageInterface;
-}  // namespace gpu
 
 namespace viz {
 class ClientResourceProvider;
@@ -48,13 +45,13 @@ class MaskFilterInfo;
 
 namespace media {
 class PaintCanvasVideoRenderer;
-class VideoFrame;
 
 // Specifies what type of data is contained in the mailboxes, as well as how
 // many mailboxes will be present.
 enum class VideoFrameResourceType {
   NONE,
   YUV,
+  YUVA,
   RGB,
   RGBA_PREMULTIPLIED,
   RGBA,
@@ -134,7 +131,7 @@ class MEDIA_EXPORT VideoResourceUpdater
   VideoFrameExternalResources CreateExternalResourcesFromVideoFrame(
       scoped_refptr<VideoFrame> video_frame);
 
-  viz::ResourceFormat YuvResourceFormat(int bits_per_channel);
+  viz::SharedImageFormat YuvSharedImageFormat(int bits_per_channel);
 
  private:
   class PlaneResource;
@@ -155,6 +152,9 @@ class MEDIA_EXPORT VideoResourceUpdater
     return context_provider_ == nullptr && raster_context_provider_ == nullptr;
   }
 
+  // Reallocate |upload_pixels_| with the requested size.
+  bool ReallocateUploadPixels(size_t needed_size);
+
   // Obtain a resource of the right format by either recycling an
   // unreferenced but appropriately formatted resource, or by
   // allocating a new resource.
@@ -164,12 +164,12 @@ class MEDIA_EXPORT VideoResourceUpdater
   // Passing -1 for |plane_index| avoids returning referenced
   // resources.
   PlaneResource* RecycleOrAllocateResource(const gfx::Size& resource_size,
-                                           viz::ResourceFormat resource_format,
+                                           viz::SharedImageFormat si_format,
                                            const gfx::ColorSpace& color_space,
-                                           int unique_id,
+                                           VideoFrame::ID unique_id,
                                            int plane_index);
   PlaneResource* AllocateResource(const gfx::Size& plane_size,
-                                  viz::ResourceFormat format,
+                                  viz::SharedImageFormat format,
                                   const gfx::ColorSpace& color_space);
 
   // Create a copy of a texture-backed source video frame in a new GL_TEXTURE_2D
@@ -201,15 +201,11 @@ class MEDIA_EXPORT VideoResourceUpdater
   void ReturnTexture(scoped_refptr<VideoFrame> video_frame,
                      const gpu::SyncToken& sync_token,
                      bool lost_resource);
-  void DestroyMailbox(gpu::Mailbox mailbox,
-                      scoped_refptr<VideoFrame> video_frame,
-                      const gpu::SyncToken& sync_token,
-                      bool lost_resource);
 
   // base::trace_event::MemoryDumpProvider implementation.
   bool OnMemoryDump(const base::trace_event::MemoryDumpArgs& args,
                     base::trace_event::ProcessMemoryDump* pmd) override;
-  gpu::SharedImageInterface* SharedImageInterface() const;
+
   const raw_ptr<viz::ContextProvider> context_provider_;
   const raw_ptr<viz::RasterContextProvider> raster_context_provider_;
   const raw_ptr<viz::SharedBitmapReporter> shared_bitmap_reporter_;
@@ -224,7 +220,7 @@ class MEDIA_EXPORT VideoResourceUpdater
   uint32_t next_plane_resource_id_ = 1;
 
   // Temporary pixel buffer when converting between formats.
-  std::unique_ptr<uint8_t[]> upload_pixels_;
+  std::unique_ptr<uint8_t[], base::UncheckedFreeDeleter> upload_pixels_;
   size_t upload_pixels_size_ = 0;
 
   VideoFrameResourceType frame_resource_type_;

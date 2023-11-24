@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "net/tools/huffman_trie/huffman/huffman_builder.h"
 #include "net/tools/huffman_trie/trie_entry.h"
 
@@ -53,7 +54,8 @@ class TopDomainTrieEntry : public net::huffman_trie::TrieEntry {
   bool WriteEntry(net::huffman_trie::TrieBitBuffer* writer) const override;
 
  private:
-  const net::huffman_trie::HuffmanRepresentationTable& huffman_table_;
+  const raw_ref<const net::huffman_trie::HuffmanRepresentationTable>
+      huffman_table_;
   raw_ptr<net::huffman_trie::HuffmanBuilder> huffman_builder_;
   raw_ptr<TopDomainEntry> entry_;
 };

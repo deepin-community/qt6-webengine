@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,23 +16,26 @@
 #include <vector>
 
 #include "base/at_exit.h"
-#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
+#include "base/functional/bind.h"
 #include "base/gtest_prod_util.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
-#include "base/memory/platform_shared_memory_region.h"
+#include "base/memory/read_only_shared_memory_region.h"
 #include "base/memory/shared_memory_mapping.h"
 #include "base/memory/unsafe_shared_memory_region.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/path_service.h"
 #include "base/posix/eintr_wrapper.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/test/task_environment.h"
+#include "base/test/test_timeouts.h"
 #include "base/threading/thread.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/values.h"
@@ -192,8 +195,8 @@ class MjpegDecodeAcceleratorTestEnvironment : public ::testing::Environment {
     return media::GetTestDataFilePath(file_path);
   }
 
-  // Creates a zero-initialized shared memory backed VideoFrame.
-  scoped_refptr<media::VideoFrame> CreateShmVideoFrame(
+  // Creates a zero-initialized memory VideoFrame.
+  scoped_refptr<media::VideoFrame> CreateMemoryVideoFrame(
       media::VideoPixelFormat format,
       const gfx::Size& coded_size,
       const gfx::Size& visible_size);
@@ -280,7 +283,7 @@ void MjpegDecodeAcceleratorTestEnvironment::SetUp() {
   gpu_memory_buffer_manager_ =
       std::make_unique<media::LocalGpuMemoryBufferManager>();
 
-  metrics_ = base::Value(base::Value::Type::DICTIONARY);
+  metrics_ = base::Value(base::Value::Type::DICT);
 }
 
 void MjpegDecodeAcceleratorTestEnvironment::TearDown() {
@@ -294,36 +297,13 @@ void MjpegDecodeAcceleratorTestEnvironment::TearDown() {
 }
 
 scoped_refptr<media::VideoFrame>
-MjpegDecodeAcceleratorTestEnvironment::CreateShmVideoFrame(
+MjpegDecodeAcceleratorTestEnvironment::CreateMemoryVideoFrame(
     media::VideoPixelFormat format,
     const gfx::Size& coded_size,
     const gfx::Size& visible_size) {
-  const size_t data_size =
-      media::VideoFrame::AllocationSize(format, coded_size);
-  auto shm_region = base::UnsafeSharedMemoryRegion::Create(data_size);
-  if (!shm_region.IsValid()) {
-    LOG(ERROR) << "Failed to create shared memory";
-    return nullptr;
-  }
-  base::WritableSharedMemoryMapping shm_mapping = shm_region.Map();
-  if (!shm_mapping.IsValid()) {
-    LOG(ERROR) << "Failed to map shared memory region";
-    return nullptr;
-  }
-  memset(shm_mapping.memory(), 0, data_size);
-
-  scoped_refptr<media::VideoFrame> frame = media::VideoFrame::WrapExternalData(
+  return media::VideoFrame::CreateZeroInitializedFrame(
       format, coded_size, gfx::Rect(visible_size), visible_size,
-      shm_mapping.GetMemoryAsSpan<uint8_t>().data(), data_size,
       base::TimeDelta());
-  if (!frame) {
-    LOG(ERROR) << "Failed to create video frame";
-    return nullptr;
-  }
-  frame->BackWithOwnedSharedMemory(std::move(shm_region),
-                                   std::move(shm_mapping));
-
-  return frame;
 }
 
 scoped_refptr<media::VideoFrame>
@@ -628,8 +608,8 @@ void JpegClient::CreateJpegDecoder() {
   }
 
   for (auto& create_jda_func : jda_factories) {
-    decoder_ =
-        std::move(create_jda_func).Run(base::ThreadTaskRunnerHandle::Get());
+    decoder_ = std::move(create_jda_func)
+                   .Run(base::SingleThreadTaskRunner::GetCurrentDefault());
     if (decoder_)
       break;
   }
@@ -735,19 +715,19 @@ void JpegClient::PrepareMemory(int32_t task_id) {
            task.image->data_str.size());
 
     // Only I420 output buffer is used in the shared memory path.
-    hw_out_frame_ = g_env->CreateShmVideoFrame(
+    hw_out_frame_ = g_env->CreateMemoryVideoFrame(
         media::PIXEL_FORMAT_I420, task.target_size, task.target_size);
     ASSERT_TRUE(hw_out_frame_);
   }
 
   if (task.image->visible_size != task.target_size) {
     // Needs an intermediate buffer for cropping/scaling.
-    sw_tmp_frame_ = g_env->CreateShmVideoFrame(media::PIXEL_FORMAT_I420,
-                                               task.image->coded_size,
-                                               task.image->visible_size);
+    sw_tmp_frame_ = g_env->CreateMemoryVideoFrame(media::PIXEL_FORMAT_I420,
+                                                  task.image->coded_size,
+                                                  task.image->visible_size);
     ASSERT_TRUE(sw_tmp_frame_);
   }
-  sw_out_frame_ = g_env->CreateShmVideoFrame(
+  sw_out_frame_ = g_env->CreateMemoryVideoFrame(
       media::PIXEL_FORMAT_I420, task.target_size, task.target_size);
   ASSERT_TRUE(sw_out_frame_);
 }
@@ -782,7 +762,7 @@ void JpegClient::SaveToFile(int32_t task_id,
       in_frame->stride(media::VideoFrame::kUPlane),
       in_frame->visible_data(media::VideoFrame::kVPlane),
       in_frame->stride(media::VideoFrame::kVPlane),
-      argb_out_frame->visible_data(media::VideoFrame::kARGBPlane),
+      argb_out_frame->GetWritableVisibleData(media::VideoFrame::kARGBPlane),
       argb_out_frame->stride(media::VideoFrame::kARGBPlane),
       argb_out_frame->visible_rect().width(),
       argb_out_frame->visible_rect().height());
@@ -851,11 +831,8 @@ void JpegClient::StartDecode(int32_t task_id, bool do_prepare_memory) {
                      task.image->data_str.size(), 0 /* src_offset */,
                      hw_out_dmabuf_frame_);
   } else {
-    base::subtle::PlatformSharedMemoryRegion dup_region =
-        base::UnsafeSharedMemoryRegion::TakeHandleForSerialization(
-            in_shm_.Duplicate());
-    ASSERT_EQ(dup_region.GetSize(), task.image->data_str.size());
-    media::BitstreamBuffer bitstream_buffer(task_id, std::move(dup_region),
+    ASSERT_EQ(in_shm_.GetSize(), task.image->data_str.size());
+    media::BitstreamBuffer bitstream_buffer(task_id, in_shm_.Duplicate(),
                                             task.image->data_str.size());
     decoder_->Decode(std::move(bitstream_buffer), hw_out_frame_);
   }
@@ -875,11 +852,11 @@ bool JpegClient::GetSoftwareDecodeResult(int32_t task_id) {
   if (libyuv::ConvertToI420(
           reinterpret_cast<const uint8_t*>(task.image->data_str.data()),
           task.image->data_str.size(),
-          decode_frame->visible_data(media::VideoFrame::kYPlane),
+          decode_frame->GetWritableVisibleData(media::VideoFrame::kYPlane),
           decode_frame->stride(media::VideoFrame::kYPlane),
-          decode_frame->visible_data(media::VideoFrame::kUPlane),
+          decode_frame->GetWritableVisibleData(media::VideoFrame::kUPlane),
           decode_frame->stride(media::VideoFrame::kUPlane),
-          decode_frame->visible_data(media::VideoFrame::kVPlane),
+          decode_frame->GetWritableVisibleData(media::VideoFrame::kVPlane),
           decode_frame->stride(media::VideoFrame::kVPlane), 0, 0,
           decode_frame->visible_rect().width(),
           decode_frame->visible_rect().height(),
@@ -915,11 +892,11 @@ bool JpegClient::GetSoftwareDecodeResult(int32_t task_id) {
                 crop.x() / 2,
             sw_tmp_frame_->stride(media::VideoFrame::kVPlane), crop.width(),
             crop.height(),
-            sw_out_frame_->visible_data(media::VideoFrame::kYPlane),
+            sw_out_frame_->GetWritableVisibleData(media::VideoFrame::kYPlane),
             sw_out_frame_->stride(media::VideoFrame::kYPlane),
-            sw_out_frame_->visible_data(media::VideoFrame::kUPlane),
+            sw_out_frame_->GetWritableVisibleData(media::VideoFrame::kUPlane),
             sw_out_frame_->stride(media::VideoFrame::kUPlane),
-            sw_out_frame_->visible_data(media::VideoFrame::kVPlane),
+            sw_out_frame_->GetWritableVisibleData(media::VideoFrame::kVPlane),
             sw_out_frame_->stride(media::VideoFrame::kVPlane),
             sw_out_frame_->visible_rect().width(),
             sw_out_frame_->visible_rect().height(),
@@ -978,6 +955,9 @@ class MjpegDecodeAcceleratorTest : public ::testing::TestWithParam<bool> {
                   size_t num_concurrent_decoders = 1);
   void PerfDecodeByJDA(int decode_times, const std::vector<DecodeTask>& tasks);
   void PerfDecodeBySW(int decode_times, const std::vector<DecodeTask>& tasks);
+
+  // This is needed to use base::ThreadPool in MjpegDecodeAccelerator.
+  base::test::TaskEnvironment task_environment_;
 };
 
 void MjpegDecodeAcceleratorTest::TestDecode(
@@ -1108,11 +1088,11 @@ scoped_refptr<media::VideoFrame> GetTestDecodedData() {
           gfx::Rect(3, 3) /* visible_rect */,
           gfx::Size(3, 3) /* natural_size */, base::TimeDelta());
   LOG_ASSERT(frame.get());
-  uint8_t* y_data = frame->data(media::VideoFrame::kYPlane);
+  uint8_t* y_data = frame->writable_data(media::VideoFrame::kYPlane);
   int y_stride = frame->stride(media::VideoFrame::kYPlane);
-  uint8_t* u_data = frame->data(media::VideoFrame::kUPlane);
+  uint8_t* u_data = frame->writable_data(media::VideoFrame::kUPlane);
   int u_stride = frame->stride(media::VideoFrame::kUPlane);
-  uint8_t* v_data = frame->data(media::VideoFrame::kVPlane);
+  uint8_t* v_data = frame->writable_data(media::VideoFrame::kVPlane);
   int v_stride = frame->stride(media::VideoFrame::kVPlane);
 
   // Data for the Y plane.
@@ -1136,11 +1116,14 @@ TEST(JpegClientTest, GetMeanAbsoluteDifference) {
   client.hw_out_frame_ = GetTestDecodedData();
   client.sw_out_frame_ = GetTestDecodedData();
 
-  uint8_t* y_data = client.sw_out_frame_->data(media::VideoFrame::kYPlane);
+  uint8_t* y_data =
+      client.sw_out_frame_->writable_data(media::VideoFrame::kYPlane);
   const int y_stride = client.sw_out_frame_->stride(media::VideoFrame::kYPlane);
-  uint8_t* u_data = client.sw_out_frame_->data(media::VideoFrame::kUPlane);
+  uint8_t* u_data =
+      client.sw_out_frame_->writable_data(media::VideoFrame::kUPlane);
   const int u_stride = client.sw_out_frame_->stride(media::VideoFrame::kUPlane);
-  uint8_t* v_data = client.sw_out_frame_->data(media::VideoFrame::kVPlane);
+  uint8_t* v_data =
+      client.sw_out_frame_->writable_data(media::VideoFrame::kVPlane);
   const int v_stride = client.sw_out_frame_->stride(media::VideoFrame::kVPlane);
 
   // Change some visible data in the software decoding result.
@@ -1325,6 +1308,7 @@ int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
   base::CommandLine::Init(argc, argv);
   mojo::core::Init();
+  TestTimeouts::Initialize();
   base::ShadowingAtExitManager at_exit_manager;
 
   // Needed to enable DVLOG through --vmodule.
@@ -1357,7 +1341,7 @@ int main(int argc, char** argv) {
       continue;
     }
     if (it->first == "perf_decode_times") {
-      perf_decode_times = std::stoi(it->second);
+      LOG_ASSERT(base::StringToInt(it->second, &perf_decode_times));
       continue;
     }
     if (it->first == "save_to_file") {
@@ -1368,8 +1352,8 @@ int main(int argc, char** argv) {
       continue;
     if (it->first == "h" || it->first == "help")
       continue;
-    LOG(ERROR) << "Unexpected switch: " << it->first << ":" << it->second;
-    return -EINVAL;
+    LOG_ASSERT(false) << "Unexpected switch: " << it->first << ":"
+                      << it->second;
   }
 #if BUILDFLAG(USE_VAAPI)
   media::VaapiWrapper::PreSandboxInitialization();

@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -127,7 +127,7 @@ void CXFA_FFLine::RenderWidget(CFGAS_GEGraphics* pGS,
     linePath.AddLine(rtLine.TopLeft(), rtLine.BottomRight());
   }
 
-  pGS->SaveGraphState();
+  CFGAS_GEGraphics::StateRestorer restorer(pGS);
   pGS->SetLineWidth(fLineWidth);
   pGS->EnableActOnDash();
   XFA_StrokeTypeSetLineDash(pGS, iStrokeType, iCap);
@@ -135,5 +135,4 @@ void CXFA_FFLine::RenderWidget(CFGAS_GEGraphics* pGS,
   pGS->SetStrokeColor(CFGAS_GEColor(lineColor));
   pGS->SetLineCap(LineCapToFXGE(iCap));
   pGS->StrokePath(linePath, mtRotate);
-  pGS->RestoreGraphState();
 }

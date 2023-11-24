@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,7 +27,7 @@ interface FileUtilitiesHost {
   // https://crbug.com/1084565.
   //
   // The rendererer passes the file handle to the backend. This could have been
-  // avoided by having NativeIOFileHost always store a dup()ed handle for the
+  // avoided by having the host always store a dup()ed handle for the
   // file. This alternative was rejected in order to avoid reasoning about the
   // effects of having multiple file handles pointing to the same file.
   //
@@ -38,7 +38,7 @@ interface FileUtilitiesHost {
   //
   // By the same reasoning above (renderers on most OSes can call ftruncate()
   // directly), this call returns unsanitized base::File::Error information.
-  [EnableIf=is_mac]
+  [EnableIf=is_mac, Sync]
   SetLength(mojo_base.mojom.File backing_file, int64 length) =>
   (mojo_base.mojom.File backing_file, bool result);
 };

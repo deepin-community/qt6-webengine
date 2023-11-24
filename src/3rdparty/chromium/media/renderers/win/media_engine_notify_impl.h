@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <mfmediaengine.h>
 #include <wrl.h>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/synchronization/lock.h"
 #include "media/base/buffering_state.h"
 #include "media/base/pipeline_status.h"
@@ -31,6 +31,7 @@ class MediaEngineNotifyImpl
   using EndedCB = base::RepeatingClosure;
   using FormatChangeCB = base::RepeatingClosure;
   using LoadedDataCB = base::RepeatingClosure;
+  using CanPlayThroughCB = base::RepeatingClosure;
   using PlayingCB = base::RepeatingClosure;
   using WaitingCB = base::RepeatingClosure;
   using TimeUpdateCB = base::RepeatingClosure;
@@ -39,6 +40,7 @@ class MediaEngineNotifyImpl
                                  EndedCB ended_cb,
                                  FormatChangeCB format_change_cb,
                                  LoadedDataCB loaded_data_cb,
+                                 CanPlayThroughCB can_play_through_cb,
                                  PlayingCB playing_cb,
                                  WaitingCB waiting_cb,
                                  TimeUpdateCB time_update_cb);
@@ -53,11 +55,12 @@ class MediaEngineNotifyImpl
  private:
   // Callbacks are called on the MF threadpool thread and the creator of this
   // object must make sure the callbacks are safe to be called on that thread,
-  // e.g. using BindToCurrentLoop().
+  // e.g. using base::BindPostTaskToCurrentDefault().
   ErrorCB error_cb_;
   EndedCB ended_cb_;
   FormatChangeCB format_change_cb_;
   LoadedDataCB loaded_data_cb_;
+  CanPlayThroughCB can_play_through_cb_;
   PlayingCB playing_cb_;
   WaitingCB waiting_cb_;
   TimeUpdateCB time_update_cb_;

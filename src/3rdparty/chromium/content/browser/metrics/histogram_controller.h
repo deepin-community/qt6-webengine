@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -86,7 +86,7 @@ class HistogramController {
       T* host);
 
   template <class T>
-  void RemoveChildHistogramFetcherInterface(T* host);
+  void RemoveChildHistogramFetcherInterface(MayBeDangling<T> host);
 
   // Specialize this template for each ChildHistogramFetcherMap defined below.
   template <class T>

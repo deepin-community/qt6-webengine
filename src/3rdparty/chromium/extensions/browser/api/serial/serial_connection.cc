@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,12 +11,11 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/files/file_path.h"
+#include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "extensions/browser/api/api_resource_manager.h"
 #include "extensions/browser/api/serial/serial_port_manager.h"
 #include "extensions/common/api/serial.h"
@@ -176,7 +175,7 @@ SerialConnection::SerialConnection(const std::string& owner_extension_id)
       send_pipe_watcher_(FROM_HERE, mojo::SimpleWatcher::ArmingPolicy::MANUAL) {
 }
 
-SerialConnection::~SerialConnection() {}
+SerialConnection::~SerialConnection() = default;
 
 bool SerialConnection::IsPersistent() const {
   return persistent();
@@ -232,15 +231,15 @@ void SerialConnection::Open(api::SerialPortManager* port_manager,
   DCHECK(!send_pipe_);
   DCHECK(!receive_pipe_);
 
-  if (options.persistent.get())
+  if (options.persistent)
     set_persistent(*options.persistent);
-  if (options.name.get())
+  if (options.name)
     set_name(*options.name);
-  if (options.buffer_size.get())
+  if (options.buffer_size)
     set_buffer_size(*options.buffer_size);
-  if (options.receive_timeout.get())
+  if (options.receive_timeout)
     set_receive_timeout(*options.receive_timeout);
-  if (options.send_timeout.get())
+  if (options.send_timeout)
     set_send_timeout(*options.send_timeout);
 
   mojo::PendingRemote<device::mojom::SerialPortClient> client;
@@ -405,7 +404,7 @@ void SerialConnection::StartPolling(const ReceiveEventCallback& callback) {
 void SerialConnection::Send(const std::vector<uint8_t>& data,
                             SendCompleteCallback callback) {
   if (send_complete_) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback), 0,
                                   api::serial::SEND_ERROR_PENDING));
     return;
@@ -426,7 +425,7 @@ void SerialConnection::Send(const std::vector<uint8_t>& data,
   if (send_timeout_ > 0) {
     send_timeout_task_.Reset(base::BindOnce(&SerialConnection::OnSendTimeout,
                                             weak_factory_.GetWeakPtr()));
-    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE, send_timeout_task_.callback(),
         base::Milliseconds(send_timeout_));
   }
@@ -435,15 +434,15 @@ void SerialConnection::Send(const std::vector<uint8_t>& data,
 void SerialConnection::Configure(const api::serial::ConnectionOptions& options,
                                  ConfigureCompleteCallback callback) {
   DCHECK(serial_port_);
-  if (options.persistent.get())
+  if (options.persistent)
     set_persistent(*options.persistent);
-  if (options.name.get())
+  if (options.name)
     set_name(*options.name);
-  if (options.buffer_size.get())
+  if (options.buffer_size)
     set_buffer_size(*options.buffer_size);
-  if (options.receive_timeout.get())
+  if (options.receive_timeout)
     set_receive_timeout(*options.receive_timeout);
-  if (options.send_timeout.get())
+  if (options.send_timeout)
     set_send_timeout(*options.send_timeout);
   serial_port_->ConfigurePort(
       device::mojom::SerialConnectionOptions::From(options),
@@ -471,12 +470,11 @@ void SerialConnection::GetInfo(GetInfoCompleteCallback callback) const {
           std::move(callback).Run(false, std::move(info));
           return;
         }
-        info->bitrate = std::make_unique<int>(port_info->bitrate);
+        info->bitrate = port_info->bitrate;
         info->data_bits = ConvertDataBitsFromMojo(port_info->data_bits);
         info->parity_bit = ConvertParityBitFromMojo(port_info->parity_bit);
         info->stop_bits = ConvertStopBitsFromMojo(port_info->stop_bits);
-        info->cts_flow_control =
-            std::make_unique<bool>(port_info->cts_flow_control);
+        info->cts_flow_control = port_info->cts_flow_control;
         std::move(callback).Run(true, std::move(info));
       },
       std::move(callback), std::move(info));
@@ -526,6 +524,7 @@ void SerialConnection::SetControlSignals(
 void SerialConnection::Close(base::OnceClosure callback) {
   DCHECK(serial_port_);
   serial_port_->Close(
+      /*flush=*/false,
       mojo::WrapCallbackWithDefaultInvokeIfNotRun(std::move(callback)));
 }
 
@@ -537,7 +536,7 @@ void SerialConnection::SetTimeoutCallback() {
   if (receive_timeout_ > 0) {
     receive_timeout_task_.Reset(base::BindOnce(
         &SerialConnection::OnReceiveTimeout, weak_factory_.GetWeakPtr()));
-    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE, receive_timeout_task_.callback(),
         base::Milliseconds(receive_timeout_));
   }
@@ -630,11 +629,11 @@ TypeConverter<device::mojom::SerialHostControlSignalsPtr,
     Convert(const extensions::api::serial::HostControlSignals& input) {
   device::mojom::SerialHostControlSignalsPtr output(
       device::mojom::SerialHostControlSignals::New());
-  if (input.dtr.get()) {
+  if (input.dtr) {
     output->has_dtr = true;
     output->dtr = *input.dtr;
   }
-  if (input.rts.get()) {
+  if (input.rts) {
     output->has_rts = true;
     output->rts = *input.rts;
   }
@@ -648,12 +647,12 @@ TypeConverter<device::mojom::SerialConnectionOptionsPtr,
     Convert(const extensions::api::serial::ConnectionOptions& input) {
   device::mojom::SerialConnectionOptionsPtr output(
       device::mojom::SerialConnectionOptions::New());
-  if (input.bitrate.get() && *input.bitrate > 0)
+  if (input.bitrate && *input.bitrate > 0)
     output->bitrate = *input.bitrate;
   output->data_bits = extensions::ConvertDataBitsToMojo(input.data_bits);
   output->parity_bit = extensions::ConvertParityBitToMojo(input.parity_bit);
   output->stop_bits = extensions::ConvertStopBitsToMojo(input.stop_bits);
-  if (input.cts_flow_control.get()) {
+  if (input.cts_flow_control) {
     output->has_cts_flow_control = true;
     output->cts_flow_control = *input.cts_flow_control;
   }
