@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -24,7 +24,8 @@
 #include "core/fpdfapi/parser/cpdf_string.h"
 #include "core/fpdfapi/parser/fpdf_parser_utility.h"
 #include "core/fxcrt/autorestorer.h"
-#include "core/fxcrt/cfx_binarybuf.h"
+#include "core/fxcrt/cfx_read_only_vector_stream.h"
+#include "core/fxcrt/fixed_uninit_data_vector.h"
 #include "core/fxcrt/fx_extension.h"
 #include "core/fxcrt/fx_safe_types.h"
 #include "third_party/base/check.h"
@@ -43,27 +44,26 @@ enum class ReadStatus {
 
 class ReadableSubStream final : public IFX_SeekableReadStream {
  public:
-  ReadableSubStream(const RetainPtr<IFX_SeekableReadStream>& pFileRead,
+  ReadableSubStream(RetainPtr<IFX_SeekableReadStream> pFileRead,
                     FX_FILESIZE part_offset,
                     FX_FILESIZE part_size)
-      : m_pFileRead(pFileRead),
+      : m_pFileRead(std::move(pFileRead)),
         m_PartOffset(part_offset),
         m_PartSize(part_size) {}
 
   ~ReadableSubStream() override = default;
 
   // IFX_SeekableReadStream overrides:
-  bool ReadBlockAtOffset(void* buffer,
-                         FX_FILESIZE offset,
-                         size_t size) override {
+  bool ReadBlockAtOffset(pdfium::span<uint8_t> buffer,
+                         FX_FILESIZE offset) override {
     FX_SAFE_FILESIZE safe_end = offset;
-    safe_end += size;
+    safe_end += buffer.size();
     // Check that requested range is valid, to prevent calling of ReadBlock
     // of original m_pFileRead with incorrect params.
     if (!safe_end.IsValid() || safe_end.ValueOrDie() > m_PartSize)
       return false;
 
-    return m_pFileRead->ReadBlockAtOffset(buffer, m_PartOffset + offset, size);
+    return m_pFileRead->ReadBlockAtOffset(buffer, m_PartOffset + offset);
   }
 
   FX_FILESIZE GetSize() override { return m_PartSize; }
@@ -81,23 +81,23 @@ int CPDF_SyntaxParser::s_CurrentRecursionDepth = 0;
 
 // static
 std::unique_ptr<CPDF_SyntaxParser> CPDF_SyntaxParser::CreateForTesting(
-    const RetainPtr<IFX_SeekableReadStream>& pFileAccess,
+    RetainPtr<IFX_SeekableReadStream> pFileAccess,
     FX_FILESIZE HeaderOffset) {
   return std::make_unique<CPDF_SyntaxParser>(
-      pdfium::MakeRetain<CPDF_ReadValidator>(pFileAccess, nullptr),
+      pdfium::MakeRetain<CPDF_ReadValidator>(std::move(pFileAccess), nullptr),
       HeaderOffset);
 }
 
 CPDF_SyntaxParser::CPDF_SyntaxParser(
-    const RetainPtr<IFX_SeekableReadStream>& pFileAccess)
+    RetainPtr<IFX_SeekableReadStream> pFileAccess)
     : CPDF_SyntaxParser(
-          pdfium::MakeRetain<CPDF_ReadValidator>(pFileAccess, nullptr),
+          pdfium::MakeRetain<CPDF_ReadValidator>(std::move(pFileAccess),
+                                                 nullptr),
           0) {}
 
-CPDF_SyntaxParser::CPDF_SyntaxParser(
-    const RetainPtr<CPDF_ReadValidator>& validator,
-    FX_FILESIZE HeaderOffset)
-    : m_pFileAccess(validator),
+CPDF_SyntaxParser::CPDF_SyntaxParser(RetainPtr<CPDF_ReadValidator> validator,
+                                     FX_FILESIZE HeaderOffset)
+    : m_pFileAccess(std::move(validator)),
       m_HeaderOffset(HeaderOffset),
       m_FileLen(m_pFileAccess->GetSize()) {
   DCHECK(m_HeaderOffset <= m_FileLen);
@@ -121,8 +121,7 @@ bool CPDF_SyntaxParser::ReadBlockAt(FX_FILESIZE read_pos) {
     read_size = m_FileLen - read_pos;
 
   m_pFileBuf.resize(read_size);
-  if (!m_pFileAccess->ReadBlockAtOffset(m_pFileBuf.data(), read_pos,
-                                        read_size)) {
+  if (!m_pFileAccess->ReadBlockAtOffset(m_pFileBuf, read_pos)) {
     m_pFileBuf.clear();
     return false;
   }
@@ -164,10 +163,10 @@ bool CPDF_SyntaxParser::GetCharAtBackward(FX_FILESIZE pos, uint8_t* ch) {
   return true;
 }
 
-bool CPDF_SyntaxParser::ReadBlock(uint8_t* pBuf, uint32_t size) {
-  if (!m_pFileAccess->ReadBlockAtOffset(pBuf, m_Pos + m_HeaderOffset, size))
+bool CPDF_SyntaxParser::ReadBlock(pdfium::span<uint8_t> buffer) {
+  if (!m_pFileAccess->ReadBlockAtOffset(buffer, m_Pos + m_HeaderOffset))
     return false;
-  m_Pos += size;
+  m_Pos += buffer.size();
   return true;
 }
 
@@ -481,6 +480,7 @@ ByteString CPDF_SyntaxParser::GetKeyword() {
 }
 
 void CPDF_SyntaxParser::SetPos(FX_FILESIZE pos) {
+  DCHECK_GE(pos, 0);
   m_Pos = std::min(pos, m_FileLen);
 }
 
@@ -589,8 +589,7 @@ RetainPtr<CPDF_Object> CPDF_SyntaxParser::GetObjectBodyInternal(
 
       // `key` has to be "/X" at the minimum.
       if (key.GetLength() > 1) {
-        ByteString key_no_slash(key.raw_str() + 1, key.GetLength() - 1);
-        pDict->SetFor(key_no_slash, std::move(pObj));
+        pDict->SetFor(key.Substr(1), std::move(pObj));
       }
     }
 
@@ -709,7 +708,8 @@ FX_FILESIZE CPDF_SyntaxParser::FindStreamEndPos() {
 
 RetainPtr<CPDF_Stream> CPDF_SyntaxParser::ReadStream(
     RetainPtr<CPDF_Dictionary> pDict) {
-  const CPDF_Number* pLenObj = ToNumber(pDict->GetDirectObjectFor("Length"));
+  RetainPtr<const CPDF_Number> pLenObj =
+      ToNumber(pDict->GetDirectObjectFor("Length"));
   FX_FILESIZE len = pLenObj ? pLenObj->GetInteger() : -1;
 
   // Locate the start of stream.
@@ -723,7 +723,7 @@ RetainPtr<CPDF_Stream> CPDF_SyntaxParser::ReadStream(
       len = -1;
   }
 
-  RetainPtr<IFX_SeekableReadStream> data;
+  RetainPtr<IFX_SeekableReadStream> substream;
   if (len > 0) {
     // Check data availability first to allow the Validator to request data
     // smoothly, without jumps.
@@ -732,7 +732,7 @@ RetainPtr<CPDF_Stream> CPDF_SyntaxParser::ReadStream(
       return nullptr;
     }
 
-    data = pdfium::MakeRetain<ReadableSubStream>(
+    substream = pdfium::MakeRetain<ReadableSubStream>(
         GetValidator(), m_HeaderOffset + GetPos(), len);
     SetPos(GetPos() + len);
   }
@@ -755,7 +755,7 @@ RetainPtr<CPDF_Stream> CPDF_SyntaxParser::ReadStream(
     // specified length, it signals the end of stream.
     if (memcmp(m_WordBuffer, kEndStreamStr.raw_str(),
                kEndStreamStr.GetLength()) != 0) {
-      data.Reset();
+      substream.Reset();
       len = -1;
       SetPos(streamStartPos);
     }
@@ -779,20 +779,29 @@ RetainPtr<CPDF_Stream> CPDF_SyntaxParser::ReadStream(
         return nullptr;
       }
 
-      data = pdfium::MakeRetain<ReadableSubStream>(
+      substream = pdfium::MakeRetain<ReadableSubStream>(
           GetValidator(), m_HeaderOffset + GetPos(), len);
       SetPos(GetPos() + len);
     }
   }
 
   RetainPtr<CPDF_Stream> pStream;
-  if (data) {
+  if (substream) {
+    // It is unclear from CPDF_SyntaxParser's perspective what object
+    // `substream` is ultimately holding references to. To avoid unexpectedly
+    // changing object lifetimes by handing `substream` to `pStream`, make a
+    // copy of the data here.
+    FixedUninitDataVector<uint8_t> data(substream->GetSize());
+    bool did_read = substream->ReadBlockAtOffset(data.writable_span(), 0);
+    CHECK(did_read);
+    auto data_as_stream =
+        pdfium::MakeRetain<CFX_ReadOnlyVectorStream>(std::move(data));
+
     pStream = pdfium::MakeRetain<CPDF_Stream>();
-    pStream->InitStreamFromFile(data, std::move(pDict));
+    pStream->InitStreamFromFile(std::move(data_as_stream), std::move(pDict));
   } else {
     DCHECK(!len);
-    pStream = pdfium::MakeRetain<CPDF_Stream>(pdfium::span<const uint8_t>(),
-                                              std::move(pDict));
+    pStream = pdfium::MakeRetain<CPDF_Stream>(std::move(pDict));
   }
   const FX_FILESIZE end_stream_offset = GetPos();
   memset(m_WordBuffer, 0, kEndObjStr.GetLength() + 1);
@@ -821,6 +830,10 @@ uint32_t CPDF_SyntaxParser::GetDirectNum() {
 
   m_WordBuffer[m_WordSize] = 0;
   return FXSYS_atoui(reinterpret_cast<const char*>(m_WordBuffer));
+}
+
+RetainPtr<CPDF_ReadValidator> CPDF_SyntaxParser::GetValidator() const {
+  return m_pFileAccess;
 }
 
 bool CPDF_SyntaxParser::IsWholeWord(FX_FILESIZE startpos,

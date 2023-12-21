@@ -23,10 +23,15 @@ void HistoryClientQt::OnHistoryServiceCreated(history::HistoryService *history_s
 
 void HistoryClientQt::Shutdown() { }
 
-bool HistoryClientQt::CanAddURL(const GURL &url)
+static bool CanAddURL(const GURL &url)
 {
     Q_UNUSED(url);
     return true;
+}
+
+history::CanAddURLCallback HistoryClientQt::GetThreadSafeCanAddURLCallback() const
+{
+    return base::BindRepeating(&CanAddURL);
 }
 
 void HistoryClientQt::NotifyProfileError(sql::InitStatus init_status,
@@ -39,6 +44,10 @@ void HistoryClientQt::NotifyProfileError(sql::InitStatus init_status,
 std::unique_ptr<history::HistoryBackendClient> HistoryClientQt::CreateBackendClient()
 {
     return nullptr;
+}
+
+void HistoryClientQt::UpdateBookmarkLastUsedTime(int64_t /*bookmark_node_id*/, base::Time /*time*/)
+{
 }
 
 // static
@@ -80,7 +89,7 @@ HistoryServiceFactoryQt::BuildServiceInstanceFor(content::BrowserContext *contex
 
     std::unique_ptr<history::HistoryService> historyService(
             new history::HistoryService(std::make_unique<HistoryClientQt>(), nullptr));
-    if (!historyService->Init(history::HistoryDatabaseParamsForPath(context->GetPath()))) {
+    if (!historyService->Init(history::HistoryDatabaseParamsForPath(context->GetPath(), version_info::Channel::DEFAULT))) {
         return nullptr;
     }
     return historyService.release();

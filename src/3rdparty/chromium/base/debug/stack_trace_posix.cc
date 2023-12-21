@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,6 +14,7 @@
 #include <string.h>
 #include <sys/param.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -25,13 +26,33 @@
 #include <tuple>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 
-#if !defined(USE_SYMBOLIZE)
-#include <cxxabi.h>
+// Controls whether `dladdr(...)` is used to print the callstack. This is
+// only used on iOS Official build where `backtrace_symbols(...)` prints
+// misleading symbols (as the binary is stripped).
+#if BUILDFLAG(IS_IOS) && defined(OFFICIAL_BUILD)
+#define HAVE_DLADDR
+#include <dlfcn.h>
 #endif
-#if !defined(__UCLIBC__) && !defined(_AIX)
+
+// Surprisingly, uClibc defines __GLIBC__ in some build configs, but
+// execinfo.h and backtrace(3) are really only present in glibc and in macOS
+// libc.
+#if BUILDFLAG(IS_APPLE) || \
+    (defined(__GLIBC__) && !defined(__UCLIBC__) && !defined(__AIX))
+#define HAVE_BACKTRACE
 #include <execinfo.h>
+#endif
+
+// Controls whether to include code to demangle C++ symbols.
+#if !defined(USE_SYMBOLIZE) && defined(HAVE_BACKTRACE) && !defined(HAVE_DLADDR)
+#define DEMANGLE_SYMBOLS
+#endif
+
+#if defined(DEMANGLE_SYMBOLS)
+#include <cxxabi.h>
 #endif
 
 #if BUILDFLAG(IS_APPLE)
@@ -76,7 +97,7 @@ volatile sig_atomic_t in_signal_handler = 0;
 bool (*try_handle_signal)(int, siginfo_t*, void*) = nullptr;
 #endif
 
-#if !defined(USE_SYMBOLIZE)
+#if defined(DEMANGLE_SYMBOLS)
 // The prefix used for mangled symbols, per the Itanium C++ ABI:
 // http://www.codesourcery.com/cxx-abi/abi.html#mangling
 const char kMangledSymbolPrefix[] = "_Z";
@@ -85,9 +106,7 @@ const char kMangledSymbolPrefix[] = "_Z";
 // (('a'..'z').to_a+('A'..'Z').to_a+('0'..'9').to_a + ['_']).join
 const char kSymbolCharacters[] =
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_";
-#endif  // !defined(USE_SYMBOLIZE)
 
-#if !defined(USE_SYMBOLIZE)
 // Demangles C++ symbols in the given text. Example:
 //
 // "out/Debug/base_unittests(_ZN10StackTraceC1Ev+0x20) [0x817778c]"
@@ -97,7 +116,6 @@ void DemangleSymbols(std::string* text) {
   // Note: code in this function is NOT async-signal safe (std::string uses
   // malloc internally).
 
-#if !defined(__UCLIBC__) && !defined(_AIX)
   std::string::size_type search_from = 0;
   while (search_from < text->size()) {
     // Look for the start of a mangled symbol, from search_from.
@@ -132,9 +150,8 @@ void DemangleSymbols(std::string* text) {
       search_from = mangled_start + 2;
     }
   }
-#endif  // !defined(__UCLIBC__) && !defined(_AIX)
 }
-#endif  // !defined(USE_SYMBOLIZE)
+#endif  // defined(DEMANGLE_SYMBOLS)
 
 class BacktraceOutputHandler {
  public:
@@ -144,7 +161,7 @@ class BacktraceOutputHandler {
   virtual ~BacktraceOutputHandler() = default;
 };
 
-#if !defined(__UCLIBC__) && !defined(_AIX)
+#if defined(HAVE_BACKTRACE)
 void OutputPointer(void* pointer, BacktraceOutputHandler* handler) {
   // This should be more than enough to store a 64-bit number in hex:
   // 16 hex digits + 1 for null-terminator.
@@ -155,15 +172,21 @@ void OutputPointer(void* pointer, BacktraceOutputHandler* handler) {
   handler->HandleOutput(buf);
 }
 
-#if defined(USE_SYMBOLIZE)
-void OutputFrameId(intptr_t frame_id, BacktraceOutputHandler* handler) {
+#if defined(HAVE_DLADDR) || defined(USE_SYMBOLIZE)
+void OutputValue(size_t value, BacktraceOutputHandler* handler) {
   // Max unsigned 64-bit number in decimal has 20 digits (18446744073709551615).
   // Hence, 30 digits should be more than enough to represent it in decimal
   // (including the null-terminator).
   char buf[30] = { '\0' };
-  handler->HandleOutput("#");
-  internal::itoa_r(frame_id, buf, sizeof(buf), 10, 1);
+  internal::itoa_r(static_cast<intptr_t>(value), buf, sizeof(buf), 10, 1);
   handler->HandleOutput(buf);
+}
+#endif  // defined(HAVE_DLADDR) || defined(USE_SYMBOLIZE)
+
+#if defined(USE_SYMBOLIZE)
+void OutputFrameId(size_t frame_id, BacktraceOutputHandler* handler) {
+  handler->HandleOutput("#");
+  OutputValue(frame_id, handler);
 }
 #endif  // defined(USE_SYMBOLIZE)
 
@@ -218,9 +241,34 @@ void ProcessBacktrace(void* const* trace,
 
   // Below part is async-signal unsafe (uses malloc), so execute it only
   // when we are not executing the signal handler.
-  if (in_signal_handler == 0) {
+  if (in_signal_handler == 0 && IsValueInRangeForNumericType<int>(size)) {
+#if defined(HAVE_DLADDR)
+    Dl_info dl_info;
+    for (size_t i = 0; i < size; ++i) {
+      if (prefix_string) {
+        handler->HandleOutput(prefix_string);
+      }
+
+      OutputValue(i, handler);
+      handler->HandleOutput(" ");
+
+      const bool dl_info_found = dladdr(trace[i], &dl_info) != 0;
+      if (dl_info_found) {
+        const char* last_sep = strrchr(dl_info.dli_fname, '/');
+        const char* basename = last_sep ? last_sep + 1 : dl_info.dli_fname;
+        handler->HandleOutput(basename);
+      } else {
+        handler->HandleOutput("???");
+      }
+      handler->HandleOutput(" ");
+      OutputPointer(trace[i], handler);
+
+      handler->HandleOutput("\n");
+    }
+    printed = true;
+#else   // defined(HAVE_DLADDR)
     std::unique_ptr<char*, FreeDeleter> trace_symbols(
-        backtrace_symbols(trace, size));
+        backtrace_symbols(trace, static_cast<int>(size)));
     if (trace_symbols.get()) {
       for (size_t i = 0; i < size; ++i) {
         std::string trace_symbol = trace_symbols.get()[i];
@@ -233,6 +281,7 @@ void ProcessBacktrace(void* const* trace,
 
       printed = true;
     }
+#endif  // defined(HAVE_DLADDR)
   }
 
   if (!printed) {
@@ -244,13 +293,34 @@ void ProcessBacktrace(void* const* trace,
   }
 #endif  // defined(USE_SYMBOLIZE)
 }
-#endif  // !defined(__UCLIBC__) && !defined(_AIX)
+#endif  // defined(HAVE_BACKTRACE)
 
 void PrintToStderr(const char* output) {
   // NOTE: This code MUST be async-signal safe (it's used by in-process
   // stack dumping signal handler). NO malloc or stdio is allowed here.
   std::ignore = HANDLE_EINTR(write(STDERR_FILENO, output, strlen(output)));
 }
+
+#if BUILDFLAG(IS_LINUX)
+void AlarmSignalHandler(int signal, siginfo_t* info, void* void_context) {
+  // We have seen rare cases on AMD linux where the default signal handler
+  // either does not run or a thread (Probably an AMD driver thread) prevents
+  // the termination of the gpu process. We catch this case when the alarm fires
+  // and then call exit_group() to kill all threads of the process. This has
+  // resolved the zombie gpu process issues we have seen on our context lost
+  // test.
+  // Note that many different calls were tried to kill the process when it is in
+  // this state. Only 'exit_group' was found to cause termination and it is
+  // speculated that only this works because only this exit kills all threads in
+  // the process (not simply the current thread).
+  // See: http://crbug.com/1396451.
+  PrintToStderr(
+      "Warning: Default signal handler failed to terminate process.\n");
+  PrintToStderr("Calling exit_group() directly to prevent timeout.\n");
+  // See: https://man7.org/linux/man-pages/man2/exit_group.2.html
+  syscall(SYS_exit_group, EXIT_FAILURE);
+}
+#endif  // BUILDFLAG(IS_LINUX)
 
 void StackDumpSignalHandler(int signal, siginfo_t* info, void* void_context) {
   // NOTE: This code MUST be async-signal safe.
@@ -270,7 +340,7 @@ void StackDumpSignalHandler(int signal, siginfo_t* info, void* void_context) {
     // installed. Thus, we reinstall ourselves before returning.
     struct sigaction action;
     memset(&action, 0, sizeof(action));
-    action.sa_flags = SA_RESETHAND | SA_SIGINFO;
+    action.sa_flags = static_cast<int>(SA_RESETHAND | SA_SIGINFO);
     action.sa_sigaction = &StackDumpSignalHandler;
     sigemptyset(&action.sa_mask);
 
@@ -347,6 +417,11 @@ void StackDumpSignalHandler(int signal, siginfo_t* info, void* void_context) {
       PrintToStderr(" SEGV_MAPERR ");
     else if (info->si_code == SEGV_ACCERR)
       PrintToStderr(" SEGV_ACCERR ");
+#if defined(ARCH_CPU_X86_64) && \
+    (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS))
+    else if (info->si_code == SI_KERNEL)
+      PrintToStderr(" SI_KERNEL");
+#endif
     else
       PrintToStderr(" <unknown> ");
   }
@@ -367,6 +442,16 @@ void StackDumpSignalHandler(int signal, siginfo_t* info, void* void_context) {
         "https://www.chromium.org/developers/testing/control-flow-integrity\n");
   }
 #endif  // BUILDFLAG(CFI_ENFORCEMENT_TRAP)
+
+#if defined(ARCH_CPU_X86_64) && \
+    (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS))
+  if (signal == SIGSEGV && info->si_code == SI_KERNEL) {
+    PrintToStderr(
+        " Possibly a General Protection Fault, can be due to a non-canonical "
+        "address dereference. See \"Intel 64 and IA-32 Architectures Software "
+        "Developer’s Manual\", Volume 1, Section 3.3.7.1.\n");
+  }
+#endif
 
   debug::StackTrace().Print();
 
@@ -457,11 +542,27 @@ void StackDumpSignalHandler(int signal, siginfo_t* info, void* void_context) {
   PrintToStderr(
       "Calling _exit(EXIT_FAILURE). Core file will not be generated.\n");
   _exit(EXIT_FAILURE);
-#endif  // !BUILDFLAG(IS_LINUX)
+#else   // BUILDFLAG(IS_LINUX)
 
   // After leaving this handler control flow returns to the point where the
   // signal was raised, raising the current signal once again but executing the
   // default handler instead of this one.
+
+  // Set an alarm to trigger in case the default handler does not terminate
+  // the process. See 'AlarmSignalHandler' for more details.
+  struct sigaction action;
+  memset(&action, 0, sizeof(action));
+  action.sa_flags = static_cast<int>(SA_RESETHAND);
+  action.sa_sigaction = &AlarmSignalHandler;
+  sigemptyset(&action.sa_mask);
+  sigaction(SIGALRM, &action, nullptr);
+  // 'alarm' function is signal handler safe.
+  // https://man7.org/linux/man-pages/man7/signal-safety.7.html
+  // This delay is set to be long enough for the real signal handler to fire but
+  // shorter than chrome's process watchdog timer.
+  constexpr unsigned int kAlarmSignalDelaySeconds = 5;
+  alarm(kAlarmSignalDelaySeconds);
+#endif  // !BUILDFLAG(IS_LINUX)
 }
 
 class PrintBacktraceOutputHandler : public BacktraceOutputHandler {
@@ -491,7 +592,7 @@ class StreamBacktraceOutputHandler : public BacktraceOutputHandler {
   void HandleOutput(const char* output) override { (*os_) << output; }
 
  private:
-  std::ostream* os_;
+  raw_ptr<std::ostream> os_;
 };
 
 void WarmUpBacktrace() {
@@ -605,9 +706,11 @@ class SandboxSymbolizeHelper {
   // (including the null terminator).
   // IMPORTANT: This function must be async-signal-safe because it can be
   // called from a signal handler (symbolizing stack frames for a crash).
-  static int OpenObjectFileContainingPc(uint64_t pc, uint64_t& start_address,
-                                        uint64_t& base_address, char* file_path,
-                                        int file_path_size) {
+  static int OpenObjectFileContainingPc(uint64_t pc,
+                                        uint64_t& start_address,
+                                        uint64_t& base_address,
+                                        char* file_path,
+                                        size_t file_path_size) {
     // This method can only be called after the singleton is instantiated.
     // This is ensured by the following facts:
     // * This is the only static method in this class, it is private, and
@@ -646,7 +749,8 @@ class SandboxSymbolizeHelper {
       return;
 
     auto safe_memcpy = [&mem_fd](void* dst, uintptr_t src, size_t size) {
-      return HANDLE_EINTR(pread(mem_fd.get(), dst, size, src)) == ssize_t(size);
+      return HANDLE_EINTR(pread(mem_fd.get(), dst, size,
+                                static_cast<off_t>(src))) == ssize_t(size);
     };
 
     uintptr_t cur_base = 0;
@@ -820,7 +924,7 @@ bool EnableInProcessStackDumping() {
 
   struct sigaction action;
   memset(&action, 0, sizeof(action));
-  action.sa_flags = SA_RESETHAND | SA_SIGINFO;
+  action.sa_flags = static_cast<int>(SA_RESETHAND | SA_SIGINFO);
   action.sa_sigaction = &StackDumpSignalHandler;
   sigemptyset(&action.sa_mask);
 
@@ -868,10 +972,11 @@ size_t CollectStackTrace(void** trace, size_t count) {
   // If we do not have unwind tables, then try tracing using frame pointers.
   return base::debug::TraceStackFramePointers(const_cast<const void**>(trace),
                                               count, 0);
-#elif !defined(__UCLIBC__) && !defined(_AIX)
+#elif defined(HAVE_BACKTRACE)
   // Though the backtrace API man page does not list any possible negative
   // return values, we take no chance.
-  return base::saturated_cast<size_t>(backtrace(trace, count));
+  return base::saturated_cast<size_t>(
+      backtrace(trace, base::saturated_cast<int>(count)));
 #else
   return 0;
 #endif
@@ -881,13 +986,13 @@ void StackTrace::PrintWithPrefix(const char* prefix_string) const {
 // NOTE: This code MUST be async-signal safe (it's used by in-process
 // stack dumping signal handler). NO malloc or stdio is allowed here.
 
-#if !defined(__UCLIBC__) && !defined(_AIX)
+#if defined(HAVE_BACKTRACE)
   PrintBacktraceOutputHandler handler;
   ProcessBacktrace(trace_, count_, prefix_string, &handler);
 #endif
 }
 
-#if !defined(__UCLIBC__) && !defined(_AIX)
+#if defined(HAVE_BACKTRACE)
 void StackTrace::OutputToStreamWithPrefix(std::ostream* os,
                                           const char* prefix_string) const {
   StreamBacktraceOutputHandler handler(os);
@@ -911,7 +1016,7 @@ char* itoa_r(intptr_t i, char* buf, size_t sz, int base, size_t padding) {
 
   char* start = buf;
 
-  uintptr_t j = i;
+  uintptr_t j = static_cast<uintptr_t>(i);
 
   // Handle negative numbers (only for base 10).
   if (i < 0 && base == 10) {
@@ -937,8 +1042,8 @@ char* itoa_r(intptr_t i, char* buf, size_t sz, int base, size_t padding) {
     }
 
     // Output the next digit.
-    *ptr++ = "0123456789abcdef"[j % base];
-    j /= base;
+    *ptr++ = "0123456789abcdef"[j % static_cast<uintptr_t>(base)];
+    j /= static_cast<uintptr_t>(base);
 
     if (padding > 0)
       padding--;

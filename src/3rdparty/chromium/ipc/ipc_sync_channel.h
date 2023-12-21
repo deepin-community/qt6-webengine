@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,6 +15,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event_watcher.h"
+#include "base/task/single_thread_task_runner.h"
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_channel_proxy.h"
 #include "ipc/ipc_sync_message.h"
@@ -211,7 +212,7 @@ class COMPONENT_EXPORT(IPC) SyncChannel : public ChannelProxy {
 
     scoped_refptr<ReceivedSyncMsgQueue> received_sync_msgs_;
 
-    raw_ptr<base::WaitableEvent> shutdown_event_;
+    raw_ptr<base::WaitableEvent, DanglingUntriaged> shutdown_event_;
     base::WaitableEventWatcher shutdown_watcher_;
     base::WaitableEventWatcher::EventCallback shutdown_watcher_callback_;
     int restrict_dispatch_group_;

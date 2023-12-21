@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,8 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/task/single_thread_task_runner.h"
 #include "net/base/net_errors.h"
@@ -20,6 +20,7 @@ MultiBufferReader::MultiBufferReader(
     MultiBuffer* multibuffer,
     int64_t start,
     int64_t end,
+    bool is_client_audio_element,
     base::RepeatingCallback<void(int64_t, int64_t)> progress_callback,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner)
     : multibuffer_(multibuffer),
@@ -32,6 +33,7 @@ MultiBufferReader::MultiBufferReader(
       current_buffer_size_(0),
       pinned_range_(0, 0),
       pos_(start),
+      is_client_audio_element_(is_client_audio_element),
       preload_pos_(-1),
       loading_(true),
       current_wait_size_(0),
@@ -94,12 +96,11 @@ int64_t MultiBufferReader::TryReadAt(int64_t pos, uint8_t* data, int64_t len) {
   for (auto& buffer : buffers) {
     if (buffer->end_of_stream())
       break;
-    size_t offset = pos & ((1LL << multibuffer_->block_size_shift()) - 1);
-    if (offset > static_cast<size_t>(buffer->data_size()))
+    int64_t offset = pos & ((1LL << multibuffer_->block_size_shift()) - 1);
+    if (offset > static_cast<int64_t>(buffer->data_size()))
       break;
-    size_t tocopy =
-        std::min<size_t>(len - bytes_read, buffer->data_size() - offset);
-    memcpy(data, buffer->data() + offset, tocopy);
+    int64_t tocopy = std::min(len - bytes_read, buffer->data_size() - offset);
+    memcpy(data, buffer->data() + offset, static_cast<size_t>(tocopy));
     data += tocopy;
     bytes_read += tocopy;
     if (bytes_read == len)

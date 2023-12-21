@@ -1,4 +1,4 @@
-# Copyright 2016 The Chromium Authors. All rights reserved.
+# Copyright 2016 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -41,7 +41,7 @@ if (enable_me2me_host) {
     if (is_component_build) {
       sources += [
         "$root_build_dir/libbase.so",
-        "$root_build_dir/libboringssl.so",
+        "$root_build_dir/libthird_party_boringssl.so",
       ]
       deps += [ "//base:base" ]
       if (use_custom_libcxx) {
@@ -76,6 +76,16 @@ if (enable_me2me_host) {
       "//remoting/host/remote_open_url",
       "//remoting/host/webauthn:remote_webauthn",
     ]
+  }
+}
+
+if (is_linux) {
+  source_set("wayland") {
+    sources = [
+      "wayland_utils.cc",
+      "wayland_utils.h",
+    ]
+    deps = [ "//base" ]
   }
 }
 
@@ -131,6 +141,7 @@ source_set("unit_tests") {
   if (!remoting_use_x11) {
     sources -= [
       "unicode_to_keysym_unittest.cc",
+      "x11_character_injector_unittest.cc",
       "x_server_clipboard_unittest.cc",
     ]
   }

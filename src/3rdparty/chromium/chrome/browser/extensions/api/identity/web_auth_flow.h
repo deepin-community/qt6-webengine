@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,9 @@
 
 #include <string>
 
+#include "base/feature_list.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "content/public/browser/storage_partition_config.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "extensions/browser/app_window/app_window_registry.h"
@@ -22,6 +24,12 @@ class StoragePartition;
 }
 
 namespace extensions {
+
+class WebAuthFlowInfoBarDelegate;
+
+// When enabled, cookies in the `launchWebAuthFlow()` partition are persisted
+// across browser restarts.
+BASE_DECLARE_FEATURE(kPersistentStorageForWebAuthFlow);
 
 // Controller class for web based auth flows. The WebAuthFlow creates
 // a dialog window in the scope approval component app by firing an
@@ -54,9 +62,10 @@ class WebAuthFlow : public content::WebContentsObserver,
   };
 
   enum Failure {
-    WINDOW_CLOSED,  // Window closed by user.
+    WINDOW_CLOSED,         // Window closed by user (app or tab).
     INTERACTION_REQUIRED,  // Non-redirect page load in silent mode.
-    LOAD_FAILED
+    LOAD_FAILED,
+    USER_NAVIGATED_AWAY  // The user navigated away from the auth page.
   };
 
   class Delegate {
@@ -69,6 +78,10 @@ class WebAuthFlow : public content::WebContentsObserver,
     virtual void OnAuthFlowURLChange(const GURL& redirect_url) {}
     // Called when the title of the current page changes.
     virtual void OnAuthFlowTitleChange(const std::string& title) {}
+    // Called when the web_contents associated with the flow has finished
+    // navigation.
+    virtual void OnNavigationFinished(
+        content::NavigationHandle* navigation_handle) {}
 
    protected:
     virtual ~Delegate() {}
@@ -106,6 +119,13 @@ class WebAuthFlow : public content::WebContentsObserver,
       Partition partition,
       content::BrowserContext* browser_context);
 
+  // This call will make the interactive mode, that opens up a browser tab for
+  // auth, display an Infobar that shows the extension name.
+  void SetShouldShowInfoBar(const std::string& extension_display_name);
+
+  // Returns nullptr if the InfoBar is not displayed.
+  base::WeakPtr<WebAuthFlowInfoBarDelegate> GetInfoBarDelegateForTesting();
+
  private:
   friend class ::WebAuthFlowTest;
 
@@ -119,6 +139,7 @@ class WebAuthFlow : public content::WebContentsObserver,
       content::WebContents* inner_web_contents) override;
   void PrimaryMainFrameRenderProcessGone(
       base::TerminationStatus status) override;
+  void WebContentsDestroyed() override;
   void TitleWasSet(content::NavigationEntry* entry) override;
   void DidStartNavigation(
       content::NavigationHandle* navigation_handle) override;
@@ -130,15 +151,46 @@ class WebAuthFlow : public content::WebContentsObserver,
   void BeforeUrlLoaded(const GURL& url);
   void AfterUrlLoaded();
 
-  raw_ptr<Delegate> delegate_;
-  raw_ptr<Profile> profile_;
-  GURL provider_url_;
-  Mode mode_;
-  Partition partition_;
+  bool IsObservingProviderWebContents() const;
 
-  raw_ptr<AppWindow> app_window_;
+  void DisplayInfoBar();
+  void CloseInfoBar();
+
+  bool IsDisplayingAuthPageInTab() const;
+
+  raw_ptr<Delegate> delegate_ = nullptr;
+  const raw_ptr<Profile> profile_;
+  const GURL provider_url_;
+  const Mode mode_;
+  const Partition partition_;
+
+  // Variables used only if displaying the auth flow in an app window.
+  raw_ptr<AppWindow> app_window_ = nullptr;
   std::string app_window_key_;
-  bool embedded_window_created_;
+  bool embedded_window_created_ = false;
+
+  // Variables used only if displaying the auth flow in a browser tab.
+  //
+  // Checks that the auth with browser tab is activated.
+  bool using_auth_with_browser_tab_ = false;
+  // WebContents used to initialize the authentication. It is not displayed
+  // and not owned by browser window. This WebContents is observed by
+  // `this`. When this value becomes nullptr, this means that the browser tab
+  // has taken ownership and the interactive tab was opened.
+  std::unique_ptr<content::WebContents> web_contents_;
+
+  // Internal struct to manage infobar parameters, external calls can only set
+  // the extension display name which will force show the info bar through
+  // `SetShouldShowInfoBar()`.
+  struct InfoBarParameters {
+    bool should_show = false;
+    std::string extension_display_name;
+  };
+  InfoBarParameters info_bar_parameters_;
+
+  // WeakPtr to the info bar delegate attached to the auth tab when opened. Used
+  // to close the info bar when closing the flow if still valid.
+  base::WeakPtr<WebAuthFlowInfoBarDelegate> info_bar_delegate_ = nullptr;
 };
 
 }  // namespace extensions

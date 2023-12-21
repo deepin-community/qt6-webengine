@@ -6,60 +6,46 @@
 
 #include "absl/strings/string_view.h"
 #include "absl/types/optional.h"
+#include "quiche/http2/adapter/header_validator_base.h"
 #include "quiche/common/platform/api/quiche_export.h"
 
 namespace http2 {
 namespace adapter {
 
-enum class HeaderType : uint8_t {
-  REQUEST,
-  REQUEST_TRAILER,
-  RESPONSE_100,
-  RESPONSE,
-  RESPONSE_TRAILER,
-};
-
-class QUICHE_EXPORT_PRIVATE HeaderValidator {
+class QUICHE_EXPORT HeaderValidator : public HeaderValidatorBase {
  public:
-  HeaderValidator() {}
+  HeaderValidator() = default;
 
-  void SetMaxFieldSize(uint32_t field_size) { max_field_size_ = field_size; }
+  void StartHeaderBlock() override;
 
-  // If called, this validator will allow the `:protocol` pseudo-header, as
-  // described in RFC 8441.
-  void AllowConnect() { allow_connect_ = true; }
-
-  void StartHeaderBlock();
-
-  enum HeaderStatus {
-    HEADER_OK,
-    HEADER_FIELD_INVALID,
-    HEADER_FIELD_TOO_LONG,
-  };
   HeaderStatus ValidateSingleHeader(absl::string_view key,
-                                    absl::string_view value);
+                                    absl::string_view value) override;
 
   // Returns true if all required pseudoheaders and no extra pseudoheaders are
   // present for the given header type.
-  bool FinishHeaderBlock(HeaderType type);
+  bool FinishHeaderBlock(HeaderType type) override;
 
-  // For responses, returns the value of the ":status" header, if present.
-  absl::string_view status_header() const { return status_; }
+  // Returns whether `value` is valid according to RFC 9110 Section 5.5 and RFC
+  // 9112 Section 8.2.1.
+  static bool IsValidHeaderValue(absl::string_view value,
+                                 ObsTextOption ops_text_option);
 
-  absl::optional<size_t> content_length() const { return content_length_; }
+  // Returns whether `authority` is valid according to RFC 3986 Section 3.2.
+  static bool IsValidAuthority(absl::string_view authority);
 
  private:
-  bool HandleContentLength(absl::string_view value);
+  enum ContentLengthStatus {
+    CONTENT_LENGTH_OK,
+    CONTENT_LENGTH_SKIP,  // Used to handle duplicate content length values.
+    CONTENT_LENGTH_ERROR,
+  };
+  ContentLengthStatus HandleContentLength(absl::string_view value);
   bool ValidateAndSetAuthority(absl::string_view authority);
 
   std::vector<std::string> pseudo_headers_;
   absl::optional<std::string> authority_ = absl::nullopt;
-  std::string status_;
   std::string method_;
   std::string path_;
-  absl::optional<size_t> max_field_size_;
-  absl::optional<size_t> content_length_;
-  bool allow_connect_ = false;
 };
 
 }  // namespace adapter

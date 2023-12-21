@@ -1,11 +1,11 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 import './strings.m.js';
 
 import {assert} from 'chrome://resources/js/assert_ts.js';
-import {loadTimeData} from 'chrome://resources/js/load_time_data.m.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 
 import {isTabElement, TabElement} from './tab.js';
 import {isDragHandle, isTabGroupElement, TabGroupElement} from './tab_group.js';
@@ -69,7 +69,7 @@ export interface DragManagerDelegate {
 
   placeTabGroupElement(element: TabGroupElement, index: number): void;
 
-  shouldPreventDrag(): boolean;
+  shouldPreventDrag(isDraggingTab: boolean): boolean;
 }
 
 type DragManagerDelegateElement = DragManagerDelegate&HTMLElement;
@@ -259,8 +259,8 @@ class DragSession {
     this.element_.setDraggedOut(false);
   }
 
-  shouldOffsetIndexForGroup_(dragOverElement: TabElement|
-                             TabGroupElement): boolean {
+  private shouldOffsetIndexForGroup_(dragOverElement: TabElement|
+                                     TabGroupElement): boolean {
     // Since TabGroupElements do not have any TabElements, they need to offset
     // the index for any elements that come after it as if there is at least
     // one element inside of it.
@@ -470,7 +470,7 @@ export class DragManager {
       return;
     }
 
-    if (this.delegate_.shouldPreventDrag()) {
+    if (this.delegate_.shouldPreventDrag(isTabElement(draggedItem))) {
       event.preventDefault();
       return;
     }

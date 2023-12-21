@@ -1,4 +1,4 @@
-// Copyright (c) 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,9 @@
 #include <cstdint>
 #include <limits>
 
+#include "base/allocator/partition_allocator/partition_alloc_base/compiler_specific.h"
+#include "base/allocator/partition_allocator/partition_alloc_buildflags.h"
 #include "base/allocator/partition_allocator/partition_alloc_check.h"
-#include "base/compiler_specific.h"
 #include "build/build_config.h"
 
 #if BUILDFLAG(IS_WIN)
@@ -87,7 +88,7 @@ Stack::Stack(void* stack_top) : stack_top_(stack_top) {
   PA_DCHECK(stack_top);
 }
 
-NOINLINE uintptr_t* GetStackPointer() {
+PA_NOINLINE uintptr_t* GetStackPointer() {
 #if defined(COMPILER_GCC) || defined(__clang__)
   return reinterpret_cast<uintptr_t*>(__builtin_frame_address(0));
 #else
@@ -120,7 +121,7 @@ namespace {
 // should never be inlined to ensure that a possible redzone cannot contain
 // any data that needs to be scanned.
 // No ASAN support as method accesses redzones while walking the stack.
-[[maybe_unused]] NOINLINE NO_SANITIZE("address") void IteratePointersImpl(
+[[maybe_unused]] PA_NOINLINE PA_NO_SANITIZE("address") void IteratePointersImpl(
     const Stack* stack,
     StackVisitor* visitor,
     uintptr_t* stack_ptr) {
@@ -139,12 +140,12 @@ namespace {
 }  // namespace
 
 void Stack::IteratePointers(StackVisitor* visitor) const {
-#if defined(PA_PCSCAN_STACK_SUPPORTED)
+#if BUILDFLAG(PCSCAN_STACK_SUPPORTED)
   PAPushAllRegistersAndIterateStack(this, visitor, &IteratePointersImpl);
   // No need to deal with callee-saved registers as they will be kept alive by
   // the regular conservative stack iteration.
   IterateSafeStackIfNecessary(visitor);
-#endif
+#endif  // BUILDFLAG(PCSCAN_STACK_SUPPORTED)
 }
 
 }  // namespace partition_alloc::internal

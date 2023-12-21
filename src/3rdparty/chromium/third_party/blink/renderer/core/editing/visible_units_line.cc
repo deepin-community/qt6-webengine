@@ -24,7 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -464,23 +464,23 @@ static bool InSameLineAlgorithm(
   DCHECK_EQ(position1.GetDocument(), position2.GetDocument());
   DCHECK(!position1.GetDocument()->NeedsLayoutTreeUpdate());
 
-  if (RuntimeEnabledFeatures::LayoutNGEnabled()) {
-    const LayoutBlockFlow* block1 =
-        NGInlineFormattingContextOf(position1.GetPosition());
-    const LayoutBlockFlow* block2 =
-        NGInlineFormattingContextOf(position2.GetPosition());
-    if (block1 || block2) {
-      if (block1 != block2)
-        return false;
-      if (!InSameNGLineBox(position1, position2))
-        return false;
-      // See (ParameterizedVisibleUnitsLineTest.InSameLineWithMixedEditability
-      return RootEditableElementOf(position1.GetPosition()) ==
-             RootEditableElementOf(position2.GetPosition());
+  const LayoutBlockFlow* block1 =
+      NGInlineFormattingContextOf(position1.GetPosition());
+  const LayoutBlockFlow* block2 =
+      NGInlineFormattingContextOf(position2.GetPosition());
+  if (block1 || block2) {
+    if (block1 != block2) {
+      return false;
     }
-
-    // Neither positions are in LayoutNG. Fall through to legacy handling.
+    if (!InSameNGLineBox(position1, position2)) {
+      return false;
+    }
+    // See (ParameterizedVisibleUnitsLineTest.InSameLineWithMixedEditability
+    return RootEditableElementOf(position1.GetPosition()) ==
+           RootEditableElementOf(position2.GetPosition());
   }
+
+  // Neither positions are in LayoutNG. Fall through to legacy handling.
 
   PositionWithAffinityTemplate<Strategy> start_of_line1 =
       StartOfLine(position1);

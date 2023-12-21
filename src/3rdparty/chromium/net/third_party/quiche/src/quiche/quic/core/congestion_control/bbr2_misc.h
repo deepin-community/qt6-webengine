@@ -75,21 +75,25 @@ struct QUIC_EXPORT_PRIVATE Bbr2Params {
    * STARTUP parameters.
    */
 
-  // The gain for both CWND and PacingRate at startup.
+  // The gain for CWND in startup.
   float startup_cwnd_gain = 2.0;
   // TODO(wub): Maybe change to the newly derived value of 2.773 (4 * ln(2)).
   float startup_pacing_gain = 2.885;
 
-  // Full bandwidth is declared if the total bandwidth growth is less than
-  // |startup_full_bw_threshold| times in the last |startup_full_bw_rounds|
-  // round trips.
-  float startup_full_bw_threshold = 1.25;
+  // STARTUP or PROBE_UP are exited if the total bandwidth growth is less than
+  // |full_bw_threshold| in the last |startup_full_bw_rounds| round trips.
+  float full_bw_threshold = 1.25;
 
   QuicRoundTripCount startup_full_bw_rounds = 3;
 
+  // Number of rounds to stay in STARTUP when there's a sufficient queue that
+  // bytes_in_flight never drops below the target (1.75 * BDP).  0 indicates the
+  // feature is disabled and we never exit due to queueing.
+  QuicRoundTripCount max_startup_queue_rounds = 0;
+
   // The minimum number of loss marking events to exit STARTUP.
   int64_t startup_full_loss_count =
-      GetQuicFlag(FLAGS_quic_bbr2_default_startup_full_loss_count);
+      GetQuicFlag(quic_bbr2_default_startup_full_loss_count);
 
   // If true, always exit STARTUP on loss, even if bandwidth exceeds threshold.
   // If false, exit STARTUP on loss only if bandwidth is below threshold.
@@ -99,9 +103,6 @@ struct QUIC_EXPORT_PRIVATE Bbr2Params {
   // acked when bandwidth increases.
   bool startup_include_extra_acked = false;
 
-  // If true, exit STARTUP if bytes in flight has not gone below 2 * BDP at
-  // any point in the last round.
-  bool exit_startup_on_persistent_queue = false;
 
   /*
    * DRAIN parameters.
@@ -125,24 +126,16 @@ struct QUIC_EXPORT_PRIVATE Bbr2Params {
   // Minimum duration for BBR-native probes.
   QuicTime::Delta probe_bw_probe_base_duration =
       QuicTime::Delta::FromMilliseconds(
-          GetQuicFlag(FLAGS_quic_bbr2_default_probe_bw_base_duration_ms));
+          GetQuicFlag(quic_bbr2_default_probe_bw_base_duration_ms));
 
   // The upper bound of the random amount of BBR-native probes.
   QuicTime::Delta probe_bw_probe_max_rand_duration =
       QuicTime::Delta::FromMilliseconds(
-          GetQuicFlag(FLAGS_quic_bbr2_default_probe_bw_max_rand_duration_ms));
+          GetQuicFlag(quic_bbr2_default_probe_bw_max_rand_duration_ms));
 
   // The minimum number of loss marking events to exit the PROBE_UP phase.
   int64_t probe_bw_full_loss_count =
-      GetQuicFlag(FLAGS_quic_bbr2_default_probe_bw_full_loss_count);
-
-  // Multiplier to get target inflight (as multiple of BDP) for PROBE_UP phase.
-  float probe_bw_probe_inflight_gain = 1.25;
-
-  // When attempting to grow inflight_hi in PROBE_UP, check whether we are cwnd
-  // limited before the current aggregation epoch, instead of before the current
-  // ack event.
-  bool probe_bw_check_cwnd_limited_before_aggregation_epoch = false;
+      GetQuicFlag(quic_bbr2_default_probe_bw_full_loss_count);
 
   // Pacing gains.
   float probe_bw_probe_up_pacing_gain = 1.25;
@@ -154,16 +147,20 @@ struct QUIC_EXPORT_PRIVATE Bbr2Params {
   /*
    * PROBE_UP parameters.
    */
-  bool probe_up_includes_acks_after_cwnd_limited = false;
-  bool probe_up_dont_exit_if_no_queue_ = false;
-  bool probe_up_ignore_inflight_hi = false;
+  bool probe_up_ignore_inflight_hi = true;
+  bool probe_up_simplify_inflight_hi = false;
+
+  // Number of rounds to stay in PROBE_UP when there's a sufficient queue that
+  // bytes_in_flight never drops below the target.  0 indicates the feature is
+  // disabled and we never exit due to queueing.
+  QuicRoundTripCount max_probe_up_queue_rounds = 0;
 
   /*
    * PROBE_RTT parameters.
    */
   float probe_rtt_inflight_target_bdp_fraction = 0.5;
   QuicTime::Delta probe_rtt_period = QuicTime::Delta::FromMilliseconds(
-      GetQuicFlag(FLAGS_quic_bbr2_default_probe_rtt_period_ms));
+      GetQuicFlag(quic_bbr2_default_probe_rtt_period_ms));
   QuicTime::Delta probe_rtt_duration = QuicTime::Delta::FromMilliseconds(200);
 
   /*
@@ -172,14 +169,14 @@ struct QUIC_EXPORT_PRIVATE Bbr2Params {
 
   // The initial value of the max ack height filter's window length.
   QuicRoundTripCount initial_max_ack_height_filter_window =
-      GetQuicFlag(FLAGS_quic_bbr2_default_initial_ack_height_filter_window);
+      GetQuicFlag(quic_bbr2_default_initial_ack_height_filter_window);
 
   // Fraction of unutilized headroom to try to leave in path upon high loss.
   float inflight_hi_headroom =
-      GetQuicFlag(FLAGS_quic_bbr2_default_inflight_hi_headroom);
+      GetQuicFlag(quic_bbr2_default_inflight_hi_headroom);
 
   // Estimate startup/bw probing has gone too far if loss rate exceeds this.
-  float loss_threshold = GetQuicFlag(FLAGS_quic_bbr2_default_loss_threshold);
+  float loss_threshold = GetQuicFlag(quic_bbr2_default_loss_threshold);
 
   // A common factor for multiplicative decreases. Used for adjusting
   // bandwidth_lo, inflight_lo and inflight_hi upon losses.
@@ -458,10 +455,10 @@ class QUIC_EXPORT_PRIVATE Bbr2NetworkModel {
   // |full_bandwidth_reached_| to true.
   bool HasBandwidthGrowth(const Bbr2CongestionEvent& congestion_event);
 
-  // Returns true if the minimum bytes in flight during the round is greater
-  // than the BDP * |bdp_gain|.
-  bool CheckPersistentQueue(const Bbr2CongestionEvent& congestion_event,
-                            float bdp_gain);
+  // Increments rounds_with_queueing_ if the minimum bytes in flight during the
+  // round is greater than the BDP * |target_gain|.
+  void CheckPersistentQueue(const Bbr2CongestionEvent& congestion_event,
+                            float target_gain);
 
   QuicPacketNumber last_sent_packet() const {
     return round_trip_counter_.last_sent_packet();
@@ -487,6 +484,10 @@ class QUIC_EXPORT_PRIVATE Bbr2NetworkModel {
 
   QuicByteCount min_bytes_in_flight_in_round() const {
     return min_bytes_in_flight_in_round_;
+  }
+
+  bool inflight_hi_limited_in_round() const {
+    return inflight_hi_limited_in_round_;
   }
 
   QuicPacketNumber end_of_app_limited_phase() const {
@@ -531,6 +532,9 @@ class QUIC_EXPORT_PRIVATE Bbr2NetworkModel {
   QuicRoundTripCount rounds_without_bandwidth_growth() const {
     return rounds_without_bandwidth_growth_;
   }
+  QuicRoundTripCount rounds_with_queueing() const {
+    return rounds_with_queueing_;
+  }
 
  private:
   // Called when a new round trip starts.
@@ -560,7 +564,11 @@ class QUIC_EXPORT_PRIVATE Bbr2NetworkModel {
   QuicByteCount max_bytes_delivered_in_round_ = 0;
 
   // The minimum bytes in flight during this round.
-  QuicByteCount min_bytes_in_flight_in_round_ = 0;
+  QuicByteCount min_bytes_in_flight_in_round_ =
+      std::numeric_limits<uint64_t>::max();
+
+  // True if sending was limited by inflight_hi anytime in the current round.
+  bool inflight_hi_limited_in_round_ = false;
 
   // Max bandwidth in the current round. Updated once per congestion event.
   QuicBandwidth bandwidth_latest_ = QuicBandwidth::Zero();
@@ -587,6 +595,9 @@ class QUIC_EXPORT_PRIVATE Bbr2NetworkModel {
   bool full_bandwidth_reached_ = false;
   QuicBandwidth full_bandwidth_baseline_ = QuicBandwidth::Zero();
   QuicRoundTripCount rounds_without_bandwidth_growth_ = 0;
+
+  // Used by STARTUP and PROBE_UP to decide when to exit.
+  QuicRoundTripCount rounds_with_queueing_ = 0;
 };
 
 enum class Bbr2Mode : uint8_t {

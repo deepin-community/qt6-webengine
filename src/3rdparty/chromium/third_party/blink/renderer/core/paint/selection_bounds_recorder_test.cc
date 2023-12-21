@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,25 +13,9 @@ using testing::ElementsAre;
 
 namespace blink {
 
-class SelectionBoundsRecorderTest : public PaintControllerPaintTestBase,
-                                    public testing::WithParamInterface<bool>,
-                                    public ScopedLayoutNGForTest {
- public:
-  SelectionBoundsRecorderTest() : ScopedLayoutNGForTest(GetParam()) {}
-};
+class SelectionBoundsRecorderTest : public PaintControllerPaintTestBase {};
 
-struct SelectionBoundsRecorderTestPassToString {
-  std::string operator()(const testing::TestParamInfo<bool> b) const {
-    return b.param ? "LayoutNG" : "LegacyLayout";
-  }
-};
-
-INSTANTIATE_TEST_SUITE_P(All,
-                         SelectionBoundsRecorderTest,
-                         ::testing::Bool(),
-                         SelectionBoundsRecorderTestPassToString());
-
-TEST_P(SelectionBoundsRecorderTest, SelectAll) {
+TEST_F(SelectionBoundsRecorderTest, SelectAll) {
   SetBodyInnerHTML("<span>A<br>B<br>C</span>");
 
   LocalFrame* local_frame = GetDocument().GetFrame();
@@ -56,12 +40,19 @@ TEST_P(SelectionBoundsRecorderTest, SelectAll) {
   EXPECT_EQ(end.edge_end, gfx::Point(9, 11));
 }
 
-TEST_P(SelectionBoundsRecorderTest, SelectMultiline) {
+TEST_F(SelectionBoundsRecorderTest, SelectMultiline) {
   LocalFrame* local_frame = GetDocument().GetFrame();
+  LoadAhem(*local_frame);
+
   local_frame->Selection().SetSelectionAndEndTyping(
-      SelectionSample::SetSelectionText(
-          GetDocument().body(),
-          "<div style='white-space:pre'>f^oo\nbar\nb|az</div>"));
+      SelectionSample::SetSelectionText(GetDocument().body(),
+                                        R"HTML(
+          <style>
+            div { white-space:pre; font-family: Ahem; }
+          </style>
+          <div>f^oo\nbar\nb|az</div>
+      )HTML"));
+
   local_frame->Selection().SetHandleVisibleForTesting();
   local_frame->GetPage()->GetFocusController().SetFocusedFrame(local_frame);
   UpdateAllLifecyclePhasesForTest();
@@ -73,16 +64,16 @@ TEST_P(SelectionBoundsRecorderTest, SelectMultiline) {
   PaintedSelectionBound start =
       chunks.begin()->layer_selection_data->start.value();
   EXPECT_EQ(start.type, gfx::SelectionBound::LEFT);
-  EXPECT_EQ(start.edge_start, gfx::Point(8, 8));
-  EXPECT_EQ(start.edge_end, gfx::Point(8, 9));
+  EXPECT_EQ(start.edge_start, gfx::Point(9, 8));
+  EXPECT_EQ(start.edge_end, gfx::Point(9, 9));
 
   PaintedSelectionBound end = chunks.begin()->layer_selection_data->end.value();
   EXPECT_EQ(end.type, gfx::SelectionBound::RIGHT);
-  EXPECT_EQ(end.edge_start, gfx::Point(9, 10));
-  EXPECT_EQ(end.edge_end, gfx::Point(9, 11));
+  EXPECT_EQ(end.edge_start, gfx::Point(19, 8));
+  EXPECT_EQ(end.edge_end, gfx::Point(19, 9));
 }
 
-TEST_P(SelectionBoundsRecorderTest, SelectMultilineEmptyStartEnd) {
+TEST_F(SelectionBoundsRecorderTest, SelectMultilineEmptyStartEnd) {
   LocalFrame* local_frame = GetDocument().GetFrame();
   LoadAhem(*local_frame);
   local_frame->Selection().SetSelectionAndEndTyping(
@@ -114,7 +105,7 @@ TEST_P(SelectionBoundsRecorderTest, SelectMultilineEmptyStartEnd) {
   EXPECT_EQ(end.edge_end, gfx::Point(0, 30));
 }
 
-TEST_P(SelectionBoundsRecorderTest, InvalidationForEmptyBounds) {
+TEST_F(SelectionBoundsRecorderTest, InvalidationForEmptyBounds) {
   LocalFrame* local_frame = GetDocument().GetFrame();
   LoadAhem(*local_frame);
 

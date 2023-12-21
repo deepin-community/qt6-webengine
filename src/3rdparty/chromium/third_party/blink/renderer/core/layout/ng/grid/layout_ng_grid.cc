@@ -1,8 +1,9 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/layout/ng/grid/layout_ng_grid.h"
+
 #include "third_party/blink/renderer/core/layout/ng/ng_layout_result.h"
 
 namespace blink {
@@ -111,14 +112,19 @@ const LayoutNGGridInterface* LayoutNGGrid::ToLayoutNGGridInterface() const {
   return this;
 }
 
+bool LayoutNGGrid::HasCachedPlacementData() const {
+  return cached_placement_data_ && !IsGridPlacementDirty();
+}
+
 const NGGridPlacementData& LayoutNGGrid::CachedPlacementData() const {
-  DCHECK(!IsGridPlacementDirty());
-  return cached_placement_data_;
+  DCHECK(HasCachedPlacementData());
+  return *cached_placement_data_;
 }
 
 void LayoutNGGrid::SetCachedPlacementData(
     NGGridPlacementData&& placement_data) {
-  cached_placement_data_ = std::move(placement_data);
+  cached_placement_data_ =
+      std::make_unique<NGGridPlacementData>(std::move(placement_data));
   SetGridPlacementDirty(false);
 }
 
@@ -134,52 +140,31 @@ const NGGridLayoutData* LayoutNGGrid::GridLayoutData() const {
 wtf_size_t LayoutNGGrid::AutoRepeatCountForDirection(
     const GridTrackSizingDirection track_direction) const {
   NOT_DESTROYED();
-  if (IsGridPlacementDirty())
+  if (!HasCachedPlacementData())
     return 0;
 
-  const bool is_for_columns = track_direction == kForColumns;
-  const wtf_size_t auto_repeat_size =
-      is_for_columns
-          ? StyleRef().GridTemplateColumns().TrackList().AutoRepeatTrackCount()
-          : StyleRef().GridTemplateRows().TrackList().AutoRepeatTrackCount();
-
-  return auto_repeat_size *
-         (is_for_columns ? cached_placement_data_.column_auto_repetitions
-                         : cached_placement_data_.row_auto_repetitions);
+  return cached_placement_data_->AutoRepeatTrackCount(track_direction);
 }
 
 wtf_size_t LayoutNGGrid::ExplicitGridStartForDirection(
     const GridTrackSizingDirection track_direction) const {
   NOT_DESTROYED();
-  if (IsGridPlacementDirty())
+  if (!HasCachedPlacementData())
     return 0;
   return (track_direction == kForColumns)
-             ? cached_placement_data_.column_start_offset
-             : cached_placement_data_.row_start_offset;
+             ? cached_placement_data_->column_start_offset
+             : cached_placement_data_->row_start_offset;
 }
 
 wtf_size_t LayoutNGGrid::ExplicitGridEndForDirection(
     const GridTrackSizingDirection track_direction) const {
   NOT_DESTROYED();
-  if (IsGridPlacementDirty())
+  if (!HasCachedPlacementData())
     return 0;
-
-  const bool is_for_columns = track_direction == kForColumns;
-  const wtf_size_t subgrid_span_size =
-      is_for_columns ? cached_placement_data_.column_subgrid_span_size
-                     : cached_placement_data_.row_subgrid_span_size;
-
-  const wtf_size_t explicit_grid_track_count =
-      is_for_columns ? GridPositionsResolver::ExplicitGridColumnCount(
-                           StyleRef(), AutoRepeatCountForDirection(kForColumns),
-                           /* is_ng_grid */ true, subgrid_span_size)
-                     : GridPositionsResolver::ExplicitGridRowCount(
-                           StyleRef(), AutoRepeatCountForDirection(kForRows),
-                           /* is_ng_grid */ true, subgrid_span_size);
 
   return base::checked_cast<wtf_size_t>(
       ExplicitGridStartForDirection(track_direction) +
-      explicit_grid_track_count);
+      cached_placement_data_->ExplicitGridTrackCount(track_direction));
 }
 
 LayoutUnit LayoutNGGrid::GridGap(
@@ -190,8 +175,8 @@ LayoutUnit LayoutNGGrid::GridGap(
     return LayoutUnit();
 
   return (track_direction == kForColumns)
-             ? grid_layout_data->Columns()->GutterSize()
-             : grid_layout_data->Rows()->GutterSize();
+             ? grid_layout_data->Columns().GutterSize()
+             : grid_layout_data->Rows().GutterSize();
 }
 
 LayoutUnit LayoutNGGrid::GridItemOffset(
@@ -210,8 +195,8 @@ Vector<LayoutUnit, 1> LayoutNGGrid::TrackSizesForComputedStyle(
     return track_sizes;
 
   const auto& track_collection = (track_direction == kForColumns)
-                                     ? *grid_layout_data->Columns()
-                                     : *grid_layout_data->Rows();
+                                     ? grid_layout_data->Columns()
+                                     : grid_layout_data->Rows();
 
   // |EndLineOfImplicitGrid| is equivalent to the total track count.
   track_sizes.ReserveInitialCapacity(std::min<wtf_size_t>(
@@ -290,8 +275,8 @@ Vector<LayoutUnit> LayoutNGGrid::ComputeExpandedPositions(
     return expanded_positions;
 
   const auto& track_collection = (track_direction == kForColumns)
-                                     ? *grid_layout_data->Columns()
-                                     : *grid_layout_data->Rows();
+                                     ? grid_layout_data->Columns()
+                                     : grid_layout_data->Rows();
 
   // |EndLineOfImplicitGrid| is equivalent to the total track count.
   expanded_positions.ReserveInitialCapacity(std::min<wtf_size_t>(

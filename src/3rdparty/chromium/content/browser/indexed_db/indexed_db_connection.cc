@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,13 +8,17 @@
 
 #include "base/check_op.h"
 #include "base/containers/contains.h"
+#include "base/functional/callback_helpers.h"
 #include "base/trace_event/base_tracing.h"
+#include "components/services/storage/privileged/mojom/indexed_db_client_state_checker.mojom-forward.h"
+#include "content/browser/indexed_db/indexed_db_bucket_state.h"
 #include "content/browser/indexed_db/indexed_db_class_factory.h"
 #include "content/browser/indexed_db/indexed_db_database_callbacks.h"
 #include "content/browser/indexed_db/indexed_db_database_error.h"
-#include "content/browser/indexed_db/indexed_db_factory_impl.h"
-#include "content/browser/indexed_db/indexed_db_storage_key_state.h"
+#include "content/browser/indexed_db/indexed_db_factory.h"
 #include "content/browser/indexed_db/indexed_db_transaction.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom.h"
 
 namespace content {
@@ -26,19 +30,21 @@ static int32_t g_next_indexed_db_connection_id;
 }  // namespace
 
 IndexedDBConnection::IndexedDBConnection(
-    IndexedDBStorageKeyStateHandle storage_key_state_handle,
+    IndexedDBBucketStateHandle bucket_state_handle,
     IndexedDBClassFactory* indexed_db_class_factory,
     base::WeakPtr<IndexedDBDatabase> database,
     base::RepeatingClosure on_version_change_ignored,
     base::OnceCallback<void(IndexedDBConnection*)> on_close,
-    scoped_refptr<IndexedDBDatabaseCallbacks> callbacks)
+    scoped_refptr<IndexedDBDatabaseCallbacks> callbacks,
+    scoped_refptr<IndexedDBClientStateCheckerWrapper> client_state_checker)
     : id_(g_next_indexed_db_connection_id++),
-      storage_key_state_handle_(std::move(storage_key_state_handle)),
+      bucket_state_handle_(std::move(bucket_state_handle)),
       indexed_db_class_factory_(indexed_db_class_factory),
       database_(std::move(database)),
       on_version_change_ignored_(std::move(on_version_change_ignored)),
       on_close_(std::move(on_close)),
-      callbacks_(callbacks) {
+      callbacks_(callbacks),
+      client_state_checker_(std::move(client_state_checker)) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 }
 
@@ -54,8 +60,7 @@ IndexedDBConnection::~IndexedDBConnection() {
   leveldb::Status status =
       AbortTransactionsAndClose(CloseErrorHandling::kAbortAllReturnLastError);
   if (!status.ok())
-    storage_key_state_handle_.storage_key_state()->tear_down_callback().Run(
-        status);
+    bucket_state_handle_.bucket_state()->tear_down_callback().Run(status);
 }
 
 leveldb::Status IndexedDBConnection::AbortTransactionsAndClose(
@@ -81,7 +86,8 @@ leveldb::Status IndexedDBConnection::AbortTransactionsAndClose(
   }
 
   std::move(on_close_).Run(this);
-  storage_key_state_handle_.Release();
+  client_keep_active_remotes_.Clear();
+  bucket_state_handle_.Release();
   return status;
 }
 
@@ -114,13 +120,12 @@ IndexedDBTransaction* IndexedDBConnection::CreateTransaction(
     IndexedDBBackingStore::Transaction* backing_store_transaction) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CHECK_EQ(GetTransaction(id), nullptr) << "Duplicate transaction id." << id;
-  IndexedDBStorageKeyState* storage_key_state =
-      storage_key_state_handle_.storage_key_state();
+  IndexedDBBucketState* bucket_state = bucket_state_handle_.bucket_state();
   std::unique_ptr<IndexedDBTransaction> transaction =
       indexed_db_class_factory_->CreateIndexedDBTransaction(
           id, this, scope, mode, database()->tasks_available_callback(),
-          storage_key_state ? storage_key_state->tear_down_callback()
-                            : IndexedDBTransaction::TearDownCallback(),
+          bucket_state ? bucket_state->tear_down_callback()
+                       : IndexedDBTransaction::TearDownCallback(),
           backing_store_transaction);
   IndexedDBTransaction* transaction_ptr = transaction.get();
   transactions_[id] = std::move(transaction);
@@ -135,8 +140,7 @@ void IndexedDBConnection::AbortTransactionAndTearDownOnError(
                transaction->id());
   leveldb::Status status = transaction->Abort(error);
   if (!status.ok())
-    storage_key_state_handle_.storage_key_state()->tear_down_callback().Run(
-        status);
+    bucket_state_handle_.bucket_state()->tear_down_callback().Run(status);
 }
 
 leveldb::Status IndexedDBConnection::AbortAllTransactions(
@@ -180,25 +184,27 @@ IndexedDBTransaction* IndexedDBConnection::GetTransaction(int64_t id) const {
   return it->second.get();
 }
 
-base::WeakPtr<IndexedDBTransaction>
-IndexedDBConnection::AddTransactionForTesting(
-    std::unique_ptr<IndexedDBTransaction> transaction) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(!base::Contains(transactions_, transaction->id()));
-  base::WeakPtr<IndexedDBTransaction> transaction_ptr =
-      transaction->ptr_factory_.GetWeakPtr();
-  transactions_[transaction->id()] = std::move(transaction);
-  return transaction_ptr;
-}
-
 void IndexedDBConnection::RemoveTransaction(int64_t id) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   transactions_.erase(id);
 }
 
-void IndexedDBConnection::ClearStateAfterClose() {
-  callbacks_ = nullptr;
-  storage_key_state_handle_.Release();
+void IndexedDBConnection::DisallowInactiveClient(
+    storage::mojom::DisallowInactiveClientReason reason,
+    base::OnceCallback<void(bool)> callback) {
+  if (reason ==
+      storage::mojom::DisallowInactiveClientReason::kClientEventIsTriggered) {
+    // It's only necessary to keep the client active under this scenario.
+    mojo::Remote<storage::mojom::IndexedDBClientKeepActive>
+        client_keep_active_remote;
+    client_state_checker_->DisallowInactiveClient(
+        reason, client_keep_active_remote.BindNewPipeAndPassReceiver(),
+        std::move(callback));
+    client_keep_active_remotes_.Add(std::move(client_keep_active_remote));
+  } else {
+    client_state_checker_->DisallowInactiveClient(reason, mojo::NullReceiver(),
+                                                  std::move(callback));
+  }
 }
 
 }  // namespace content

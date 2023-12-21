@@ -13,6 +13,7 @@
 #include <QtWebEngineCore/qwebenginesettings.h>
 #include <QtWebEngineCore/qwebengineprofile.h>
 #include <QtWebEngineCore/qwebenginepage.h>
+#include <QtWebEngineWidgets/qwebengineview.h>
 
 #if defined(WEBSOCKETS)
 #include <QtWebSockets/qwebsocket.h>
@@ -150,7 +151,15 @@ void registerSchemes()
         scheme.setFlags(QWebEngineUrlScheme::LocalScheme | QWebEngineUrlScheme::CorsEnabled);
         QWebEngineUrlScheme::registerScheme(scheme);
     }
-
+    {
+        QWebEngineUrlScheme scheme("fetchapi-allowed");
+        scheme.setFlags(QWebEngineUrlScheme::CorsEnabled | QWebEngineUrlScheme::FetchApiAllowed);
+        QWebEngineUrlScheme::registerScheme(scheme);
+    }
+    {
+        QWebEngineUrlScheme scheme("fetchapi-not-allowed");
+        QWebEngineUrlScheme::registerScheme(scheme);
+    }
 }
 Q_CONSTRUCTOR_FUNCTION(registerSchemes)
 
@@ -262,6 +271,23 @@ public:
         messages << message;
         qCDebug(lc) << message;
     }
+
+    bool logContainsDoneMarker() const { return messages.contains("TEST:done"); }
+
+    QString findResultInLog() const
+    {
+        // make sure we do not have some extra logs from blink
+        for (auto message : messages) {
+            QStringList s = message.split(':');
+            if (s.size() > 1 && s[0] == "TEST")
+                return s[1];
+        }
+        return QString();
+    }
+
+    void clearLog() { messages.clear(); }
+
+private:
     QStringList messages;
 };
 
@@ -281,6 +307,9 @@ private Q_SLOTS:
     void subdirWithoutAccess();
     void fileAccessRemoteUrl_data();
     void fileAccessRemoteUrl();
+    void fileAccessLocalUrl_data();
+    void fileAccessLocalUrl();
+    void mixedSchemes_data();
     void mixedSchemes();
     void mixedSchemesWithCsp();
     void mixedXHR_data();
@@ -305,6 +334,9 @@ private Q_SLOTS:
     void redirectInterceptorSecure();
     void redirectInterceptorFile();
     void redirectInterceptorHttp();
+    void fetchApiCustomUrl_data();
+    void fetchApiCustomUrl();
+    void fetchApiHttpUrl();
 
 private:
     bool verifyLoad(const QUrl &url)
@@ -442,8 +474,8 @@ void tst_Origins::jsUrlRelative()
     // URLs even without an initial slash.
     QCOMPARE(eval(QSL("new URL('bar', 'qrc:foo').href")), QVariant(QSL("qrc:bar")));
     QCOMPARE(eval(QSL("new URL('baz', 'qrc:foo/bar').href")), QVariant(QSL("qrc:foo/baz")));
-    QCOMPARE(eval(QSL("new URL('bar', 'qrc://foo').href")), QVariant());
-    QCOMPARE(eval(QSL("new URL('bar', 'qrc:///foo').href")), QVariant());
+    QCOMPARE(eval(QSL("new URL('bar', 'qrc://foo').href")), QVariant(QSL("qrc://bar")));
+    QCOMPARE(eval(QSL("new URL('bar', 'qrc:///foo').href")), QVariant(QSL("qrc:///bar")));
 
     // With a slash it works the same as http except 'foo' is part of the path and not the host.
     QCOMPARE(eval(QSL("new URL('bar', 'qrc:/foo').href")), QVariant(QSL("qrc:/bar")));
@@ -577,13 +609,22 @@ void tst_Origins::subdirWithoutAccess()
 void tst_Origins::fileAccessRemoteUrl_data()
 {
     QTest::addColumn<bool>("EnableAccess");
-    QTest::addRow("enabled") << true;
-    QTest::addRow("disabled") << false;
+    QTest::addColumn<bool>("UserGesture");
+    QTest::addRow("enabled, XHR") << true << false;
+    QTest::addRow("enabled, link click") << true << true;
+    QTest::addRow("disabled, XHR") << false << false;
+    QTest::addRow("disabled, link click") << false << true;
 }
 
 void tst_Origins::fileAccessRemoteUrl()
 {
     QFETCH(bool, EnableAccess);
+    QFETCH(bool, UserGesture);
+
+    QWebEngineView view;
+    view.setPage(m_page);
+    view.resize(800, 600);
+    view.show();
 
     HttpServer server;
     server.setResourceDirs({ QDir(QT_TESTCASE_SOURCEDIR).canonicalPath() + "/resources" });
@@ -592,11 +633,88 @@ void tst_Origins::fileAccessRemoteUrl()
     ScopedAttribute sa1(m_page->settings(), QWebEngineSettings::LocalContentCanAccessRemoteUrls, EnableAccess);
     ScopedAttribute sa2(m_page->settings(), QWebEngineSettings::ErrorPageEnabled, false);
 
-    QVERIFY(verifyLoad("file:" + QDir(QT_TESTCASE_SOURCEDIR).canonicalPath()
-                       + "/resources/mixedXHR.html"));
+    if (UserGesture) {
+        QString remoteUrl(server.url("/link.html").toString());
+#ifdef Q_OS_WIN
+        QString localUrl("file:///" + QDir(QT_TESTCASE_SOURCEDIR).canonicalPath()
+                           + "/resources/link.html?linkLocation=" + remoteUrl);
+#else
+        QString localUrl("file:" + QDir(QT_TESTCASE_SOURCEDIR).canonicalPath()
+                           + "/resources/link.html?linkLocation=" + remoteUrl);
+#endif
 
-    eval("sendXHR('" + server.url("/mixedXHR.txt").toString() + "')");
-    QTRY_COMPARE(eval("result"), (EnableAccess ? QString("ok") : QString("error")));
+        QVERIFY(verifyLoad(localUrl));
+
+        QTest::mouseClick(view.focusProxy(), Qt::LeftButton, {}, elementCenter(m_page, "link"));
+        // Succeed independently of EnableAccess == false
+        QTRY_COMPARE(m_page->url(), remoteUrl);
+
+        // Back/forward navigation is also allowed, however they are not user gesture
+        m_page->triggerAction(QWebEnginePage::Back);
+        QTRY_COMPARE(m_page->url(), localUrl);
+        m_page->triggerAction(QWebEnginePage::Forward);
+        QTRY_COMPARE(m_page->url(), remoteUrl);
+    } else {
+        QVERIFY(verifyLoad("file:" + QDir(QT_TESTCASE_SOURCEDIR).canonicalPath()
+                           + "/resources/mixedXHR.html"));
+        eval("sendXHR('" + server.url("/mixedXHR.txt").toString() + "')");
+        QTRY_COMPARE(eval("result"), (EnableAccess ? QString("ok") : QString("error")));
+    }
+}
+
+void tst_Origins::fileAccessLocalUrl_data()
+{
+    QTest::addColumn<bool>("EnableAccess");
+    QTest::addColumn<bool>("UserGesture");
+    QTest::addRow("enabled, XHR") << true << false;
+    QTest::addRow("enabled, link click") << true << true;
+    QTest::addRow("disabled, XHR") << false << false;
+    QTest::addRow("disabled, link click") << false << true;
+}
+
+void tst_Origins::fileAccessLocalUrl()
+{
+    QFETCH(bool, EnableAccess);
+    QFETCH(bool, UserGesture);
+
+    QWebEngineView view;
+    view.setPage(m_page);
+    view.resize(800, 600);
+    view.show();
+
+    ScopedAttribute sa1(m_page->settings(), QWebEngineSettings::LocalContentCanAccessFileUrls, EnableAccess);
+    ScopedAttribute sa2(m_page->settings(), QWebEngineSettings::ErrorPageEnabled, false);
+
+    if (UserGesture) {
+#ifdef Q_OS_WIN
+        QString localUrl1("file:///" + QDir(QT_TESTCASE_SOURCEDIR).canonicalPath()
+                           + "/resources/link.html?linkLocation=link.html");
+        QString localUrl2("file:///" + QDir(QT_TESTCASE_SOURCEDIR).canonicalPath()
+                           + "/resources/link.html");
+#else
+        QString localUrl1("file:" + QDir(QT_TESTCASE_SOURCEDIR).canonicalPath()
+                           + "/resources/link.html?linkLocation=link.html");
+        QString localUrl2("file:" + QDir(QT_TESTCASE_SOURCEDIR).canonicalPath()
+                           + "/resources/link.html");
+#endif
+
+        QVERIFY(verifyLoad(localUrl1));
+        QTest::mouseClick(view.focusProxy(), Qt::LeftButton, {}, elementCenter(m_page, "link"));
+        // Succeed independently of EnableAccess == false
+        QTRY_COMPARE(m_page->url(), localUrl2);
+
+        // Back/forward navigation is also allowed, however they are not user gesture
+        m_page->triggerAction(QWebEnginePage::Back);
+        QTRY_COMPARE(m_page->url(), localUrl1);
+        m_page->triggerAction(QWebEnginePage::Forward);
+        QTRY_COMPARE(m_page->url(), localUrl2);
+    } else {
+        QVERIFY(verifyLoad("file:" + QDir(QT_TESTCASE_SOURCEDIR).canonicalPath()
+                           + "/resources/mixedXHR.html"));
+        eval("sendXHR('file:" +  QDir(QT_TESTCASE_SOURCEDIR).canonicalPath()
+                           + "/resources/mixedXHR.txt" + "')");
+        QTRY_COMPARE(eval("result"), (EnableAccess ? QString("ok") : QString("error")));
+    }
 }
 
 // Load the main page over one scheme with an iframe over another scheme.
@@ -607,89 +725,135 @@ void tst_Origins::fileAccessRemoteUrl()
 // Additionally for unregistered custom schemes and custom schemes without
 // LocalAccessAllowed it should not be possible to load an iframe over the
 // file: scheme.
+void tst_Origins::mixedSchemes_data()
+{
+    QTest::addColumn<QString>("schemeFrom");
+    QTest::addColumn<QVariantMap>("testPairs");
+
+    QVariant SLF = QVariant(QSL("canLoadAndAccess")), OK = QVariant(QSL("canLoadButNotAccess")),
+             ERR = QVariant(QSL("cannotLoad"));
+    std::vector<std::pair<const char *, std::vector<std::pair<const char *, QVariant>>>> data = {
+        { "file",
+          {
+                  { "file", SLF },
+                  { "qrc", OK },
+                  { "tst", ERR },
+          } },
+        { "qrc",
+          {
+                  { "file", ERR },
+                  { "qrc", SLF },
+                  { "tst", OK },
+          } },
+        { "tst",
+          {
+                  { "file", ERR },
+                  { "qrc", OK },
+                  { "tst", SLF },
+          } },
+        { "PathSyntax",
+          {
+                  { "PathSyntax", SLF },
+                  { "PathSyntax-Local", ERR },
+                  { "PathSyntax-LocalAccessAllowed", OK },
+                  { "PathSyntax-NoAccessAllowed", OK },
+          } },
+        { "PathSyntax-LocalAccessAllowed",
+          {
+                  { "PathSyntax", OK },
+                  { "PathSyntax-Local", OK },
+                  { "PathSyntax-LocalAccessAllowed", SLF },
+                  { "PathSyntax-NoAccessAllowed", OK },
+          } },
+        { "PathSyntax-NoAccessAllowed",
+          {
+                  { "PathSyntax", OK },
+                  { "PathSyntax-Local", ERR },
+                  { "PathSyntax-LocalAccessAllowed", OK },
+                  { "PathSyntax-NoAccessAllowed", OK },
+          } },
+        { "HostSyntax://a",
+          {
+                  { "HostSyntax://a", SLF },
+                  { "HostSyntax://b", OK },
+          } },
+        { "local-localaccess",
+          {
+                  { "local-cors", OK },
+                  { "local-localaccess", SLF },
+                  { "local", OK },
+          } },
+        { "local-cors",
+          {
+                  { "local", OK },
+                  { "local-cors", SLF },
+          } },
+    };
+
+    for (auto &&d : data) {
+        auto schemeFrom = d.first;
+        QVariantMap testPairs;
+        for (auto &&destSchemes : d.second) {
+            auto &&destScheme = destSchemes.first;
+            testPairs[destScheme] = destSchemes.second;
+        }
+        QTest::addRow("%s", schemeFrom) << schemeFrom << testPairs;
+    }
+}
+
+static QStringList protocolAndHost(const QString scheme)
+{
+    static QString srcDir(QDir(QT_TESTCASE_SOURCEDIR).canonicalPath());
+    QStringList result;
+    if (scheme == QSL("file")) {
+        return QStringList{ scheme, srcDir };
+    }
+    if (scheme.contains(QSL("HostSyntax:"))) {
+        const QStringList &res = scheme.split(':');
+        Q_ASSERT(res.size() == 2);
+        return res;
+    }
+    return QStringList{ scheme, "" };
+}
+
 void tst_Origins::mixedSchemes()
 {
+    QFETCH(QString, schemeFrom);
+    QFETCH(QVariantMap, testPairs);
+
     ScopedAttribute sa(m_page->settings(), QWebEngineSettings::ErrorPageEnabled, false);
+    QString srcDir(QDir(QT_TESTCASE_SOURCEDIR).canonicalPath());
+    QString host;
+    auto pah = protocolAndHost(schemeFrom);
+    auto loadUrl = QString("%1:%2/resources/mixedSchemes.html").arg(pah[0]).arg(pah[1]);
+    QVERIFY(verifyLoad(loadUrl));
 
-    QVERIFY(verifyLoad("file:" + QDir(QT_TESTCASE_SOURCEDIR).canonicalPath()
-                       + "/resources/mixedSchemes.html"));
-    eval("setIFrameUrl('file:" + QDir(QT_TESTCASE_SOURCEDIR).canonicalPath()
-         + "/resources/mixedSchemes_frame.html')");
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadAndAccess")));
-    eval(QSL("setIFrameUrl('qrc:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadButNotAccess")));
-    eval(QSL("setIFrameUrl('tst:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("cannotLoad")));
+    QStringList schemesTo, expected, results;
+    for (auto it = testPairs.begin(), end = testPairs.end(); it != end; ++it) {
 
-    QVERIFY(verifyLoad(QSL("qrc:/resources/mixedSchemes.html")));
-    eval("setIFrameUrl('file:" + QDir(QT_TESTCASE_SOURCEDIR).canonicalPath()
-         + "/resources/mixedSchemes_frame.html')");
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("cannotLoad")));
-    eval(QSL("setIFrameUrl('qrc:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadAndAccess")));
-    eval(QSL("setIFrameUrl('tst:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadButNotAccess")));
+        auto schemeTo = it.key();
+        auto pah = protocolAndHost(schemeTo);
+        auto expectedResult = it.value().toString();
+        auto frameUrl = QString("%1:%2/resources/mixedSchemes_frame.html").arg(pah[0]).arg(pah[1]);
+        auto imgUrl = QString("%1:%2/resources/red.png").arg(pah[0]).arg(pah[1]);
 
-    QVERIFY(verifyLoad(QSL("tst:/resources/mixedSchemes.html")));
-    eval("setIFrameUrl('file:" + QDir(QT_TESTCASE_SOURCEDIR).canonicalPath()
-         + "/resources/mixedSchemes_frame.html')");
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("cannotLoad")));
-    eval(QSL("setIFrameUrl('qrc:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadButNotAccess")));
-    eval(QSL("setIFrameUrl('tst:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadAndAccess")));
+        eval(QString("setIFrameUrl('%1','%2')").arg(frameUrl).arg(imgUrl));
 
-    QVERIFY(verifyLoad(QSL("PathSyntax:/resources/mixedSchemes.html")));
-    eval(QSL("setIFrameUrl('PathSyntax:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadAndAccess")));
-    eval(QSL("setIFrameUrl('PathSyntax-Local:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("cannotLoad")));
-    eval(QSL("setIFrameUrl('PathSyntax-LocalAccessAllowed:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadButNotAccess")));
-    eval(QSL("setIFrameUrl('PathSyntax-NoAccessAllowed:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadButNotAccess")));
+        // wait for token in the log
+        QTRY_VERIFY(m_page->logContainsDoneMarker());
+        const QString result = m_page->findResultInLog();
+        m_page->clearLog();
+        schemesTo.append(schemeTo.rightJustified(20));
+        results.append(result.rightJustified(20));
+        expected.append(expectedResult.rightJustified(20));
+    }
 
-    QVERIFY(verifyLoad(QSL("PathSyntax-LocalAccessAllowed:/resources/mixedSchemes.html")));
-    eval(QSL("setIFrameUrl('PathSyntax:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadButNotAccess")));
-    eval(QSL("setIFrameUrl('PathSyntax-Local:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadButNotAccess")));
-    eval(QSL("setIFrameUrl('PathSyntax-LocalAccessAllowed:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadAndAccess")));
-    eval(QSL("setIFrameUrl('PathSyntax-NoAccessAllowed:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadButNotAccess")));
-
-    QVERIFY(verifyLoad(QSL("PathSyntax-NoAccessAllowed:/resources/mixedSchemes.html")));
-    eval(QSL("setIFrameUrl('PathSyntax:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadButNotAccess")));
-    eval(QSL("setIFrameUrl('PathSyntax-Local:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("cannotLoad")));
-    eval(QSL("setIFrameUrl('PathSyntax-LocalAccessAllowed:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadButNotAccess")));
-    eval(QSL("setIFrameUrl('PathSyntax-NoAccessAllowed:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadButNotAccess")));
-
-    QVERIFY(verifyLoad(QSL("HostSyntax://a/resources/mixedSchemes.html")));
-    eval(QSL("setIFrameUrl('HostSyntax://a/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadAndAccess")));
-    eval(QSL("setIFrameUrl('HostSyntax://b/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadButNotAccess")));
-
-    QVERIFY(verifyLoad(QSL("local-localaccess:/resources/mixedSchemes.html")));
-    eval("setIFrameUrl('local-cors:/resources/mixedSchemes_frame.html')");
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadButNotAccess")));
-    eval(QSL("setIFrameUrl('local-localaccess:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadAndAccess")));
-    eval(QSL("setIFrameUrl('local:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadButNotAccess")));
-
-    QVERIFY(verifyLoad(QSL("local-cors:/resources/mixedSchemes.html")));
-    eval("setIFrameUrl('local:/resources/mixedSchemes_frame.html')");
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadButNotAccess")));
-    eval(QSL("setIFrameUrl('local-cors:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadAndAccess")));
-    eval(QSL("setIFrameUrl('local:/resources/mixedSchemes_frame.html')"));
-    QTRY_COMPARE(eval(QSL("result")), QVariant(QSL("canLoadButNotAccess")));
+    QVERIFY2(results == expected,
+             qPrintable(QString("\nFrom '%1' to:\n\tScheme: %2\n\tActual: %3\n\tExpect: %4")
+                                .arg(schemeFrom)
+                                .arg(schemesTo.join(' '))
+                                .arg(results.join(' '))
+                                .arg(expected.join(' '))));
 }
 
 // Like mixedSchemes but adds a Content-Security-Policy: frame-src 'none' header.
@@ -1005,12 +1169,17 @@ void tst_Origins::mixedContent()
 
     auto setIFrameUrl = [&] (const QString &scheme) {
         if (scheme == "data")
-            return QString("setIFrameUrl('data:,<script>var canary = true; parent.canary = true</script>')");
+            return QString("setIFrameUrl('data:,<script>var canary = true; parent.canary = "
+                           "true</script>','data:image/png;base64, iVBORw0KGgoAAAANSUhEUgAAAAUA"
+                           "AAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/"
+                           "w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==')");
         auto frameUrl = QString("%1:%2/resources/mixedSchemes_frame.html").arg(scheme).arg(scheme == "file" ? srcDir : "");
-        return QString("setIFrameUrl('%1')").arg(frameUrl);
+        auto imgUrl =
+                QString("%1:%2/resources/red.png").arg(scheme).arg(scheme == "file" ? srcDir : "");
+        return QString("setIFrameUrl('%1','%2')").arg(frameUrl).arg(imgUrl);
     };
 
-    m_page->messages.clear();
+    m_page->clearLog();
     QStringList schemesTo, expected, results;
     for (auto it = testPairs.begin(), end = testPairs.end(); it != end; ++it) {
 
@@ -1019,15 +1188,10 @@ void tst_Origins::mixedContent()
 
         eval(setIFrameUrl(schemeTo));
 
-        QTRY_COMPARE(eval(QSL("result !== undefined")), QVariant(true));
-        auto result = eval(QSL("result")).toString();
-        // Work-around some combinations missing JS loaded signals:
-        if (m_page->messages.size() > 0) {
-            if (m_page->messages[0] == QSL("Frame Loaded") && result == QSL("cannotLoad"))
-                result = QSL("canLoadButNotAccess");
-            m_page->messages.clear();
-        }
-
+        // wait for token in the log
+        QTRY_VERIFY(m_page->logContainsDoneMarker());
+        const QString result = m_page->findResultInLog();
+        m_page->clearLog();
         schemesTo.append(schemeTo.rightJustified(20));
         results.append(result.rightJustified(20));
         expected.append(expectedResult.rightJustified(20));
@@ -1445,6 +1609,122 @@ void tst_Origins::localMediaBlock()
         QTest::qSleep(500);
     QTRY_COMPARE(accessed.load(), enableAccess);
 
+}
+
+class FetchApiHandler : public QWebEngineUrlSchemeHandler
+{
+    Q_OBJECT
+public:
+    FetchApiHandler(QByteArray schemeName, QObject *parent = nullptr)
+        : QWebEngineUrlSchemeHandler(parent), m_schemeName(schemeName)
+    {
+    }
+
+    void requestStarted(QWebEngineUrlRequestJob *job) override
+    {
+        QCOMPARE(job->requestUrl(), QUrl(m_schemeName + ":about"));
+        fetchWasAllowed = true;
+    }
+
+    bool fetchWasAllowed = false;
+
+private:
+    QByteArray m_schemeName;
+};
+
+class FetchApiPage : public QWebEnginePage
+{
+    Q_OBJECT
+
+signals:
+    void jsCalled();
+
+public:
+    FetchApiPage(QWebEngineProfile *profile, QObject *parent = nullptr)
+        : QWebEnginePage(profile, parent)
+    {
+    }
+
+protected:
+    void javaScriptConsoleMessage(QWebEnginePage::JavaScriptConsoleMessageLevel level,
+                                  const QString &message, int lineNumber,
+                                  const QString &sourceID) override
+    {
+        qCritical() << "js:" << message;
+        emit jsCalled();
+    }
+};
+
+void tst_Origins::fetchApiCustomUrl_data()
+{
+    QTest::addColumn<QUrl>("url");
+    QTest::addColumn<QByteArray>("fetchApiScheme");
+    QTest::addColumn<bool>("expectedFetchWasAllowed");
+
+    QTest::newRow("custom url with fetch allowed flag")
+            << QUrl("qrc:///resources/fetchApi.html?printRes=false&url=fetchapi-allowed:about")
+            << QBAL("fetchapi-allowed") << true;
+    QTest::newRow("custom url without fetch allowed flag")
+            << QUrl("qrc:///resources/fetchApi.html?printRes=false&url=fetchapi-not-allowed:about")
+            << QBAL("fetchapi-not-allowed") << false;
+}
+
+void tst_Origins::fetchApiCustomUrl()
+{
+    QFETCH(QUrl, url);
+    QFETCH(QByteArray, fetchApiScheme);
+    QFETCH(bool, expectedFetchWasAllowed);
+
+    QWebEngineProfile profile;
+    FetchApiHandler handler(fetchApiScheme);
+
+    profile.installUrlSchemeHandler(fetchApiScheme, &handler);
+
+    FetchApiPage page(&profile);
+    QSignalSpy loadSpy(&page, SIGNAL(loadFinished(bool)));
+    QSignalSpy jsSpy(&page, SIGNAL(jsCalled()));
+
+    if (fetchApiScheme == "fetchapi-not-allowed") {
+        QTest::ignoreMessage(QtCriticalMsg, QRegularExpression("Failed to fetch"));
+        QTest::ignoreMessage(
+                QtCriticalMsg,
+                QRegularExpression("Fetch API cannot load fetchapi-not-allowed:about."));
+    }
+
+    page.load(url);
+    QTRY_VERIFY(loadSpy.count() > 0);
+    QTRY_COMPARE(handler.fetchWasAllowed, expectedFetchWasAllowed);
+
+    if (fetchApiScheme == "fetchapi-not-allowed") {
+        QTRY_VERIFY(jsSpy.count() > 0);
+    }
+}
+
+void tst_Origins::fetchApiHttpUrl()
+{
+    HttpServer httpServer;
+    QObject::connect(&httpServer, &HttpServer::newRequest, this, [](HttpReqRep *rr) {
+        rr->setResponseBody(QBAL("Fetch Was Allowed"));
+        rr->setResponseHeader(QBAL("Access-Control-Allow-Origin"), QBAL("*"));
+        rr->sendResponse();
+    });
+    QVERIFY(httpServer.start());
+
+    QWebEngineProfile profile;
+    FetchApiPage page(&profile);
+
+    QSignalSpy loadSpy(&page, SIGNAL(loadFinished(bool)));
+    QSignalSpy jsSpy(&page, SIGNAL(jsCalled()));
+
+    QTest::ignoreMessage(QtCriticalMsg, QRegularExpression("Fetch Was Allowed"));
+
+    const QByteArray fullUrl = QByteArray("qrc:///resources/fetchApi.html?printRes=true&url=")
+            + httpServer.url("/somepage.html").toEncoded();
+    page.load(QUrl(fullUrl));
+
+    QTRY_VERIFY(loadSpy.count() > 0);
+    QTRY_VERIFY(jsSpy.count() > 0);
+    QVERIFY(httpServer.stop());
 }
 
 QTEST_MAIN(tst_Origins)

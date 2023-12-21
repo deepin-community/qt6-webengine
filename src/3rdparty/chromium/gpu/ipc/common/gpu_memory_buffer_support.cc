@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,16 +12,16 @@
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/buffer_usage_util.h"
 
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_APPLE)
 #include "gpu/ipc/common/gpu_memory_buffer_impl_io_surface.h"
 #endif
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
 #include "ui/ozone/public/client_native_pixmap_factory_ozone.h"
 #include "ui/ozone/public/ozone_platform.h"
 #endif
 
-#if defined(USE_OZONE) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(IS_OZONE) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 #include "gpu/ipc/common/gpu_memory_buffer_impl_native_pixmap.h"
 #endif
 
@@ -37,7 +37,7 @@
 namespace gpu {
 
 GpuMemoryBufferSupport::GpuMemoryBufferSupport() {
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
   client_native_pixmap_factory_ = ui::CreateClientNativePixmapFactoryOzone();
 #endif
 }
@@ -46,11 +46,11 @@ GpuMemoryBufferSupport::~GpuMemoryBufferSupport() {}
 
 gfx::GpuMemoryBufferType
 GpuMemoryBufferSupport::GetNativeGpuMemoryBufferType() {
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_APPLE)
   return gfx::IO_SURFACE_BUFFER;
 #elif BUILDFLAG(IS_ANDROID)
   return gfx::ANDROID_HARDWARE_BUFFER;
-#elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || defined(USE_OZONE)
+#elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_OZONE)
   return gfx::NATIVE_PIXMAP;
 #elif BUILDFLAG(IS_WIN)
   return gfx::DXGI_SHARED_HANDLE;
@@ -64,7 +64,7 @@ bool GpuMemoryBufferSupport::IsNativeGpuMemoryBufferConfigurationSupported(
     gfx::BufferUsage usage) {
   DCHECK_NE(gfx::SHARED_MEMORY_BUFFER, GetNativeGpuMemoryBufferType());
 
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_APPLE)
   switch (usage) {
     case gfx::BufferUsage::GPU_READ:
     case gfx::BufferUsage::SCANOUT:
@@ -75,10 +75,15 @@ bool GpuMemoryBufferSupport::IsNativeGpuMemoryBufferConfigurationSupported(
       return format == gfx::BufferFormat::BGRA_8888 ||
              format == gfx::BufferFormat::RGBA_8888 ||
              format == gfx::BufferFormat::BGRX_8888 ||
+             format == gfx::BufferFormat::RGBX_8888 ||
              format == gfx::BufferFormat::R_8 ||
+             format == gfx::BufferFormat::RG_88 ||
+             format == gfx::BufferFormat::R_16 ||
+             format == gfx::BufferFormat::RG_1616 ||
              format == gfx::BufferFormat::RGBA_F16 ||
              format == gfx::BufferFormat::BGRA_1010102 ||
              format == gfx::BufferFormat::YUV_420_BIPLANAR ||
+             format == gfx::BufferFormat::YUVA_420_TRIPLANAR ||
              format == gfx::BufferFormat::P010;
     case gfx::BufferUsage::SCANOUT_VDA_WRITE:
     case gfx::BufferUsage::PROTECTED_SCANOUT_VDA_WRITE:
@@ -112,7 +117,7 @@ bool GpuMemoryBufferSupport::IsNativeGpuMemoryBufferConfigurationSupported(
   }
   NOTREACHED();
   return false;
-#elif defined(USE_OZONE)
+#elif BUILDFLAG(IS_OZONE)
   return ui::OzonePlatform::GetInstance()->IsNativePixmapConfigSupported(format,
                                                                          usage);
 #elif BUILDFLAG(IS_WIN)
@@ -120,8 +125,7 @@ bool GpuMemoryBufferSupport::IsNativeGpuMemoryBufferConfigurationSupported(
     case gfx::BufferUsage::GPU_READ:
     case gfx::BufferUsage::SCANOUT:
       return format == gfx::BufferFormat::RGBA_8888 ||
-             format == gfx::BufferFormat::RGBX_8888 ||
-             format == gfx::BufferFormat::YUV_420_BIPLANAR;
+             format == gfx::BufferFormat::RGBX_8888;
     case gfx::BufferUsage::SCANOUT_CPU_READ_WRITE:
     case gfx::BufferUsage::GPU_READ_CPU_READ_WRITE:
     case gfx::BufferUsage::SCANOUT_VDA_WRITE:
@@ -171,12 +175,12 @@ GpuMemoryBufferSupport::CreateGpuMemoryBufferImplFromHandle(
     case gfx::SHARED_MEMORY_BUFFER:
       return GpuMemoryBufferImplSharedMemory::CreateFromHandle(
           std::move(handle), size, format, usage, std::move(callback));
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_APPLE)
     case gfx::IO_SURFACE_BUFFER:
       return GpuMemoryBufferImplIOSurface::CreateFromHandle(
           std::move(handle), size, format, usage, std::move(callback));
 #endif
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
     case gfx::NATIVE_PIXMAP:
       return GpuMemoryBufferImplNativePixmap::CreateFromHandle(
           client_native_pixmap_factory(), std::move(handle), size, format,

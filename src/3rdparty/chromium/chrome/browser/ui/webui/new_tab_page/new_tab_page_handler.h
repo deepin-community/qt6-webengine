@@ -1,11 +1,13 @@
-// Copyright (c) 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CHROME_BROWSER_UI_WEBUI_NEW_TAB_PAGE_NEW_TAB_PAGE_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_NEW_TAB_PAGE_NEW_TAB_PAGE_HANDLER_H_
 
+#include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
@@ -22,6 +24,7 @@
 #include "chrome/browser/ui/search/ntp_user_data_logger.h"
 #include "chrome/browser/ui/webui/new_tab_page/new_tab_page.mojom.h"
 #include "chrome/common/search/ntp_logging_events.h"
+#include "components/prefs/pref_change_registrar.h"
 #include "components/search_provider_logos/logo_common.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -58,15 +61,17 @@ class NewTabPageHandler : public new_tab_page::mojom::PageHandler,
                           public ui::SelectFileDialog::Listener,
                           public PromoServiceObserver {
  public:
-  NewTabPageHandler(mojo::PendingReceiver<new_tab_page::mojom::PageHandler>
-                        pending_page_handler,
-                    mojo::PendingRemote<new_tab_page::mojom::Page> pending_page,
-                    Profile* profile,
-                    NtpCustomBackgroundService* ntp_custom_background_service,
-                    ThemeService* theme_service,
-                    search_provider_logos::LogoService* logo_service,
-                    content::WebContents* web_contents,
-                    const base::Time& ntp_navigation_start_time);
+  NewTabPageHandler(
+      mojo::PendingReceiver<new_tab_page::mojom::PageHandler>
+          pending_page_handler,
+      mojo::PendingRemote<new_tab_page::mojom::Page> pending_page,
+      Profile* profile,
+      NtpCustomBackgroundService* ntp_custom_background_service,
+      ThemeService* theme_service,
+      search_provider_logos::LogoService* logo_service,
+      content::WebContents* web_contents,
+      const base::Time& ntp_navigation_start_time,
+      const std::vector<std::pair<const std::string, int>> module_id_names);
 
   NewTabPageHandler(const NewTabPageHandler&) = delete;
   NewTabPageHandler& operator=(const NewTabPageHandler&) = delete;
@@ -85,7 +90,9 @@ class NewTabPageHandler : public new_tab_page::mojom::PageHandler,
   void SetBackgroundImage(const std::string& attribution_1,
                           const std::string& attribution_2,
                           const GURL& attribution_url,
-                          const GURL& image_url) override;
+                          const GURL& image_url,
+                          const GURL& thumbnail_ur,
+                          const std::string& collection_id) override;
   void SetDailyRefreshCollectionId(const std::string& collection_id) override;
   void SetNoBackgroundImage() override;
   void RevertBackgroundChanges() override;
@@ -97,13 +104,17 @@ class NewTabPageHandler : public new_tab_page::mojom::PageHandler,
   void GetDoodle(GetDoodleCallback callback) override;
   void ChooseLocalCustomBackground(
       ChooseLocalCustomBackgroundCallback callback) override;
-  void GetPromo(GetPromoCallback callback) override;
+  void UpdatePromoData() override;
+  void BlocklistPromo(const std::string& promo_id) override;
+  void UndoBlocklistPromo(const std::string& promo_id) override;
   void OnDismissModule(const std::string& module_id) override;
   void OnRestoreModule(const std::string& module_id) override;
   void SetModulesVisible(bool visible) override;
   void SetModuleDisabled(const std::string& module_id, bool disabled) override;
   void UpdateDisabledModules() override;
-  void OnModulesLoadedWithData() override;
+  void OnModulesLoadedWithData(
+      const std::vector<std::string>& module_ids) override;
+  void GetModulesIdNames(GetModulesIdNamesCallback callback) override;
   void SetModulesOrder(const std::vector<std::string>& module_ids) override;
   void GetModulesOrder(GetModulesOrderCallback callback) override;
   void IncrementModulesShownCount() override;
@@ -111,6 +122,10 @@ class NewTabPageHandler : public new_tab_page::mojom::PageHandler,
   void UpdateModulesFreVisibility() override;
   void LogModulesFreOptInStatus(
       new_tab_page::mojom::OptInStatus opt_in_status) override;
+  void SetCustomizeChromeSidePanelVisible(
+      bool visible,
+      new_tab_page::mojom::CustomizeChromeSection section) override;
+  void IncrementCustomizeChromeButtonOpenCount() override;
   void OnAppRendered(double time) override;
   void OnOneGoogleBarRendered(double time) override;
   void OnPromoRendered(double time,
@@ -175,6 +190,7 @@ class NewTabPageHandler : public new_tab_page::mojom::PageHandler,
 
   bool IsCustomLinksEnabled() const;
   bool IsShortcutsVisible() const;
+  void NotifyCustomizeChromeSidePanelVisibilityChanged(bool is_open);
 
   ChooseLocalCustomBackgroundCallback choose_local_custom_background_callback_;
   raw_ptr<NtpBackgroundService> ntp_background_service_;
@@ -193,11 +209,12 @@ class NewTabPageHandler : public new_tab_page::mojom::PageHandler,
   scoped_refptr<ui::SelectFileDialog> select_file_dialog_;
   raw_ptr<content::WebContents> web_contents_;
   base::Time ntp_navigation_start_time_;
+  const std::vector<std::pair<const std::string, int>> module_id_names_;
   NTPUserDataLogger logger_;
   std::unordered_map<const network::SimpleURLLoader*,
                      std::unique_ptr<network::SimpleURLLoader>>
       loader_map_;
-  std::vector<GetPromoCallback> promo_callbacks_;
+  PrefChangeRegistrar pref_change_registrar_;
   raw_ptr<PromoService> promo_service_;
   base::ScopedObservation<ui::NativeTheme, ui::NativeThemeObserver>
       native_theme_observation_{this};

@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -35,8 +35,9 @@ StyleRuleFontPaletteValues::StyleRuleFontPaletteValues(
 StyleRuleFontPaletteValues::~StyleRuleFontPaletteValues() = default;
 
 AtomicString StyleRuleFontPaletteValues::GetFontFamilyAsString() const {
-  if (!font_family_ || !font_family_->IsFontFamilyValue())
+  if (!font_family_ || !font_family_->IsFontFamilyValue()) {
     return g_empty_atom;
+  }
 
   return To<CSSFontFamilyValue>(*font_family_).Value();
 }
@@ -72,8 +73,9 @@ FontPalette::BasePaletteValue StyleRuleFontPaletteValues::GetBasePaletteIndex()
 
 Vector<FontPalette::FontPaletteOverride>
 StyleRuleFontPaletteValues::GetOverrideColorsAsVector() const {
-  if (!override_colors_ || !override_colors_->IsValueList())
+  if (!override_colors_ || !override_colors_->IsValueList()) {
     return {};
+  }
 
   // Note: This function should not allocate Oilpan object, e.g. `CSSValue`,
   // because this function is called in font threads to determine primary
@@ -96,7 +98,7 @@ StyleRuleFontPaletteValues::GetOverrideColorsAsVector() const {
     }
     const cssvalue::CSSColor& css_color =
         To<cssvalue::CSSColor>(override_pair.Second());
-    return static_cast<SkColor>(css_color.Value());
+    return css_color.Value().ToSkColorDeprecated();
   };
 
   Vector<FontPalette::FontPaletteOverride> return_overrides;

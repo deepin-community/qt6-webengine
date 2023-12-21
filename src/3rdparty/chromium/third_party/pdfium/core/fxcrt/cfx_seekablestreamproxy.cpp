@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,14 +6,15 @@
 
 #include "core/fxcrt/cfx_seekablestreamproxy.h"
 
+#include <stdint.h>
+
 #include <algorithm>
 #include <limits>
 #include <utility>
-#include <vector>
 
 #include "build/build_config.h"
+#include "core/fxcrt/data_vector.h"
 #include "core/fxcrt/fx_extension.h"
-#include "core/fxcrt/fx_memory_wrappers.h"
 #include "core/fxcrt/fx_safe_types.h"
 #include "third_party/base/check.h"
 #include "third_party/base/check_op.h"
@@ -174,7 +175,7 @@ size_t CFX_SeekableStreamProxy::ReadData(uint8_t* pBuffer, size_t iBufferSize) {
   if (iBufferSize <= 0)
     return 0;
 
-  if (!m_pStream->ReadBlockAtOffset(pBuffer, m_iPosition, iBufferSize))
+  if (!m_pStream->ReadBlockAtOffset({pBuffer, iBufferSize}, m_iPosition))
     return 0;
 
   FX_SAFE_FILESIZE new_pos = m_iPosition;
@@ -207,7 +208,7 @@ size_t CFX_SeekableStreamProxy::ReadBlock(wchar_t* pStr, size_t size) {
   if (iBytes == 0)
     return 0;
 
-  std::vector<uint8_t, FxAllocAllocator<uint8_t>> buf(iBytes);
+  DataVector<uint8_t> buf(iBytes);
   size_t iLen = ReadData(buf.data(), iBytes);
   if (m_wCodePage != FX_CodePage::kUTF8)
     return 0;

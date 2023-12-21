@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,8 @@
 #include "core/fpdfapi/page/cpdf_textstate.h"
 
 #include <math.h>
+
+#include <utility>
 
 #include "core/fpdfapi/font/cpdf_font.h"
 #include "core/fpdfapi/page/cpdf_docpagedata.h"
@@ -23,8 +25,8 @@ RetainPtr<CPDF_Font> CPDF_TextState::GetFont() const {
   return m_Ref.GetObject()->m_pFont;
 }
 
-void CPDF_TextState::SetFont(const RetainPtr<CPDF_Font>& pFont) {
-  m_Ref.GetPrivateCopy()->SetFont(pFont);
+void CPDF_TextState::SetFont(RetainPtr<CPDF_Font> pFont) {
+  m_Ref.GetPrivateCopy()->SetFont(std::move(pFont));
 }
 
 float CPDF_TextState::GetFontSize() const {
@@ -95,8 +97,8 @@ CPDF_TextState::TextData::TextData(const TextData& that)
     m_CTM[i] = that.m_CTM[i];
 
   if (m_pDocument && m_pFont) {
-    auto* pPageData = CPDF_DocPageData::FromDocument(m_pDocument.Get());
-    m_pFont = pPageData->GetFont(m_pFont->GetFontDict());
+    auto* pPageData = CPDF_DocPageData::FromDocument(m_pDocument);
+    m_pFont = pPageData->GetFont(m_pFont->GetMutableFontDict());
   }
 }
 
@@ -106,9 +108,9 @@ RetainPtr<CPDF_TextState::TextData> CPDF_TextState::TextData::Clone() const {
   return pdfium::MakeRetain<CPDF_TextState::TextData>(*this);
 }
 
-void CPDF_TextState::TextData::SetFont(const RetainPtr<CPDF_Font>& pFont) {
+void CPDF_TextState::TextData::SetFont(RetainPtr<CPDF_Font> pFont) {
   m_pDocument = pFont ? pFont->GetDocument() : nullptr;
-  m_pFont = pFont;
+  m_pFont = std::move(pFont);
 }
 
 float CPDF_TextState::TextData::GetFontSizeH() const {

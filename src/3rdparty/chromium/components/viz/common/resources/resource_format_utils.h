@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,13 +7,11 @@
 
 #include "build/build_config.h"
 #include "components/viz/common/resources/resource_format.h"
+#include "components/viz/common/resources/shared_image_format.h"
 #include "components/viz/common/viz_resource_format_export.h"
 #include "gpu/vulkan/buildflags.h"
 #include "skia/buildflags.h"
-#include "third_party/dawn/include/dawn/webgpu.h"
-#include "third_party/dawn/include/dawn/webgpu_cpp.h"
-#include "third_party/skia/include/core/SkImageInfo.h"
-#include "third_party/skia/include/gpu/GrTypes.h"
+#include "third_party/skia/include/core/SkColorType.h"
 #include "ui/gfx/buffer_types.h"
 
 #if BUILDFLAG(ENABLE_VULKAN)
@@ -24,8 +22,9 @@ namespace viz {
 
 VIZ_RESOURCE_FORMAT_EXPORT SkColorType
 ResourceFormatToClosestSkColorType(bool gpu_compositing, ResourceFormat format);
+
 VIZ_RESOURCE_FORMAT_EXPORT int BitsPerPixel(ResourceFormat format);
-VIZ_RESOURCE_FORMAT_EXPORT bool HasAlpha(ResourceFormat format);
+VIZ_RESOURCE_FORMAT_EXPORT int AlphaBits(ResourceFormat format);
 VIZ_RESOURCE_FORMAT_EXPORT ResourceFormat
 SkColorTypeToResourceFormat(SkColorType color_type);
 
@@ -36,7 +35,11 @@ SkColorTypeToResourceFormat(SkColorType color_type);
 VIZ_RESOURCE_FORMAT_EXPORT unsigned int GLDataType(ResourceFormat format);
 VIZ_RESOURCE_FORMAT_EXPORT unsigned int GLDataFormat(ResourceFormat format);
 VIZ_RESOURCE_FORMAT_EXPORT unsigned int GLInternalFormat(ResourceFormat format);
-VIZ_RESOURCE_FORMAT_EXPORT unsigned int GLCopyTextureInternalFormat(
+
+// Checks if there is an equivalent BufferFormat.
+VIZ_RESOURCE_FORMAT_EXPORT bool HasEquivalentBufferFormat(
+    SharedImageFormat format);
+VIZ_RESOURCE_FORMAT_EXPORT bool HasEquivalentBufferFormat(
     ResourceFormat format);
 
 // Returns the pixel format of the resource when mapped into client-side memory.
@@ -54,8 +57,7 @@ VIZ_RESOURCE_FORMAT_EXPORT unsigned int TextureStorageFormat(
     ResourceFormat format,
     bool use_angle_rgbx_format);
 
-// Returns whether the format can be used with GpuMemoryBuffer texture storage,
-// allocated through TexStorage2DImageCHROMIUM.
+// Returns whether the format can be used with GpuMemoryBuffer texture storage.
 VIZ_RESOURCE_FORMAT_EXPORT bool IsGpuMemoryBufferFormatSupported(
     ResourceFormat format);
 
@@ -73,19 +75,14 @@ VIZ_RESOURCE_FORMAT_EXPORT bool HasVkFormat(ResourceFormat format);
 VIZ_RESOURCE_FORMAT_EXPORT VkFormat ToVkFormat(ResourceFormat format);
 #endif
 
-VIZ_RESOURCE_FORMAT_EXPORT wgpu::TextureFormat ToDawnFormat(
-    ResourceFormat format);
-// Same as ToDawnFormat, except it casts from wgpu::TextureFormat to
-// WGPUTextureFormat instead.
-VIZ_RESOURCE_FORMAT_EXPORT WGPUTextureFormat
-ToWGPUFormat(ResourceFormat format);
-
-#if BUILDFLAG(IS_APPLE)
-VIZ_RESOURCE_FORMAT_EXPORT unsigned int ToMTLPixelFormat(ResourceFormat format);
-#endif
-
-VIZ_RESOURCE_FORMAT_EXPORT size_t
-AlphaBitsForSkColorType(SkColorType color_type);
+// Gets the closest SkColorType for a given `format` and `plane_index`. For
+// single planar formats (eg. RGBA) the plane_index is not required and is
+// default to 0; in such cases the corresponding function with ResourceFormat is
+// called. For multiplanar formats a plane_index is required.
+VIZ_RESOURCE_FORMAT_EXPORT SkColorType
+ToClosestSkColorType(bool gpu_compositing,
+                     SharedImageFormat format,
+                     int plane_index = 0);
 
 }  // namespace viz
 

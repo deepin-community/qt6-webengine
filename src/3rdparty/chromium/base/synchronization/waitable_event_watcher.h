@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -25,7 +25,7 @@
 #endif
 
 #if !BUILDFLAG(IS_WIN)
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #endif
 
 namespace base {
@@ -145,14 +145,14 @@ class BASE_EXPORT WaitableEventWatcher
   scoped_refptr<Flag> cancel_flag_;
 
   // Enqueued in the wait list of the watched WaitableEvent.
-  raw_ptr<AsyncWaiter> waiter_ = nullptr;
+  raw_ptr<AsyncWaiter, DanglingUntriaged> waiter_ = nullptr;
 
   // Kernel of the watched WaitableEvent.
   scoped_refptr<WaitableEvent::WaitableEventKernel> kernel_;
 
   // Ensures that StartWatching() and StopWatching() are called on the same
   // sequence.
-  SequenceChecker sequence_checker_;
+  SEQUENCE_CHECKER(sequence_checker_);
 #endif
 };
 

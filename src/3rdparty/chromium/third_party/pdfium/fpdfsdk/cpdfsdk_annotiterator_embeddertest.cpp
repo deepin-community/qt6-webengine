@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -55,7 +55,7 @@ TEST_F(CPDFSDK_AnnotIteratorTest, CPDFSDK_AnnotIterator) {
     pAnnot = iter.GetNextAnnot(pAnnot);
     CheckRect(pAnnot->GetRect(), LeftBottom);
     pAnnot = iter.GetNextAnnot(pAnnot);
-    EXPECT_EQ(nullptr, pAnnot);
+    EXPECT_FALSE(pAnnot);
 
     pAnnot = iter.GetLastAnnot();
     CheckRect(pAnnot->GetRect(), LeftBottom);
@@ -66,7 +66,7 @@ TEST_F(CPDFSDK_AnnotIteratorTest, CPDFSDK_AnnotIterator) {
     pAnnot = iter.GetPrevAnnot(pAnnot);
     CheckRect(pAnnot->GetRect(), RightTop);
     pAnnot = iter.GetPrevAnnot(pAnnot);
-    EXPECT_EQ(nullptr, pAnnot);
+    EXPECT_FALSE(pAnnot);
   }
   {
     // Page 1 specifies "column order"
@@ -81,7 +81,7 @@ TEST_F(CPDFSDK_AnnotIteratorTest, CPDFSDK_AnnotIterator) {
     pAnnot = iter.GetNextAnnot(pAnnot);
     CheckRect(pAnnot->GetRect(), LeftBottom);
     pAnnot = iter.GetNextAnnot(pAnnot);
-    EXPECT_EQ(nullptr, pAnnot);
+    EXPECT_FALSE(pAnnot);
 
     pAnnot = iter.GetLastAnnot();
     CheckRect(pAnnot->GetRect(), LeftBottom);
@@ -92,7 +92,7 @@ TEST_F(CPDFSDK_AnnotIteratorTest, CPDFSDK_AnnotIterator) {
     pAnnot = iter.GetPrevAnnot(pAnnot);
     CheckRect(pAnnot->GetRect(), RightTop);
     pAnnot = iter.GetPrevAnnot(pAnnot);
-    EXPECT_EQ(nullptr, pAnnot);
+    EXPECT_FALSE(pAnnot);
   }
   {
     // Page 2 specifies "struct order"
@@ -107,7 +107,7 @@ TEST_F(CPDFSDK_AnnotIteratorTest, CPDFSDK_AnnotIterator) {
     pAnnot = iter.GetNextAnnot(pAnnot);
     CheckRect(pAnnot->GetRect(), RightBottom);
     pAnnot = iter.GetNextAnnot(pAnnot);
-    EXPECT_EQ(nullptr, pAnnot);
+    EXPECT_FALSE(pAnnot);
 
     pAnnot = iter.GetLastAnnot();
     CheckRect(pAnnot->GetRect(), RightBottom);
@@ -118,7 +118,7 @@ TEST_F(CPDFSDK_AnnotIteratorTest, CPDFSDK_AnnotIterator) {
     pAnnot = iter.GetPrevAnnot(pAnnot);
     CheckRect(pAnnot->GetRect(), LeftBottom);
     pAnnot = iter.GetPrevAnnot(pAnnot);
-    EXPECT_EQ(nullptr, pAnnot);
+    EXPECT_FALSE(pAnnot);
   }
   UnloadPage(page2);
   UnloadPage(page1);

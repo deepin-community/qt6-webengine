@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,20 +8,27 @@
 
 #include "base/files/file_path.h"
 #include "base/logging.h"
+#include "base/memory/ref_counted_memory.h"
 #include "components/update_client/update_client.h"
+#include "content/public/browser/browser_context.h"
+#include "content/public/browser/site_instance.h"
+#include "content/public/browser/storage_partition_config.h"
 #include "extensions/browser/extension_api_frame_id_map.h"
 #include "extensions/browser/extension_error.h"
 #include "extensions/browser/updater/scoped_extension_updater_keep_alive.h"
+#include "extensions/common/constants.h"
+#include "extensions/common/permissions/permission_set.h"
+#include "url/gurl.h"
 
 namespace extensions {
 
 namespace {
 
-ExtensionsBrowserClient* g_extension_browser_client = NULL;
+ExtensionsBrowserClient* g_extension_browser_client = nullptr;
 
 }  // namespace
 
-ExtensionsBrowserClient::ExtensionsBrowserClient() {}
+ExtensionsBrowserClient::ExtensionsBrowserClient() = default;
 ExtensionsBrowserClient::~ExtensionsBrowserClient() = default;
 
 ExtensionsBrowserClient* ExtensionsBrowserClient::Get() {
@@ -140,11 +147,6 @@ bool ExtensionsBrowserClient::IsExtensionTelemetryServiceEnabled(
   return false;
 }
 
-bool ExtensionsBrowserClient::
-    IsExtensionTelemetryRemoteHostContactedSignalEnabled() const {
-  return false;
-}
-
 void ExtensionsBrowserClient::NotifyExtensionRemoteHostContacted(
     content::BrowserContext* context,
     const ExtensionId& extension_id,
@@ -156,6 +158,79 @@ bool ExtensionsBrowserClient::IsUsbDeviceAllowedByPolicy(
     int vendor_id,
     int product_id) const {
   return false;
+}
+
+void ExtensionsBrowserClient::GetFavicon(
+    content::BrowserContext* browser_context,
+    const Extension* extension,
+    const GURL& url,
+    base::CancelableTaskTracker* tracker,
+    base::OnceCallback<void(scoped_refptr<base::RefCountedMemory> bitmap_data)>
+        callback) const {}
+
+std::vector<content::BrowserContext*>
+ExtensionsBrowserClient::GetRelatedContextsForExtension(
+    content::BrowserContext* browser_context,
+    const Extension& extension) const {
+  return {browser_context};
+}
+
+void ExtensionsBrowserClient::AddAdditionalAllowedHosts(
+    const PermissionSet& desired_permissions,
+    PermissionSet* granted_permissions) const {}
+
+void ExtensionsBrowserClient::AddAPIActionToActivityLog(
+    content::BrowserContext* browser_context,
+    const ExtensionId& extension_id,
+    const std::string& call_name,
+    base::Value::List args,
+    const std::string& extra) {}
+
+void ExtensionsBrowserClient::AddEventToActivityLog(
+    content::BrowserContext* context,
+    const ExtensionId& extension_id,
+    const std::string& call_name,
+    base::Value::List args,
+    const std::string& extra) {}
+
+void ExtensionsBrowserClient::AddDOMActionToActivityLog(
+    content::BrowserContext* browser_context,
+    const ExtensionId& extension_id,
+    const std::string& call_name,
+    base::Value::List args,
+    const GURL& url,
+    const std::u16string& url_title,
+    int call_type) {}
+
+content::StoragePartitionConfig
+ExtensionsBrowserClient::GetWebViewStoragePartitionConfig(
+    content::BrowserContext* browser_context,
+    content::SiteInstance* owner_site_instance,
+    const std::string& partition_name,
+    bool in_memory) {
+  const GURL& owner_site_url = owner_site_instance->GetSiteURL();
+  auto partition_config = content::StoragePartitionConfig::Create(
+      browser_context, owner_site_url.host(), partition_name, in_memory);
+
+  if (owner_site_url.SchemeIs(extensions::kExtensionScheme)) {
+    const auto& owner_config = owner_site_instance->GetStoragePartitionConfig();
+#if DCHECK_IS_ON()
+    if (browser_context->IsOffTheRecord()) {
+      DCHECK(owner_config.in_memory());
+    }
+#endif
+    if (!owner_config.is_default()) {
+      partition_config.set_fallback_to_partition_domain_for_blob_urls(
+          owner_config.in_memory()
+              ? content::StoragePartitionConfig::FallbackMode::
+                    kFallbackPartitionInMemory
+              : content::StoragePartitionConfig::FallbackMode::
+                    kFallbackPartitionOnDisk);
+      DCHECK_EQ(owner_config,
+                partition_config.GetFallbackForBlobUrls().value());
+    }
+  }
+  return partition_config;
 }
 
 }  // namespace extensions

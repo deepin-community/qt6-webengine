@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -112,8 +112,7 @@ void FilterInstalledAppsForWin(
     std::vector<blink::mojom::RelatedApplicationPtr> related_apps,
     blink::mojom::InstalledAppProvider::FilterInstalledAppsCallback callback,
     const GURL frame_url) {
-  if (!base::win::ScopedHString::ResolveCoreWinRTStringDelayload() ||
-      !base::win::ResolveCoreWinRTDelayload()) {
+  if (!base::win::ResolveCoreWinRTDelayload()) {
     std::move(callback).Run(std::vector<blink::mojom::RelatedApplicationPtr>());
     return;
   }

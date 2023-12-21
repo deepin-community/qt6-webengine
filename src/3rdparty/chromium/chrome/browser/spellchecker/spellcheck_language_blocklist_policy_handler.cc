@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -35,7 +35,7 @@ bool SpellcheckLanguageBlocklistPolicyHandler::CheckPolicySettings(
   const base::Value* value = nullptr;
   bool ok = CheckAndGetValue(policies, errors, &value);
 
-  std::vector<base::Value> blocklisted;
+  base::Value::List blocklisted;
   std::vector<std::string> unknown;
   std::vector<std::string> duplicates;
   SortBlocklistedLanguages(policies, &blocklisted, &unknown, &duplicates);
@@ -72,7 +72,7 @@ void SpellcheckLanguageBlocklistPolicyHandler::ApplyPolicySettings(
 
   // Set the blocklisted dictionaries preference based on this policy's values,
   // and emit warnings for unknown or duplicate languages.
-  std::vector<base::Value> blocklisted;
+  base::Value::List blocklisted;
   std::vector<std::string> unknown;
   std::vector<std::string> duplicates;
   SortBlocklistedLanguages(policies, &blocklisted, &unknown, &duplicates);
@@ -96,7 +96,7 @@ void SpellcheckLanguageBlocklistPolicyHandler::ApplyPolicySettings(
 
 void SpellcheckLanguageBlocklistPolicyHandler::SortBlocklistedLanguages(
     const policy::PolicyMap& policies,
-    std::vector<base::Value>* const blocklisted,
+    base::Value::List* const blocklisted,
     std::vector<std::string>* const unknown,
     std::vector<std::string>* const duplicates) {
   const base::Value* value =
@@ -109,14 +109,13 @@ void SpellcheckLanguageBlocklistPolicyHandler::SortBlocklistedLanguages(
       policy::key::kSpellcheckLanguage, base::Value::Type::LIST);
   std::unordered_set<std::string> forced_languages_lookup;
   if (forced_enabled_value) {
-    for (const auto& forced_language :
-         forced_enabled_value->GetListDeprecated())
+    for (const auto& forced_language : forced_enabled_value->GetList())
       forced_languages_lookup.insert(forced_language.GetString());
   }
 
   // Separate the valid languages from the unknown / unsupported languages and
   // the languages that also appear in the SpellcheckLanguage policy.
-  for (const base::Value& language : value->GetListDeprecated()) {
+  for (const base::Value& language : value->GetList()) {
     std::string candidate_language(
         base::TrimWhitespaceASCII(language.GetString(), base::TRIM_ALL));
     std::string current_language =
@@ -131,7 +130,7 @@ void SpellcheckLanguageBlocklistPolicyHandler::SortBlocklistedLanguages(
         // wins. Put the language in the list of duplicates.
         duplicates->emplace_back(std::move(current_language));
       } else {
-        blocklisted->emplace_back(std::move(current_language));
+        blocklisted->Append(std::move(current_language));
       }
     }
   }

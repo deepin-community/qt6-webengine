@@ -1,14 +1,13 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/webui/settings/captions_handler.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
-#include "chrome/browser/profiles/profile.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/live_caption/pref_names.h"
@@ -32,6 +31,8 @@ CaptionsHandler::CaptionsHandler(PrefService* prefs) : prefs_(prefs) {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   soda_available_ =
       base::FeatureList::IsEnabled(ash::features::kOnDeviceSpeechRecognition);
+#elif BUILDFLAG(IS_CHROMEOS_LACROS)
+  soda_available_ = false;
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 }
 
@@ -93,7 +94,9 @@ void CaptionsHandler::OnSodaInstalled(speech::LanguageCode language_code) {
                     base::Value(speech::GetLanguageName(language_code)));
 }
 
-void CaptionsHandler::OnSodaError(speech::LanguageCode language_code) {
+void CaptionsHandler::OnSodaInstallError(
+    speech::LanguageCode language_code,
+    speech::SodaInstaller::ErrorCode error_code) {
   // If multi-language is disabled and the language code received is not for
   // Live Caption (perhaps it is downloading because another feature, such as
   // dictation on ChromeOS, has a different language selected), then return
@@ -108,9 +111,22 @@ void CaptionsHandler::OnSodaError(speech::LanguageCode language_code) {
     return;
   }
 
+  std::u16string error_message;
+  switch (error_code) {
+    case speech::SodaInstaller::ErrorCode::kUnspecifiedError: {
+      error_message = l10n_util::GetStringUTF16(
+          IDS_SETTINGS_CAPTIONS_LIVE_CAPTION_DOWNLOAD_ERROR);
+      break;
+    }
+    case speech::SodaInstaller::ErrorCode::kNeedsReboot: {
+      error_message = l10n_util::GetStringUTF16(
+          IDS_SETTINGS_CAPTIONS_LIVE_CAPTION_DOWNLOAD_ERROR_REBOOT_REQUIRED);
+      break;
+    }
+  }
+
   FireWebUIListener("soda-download-progress-changed",
-                    base::Value(l10n_util::GetStringUTF16(
-                        IDS_SETTINGS_CAPTIONS_LIVE_CAPTION_DOWNLOAD_ERROR)),
+                    base::Value(error_message),
                     base::Value(speech::GetLanguageName(language_code)));
 }
 

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,9 @@ syntax = "proto2";
 option optimize_for = LITE_RUNTIME;
 
 package webapk;
+
+option java_package = "org.chromium.components.webapk.proto";
+option java_outer_classname = "WebApkProto";
 
 // Response after creating or updating a WebAPK.
 message WebApkResponse {
@@ -87,6 +90,9 @@ message WebApk {
   // Whether this builds supports app identity updates via dialog.
   optional bool app_identity_update_supported = 13;
 
+  // The key used for identifying a WebAPK.
+  optional string app_key = 14;
+
   reserved 4, 10;
 }
 
@@ -103,6 +109,7 @@ message WebAppManifest {
   optional string background_color = 12;
   repeated ShareTarget share_targets = 17;
   repeated ShortcutItem shortcuts = 18;
+  optional string id = 19;
 
   reserved 3, 7, 8, 13 to 16;
 }

@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -7,7 +7,7 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_COMMON_MEDIA_VIDEO_CAPTURE_H_
 #define THIRD_PARTY_BLINK_PUBLIC_COMMON_MEDIA_VIDEO_CAPTURE_H_
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/time/time.h"
 #include "media/capture/video/video_capture_feedback.h"
 #include "media/capture/video_capture_types.h"
@@ -45,6 +45,13 @@ using VideoCaptureDeliverFrameCB = base::RepeatingCallback<void(
     scoped_refptr<media::VideoFrame> video_frame,
     std::vector<scoped_refptr<media::VideoFrame>> scaled_video_frames,
     base::TimeTicks estimated_capture_time)>;
+
+// Callback for delivering dropped frame notifications.
+using VideoCaptureNotifyFrameDroppedCB = base::RepeatingClosure;
+
+// Callback for informing when new crop-versions are applied.
+using VideoCaptureCropVersionCB =
+    base::RepeatingCallback<void(uint32_t crop_version)>;
 
 using VideoCaptureDeviceFormatsCB =
     base::OnceCallback<void(const media::VideoCaptureFormats&)>;

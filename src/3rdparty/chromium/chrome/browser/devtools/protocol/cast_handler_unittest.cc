@@ -1,11 +1,11 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/devtools/protocol/cast_handler.h"
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "chrome/browser/media/router/chrome_media_router_factory.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "components/media_router/browser/media_sinks_observer.h"
@@ -83,8 +83,6 @@ class CastHandlerTest : public ChromeRenderViewHostTestHarness {
 
  protected:
   void EnableHandler() {
-    EXPECT_CALL(*router_, RegisterMediaRoutesObserver(_))
-        .WillOnce(SaveArg<0>(&routes_observer_));
     EXPECT_CALL(*router_, RegisterMediaSinksObserver(_))
         .WillRepeatedly(
             WithArg<0>([this](media_router::MediaSinksObserver* observer) {
@@ -102,7 +100,6 @@ class CastHandlerTest : public ChromeRenderViewHostTestHarness {
 
   std::unique_ptr<CastHandler> handler_;
   media_router::MockMediaRouter* router_ = nullptr;
-  media_router::MediaRoutesObserver* routes_observer_ = nullptr;
   media_router::MediaSinksObserver* desktop_sinks_observer_ = nullptr;
   media_router::MediaSinksObserver* sinks_observer_ = nullptr;
 };
@@ -147,7 +144,7 @@ TEST_F(CastHandlerTest, StartDesktopMirroring) {
                 media_router::mojom::RoutePresentationConnectionPtr(),
                 media_router::RouteRequestResult(
                     std::make_unique<media_router::MediaRoute>(Route1()), "id",
-                    "", media_router::RouteRequestResult::OK));
+                    "", media_router::mojom::RouteRequestResultCode::OK));
           }));
   EXPECT_CALL(*callback_ptr, sendSuccess());
   handler_->StartDesktopMirroring(kSinkName1, std::move(callback));
@@ -182,7 +179,7 @@ TEST_F(CastHandlerTest, StartTabMirroring) {
                 media_router::mojom::RoutePresentationConnectionPtr(),
                 media_router::RouteRequestResult(
                     std::make_unique<media_router::MediaRoute>(Route1()), "id",
-                    "", media_router::RouteRequestResult::OK));
+                    "", media_router::mojom::RouteRequestResultCode::OK));
           }));
   EXPECT_CALL(*callback_ptr, sendSuccess());
   handler_->StartTabMirroring(kSinkName1, std::move(callback));
@@ -201,14 +198,14 @@ TEST_F(CastHandlerTest, StartTabMirroringWithInvalidName) {
 
 TEST_F(CastHandlerTest, StopCasting) {
   sinks_observer_->OnSinksUpdated({sink1, sink2}, {});
-  routes_observer_->OnRoutesUpdated({Route1()});
+  router_->routes_observers().begin()->OnRoutesUpdated({Route1()});
   EXPECT_CALL(*router_, TerminateRoute(kRouteId1));
   EXPECT_TRUE(handler_->StopCasting(kSinkName1).IsSuccess());
 }
 
 TEST_F(CastHandlerTest, StopCastingWithInvalidName) {
   sinks_observer_->OnSinksUpdated({sink1, sink2}, {});
-  routes_observer_->OnRoutesUpdated({Route1()});
+  router_->routes_observers().begin()->OnRoutesUpdated({Route1()});
   // Attempting to stop casting to a sink without a route should fail.
   EXPECT_TRUE(handler_->StopCasting(kSinkName2).IsError());
 }

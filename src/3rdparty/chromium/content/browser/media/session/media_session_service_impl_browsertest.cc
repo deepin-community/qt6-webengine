@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,6 @@
 
 #include "base/command_line.h"
 #include "base/memory/raw_ptr.h"
-#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "content/browser/media/session/media_session_impl.h"
 #include "content/browser/media/session/media_session_player_observer.h"
@@ -20,7 +19,6 @@
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "media/base/media_content_type.h"
-#include "media/base/media_switches.h"
 #include "services/media_session/public/cpp/test/mock_media_session.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -63,6 +61,7 @@ class MockMediaSessionPlayerObserver : public MediaSessionPlayerObserver {
   void OnSetAudioSinkId(int player_id,
                         const std::string& raw_device_id) override {}
   void OnSetMute(int player_id, bool mute) override {}
+  void OnRequestMediaRemoting(int player_id) override {}
 
   absl::optional<media_session::MediaPosition> GetPosition(
       int player_id) const override {
@@ -91,7 +90,7 @@ class MockMediaSessionPlayerObserver : public MediaSessionPlayerObserver {
   }
 
  private:
-  raw_ptr<RenderFrameHost> render_frame_host_;
+  raw_ptr<RenderFrameHost, DanglingUntriaged> render_frame_host_;
 };
 
 void NavigateToURLAndWaitForFinish(Shell* window, const GURL& url) {
@@ -134,7 +133,7 @@ class MediaSessionServiceImplBrowserTest : public ContentBrowserTest {
       return;
 
     player_ = std::make_unique<MockMediaSessionPlayerObserver>(
-        shell()->web_contents()->GetMainFrame());
+        shell()->web_contents()->GetPrimaryMainFrame());
 
     MediaSessionImpl::Get(shell()->web_contents())
         ->AddPlayer(player_.get(), kPlayerId);
@@ -145,7 +144,8 @@ class MediaSessionServiceImplBrowserTest : public ContentBrowserTest {
   }
 
   MediaSessionServiceImpl* GetService() {
-    RenderFrameHost* main_frame = shell()->web_contents()->GetMainFrame();
+    RenderFrameHost* main_frame =
+        shell()->web_contents()->GetPrimaryMainFrame();
     const auto main_frame_id = main_frame->GetGlobalId();
     if (GetSession()->services_.count(main_frame_id))
       return GetSession()->services_[main_frame_id];
@@ -165,6 +165,25 @@ class MediaSessionServiceImplBrowserTest : public ContentBrowserTest {
     expected_actions.insert(media_session::mojom::MediaSessionAction::kScrubTo);
     expected_actions.insert(
         media_session::mojom::MediaSessionAction::kSeekForward);
+
+    observer.WaitForExpectedActions(expected_actions);
+  }
+
+  void ExecuteScriptToSetUpWebRTCMediaSessionSync() {
+    ASSERT_TRUE(ExecJs(shell(), kSetUpWebRTCMediaSessionScript));
+    media_session::test::MockMediaSessionMojoObserver observer(*GetSession());
+
+    std::set<media_session::mojom::MediaSessionAction> expected_actions;
+    expected_actions.insert(media_session::mojom::MediaSessionAction::kPlay);
+    expected_actions.insert(media_session::mojom::MediaSessionAction::kPause);
+    expected_actions.insert(media_session::mojom::MediaSessionAction::kStop);
+    expected_actions.insert(media_session::mojom::MediaSessionAction::kSeekTo);
+    expected_actions.insert(media_session::mojom::MediaSessionAction::kScrubTo);
+    expected_actions.insert(
+        media_session::mojom::MediaSessionAction::kToggleMicrophone);
+    expected_actions.insert(
+        media_session::mojom::MediaSessionAction::kToggleCamera);
+    expected_actions.insert(media_session::mojom::MediaSessionAction::kHangUp);
 
     observer.WaitForExpectedActions(expected_actions);
   }
@@ -257,40 +276,7 @@ IN_PROC_BROWSER_TEST_F(MediaSessionServiceImplBrowserTest,
   EXPECT_EQ(1u, GetService()->actions().size());
 }
 
-// Browser tests with the MediaSessionWebRTC feature enabled.
-// TODO(steimel): Merge with above tests when the feature is enabled by default.
-class MediaSessionServiceImplWebRTCBrowserTest
-    : public MediaSessionServiceImplBrowserTest {
- protected:
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    MediaSessionServiceImplBrowserTest::SetUpCommandLine(command_line);
-    feature_list_.InitAndEnableFeature(media::kMediaSessionWebRTC);
-  }
-
-  void ExecuteScriptToSetUpWebRTCMediaSessionSync() {
-    ASSERT_TRUE(ExecJs(shell(), kSetUpWebRTCMediaSessionScript));
-    media_session::test::MockMediaSessionMojoObserver observer(*GetSession());
-
-    std::set<media_session::mojom::MediaSessionAction> expected_actions;
-    expected_actions.insert(media_session::mojom::MediaSessionAction::kPlay);
-    expected_actions.insert(media_session::mojom::MediaSessionAction::kPause);
-    expected_actions.insert(media_session::mojom::MediaSessionAction::kStop);
-    expected_actions.insert(media_session::mojom::MediaSessionAction::kSeekTo);
-    expected_actions.insert(media_session::mojom::MediaSessionAction::kScrubTo);
-    expected_actions.insert(
-        media_session::mojom::MediaSessionAction::kToggleMicrophone);
-    expected_actions.insert(
-        media_session::mojom::MediaSessionAction::kToggleCamera);
-    expected_actions.insert(media_session::mojom::MediaSessionAction::kHangUp);
-
-    observer.WaitForExpectedActions(expected_actions);
-  }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
-};
-
-IN_PROC_BROWSER_TEST_F(MediaSessionServiceImplWebRTCBrowserTest,
+IN_PROC_BROWSER_TEST_F(MediaSessionServiceImplBrowserTest,
                        MicrophoneAndCameraStatesInitiallyUnknown) {
   EXPECT_TRUE(NavigateToURL(shell(), GetTestUrl(".", "title1.html")));
   EnsurePlayer();
@@ -303,7 +289,7 @@ IN_PROC_BROWSER_TEST_F(MediaSessionServiceImplWebRTCBrowserTest,
   observer.WaitForCameraState(media_session::mojom::CameraState::kUnknown);
 }
 
-IN_PROC_BROWSER_TEST_F(MediaSessionServiceImplWebRTCBrowserTest,
+IN_PROC_BROWSER_TEST_F(MediaSessionServiceImplBrowserTest,
                        MicrophoneAndCameraStatesCanBeSet) {
   EXPECT_TRUE(NavigateToURL(shell(), GetTestUrl(".", "title1.html")));
   EnsurePlayer();

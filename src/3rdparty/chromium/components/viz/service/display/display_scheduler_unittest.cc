@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,7 @@
 #include "base/check.h"
 #include "base/containers/contains.h"
 #include "base/memory/raw_ptr.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/null_task_runner.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_tick_clock.h"
@@ -181,7 +182,9 @@ class DisplaySchedulerTest : public testing::Test {
       : wait_for_all_surfaces_before_draw_(wait_for_all_surfaces_before_draw),
         fake_begin_frame_source_(0.f, false),
         task_runner_(new base::NullTaskRunner),
-        surface_manager_(nullptr, 4u),
+        surface_manager_(nullptr,
+                         /*activation_deadline_in_frames=*/4u,
+                         /*max_uncommitted_frames=*/0),
         resource_provider_(&shared_bitmap_manager_),
         aggregator_(&surface_manager_, &resource_provider_, false, false),
         damage_tracker_(

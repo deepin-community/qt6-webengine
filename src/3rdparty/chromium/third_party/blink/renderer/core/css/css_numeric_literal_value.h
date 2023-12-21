@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,8 @@
 #include "third_party/blink/renderer/core/css/css_primitive_value.h"
 
 namespace blink {
+
+class CSSLengthResolver;
 
 // Numeric values that can be expressed as a single unit (or a naked number or
 // percentage). The equivalence of CSS Typed OM's |CSSUnitValue| in the
@@ -25,9 +27,22 @@ class CORE_EXPORT CSSNumericLiteralValue : public CSSPrimitiveValue {
 
   bool IsAngle() const { return CSSPrimitiveValue::IsAngle(GetType()); }
   bool IsFontRelativeLength() const {
-    return GetType() == UnitType::kQuirkyEms || GetType() == UnitType::kEms ||
-           GetType() == UnitType::kExs || GetType() == UnitType::kRems ||
-           GetType() == UnitType::kChs;
+    switch (GetType()) {
+      case UnitType::kQuirkyEms:
+      case UnitType::kEms:
+      case UnitType::kExs:
+      case UnitType::kRems:
+      case UnitType::kChs:
+      case UnitType::kIcs:
+      case UnitType::kLhs:
+      case UnitType::kRexs:
+      case UnitType::kRchs:
+      case UnitType::kRics:
+      case UnitType::kRlhs:
+        return true;
+      default:
+        return false;
+    }
   }
   bool IsQuirkyEms() const { return GetType() == UnitType::kQuirkyEms; }
   bool IsViewportPercentageLength() const {
@@ -55,8 +70,7 @@ class CORE_EXPORT CSSNumericLiteralValue : public CSSPrimitiveValue {
   double ComputeDegrees() const;
   double ComputeDotsPerPixel() const;
 
-  double ComputeLengthPx(
-      const CSSToLengthConversionData& conversion_data) const;
+  double ComputeLengthPx(const CSSLengthResolver&) const;
   bool AccumulateLengthArray(CSSLengthArray& length_array,
                              double multiplier) const;
   void AccumulateLengthUnitTypes(LengthTypeFlags& types) const;

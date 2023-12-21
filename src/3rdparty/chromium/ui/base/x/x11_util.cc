@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -30,7 +30,6 @@
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
-#include "base/values.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -99,9 +98,6 @@ bool SupportsEWMH() {
 
 bool GetWindowManagerName(std::string* wm_name) {
   DCHECK(wm_name);
-  if (!x11::Connection::Get()->GetXlibDisplay())
-    return false;
-
   if (!SupportsEWMH())
     return false;
 
@@ -697,21 +693,6 @@ bool SuspendX11ScreenSaver(bool suspend) {
   return true;
 }
 
-void StoreGpuExtraInfoIntoListValue(x11::VisualId system_visual,
-                                    x11::VisualId rgba_visual,
-                                    base::Value& list_value) {
-  list_value.Append(display::BuildGpuInfoEntry("Window manager",
-                                               ui::GuessWindowManagerName()));
-  list_value.Append(display::BuildGpuInfoEntry(
-      "Compositing manager", ui::IsCompositingManagerPresent() ? "Yes" : "No"));
-  list_value.Append(display::BuildGpuInfoEntry(
-      "System visual ID",
-      base::NumberToString(static_cast<uint32_t>(system_visual))));
-  list_value.Append(display::BuildGpuInfoEntry(
-      "RGBA visual ID",
-      base::NumberToString(static_cast<uint32_t>(rgba_visual))));
-}
-
 bool WmSupportsHint(x11::Atom atom) {
   if (!SupportsEWMH())
     return false;
@@ -750,7 +731,7 @@ bool IsSyncExtensionAvailable() {
 // builds as long as our EGL impl for Ozone/X11 is not mature enough and we do
 // not receive swap completions on time, which results in weird resize behaviour
 // as X Server waits for the XSyncCounter changes.
-#if BUILDFLAG(IS_CHROMEOS_ASH) || defined(USE_OZONE)
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_OZONE)
   return false;
 #else
   static bool result =

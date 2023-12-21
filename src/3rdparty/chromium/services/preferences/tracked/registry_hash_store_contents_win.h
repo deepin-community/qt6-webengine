@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -50,7 +50,7 @@ class RegistryHashStoreContentsWin : public HashStoreContents {
   // Unsupported HashStoreContents overrides:
   void ImportEntry(const std::string& path,
                    const base::Value* in_value) override;
-  const base::DictionaryValue* GetContents() const override;
+  const base::Value::Dict* GetContents() const override;
   std::string GetSuperMac() const override;
   void SetSuperMac(const std::string& super_mac) override;
 

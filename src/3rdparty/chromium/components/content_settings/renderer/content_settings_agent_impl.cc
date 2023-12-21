@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,8 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "components/content_settings/core/common/content_settings.h"
@@ -87,8 +87,8 @@ ContentSettingsAgentImpl::ContentSettingsAgentImpl(
   ClearBlockedContentSettings();
   render_frame->GetWebFrame()->SetContentSettingsClient(this);
 
-  render_frame->GetAssociatedInterfaceRegistry()->AddInterface(
-      base::BindRepeating(
+  render_frame->GetAssociatedInterfaceRegistry()
+      ->AddInterface<mojom::ContentSettingsAgent>(base::BindRepeating(
           &ContentSettingsAgentImpl::OnContentSettingsAgentRequest,
           base::Unretained(this)));
 
@@ -168,14 +168,6 @@ void ContentSettingsAgentImpl::DidCommitProvisionalLoad(
   blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
   if (frame->Parent())
     return;  // Not a top-level navigation.
-
-  if (!base::FeatureList::IsEnabled(
-          features::kNavigationThreadingOptimizations)) {
-    // TODO(crbug.com/1187753): Remove this once it's verified it isn't needed.
-    // ContentSettingsManager was moved to be per-process in
-    // http://crrev.com/c/1949036, so should be safe to remove.
-    content_settings_manager_.reset();
-  }
 
 #if DCHECK_IS_ON()
   GURL url = frame->GetDocument().Url();
@@ -409,7 +401,7 @@ bool ContentSettingsAgentImpl::ShouldAutoupgradeMixedContent() {
         content_setting_rules_->mixed_content_rules, GURL());
     return setting != CONTENT_SETTING_ALLOW;
   }
-  return false;
+  return true;
 }
 
 RendererContentSettingRules*

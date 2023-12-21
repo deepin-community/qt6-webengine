@@ -8,8 +8,8 @@
 
 #include "net/system_network_context_manager.h"
 
-#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
 #include "base/strings/string_split.h"
 #include "chrome/browser/net/chrome_mojo_proxy_resolver_factory.h"
 #include "chrome/common/chrome_switches.h"
@@ -29,11 +29,16 @@
 #include "services/network/public/mojom/cert_verifier_service.mojom.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "services/proxy_resolver/public/mojom/proxy_resolver.mojom.h"
+#include "api/qwebengineglobalsettings.h"
+#include "api/qwebengineglobalsettings_p.h"
+
+#if BUILDFLAG(IS_WIN)
+#include "chrome/browser/net/chrome_mojo_proxy_resolver_win.h"
+#include "components/os_crypt/os_crypt.h"
+#include "content/public/common/network_service_util.h"
+#endif
 
 namespace {
-
-// The global instance of the SystemNetworkContextmanager.
-SystemNetworkContextManager *g_system_network_context_manager = nullptr;
 
 network::mojom::HttpAuthStaticParamsPtr CreateHttpAuthStaticParams()
 {
@@ -58,6 +63,11 @@ network::mojom::HttpAuthDynamicParamsPtr CreateHttpAuthDynamicParams()
 }
 
 } // namespace
+
+namespace QtWebEngineCore {
+
+// The global instance of the SystemNetworkContextmanager.
+SystemNetworkContextManager *g_system_network_context_manager = nullptr;
 
 // SharedURLLoaderFactory backed by a SystemNetworkContextManager and its
 // network context. Transparently handles crashes.
@@ -186,6 +196,11 @@ void SystemNetworkContextManager::OnNetworkServiceCreated(network::mojom::Networ
     network_service->SetUpHttpAuth(CreateHttpAuthStaticParams());
     network_service->ConfigureHttpAuthPrefs(CreateHttpAuthDynamicParams());
 
+#if BUILDFLAG(IS_WIN)
+    if (content::IsOutOfProcessNetworkService())
+        network_service->SetEncryptionKey(OSCrypt::GetRawEncryptionKey());
+#endif
+
     // Configure the Certificate Transparency logs.
     std::vector<std::pair<std::string, base::Time>> disqualified_logs =
         certificate_transparency::GetDisqualifiedLogs();
@@ -244,12 +259,13 @@ void SystemNetworkContextManager::OnNetworkServiceCreated(network::mojom::Networ
 
         network_service->SetExplicitlyAllowedPorts(explicitly_allowed_network_ports);
     }
-    // Configure the stub resolver. This must be done after the system
-    // NetworkContext is created, but before anything has the chance to use it.
-    //    bool stub_resolver_enabled;
-    //    absl::optional<std::vector<network::mojom::DnsOverHttpsServerPtr>> dns_over_https_servers;
-    //    GetStubResolverConfig(local_state_, &stub_resolver_enabled, &dns_over_https_servers);
-    //    content::GetNetworkService()->ConfigureStubHostResolver(stub_resolver_enabled, std::move(dns_over_https_servers));
+
+    // The network service is a singleton that can be reinstantiated for different reasons,
+    // e.g., when the network service crashes. Therefore, we configure the stub host
+    // resolver of the network service here, each time it is instantiated, with our global
+    // DNS-Over-HTTPS settings. This ensures that the global settings don't get lost
+    // on reinstantiation and are in effect upon initial instantiation.
+    QWebEngineGlobalSettingsPrivate::instance()->configureStubHostResolver();
 }
 
 void SystemNetworkContextManager::AddSSLConfigToNetworkContextParams(network::mojom::NetworkContextParams *network_context_params)
@@ -270,13 +286,20 @@ void SystemNetworkContextManager::ConfigureDefaultNetworkContextParams(network::
     const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
 
-    if (command_line.HasSwitch(switches::kSingleProcess)) {
-      LOG(ERROR) << "Cannot use V8 Proxy resolver in single process mode.";
-    } else {
-      network_context_params->proxy_resolver_factory =
-          ChromeMojoProxyResolverFactory::CreateWithSelfOwnedReceiver();
+    if (!command_line.HasSwitch(switches::kWinHttpProxyResolver)) {
+        if (command_line.HasSwitch(switches::kSingleProcess)) {
+            LOG(ERROR) << "Cannot use V8 Proxy resolver in single process mode.";
+        } else {
+            network_context_params->proxy_resolver_factory =
+                    ChromeMojoProxyResolverFactory::CreateWithSelfOwnedReceiver();
+        }
     }
-
+#if BUILDFLAG(IS_WIN)
+    if (command_line.HasSwitch(switches::kUseSystemProxyResolver)) {
+        network_context_params->windows_system_proxy_resolver =
+                ChromeMojoProxyResolverWin::CreateWithSelfOwnedReceiver();
+    }
+#endif
     // Use the SystemNetworkContextManager to populate and update SSL
     // configuration. The SystemNetworkContextManager is owned by the
     // BrowserProcess itself, so will only be destroyed on shutdown, at which
@@ -302,3 +325,5 @@ network::mojom::NetworkContextParamsPtr SystemNetworkContextManager::CreateNetwo
          content::GetCertVerifierParams(std::move(cert_verifier_creation_params));
     return network_context_params;
 }
+
+} // namespace QtWebEngineCore

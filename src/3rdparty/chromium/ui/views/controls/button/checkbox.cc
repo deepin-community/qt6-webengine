@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,10 +9,11 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/color/color_id.h"
 #include "ui/color/color_provider.h"
 #include "ui/gfx/canvas.h"
@@ -177,7 +178,6 @@ std::unique_ptr<LabelButtonBorder> Checkbox::CreateDefaultBorder() const {
 
 void Checkbox::OnThemeChanged() {
   LabelButton::OnThemeChanged();
-  UpdateImage();
 }
 
 SkPath Checkbox::GetFocusRingPath() const {
@@ -189,9 +189,17 @@ SkPath Checkbox::GetFocusRingPath() const {
 }
 
 SkColor Checkbox::GetIconImageColor(int icon_state) const {
-  SkColor active_color = GetColorProvider()->GetColor(
-      (icon_state & IconState::CHECKED) ? ui::kColorButtonForegroundChecked
-                                        : ui::kColorButtonForegroundUnchecked);
+  SkColor active_color =
+      GetColorProvider()->GetColor((icon_state & IconState::CHECKED)
+                                       ? ui::kColorCheckboxForegroundChecked
+                                       : ui::kColorCheckboxForegroundUnchecked);
+
+  // TODO(crbug.com/1394575): Remove block and update the above ColorIds
+  if (features::IsChromeRefresh2023()) {
+    active_color = GetColorProvider()->GetColor(
+        (icon_state & IconState::CHECKED) ? ui::kColorAlertHighSeverity
+                                          : ui::kColorAlertMediumSeverity);
+  }
 
   // Use the overridden checked icon image color instead if set.
   if (icon_state & IconState::CHECKED && checked_icon_image_color_.has_value())
@@ -204,6 +212,10 @@ SkColor Checkbox::GetIconImageColor(int icon_state) const {
 }
 
 const gfx::VectorIcon& Checkbox::GetVectorIcon() const {
+  if (features::IsChromeRefresh2023()) {
+    return GetChecked() ? kCheckboxActiveCr2023Icon : kCheckboxNormalIcon;
+  }
+
   return GetChecked() ? kCheckboxActiveIcon : kCheckboxNormalIcon;
 }
 

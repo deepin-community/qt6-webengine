@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,7 +16,9 @@ PredictionModelExecutor::~PredictionModelExecutor() = default;
 
 bool PredictionModelExecutor::Preprocess(
     const std::vector<TfLiteTensor*>& input_tensors,
-    const GeneratePredictionsRequest& input) {
+    const GeneratePredictionsRequest& input,
+    const absl::optional<WebPermissionPredictionsModelMetadata>& metadata) {
+  model_metadata_ = metadata;
   switch (input.permission_features()[0].permission_type_case()) {
     case PermissionFeatures::kNotificationPermission:
       request_type_ = RequestType::kNotifications;
@@ -129,15 +131,30 @@ PredictionModelExecutor::Postprocess(
     return absl::nullopt;
   }
 
-  GeneratePredictionsResponse response;
   float threshold = request_type_ == RequestType::kNotifications
                         ? kNotificationPredictionsThreshold
                         : kGeolocationPredictionsThreshold;
+
+  // If the model has a metadata which contains a threshold value,
+  // use that threshold value.
+  if (model_metadata_ && model_metadata_->has_not_grant_thresholds()) {
+    // max_likely represents very likely to not grant
+    threshold = model_metadata_->not_grant_thresholds().max_likely();
+    base::UmaHistogramEnumeration(
+        "Permissions.PredictionService.PredictionThresholdSource",
+        PermissionPredictionThresholdSource::MODEL_METADATA);
+  } else {
+    base::UmaHistogramEnumeration(
+        "Permissions.PredictionService.PredictionThresholdSource",
+        PermissionPredictionThresholdSource::HARDCODED_FALLBACK);
+  }
+
+  GeneratePredictionsResponse response;
   response.mutable_prediction()
       ->Add()
       ->mutable_grant_likelihood()
       ->set_discretized_likelihood(
-          data[1] >= threshold
+          data[1] > threshold
               ? PermissionPrediction_Likelihood_DiscretizedLikelihood_VERY_UNLIKELY
               : PermissionPrediction_Likelihood_DiscretizedLikelihood_DISCRETIZED_LIKELIHOOD_UNSPECIFIED);
 

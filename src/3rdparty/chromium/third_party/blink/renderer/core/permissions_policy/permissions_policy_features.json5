@@ -65,11 +65,17 @@
     {
       name: "AttributionReporting",
       permissions_policy_name: "attribution-reporting",
+      feature_default: "EnableForAll",
       depends_on: ["AttributionReporting"],
     },
     {
       name: "Autoplay",
       permissions_policy_name: "autoplay",
+    },
+    {
+      name: "Bluetooth",
+      permissions_policy_name: "bluetooth",
+      depends_on: ["WebBluetooth"],
     },
     {
       name: "BrowsingTopics",
@@ -104,13 +110,12 @@
       permissions_policy_name: "ch-ect",
     },
     {
-      name: "ClientHintPartitionedCookies",
-      permissions_policy_name: "ch-partitioned-cookies",
-      depends_on: ["PartitionedCookies"],
-    },
-    {
       name: "ClientHintPrefersColorScheme",
       permissions_policy_name: "ch-prefers-color-scheme",
+    },
+    {
+      name: "ClientHintPrefersReducedMotion",
+      permissions_policy_name: "ch-prefers-reduced-motion",
     },
     {
       name: "ClientHintRTT",
@@ -137,9 +142,7 @@
     {
       name: "ClientHintUAPlatform",
       permissions_policy_name: "ch-ua-platform",
-      default_value_behind_flag: [
-        ["UACHPlatformEnabledByDefault", "EnableForAll"],
-      ],
+      feature_default: "EnableForAll",
     },
     {
       name: "ClientHintUAModel",
@@ -162,7 +165,6 @@
     {
       name: "ClientHintUAFullVersionList",
       permissions_policy_name: "ch-ua-full-version-list",
-      depends_on: ["UserAgentClientHintFullVersionList"],
     },
     {
       name: "ClientHintUAPlatformVersion",
@@ -199,9 +201,13 @@
       permissions_policy_name: "clipboard-write",
     },
     {
+      name: "ComputePressure",
+      permissions_policy_name: "compute-pressure",
+      depends_on: ["ComputePressure"],
+    },
+    {
       name: "CrossOriginIsolated",
       permissions_policy_name: "cross-origin-isolated",
-      depends_on: ["CrossOriginIsolation"],
     },
     {
       name: "DirectSockets",
@@ -211,11 +217,6 @@
     {
       name: "DisplayCapture",
       permissions_policy_name: "display-capture",
-    },
-    {
-      name: "DocumentDomain",
-      permissions_policy_name: "document-domain",
-      feature_default: "EnableForAll",
     },
     {
       name: "EncryptedMedia",
@@ -251,7 +252,7 @@
     {
       name: "Gamepad",
       permissions_policy_name: "gamepad",
-      depends_on: ["RestrictGamepadAccess"],
+      feature_default: "EnableForAll",
     },
     {
       name: "Geolocation",
@@ -265,6 +266,11 @@
       name: "Hid",
       permissions_policy_name: "hid",
       depends_on: ["WebHID"],
+    },
+    {
+      name: "IdentityCredentialsGet",
+      permissions_policy_name: "identity-credentials-get",
+      depends_on: ["FedCmIframeSupport"],
     },
     {
       name: "IdleDetection",
@@ -283,6 +289,11 @@
     {
       name: "KeyboardMap",
       permissions_policy_name: "keyboard-map",
+    },
+    {
+      name: "LocalFonts",
+      permissions_policy_name: "local-fonts",
+      depends_on: ["FontAccess"],
     },
     {
       name: "Magnetometer",
@@ -310,7 +321,12 @@
       name: "PictureInPicture",
       permissions_policy_name: "picture-in-picture",
       feature_default: "EnableForAll",
-      depends_on: ["PictureInPictureAPI"],
+    },
+    {
+      name: "PrivateAggregation",
+      permissions_policy_name: "private-aggregation",
+      feature_default: "EnableForAll",
+      depends_on: ["SharedStorageAPI", "Fledge"],
     },
     {
       name: "PublicKeyCredentialsGet",
@@ -341,9 +357,26 @@
       depends_on: ["SharedAutofill"],
     },
     {
+      name: "SharedStorage",
+      permissions_policy_name: "shared-storage",
+      feature_default: "EnableForAll",
+      depends_on: ["SharedStorageAPI"],
+    },
+    {
+      name: "SharedStorageSelectUrl",
+      permissions_policy_name: "shared-storage-select-url",
+      feature_default: "EnableForAll",
+      depends_on: ["SharedStorageAPI"],
+    },
+    {
+      name: "SmartCard",
+      permissions_policy_name: "smart-card",
+      depends_on: ["SmartCard"],
+    },
+    {
       name: "StorageAccessAPI",
       feature_default: "EnableForAll",
-      permissions_policy_name: "storage-access-api",
+      permissions_policy_name: "storage-access",
       depends_on: ["StorageAccessAPI"],
     },
     {
@@ -354,12 +387,18 @@
     {
       name: "TrustTokenRedemption",
       permissions_policy_name: "trust-token-redemption",
-      depends_on: ["TrustTokens"],
+      depends_on: ["PrivateStateTokens"],
     },
     {
       name: "Usb",
       permissions_policy_name: "usb",
       depends_on: ["WebUSB"],
+    },
+    {
+      name: "Unload",
+      permissions_policy_name: "unload",
+      feature_default: "EnableForAll",
+      depends_on: ["PermissionsPolicyUnload"],
     },
     {
       name: "VerticalScroll",
@@ -378,9 +417,9 @@
       depends_on: ["WebXR"],
     },
     {
-      name: "WindowPlacement",
+      name: "WindowManagement",
+      // Parser also accepts "window-management" alias (crbug.com/1328581).
       permissions_policy_name: "window-placement",
-      depends_on: ["WindowPlacement"],
     },
   ],
 }

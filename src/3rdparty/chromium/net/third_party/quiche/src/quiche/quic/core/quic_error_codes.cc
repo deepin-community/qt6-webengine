@@ -58,6 +58,7 @@ const char* QuicRstStreamErrorCodeToString(QuicRstStreamErrorCode error) {
     RETURN_STRING_LITERAL(QUIC_STREAM_WEBTRANSPORT_SESSION_GONE);
     RETURN_STRING_LITERAL(
         QUIC_STREAM_WEBTRANSPORT_BUFFERED_STREAMS_LIMIT_EXCEEDED);
+    RETURN_STRING_LITERAL(QUIC_APPLICATION_DONE_WITH_STREAM);
     RETURN_STRING_LITERAL(QUIC_STREAM_LAST_ERROR);
   }
   // Return a default value so that we return this when |error| doesn't match
@@ -281,6 +282,7 @@ const char* QuicErrorCodeToString(QuicErrorCode error) {
     RETURN_STRING_LITERAL(QUIC_TLS_KEYING_MATERIAL_EXPORTS_MISMATCH);
     RETURN_STRING_LITERAL(QUIC_TLS_KEYING_MATERIAL_EXPORT_NOT_AVAILABLE);
     RETURN_STRING_LITERAL(QUIC_UNEXPECTED_DATA_BEFORE_ENCRYPTION_ESTABLISHED);
+    RETURN_STRING_LITERAL(QUIC_SERVER_UNHEALTHY);
 
     RETURN_STRING_LITERAL(QUIC_LAST_ERROR);
     // Intentionally have no default case, so we'll break the build
@@ -790,6 +792,8 @@ QuicErrorCodeToIetfMapping QuicErrorCodeToTransportErrorCode(
       return {true, static_cast<uint64_t>(PROTOCOL_VIOLATION)};
     case QUIC_UNEXPECTED_DATA_BEFORE_ENCRYPTION_ESTABLISHED:
       return {true, static_cast<uint64_t>(PROTOCOL_VIOLATION)};
+    case QUIC_SERVER_UNHEALTHY:
+      return {true, static_cast<uint64_t>(INTERNAL_ERROR)};
     case QUIC_LAST_ERROR:
       return {false, static_cast<uint64_t>(QUIC_LAST_ERROR)};
   }
@@ -904,6 +908,8 @@ uint64_t RstStreamErrorCodeToIetfResetStreamErrorCode(
       return static_cast<uint64_t>(QuicHttp3ErrorCode::CONNECT_ERROR);
     case QUIC_STREAM_WEBTRANSPORT_BUFFERED_STREAMS_LIMIT_EXCEEDED:
       return static_cast<uint64_t>(QuicHttp3ErrorCode::CONNECT_ERROR);
+    case QUIC_APPLICATION_DONE_WITH_STREAM:
+      return static_cast<uint64_t>(QuicHttp3ErrorCode::GENERAL_PROTOCOL_ERROR);
     case QUIC_STREAM_LAST_ERROR:
       return static_cast<uint64_t>(QuicHttp3ErrorCode::INTERNAL_ERROR);
   }
@@ -968,6 +974,17 @@ QuicResetStreamError QuicResetStreamError::FromInternal(
 QuicResetStreamError QuicResetStreamError::FromIetf(uint64_t code) {
   return QuicResetStreamError(
       IetfResetStreamErrorCodeToRstStreamErrorCode(code), code);
+}
+
+// static
+QuicResetStreamError QuicResetStreamError::FromIetf(QuicHttp3ErrorCode code) {
+  return FromIetf(static_cast<uint64_t>(code));
+}
+
+// static
+QuicResetStreamError QuicResetStreamError::FromIetf(
+    QuicHttpQpackErrorCode code) {
+  return FromIetf(static_cast<uint64_t>(code));
 }
 
 #undef RETURN_STRING_LITERAL  // undef for jumbo builds

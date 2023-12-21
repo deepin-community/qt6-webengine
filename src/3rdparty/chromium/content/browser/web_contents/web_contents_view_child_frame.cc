@@ -1,8 +1,10 @@
-// Copyright (c) 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/web_contents/web_contents_view_child_frame.h"
+
+#include <utility>
 
 #include "build/build_config.h"
 #include "content/browser/renderer_host/render_frame_proxy_host.h"
@@ -15,16 +17,31 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 
+#if BUILDFLAG(IS_MAC)
+#include "content/browser/renderer_host/popup_menu_helper_mac.h"
+#endif
+
 using blink::DragOperationsMask;
 
 namespace content {
 
+namespace {
+#if BUILDFLAG(IS_MAC)
+class NoOpPopupMenuHelperDelegate : public PopupMenuHelper::Delegate {
+ public:
+  void OnMenuClosed() final {
+    // Nothing to clean up, as `PopupMenuHelper` deletes itself at the end of
+    // `WebContentsViewChildFrame::ShowPopupMenu`.
+  }
+};
+#endif
+}  // namespace
+
 WebContentsViewChildFrame::WebContentsViewChildFrame(
     WebContentsImpl* web_contents,
-    WebContentsViewDelegate* delegate,
+    std::unique_ptr<WebContentsViewDelegate> delegate,
     RenderViewHostDelegateView** delegate_view)
-    : web_contents_(web_contents),
-    delegate_(delegate) {
+    : web_contents_(web_contents), delegate_(std::move(delegate)) {
   *delegate_view = this;
 }
 
@@ -110,6 +127,11 @@ bool WebContentsViewChildFrame::CloseTabAfterEventTrackingIfNeeded() {
 
 void WebContentsViewChildFrame::OnCapturerCountChanged() {}
 
+void WebContentsViewChildFrame::FullscreenStateChanged(bool is_fullscreen) {}
+
+void WebContentsViewChildFrame::UpdateWindowControlsOverlay(
+    const gfx::Rect& bounding_rect) {}
+
 void WebContentsViewChildFrame::RestoreFocus() {
   NOTREACHED();
 }
@@ -154,16 +176,38 @@ void WebContentsViewChildFrame::ShowContextMenu(
   NOTREACHED();
 }
 
+#if BUILDFLAG(USE_EXTERNAL_POPUP_MENU)
+void WebContentsViewChildFrame::ShowPopupMenu(
+    RenderFrameHost* render_frame_host,
+    mojo::PendingRemote<blink::mojom::PopupMenuClient> popup_client,
+    const gfx::Rect& bounds,
+    int item_height,
+    double item_font_size,
+    int selected_item,
+    std::vector<blink::mojom::MenuItemPtr> menu_items,
+    bool right_aligned,
+    bool allow_multiple_selection) {
+#if BUILDFLAG(IS_MAC)
+  NoOpPopupMenuHelperDelegate delegate;
+  PopupMenuHelper helper(&delegate, render_frame_host, std::move(popup_client));
+  helper.ShowPopupMenu(bounds, item_height, item_font_size, selected_item,
+                       std::move(menu_items), right_aligned,
+                       allow_multiple_selection);
+#endif  // BUILDFLAG(IS_MAC)
+}
+#endif  // BUILDFLAG(USE_EXTERNAL_POPUP_MENU)
+
 void WebContentsViewChildFrame::StartDragging(
     const DropData& drop_data,
     DragOperationsMask ops,
     const gfx::ImageSkia& image,
-    const gfx::Vector2d& image_offset,
+    const gfx::Vector2d& cursor_offset,
+    const gfx::Rect& drag_obj_rect,
     const blink::mojom::DragEventSourceInfo& event_info,
     RenderWidgetHostImpl* source_rwh) {
   if (auto* view = GetOuterDelegateView()) {
-    view->StartDragging(
-        drop_data, ops, image, image_offset, event_info, source_rwh);
+    view->StartDragging(drop_data, ops, image, cursor_offset, drag_obj_rect,
+                        event_info, source_rwh);
   } else {
     web_contents_->GetOuterWebContents()->SystemDragEnded(source_rwh);
   }

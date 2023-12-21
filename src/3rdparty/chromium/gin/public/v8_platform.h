@@ -1,14 +1,15 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef GIN_PUBLIC_V8_PLATFORM_H_
 #define GIN_PUBLIC_V8_PLATFORM_H_
 
-#include "base/allocator/buildflags.h"
+#include "base/allocator/partition_allocator/partition_alloc_buildflags.h"
 #include "base/compiler_specific.h"
 #include "base/lazy_instance.h"
 #include "gin/gin_export.h"
+#include "gin/time_clamper.h"
 #include "gin/v8_platform_page_allocator.h"
 #include "v8/include/v8-platform.h"
 
@@ -43,12 +44,14 @@ class GIN_EXPORT V8Platform : public v8::Platform {
       std::unique_ptr<v8::Task> task) override;
   void CallDelayedOnWorkerThread(std::unique_ptr<v8::Task> task,
                                  double delay_in_seconds) override;
-  std::unique_ptr<v8::JobHandle> PostJob(
+  std::unique_ptr<v8::JobHandle> CreateJob(
       v8::TaskPriority priority,
       std::unique_ptr<v8::JobTask> job_task) override;
   bool IdleTasksEnabled(v8::Isolate* isolate) override;
   double MonotonicallyIncreasingTime() override;
   double CurrentClockTimeMillis() override;
+  int64_t CurrentClockTimeMilliseconds() override;
+  double CurrentClockTimeMillisecondsHighResolution() override;
   StackTracePrinter GetStackTracePrinter() override;
   v8::TracingController* GetTracingController() override;
 
@@ -60,6 +63,7 @@ class GIN_EXPORT V8Platform : public v8::Platform {
 
   class TracingControllerImpl;
   std::unique_ptr<TracingControllerImpl> tracing_controller_;
+  TimeClamper time_clamper_;
 };
 
 }  // namespace gin

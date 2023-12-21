@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,7 +15,7 @@
 
 #include "base/component_export.h"
 #include "base/containers/span.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "device/bluetooth/bluetooth_adapter.h"
 #include "device/fido/cable/cable_discovery_data.h"
@@ -42,7 +42,7 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoCableDiscovery
   ~FidoCableDiscovery() override;
 
   // FidoDeviceDiscovery:
-  bool MaybeStop() override;
+  void Stop() override;
 
   // GetV2AdvertStream returns a stream of caBLEv2 BLE adverts. Only a single
   // stream is supported.

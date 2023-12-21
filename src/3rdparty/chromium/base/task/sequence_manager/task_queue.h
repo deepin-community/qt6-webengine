@@ -1,22 +1,25 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef BASE_TASK_SEQUENCE_MANAGER_TASK_QUEUE_H_
 #define BASE_TASK_SEQUENCE_MANAGER_TASK_QUEUE_H_
 
+#include <cstdint>
 #include <memory>
+#include <type_traits>
 
 #include "base/base_export.h"
 #include "base/check.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/common/checked_lock.h"
-#include "base/task/sequence_manager/lazy_now.h"
+#include "base/task/common/lazy_now.h"
 #include "base/task/sequence_manager/tasks.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/task_observer.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
+#include "base/trace_event/base_tracing.h"
 #include "base/trace_event/base_tracing_forward.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
@@ -28,11 +31,9 @@ namespace base {
 
 class TaskObserver;
 
-namespace trace_event {
-class BlameContext;
-}
-
 namespace sequence_manager {
+
+using QueueName = ::perfetto::protos::pbzero::SequenceManagerTask::QueueName;
 
 namespace internal {
 class AssociatedThreadId;
@@ -99,39 +100,25 @@ class BASE_EXPORT TaskQueue : public RefCountedThreadSafe<TaskQueue> {
   // Shuts down the queue when there are no more tasks queued.
   void ShutdownTaskQueueGracefully();
 
-  // Queues with higher priority are selected to run before queues of lower
-  // priority. Note that there is no starvation protection, i.e., a constant
-  // stream of high priority work can mean that tasks in lower priority queues
-  // won't get to run.
-  // TODO(scheduler-dev): Could we define a more clear list of priorities?
-  // See https://crbug.com/847858.
-  enum QueuePriority : uint8_t {
-    // Queues with control priority will run before any other queue, and will
-    // explicitly starve other queues. Typically this should only be used for
-    // private queues which perform control operations.
-    kControlPriority = 0,
+  // Queues with higher priority (smaller number) are selected to run before
+  // queues of lower priority. Note that there is no starvation protection,
+  // i.e., a constant stream of high priority work can mean that tasks in lower
+  // priority queues won't get to run.
+  using QueuePriority = uint8_t;
 
-    kHighestPriority = 1,
-    kVeryHighPriority = 2,
-    kHighPriority = 3,
-    kNormalPriority = 4,  // Queues with normal priority are the default.
-    kLowPriority = 5,
-
-    // Queues with best effort priority will only be run if all other queues are
-    // empty.
-    kBestEffortPriority = 6,
+  // By default there is only a single priority. Sequences making use of
+  // priorities should parameterize the `SequenceManager` with the appropriate
+  // `SequenceManager::PrioritySettings`.
+  enum class DefaultQueuePriority : QueuePriority {
+    kNormalPriority = 0,
 
     // Must be the last entry.
-    kQueuePriorityCount = 7,
-    kFirstQueuePriority = kControlPriority,
+    kQueuePriorityCount = 1,
   };
-
-  // Can be called on any thread.
-  static const char* PriorityToString(QueuePriority priority);
 
   // Options for constructing a TaskQueue.
   struct Spec {
-    explicit Spec(const char* name) : name(name) {}
+    explicit Spec(QueueName name) : name(name) {}
 
     Spec SetShouldMonitorQuiescence(bool should_monitor) {
       should_monitor_quiescence = should_monitor;
@@ -155,7 +142,7 @@ class BASE_EXPORT TaskQueue : public RefCountedThreadSafe<TaskQueue> {
       return *this;
     }
 
-    const char* name;
+    QueueName name;
     bool should_monitor_quiescence = false;
     bool should_notify_observers = true;
     bool delayed_fence_allowed = false;
@@ -294,6 +281,15 @@ class BASE_EXPORT TaskQueue : public RefCountedThreadSafe<TaskQueue> {
   // the thread this TaskQueue was created by.
   void SetQueuePriority(QueuePriority priority);
 
+  // Same as above but with an enum value as the priority.
+  template <typename T, typename = typename std::enable_if_t<std::is_enum_v<T>>>
+  void SetQueuePriority(T priority) {
+    static_assert(std::is_same_v<std::underlying_type_t<T>, QueuePriority>,
+                  "Enumerated priorites must have the same underlying type as "
+                  "TaskQueue::QueuePriority");
+    SetQueuePriority(static_cast<QueuePriority>(priority));
+  }
+
   // Returns the current queue priority.
   QueuePriority GetQueuePriority() const;
 
@@ -301,11 +297,6 @@ class BASE_EXPORT TaskQueue : public RefCountedThreadSafe<TaskQueue> {
   // manager executes its tasks on.
   void AddTaskObserver(TaskObserver* task_observer);
   void RemoveTaskObserver(TaskObserver* task_observer);
-
-  // Set the blame context which is entered and left while executing tasks from
-  // this task queue. |blame_context| must be null or outlive this task queue.
-  // Must be called on the thread this TaskQueue was created by.
-  void SetBlameContext(trace_event::BlameContext* blame_context);
 
   enum class InsertFencePosition {
     kNow,  // Tasks posted on the queue up till this point further may run.
@@ -469,12 +460,12 @@ class BASE_EXPORT TaskQueue : public RefCountedThreadSafe<TaskQueue> {
 
   const WeakPtr<internal::SequenceManagerImpl> sequence_manager_;
 
-  scoped_refptr<internal::AssociatedThreadId> associated_thread_;
-  scoped_refptr<SingleThreadTaskRunner> default_task_runner_;
+  const scoped_refptr<const internal::AssociatedThreadId> associated_thread_;
+  const scoped_refptr<SingleThreadTaskRunner> default_task_runner_;
 
   int enabled_voter_count_ = 0;
   int voter_count_ = 0;
-  const char* name_;
+  QueueName name_;
 
   base::WeakPtrFactory<TaskQueue> weak_ptr_factory_{this};
 };

@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,8 +9,8 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/check_op.h"
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/unsafe_shared_memory_region.h"
 #include "base/no_destructor.h"
@@ -176,7 +176,7 @@ bool TestPlugin::Initialize(blink::WebPluginContainer* container) {
   std::unique_ptr<blink::WebGraphicsContext3DProvider> context_provider =
       blink::Platform::Current()->CreateOffscreenGraphicsContext3DProvider(
           attrs, url, &gl_info);
-  if (context_provider && !context_provider->BindToCurrentThread())
+  if (context_provider && !context_provider->BindToCurrentSequence())
     context_provider = nullptr;
   if (context_provider) {
     gl_ = context_provider ? context_provider->ContextGL() : nullptr;
@@ -251,9 +251,9 @@ void TestPlugin::UpdateGeometry(const gfx::Rect& window_rect,
     DCHECK(context_provider_);
     auto* sii = context_provider_->data->SharedImageInterface();
     mailbox_ = sii->CreateSharedImage(
-        viz::ResourceFormat::RGBA_8888, rect_.size(), gfx::ColorSpace(),
+        viz::SinglePlaneFormat::kRGBA_8888, rect_.size(), gfx::ColorSpace(),
         kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType,
-        gpu::SHARED_IMAGE_USAGE_GLES2 | gpu::SHARED_IMAGE_USAGE_DISPLAY,
+        gpu::SHARED_IMAGE_USAGE_GLES2 | gpu::SHARED_IMAGE_USAGE_DISPLAY_READ,
         gpu::kNullSurfaceHandle);
     gl_->WaitSyncTokenCHROMIUM(sii->GenUnverifiedSyncToken().GetConstData());
 
@@ -321,8 +321,8 @@ bool TestPlugin::PrepareTransferableResource(
     return false;
   gfx::Size size(rect_.size());
   if (!mailbox_.IsZero()) {
-    *resource = viz::TransferableResource::MakeGL(
-        mailbox_, GL_LINEAR, GL_TEXTURE_2D, sync_token_, size,
+    *resource = viz::TransferableResource::MakeGpu(
+        mailbox_, GL_LINEAR, GL_TEXTURE_2D, sync_token_, size, viz::RGBA_8888,
         false /* is_overlay_candidate */);
     // We pass ownership of the shared image to the callback.
     *release_callback =

@@ -34,10 +34,11 @@ std::ostream& operator<<(std::ostream& os,
 QuicPathValidator::QuicPathValidator(QuicAlarmFactory* alarm_factory,
                                      QuicConnectionArena* arena,
                                      SendDelegate* send_delegate,
-                                     QuicRandom* random,
+                                     QuicRandom* random, const QuicClock* clock,
                                      QuicConnectionContext* context)
     : send_delegate_(send_delegate),
       random_(random),
+      clock_(clock),
       retry_timer_(alarm_factory->CreateAlarm(
           arena->New<RetryAlarmDelegate>(this, context), arena)),
       retry_count_(0u) {}
@@ -57,19 +58,22 @@ void QuicPathValidator::OnPathResponse(const QuicPathFrameBuffer& probing_data,
     return;
   }
   // This iterates at most 3 times.
-  if (std::find(probing_data_.begin(), probing_data_.end(), probing_data) !=
-      probing_data_.end()) {
-    result_delegate_->OnPathValidationSuccess(std::move(path_context_));
-    ResetPathValidation();
-  } else {
-    QUIC_DVLOG(1) << "PATH_RESPONSE with payload " << probing_data.data()
-                  << " doesn't match the probing data.";
+  for (auto it = probing_data_.begin(); it != probing_data_.end(); ++it) {
+    if (it->frame_buffer == probing_data) {
+      result_delegate_->OnPathValidationSuccess(std::move(path_context_),
+                                                it->send_time);
+      ResetPathValidation();
+      return;
+    }
   }
+  QUIC_DVLOG(1) << "PATH_RESPONSE with payload " << probing_data.data()
+                << " doesn't match the probing data.";
 }
 
 void QuicPathValidator::StartPathValidation(
     std::unique_ptr<QuicPathValidationContext> context,
-    std::unique_ptr<ResultDelegate> result_delegate) {
+    std::unique_ptr<ResultDelegate> result_delegate,
+    PathValidationReason reason) {
   QUICHE_DCHECK(context);
   QUIC_DLOG(INFO) << "Start validating path " << *context
                   << " via writer: " << context->WriterToUse();
@@ -79,6 +83,7 @@ void QuicPathValidator::StartPathValidation(
     ResetPathValidation();
   }
 
+  reason_ = reason;
   path_context_ = std::move(context);
   result_delegate_ = std::move(result_delegate);
   SendPathChallengeAndSetAlarm();
@@ -89,6 +94,7 @@ void QuicPathValidator::ResetPathValidation() {
   result_delegate_ = nullptr;
   retry_timer_->Cancel();
   retry_count_ = 0;
+  reason_ = PathValidationReason::kReasonUnknown;
 }
 
 void QuicPathValidator::CancelPathValidation() {
@@ -109,9 +115,10 @@ QuicPathValidationContext* QuicPathValidator::GetContext() const {
 }
 
 const QuicPathFrameBuffer& QuicPathValidator::GeneratePathChallengePayload() {
-  probing_data_.push_back(QuicPathFrameBuffer());
-  random_->RandBytes(probing_data_.back().data(), sizeof(QuicPathFrameBuffer));
-  return probing_data_.back();
+  probing_data_.emplace_back(clock_->Now());
+  random_->RandBytes(probing_data_.back().frame_buffer.data(),
+                     sizeof(QuicPathFrameBuffer));
+  return probing_data_.back().frame_buffer;
 }
 
 void QuicPathValidator::OnRetryTimeout() {
@@ -143,6 +150,20 @@ bool QuicPathValidator::IsValidatingPeerAddress(
     const QuicSocketAddress& effective_peer_address) {
   return path_context_ != nullptr &&
          path_context_->effective_peer_address() == effective_peer_address;
+}
+
+void QuicPathValidator::MaybeWritePacketToAddress(
+    const char* buffer, size_t buf_len, const QuicSocketAddress& peer_address) {
+  if (!HasPendingPathValidation() ||
+      path_context_->peer_address() != peer_address) {
+    return;
+  }
+  QUIC_DVLOG(1) << "Path validator is sending packet of size " << buf_len
+                << " from " << path_context_->self_address() << " to "
+                << path_context_->peer_address();
+  path_context_->WriterToUse()->WritePacket(
+      buffer, buf_len, path_context_->self_address().host(),
+      path_context_->peer_address(), nullptr);
 }
 
 }  // namespace quic

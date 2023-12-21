@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,9 @@
 
 #include "base/bits.h"
 #include "base/fuchsia/fuchsia_logging.h"
+#include "base/fuchsia/koid.h"
+#include "base/task/current_thread.h"
+#include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "gpu/vulkan/vulkan_device_queue.h"
 #include "gpu/vulkan/vulkan_function_pointers.h"
@@ -120,18 +123,25 @@ VkImageFormatConstraintsInfoFUCHSIA GetDefaultImageFormatConstraintsInfo(
   DCHECK(create_info.usage != 0);
 
   static const VkSysmemColorSpaceFUCHSIA kSrgbColorSpace = {
-      .sType = VK_STRUCTURE_TYPE_SYSMEM_COLOR_SPACE_FUCHSIA,
-      .pNext = nullptr,
-      .colorSpace =
-          static_cast<uint32_t>(fuchsia::sysmem::ColorSpaceType::SRGB),
+      VK_STRUCTURE_TYPE_SYSMEM_COLOR_SPACE_FUCHSIA, nullptr,
+      static_cast<uint32_t>(fuchsia::sysmem::ColorSpaceType::SRGB)};
+
+  static const VkSysmemColorSpaceFUCHSIA kYuvDefaultColorSpaces[] = {
+      {VK_STRUCTURE_TYPE_SYSMEM_COLOR_SPACE_FUCHSIA, nullptr,
+       static_cast<uint32_t>(fuchsia::sysmem::ColorSpaceType::REC709)},
+      {VK_STRUCTURE_TYPE_SYSMEM_COLOR_SPACE_FUCHSIA, nullptr,
+       static_cast<uint32_t>(fuchsia::sysmem::ColorSpaceType::REC601_NTSC)},
+      {VK_STRUCTURE_TYPE_SYSMEM_COLOR_SPACE_FUCHSIA, nullptr,
+       static_cast<uint32_t>(
+           fuchsia::sysmem::ColorSpaceType::REC601_NTSC_FULL_RANGE)},
+      {VK_STRUCTURE_TYPE_SYSMEM_COLOR_SPACE_FUCHSIA, nullptr,
+       static_cast<uint32_t>(fuchsia::sysmem::ColorSpaceType::REC601_PAL)},
+      {VK_STRUCTURE_TYPE_SYSMEM_COLOR_SPACE_FUCHSIA, nullptr,
+       static_cast<uint32_t>(
+           fuchsia::sysmem::ColorSpaceType::REC601_PAL_FULL_RANGE)},
   };
 
-  static const VkSysmemColorSpaceFUCHSIA kYuvDefaultColorSpace = {
-      .sType = VK_STRUCTURE_TYPE_SYSMEM_COLOR_SPACE_FUCHSIA,
-      .pNext = nullptr,
-      .colorSpace =
-          static_cast<uint32_t>(fuchsia::sysmem::ColorSpaceType::REC709),
-  };
+  bool is_yuv = IsYuvVkFormat(create_info.format);
 
   VkImageFormatConstraintsInfoFUCHSIA format_info = {
       .sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_CONSTRAINTS_INFO_FUCHSIA,
@@ -140,9 +150,9 @@ VkImageFormatConstraintsInfoFUCHSIA GetDefaultImageFormatConstraintsInfo(
       .requiredFormatFeatures =
           GetFormatFeatureFlagsFromUsage(create_info.usage),
       .sysmemPixelFormat = 0u,
-      .colorSpaceCount = 1u,
-      .pColorSpaces = IsYuvVkFormat(create_info.format) ? &kYuvDefaultColorSpace
-                                                        : &kSrgbColorSpace,
+      .colorSpaceCount = static_cast<uint32_t>(
+          is_yuv ? std::size(kYuvDefaultColorSpaces) : 1u),
+      .pColorSpaces = is_yuv ? kYuvDefaultColorSpaces : &kSrgbColorSpace,
   };
   return format_info;
 }
@@ -234,16 +244,13 @@ bool SysmemBufferCollection::IsNativePixmapConfigSupported(
   return true;
 }
 
-SysmemBufferCollection::SysmemBufferCollection()
-    : SysmemBufferCollection(gfx::SysmemBufferCollectionId::Create()) {}
-
-SysmemBufferCollection::SysmemBufferCollection(gfx::SysmemBufferCollectionId id)
-    : id_(id) {}
+SysmemBufferCollection::SysmemBufferCollection() = default;
 
 bool SysmemBufferCollection::Initialize(
     fuchsia::sysmem::Allocator_Sync* allocator,
     ScenicSurfaceFactory* scenic_surface_factory,
-    zx::channel token_handle,
+    zx::eventpair handle,
+    zx::channel sysmem_token,
     gfx::Size size,
     gfx::BufferFormat format,
     gfx::BufferUsage usage,
@@ -254,6 +261,12 @@ bool SysmemBufferCollection::Initialize(
   DCHECK(!collection_);
   DCHECK(!vk_buffer_collection_);
 
+  handle_ = std::move(handle);
+  auto koid = base::GetKoid(handle_);
+  if (!koid)
+    return false;
+  id_ = koid.value();
+
   // Currently all supported |usage| values require GPU access, which requires
   // a valid VkDevice.
   if (vk_device == VK_NULL_HANDLE)
@@ -262,7 +275,7 @@ bool SysmemBufferCollection::Initialize(
   if (size.IsEmpty()) {
     // Buffer collection that doesn't have explicit size is expected to be
     // shared with other participants, who will determine the actual image size.
-    DCHECK(token_handle);
+    DCHECK(sysmem_token);
 
     // Set nominal size of 1x1, which will be used only for
     // vkSetBufferCollectionConstraintsFUCHSIA(). The actual size of the
@@ -280,14 +293,15 @@ bool SysmemBufferCollection::Initialize(
   is_protected_ = false;
 
   if (register_with_image_pipe) {
-    overlay_view_task_runner_ = base::ThreadTaskRunnerHandle::Get();
+    overlay_view_task_runner_ =
+        base::SingleThreadTaskRunner::GetCurrentDefault();
     scenic_overlay_view_ = std::make_unique<ScenicOverlayView>(
         scenic_surface_factory->CreateScenicSession());
   }
 
   fuchsia::sysmem::BufferCollectionTokenSyncPtr collection_token;
-  if (token_handle) {
-    collection_token.Bind(std::move(token_handle));
+  if (sysmem_token) {
+    collection_token.Bind(std::move(sysmem_token));
   } else {
     zx_status_t status =
         allocator->AllocateSharedCollection(collection_token.NewRequest());
@@ -303,25 +317,26 @@ bool SysmemBufferCollection::Initialize(
 }
 
 scoped_refptr<gfx::NativePixmap> SysmemBufferCollection::CreateNativePixmap(
-    size_t buffer_index) {
-  CHECK_LT(buffer_index, num_buffers());
+    gfx::NativePixmapHandle handle,
+    gfx::Size size) {
+  CHECK_LT(handle.buffer_index, num_buffers());
 
-  gfx::NativePixmapHandle handle;
-  handle.buffer_collection_id = id();
-  handle.buffer_index = buffer_index;
+  DCHECK_EQ(base::GetRelatedKoid(handle.buffer_collection_handle).value(), id_);
   handle.ram_coherency =
       buffers_info_.settings.buffer_settings.coherency_domain ==
       fuchsia::sysmem::CoherencyDomain::RAM;
 
+  // `handle.planes` need to be filled in only for mappable buffers.
+  if (!is_mappable())
+    return new SysmemNativePixmap(this, std::move(handle), size);
+
   zx::vmo main_plane_vmo;
-  if (is_mappable()) {
-    DCHECK(buffers_info_.buffers[buffer_index].vmo.is_valid());
-    zx_status_t status = buffers_info_.buffers[buffer_index].vmo.duplicate(
-        ZX_RIGHT_SAME_RIGHTS, &main_plane_vmo);
-    if (status != ZX_OK) {
-      ZX_DLOG(ERROR, status) << "zx_handle_duplicate";
-      return nullptr;
-    }
+  DCHECK(buffers_info_.buffers[handle.buffer_index].vmo.is_valid());
+  zx_status_t status = buffers_info_.buffers[handle.buffer_index].vmo.duplicate(
+      ZX_RIGHT_SAME_RIGHTS, &main_plane_vmo);
+  if (status != ZX_OK) {
+    ZX_DLOG(ERROR, status) << "zx_handle_duplicate";
+    return nullptr;
   }
 
   const fuchsia::sysmem::ImageFormatConstraints& format =
@@ -330,10 +345,11 @@ scoped_refptr<gfx::NativePixmap> SysmemBufferCollection::CreateNativePixmap(
   // The logic should match LogicalBufferCollection::Allocate().
   size_t stride =
       RoundUp(std::max(static_cast<size_t>(format.min_bytes_per_row),
-                       image_size_.width() * GetBytesPerPixel(format_)),
+                       size.width() * GetBytesPerPixel(format_)),
               format.bytes_per_row_divisor);
-  size_t plane_offset = buffers_info_.buffers[buffer_index].vmo_usable_start;
-  size_t plane_size = stride * image_size_.height();
+  size_t plane_offset =
+      buffers_info_.buffers[handle.buffer_index].vmo_usable_start;
+  size_t plane_size = stride * size.height();
   handle.planes.emplace_back(stride, plane_offset, plane_size,
                              std::move(main_plane_vmo));
 
@@ -341,23 +357,30 @@ scoped_refptr<gfx::NativePixmap> SysmemBufferCollection::CreateNativePixmap(
   if (format_ == gfx::BufferFormat::YUV_420_BIPLANAR) {
     size_t uv_plane_offset = plane_offset + plane_size;
     size_t uv_plane_size = plane_size / 2;
+
+    zx::vmo uv_plane_vmo;
+    status =
+        handle.planes[0].vmo.duplicate(ZX_RIGHT_SAME_RIGHTS, &uv_plane_vmo);
+    if (status != ZX_OK) {
+      ZX_DLOG(ERROR, status) << "zx_handle_duplicate";
+      return nullptr;
+    }
+
     handle.planes.emplace_back(stride, uv_plane_offset, uv_plane_size,
-                               zx::vmo());
+                               std::move(uv_plane_vmo));
     DCHECK_LE(uv_plane_offset + uv_plane_size, buffer_size_);
   }
 
-  return new SysmemNativePixmap(this, std::move(handle));
+  return new SysmemNativePixmap(this, std::move(handle), size);
 }
 
-bool SysmemBufferCollection::CreateVkImage(
-    size_t buffer_index,
-    VkDevice vk_device,
-    gfx::Size size,
-    VkImage* vk_image,
-    VkImageCreateInfo* vk_image_info,
-    VkDeviceMemory* vk_device_memory,
-    VkDeviceSize* mem_allocation_size,
-    absl::optional<gpu::VulkanYCbCrInfo>* ycbcr_info) {
+bool SysmemBufferCollection::CreateVkImage(size_t buffer_index,
+                                           VkDevice vk_device,
+                                           gfx::Size size,
+                                           VkImage* vk_image,
+                                           VkImageCreateInfo* vk_image_info,
+                                           VkDeviceMemory* vk_device_memory,
+                                           VkDeviceSize* mem_allocation_size) {
   DCHECK_CALLED_ON_VALID_THREAD(vulkan_thread_checker_);
 
   if (vk_device_ != vk_device) {
@@ -432,39 +455,12 @@ bool SysmemBufferCollection::CreateVkImage(
 
   *mem_allocation_size = requirements.size;
 
-  auto color_space =
-      buffers_info_.settings.image_format_constraints.color_space[0].type;
-  switch (color_space) {
-    case fuchsia::sysmem::ColorSpaceType::SRGB:
-      *ycbcr_info = absl::nullopt;
-      break;
-
-    case fuchsia::sysmem::ColorSpaceType::REC709: {
-      // Currently sysmem doesn't specify location of chroma samples relative to
-      // luma (see fxb/13677). Assume they are cosited with luma. YCbCr info
-      // here must match the values passed for the same buffer in
-      // FuchsiaVideoDecoder. |format_features| are resolved later in the GPU
-      // process before the ycbcr info is passed to Skia.
-      *ycbcr_info = gpu::VulkanYCbCrInfo(
-          vk_image_info->format, /*external_format=*/0,
-          VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_709,
-          VK_SAMPLER_YCBCR_RANGE_ITU_NARROW, VK_CHROMA_LOCATION_COSITED_EVEN,
-          VK_CHROMA_LOCATION_COSITED_EVEN, /*format_features=*/0);
-      break;
-    }
-
-    default:
-      DLOG(ERROR) << "Sysmem allocated buffer with unsupported color space: "
-                  << static_cast<int>(color_space);
-      return false;
-  }
-
   return true;
 }
 
-void SysmemBufferCollection::AddOnDeletedCallback(
-    base::OnceClosure on_deleted) {
-  on_deleted_.push_back(std::move(on_deleted));
+void SysmemBufferCollection::AddOnReleasedCallback(
+    base::OnceClosure on_released) {
+  on_released_.push_back(std::move(on_released));
 }
 
 SysmemBufferCollection::~SysmemBufferCollection() {
@@ -475,9 +471,6 @@ SysmemBufferCollection::~SysmemBufferCollection() {
 
   if (collection_)
     collection_->Close();
-
-  for (auto& callback : on_deleted_)
-    std::move(callback).Run();
 
   if (scenic_overlay_view_ &&
       !overlay_view_task_runner_->BelongsToCurrentThread()) {
@@ -591,22 +584,19 @@ bool SysmemBufferCollection::InitializeInternal(
   DCHECK_GE(buffers_info_.buffer_count, min_buffer_count);
   DCHECK(buffers_info_.settings.has_image_format_constraints);
 
-  // The logic should match LogicalBufferCollection::Allocate().
-  const fuchsia::sysmem::ImageFormatConstraints& format =
-      buffers_info_.settings.image_format_constraints;
-  size_t width =
-      RoundUp(std::max(format.min_coded_width, format.required_max_coded_width),
-              format.coded_width_divisor);
-  size_t height = RoundUp(
-      std::max(format.min_coded_height, format.required_max_coded_height),
-      format.coded_height_divisor);
-  image_size_ = gfx::Size(width, height);
   buffer_size_ = buffers_info_.settings.buffer_settings.size_bytes;
   is_protected_ = buffers_info_.settings.buffer_settings.is_secure;
 
-  // Add all images to Image pipe for presentation later.
-  if (scenic_overlay_view_) {
-    scenic_overlay_view_->AddImages(buffers_info_.buffer_count, image_size_);
+  handle_watch_ =
+      std::make_unique<base::MessagePumpForIO::ZxHandleWatchController>(
+          FROM_HERE);
+  bool watch_result = base::CurrentIOThread::Get()->WatchZxHandle(
+      handle_.get(), /*persistent=*/false, ZX_EVENTPAIR_PEER_CLOSED,
+      handle_watch_.get(), this);
+
+  if (!watch_result) {
+    DLOG(ERROR) << "Failed to add a watcher for sysmem buffer token";
+    return false;
   }
 
   // CreateVkImage() should always be called on the same thread, but it may be
@@ -640,6 +630,21 @@ void SysmemBufferCollection::InitializeImageCreateInfo(
 
   vk_image_info->sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   vk_image_info->initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+}
+
+void SysmemBufferCollection::OnZxHandleSignalled(zx_handle_t handle,
+                                                 zx_signals_t signals) {
+  DCHECK_EQ(handle, handle_.get());
+  DCHECK_EQ(signals, ZX_EVENTPAIR_PEER_CLOSED);
+
+  // Keep a reference to `this` to ensure it's not destroyed while calling the
+  // callbacks.
+  scoped_refptr<SysmemBufferCollection> self(this);
+
+  for (auto& callback : on_released_) {
+    std::move(callback).Run();
+  }
+  on_released_.clear();
 }
 
 }  // namespace ui

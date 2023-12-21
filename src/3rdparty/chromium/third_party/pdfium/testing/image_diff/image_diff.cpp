@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -366,7 +366,7 @@ int DiffImages(const std::string& binary_name,
 }
 
 int main(int argc, const char* argv[]) {
-  FXMEM_InitializePartitionAlloc();
+  FX_InitializeMemoryAllocators();
 
   bool histograms = false;
   bool produce_diff_image = false;

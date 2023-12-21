@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -17,10 +17,10 @@
 #include <utility>
 
 #include <GLES2/gl2extchromium.h>
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/task/bind_post_task.h"
@@ -39,7 +39,6 @@
 #include "media/capture/mojom/video_capture_types.mojom-blink.h"
 #include "media/capture/video_capture_types.h"
 #include "media/video/gpu_video_accelerator_factories.h"
-#include "mojo/public/cpp/system/platform_handle.h"
 #include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/platform.h"
@@ -50,8 +49,9 @@ namespace blink {
 
 constexpr int kMaxFirstFrameLogs = 5;
 
-const base::Feature kTimeoutHangingVideoCaptureStarts{
-    "TimeoutHangingVideoCaptureStarts", base::FEATURE_ENABLED_BY_DEFAULT};
+BASE_FEATURE(kTimeoutHangingVideoCaptureStarts,
+             "TimeoutHangingVideoCaptureStarts",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 using VideoFrameBufferHandleType = media::mojom::blink::VideoBufferHandle::Tag;
 
@@ -80,25 +80,24 @@ struct VideoCaptureImpl::BufferContext
       : buffer_type_(buffer_handle->which()),
         media_task_runner_(media_task_runner) {
     switch (buffer_type_) {
-      case VideoFrameBufferHandleType::SHARED_BUFFER_HANDLE:
-        InitializeFromSharedMemory(
-            std::move(buffer_handle->get_shared_buffer_handle()));
+      case VideoFrameBufferHandleType::kUnsafeShmemRegion:
+        InitializeFromUnsafeShmemRegion(
+            std::move(buffer_handle->get_unsafe_shmem_region()));
         break;
-      case VideoFrameBufferHandleType::READ_ONLY_SHMEM_REGION:
+      case VideoFrameBufferHandleType::kReadOnlyShmemRegion:
         InitializeFromReadOnlyShmemRegion(
             std::move(buffer_handle->get_read_only_shmem_region()));
         break;
-      case VideoFrameBufferHandleType::SHARED_MEMORY_VIA_RAW_FILE_DESCRIPTOR:
-        NOTREACHED();
-        break;
-      case VideoFrameBufferHandleType::MAILBOX_HANDLES:
+      case VideoFrameBufferHandleType::kMailboxHandles:
         InitializeFromMailbox(std::move(buffer_handle->get_mailbox_handles()));
         break;
-      case VideoFrameBufferHandleType::GPU_MEMORY_BUFFER_HANDLE:
-#if !BUILDFLAG(IS_MAC)
+      case VideoFrameBufferHandleType::kGpuMemoryBufferHandle:
+#if !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_WIN)
         // On macOS, an IOSurfaces passed as a GpuMemoryBufferHandle can be
         // used by both hardware and software paths.
         // https://crbug.com/1125879
+        // On Windows, GMBs might be passed by the capture process even if
+        // the acceleration disabled during the capture.
         CHECK(media_task_runner_);
 #endif
         InitializeFromGpuMemoryBufferHandle(
@@ -112,6 +111,9 @@ struct VideoCaptureImpl::BufferContext
   VideoFrameBufferHandleType buffer_type() const { return buffer_type_; }
   const uint8_t* data() const { return data_; }
   size_t data_size() const { return data_size_; }
+  const base::ReadOnlySharedMemoryRegion* read_only_shmem_region() const {
+    return &read_only_shmem_region_;
+  }
   const Vector<gpu::MailboxHolder>& mailbox_holders() const {
     return mailbox_holders_;
   }
@@ -126,7 +128,7 @@ struct VideoCaptureImpl::BufferContext
   }
 
   gfx::GpuMemoryBufferHandle TakeGpuMemoryBufferHandle() {
-#if BUILDFLAG(IS_MAC) or BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
     // The same GpuMemoryBuffersHandles will be reused repeatedly by the
     // unaccelerated macOS path. Each of these uses will call this function.
     // Ensure that this function doesn't invalidate the GpuMemoryBufferHandle
@@ -186,23 +188,6 @@ struct VideoCaptureImpl::BufferContext
   }
 
  private:
-  void InitializeFromSharedMemory(mojo::ScopedSharedBufferHandle handle) {
-    DCHECK(handle.is_valid());
-    base::UnsafeSharedMemoryRegion region =
-        mojo::UnwrapUnsafeSharedMemoryRegion(std::move(handle));
-    if (!region.IsValid()) {
-      DLOG(ERROR) << "Unwrapping shared memory failed.";
-      return;
-    }
-    writable_mapping_ = region.Map();
-    if (!writable_mapping_.IsValid()) {
-      DLOG(ERROR) << "Mapping shared memory failed.";
-      return;
-    }
-    data_ = writable_mapping_.GetMemoryAsSpan<uint8_t>().data();
-    data_size_ = writable_mapping_.size();
-  }
-
   void InitializeFromReadOnlyShmemRegion(
       base::ReadOnlySharedMemoryRegion region) {
     DCHECK(region.IsValid());
@@ -210,6 +195,7 @@ struct VideoCaptureImpl::BufferContext
     DCHECK(read_only_mapping_.IsValid());
     data_ = read_only_mapping_.GetMemoryAsSpan<uint8_t>().data();
     data_size_ = read_only_mapping_.size();
+    read_only_shmem_region_ = std::move(region);
   }
 
   void InitializeFromMailbox(
@@ -246,6 +232,7 @@ struct VideoCaptureImpl::BufferContext
   base::WritableSharedMemoryMapping writable_mapping_;
 
   // Only valid for |buffer_type_ == READ_ONLY_SHMEM_REGION|.
+  base::ReadOnlySharedMemoryRegion read_only_shmem_region_;
   base::ReadOnlySharedMemoryMapping read_only_mapping_;
 
   // Only valid for |buffer_type == GPU_MEMORY_BUFFER_HANDLE|
@@ -304,10 +291,10 @@ bool VideoCaptureImpl::VideoFrameBufferPreparer::Initialize() {
   DCHECK(iter != video_capture_impl_.client_buffers_.end());
   buffer_context_ = iter->second;
   switch (buffer_context_->buffer_type()) {
-    case VideoFrameBufferHandleType::SHARED_BUFFER_HANDLE:
+    case VideoFrameBufferHandleType::kUnsafeShmemRegion:
       // The frame is backed by a writable (unsafe) shared memory handle, but as
       // it is not sent cross-process the region does not need to be attached to
-      // the frame. See also the case for READ_ONLY_SHMEM_REGION.
+      // the frame. See also the case for kReadOnlyShmemRegion.
       if (frame_info_->strides) {
         CHECK(IsYuvPlanar(frame_info_->pixel_format) &&
               (media::VideoFrame::NumPlanes(frame_info_->pixel_format) == 3))
@@ -340,8 +327,8 @@ bool VideoCaptureImpl::VideoFrameBufferPreparer::Initialize() {
             buffer_context_->data_size(), frame_info_->timestamp);
       }
       break;
-    case VideoFrameBufferHandleType::READ_ONLY_SHMEM_REGION:
-      // As with the SHARED_BUFFER_HANDLE type, it is sufficient to just wrap
+    case VideoFrameBufferHandleType::kReadOnlyShmemRegion:
+      // As with the kSharedBufferHandle type, it is sufficient to just wrap
       // the data without attaching the shared region to the frame.
       frame_ = media::VideoFrame::WrapExternalData(
           frame_info_->pixel_format, gfx::Size(frame_info_->coded_size),
@@ -349,11 +336,9 @@ bool VideoCaptureImpl::VideoFrameBufferPreparer::Initialize() {
           frame_info_->visible_rect.size(),
           const_cast<uint8_t*>(buffer_context_->data()),
           buffer_context_->data_size(), frame_info_->timestamp);
+      frame_->BackWithSharedMemory(buffer_context_->read_only_shmem_region());
       break;
-    case VideoFrameBufferHandleType::SHARED_MEMORY_VIA_RAW_FILE_DESCRIPTOR:
-      NOTREACHED();
-      break;
-    case VideoFrameBufferHandleType::MAILBOX_HANDLES: {
+    case VideoFrameBufferHandleType::kMailboxHandles: {
       gpu::MailboxHolder mailbox_holder_array[media::VideoFrame::kMaxPlanes];
       CHECK_EQ(media::VideoFrame::kMaxPlanes,
                buffer_context_->mailbox_holders().size());
@@ -368,7 +353,7 @@ bool VideoCaptureImpl::VideoFrameBufferPreparer::Initialize() {
           frame_info_->visible_rect.size(), frame_info_->timestamp);
       break;
     }
-    case VideoFrameBufferHandleType::GPU_MEMORY_BUFFER_HANDLE: {
+    case VideoFrameBufferHandleType::kGpuMemoryBufferHandle: {
 #if BUILDFLAG(IS_MAC)
       // On macOS, an IOSurfaces passed as a GpuMemoryBufferHandle can be
       // used by both hardware and software paths.
@@ -393,7 +378,8 @@ bool VideoCaptureImpl::VideoFrameBufferPreparer::Initialize() {
       // connection, while the capturer process will continue to produce
       // GPU backed frames.
       if (!video_capture_impl_.gpu_factories_ ||
-          !video_capture_impl_.media_task_runner_) {
+          !video_capture_impl_.media_task_runner_ ||
+          video_capture_impl_.gmb_not_supported_) {
         video_capture_impl_.RequirePremappedFrames();
         if (!frame_info_->is_premapped || !buffer_context_->data()) {
           // If the frame isn't premapped, can't do anything here.
@@ -447,7 +433,10 @@ bool VideoCaptureImpl::VideoFrameBufferPreparer::Initialize() {
       CHECK(buffer_context_->GetGpuMemoryBuffer());
 
       auto buffer_handle = buffer_context_->GetGpuMemoryBuffer()->CloneHandle();
-
+#if BUILDFLAG(IS_CHROMEOS)
+      is_webgpu_compatible_ =
+          buffer_handle.native_pixmap_handle.supports_zero_copy_webgpu_import;
+#endif
       // No need to propagate shared memory region further as it's already
       // exposed by |buffer_context_->data()|.
       buffer_handle.region = base::UnsafeSharedMemoryRegion();
@@ -501,6 +490,19 @@ bool VideoCaptureImpl::VideoFrameBufferPreparer::BindVideoFrameOnMediaThread(
     buffer_context_->SetGpuFactories(gpu_factories);
     should_recreate_shared_image = true;
   }
+#if BUILDFLAG(IS_WIN)
+  // If the renderer is running in d3d9 mode due to e.g. driver bugs
+  // workarounds, DXGI D3D11 textures won't be supported.
+  // Can't check this from the ::Initialize() since media context provider can
+  // be accessed only on the Media thread.
+  const gpu::Capabilities* context_capabilites =
+      gpu_factories->ContextCapabilities();
+  if (!context_capabilites || !context_capabilites->shared_image_d3d) {
+    video_capture_impl_.RequirePremappedFrames();
+    video_capture_impl_.gmb_not_supported_ = true;
+    return false;
+  }
+#endif
 
   // Create GPU texture and bind GpuMemoryBuffer to the texture.
   auto* sii = buffer_context_->gpu_factories()->SharedImageInterface();
@@ -523,63 +525,40 @@ bool VideoCaptureImpl::VideoFrameBufferPreparer::BindVideoFrameOnMediaThread(
 
   uint32_t usage =
       gpu::SHARED_IMAGE_USAGE_GLES2 | gpu::SHARED_IMAGE_USAGE_RASTER |
-      gpu::SHARED_IMAGE_USAGE_DISPLAY | gpu::SHARED_IMAGE_USAGE_SCANOUT;
+      gpu::SHARED_IMAGE_USAGE_DISPLAY_READ | gpu::SHARED_IMAGE_USAGE_SCANOUT;
 #if BUILDFLAG(IS_MAC)
   usage |= gpu::SHARED_IMAGE_USAGE_MACOS_VIDEO_TOOLBOX;
 #endif
+#if BUILDFLAG(IS_CHROMEOS)
+  usage |= gpu::SHARED_IMAGE_USAGE_WEBGPU;
+#endif
 
-  unsigned texture_target =
-      buffer_context_->gpu_factories()->ImageTextureTarget(
-          gpu_memory_buffer_->GetFormat());
-
-#if BUILDFLAG(IS_WIN)
-  if (output_format ==
-      media::GpuVideoAcceleratorFactories::OutputFormat::NV12_DUAL_GMB) {
+  if (base::FeatureList::IsEnabled(
+          media::kMultiPlaneVideoCaptureSharedImages)) {
     planes.push_back(gfx::BufferPlane::Y);
     planes.push_back(gfx::BufferPlane::UV);
-
-    // Explicitly set GL_TEXTURE_EXTERNAL_OES since ImageTextureTarget() will
-    // return GL_TEXTURE_2D due to GMB factory not supporting NV12 DXGI GMBs.
-    // See https://crbug.com/1253791#c17
-    texture_target = GL_TEXTURE_EXTERNAL_OES;
-
+  } else {
+    planes.push_back(gfx::BufferPlane::DEFAULT);
+  }
+  for (size_t plane = 0; plane < planes.size(); ++plane) {
     if (should_recreate_shared_image ||
-        buffer_context_->gmb_resources()->mailboxes[0].IsZero()) {
-      auto plane_mailboxes = sii->CreateSharedImageVideoPlanes(
-          gpu_memory_buffer_.get(),
-          buffer_context_->gpu_factories()->GpuMemoryBufferManager(), usage);
-      DCHECK_EQ(plane_mailboxes.size(), planes.size());
-      for (size_t plane = 0; plane < planes.size(); ++plane) {
-        buffer_context_->gmb_resources()->mailboxes[plane] =
-            plane_mailboxes[plane];
-      }
-    }
-  }
-#endif  // BUILDFLAG(IS_WIN)
-  if (planes.empty()) {
-    if (base::FeatureList::IsEnabled(
-            media::kMultiPlaneVideoCaptureSharedImages)) {
-      planes.push_back(gfx::BufferPlane::Y);
-      planes.push_back(gfx::BufferPlane::UV);
+        buffer_context_->gmb_resources()->mailboxes[plane].IsZero()) {
+      buffer_context_->gmb_resources()->mailboxes[plane] =
+          sii->CreateSharedImage(
+              gpu_memory_buffer_.get(),
+              buffer_context_->gpu_factories()->GpuMemoryBufferManager(),
+              planes[plane], *(frame_info_->color_space),
+              kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType, usage);
     } else {
-      planes.push_back(gfx::BufferPlane::DEFAULT);
-    }
-    for (size_t plane = 0; plane < planes.size(); ++plane) {
-      if (should_recreate_shared_image ||
-          buffer_context_->gmb_resources()->mailboxes[plane].IsZero()) {
-        buffer_context_->gmb_resources()->mailboxes[plane] =
-            sii->CreateSharedImage(
-                gpu_memory_buffer_.get(),
-                buffer_context_->gpu_factories()->GpuMemoryBufferManager(),
-                planes[plane], *(frame_info_->color_space),
-                kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType, usage);
-      } else {
-        sii->UpdateSharedImage(
-            buffer_context_->gmb_resources()->release_sync_token,
-            buffer_context_->gmb_resources()->mailboxes[plane]);
-      }
+      sii->UpdateSharedImage(
+          buffer_context_->gmb_resources()->release_sync_token,
+          buffer_context_->gmb_resources()->mailboxes[plane]);
     }
   }
+
+  const unsigned texture_target =
+      buffer_context_->gpu_factories()->ImageTextureTarget(
+          gpu_memory_buffer_->GetFormat());
 
   const gpu::SyncToken sync_token = sii->GenVerifiedSyncToken();
 
@@ -604,6 +583,9 @@ bool VideoCaptureImpl::VideoFrameBufferPreparer::BindVideoFrameOnMediaThread(
   }
   frame_->metadata().allow_overlay = true;
   frame_->metadata().read_lock_fences_enabled = true;
+#if BUILDFLAG(IS_CHROMEOS)
+  frame_->metadata().is_webgpu_compatible = is_webgpu_compatible_;
+#endif
   return true;
 }
 
@@ -635,6 +617,8 @@ struct VideoCaptureImpl::ClientInfo {
   VideoCaptureStateUpdateCB state_update_cb;
 
   VideoCaptureDeliverFrameCB deliver_frame_cb;
+
+  VideoCaptureCropVersionCB crop_version_cb;
 };
 
 VideoCaptureImpl::VideoCaptureImpl(
@@ -701,7 +685,8 @@ void VideoCaptureImpl::StartCapture(
     int client_id,
     const media::VideoCaptureParams& params,
     const VideoCaptureStateUpdateCB& state_update_cb,
-    const VideoCaptureDeliverFrameCB& deliver_frame_cb) {
+    const VideoCaptureDeliverFrameCB& deliver_frame_cb,
+    const VideoCaptureCropVersionCB& crop_version_cb) {
   DVLOG(1) << __func__ << " |device_id_| = " << device_id_;
   DCHECK_CALLED_ON_VALID_THREAD(io_thread_checker_);
   OnLog("VideoCaptureImpl got request to start capture.");
@@ -710,6 +695,7 @@ void VideoCaptureImpl::StartCapture(
   client_info.params = params;
   client_info.state_update_cb = state_update_cb;
   client_info.deliver_frame_cb = deliver_frame_cb;
+  client_info.crop_version_cb = crop_version_cb;
 
   switch (state_) {
     case VIDEO_CAPTURE_STATE_STARTING:
@@ -819,7 +805,7 @@ void VideoCaptureImpl::OnStateChanged(
   startup_timeout_.Stop();
 
   if (result->which() ==
-      media::mojom::blink::VideoCaptureResult::Tag::ERROR_CODE) {
+      media::mojom::blink::VideoCaptureResult::Tag::kErrorCode) {
     DVLOG(1) << __func__ << " Failed with an error.";
     if (result->get_error_code() ==
         media::VideoCaptureError::kWinMediaFoundationSystemPermissionDenied) {
@@ -834,8 +820,7 @@ void VideoCaptureImpl::OnStateChanged(
     for (const auto& client : clients_)
       client.second.state_update_cb.Run(state_);
     clients_.clear();
-    RecordStartOutcomeUMA(start_timedout_ ? VideoCaptureStartOutcome::kTimedout
-                                          : VideoCaptureStartOutcome::kFailed);
+    RecordStartOutcomeUMA(result->get_error_code());
     return;
   }
 
@@ -851,7 +836,7 @@ void VideoCaptureImpl::OnStateChanged(
       // a frame refresh to start the video call with.
       // Capture device will make a decision if it should refresh a frame.
       RequestRefreshFrame();
-      RecordStartOutcomeUMA(VideoCaptureStartOutcome::kStarted);
+      RecordStartOutcomeUMA(media::VideoCaptureError::kNone);
       break;
     case media::mojom::VideoCaptureState::STOPPED:
       OnLog("VideoCaptureImpl changing state to VIDEO_CAPTURE_STATE_STOPPED");
@@ -1083,10 +1068,18 @@ void VideoCaptureImpl::OnBufferDestroyed(int32_t buffer_id) {
     // only one reference should be held.
     DCHECK(!cb_iter->second.get() ||
            cb_iter->second->buffer_type() ==
-               VideoFrameBufferHandleType::GPU_MEMORY_BUFFER_HANDLE ||
+               VideoFrameBufferHandleType::kGpuMemoryBufferHandle ||
            cb_iter->second->HasOneRef())
         << "Instructed to delete buffer we are still using.";
     client_buffers_.erase(cb_iter);
+  }
+}
+
+void VideoCaptureImpl::OnNewCropVersion(uint32_t crop_version) {
+  DCHECK_CALLED_ON_VALID_THREAD(io_thread_checker_);
+
+  for (const auto& client : clients_) {
+    client.second.crop_version_cb.Run(crop_version);
   }
 }
 
@@ -1115,7 +1108,7 @@ void VideoCaptureImpl::OnAllClientsFinishedConsumingFrame(
   // frames, because MailboxHolderReleased may hold on to a reference to
   // |buffer_context|.
   if (buffer_raw_ptr->buffer_type() !=
-      VideoFrameBufferHandleType::GPU_MEMORY_BUFFER_HANDLE) {
+      VideoFrameBufferHandleType::kGpuMemoryBufferHandle) {
     DCHECK(buffer_raw_ptr->HasOneRef());
   }
 #else
@@ -1170,7 +1163,6 @@ void VideoCaptureImpl::StartCaptureInternal() {
                            base::BindOnce(&VideoCaptureImpl::OnStartTimedout,
                                           base::Unretained(this)));
   }
-  start_timedout_ = false;
   start_outcome_reported_ = false;
   base::UmaHistogramBoolean("Media.VideoCapture.Start", true);
 
@@ -1181,8 +1173,6 @@ void VideoCaptureImpl::StartCaptureInternal() {
 void VideoCaptureImpl::OnStartTimedout() {
   DCHECK_CALLED_ON_VALID_THREAD(io_thread_checker_);
   OnLog("VideoCaptureImpl timed out during starting");
-
-  start_timedout_ = true;
 
   OnStateChanged(media::mojom::blink::VideoCaptureResult::NewErrorCode(
       media::VideoCaptureError::kVideoCaptureImplTimedOutOnStart));
@@ -1224,11 +1214,26 @@ media::mojom::blink::VideoCaptureHost* VideoCaptureImpl::GetVideoCaptureHost() {
   return video_capture_host_.get();
 }
 
-void VideoCaptureImpl::RecordStartOutcomeUMA(VideoCaptureStartOutcome outcome) {
+void VideoCaptureImpl::RecordStartOutcomeUMA(
+    media::VideoCaptureError error_code) {
   // Record the success or failure of starting only the first time we transition
   // into such a state, not eg when resuming after pausing.
   if (!start_outcome_reported_) {
+    VideoCaptureStartOutcome outcome;
+    switch (error_code) {
+      case media::VideoCaptureError::kNone:
+        outcome = VideoCaptureStartOutcome::kStarted;
+        break;
+      case media::VideoCaptureError::kVideoCaptureImplTimedOutOnStart:
+        outcome = VideoCaptureStartOutcome::kTimedout;
+        break;
+      default:
+        outcome = VideoCaptureStartOutcome::kFailed;
+        break;
+    }
     base::UmaHistogramEnumeration("Media.VideoCapture.StartOutcome", outcome);
+    base::UmaHistogramEnumeration("Media.VideoCapture.StartErrorCode",
+                                  error_code);
     start_outcome_reported_ = true;
   }
 }

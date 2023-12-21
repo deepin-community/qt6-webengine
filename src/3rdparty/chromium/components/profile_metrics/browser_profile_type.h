@@ -1,11 +1,13 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_PROFILE_METRICS_BROWSER_PROFILE_TYPE_H_
 #define COMPONENTS_PROFILE_METRICS_BROWSER_PROFILE_TYPE_H_
 
-#include "base/supports_user_data.h"
+namespace base {
+class SupportsUserData;
+}
 
 namespace profile_metrics {
 

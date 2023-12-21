@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,12 +6,13 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/check.h"
 #include "base/containers/cxx20_erase.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/no_destructor.h"
 #include "base/observer_list.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "services/device/generic_sensor/platform_sensor_provider.h"
 #include "services/device/generic_sensor/platform_sensor_util.h"
 #include "services/device/public/cpp/generic_sensor/platform_sensor_configuration.h"
@@ -22,16 +23,20 @@ namespace device {
 PlatformSensor::PlatformSensor(mojom::SensorType type,
                                SensorReadingSharedBuffer* reading_buffer,
                                PlatformSensorProvider* provider)
-    : main_task_runner_(base::SequencedTaskRunnerHandle::Get()),
+    : main_task_runner_(base::SequencedTaskRunner::GetCurrentDefault()),
       reading_buffer_(reading_buffer),
       type_(type),
       provider_(provider) {
+  CHECK(!PlatformSensor::GetInitializedSensors().contains(type));
+  PlatformSensor::GetInitializedSensors().insert(type);
   VLOG(1) << "Platform sensor created. Type " << type_ << ".";
 }
 
 PlatformSensor::~PlatformSensor() {
   if (provider_)
     provider_->RemoveSensor(GetType(), this);
+  CHECK(PlatformSensor::GetInitializedSensors().contains(type_));
+  PlatformSensor::GetInitializedSensors().erase(type_);
   VLOG(1) << "Platform sensor released. Type " << type_ << ".";
 }
 
@@ -147,16 +152,27 @@ bool PlatformSensor::UpdateSharedBuffer(const SensorReading& reading,
     last_raw_reading_ = reading;
   }
 
-  ReadingBuffer* buffer = reading_buffer_;
-  auto& seqlock = buffer->seqlock.value();
-
   // Round the reading to guard user privacy. See https://crbug.com/1018180.
   SensorReading rounded_reading = reading;
   RoundSensorReading(&rounded_reading, type_);
 
-  seqlock.WriteBegin();
-  buffer->reading = rounded_reading;
-  seqlock.WriteEnd();
+  {
+    base::AutoLock auto_lock(lock_);
+    // Report new values only if rounded value is different compared to
+    // previous value.
+    if (GetReportingMode() == mojom::ReportingMode::ON_CHANGE &&
+        do_significance_check && last_rounded_reading_.has_value() &&
+        base::ranges::equal(rounded_reading.raw.values,
+                            last_rounded_reading_->raw.values)) {
+      return false;
+    }
+    // Save rounded value for next comparison.
+    last_rounded_reading_ = rounded_reading;
+  }
+  reading_buffer_->seqlock.value().WriteBegin();
+  device::OneWriterSeqLock::AtomicWriterMemcpy(
+      &reading_buffer_->reading, &rounded_reading, sizeof(SensorReading));
+  reading_buffer_->seqlock.value().WriteEnd();
   return true;
 }
 
@@ -202,6 +218,12 @@ bool PlatformSensor::UpdateSensorInternal(const ConfigMap& configurations) {
 
   is_active_ = StartSensor(*optimal_configuration);
   return is_active_;
+}
+
+base::flat_set<mojom::SensorType>& PlatformSensor::GetInitializedSensors() {
+  static base::NoDestructor<base::flat_set<mojom::SensorType>>
+      initialized_sensors;
+  return *initialized_sensors;
 }
 
 bool PlatformSensor::IsActiveForTesting() const {

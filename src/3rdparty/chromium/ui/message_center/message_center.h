@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -110,6 +110,11 @@ class MESSAGE_CENTER_EXPORT MessageCenter {
   // in this list.
   virtual const NotificationList::Notifications& GetVisibleNotifications() = 0;
 
+  // Gets all notifications to be shown to the user in the message center if not
+  // for the given blocker.
+  virtual NotificationList::Notifications GetVisibleNotificationsWithoutBlocker(
+      const NotificationBlocker* blocker) const = 0;
+
   // Gets all notifications being shown as popups. This should not be affected
   // by the change queue since notifications are not held up while the state is
   // VISIBILITY_TRANSIENT or VISIBILITY_SETTINGS.
@@ -189,6 +194,11 @@ class MESSAGE_CENTER_EXPORT MessageCenter {
   virtual void MarkSinglePopupAsShown(const std::string& id,
                                       bool mark_notification_as_read) = 0;
 
+  // Resets the timer for the popup associated with the provided notification
+  // id.
+  virtual void ResetPopupTimer(const std::string& id) = 0;
+
+  // Resets the state for a popup so it is shown again.
   virtual void ResetSinglePopup(const std::string& id) = 0;
 
   // This should be called by UI classes when a notification is first displayed
@@ -212,6 +222,15 @@ class MESSAGE_CENTER_EXPORT MessageCenter {
 
   // Allows querying the visibility of the center.
   virtual bool IsMessageCenterVisible() const = 0;
+
+  // Access for the `ExpandState` stored for each notification in the
+  // `NotificationList`. The `ExpandState` is kept alongside other
+  // notifications' state information in the `NotificationState` struct. The
+  // `ExpandState signifies whether the notification has been manually expanded
+  // or collapsed by the user.
+  virtual ExpandState GetNotificationExpandState(const std::string& id) = 0;
+  virtual void SetNotificationExpandState(const std::string& id,
+                                          const ExpandState state) = 0;
 
   // Informs the MessageCenter whether there's a bubble anchored to a system
   // tray which holds notifications. If false, only toasts are shown (e.g. on

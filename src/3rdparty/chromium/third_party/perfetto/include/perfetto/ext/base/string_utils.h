@@ -109,6 +109,7 @@ std::vector<std::string> SplitString(const std::string& text,
                                      const std::string& delimiter);
 std::string StripPrefix(const std::string& str, const std::string& prefix);
 std::string StripSuffix(const std::string& str, const std::string& suffix);
+std::string TrimWhitespace(const std::string& str);
 std::string ToLower(const std::string& str);
 std::string ToUpper(const std::string& str);
 std::string StripChars(const std::string& str,
@@ -167,6 +168,20 @@ inline void StringCopy(char* dst, const char* src, size_t dst_size) {
 size_t SprintfTrunc(char* dst, size_t dst_size, const char* fmt, ...)
     PERFETTO_PRINTF_FORMAT(3, 4);
 
+// Line number starts from 1
+struct LineWithOffset {
+  base::StringView line;
+  uint32_t line_offset;
+  uint32_t line_num;
+};
+
+// For given string and offset Pfinds a line with character for
+// which offset points, what number is this line (starts from 1), and the offset
+// inside this line. returns nullopt if the offset points to
+// line break character or exceeds string length.
+base::Optional<LineWithOffset> FindLineWithOffset(base::StringView str,
+                                                  uint32_t offset);
+
 // A helper class to facilitate construction and usage of write-once stack
 // strings.
 // Example usage:
@@ -196,6 +211,7 @@ class StackString {
   std::string ToStdString() const { return std::string(buf_, len_); }
   const char* c_str() const { return buf_; }
   size_t len() const { return len_; }
+  char* mutable_data() { return buf_; }
 
  private:
   char buf_[N];

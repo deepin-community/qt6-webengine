@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -137,10 +137,30 @@ CrasDevice::CrasDevice(struct libcras_node_info* node, DeviceType type)
   }
 
   name = std::string(node_name);
-  if (name.empty() || name == "(default)")
+  if (name.empty() || name == "(default)") {
     name = device_name;
+  }
   dev_name = device_name;
 }
+
+CrasDevice::CrasDevice(DeviceType type,
+                       uint64_t id,
+                       uint32_t dev_idx,
+                       uint32_t max_supported_channels,
+                       bool plugged,
+                       bool active,
+                       std::string node_type,
+                       std::string name,
+                       std::string dev_name)
+    : type(type),
+      id(id),
+      dev_idx(dev_idx),
+      max_supported_channels(max_supported_channels),
+      plugged(plugged),
+      active(active),
+      node_type(node_type),
+      name(name),
+      dev_name(dev_name) {}
 
 void mergeDevices(CrasDevice& old_dev, CrasDevice& new_dev) {
   if (old_dev.node_type == kLineout || new_dev.node_type == kLineout) {
@@ -168,8 +188,9 @@ std::vector<CrasDevice> CrasUtil::CrasGetAudioDevices(DeviceType type) {
   std::vector<CrasDevice> devices;
 
   libcras_client* client = CrasConnect();
-  if (!client)
+  if (!client) {
     return devices;
+  }
 
   int rc;
 
@@ -192,8 +213,9 @@ std::vector<CrasDevice> CrasUtil::CrasGetAudioDevices(DeviceType type) {
 
   for (size_t i = 0; i < num_nodes; i++) {
     auto new_dev = CrasDevice(nodes[i], type);
-    if (!new_dev.plugged || !IsForSimpleUsage(new_dev.node_type))
+    if (!new_dev.plugged || !IsForSimpleUsage(new_dev.node_type)) {
       continue;
+    }
     bool added = false;
     for (auto& dev : devices) {
       if (dev.dev_idx == new_dev.dev_idx) {
@@ -202,8 +224,9 @@ std::vector<CrasDevice> CrasUtil::CrasGetAudioDevices(DeviceType type) {
         break;
       }
     }
-    if (!added)
+    if (!added) {
       devices.emplace_back(new_dev);
+    }
   }
 
   libcras_node_info_array_destroy(nodes, num_nodes);
@@ -214,8 +237,9 @@ std::vector<CrasDevice> CrasUtil::CrasGetAudioDevices(DeviceType type) {
 
 int CrasUtil::CrasGetAecSupported() {
   libcras_client* client = CrasConnect();
-  if (!client)
+  if (!client) {
     return 0;
+  }
 
   int supported;
   libcras_client_get_aec_supported(client, &supported);
@@ -226,8 +250,9 @@ int CrasUtil::CrasGetAecSupported() {
 
 int CrasUtil::CrasGetAecGroupId() {
   libcras_client* client = CrasConnect();
-  if (!client)
+  if (!client) {
     return -1;
+  }
 
   int id;
   int rc = libcras_client_get_aec_group_id(client, &id);
@@ -238,8 +263,9 @@ int CrasUtil::CrasGetAecGroupId() {
 
 int CrasUtil::CrasGetDefaultOutputBufferSize() {
   libcras_client* client = CrasConnect();
-  if (!client)
+  if (!client) {
     return -1;
+  }
 
   int size;
   int rc = libcras_client_get_default_output_buffer_size(client, &size);

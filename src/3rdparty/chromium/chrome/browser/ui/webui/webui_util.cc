@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,7 @@
 #include "services/network/public/mojom/content_security_policy.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/webui/web_ui_util.h"
-#include "ui/resources/grit/webui_generated_resources.h"
+#include "ui/resources/grit/webui_resources.h"
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
@@ -19,6 +19,8 @@
 #include "chrome/browser/browser_process_platform_part.h"
 #elif BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
 #include "base/enterprise_util.h"
+#elif BUILDFLAG(IS_CHROMEOS_LACROS)
+#include "chromeos/startup/browser_params_proxy.h"
 #endif
 
 #if defined(TOOLKIT_VIEWS)
@@ -36,24 +38,44 @@ namespace webui {
 void SetJSModuleDefaults(content::WebUIDataSource* source) {
   source->OverrideContentSecurityPolicy(
       network::mojom::CSPDirectiveName::ScriptSrc,
-      "script-src chrome://resources chrome://test "
-      "chrome://webui-test 'self';");
-  // TODO(crbug.com/1098690): Trusted Type Polymer
-  source->DisableTrustedTypesCSP();
+      "script-src chrome://resources chrome://webui-test "
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+      "chrome://test "
+#endif
+      "'self';");
+
   source->UseStringsJs();
   source->EnableReplaceI18nInJS();
   source->AddResourcePath("test_loader.js", IDR_WEBUI_JS_TEST_LOADER_JS);
   source->AddResourcePath("test_loader_util.js",
                           IDR_WEBUI_JS_TEST_LOADER_UTIL_JS);
-  source->AddResourcePath("test_loader.html", IDR_WEBUI_HTML_TEST_LOADER_HTML);
+  source->AddResourcePath("test_loader.html", IDR_WEBUI_TEST_LOADER_HTML);
 }
 
 void SetupWebUIDataSource(content::WebUIDataSource* source,
                           base::span<const ResourcePath> resources,
                           int default_resource) {
   SetJSModuleDefaults(source);
+  EnableTrustedTypesCSP(source);
   source->AddResourcePaths(resources);
   source->AddResourcePath("", default_resource);
+}
+
+void EnableTrustedTypesCSP(content::WebUIDataSource* source) {
+  source->OverrideContentSecurityPolicy(
+      network::mojom::CSPDirectiveName::RequireTrustedTypesFor,
+      "require-trusted-types-for 'script';");
+  source->OverrideContentSecurityPolicy(
+      network::mojom::CSPDirectiveName::TrustedTypes,
+      "trusted-types parse-html-subset sanitize-inner-html static-types "
+      // Add TrustedTypes policies for cr-lottie.
+      "lottie-worker-script-loader "
+      // Add TrustedTypes policies used during tests.
+      "webui-test-script webui-test-html "
+      // Add TrustedTypes policy for creating the PDF plugin.
+      "print-preview-plugin-loader "
+      // Add TrustedTypes policies necessary for using Polymer.
+      "polymer-html-literal polymer-template-event-attribute-policy;");
 }
 
 void AddLocalizedString(content::WebUIDataSource* source,
@@ -62,18 +84,6 @@ void AddLocalizedString(content::WebUIDataSource* source,
   std::u16string str = l10n_util::GetStringUTF16(id);
   base::Erase(str, '&');
   source->AddString(message, str);
-}
-
-bool IsEnterpriseManaged() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  policy::BrowserPolicyConnectorAsh* connector =
-      g_browser_process->platform_part()->browser_policy_connector_ash();
-  return connector->IsDeviceEnterpriseManaged();
-#elif BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
-  return base::IsMachineExternallyManaged();
-#else
-  return false;
-#endif
 }
 
 #if defined(TOOLKIT_VIEWS)

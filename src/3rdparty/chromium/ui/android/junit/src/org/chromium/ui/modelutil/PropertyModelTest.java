@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -206,7 +206,7 @@ public class PropertyModelTest {
         model.set(INT_PROPERTY_A, -1);
         model.set(OBJECT_PROPERTY_A, obj);
 
-        Mockito.verifyZeroInteractions(observer);
+        Mockito.verifyNoMoreInteractions(observer);
     }
 
     @Test

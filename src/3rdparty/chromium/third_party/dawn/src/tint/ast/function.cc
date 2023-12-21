@@ -23,34 +23,38 @@ TINT_INSTANTIATE_TYPEINFO(tint::ast::Function);
 namespace tint::ast {
 
 Function::Function(ProgramID pid,
+                   NodeID nid,
                    const Source& src,
-                   Symbol sym,
-                   VariableList parameters,
-                   const Type* return_ty,
+                   const Identifier* n,
+                   utils::VectorRef<const Parameter*> parameters,
+                   Type return_ty,
                    const BlockStatement* b,
-                   AttributeList attrs,
-                   AttributeList return_type_attrs)
-    : Base(pid, src),
-      symbol(sym),
+                   utils::VectorRef<const Attribute*> attrs,
+                   utils::VectorRef<const Attribute*> return_type_attrs)
+    : Base(pid, nid, src),
+      name(n),
       params(std::move(parameters)),
       return_type(return_ty),
       body(b),
       attributes(std::move(attrs)),
       return_type_attributes(std::move(return_type_attrs)) {
-  TINT_ASSERT_PROGRAM_IDS_EQUAL_IF_VALID(AST, symbol, program_id);
-  TINT_ASSERT_PROGRAM_IDS_EQUAL_IF_VALID(AST, body, program_id);
-  for (auto* param : params) {
-    TINT_ASSERT(AST, param && param->is_const);
-    TINT_ASSERT_PROGRAM_IDS_EQUAL_IF_VALID(AST, param, program_id);
-  }
-  TINT_ASSERT(AST, symbol.IsValid());
-  TINT_ASSERT(AST, return_type);
-  for (auto* attr : attributes) {
-    TINT_ASSERT_PROGRAM_IDS_EQUAL_IF_VALID(AST, attr, program_id);
-  }
-  for (auto* attr : return_type_attributes) {
-    TINT_ASSERT_PROGRAM_IDS_EQUAL_IF_VALID(AST, attr, program_id);
-  }
+    TINT_ASSERT(AST, name);
+    if (name) {
+        TINT_ASSERT(AST, !name->Is<TemplatedIdentifier>());
+    }
+    TINT_ASSERT_PROGRAM_IDS_EQUAL_IF_VALID(AST, name, program_id);
+    TINT_ASSERT_PROGRAM_IDS_EQUAL_IF_VALID(AST, return_ty, program_id);
+    TINT_ASSERT_PROGRAM_IDS_EQUAL_IF_VALID(AST, body, program_id);
+    for (auto* param : params) {
+        TINT_ASSERT(AST, tint::Is<Parameter>(param));
+        TINT_ASSERT_PROGRAM_IDS_EQUAL_IF_VALID(AST, param, program_id);
+    }
+    for (auto* attr : attributes) {
+        TINT_ASSERT_PROGRAM_IDS_EQUAL_IF_VALID(AST, attr, program_id);
+    }
+    for (auto* attr : return_type_attributes) {
+        TINT_ASSERT_PROGRAM_IDS_EQUAL_IF_VALID(AST, attr, program_id);
+    }
 }
 
 Function::Function(Function&&) = default;
@@ -58,49 +62,49 @@ Function::Function(Function&&) = default;
 Function::~Function() = default;
 
 PipelineStage Function::PipelineStage() const {
-  if (auto* stage = GetAttribute<StageAttribute>(attributes)) {
-    return stage->stage;
-  }
-  return PipelineStage::kNone;
+    if (auto* stage = GetAttribute<StageAttribute>(attributes)) {
+        return stage->stage;
+    }
+    return PipelineStage::kNone;
 }
 
 const Function* Function::Clone(CloneContext* ctx) const {
-  // Clone arguments outside of create() call to have deterministic ordering
-  auto src = ctx->Clone(source);
-  auto sym = ctx->Clone(symbol);
-  auto p = ctx->Clone(params);
-  auto* ret = ctx->Clone(return_type);
-  auto* b = ctx->Clone(body);
-  auto attrs = ctx->Clone(attributes);
-  auto ret_attrs = ctx->Clone(return_type_attributes);
-  return ctx->dst->create<Function>(src, sym, p, ret, b, attrs, ret_attrs);
+    // Clone arguments outside of create() call to have deterministic ordering
+    auto src = ctx->Clone(source);
+    auto n = ctx->Clone(name);
+    auto p = ctx->Clone(params);
+    auto ret = ctx->Clone(return_type);
+    auto* b = ctx->Clone(body);
+    auto attrs = ctx->Clone(attributes);
+    auto ret_attrs = ctx->Clone(return_type_attributes);
+    return ctx->dst->create<Function>(src, n, p, ret, b, attrs, ret_attrs);
 }
 
 const Function* FunctionList::Find(Symbol sym) const {
-  for (auto* func : *this) {
-    if (func->symbol == sym) {
-      return func;
+    for (auto* func : *this) {
+        if (func->name->symbol == sym) {
+            return func;
+        }
     }
-  }
-  return nullptr;
+    return nullptr;
 }
 
 const Function* FunctionList::Find(Symbol sym, PipelineStage stage) const {
-  for (auto* func : *this) {
-    if (func->symbol == sym && func->PipelineStage() == stage) {
-      return func;
+    for (auto* func : *this) {
+        if (func->name->symbol == sym && func->PipelineStage() == stage) {
+            return func;
+        }
     }
-  }
-  return nullptr;
+    return nullptr;
 }
 
 bool FunctionList::HasStage(ast::PipelineStage stage) const {
-  for (auto* func : *this) {
-    if (func->PipelineStage() == stage) {
-      return true;
+    for (auto* func : *this) {
+        if (func->PipelineStage() == stage) {
+            return true;
+        }
     }
-  }
-  return false;
+    return false;
 }
 
 }  // namespace tint::ast

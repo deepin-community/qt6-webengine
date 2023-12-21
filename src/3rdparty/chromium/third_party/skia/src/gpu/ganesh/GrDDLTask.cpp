@@ -9,6 +9,7 @@
 
 #include "include/core/SkDeferredDisplayList.h"
 #include "src/core/SkDeferredDisplayListPriv.h"
+#include "src/gpu/ganesh/GrRenderTargetProxy.h"
 #include "src/gpu/ganesh/GrResourceAllocator.h"
 
 GrDDLTask::GrDDLTask(GrDrawingManager* drawingMgr,
@@ -78,12 +79,6 @@ GrRenderTask::ExpectedOutcome GrDDLTask::onMakeClosed(GrRecordingContext*,
                                                       SkIRect* targetUpdateBounds) {
     SkASSERT(0);
     return ExpectedOutcome::kTargetUnchanged;
-}
-
-void GrDDLTask::gatherIDs(SkSTArray<8, uint32_t, true>* idArray) const {
-    for (auto& task : fDDL->priv().renderTasks()) {
-        task->gatherIDs(idArray);
-    }
 }
 
 void GrDDLTask::onPrepare(GrOpFlushState* flushState) {

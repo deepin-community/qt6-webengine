@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -41,17 +41,20 @@ class CC_PAINT_EXPORT PaintFlags {
     return static_cast<Style>(bitfields_.style_);
   }
   ALWAYS_INLINE void setStyle(Style style) { bitfields_.style_ = style; }
+  // TODO(crbug.com/1308932): Remove this function
   ALWAYS_INLINE SkColor getColor() const { return color_.toSkColor(); }
   ALWAYS_INLINE SkColor4f getColor4f() const { return color_; }
   ALWAYS_INLINE void setColor(SkColor color) {
     color_ = SkColor4f::FromColor(color);
   }
-  ALWAYS_INLINE void setColor4f(SkColor4f color) { color_ = color; }
+  ALWAYS_INLINE void setColor(SkColor4f color) { color_ = color; }
   ALWAYS_INLINE uint8_t getAlpha() const {
     return SkColorGetA(color_.toSkColor());
   }
-  ALWAYS_INLINE void setAlpha(uint8_t a) {
-    color_ = SkColor4f::FromColor(SkColorSetA(color_.toSkColor(), a));
+  ALWAYS_INLINE float getAlphaf() const { return color_.fA; }
+  template <class F, class = std::enable_if_t<std::is_same_v<F, float>>>
+  ALWAYS_INLINE void setAlphaf(F a) {
+    color_.fA = a;
   }
   ALWAYS_INLINE void setBlendMode(SkBlendMode mode) {
     blend_mode_ = static_cast<uint32_t>(mode);
@@ -72,7 +75,7 @@ class CC_PAINT_EXPORT PaintFlags {
     kLast = kHigh,
   };
   ALWAYS_INLINE void setFilterQuality(FilterQuality quality) {
-    bitfields_.filter_quality_ = static_cast<int>(quality);
+    bitfields_.filter_quality_ = static_cast<uint32_t>(quality);
   }
   ALWAYS_INLINE FilterQuality getFilterQuality() const {
     return static_cast<FilterQuality>(bitfields_.filter_quality_);
@@ -159,13 +162,9 @@ class CC_PAINT_EXPORT PaintFlags {
     draw_looper_ = std::move(looper);
   }
 
-  // Returns true if this just represents an opacity blend when used as
-  // saveLayer flags, thus the saveLayer can be converted to a saveLayerAlpha.
-  bool IsSimpleOpacity() const;
-
   // Returns true if this (of a drawOp) allows the sequence
-  // saveLayerAlpha/drawOp/restore to be folded into a single drawOp by baking
-  // the alpha in the saveLayerAlpha into the flags of the drawOp.
+  // saveLayerAlphaf/drawOp/restore to be folded into a single drawOp by baking
+  // the alpha in the saveLayerAlphaf into the flags of the drawOp.
   bool SupportsFoldingAlpha() const;
 
   // SkPaint does not support loopers, so callers of SkToPaint need
@@ -185,12 +184,9 @@ class CC_PAINT_EXPORT PaintFlags {
       FilterQuality filter_quality);
 
   bool IsValid() const;
-  bool operator==(const PaintFlags& other) const;
-  bool operator!=(const PaintFlags& other) const { return !(*this == other); }
+  bool EqualsForTesting(const PaintFlags& other) const;
 
   bool HasDiscardableImages() const;
-
-  size_t GetSerializedSize() const;
 
  private:
   friend class PaintOpReader;
@@ -205,7 +201,7 @@ class CC_PAINT_EXPORT PaintFlags {
 
   // Match(ish) SkPaint defaults.  SkPaintDefaults is not public, so this
   // just uses these values and ignores any SkUserConfig overrides.
-  SkColor4f color_ = SkColor4f::FromColor(SK_ColorBLACK);
+  SkColor4f color_ = SkColors::kBlack;
   float width_ = 0.f;
   float miter_limit_ = 4.f;
   uint32_t blend_mode_ = static_cast<uint32_t>(SkBlendMode::kSrcOver);

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -52,8 +52,9 @@ class CORE_EXPORT MediaValuesCached final : public MediaValues {
     float em_size = 16.f;
     float ex_size = 8.f;
     float ch_size = 8.f;
+    float ic_size = 16.f;
+    float line_height = 0;
     bool three_d_enabled = false;
-    bool immersive_mode = false;
     bool strict_mode = true;
     String media_type;
     mojom::blink::DisplayMode display_mode =
@@ -92,10 +93,10 @@ class CORE_EXPORT MediaValuesCached final : public MediaValues {
       data.em_size = em_size;
       data.ex_size = ex_size;
       data.ch_size = ch_size;
+      data.ch_size = ic_size;
       data.three_d_enabled = three_d_enabled;
-      data.immersive_mode = immersive_mode;
       data.strict_mode = strict_mode;
-      data.media_type = media_type.IsolatedCopy();
+      data.media_type = media_type;
       data.display_mode = display_mode;
       data.color_gamut = color_gamut;
       data.preferred_color_scheme = preferred_color_scheme;
@@ -128,7 +129,6 @@ class CORE_EXPORT MediaValuesCached final : public MediaValues {
   mojom::blink::HoverType PrimaryHoverType() const override;
   int AvailableHoverTypes() const override;
   bool ThreeDEnabled() const override;
-  bool InImmersiveMode() const override;
   bool StrictMode() const override;
   Document* GetDocument() const override;
   bool HasValues() const override;
@@ -148,6 +148,17 @@ class CORE_EXPORT MediaValuesCached final : public MediaValues {
   void OverrideViewportDimensions(double width, double height);
 
  protected:
+  // CSSLengthResolver
+  float EmFontSize(float zoom) const override;
+  float RemFontSize(float zoom) const override;
+  float ExFontSize(float zoom) const override;
+  float RexFontSize(float zoom) const override;
+  float ChFontSize(float zoom) const override;
+  float RchFontSize(float zoom) const override;
+  float IcFontSize(float zoom) const override;
+  float RicFontSize(float zoom) const override;
+  float LineHeight(float zoom) const override;
+  float RootLineHeight(float zoom) const override;
   double ViewportWidth() const override;
   double ViewportHeight() const override;
   double SmallViewportWidth() const override;
@@ -156,10 +167,8 @@ class CORE_EXPORT MediaValuesCached final : public MediaValues {
   double LargeViewportHeight() const override;
   double DynamicViewportWidth() const override;
   double DynamicViewportHeight() const override;
-  float EmSize() const override;
-  float RemSize() const override;
-  float ExSize() const override;
-  float ChSize() const override;
+  double ContainerWidth() const override;
+  double ContainerHeight() const override;
   WritingMode GetWritingMode() const override {
     return WritingMode::kHorizontalTb;
   }

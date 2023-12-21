@@ -1,4 +1,4 @@
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -82,8 +82,10 @@ GRDP_END_TEMPLATE = '</grit-part>\n'
 # Generates an <include .... /> row for the given file.
 def _generate_include_row(grd_prefix, filename, pathname, \
                           resource_path_rewrites, resource_path_prefix):
+  assert '\\' not in filename
+  assert '\\' not in pathname
   name_suffix = filename.upper().replace('/', '_').replace('.', '_'). \
-          replace('-', '_')
+          replace('-', '_').replace('@', '_AT_')
   name = 'IDR_%s_%s' % (grd_prefix.upper(), name_suffix)
   extension = os.path.splitext(filename)[1]
   type = 'chrome_html' if extension == '.html' or extension == '.js' \
@@ -94,6 +96,7 @@ def _generate_include_row(grd_prefix, filename, pathname, \
 
   if resource_path_prefix != None:
     resource_path = resource_path_prefix + '/' + resource_path
+  assert '\\' not in resource_path
 
   # This is a temporary workaround, since Polymer 2 shared resource files are
   # not preprocessed.
@@ -131,9 +134,7 @@ def main(argv):
   args = parser.parse_args(argv)
 
   grd_path = os.path.normpath(os.path.join(_CWD, args.out_grd))
-  with open(grd_path, 'w',
-            newline='') if sys.version_info.major == 3 else open(
-                grd_path, 'wb') as grd_file:
+  with open(grd_path, 'w', newline='') as grd_file:
     begin_template = GRDP_BEGIN_TEMPLATE if args.out_grd.endswith('.grdp') else \
         GRD_BEGIN_TEMPLATE
     grd_file.write(begin_template.format(prefix=args.grd_prefix,
@@ -163,6 +164,13 @@ def main(argv):
             args.root_gen_dir + '/', '${root_gen_dir}/')
 
       for filename in args.input_files:
+        norm_base = os.path.normpath(args.input_files_base_dir)
+        norm_path = os.path.normpath(os.path.join(args.input_files_base_dir,
+                                                  filename))
+        assert os.path.commonprefix([norm_base, norm_path]) == norm_base, \
+            f'Error: input_file {filename} found outside of ' + \
+            'input_files_base_dir'
+
         filepath = os.path.join(base_dir, filename).replace('\\', '/')
         grd_file.write(_generate_include_row(
             args.grd_prefix, filename, filepath,

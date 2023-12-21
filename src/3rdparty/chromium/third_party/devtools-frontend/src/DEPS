@@ -3,48 +3,51 @@
 # found in the LICENSE file.
 
 use_relative_paths = True
+gclient_gn_args_file = 'build/config/gclient_args.gni'
+gclient_gn_args = [
+]
 
 vars = {
   'build_with_chromium': False,
 
-  # By default, do not checkout the re-client binaries.
-  'checkout_reclient': False,
-
   'build_url': 'https://chromium.googlesource.com/chromium/src/build.git',
-  'build_revision': 'cf04b9f43f87afc696a08585f84c058a02dfc519',
+  'build_revision': '567de59cc5f0cb427140fffbcc950bb17de135c1',
 
   'buildtools_url': 'https://chromium.googlesource.com/chromium/src/buildtools.git',
-  'buildtools_revision': 'c2e4795660817c2776dbabd778b92ed58c074032',
+  'buildtools_revision': 'c9ed0b613fbde914d8dbcf244ccfb291716f62a5',
 
   'depot_tools_url': 'https://chromium.googlesource.com/chromium/tools/depot_tools.git',
-  'depot_tools_revision': '6ebf7b5b6bfcfbd90288bb3ba4b0fffc969a9310',
+  'depot_tools_revision': 'd85c5bc6ff0dee8171007d947aabc3dfa6dd433b',
 
   'inspector_protocol_url': 'https://chromium.googlesource.com/deps/inspector_protocol',
-  'inspector_protocol_revision': '6f1de63c77f173b7f81f35ae04f3a6803209446e',
+  'inspector_protocol_revision': '231d3578b4bf2bec1c3d306e53621430003b4bae',
 
   'clang_format_url': 'https://chromium.googlesource.com/external/github.com/llvm/llvm-project/clang/tools/clang-format.git',
-  'clang_format_revision': 'e435ad79c17b1888b34df88d6a30a094936e3836',
+  'clang_format_revision': 'f97059df7f8b205064625cdb5f97b56668a125ef',
 
-  'emscripten_tag': '6ab7fc5622a67e6111d07c4ba61c8d3c8fc33ed2',
+  'emscripten_tag': 'ade9d780ff17c88d81aa13860361743e3c1e1396',
 
   # GN CIPD package version.
-  'gn_version': 'git_revision:c114b7e0b3a327e854cae6b560902230436f1ac7',
+  'gn_version': 'git_revision:b25a2f8c2d33f02082f0f258350f5e22c0973108',
 
-  # reclient CIPD package version
-  'reclient_version': 're_client_version:0.19.2.319f839',
+  # ninja CIPD package version.
+  # https://chrome-infra-packages.appspot.com/p/infra/3pp/tools/ninja
+  'ninja_version': 'version:2@1.11.1.chromium.6',
 
   # Chromium build number for unit tests. It should be regularly updated to
   # the content of https://commondatastorage.googleapis.com/chromium-browser-snapshots/Linux_x64/LAST_CHANGE
-  'chromium_linux': '992410',
+  'chromium_linux': '1108867',
   # the content of https://commondatastorage.googleapis.com/chromium-browser-snapshots/Win_x64/LAST_CHANGE
-  'chromium_win': '992402',
+  'chromium_win': '1108853',
   # the content of https://commondatastorage.googleapis.com/chromium-browser-snapshots/Mac/LAST_CHANGE
-  'chromium_mac': '992394',
+  'chromium_mac': '1108856',
+  # the content of https://commondatastorage.googleapis.com/chromium-browser-snapshots/Mac_Arm/LAST_CHANGE
+  'chromium_mac_arm': '1108857',
 }
 
 # Only these hosts are allowed for dependencies in this DEPS file.
 # If you need to add a new host, contact chrome infrastracture team.
-allowed_hosts = [ 'chromium.googlesource.com' ]
+allowed_hosts = [ 'chromium.googlesource.com', 'chrome-infra-packages.appspot.com' ]
 
 deps = {
   'buildtools/clang_format/script': {
@@ -60,7 +63,7 @@ deps = {
   'buildtools/linux64': {
     'packages': [
       {
-        'package': 'gn/gn/linux-amd64',
+        'package': 'gn/gn/linux-${{arch}}',
         'version': Var('gn_version'),
       }
     ],
@@ -70,7 +73,7 @@ deps = {
   'buildtools/mac': {
     'packages': [
       {
-        'package': 'gn/gn/mac-amd64',
+        'package': 'gn/gn/mac-${{arch}}',
         'version': Var('gn_version'),
       }
     ],
@@ -80,22 +83,12 @@ deps = {
   'buildtools/win': {
     'packages': [
       {
-        'package': 'gn/gn/windows-amd64',
+        'package': 'gn/gn/windows-${{arch}}',
         'version': Var('gn_version'),
       }
     ],
     'dep_type': 'cipd',
     'condition': 'host_os == "win" and build_with_chromium == False',
-  },
-  'buildtools/reclient': {
-    'packages': [
-      {
-        'package': 'infra/rbe/client/${{platform}}',
-        'version': Var('reclient_version'),
-      }
-    ],
-    'dep_type': 'cipd',
-    'condition': '(host_os == "linux" or host_os == "win") and checkout_reclient',
   },
   'third_party/esbuild': {
     'packages': [
@@ -117,6 +110,16 @@ deps = {
   },
   'third_party/inspector_protocol': {
     'url': Var('inspector_protocol_url') + '@' + Var('inspector_protocol_revision'),
+    'condition': 'build_with_chromium == False',
+  },
+  'third_party/ninja': {
+    'packages': [
+      {
+        'package': 'infra/3pp/tools/ninja/${{platform}}',
+        'version': Var('ninja_version'),
+      }
+    ],
+    'dep_type': 'cipd',
     'condition': 'build_with_chromium == False',
   },
 }
@@ -243,13 +246,25 @@ hooks = [
   {
     'name': 'download_chromium_mac',
     'pattern': '.',
-    'condition': 'host_os == "mac" and build_with_chromium == False',
+    'condition': 'host_os == "mac" and build_with_chromium == False and host_cpu != "arm64"',
     'action': [ 'python3',
                 'scripts/deps/download_chromium.py',
                 'https://commondatastorage.googleapis.com/chromium-browser-snapshots/Mac/' + Var('chromium_mac') + '/chrome-mac.zip',
                 'third_party/chrome',
                 'chrome-mac/Chromium.app/Contents',
                 Var('chromium_mac'),
+    ],
+  },
+  {
+    'name': 'download_chromium_mac',
+    'pattern': '.',
+    'condition': 'host_os == "mac" and build_with_chromium == False and host_cpu == "arm64"',
+    'action': [ 'python3',
+                'scripts/deps/download_chromium.py',
+                'https://commondatastorage.googleapis.com/chromium-browser-snapshots/Mac_Arm/' + Var('chromium_mac_arm') + '/chrome-mac.zip',
+                'third_party/chrome',
+                'chrome-mac/Chromium.app/Contents',
+                Var('chromium_mac_arm'),
     ],
   },
   {

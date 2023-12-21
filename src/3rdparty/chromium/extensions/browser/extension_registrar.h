@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,8 @@
 
 #include <memory>
 
-#include "base/memory/ref_counted.h"
+#include "base/memory/raw_ptr_exclusion.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
 #include "extensions/browser/process_manager.h"
@@ -166,6 +167,12 @@ class ExtensionRegistrar : public ProcessManagerObserver {
   void DeactivateExtension(const Extension* extension,
                            UnloadedExtensionReason reason);
 
+  // Unregister the service worker that is not from manifest and has extension
+  // root scope.
+  void UnregisterServiceWorkerWithRootScope(const Extension* extension);
+  void NotifyServiceWorkerUnregistered(const ExtensionId& extension_id,
+                                       bool success);
+
   // Given an extension that was disabled for reloading, completes the reload
   // by replacing the old extension with the new version and enabling it.
   // Returns true on success.
@@ -176,23 +183,34 @@ class ExtensionRegistrar : public ProcessManagerObserver {
   void OnExtensionRegisteredWithRequestContexts(
       scoped_refptr<const Extension> extension);
 
-  // Upon reloading an extension, spins up its lazy background page if
-  // necessary.
-  void MaybeSpinUpLazyBackgroundPage(const Extension* extension);
+  // Upon reloading an extension, spins up its context if necessary.
+  void MaybeSpinUpLazyContext(const Extension* extension, bool is_newly_added);
 
   // ProcessManagerObserver overrides
   void OnServiceWorkerRegistered(const WorkerId& worker_id) override;
 
-  content::BrowserContext* const browser_context_;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #union
+  RAW_PTR_EXCLUSION content::BrowserContext* const browser_context_;
 
   // Delegate provided in the constructor. Should outlive this object.
-  Delegate* const delegate_;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #union
+  RAW_PTR_EXCLUSION Delegate* const delegate_;
 
   // Keyed services we depend on. Cached here for repeated access.
-  ExtensionSystem* const extension_system_;
-  ExtensionPrefs* const extension_prefs_;
-  ExtensionRegistry* const registry_;
-  RendererStartupHelper* const renderer_helper_;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #union
+  RAW_PTR_EXCLUSION ExtensionSystem* const extension_system_;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #union
+  RAW_PTR_EXCLUSION ExtensionPrefs* const extension_prefs_;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #union
+  RAW_PTR_EXCLUSION ExtensionRegistry* const registry_;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #union
+  RAW_PTR_EXCLUSION RendererStartupHelper* const renderer_helper_;
 
   // Map of DevToolsAgentHost instances that are detached,
   // waiting for an extension to be reloaded.

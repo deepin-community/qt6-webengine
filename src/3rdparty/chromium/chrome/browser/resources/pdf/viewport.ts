@@ -1,41 +1,44 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import {getInstance as getAnnouncerInstance} from 'chrome://resources/cr_elements/cr_a11y_announcer/cr_a11y_announcer.js';
 import {assert, assertNotReached} from 'chrome://resources/js/assert_ts.js';
-import {EventTracker} from 'chrome://resources/js/event_tracker.m.js';
-import {hasKeyModifiers, isRTL} from 'chrome://resources/js/util.m.js';
+import {EventTracker} from 'chrome://resources/js/event_tracker.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+import {hasKeyModifiers, isRTL} from 'chrome://resources/js/util_ts.js';
 
 import {ExtendedKeyEvent, FittingType, Point} from './constants.js';
 import {Gesture, GestureDetector, PinchEventDetail} from './gesture_detector.js';
 import {PdfPluginElement} from './internal_plugin.js';
+import {SwipeDetector, SwipeDirection} from './swipe_detector.js';
 import {ViewportInterface} from './viewport_scroller.js';
 import {InactiveZoomManager, ZoomManager} from './zoom_manager.js';
 
-export type ViewportRect = {
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-};
+export interface ViewportRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
-export type DocumentDimensions = {
-  width: number,
-  height: number,
-  pageDimensions: ViewportRect[],
-  layoutOptions?: LayoutOptions,
-};
+export interface DocumentDimensions {
+  width: number;
+  height: number;
+  pageDimensions: ViewportRect[];
+  layoutOptions?: LayoutOptions;
+}
 
-export type LayoutOptions = {
-  direction: number,
-  defaultPageOrientation: number,
-  twoUpViewEnabled: boolean,
-};
+export interface LayoutOptions {
+  direction: number;
+  defaultPageOrientation: number;
+  twoUpViewEnabled: boolean;
+}
 
-export type Size = {
-  width: number,
-  height: number,
-};
+export interface Size {
+  width: number;
+  height: number;
+}
 
 /** @return The area of the intersection of the rects */
 function getIntersectionArea(rect1: ViewportRect, rect2: ViewportRect): number {
@@ -56,7 +59,7 @@ function vectorDelta(p1: Point, p2: Point): Point {
   return {x: p2.x - p1.x, y: p2.y - p1.y};
 }
 
-type HTMLElementWithExtras = HTMLElement&{
+type HtmlElementWithExtras = HTMLElement&{
   scrollCallback(): void,
   resizeCallback(): void,
 };
@@ -74,6 +77,13 @@ export class Viewport implements ViewportInterface {
 
   private allowedToChangeZoom_: boolean = false;
   private internalZoom_: number = 1;
+
+  /**
+   * Zoom state used to change zoom and fitting type to what it was
+   * originally when saved.
+   */
+  private savedZoom_: number|null = null;
+  private savedFittingType_: FittingType|null = null;
 
   /**
    * Predefined zoom factors to be used when zooming in/out. These are in
@@ -95,7 +105,9 @@ export class Viewport implements ViewportInterface {
   private keepContentCentered_: boolean = false;
   private tracker_: EventTracker = new EventTracker();
   private gestureDetector_: GestureDetector;
+  private swipeDetector_: SwipeDetector;
   private sentPinchEvent_: boolean = false;
+  private fullscreenForTesting_: boolean = false;
 
   /**
    * @param container The element which contains the scrollable content.
@@ -133,6 +145,11 @@ export class Viewport implements ViewportInterface {
     this.gestureDetector_.getEventTarget().addEventListener(
         'wheel', e => this.onWheel_(e as CustomEvent<PinchEventDetail>));
 
+    this.swipeDetector_ = new SwipeDetector(content);
+
+    this.swipeDetector_.getEventTarget().addEventListener(
+        'swipe', e => this.onSwipe_(e as CustomEvent<SwipeDirection>));
+
     // Set to a default zoom manager - used in tests.
     this.setZoomManager(new InactiveZoomManager(this.getZoom.bind(this), 1));
 
@@ -144,12 +161,12 @@ export class Viewport implements ViewportInterface {
       this.scrollContent_.setEventTarget(window);
       // The following line is only used in tests, since they expect
       // |scrollCallback| to be called on the mock |window_| object (legacy).
-      (this.window_ as HTMLElementWithExtras).scrollCallback =
+      (this.window_ as HtmlElementWithExtras).scrollCallback =
           this.updateViewport_.bind(this);
       window.addEventListener('resize', this.resizeWrapper_.bind(this));
       // The following line is only used in tests, since they expect
       // |resizeCallback| to be called on the mock |window_| object (legacy).
-      (this.window_ as HTMLElementWithExtras).resizeCallback =
+      (this.window_ as HtmlElementWithExtras).resizeCallback =
           this.resizeWrapper_.bind(this);
     } else {
       // Standard PDF viewer
@@ -171,6 +188,7 @@ export class Viewport implements ViewportInterface {
   setPresentationMode(enabled: boolean) {
     assert((document.fullscreenElement !== null) === enabled);
     this.gestureDetector_.setPresentationMode(enabled);
+    this.swipeDetector_.setPresentationMode(enabled);
   }
 
   /**
@@ -308,7 +326,7 @@ export class Viewport implements ViewportInterface {
     }
     return {
       width: Math.round(this.documentDimensions_.width * zoom),
-      height: Math.round(this.documentDimensions_.height * zoom)
+      height: Math.round(this.documentDimensions_.height * zoom),
     };
   }
 
@@ -316,7 +334,7 @@ export class Viewport implements ViewportInterface {
   getDocumentDimensions(): Size {
     return {
       width: this.documentDimensions_!.width,
-      height: this.documentDimensions_!.height
+      height: this.documentDimensions_!.height,
     };
   }
 
@@ -343,7 +361,7 @@ export class Viewport implements ViewportInterface {
       x: this.position.x / zoom,
       y: this.position.y / zoom,
       width: this.size.width / zoom,
-      height: this.size.height / zoom
+      height: this.size.height / zoom,
     };
   }
 
@@ -361,7 +379,7 @@ export class Viewport implements ViewportInterface {
 
     return {
       horizontal: zoomedDimensions.width > this.window_.offsetWidth,
-      vertical: zoomedDimensions.height > this.window_.offsetHeight
+      vertical: zoomedDimensions.height > this.window_.offsetHeight,
     };
   }
 
@@ -516,7 +534,7 @@ export class Viewport implements ViewportInterface {
     let zoom = this.getZoom();
     const currentScrollPos = {
       x: this.position.x / zoom,
-      y: this.position.y / zoom
+      y: this.position.y / zoom,
     };
 
     this.internalZoom_ = newZoom;
@@ -550,7 +568,7 @@ export class Viewport implements ViewportInterface {
     const zoom = this.getZoom();
     const currentScrollPos = {
       x: this.position.x - delta.x * zoom,
-      y: this.position.y - delta.y * zoom
+      y: this.position.y - delta.y * zoom,
     };
 
     this.contentSizeChanged_();
@@ -569,7 +587,7 @@ export class Viewport implements ViewportInterface {
     const zoom = this.getZoom();
     return {
       x: (pluginPoint.x + this.position.x) / zoom,
-      y: (pluginPoint.y + this.position.y) / zoom
+      y: (pluginPoint.y + this.position.y) / zoom,
     };
   }
 
@@ -582,6 +600,30 @@ export class Viewport implements ViewportInterface {
     });
   }
 
+  /**
+   * Save the current zoom and fitting type.
+   */
+  saveZoomState() {
+    this.savedZoom_ = this.internalZoom_;
+    this.savedFittingType_ = this.fittingType_;
+  }
+
+  /**
+   * Set zoom and fitting type to what it was when saved. See saveZoomState().
+   */
+  restoreZoomState() {
+    assert(
+        this.savedZoom_ !== null && this.savedFittingType_ !== null,
+        'No saved zoom state exists');
+    if (this.savedFittingType_ === FittingType.NONE) {
+      this.setZoom(this.savedZoom_);
+    } else {
+      this.setFittingType(this.savedFittingType_);
+    }
+    this.savedZoom_ = null;
+    this.savedFittingType_ = null;
+  }
+
   /** @param e Event containing the old browser zoom. */
   private updateZoomFromBrowserChange_(e: CustomEvent<number>) {
     const oldBrowserZoom = e.detail;
@@ -590,7 +632,7 @@ export class Viewport implements ViewportInterface {
       const oldZoom = oldBrowserZoom * this.internalZoom_;
       const currentScrollPos = {
         x: this.position.x / oldZoom,
-        y: this.position.y / oldZoom
+        y: this.position.y / oldZoom,
       };
       this.contentSizeChanged_();
       const newZoom = this.getZoom();
@@ -859,6 +901,25 @@ export class Viewport implements ViewportInterface {
     return Math.max(zoom, 0);
   }
 
+  setFittingType(fittingType: FittingType) {
+    switch (fittingType) {
+      case FittingType.FIT_TO_PAGE:
+        this.fitToPage();
+        return;
+      case FittingType.FIT_TO_WIDTH:
+        this.fitToWidth();
+        return;
+      case FittingType.FIT_TO_HEIGHT:
+        this.fitToHeight();
+        return;
+      case FittingType.NONE:
+        this.fittingType_ = fittingType;
+        return;
+      default:
+        assertNotReached('Invalid fittingType');
+    }
+  }
+
   /** Zoom the viewport so that the page width consumes the entire viewport. */
   fitToWidth() {
     this.mightZoom_(() => {
@@ -972,6 +1033,7 @@ export class Viewport implements ViewportInterface {
       }
       this.setZoomInternal_(nextZoom);
       this.updateViewport_();
+      this.announceZoom_();
     });
   }
 
@@ -988,7 +1050,16 @@ export class Viewport implements ViewportInterface {
       }
       this.setZoomInternal_(nextZoom);
       this.updateViewport_();
+      this.announceZoom_();
     });
+  }
+
+  /** Announce zoom level for screen readers. */
+  private announceZoom_(): void {
+    const announcer = getAnnouncerInstance();
+    const ariaLabel = loadTimeData.getString('zoomTextInputAriaLabel');
+    const zoom = Math.round(100 * this.getZoom());
+    announcer.announce(`${ariaLabel}: ${zoom}%`);
   }
 
   private pageUpDownSpaceHandler_(e: KeyboardEvent, formFieldFocused: boolean) {
@@ -1126,14 +1197,14 @@ export class Viewport implements ViewportInterface {
    * @param page the index of the page to go to. zero-based.
    */
   goToPage(page: number) {
-    this.goToPageAndXY(page, 0, 0);
+    this.goToPageAndXy(page, 0, 0);
   }
 
   /**
    * Go to the given y position in the given page index.
    * @param page the index of the page to go to. zero-based.
    */
-  goToPageAndXY(page: number, x: number|undefined, y: number|undefined) {
+  goToPageAndXy(page: number, x: number|undefined, y: number|undefined) {
     this.mightZoom_(() => {
       if (this.pageDimensions_.length === 0) {
         return;
@@ -1167,6 +1238,7 @@ export class Viewport implements ViewportInterface {
   setDocumentDimensions(documentDimensions: DocumentDimensions) {
     this.mightZoom_(() => {
       const initialDimensions = !this.documentDimensions_;
+      const initialRotations = this.getClockwiseRotations();
       this.documentDimensions_ = documentDimensions;
 
       // Override layout direction based on isRTL().
@@ -1189,7 +1261,21 @@ export class Viewport implements ViewportInterface {
       }
       this.contentSizeChanged_();
       this.resize_();
+
+      if (initialRotations !== this.getClockwiseRotations()) {
+        this.announceRotation_();
+      }
     });
+  }
+
+  /** Announce state of rotation, clockwise, for screen readers. */
+  private announceRotation_() {
+    const announcer = getAnnouncerInstance();
+
+    const clockwiseRotationsDegrees = this.getClockwiseRotations() * 90;
+    const rotationStateLabel = loadTimeData.getString(
+        `rotationStateLabel${clockwiseRotationsDegrees}`);
+    announcer.announce(rotationStateLabel);
   }
 
   /** @return The bounds for page `page` minus the shadows. */
@@ -1239,7 +1325,7 @@ export class Viewport implements ViewportInterface {
       x: x * zoom + spaceOnLeft - this.scrollContent_.scrollLeft,
       y: insetDimensions.y * zoom - this.scrollContent_.scrollTop,
       width: insetDimensions.width * zoom,
-      height: insetDimensions.height * zoom
+      height: insetDimensions.height * zoom,
     };
   }
 
@@ -1278,7 +1364,7 @@ export class Viewport implements ViewportInterface {
     if (zoom) {
       this.setZoom(zoom);
     }
-    this.goToPageAndXY(page, x, y);
+    this.goToPageAndXy(page, x, y);
   }
 
   setSmoothScrolling(isSmooth: boolean) {
@@ -1327,6 +1413,14 @@ export class Viewport implements ViewportInterface {
   }
 
   /**
+   * Dispatches a swipe event of |direction| external to this viewport.
+   */
+  dispatchSwipe(direction: SwipeDirection) {
+    this.swipeDetector_.getEventTarget().dispatchEvent(
+        new CustomEvent('swipe', {detail: direction}));
+  }
+
+  /**
    * A callback that's called when an update to a pinch zoom is detected.
    */
   private onPinchUpdate_(e: CustomEvent<PinchEventDetail>) {
@@ -1364,7 +1458,7 @@ export class Viewport implements ViewportInterface {
         if (!needsScrollbars.horizontal) {
           this.pinchCenter_ = {
             x: this.window_.offsetWidth / 2,
-            y: this.window_.offsetHeight / 2
+            y: this.window_.offsetHeight / 2,
           };
         } else if (this.keepContentCentered_) {
           this.oldCenterInContent_ = this.pluginToContent_(this.pinchCenter_);
@@ -1408,7 +1502,7 @@ export class Viewport implements ViewportInterface {
    * A callback that's called when the start of a pinch zoom is detected.
    */
   private onPinchStart_(e: CustomEvent<PinchEventDetail>) {
-    // Disable pinch gestures in Presentation  mode.
+    // Disable pinch gestures in Presentation mode.
     if (document.fullscreenElement !== null) {
       return;
     }
@@ -1442,11 +1536,33 @@ export class Viewport implements ViewportInterface {
   getGestureDetectorForTesting(): GestureDetector {
     return this.gestureDetector_;
   }
+
+  /**
+   * A callback that's called when a left/right swipe is detected in
+   * Presentation mode.
+   */
+  private onSwipe_(e: CustomEvent<SwipeDirection>) {
+    // Left and right swipes are enabled only in Presentation mode.
+    if (document.fullscreenElement === null && !this.fullscreenForTesting_) {
+      return;
+    }
+
+    if ((e.detail === SwipeDirection.RIGHT_TO_LEFT && !isRTL()) ||
+        (e.detail === SwipeDirection.LEFT_TO_RIGHT && isRTL())) {
+      this.goToNextPage();
+    } else {
+      this.goToPreviousPage();
+    }
+  }
+
+  enableFullscreenForTesting() {
+    this.fullscreenForTesting_ = true;
+  }
 }
 
 /**
  * Enumeration of pinch states.
- * This should match PinchPhase enum in pdf/pdf_view_plugin_base.cc.
+ * This should match PinchPhase enum in pdf/pdf_view_web_plugin.cc.
  */
 export enum PinchPhase {
   NONE = 0,
@@ -1525,7 +1641,7 @@ class ScrollContent {
   /**
    * Dispatches a "scroll" event.
    */
-  dispatchScroll_() {
+  private dispatchScroll_() {
     this.target_ && this.target_.dispatchEvent(new Event('scroll'));
   }
 

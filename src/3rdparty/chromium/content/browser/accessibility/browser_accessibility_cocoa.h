@@ -1,9 +1,11 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_BROWSER_ACCESSIBILITY_BROWSER_ACCESSIBILITY_COCOA_H_
 #define CONTENT_BROWSER_ACCESSIBILITY_BROWSER_ACCESSIBILITY_COCOA_H_
+
+#include "base/memory/raw_ptr.h"
 
 #import <Cocoa/Cocoa.h>
 #include <string>
@@ -56,7 +58,7 @@ id AXTextMarkerRangeFrom(id anchor_text_marker, id focus_text_marker);
 // This class converts it into a format Cocoa can query.
 @interface BrowserAccessibilityCocoa : AXPlatformNodeCocoa {
  @private
-  content::BrowserAccessibility* _owner;
+  raw_ptr<content::BrowserAccessibility> _owner;
   // An array of children of this object. Cached to avoid re-computing.
   base::scoped_nsobject<NSMutableArray> _children;
   // Whether the children have changed and need to be updated.
@@ -80,10 +82,6 @@ id AXTextMarkerRangeFrom(id anchor_text_marker, id focus_text_marker);
 // Invalidate children for a non-ignored ancestor (including self).
 - (void)childrenChanged;
 
-// Convenience method to get the internal, cross-platform role
-// from browserAccessibility_.
-- (ax::mojom::Role)internalRole;
-
 // Get the BrowserAccessibility that this object wraps.
 - (content::BrowserAccessibility*)owner;
 
@@ -101,7 +99,6 @@ id AXTextMarkerRangeFrom(id anchor_text_marker, id focus_text_marker);
 - (NSString*)methodNameForAttribute:(NSString*)attribute;
 
 - (NSString*)valueForRange:(NSRange)range;
-- (NSAttributedString*)attributedValueForRange:(NSRange)range;
 - (NSRect)frameForRange:(NSRange)range;
 
 // Find the index of the given row among the descendants of this object
@@ -112,9 +109,6 @@ id AXTextMarkerRangeFrom(id anchor_text_marker, id focus_text_marker);
 // Choose the appropriate accessibility object to receive an action depending
 // on the characteristics of this accessibility node.
 - (content::BrowserAccessibility*)actionTarget;
-
-// Internally-used property.
-@property(nonatomic, readonly) NSPoint origin;
 
 @property(nonatomic, readonly) NSArray* children;
 @property(nonatomic, readonly) NSArray* columns;
@@ -130,7 +124,6 @@ id AXTextMarkerRangeFrom(id anchor_text_marker, id focus_text_marker);
 @property(nonatomic, readonly) NSNumber* expanded;
 @property(nonatomic, readonly) NSNumber* focused;
 @property(nonatomic, readonly) id header;
-@property(nonatomic, readonly) NSString* help;
 // Index of a row, column, or tree item.
 @property(nonatomic, readonly) NSNumber* index;
 @property(nonatomic, readonly) NSNumber* treeItemRowIndex;
@@ -146,14 +139,10 @@ id AXTextMarkerRangeFrom(id anchor_text_marker, id focus_text_marker);
 @property(nonatomic, readonly) NSString* role;
 @property(nonatomic, readonly) NSArray* rowHeaders;
 @property(nonatomic, readonly) NSValue* rowIndexRange;
-@property(nonatomic, readonly) NSArray* rows;
-// The object is selected as a whole.
-@property(nonatomic, readonly) NSNumber* selected;
 @property(nonatomic, readonly) NSArray* selectedChildren;
 @property(nonatomic, readonly) NSString* selectedText;
 @property(nonatomic, readonly) NSValue* selectedTextRange;
 @property(nonatomic, readonly) id selectedTextMarkerRange;
-@property(nonatomic, readonly) NSValue* size;
 @property(nonatomic, readonly) NSString* sortDirection;
 // Returns a text marker that points to the first character in the document that
 // can be selected with Voiceover.

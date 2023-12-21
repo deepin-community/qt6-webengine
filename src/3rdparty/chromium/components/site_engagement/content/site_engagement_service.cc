@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/metrics/field_trial.h"
 #include "base/observer_list.h"
@@ -118,7 +118,6 @@ mojom::SiteEngagementDetails GetDetailsImpl(base::Clock* clock,
 }
 
 std::vector<mojom::SiteEngagementDetails> GetAllDetailsImpl(
-    browsing_data::TimePeriod time_period,
     base::Clock* clock,
     HostContentSettingsMap* map) {
   std::set<GURL> origins = GetEngagementOriginsFromContentSettings(map);
@@ -126,19 +125,10 @@ std::vector<mojom::SiteEngagementDetails> GetAllDetailsImpl(
   std::vector<mojom::SiteEngagementDetails> details;
   details.reserve(origins.size());
 
-  auto begin_time = browsing_data::CalculateBeginDeleteTime(time_period);
-  auto end_time = browsing_data::CalculateEndDeleteTime(time_period);
-
   for (const GURL& origin : origins) {
     if (!origin.is_valid())
       continue;
-
-    auto score = CreateEngagementScoreImpl(clock, origin, map);
-    auto last_engagement_time = score.last_engagement_time();
-    if (begin_time > last_engagement_time || end_time < last_engagement_time)
-      continue;
-
-    details.push_back(score.GetDetails());
+    details.push_back(GetDetailsImpl(clock, origin, map));
   }
 
   return details;
@@ -224,8 +214,7 @@ SiteEngagementService::GetAllDetailsInBackground(
     scoped_refptr<HostContentSettingsMap> map) {
   StoppedClock clock(now);
   base::AssertLongCPUWorkAllowed();
-  return GetAllDetailsImpl(browsing_data::TimePeriod::ALL_TIME, &clock,
-                           map.get());
+  return GetAllDetailsImpl(&clock, map.get());
 }
 
 // static
@@ -284,18 +273,7 @@ std::vector<mojom::SiteEngagementDetails> SiteEngagementService::GetAllDetails()
   if (IsLastEngagementStale())
     CleanupEngagementScores(true);
   return GetAllDetailsImpl(
-      browsing_data::TimePeriod::ALL_TIME, clock_,
-      permissions::PermissionsClient::Get()->GetSettingsMap(browser_context_));
-}
-
-std::vector<mojom::SiteEngagementDetails>
-SiteEngagementService::GetAllDetailsEngagedInTimePeriod(
-    browsing_data::TimePeriod time_period) const {
-  if (IsLastEngagementStale())
-    CleanupEngagementScores(true);
-
-  return GetAllDetailsImpl(
-      time_period, clock_,
+      clock_,
       permissions::PermissionsClient::Get()->GetSettingsMap(browser_context_));
 }
 
@@ -558,8 +536,6 @@ void SiteEngagementService::RecordMetrics(
       GetMedianEngagementFromSortedDetails(details));
   SiteEngagementMetrics::RecordEngagementScores(details);
 
-  SiteEngagementMetrics::RecordOriginsWithMaxDailyEngagement(
-      OriginsWithMaxDailyEngagement());
   SiteEngagementMetrics::RecordOriginsWithMaxEngagement(
       origins_with_max_engagement);
 }
@@ -686,24 +662,6 @@ SiteEngagementScore SiteEngagementService::CreateEngagementScore(
   return CreateEngagementScoreImpl(
       clock_, origin,
       permissions::PermissionsClient::Get()->GetSettingsMap(browser_context_));
-}
-
-int SiteEngagementService::OriginsWithMaxDailyEngagement() const {
-  int total_origins = 0;
-
-  // We cannot call GetScoreMap as we need the score objects, not raw scores.
-  for (const auto& site : GetContentSettingsFromBrowserContext(
-           browser_context_, ContentSettingsType::SITE_ENGAGEMENT)) {
-    GURL origin(site.primary_pattern.ToString());
-
-    if (!origin.is_valid())
-      continue;
-
-    if (CreateEngagementScore(origin).MaxPointsPerDayAdded())
-      ++total_origins;
-  }
-
-  return total_origins;
 }
 
 }  // namespace site_engagement

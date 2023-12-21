@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -75,7 +75,7 @@ class ProtocolHandler {
   // ignored.
   bool IsEquivalent(const ProtocolHandler& other) const;
 
-  // Encodes this protocol handler as a DictionaryValue.
+  // Encodes this protocol handler as a `base::Value::Dict`.
   base::Value::Dict Encode() const;
 
   // Returns a friendly name for |protocol| if one is available, otherwise

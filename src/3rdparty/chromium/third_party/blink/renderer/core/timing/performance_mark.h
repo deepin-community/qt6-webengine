@@ -29,6 +29,7 @@
 #include "base/time/time.h"
 #include "third_party/blink/public/mojom/timing/performance_mark_or_measure.mojom-blink-forward.h"
 #include "third_party/blink/renderer/bindings/core/v8/serialization/serialized_script_value.h"
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/timing/performance_entry.h"
 #include "third_party/blink/renderer/platform/bindings/trace_wrapper_v8_reference.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
@@ -56,18 +57,16 @@ class CORE_EXPORT PerformanceMark final : public PerformanceEntry {
                                  ExceptionState&);
 
   // This constructor is only public so that MakeGarbageCollected can call it.
-  PerformanceMark(
-      const AtomicString& name,
-      double start_time,
-      base::TimeTicks unsafe_time_for_traces,
-      scoped_refptr<SerializedScriptValue>,
-      ExceptionState& exception_state,
-      uint32_t navigation_count = 0); /* TODO(1273925): Remove the default value
-                                      when all callers have been updated. */
+  PerformanceMark(const AtomicString& name,
+                  double start_time,
+                  base::TimeTicks unsafe_time_for_traces,
+                  scoped_refptr<SerializedScriptValue>,
+                  ExceptionState& exception_state,
+                  DOMWindow* source);
 
   ~PerformanceMark() override = default;
 
-  AtomicString entryType() const override;
+  const AtomicString& entryType() const override;
   PerformanceEntryType EntryTypeEnum() const override;
   mojom::blink::PerformanceMarkOrMeasurePtr ToMojoPerformanceMarkOrMeasure()
       override;

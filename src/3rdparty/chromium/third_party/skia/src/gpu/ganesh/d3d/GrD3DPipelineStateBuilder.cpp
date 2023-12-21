@@ -11,6 +11,7 @@
 
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/d3d/GrD3DTypes.h"
+#include "include/private/SkSLProgramKind.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkTraceEvent.h"
 #include "src/gpu/ganesh/GrAutoLocaleSetter.h"
@@ -24,9 +25,12 @@
 #include "src/gpu/ganesh/d3d/GrD3DRootSignature.h"
 #include "src/gpu/ganesh/d3d/GrD3DUtil.h"
 #include "src/sksl/SkSLCompiler.h"
+#include "src/sksl/SkSLProgramSettings.h"
 #include "src/utils/SkShaderUtils.h"
 
 #include <d3dcompiler.h>
+
+using namespace skia_private;
 
 std::unique_ptr<GrD3DPipelineState> GrD3DPipelineStateBuilder::MakePipelineState(
         GrD3DGpu* gpu,
@@ -63,10 +67,6 @@ const GrCaps* GrD3DPipelineStateBuilder::caps() const {
 
 SkSL::Compiler* GrD3DPipelineStateBuilder::shaderCompiler() const {
     return fGpu->shaderCompiler();
-}
-
-void GrD3DPipelineStateBuilder::finalizeFragmentOutputColor(GrShaderVar& outputColor) {
-    outputColor.addLayoutQualifier("location = 0, index = 0");
 }
 
 void GrD3DPipelineStateBuilder::finalizeFragmentSecondaryColor(GrShaderVar& outputColor) {
@@ -136,7 +136,7 @@ bool GrD3DPipelineStateBuilder::loadHLSLFromCache(SkReadBuffer* reader, gr_cp<ID
 gr_cp<ID3DBlob> GrD3DPipelineStateBuilder::compileD3DProgram(
         SkSL::ProgramKind kind,
         const std::string& sksl,
-        const SkSL::Program::Settings& settings,
+        const SkSL::ProgramSettings& settings,
         SkSL::Program::Inputs* outInputs,
         std::string* outHLSL) {
 #ifdef SK_DEBUG
@@ -346,7 +346,7 @@ static void fill_in_blend_state(const GrPipeline& pipeline, D3D12_BLEND_DESC* bl
     blendDesc->AlphaToCoverageEnable = false;
     blendDesc->IndependentBlendEnable = false;
 
-    const GrXferProcessor::BlendInfo& blendInfo = pipeline.getXferProcessor().getBlendInfo();
+    const skgpu::BlendInfo& blendInfo = pipeline.getXferProcessor().getBlendInfo();
 
     skgpu::BlendEquation equation = blendInfo.fEquation;
     skgpu::BlendCoeff srcCoeff = blendInfo.fSrcBlend;
@@ -364,7 +364,7 @@ static void fill_in_blend_state(const GrPipeline& pipeline, D3D12_BLEND_DESC* bl
         rtBlend.BlendOpAlpha = blend_equation_to_d3d_op(equation);
     }
 
-    if (!blendInfo.fWriteColor) {
+    if (!blendInfo.fWritesColor) {
         rtBlend.RenderTargetWriteMask = 0;
     } else {
         rtBlend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
@@ -481,8 +481,6 @@ static D3D12_PRIMITIVE_TOPOLOGY_TYPE gr_primitive_type_to_d3d(GrPrimitiveType pr
         case GrPrimitiveType::kLines: // fall through
         case GrPrimitiveType::kLineStrip:
             return D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE;
-        case GrPrimitiveType::kPatches: // fall through, unsupported
-        case GrPrimitiveType::kPath: // fall through, unsupported
         default:
             SkUNREACHABLE;
     }
@@ -514,7 +512,7 @@ gr_cp<ID3D12PipelineState> create_pipeline_state(
 
     unsigned int totalAttributeCnt = programInfo.geomProc().numVertexAttributes() +
                                      programInfo.geomProc().numInstanceAttributes();
-    SkAutoSTArray<4, D3D12_INPUT_ELEMENT_DESC> inputElements(totalAttributeCnt);
+    AutoSTArray<4, D3D12_INPUT_ELEMENT_DESC> inputElements(totalAttributeCnt);
     setup_vertex_input_layout(programInfo.geomProc(), inputElements.get());
 
     psoDesc.InputLayout = { inputElements.get(), totalAttributeCnt };
@@ -557,7 +555,7 @@ std::unique_ptr<GrD3DPipelineState> GrD3DPipelineStateBuilder::finalize() {
 
     this->finalizeShaders();
 
-    SkSL::Program::Settings settings;
+    SkSL::ProgramSettings settings;
     settings.fSharpenTextures = true;
     settings.fRTFlipOffset = fUniformHandler.getRTFlipOffset();
     settings.fRTFlipBinding = 0;

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,21 +7,20 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/files/file_path.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/strings/string_util.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/device_event_log/device_event_log.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chromeos/dbus/permission_broker/permission_broker_client.h"  // nogncheck
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace device {
 
@@ -51,14 +50,14 @@ void SerialIoHandler::Open(const mojom::SerialConnectionOptions& options,
   DCHECK(ui_thread_task_runner_.get());
   MergeConnectionOptions(options);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS)
   // Note: dbus clients are destroyed in PostDestroyThreads so passing |client|
   // as unretained is safe.
   auto* client = chromeos::PermissionBrokerClient::Get();
   DCHECK(client) << "Could not get permission_broker client.";
   // PermissionBrokerClient should be called on the UI thread.
   scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-      base::ThreadTaskRunnerHandle::Get();
+      base::SingleThreadTaskRunner::GetCurrentDefault();
   ui_thread_task_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(&chromeos::PermissionBrokerClient::OpenPath,
@@ -72,11 +71,11 @@ void SerialIoHandler::Open(const mojom::SerialConnectionOptions& options,
       FROM_HERE,
       {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::BindOnce(&SerialIoHandler::StartOpen, this,
-                     base::ThreadTaskRunnerHandle::Get()));
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+                     base::SingleThreadTaskRunner::GetCurrentDefault()));
+#endif  // BUILDFLAG(IS_CHROMEOS)
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS)
 
 void SerialIoHandler::OnPathOpened(
     scoped_refptr<base::SingleThreadTaskRunner> io_thread_task_runner,
@@ -105,7 +104,7 @@ void SerialIoHandler::ReportPathOpenError(const std::string& error_name,
   std::move(open_complete_).Run(false);
 }
 
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 void SerialIoHandler::MergeConnectionOptions(
     const mojom::SerialConnectionOptions& options) {

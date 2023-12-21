@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -70,14 +70,15 @@ FXDIB_Format XFA_GetDIBFormat(FXCODEC_IMAGE_TYPE type,
 void XFA_DrawImage(CFGAS_GEGraphics* pGS,
                    const CFX_RectF& rtImage,
                    const CFX_Matrix& matrix,
-                   const RetainPtr<CFX_DIBitmap>& pDIBitmap,
+                   RetainPtr<CFX_DIBitmap> pDIBitmap,
                    XFA_AttributeValue iAspect,
                    const CFX_Size& dpi,
                    XFA_AttributeValue iHorzAlign,
                    XFA_AttributeValue iVertAlign) {
   if (rtImage.IsEmpty())
     return;
-  if (!pDIBitmap || !pDIBitmap->GetBuffer())
+
+  if (!pDIBitmap || pDIBitmap->GetBuffer().empty())
     return;
 
   CFX_RectF rtFit(rtImage.TopLeft(),
@@ -135,23 +136,24 @@ void XFA_DrawImage(CFGAS_GEGraphics* pGS,
       CFX_Matrix(rtFit.width, 0, 0, rtFit.height, rtFit.left, rtFit.top));
   mtImage.Concat(matrix);
 
-  CXFA_ImageRenderer imageRender(pRenderDevice, pDIBitmap, mtImage);
-  if (!imageRender.Start()) {
+  CXFA_ImageRenderer imageRender(pRenderDevice, std::move(pDIBitmap), mtImage);
+  if (!imageRender.Start())
     return;
-  }
+
   while (imageRender.Continue())
     continue;
 }
 
 RetainPtr<CFX_DIBitmap> XFA_LoadImageFromBuffer(
-    const RetainPtr<IFX_SeekableReadStream>& pImageFileRead,
+    RetainPtr<IFX_SeekableReadStream> pImageFileRead,
     FXCODEC_IMAGE_TYPE type,
     int32_t& iImageXDpi,
     int32_t& iImageYDpi) {
   auto pProgressiveDecoder = std::make_unique<ProgressiveDecoder>();
 
   CFX_DIBAttribute dibAttr;
-  pProgressiveDecoder->LoadImageInfo(pImageFileRead, type, &dibAttr, false);
+  pProgressiveDecoder->LoadImageInfo(std::move(pImageFileRead), type, &dibAttr,
+                                     false);
   switch (dibAttr.m_wDPIUnit) {
     case CFX_DIBAttribute::kResUnitCentimeter:
       dibAttr.m_nXDPI = static_cast<int32_t>(dibAttr.m_nXDPI * 2.54f);

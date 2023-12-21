@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include "base/test/task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
-#include "ui/accessibility/platform/ax_platform_node_delegate_base.h"
+#include "ui/accessibility/platform/ax_platform_node_delegate.h"
 #include "ui/accessibility/platform/fuchsia/accessibility_bridge_fuchsia_impl.h"
 #include "ui/accessibility/platform/fuchsia/ax_platform_node_fuchsia.h"
 #include "ui/accessibility/platform/fuchsia/semantic_provider.h"
@@ -40,6 +40,8 @@ class MockSemanticProvider : public AXFuchsiaSemanticProvider {
 
   float GetPixelScale() const override { return pixel_scale_; }
 
+  void SetPixelScale(float pixel_scale) override { pixel_scale_ = pixel_scale; }
+
   const absl::optional<fuchsia::accessibility::semantics::Node>& last_update()
       const {
     return last_update_;
@@ -52,8 +54,6 @@ class MockSemanticProvider : public AXFuchsiaSemanticProvider {
     return last_event_;
   }
 
-  void set_pixel_scale(float pixel_scale) { pixel_scale_ = pixel_scale; }
-
  private:
   absl::optional<fuchsia::accessibility::semantics::Node> last_update_;
   absl::optional<uint32_t> last_deletion_;
@@ -61,7 +61,7 @@ class MockSemanticProvider : public AXFuchsiaSemanticProvider {
   float pixel_scale_ = 1.f;
 };
 
-class MockAXPlatformNodeDelegate : public AXPlatformNodeDelegateBase {
+class MockAXPlatformNodeDelegate : public AXPlatformNodeDelegate {
  public:
   MockAXPlatformNodeDelegate() = default;
   ~MockAXPlatformNodeDelegate() override = default;
@@ -99,7 +99,6 @@ class AccessibilityBridgeFuchsiaTest : public ::testing::Test {
     auto view_ref_pair = scenic::ViewRefPair::New();
     accessibility_bridge_ = std::make_unique<AccessibilityBridgeFuchsiaImpl>(
         /*root_window=*/nullptr, std::move(view_ref_pair.view_ref),
-        base::BindRepeating([]() { return 1.0f; }),
         base::RepeatingCallback<void(bool)>(),
         base::RepeatingCallback<bool(zx_status_t)>(), inspect::Node());
     accessibility_bridge_->set_semantic_provider_for_test(

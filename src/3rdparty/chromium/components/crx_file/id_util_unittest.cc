@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,7 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace crx_file {
-namespace id_util {
+namespace crx_file::id_util {
 
 TEST(IDUtilTest, GenerateID) {
   const uint8_t public_key_info[] = {
@@ -51,5 +50,4 @@ TEST(IDUtilTest, GenerateID) {
       GenerateId("this_string_is_longer_than_a_single_sha256_hash_digest"));
 }
 
-}  // namespace id_util
-}  // namespace crx_file
+}  // namespace crx_file::id_util

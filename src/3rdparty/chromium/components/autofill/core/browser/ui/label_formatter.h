@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "base/memory/raw_ref.h"
 #include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/field_types.h"
 
@@ -49,12 +50,6 @@ class LabelFormatter {
       const AutofillProfile& profile,
       FieldTypeGroup focused_group) const = 0;
 
-  // Returns the FieldTypeGroup with which |focused_field_type_| is associated.
-  // Billing field types are mapped to their corresponding home address field
-  // types. For example, if focused_field_type_ is ADDRESS_BILLING_ZIP, then
-  // the resulting FieldTypeGroup is kAddressHome instead of kAddressBilling.
-  FieldTypeGroup GetFocusedNonBillingGroup() const;
-
   const std::string& app_locale() const { return app_locale_; }
 
   ServerFieldType focused_field_type() const { return focused_field_type_; }
@@ -71,7 +66,7 @@ class LabelFormatter {
   // It is safe to store a reference here because the LabelFormatter is
   // destroyed when the suggestions for which the labels are constructed are
   // returned.
-  const std::vector<AutofillProfile*>& profiles_;
+  const raw_ref<const std::vector<AutofillProfile*>> profiles_;
 
   // The locale for which to generate labels. This reflects the language and
   // country for which the application is translated, e.g. en-AU for Australian

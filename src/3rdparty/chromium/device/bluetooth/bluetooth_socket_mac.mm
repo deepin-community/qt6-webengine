@@ -1,8 +1,10 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "device/bluetooth/bluetooth_socket_mac.h"
+
+#include "base/memory/raw_ptr.h"
 
 #import <IOBluetooth/IOBluetooth.h>
 #include <stdint.h>
@@ -13,10 +15,10 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/containers/queue.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/mac/scoped_cftyperef.h"
 #include "base/memory/ref_counted.h"
 #include "base/numerics/safe_conversions.h"
@@ -98,7 +100,7 @@ using device::BluetoothSocket;
 @interface BluetoothRfcommConnectionListener : NSObject {
  @private
   // The socket that owns |self|.
-  device::BluetoothSocketMac* _socket;  // weak
+  raw_ptr<device::BluetoothSocketMac> _socket;  // weak
 
   // The OS mechanism used to subscribe to and unsubscribe from RFCOMM channel
   // creation notifications.
@@ -160,7 +162,7 @@ using device::BluetoothSocket;
 @interface BluetoothL2capConnectionListener : NSObject {
  @private
   // The socket that owns |self|.
-  device::BluetoothSocketMac* _socket;  // weak
+  raw_ptr<device::BluetoothSocketMac> _socket;  // weak
 
   // The OS mechanism used to subscribe to and unsubscribe from L2CAP channel
   // creation notifications.

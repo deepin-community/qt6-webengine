@@ -1,13 +1,12 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 #include "base/test/trace_test_utils.h"
 
 #include "base/no_destructor.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/tracing/perfetto_platform.h"
-#include "third_party/perfetto/include/perfetto/tracing.h"
+#include "third_party/perfetto/include/perfetto/tracing/core/data_source_config.h"
 
 namespace base {
 namespace test {

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,8 +19,10 @@
 #include "components/feed/core/proto/v2/wire/stream_structure.pb.h"
 #include "components/feed/core/proto/v2/wire/token.pb.h"
 #include "components/feed/core/v2/feedstore_util.h"
+#include "components/feed/core/v2/ios_shared_experiments_translator.h"
 #include "components/feed/core/v2/metrics_reporter.h"
 #include "components/feed/core/v2/proto_util.h"
+#include "components/feed/feed_feature_list.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace feed {
@@ -52,8 +54,8 @@ feedstore::StreamStructure::Type TranslateNodeType(
       return feedstore::StreamStructure::STREAM;
     case feedwire::Feature::CONTENT:
       return feedstore::StreamStructure::CONTENT;
-    case feedwire::Feature::CLUSTER:
-      return feedstore::StreamStructure::CLUSTER;
+    case feedwire::Feature::GROUP:
+      return feedstore::StreamStructure::GROUP;
     default:
       return feedstore::StreamStructure::UNKNOWN_TYPE;
   }
@@ -337,8 +339,17 @@ RefreshResponseData TranslateWireResponse(
       chrome_response_metadata.logging_enabled());
   result->stream_data.set_privacy_notice_fulfilled(
       chrome_response_metadata.privacy_notice_fulfilled());
+
   for (const feedstore::Content& content : result->content) {
-    result->stream_data.add_content_ids(content.content_id().id());
+    feedstore::StreamContentHashList* hash_list = nullptr;
+    for (auto& metadata : content.prefetch_metadata()) {
+      if (!metadata.has_uri())
+        continue;
+      if (hash_list == nullptr)
+        hash_list = result->stream_data.add_content_hashes();
+      hash_list->add_hashes(
+          feedstore::ContentHashFromPrefetchMetadata(metadata));
+    }
   }
 
   absl::optional<std::string> session_id = absl::nullopt;
@@ -353,14 +364,8 @@ RefreshResponseData TranslateWireResponse(
     session_id = chrome_response_metadata.session_id();
   }
 
-  absl::optional<Experiments> experiments = absl::nullopt;
-  if (chrome_response_metadata.experiments_size() > 0) {
-    Experiments e;
-    for (feedwire::Experiment exp : chrome_response_metadata.experiments()) {
-      e[exp.trial_name()] = exp.group_name();
-    }
-    experiments = std::move(e);
-  }
+  absl::optional<Experiments> experiments =
+      TranslateExperiments(chrome_response_metadata.experiments());
 
   MetricsReporter::ActivityLoggingEnabled(
       chrome_response_metadata.logging_enabled());
@@ -373,10 +378,12 @@ RefreshResponseData TranslateWireResponse(
   response_data.content_lifetime = std::move(content_lifetime);
   response_data.session_id = std::move(session_id);
   response_data.experiments = std::move(experiments);
-  response_data.server_request_received_timestamp_ns =
-      feed_response->feed_response_metadata().event_id().time_usec() * 1'000;
-  response_data.server_response_sent_timestamp_ns =
-      feed_response->feed_response_metadata().response_time_ms() * 1'000'000;
+  response_data.server_request_received_timestamp =
+      feedstore::FromTimestampMicros(
+          feed_response->feed_response_metadata().event_id().time_usec());
+  response_data.server_response_sent_timestamp = feedstore::FromTimestampMillis(
+      feed_response->feed_response_metadata().response_time_ms());
+  response_data.last_fetch_timestamp = current_time;
   response_data.web_and_app_activity_enabled =
       chrome_response_metadata.web_and_app_activity_enabled();
   response_data.discover_personalization_enabled =

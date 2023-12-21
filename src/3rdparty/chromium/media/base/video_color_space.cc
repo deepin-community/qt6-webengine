@@ -1,8 +1,10 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "media/base/video_color_space.h"
+
+#include "base/strings/stringprintf.h"
 
 namespace media {
 
@@ -287,6 +289,13 @@ gfx::ColorSpace VideoColorSpace::ToGfxColorSpace() const {
   }
 
   return gfx::ColorSpace(primary_id, transfer_id, matrix_id, range);
+}
+
+std::string VideoColorSpace::ToString() const {
+  return base::StringPrintf("{primary=%d, transfer=%d, matrix=%d, range=%d}",
+                            static_cast<int>(primaries),
+                            static_cast<int>(transfer),
+                            static_cast<int>(matrix), static_cast<int>(range));
 }
 
 VideoColorSpace VideoColorSpace::REC709() {

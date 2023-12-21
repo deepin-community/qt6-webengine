@@ -8,6 +8,7 @@
 #include <QtQml/qqmlcontext.h>
 #include <QtQml/qqmlengine.h>
 #include <QtQuick/qquickitem.h>
+#include <QtQml/qqmlfile.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -35,15 +36,18 @@ QQuickPdfDocument::QQuickPdfDocument(QObject *parent)
 /*!
     \internal
 */
-QQuickPdfDocument::~QQuickPdfDocument() = default;
+QQuickPdfDocument::~QQuickPdfDocument()
+{
+    delete m_carrierFile;
+};
 
 void QQuickPdfDocument::classBegin()
 {
     m_doc = static_cast<QPdfDocument *>(qmlExtendedObject(this));
     Q_ASSERT(m_doc);
-    connect(m_doc, &QPdfDocument::passwordChanged, this, [this]() {
-        if (resolvedSource().isValid() && resolvedSource().isLocalFile())
-            m_doc->load(resolvedSource().path());
+    connect(m_doc, &QPdfDocument::passwordChanged, this, [this]() -> void {
+        if (resolvedSource().isValid())
+            m_doc->load(QQmlFile::urlToLocalFileOrQrc(resolvedSource()));
     });
     connect(m_doc, &QPdfDocument::statusChanged, this, [this] (QPdfDocument::Status status) {
         emit errorChanged();
@@ -73,10 +77,8 @@ void QQuickPdfDocument::setSource(QUrl source)
     emit sourceChanged();
     const QQmlContext *context = qmlContext(this);
     m_resolvedSource = context ? context->resolvedUrl(source) : source;
-    if (source.scheme() == QLatin1String("qrc"))
-        m_doc->load(QLatin1Char(':') + m_resolvedSource.path());
-    else
-        m_doc->load(m_resolvedSource.toLocalFile());
+    if (m_resolvedSource.isValid())
+        m_doc->load(QQmlFile::urlToLocalFileOrQrc(m_resolvedSource));
 }
 
 /*!

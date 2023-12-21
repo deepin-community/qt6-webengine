@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -74,7 +74,6 @@ AutofillProviderAndroid::AutofillProviderAndroid(
     const JavaRef<jobject>& jcaller,
     content::WebContents* web_contents)
     : AutofillProvider(web_contents),
-      id_(kNoQueryId),
       java_ref_(JavaObjectWeakGlobalRef(env, jcaller)),
       check_submission_(false) {}
 
@@ -102,16 +101,15 @@ void AutofillProviderAndroid::DetachFromJavaAutofillProvider(JNIEnv* env) {
 
 void AutofillProviderAndroid::OnAskForValuesToFill(
     AndroidAutofillManager* manager,
-    int32_t id,
     const FormData& form,
     const FormFieldData& field,
     const gfx::RectF& bounding_box,
-    bool /*unused_autoselect_first_suggestion*/) {
+    AutoselectFirstSuggestion /*unused_autoselect_first_suggestion*/,
+    FormElementWasClicked /*unused_form_element_was_clicked*/) {
   // The id isn't passed to Java side because Android API guarantees the
   // response is always for current session, so we just use the current id
   // in response, see OnAutofillAvailable.
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  id_ = id;
 
   // Focus or field value change will also trigger the query, so it should be
   // ignored if the form is same.
@@ -151,18 +149,17 @@ void AutofillProviderAndroid::StartNewSession(AndroidAutofillManager* manager,
   if (obj.is_null())
     return;
 
-  form_ = std::make_unique<FormDataAndroid>(
-      form,
-      base::BindRepeating(
-          &ContentAutofillDriver::TransformBoundingBoxToViewportCoordinates,
-          base::Unretained(
-              static_cast<ContentAutofillDriver*>(manager->driver()))));
+  form_ = std::make_unique<FormDataAndroid>(form);
   field_id_ = field.global_id();
+  field_type_group_ = manager->ComputeFieldTypeGroupForField(form, field);
+  triggered_origin_ = field.origin;
 
   size_t index;
   if (!form_->GetFieldIndex(field, &index)) {
     form_.reset();
     field_id_ = {};
+    field_type_group_ = FieldTypeGroup::kNoGroup;
+    triggered_origin_ = {};
     return;
   }
 
@@ -175,7 +172,7 @@ void AutofillProviderAndroid::StartNewSession(AndroidAutofillManager* manager,
   gfx::RectF transformed_bounding = ToClientAreaBound(bounding_box);
 
   ScopedJavaLocalRef<jobject> form_obj = form_->GetJavaPeer(form_structure);
-  manager_ = manager->GetWeakPtr();
+  manager_ = manager->GetWeakPtrToLeafClass();
   Java_AutofillProvider_startAutofillSession(
       env, obj, form_obj, index, transformed_bounding.x(),
       transformed_bounding.y(), transformed_bounding.width(),
@@ -187,8 +184,11 @@ void AutofillProviderAndroid::OnAutofillAvailable(JNIEnv* env,
                                                   jobject formData) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (manager_ && form_) {
-    const FormData& form = form_->GetAutofillValues();
-    FillOrPreviewForm(manager_.get(), id_, form);
+    form_->UpdateFromJava();
+    const FormData& form = form_->form();
+
+    FillOrPreviewForm(manager_.get(), form, field_type_group_,
+                      triggered_origin_);
   }
 }
 
@@ -309,10 +309,6 @@ void AutofillProviderAndroid::OnFocusOnFormField(
       !form_->GetSimilarFieldIndex(field, &index))
     return;
 
-  // Because this will trigger a suggestion query, set request id to browser
-  // initiated request.
-  id_ = kNoQueryId;
-
   OnFocusChanged(true, index, ToClientAreaBound(bounding_box));
 }
 
@@ -369,9 +365,6 @@ void AutofillProviderAndroid::OnDidFillAutofillFormData(
   Java_AutofillProvider_onDidFillAutofillFormData(env, obj);
 }
 
-void AutofillProviderAndroid::OnFormsSeen(AndroidAutofillManager* manager,
-                                          const std::vector<FormData>& forms) {}
-
 void AutofillProviderAndroid::OnHidePopup(AndroidAutofillManager* manager) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (manager == manager_.get()) {
@@ -391,7 +384,7 @@ void AutofillProviderAndroid::OnServerPredictionsAvailable(
     return;
 
   if (auto* form_structure =
-          manager_->FindCachedFormByRendererId(form_->form().global_id())) {
+          manager_->FindCachedFormById(form_->form().global_id())) {
     form_->UpdateFieldTypes(*form_structure);
 
     JNIEnv* env = AttachCurrentThread();
@@ -410,7 +403,7 @@ void AutofillProviderAndroid::OnServerQueryRequestError(
     return;
 
   if (auto* form_structure =
-          manager_->FindCachedFormByRendererId(form_->form().global_id())) {
+          manager_->FindCachedFormById(form_->form().global_id())) {
     if (form_structure->form_signature() != form_signature)
       return;
 
@@ -443,6 +436,13 @@ void AutofillProviderAndroid::Reset(AndroidAutofillManager* manager) {
   }
 }
 
+bool AutofillProviderAndroid::GetCachedIsAutofilled(
+    const FormFieldData& field) const {
+  size_t field_index = 0u;
+  return form_ && form_->GetFieldIndex(field, &field_index) &&
+         form_->form().fields[field_index].is_autofilled;
+}
+
 bool AutofillProviderAndroid::IsCurrentlyLinkedManager(
     AndroidAutofillManager* manager) {
   return manager == manager_.get();
@@ -461,7 +461,8 @@ gfx::RectF AutofillProviderAndroid::ToClientAreaBound(
 void AutofillProviderAndroid::Reset() {
   form_.reset(nullptr);
   field_id_ = {};
-  id_ = kNoQueryId;
+  field_type_group_ = FieldTypeGroup::kNoGroup;
+  triggered_origin_ = {};
   check_submission_ = false;
 }
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -67,6 +67,11 @@ void ExtensionDownloaderDelegate::OnExtensionDownloadStageChanged(
     const ExtensionId& id,
     Stage stage) {}
 
+void ExtensionDownloaderDelegate::OnExtensionUpdateFound(
+    const ExtensionId& id,
+    const std::set<int>& request_ids,
+    const base::Version& version) {}
+
 void ExtensionDownloaderDelegate::OnExtensionDownloadCacheStatusRetrieved(
     const ExtensionId& id,
     CacheStatus cache_status) {}
@@ -86,7 +91,7 @@ void ExtensionDownloaderDelegate::OnExtensionDownloadRetryForTests() {}
 
 bool ExtensionDownloaderDelegate::GetPingDataForExtension(
     const ExtensionId& id,
-    ManifestFetchData::PingData* ping) {
+    DownloadPingData* ping) {
   return false;
 }
 

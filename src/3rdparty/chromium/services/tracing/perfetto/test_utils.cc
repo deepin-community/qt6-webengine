@@ -1,12 +1,13 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 #include "services/tracing/perfetto/test_utils.h"
 
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/tracing/perfetto_platform.h"
 #include "services/tracing/public/cpp/perfetto/shared_memory.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -278,6 +279,8 @@ void MockConsumer::OnDetach(bool /*success*/) {}
 void MockConsumer::OnAttach(bool /*success*/, const perfetto::TraceConfig&) {}
 void MockConsumer::OnTraceStats(bool /*success*/, const perfetto::TraceStats&) {
 }
+void MockConsumer::OnSessionCloned(bool /*success*/,
+                                   const std::string& /*error*/) {}
 
 void MockConsumer::OnObservableEvents(
     const perfetto::ObservableEvents& events) {
@@ -351,9 +354,9 @@ MockProducerHost::MockProducerHost(
   mojo::PendingRemote<mojom::ProducerHost> host_remote;
   auto client_receiver = client.InitWithNewPipeAndPassReceiver();
   Initialize(std::move(client), service->GetService(), producer_name_,
-             static_cast<MojoSharedMemory*>(
+             static_cast<ChromeBaseSharedMemory*>(
                  producer_client->shared_memory_for_testing())
-                 ->Clone(),
+                 ->CloneRegion(),
              PerfettoProducer::kSMBPageSizeBytes);
   receiver_.Bind(host_remote.InitWithNewPipeAndPassReceiver());
   producer_client->BindClientAndHostPipesForTesting(std::move(client_receiver),
@@ -430,7 +433,7 @@ TracingUnitTest::TracingUnitTest()
           base::test::TaskEnvironment::MainThreadType::IO)),
       tracing_environment_(std::make_unique<base::test::TracingEnvironment>(
           *task_environment_,
-          base::ThreadTaskRunnerHandle::Get(),
+          base::SingleThreadTaskRunner::GetCurrentDefault(),
           PerfettoTracedProcess::Get()->perfetto_platform_for_testing())) {}
 
 TracingUnitTest::~TracingUnitTest() {
@@ -442,7 +445,7 @@ void TracingUnitTest::SetUp() {
 
   // Also tell PerfettoTracedProcess to use the current task environment.
   test_handle_ = PerfettoTracedProcess::SetupForTesting(
-      base::ThreadTaskRunnerHandle::Get());
+      base::SingleThreadTaskRunner::GetCurrentDefault());
   PerfettoTracedProcess::Get()->OnThreadPoolAvailable(
       /* enable_consumer */ true);
 

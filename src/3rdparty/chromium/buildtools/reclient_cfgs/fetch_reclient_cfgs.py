@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2021 The Chromium Authors. All rights reserved.
+# Copyright 2021 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -34,10 +34,13 @@ def NaclRevision():
 
 def CipdEnsure(pkg_name, ref, directory):
     print('ensure %s %s in %s' % (pkg_name, ref, directory))
+    ensure_file = """
+$ParanoidMode CheckPresence
+{pkg} {ref}
+""".format(pkg=pkg_name, ref=ref).encode('utf-8')
     output = subprocess.check_output(
-        ['cipd', 'ensure', '-root', directory,
-         '-ensure-file', '-'],
-        input=('%s %s' % (pkg_name, ref)).encode('utf-8'))
+        ' '.join(['cipd', 'ensure', '-log-level=debug', '-root', directory,
+                  '-ensure-file', '-']), shell=True, input=ensure_file)
     print(output)
 
 def RbeProjectFromEnv():
@@ -69,7 +72,8 @@ def main():
 
     tool_revisions = {
         'chromium-browser-clang': ClangRevision(),
-        'nacl': NaclRevision()
+        'nacl': NaclRevision(),
+        'python': '3.8.0',
     }
     for toolchain in tool_revisions:
       revision = tool_revisions[toolchain]
@@ -77,24 +81,30 @@ def main():
         print('failed to detect %s revision' % toolchain)
         continue
 
+      toolchain_root = os.path.join(THIS_DIR, toolchain)
+      cipd_ref = 'revision/' + revision
+      # 'cipd ensure' initializes the directory.
       CipdEnsure(posixpath.join(cipd_prefix, toolchain),
-                  ref='revision/' + revision,
-                  directory=os.path.join(THIS_DIR, toolchain))
-      if os.path.exists(os.path.join(THIS_DIR,
-                                     toolchain, 'win-cross-experiments')):
-        # copy in win-cross-experiments/toolchain
-        # as windows may not use symlinks.
-        wcedir = os.path.join(THIS_DIR, 'win-cross-experiments', toolchain)
-        if not os.path.exists(wcedir):
+                  ref=cipd_ref,
+                  directory=toolchain_root)
+      # support legacy (win-cross-experiments) and new (win-cross)
+      # TODO(crbug.com/1407557): drop -experiments support
+      wcedir = os.path.join(THIS_DIR, 'win-cross', toolchain)
+      if not os.path.exists(wcedir):
           os.makedirs(wcedir, mode=0o755)
-        for cfg in glob.glob(os.path.join(THIS_DIR, toolchain,
-                                          'win-cross-experiments', '*.cfg')):
-          fname = os.path.join(wcedir, os.path.basename(cfg))
-          if os.path.exists(fname):
-            os.chmod(fname, 0o777)
-            os.remove(fname)
-          print('Copy from %s to %s...' % (cfg, fname))
-          shutil.copy(cfg, fname)
+      for win_cross_cfg_dir in ['win-cross','win-cross-experiments']:
+          if os.path.exists(os.path.join(toolchain_root, win_cross_cfg_dir)):
+              # copy in win-cross*/toolchain
+              # as windows may not use symlinks.
+              for cfg in glob.glob(os.path.join(toolchain_root,
+                                                win_cross_cfg_dir,
+                                                '*.cfg')):
+                  fname = os.path.join(wcedir, os.path.basename(cfg))
+                  if os.path.exists(fname):
+                    os.chmod(fname, 0o777)
+                    os.remove(fname)
+                  print('Copy from %s to %s...' % (cfg, fname))
+                  shutil.copy(cfg, fname)
 
     return 0
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,7 +14,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "components/services/filesystem/public/mojom/types.mojom.h"
@@ -55,8 +55,8 @@ class ChromeBlobStorageContext;
 class CONTENT_EXPORT FileSystemManagerImpl
     : public blink::mojom::FileSystemManager {
  public:
-  // Constructed and held by the render frame host and render process host on
-  // the UI thread. Used by render frames (via the render frame host), workers
+  // Constructed and held by the RenderFrameHost and render process host on
+  // the UI thread. Used by render frames (via the RenderFrameHost), workers
   // and pepper (via the render process host).
   FileSystemManagerImpl(
       int process_id,
@@ -209,6 +209,15 @@ class CONTENT_EXPORT FileSystemManagerImpl
   void ContinueCreateSnapshotFile(const storage::FileSystemURL& url,
                                   CreateSnapshotFileCallback callback,
                                   bool security_check_success);
+  void ContinueRegisterBlob(
+      const std::string& content_type,
+      const GURL& url,
+      uint64_t length,
+      absl::optional<base::Time> expected_modification_time,
+      RegisterBlobCallback callback,
+      storage::FileSystemURL crack_url,
+      bool security_check_success);
+
   void Cancel(
       OperationID op_id,
       blink::mojom::FileSystemCancellableOperation::CancelCallback callback);
@@ -242,7 +251,7 @@ class CONTENT_EXPORT FileSystemManagerImpl
                     int64_t bytes,
                     bool complete);
   void DidOpenFileSystem(OpenCallback callback,
-                         const GURL& root,
+                         const storage::FileSystemURL& root,
                          const std::string& filesystem_name,
                          base::File::Error result);
   void DidResolveURL(ResolveURLCallback callback,

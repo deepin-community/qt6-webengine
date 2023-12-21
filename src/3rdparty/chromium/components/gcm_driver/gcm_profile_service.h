@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,9 @@
 #include <memory>
 #include <string>
 
-#include "base/callback_forward.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -78,14 +78,11 @@ class GCMProfileService : public KeyedService {
   // KeyedService:
   void Shutdown() override;
 
-  // For testing purposes.
-  void SetDriverForTesting(std::unique_ptr<GCMDriver> driver);
-
   GCMDriver* driver() const { return driver_.get(); }
 
  protected:
   // Used for constructing fake GCMProfileService for testing purpose.
-  GCMProfileService();
+  explicit GCMProfileService(std::unique_ptr<GCMDriver> driver);
 
  private:
   std::unique_ptr<GCMDriver> driver_;

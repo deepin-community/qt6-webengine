@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,10 +9,11 @@
 #include <utility>
 
 #include "base/base_export.h"
-#include "base/bind.h"
 #include "base/check.h"
 #include "base/check_op.h"
 #include "base/containers/contains.h"
+#include "base/dcheck_is_on.h"
+#include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
@@ -20,7 +21,7 @@
 #include "base/observer_list.h"
 #include "base/synchronization/lock.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_local.h"
 #include "build/build_config.h"
 
@@ -116,9 +117,10 @@ class ObserverListThreadSafe : public internal::ObserverListThreadSafeBase {
 
   // Adds |observer| to the list. |observer| must not already be in the list.
   AddObserverResult AddObserver(ObserverType* observer) {
-    DCHECK(SequencedTaskRunnerHandle::IsSet())
-        << "An observer can only be registered when SequencedTaskRunnerHandle "
-           "is set. If this is in a unit test, you're likely merely missing a "
+    DCHECK(SequencedTaskRunner::HasCurrentDefault())
+        << "An observer can only be registered when "
+           "SequencedTaskRunner::HasCurrentDefault. If this is in a unit test, "
+           "you're likely merely missing a "
            "base::test::(SingleThread)TaskEnvironment in your fixture. "
            "Otherwise, try running this code on a named thread (main/UI/IO) or "
            "from a task posted to a base::SequencedTaskRunner or "
@@ -131,7 +133,7 @@ class ObserverListThreadSafe : public internal::ObserverListThreadSafeBase {
     // Add |observer| to the list of observers.
     DCHECK(!Contains(observers_, observer));
     const scoped_refptr<SequencedTaskRunner> task_runner =
-        SequencedTaskRunnerHandle::Get();
+        SequencedTaskRunner::GetCurrentDefault();
     // Each observer gets a unique identifier. These unique identifiers are used
     // to avoid execution of pending posted-tasks over removed or released
     // observers.
@@ -153,7 +155,12 @@ class ObserverListThreadSafe : public internal::ObserverListThreadSafeBase {
         task_runner->PostTask(
             current_notification->from_here,
             BindOnce(&ObserverListThreadSafe<ObserverType>::NotifyWrapper, this,
-                     observer,
+                     // While `observer` may be dangling, we pass it and
+                     // check it wasn't deallocated in NotifyWrapper() which can
+                     // check `observers_` to verify presence (the owner of the
+                     // observer is responsible for removing it from that list
+                     // before deallocation).
+                     UnsafeDangling(observer),
                      NotificationData(this, observer_id,
                                       current_notification->from_here,
                                       notification_data->method)));
@@ -199,7 +206,12 @@ class ObserverListThreadSafe : public internal::ObserverListThreadSafeBase {
       observer.second.task_runner->PostTask(
           from_here,
           BindOnce(&ObserverListThreadSafe<ObserverType>::NotifyWrapper, this,
-                   observer.first,
+                   // While `observer.first` may be dangling, we pass it and
+                   // check it wasn't deallocated in NotifyWrapper() which can
+                   // check `observers_` to verify presence (the owner of the
+                   // observer is responsible for removing it from that list
+                   // before deallocation).
+                   UnsafeDangling(observer.first),
                    NotificationData(this, observer.second.observer_id,
                                     from_here, method)));
     }
@@ -223,7 +235,7 @@ class ObserverListThreadSafe : public internal::ObserverListThreadSafeBase {
 
   ~ObserverListThreadSafe() override = default;
 
-  void NotifyWrapper(ObserverType* observer,
+  void NotifyWrapper(MayBeDangling<ObserverType> observer,
                      const NotificationData& notification) {
     {
       AutoLock auto_lock(lock_);

@@ -73,6 +73,8 @@ WebrtcDesktopCapturePrivateChooseDesktopMediaFunction::
 
 WebrtcDesktopCapturePrivateChooseDesktopMediaFunction::
     ~WebrtcDesktopCapturePrivateChooseDesktopMediaFunction() {
+      DesktopCaptureRequestsRegistry::GetInstance()->RemoveRequest(
+      source_process_id(), request_id_);
 }
 
 ExtensionFunction::ResponseAction
@@ -106,7 +108,7 @@ WebrtcDesktopCapturePrivateChooseDesktopMediaFunction::Run() {
     return RespondNow(Error(kTargetNotFoundError));
   }
 
-  content::RenderFrameHost* const main_frame = web_contents->GetMainFrame();
+  content::RenderFrameHost* const main_frame = web_contents->GetPrimaryMainFrame();
   content::MediaStreamRequest request(main_frame->GetProcess()->GetID() /* render_process_id */,
                                       main_frame->GetRoutingID() /* render_frame_id */,
                                       request_id_ /* page_request_id */,
@@ -123,7 +125,7 @@ WebrtcDesktopCapturePrivateChooseDesktopMediaFunction::Run() {
   extensions::ExtensionHost *host = extensions::ProcessManager::Get(browser_context())->GetBackgroundHostForExtension(extension_id());
   host->RequestMediaAccessPermission(web_contents, request,
                                      base::BindOnce(&WebrtcDesktopCapturePrivateChooseDesktopMediaFunction::ProcessAccessRequestResponse,
-                                                    weak_factory_.GetWeakPtr(), main_frame, origin));
+                                                    this, main_frame, origin));
 
   return RespondLater();
 }
@@ -131,22 +133,26 @@ WebrtcDesktopCapturePrivateChooseDesktopMediaFunction::Run() {
 void WebrtcDesktopCapturePrivateChooseDesktopMediaFunction::ProcessAccessRequestResponse(
       content::RenderFrameHost* const main_frame,
       const GURL &origin,
-      const blink::MediaStreamDevices& devices,
+      const blink::mojom::StreamDevicesSet& devicesSet,
       blink::mojom::MediaStreamRequestResult stream_request_result,
       std::unique_ptr<content::MediaStreamUI> stream_ui)
 {
   if (stream_request_result != blink::mojom::MediaStreamRequestResult::OK) {
-    Respond(ArgumentList(Create(std::string(), Options())));
+    // The request is canceled either by the desktopMediaRequest or the permission request.
+    // Respond with no arguments to mimic DesktopCaptureCancelChooseDesktopMediaFunctionBase::Run()
+    // form desktop_capture_base.cc.
+    Respond(NoArguments());
     return;
   }
 
-  DCHECK(!devices.empty());
+  DCHECK(!devicesSet.stream_devices.empty());
 
   content::DesktopMediaID source = content::DesktopMediaID(content::DesktopMediaID::TYPE_SCREEN, 0);
-  blink::MediaStreamDevices::const_iterator it = devices.begin();
-  for (; it != devices.end(); ++it) {
-    content::DesktopMediaID id = content::DesktopMediaID::Parse(it->id);
-    if (id.type == content::DesktopMediaID::TYPE_SCREEN) {
+  auto it = devicesSet.stream_devices.begin();
+  for (; it != devicesSet.stream_devices.end(); ++it) {
+    content::DesktopMediaID id = content::DesktopMediaID::Parse((*it)->video_device->id);
+    if (id.type == content::DesktopMediaID::TYPE_SCREEN ||
+        id.type == content::DesktopMediaID::TYPE_WINDOW) {
         source = id;
         break;
     }

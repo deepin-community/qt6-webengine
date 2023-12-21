@@ -14,7 +14,11 @@
  * limitations under the License.
  */
 
+#include "idl_gen_json_schema.h"
+
+#include <algorithm>
 #include <iostream>
+#include <limits>
 
 #include "flatbuffers/code_generators.h"
 #include "flatbuffers/idl.h"
@@ -24,7 +28,10 @@ namespace flatbuffers {
 
 namespace jsons {
 
-template<class T> std::string GenFullName(const T *enum_def) {
+namespace {
+
+template<class T>
+static std::string GenFullName(const T *enum_def) {
   std::string full_name;
   const auto &name_spaces = enum_def->defined_namespace->components;
   for (auto ns = name_spaces.cbegin(); ns != name_spaces.cend(); ++ns) {
@@ -34,15 +41,16 @@ template<class T> std::string GenFullName(const T *enum_def) {
   return full_name;
 }
 
-template<class T> std::string GenTypeRef(const T *enum_def) {
+template<class T>
+static std::string GenTypeRef(const T *enum_def) {
   return "\"$ref\" : \"#/definitions/" + GenFullName(enum_def) + "\"";
 }
 
-std::string GenType(const std::string &name) {
+static std::string GenType(const std::string &name) {
   return "\"type\" : \"" + name + "\"";
 }
 
-std::string GenType(BaseType type) {
+static std::string GenType(BaseType type) {
   switch (type) {
     case BASE_TYPE_BOOL: return "\"type\" : \"boolean\"";
     case BASE_TYPE_CHAR:
@@ -84,13 +92,13 @@ std::string GenType(BaseType type) {
   }
 }
 
-std::string GenBaseType(const Type &type) {
+static std::string GenBaseType(const Type &type) {
   if (type.struct_def != nullptr) { return GenTypeRef(type.struct_def); }
   if (type.enum_def != nullptr) { return GenTypeRef(type.enum_def); }
   return GenType(type.base_type);
 }
 
-std::string GenArrayType(const Type &type) {
+static std::string GenArrayType(const Type &type) {
   std::string element_type;
   if (type.struct_def != nullptr) {
     element_type = GenTypeRef(type.struct_def);
@@ -103,7 +111,7 @@ std::string GenArrayType(const Type &type) {
   return "\"type\" : \"array\", \"items\" : {" + element_type + "}";
 }
 
-std::string GenType(const Type &type) {
+static std::string GenType(const Type &type) {
   switch (type.base_type) {
     case BASE_TYPE_ARRAY: FLATBUFFERS_FALLTHROUGH();  // fall thru
     case BASE_TYPE_VECTOR: {
@@ -135,6 +143,8 @@ std::string GenType(const Type &type) {
     }
   }
 }
+
+} // namespace
 
 class JsonSchemaGenerator : public BaseGenerator {
  private:
@@ -321,5 +331,64 @@ bool GenerateJsonSchema(const Parser &parser, std::string *json) {
   if (!generator.generate()) { return false; }
   *json = generator.getJson();
   return true;
+}
+
+namespace {
+
+class JsonSchemaCodeGenerator : public CodeGenerator {
+ public:
+  Status GenerateCode(const Parser &parser, const std::string &path,
+                      const std::string &filename) override {
+    if (!GenerateJsonSchema(parser, path, filename)) { return Status::ERROR; }
+    return Status::OK;
+  }
+
+  Status GenerateCode(const uint8_t *buffer, int64_t length) override {
+    (void)buffer;
+    (void)length;
+    return Status::NOT_IMPLEMENTED;
+  }
+
+  Status GenerateMakeRule(const Parser &parser, const std::string &path,
+                          const std::string &filename,
+                          std::string &output) override {
+    (void)parser;
+    (void)path;
+    (void)filename;
+    (void)output;
+    return Status::NOT_IMPLEMENTED;
+  }
+
+  Status GenerateGrpcCode(const Parser &parser, const std::string &path,
+                          const std::string &filename) override {
+    (void)parser;
+    (void)path;
+    (void)filename;
+    return Status::NOT_IMPLEMENTED;
+  }
+
+  Status GenerateRootFile(const Parser &parser,
+                          const std::string &path) override {
+    (void)parser;
+    (void)path;
+    return Status::NOT_IMPLEMENTED;
+  }
+  bool IsSchemaOnly() const override { return true; }
+
+  bool SupportsBfbsGeneration() const override { return false; }
+
+  bool SupportsRootFileGeneration() const override { return false; }
+
+  IDLOptions::Language Language() const override {
+    return IDLOptions::kJsonSchema;
+  }
+
+  std::string LanguageName() const override { return "JsonSchema"; }
+};
+}  // namespace
+
+std::unique_ptr<CodeGenerator> NewJsonSchemaCodeGenerator() {
+  return std::unique_ptr<JsonSchemaCodeGenerator>(
+      new JsonSchemaCodeGenerator());
 }
 }  // namespace flatbuffers

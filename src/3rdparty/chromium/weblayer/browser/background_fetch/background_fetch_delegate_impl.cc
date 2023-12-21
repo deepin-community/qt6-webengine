@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/check_op.h"
+#include "base/task/sequenced_task_runner.h"
 #include "build/build_config.h"
 #include "components/background_fetch/download_client.h"
 #include "components/background_fetch/job_details.h"
@@ -43,7 +44,7 @@ void BackgroundFetchDelegateImpl::MarkJobComplete(const std::string& job_id) {
     // reflected in the UI after a brief delay. See
     // https://developer.android.com/training/notify-user/build-notification#Updating
     static constexpr auto kDelay = base::Milliseconds(1500);
-    base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE,
         base::BindOnce(&BackgroundFetchDelegateImpl::DoUpdateUi,
                        weak_ptr_factory_.GetWeakPtr(), job_id),

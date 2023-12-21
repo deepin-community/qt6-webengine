@@ -23,6 +23,8 @@
 
 #include "third_party/blink/renderer/core/layout/line/inline_text_box.h"
 
+#include <algorithm>
+
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -41,8 +43,7 @@
 #include "third_party/blink/renderer/platform/wtf/size_assertions.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
-
-#include <algorithm>
+#include "ui/gfx/geometry/rect_conversions.h"
 
 namespace blink {
 
@@ -684,7 +685,6 @@ TextRun InlineTextBox::ConstructTextRun(
               Direction(),
               DirOverride() || style.RtlOrdering() == EOrder::kVisual);
   run.SetTabSize(!style.CollapseWhiteSpace(), style.GetTabSize());
-  run.SetTextJustify(style.GetTextJustify());
 
   // Propagate the maximum length of the characters buffer to the TextRun, even
   // when we're only processing a substring.

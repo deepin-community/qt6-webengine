@@ -1,8 +1,8 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
-// Next MinVersion: 50
+// Next MinVersion: 51
 
 module arc.mojom;
 
@@ -167,8 +167,19 @@ enum ChromePage {
   OSLANGUAGESLANGUAGES = 72,
   // 73-76 are removed intentionally. Do not reuse them.
   SMARTPRIVACY = 77,
+  PRIVACYHUB = 78,
+  TEXTTOSPEECH = 79,
+  AUDIO = 80,
+  DISPLAYANDMAGNFICATION = 81,
+  KEYBOARDANDTEXTINPUT = 82,
+  CURSORANDTOUCHPAD = 83,
+  AUDIOANDCAPTIONS = 84,
+  PERDEVICEKEYBOARD = 85,
+  PERDEVICEMOUSE = 86,
+  PERDEVICETOUCHPAD = 87,
+  PERDEVICEPOINTINGSTICK = 88,
 
-  // Next value to be used is 78.
+  // Next value to be used is 89.
 };
 
 // Describes an unique chrome app.
@@ -242,15 +253,13 @@ struct LaunchIntent {
   array<LaunchFileInfo>? files;
 };
 
-// Contains information about an app's supported links.
-struct SupportedLinks {
+// Contains information about supported links for an ARC package.
+[RenamedFrom="arc.mojom.SupportedLinks"]
+struct SupportedLinksPackage {
   // Android package name of the app.
   string package_name;
-  // A list of all the link intent filters handled by the app. Should only
-  // include, link intents. That is, filters must have an http/https scheme and
-  // at least one authority. This field can be omitted when deleting supported
-  // links for an app.
-  array<IntentFilter>? filters;
+  // Deprecated and no longer used.
+  array<IntentFilter>? deprecated_filters;
 };
 
 // The source of a change in the supported links setting.
@@ -265,6 +274,13 @@ enum SupportedLinkChangeSource {
   kUserPreference,
 };
 
+// Android setting that we want to relay back to update Chrome setting.
+[Extensible]
+enum AndroidSetting {
+  [Default] kUnknown = 0,
+  kGeoLocation,
+};
+
 // Interface to interact with a custom tab.
 // Close the interface pointer to close the custom tab.
 // Next method ID: 1
@@ -274,8 +290,8 @@ interface CustomTabSession {
 };
 
 // Handles intents from ARC in Chrome.
-// Deprecated method ID: 4, 9, 10, 16
-// Next method ID: 23
+// Deprecated method ID: 4, 9, 10, 16, 18
+// Next method ID: 24
 interface IntentHelperHost {
   // Called when icons associated with the package are no longer up to date.
   [MinVersion=3] OnIconInvalidated@1(string package_name);
@@ -349,10 +365,11 @@ interface IntentHelperHost {
   // IntentFilters, and removes the apps in |removed_packages| from handling
   // supported links.
   [MinVersion=47] OnSupportedLinksChanged@20(
-      array<SupportedLinks> added_packages,
-      array<SupportedLinks> removed_packages,
+      array<SupportedLinksPackage> added_packages,
+      array<SupportedLinksPackage> removed_packages,
       [MinVersion=48] SupportedLinkChangeSource source);
 
+  // DEPRECATED: Replaced by `FileSystemHost::OnMediaStoreUriAdded()`.
   // Called when a new entry has been added to the MediaStore.Downloads
   // collection of downloaded items with the specified metadata.
   // |relative_path|      relative path of the download within the Download/
@@ -362,7 +379,7 @@ interface IntentHelperHost {
   //                      treating ARC as an untrusted source.
   // |owner_package_name| package name that contributed the download (e.g.
   //                      "com.bar.foo").
-  [MinVersion=44] OnDownloadAdded@18(
+  [MinVersion=44] OnDownloadAddedDeprecated@18(
       string relative_path, string owner_package_name);
 
   // Opens the web app for a specified URL, if it is installed, and delivers
@@ -379,10 +396,14 @@ interface IntentHelperHost {
 
   // Close any dialogs opened from ARC.
   [MinVersion=49] OnCloseSystemDialogs@22();
+
+  // Relay android setting to Chrome.
+  [MinVersion=50] OnAndroidSettingChange@23(
+      AndroidSetting setting, bool is_enabled);
 };
 
 // Sends intents to ARC on behalf of Chrome.
-// Deprecated method ID: 0, 7, 11, 12, 14, 18
+// Deprecated method ID: 0, 7, 11, 12, 14, 17, 18
 // Next method ID: 22
 interface IntentHelperInstance {
   // Sets the given package as a preferred package. The next time an ACTION_VIEW
@@ -390,16 +411,6 @@ interface IntentHelperInstance {
   // the ResolverActivity, this package will be picked if it is on the list.
   // When multiple packages are set as preferred, the most recent setting wins.
   [MinVersion=7] AddPreferredPackage@8(string package_name);
-
-  // Sets the given package as a preferred app for the given |intent_filter|
-  // and |intent_info|.
-  // The |package_name| is selected by the user on Chrome-side to remember the
-  // user preference. The |intent_info| is used to generate the components set
-  // and match for setting the preferred activity.
-  // This is used to sync the preferred app setting from Chrome OS.
-  [MinVersion=32] AddPreferredApp@17(string package_name,
-                                     IntentFilter intent_filter,
-                                     IntentInfo intent_info);
 
   // Set the verified link domain status to either always open (|always_open| is
   // true) or always ask (|always_open| is false) for the |package_names|.

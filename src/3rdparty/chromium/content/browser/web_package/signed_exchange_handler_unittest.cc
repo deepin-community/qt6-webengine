@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,12 +6,13 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/path_service.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
@@ -30,7 +31,7 @@
 #include "net/base/features.h"
 #include "net/base/io_buffer.h"
 #include "net/base/load_flags.h"
-#include "net/base/network_isolation_key.h"
+#include "net/base/network_anonymization_key.h"
 #include "net/base/test_completion_callback.h"
 #include "net/cert/ct_policy_enforcer.h"
 #include "net/cert/mock_cert_verifier.h"
@@ -70,39 +71,6 @@ constexpr char kTestSxgInnerURL[] = "https://test.example.org/test/";
 
 // "wildcard_example.org.public.pem.cbor" has dummy data in its "ocsp" field.
 constexpr base::StringPiece kDummyOCSPDer = "OCSP";
-
-// ExpectCTReporter implementation that logs a single report.
-class MockExpectCTReporter
-    : public net::TransportSecurityState::ExpectCTReporter {
- public:
-  MockExpectCTReporter() = default;
-  ~MockExpectCTReporter() override = default;
-
-  void OnExpectCTFailed(
-      const net::HostPortPair& host_port_pair,
-      const GURL& report_uri,
-      base::Time expiration,
-      const net::X509Certificate* validated_certificate_chain,
-      const net::X509Certificate* served_certificate_chain,
-      const net::SignedCertificateTimestampAndStatusList&
-          signed_certificate_timestamps,
-      const net::NetworkIsolationKey& network_isolation_key) override {
-    num_failures_++;
-    report_uri_ = report_uri;
-    network_isolation_key_ = network_isolation_key;
-  }
-
-  int num_failures() const { return num_failures_; }
-  const GURL& report_uri() const { return report_uri_; }
-  const net::NetworkIsolationKey& network_isolation_key() const {
-    return network_isolation_key_;
-  }
-
- private:
-  int num_failures_ = 0;
-  GURL report_uri_;
-  net::NetworkIsolationKey network_isolation_key_;
-};
 
 class TestBrowserClient : public ContentBrowserClient {
   bool CanAcceptUntrustedExchangesIfNeeded() override { return true; }
@@ -148,7 +116,7 @@ class MockSignedExchangeCertFetcherFactory
         base::as_bytes(base::make_span(cert_str_)), devtools_proxy);
     EXPECT_TRUE(cert_chain);
 
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(std::move(callback), SignedExchangeLoadResult::kSuccess,
                        std::move(cert_chain), net::IPAddress()));
@@ -368,7 +336,7 @@ class SignedExchangeHandlerTest
         std::move(source_stream_),
         base::BindOnce(&SignedExchangeHandlerTest::OnHeaderFound,
                        base::Unretained(this)),
-        std::move(cert_fetcher_factory_), network_isolation_key_,
+        std::move(cert_fetcher_factory_), network_anonymization_key_,
         absl::nullopt /* outer_request_isolation_info */, net::LOAD_NORMAL,
         net::IPEndPoint(),
         std::make_unique<blink::WebPackageRequestMatcher>(
@@ -407,10 +375,10 @@ class SignedExchangeHandlerTest
                              ocsp_revocation_status);
   }
 
-  // Sets the NetworkIsolationKey used by CreateSignedExchangeHandler().
-  void set_network_isolation_key(
-      const net::NetworkIsolationKey& network_isolation_key) {
-    network_isolation_key_ = network_isolation_key;
+  // Sets the NetworkAnonymizationKey used by CreateSignedExchangeHandler().
+  void set_network_anonymization_key(
+      const net::NetworkAnonymizationKey& network_anonymization_key) {
+    network_anonymization_key_ = network_anonymization_key;
   }
 
  protected:
@@ -457,7 +425,7 @@ class SignedExchangeHandlerTest
       original_ignore_errors_spki_list_;
   std::unique_ptr<net::MockSourceStream> source_stream_;
   std::unique_ptr<MockSignedExchangeCertFetcherFactory> cert_fetcher_factory_;
-  net::NetworkIsolationKey network_isolation_key_;
+  net::NetworkAnonymizationKey network_anonymization_key_;
 
   bool read_header_ = false;
   SignedExchangeLoadResult result_;
@@ -907,19 +875,11 @@ TEST_P(SignedExchangeHandlerTest, NotEnoughSCTsFromPubliclyTrustedCert) {
 }
 
 TEST_P(SignedExchangeHandlerTest, ReportUsesNetworkIsolationKey) {
-  const net::NetworkIsolationKey kNetworkIsolationKey =
-      net::NetworkIsolationKey::CreateTransient();
+  const net::NetworkAnonymizationKey kNetworkIsolationKey =
+      net::NetworkAnonymizationKey::CreateTransient();
   const GURL kReportUri = GURL("https://report.test/");
 
-  set_network_isolation_key(kNetworkIsolationKey);
-
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeatures(
-      // enabled_features
-      {net::TransportSecurityState::kDynamicExpectCTFeature,
-       net::features::kPartitionExpectCTStateByNetworkIsolationKey},
-      // disabled_features
-      {});
+  set_network_anonymization_key(kNetworkIsolationKey);
 
   mock_cert_fetcher_factory_->ExpectFetch(
       GURL("https://cert.example.org/cert.msg"),
@@ -937,13 +897,6 @@ TEST_P(SignedExchangeHandlerTest, ReportUsesNetworkIsolationKey) {
 
   std::unique_ptr<net::URLRequestContext> url_request_context =
       CreateTestURLRequestContext();
-  url_request_context->transport_security_state()->AddExpectCT(
-      "test.example.org", base::Time::Now() + base::Days(1) /* expiry */,
-      false /* include_subdomains */, kReportUri, kNetworkIsolationKey);
-  MockExpectCTReporter expect_ct_reporter;
-  url_request_context->transport_security_state()->SetExpectCTReporter(
-      &expect_ct_reporter);
-
   CreateSignedExchangeHandler(std::move(url_request_context));
   WaitForHeader();
 
@@ -958,10 +911,6 @@ TEST_P(SignedExchangeHandlerTest, ReportUsesNetworkIsolationKey) {
                         absl::nullopt /* ocsp_revocation_status */);
   // Drain the MockSourceStream, otherwise its destructer causes DCHECK failure.
   ReadStream(source_, nullptr);
-
-  ASSERT_EQ(1, expect_ct_reporter.num_failures());
-  EXPECT_EQ(kReportUri, expect_ct_reporter.report_uri());
-  EXPECT_EQ(kNetworkIsolationKey, expect_ct_reporter.network_isolation_key());
 }
 
 TEST_P(SignedExchangeHandlerTest, CTRequirementsMetForPubliclyTrustedCert) {

@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -196,7 +196,7 @@ std::unique_ptr<CFXJSE_Context> CFXJSE_Context::Create(
   FXJSE_UpdateObjectBinding(pThis, pGlobalObject);
 
   v8::Local<v8::Context> hRootContext = v8::Local<v8::Context>::New(
-      pIsolate, CFXJSE_RuntimeData::Get(pIsolate)->m_hRootContext);
+      pIsolate, CFXJSE_RuntimeData::Get(pIsolate)->GetRootContext());
   hNewContext->SetSecurityToken(hRootContext->GetSecurityToken());
   pContext->m_hContext.Reset(pIsolate, hNewContext);
   return pContext;

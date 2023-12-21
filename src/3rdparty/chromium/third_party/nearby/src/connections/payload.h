@@ -23,21 +23,19 @@
 #include "absl/types/variant.h"
 #include "connections/payload_type.h"
 #include "internal/platform/byte_array.h"
-#include "internal/platform/core_config.h"
 #include "internal/platform/file.h"
 #include "internal/platform/input_stream.h"
 #include "internal/platform/logging.h"
 #include "internal/platform/payload_id.h"
 #include "internal/platform/prng.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 
 // Payload is default-constructible, and moveable, but not copyable container
 // that holds at most one instance of one of:
 // ByteArray, InputStream, or InputFile.
-class DLL_API Payload {
+class Payload {
  public:
   using Id = PayloadId;
   // Order of types in variant, and values in Type enum is important.
@@ -85,7 +83,6 @@ class DLL_API Payload {
 
   // Returns ByteArray payload, if it has been defined, or empty ByteArray.
   const ByteArray& AsBytes() const&;
-  ByteArray&& AsBytes() &&;
   // Returns InputStream* payload, if it has been defined, or nullptr.
   InputStream* AsStream();
   // Returns InputFile* payload, if it has been defined, or nullptr.
@@ -123,6 +120,5 @@ class DLL_API Payload {
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location
 
 #endif  // CORE_PAYLOAD_H_

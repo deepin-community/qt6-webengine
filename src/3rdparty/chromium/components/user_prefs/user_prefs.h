@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -40,7 +40,7 @@ class USER_PREFS_EXPORT UserPrefs : public base::SupportsUserData::Data {
   explicit UserPrefs(PrefService* prefs);
 
   // Non-owning; owned by embedder.
-  raw_ptr<PrefService> prefs_;
+  raw_ptr<PrefService, DanglingUntriaged> prefs_;
 };
 
 }  // namespace user_prefs

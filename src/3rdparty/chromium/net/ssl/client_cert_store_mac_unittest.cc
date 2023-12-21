@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,9 @@
 #include <memory>
 
 #include "base/strings/string_number_conversions.h"
-#include "net/cert/internal/extended_key_usage.h"
-#include "net/cert/internal/parse_certificate.h"
-#include "net/cert/x509_util_ios_and_mac.h"
+#include "net/cert/pki/extended_key_usage.h"
+#include "net/cert/pki/parse_certificate.h"
+#include "net/cert/x509_util_apple.h"
 #include "net/ssl/client_cert_identity_mac.h"
 #include "net/ssl/client_cert_identity_test_util.h"
 #include "net/ssl/client_cert_store_unittest-inl.h"
@@ -22,11 +22,15 @@ namespace {
 
 std::vector<std::unique_ptr<ClientCertIdentityMac>>
 ClientCertIdentityMacListFromCertificateList(const CertificateList& certs) {
-  // This doesn't quite construct a real `ClientCertIdentityMac` the
+  // This doesn't quite construct a real `ClientCertIdentityMac` because the
   // `SecIdentityRef` is null. This means `SelectClientCertsForTesting` must
   // turn off the KeyChain query. If this becomes an issue, change
-  // client_cert_store_unittest-inl.h to pass in the key data and use
-  // `ScopedTestKeychain` with `ImportCertAndKeyToKeychain`.
+  // client_cert_store_unittest-inl.h to pass in the key data.
+  //
+  // Actually constructing a `SecIdentityRef` without persisting it is not
+  // currently possible with macOS's non-deprecated APIs, but it is possible
+  // with deprecated APIs using `SecKeychainCreate` and `SecItemImport`. See git
+  // history for net/test/keychain_test_util_mac.cc.
   std::vector<std::unique_ptr<ClientCertIdentityMac>> identities;
   identities.reserve(certs.size());
   for (const auto& cert : certs) {

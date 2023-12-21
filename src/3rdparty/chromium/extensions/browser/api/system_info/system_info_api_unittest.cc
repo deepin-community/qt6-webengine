@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,7 @@
 #include "components/storage_monitor/storage_monitor.h"
 #include "components/storage_monitor/test_storage_monitor.h"
 #include "content/public/test/browser_task_environment.h"
+#include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/test_browser_context.h"
 #include "extensions/browser/api/system_display/display_info_provider.h"
 #include "extensions/browser/api/system_info/system_info_provider.h"
@@ -36,7 +37,7 @@ class FakeExtensionsBrowserClient : public TestExtensionsBrowserClient {
  public:
   struct Broadcast {
     Broadcast(events::HistogramValue histogram_value,
-              std::unique_ptr<base::ListValue> args,
+              base::Value::List args,
               bool dispatch_to_off_the_record_profiles)
         : histogram_value(histogram_value),
           args(std::move(args)),
@@ -46,7 +47,7 @@ class FakeExtensionsBrowserClient : public TestExtensionsBrowserClient {
     ~Broadcast() = default;
 
     events::HistogramValue histogram_value;
-    std::unique_ptr<base::ListValue> args;
+    base::Value::List args;
     bool dispatch_to_off_the_record_profiles;
   };
 
@@ -69,7 +70,7 @@ class FakeExtensionsBrowserClient : public TestExtensionsBrowserClient {
   void BroadcastEventToRenderers(
       events::HistogramValue histogram_value,
       const std::string& event_name,
-      std::unique_ptr<base::ListValue> args,
+      base::Value::List args,
       bool dispatch_to_off_the_record_profiles) override {
     event_name_to_broadcasts_map_[event_name].emplace_back(
         histogram_value, std::move(args), dispatch_to_off_the_record_profiles);
@@ -138,21 +139,21 @@ const storage_monitor::StorageInfo& GetFakeStorageInfo() {
   return *info;
 }
 
-base::ListValue GetStorageAttachedArgs() {
+base::Value::List GetStorageAttachedArgs() {
   // Because of the use of GetTransientIdForDeviceId() in
   // BuildStorageUnitInfo(), we cannot use a static variable and cache the
-  // returned ListValue.
+  // returned value.
   api::system_storage::StorageUnitInfo unit;
   systeminfo::BuildStorageUnitInfo(GetFakeStorageInfo(), &unit);
-  base::ListValue args;
+  base::Value::List args;
   args.Append(unit.ToValue());
   return args;
 }
 
-base::ListValue GetStorageDetachedArgs() {
+base::Value::List GetStorageDetachedArgs() {
   // Because of the use of GetTransientIdForDeviceId(), we cannot use a static
-  // variable and cache the returned ListValue.
-  base::ListValue args;
+  // variable and cache the returned value.
+  base::Value::List args;
   args.Append(
       storage_monitor::StorageMonitor::GetInstance()->GetTransientIdForDeviceId(
           GetFakeStorageDeviceId()));
@@ -184,6 +185,9 @@ class SystemInfoAPITest : public testing::Test {
     FakeDisplayInfoProvider::InitializeForTesting(&display_info_provider_);
 
     storage_monitor_ = storage_monitor::TestStorageMonitor::CreateAndInstall();
+
+    render_process_host_ =
+        std::make_unique<content::MockRenderProcessHost>(&context1_);
   }
 
   void TearDown() override {
@@ -201,6 +205,12 @@ class SystemInfoAPITest : public testing::Test {
         ->DestroyBrowserContextServices(&context1_);
 
     ExtensionsBrowserClient::Set(nullptr);
+
+    render_process_host_.reset();
+  }
+
+  content::RenderProcessHost* render_process_host() const {
+    return render_process_host_.get();
   }
 
   std::string EventTypeToName(EventType type) {
@@ -217,14 +227,14 @@ class SystemInfoAPITest : public testing::Test {
   void AddEventListener(EventRouter* router,
                         EventType type,
                         const std::string& extension_id = kFakeExtensionId) {
-    router->AddEventListener(EventTypeToName(type), nullptr /* process */,
+    router->AddEventListener(EventTypeToName(type), render_process_host(),
                              extension_id);
   }
 
   void RemoveEventListener(EventRouter* router,
                            EventType type,
                            const std::string& extension_id = kFakeExtensionId) {
-    router->RemoveEventListener(EventTypeToName(type), nullptr /* process */,
+    router->RemoveEventListener(EventTypeToName(type), render_process_host(),
                                 extension_id);
   }
 
@@ -259,8 +269,7 @@ class SystemInfoAPITest : public testing::Test {
 
     return broadcasts.back().histogram_value ==
                events::SYSTEM_STORAGE_ON_ATTACHED &&
-           broadcasts.back().args &&
-           *broadcasts.back().args == GetStorageAttachedArgs() &&
+           broadcasts.back().args == GetStorageAttachedArgs() &&
            !broadcasts.back().dispatch_to_off_the_record_profiles;
   }
 
@@ -288,8 +297,7 @@ class SystemInfoAPITest : public testing::Test {
 
     return broadcasts.back().histogram_value ==
                events::SYSTEM_STORAGE_ON_DETACHED &&
-           broadcasts.back().args &&
-           *broadcasts.back().args == GetStorageDetachedArgs() &&
+           broadcasts.back().args == GetStorageDetachedArgs() &&
            !broadcasts.back().dispatch_to_off_the_record_profiles;
   }
 
@@ -301,6 +309,7 @@ class SystemInfoAPITest : public testing::Test {
   raw_ptr<EventRouter> router2_ = nullptr;
   FakeDisplayInfoProvider display_info_provider_;
   raw_ptr<storage_monitor::TestStorageMonitor> storage_monitor_;
+  std::unique_ptr<content::RenderProcessHost> render_process_host_;
 };
 
 /******************************************************************************/

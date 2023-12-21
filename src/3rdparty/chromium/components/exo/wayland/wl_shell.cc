@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <wayland-server-protocol-core.h>
 
 #include "ash/public/cpp/shell_window_ids.h"
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/exo/display.h"
 #include "components/exo/shell_surface.h"
@@ -128,7 +128,8 @@ uint32_t HandleShellSurfaceConfigureCallback(
     chromeos::WindowStateType state_type,
     bool resizing,
     bool activated,
-    const gfx::Vector2d& origin_offset) {
+    const gfx::Vector2d& origin_offset,
+    float raster_scale) {
   wl_shell_surface_send_configure(resource, WL_SHELL_SURFACE_RESIZE_NONE,
                                   bounds.width(), bounds.height());
   wl_client_flush(wl_resource_get_client(resource));
@@ -154,6 +155,8 @@ void shell_get_shell_surface(wl_client* client,
   // Shell surfaces are initially disabled and needs to be explicitly mapped
   // before they are enabled and can become visible.
   shell_surface->SetEnabled(false);
+
+  shell_surface->SetSecurityDelegate(GetSecurityDelegate(client));
 
   shell_surface->set_configure_callback(
       base::BindRepeating(&HandleShellSurfaceConfigureCallback,

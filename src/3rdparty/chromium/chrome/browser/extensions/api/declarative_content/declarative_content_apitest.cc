@@ -1,9 +1,9 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -31,6 +31,7 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/test_extension_registry_observer.h"
+#include "extensions/common/api/extension_action/action_info.h"
 #include "extensions/common/api/extension_action/action_info_test_util.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/test_extension_dir.h"
@@ -152,8 +153,8 @@ void DeclarativeContentApiTest::CheckIncognito(IncognitoMode mode,
   ext_dir_.WriteFile(FILE_PATH_LITERAL("background.js"),
                      kIncognitoSpecificBackground);
 
-  ExtensionTestMessageListener ready("ready", false);
-  ExtensionTestMessageListener ready_incognito("ready (split)", false);
+  ExtensionTestMessageListener ready("ready");
+  ExtensionTestMessageListener ready_incognito("ready (split)");
 
   const Extension* extension = LoadExtension(
       ext_dir_.UnpackedPath(), {.allow_in_incognito = is_enabled_in_incognito});
@@ -285,7 +286,7 @@ IN_PROC_BROWSER_TEST_F(DeclarativeContentApiTest, Overview) {
       "    chrome.test.sendMessage(\"ready\")\n"
       "  });\n"
       "});\n");
-  ExtensionTestMessageListener ready("ready", false);
+  ExtensionTestMessageListener ready("ready");
   const Extension* extension = LoadExtension(ext_dir_.UnpackedPath());
   ASSERT_TRUE(extension);
   const ExtensionAction* action =
@@ -366,7 +367,7 @@ IN_PROC_BROWSER_TEST_F(DeclarativeContentApiTest, ReusedActionInstance) {
       "    chrome.test.sendMessage(\"ready\");\n"
       "  });\n"
       "});\n");
-  ExtensionTestMessageListener ready("ready", false);
+  ExtensionTestMessageListener ready("ready");
   const Extension* extension = LoadExtension(ext_dir_.UnpackedPath());
   ASSERT_TRUE(extension);
   // Wait for declarative rules to be set up.
@@ -470,7 +471,7 @@ void ParameterizedShowActionDeclarativeContentApiTest::TestShowAction(
   int manifest_version = 2;
   if (action_type) {
     action_declaration = base::StringPrintf(
-        R"("%s": {},)", GetManifestKeyForActionType(*action_type));
+        R"("%s": {},)", ActionInfo::GetManifestKeyForActionType(*action_type));
     manifest_version = GetManifestVersionForActionType(*action_type);
   }
 
@@ -647,7 +648,7 @@ IN_PROC_BROWSER_TEST_F(DeclarativeContentApiTest,
   ext_dir_.WriteManifest(kDeclarativeContentManifest);
   ext_dir_.WriteFile(FILE_PATH_LITERAL("background.js"),
                      kIncognitoSpecificBackground);
-  ExtensionTestMessageListener ready("ready", false);
+  ExtensionTestMessageListener ready("ready");
   const Extension* extension =
       LoadExtension(ext_dir_.UnpackedPath(), {.allow_in_incognito = true});
   ASSERT_TRUE(extension);
@@ -673,8 +674,8 @@ constexpr char kRulesExtensionName[] =
 #endif
 // Sets up rules matching http://test1/ in a normal and incognito browser.
 IN_PROC_BROWSER_TEST_F(DeclarativeContentApiTest, MAYBE_PRE_RulesPersistence) {
-  ExtensionTestMessageListener ready("ready", false);
-  ExtensionTestMessageListener ready_split("ready (split)", false);
+  ExtensionTestMessageListener ready("ready");
+  ExtensionTestMessageListener ready_split("ready (split)");
   // An on-disk extension is required so that it can be reloaded later in the
   // RulesPersistence test.
   const Extension* extension =
@@ -727,7 +728,7 @@ IN_PROC_BROWSER_TEST_F(DeclarativeContentApiTest, MAYBE_RulesPersistence) {
   test_observer.WaitForPageActionVisibilityChangeTo(0);
   EXPECT_FALSE(action->GetIsVisible(tab_id));
 
-  ExtensionTestMessageListener ready_split("second run ready (split)", false);
+  ExtensionTestMessageListener ready_split("second run ready (split)");
 
   // Check incognito browser.
   Browser* incognito_browser = CreateIncognitoBrowser();
@@ -760,7 +761,7 @@ IN_PROC_BROWSER_TEST_F(DeclarativeContentApiTest,
   std::string script =
       kBackgroundHelpers + std::string("\nchrome.test.sendMessage('ready');");
   ext_dir_.WriteFile(FILE_PATH_LITERAL("background.js"), script);
-  ExtensionTestMessageListener ready_listener("ready", false);
+  ExtensionTestMessageListener ready_listener("ready");
   const Extension* extension = LoadExtension(ext_dir_.UnpackedPath());
   ASSERT_TRUE(extension);
   ASSERT_TRUE(ready_listener.WaitUntilSatisfied());
@@ -792,7 +793,7 @@ IN_PROC_BROWSER_TEST_F(DeclarativeContentApiTest,
   EXPECT_EQ(1u, extension_action_test_util::GetVisiblePageActionCount(tab));
   EXPECT_EQ(1u, extension_action_test_util::GetTotalPageActionCount(tab));
 
-  ExtensionTestMessageListener reload_ready_listener("ready", false);
+  ExtensionTestMessageListener reload_ready_listener("ready");
   ReloadExtension(extension_id);  // Invalidates action and extension.
   ASSERT_TRUE(reload_ready_listener.WaitUntilSatisfied());
 

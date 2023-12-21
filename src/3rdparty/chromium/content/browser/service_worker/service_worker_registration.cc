@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,10 +6,10 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/observer_list.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "content/browser/service_worker/embedded_worker_status.h"
 #include "content/browser/service_worker/service_worker_container_host.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
@@ -48,7 +48,8 @@ ServiceWorkerRegistration::ServiceWorkerRegistration(
     const blink::mojom::ServiceWorkerRegistrationOptions& options,
     const blink::StorageKey& key,
     int64_t registration_id,
-    base::WeakPtr<ServiceWorkerContextCore> context)
+    base::WeakPtr<ServiceWorkerContextCore> context,
+    blink::mojom::AncestorFrameType ancestor_frame_type)
     : scope_(options.scope),
       key_(key),
       update_via_cache_(options.update_via_cache),
@@ -58,7 +59,8 @@ ServiceWorkerRegistration::ServiceWorkerRegistration(
       should_activate_when_ready_(false),
       resources_total_size_bytes_(0),
       context_(context),
-      task_runner_(base::ThreadTaskRunnerHandle::Get()) {
+      task_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()),
+      ancestor_frame_type_(ancestor_frame_type) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK_NE(blink::mojom::kInvalidServiceWorkerRegistrationId, registration_id);
   DCHECK(context_);
@@ -335,8 +337,7 @@ void ServiceWorkerRegistration::DeleteAndClearWhenReady() {
   }
 
   context_->registry()->DeleteRegistration(
-      this, key_,
-      base::BindOnce(&ServiceWorkerRegistration::OnDeleteFinished, this));
+      this, base::BindOnce(&ServiceWorkerRegistration::OnDeleteFinished, this));
 
   if (!active_version() || !active_version()->HasControllee())
     Clear();
@@ -346,7 +347,7 @@ void ServiceWorkerRegistration::DeleteAndClearImmediately() {
   DCHECK(context_);
   if (!is_deleted()) {
     context_->registry()->DeleteRegistration(
-        this, key_,
+        this,
         base::BindOnce(&ServiceWorkerRegistration::OnDeleteFinished, this));
   }
 
@@ -587,7 +588,7 @@ void ServiceWorkerRegistration::ForceDelete() {
   // Delete the registration and its state from storage.
   if (status() == Status::kIntact) {
     context_->registry()->DeleteRegistration(
-        this, key_,
+        this,
         base::BindOnce(&ServiceWorkerRegistration::OnDeleteFinished, protect));
   }
   DCHECK(is_uninstalling());

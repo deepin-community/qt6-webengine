@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,8 @@
 #include <ostream>
 #include <string>
 
-#include "base/callback_forward.h"
 #include "base/containers/flat_set.h"
+#include "base/functional/function_ref.h"
 #include "components/performance_manager/public/freezing/freezing.h"
 #include "components/performance_manager/public/graph/node.h"
 #include "components/performance_manager/public/mojom/coordination_unit.mojom.h"
@@ -25,12 +25,21 @@ namespace performance_manager {
 class FrameNode;
 class PageNodeObserver;
 
+enum class PageType {
+  // A browser tab.
+  kTab,
+  // An extension background page.
+  kExtension,
+  // Anything else.
+  kUnknown,
+};
+
 // A PageNode represents the root of a FrameTree, or equivalently a WebContents.
 // These may correspond to normal tabs, WebViews, Portals, Chrome Apps or
 // Extensions.
 class PageNode : public Node {
  public:
-  using FrameNodeVisitor = base::RepeatingCallback<bool(const FrameNode*)>;
+  using FrameNodeVisitor = base::FunctionRef<bool(const FrameNode*)>;
   using LifecycleState = mojom::LifecycleState;
   using Observer = PageNodeObserver;
   class ObserverDefaultImpl;
@@ -70,7 +79,8 @@ class PageNode : public Node {
     kLoadedIdle,
   };
 
-  // Returns a string for a PageNode::LoadingState enumeration.
+  // Returns a string for an enumeration value.
+  static const char* ToString(PageType type);
   static const char* ToString(PageNode::LoadingState loading_state);
 
   // State of a page. Pages can be born in "kActive" or "kPrerendering" state.
@@ -113,6 +123,9 @@ class PageNode : public Node {
   // Returns the type of relationship this node has with its embedder, if it has
   // an embedder.
   virtual EmbeddingType GetEmbeddingType() const = 0;
+
+  // Returns the type of the page.
+  virtual PageType GetType() const = 0;
 
   // Returns true if this page is currently visible, false otherwise.
   // See PageNodeObserver::OnIsVisibleChanged.
@@ -186,6 +199,11 @@ class PageNode : public Node {
   // interactions.
   virtual bool HadFormInteraction() const = 0;
 
+  // Indicates if at least one of the frames in the page has received
+  // user-initiated edits. This is a superset of `HadFormInteraction()` that
+  // also includes changes to `contenteditable` elements.
+  virtual bool HadUserEdits() const = 0;
+
   // Returns the web contents associated with this page node. It is valid to
   // call this function on any thread but the weak pointer must only be
   // dereferenced on the UI thread.
@@ -203,6 +221,10 @@ class PageNode : public Node {
 
   // Returns the current page state. See "PageNodeObserver::OnPageStateChanged".
   virtual PageState GetPageState() const = 0;
+
+  virtual uint64_t EstimateResidentSetSize() const = 0;
+
+  virtual uint64_t EstimatePrivateFootprintSize() const = 0;
 };
 
 // Pure virtual observer interface. Derive from this if you want to be forced to
@@ -249,6 +271,10 @@ class PageNodeObserver {
       const FrameNode* previous_embedder,
       EmbeddingType previous_embedder_type) = 0;
 
+  // Invoked when the GetType property changes.
+  virtual void OnTypeChanged(const PageNode* page_node,
+                             PageType previous_type) = 0;
+
   // Invoked when the IsVisible property changes.
   virtual void OnIsVisibleChanged(const PageNode* page_node) = 0;
 
@@ -283,6 +309,9 @@ class PageNodeObserver {
   // Invoked when the HadFormInteraction property changes.
   virtual void OnHadFormInteractionChanged(const PageNode* page_node) = 0;
 
+  // Invoked when the HadUserEdits property changes.
+  virtual void OnHadUserEditsChanged(const PageNode* page_node) = 0;
+
   // Invoked when the page state changes. See `PageState` for the valid
   // transitions.
   virtual void OnPageStateChanged(const PageNode* page_node,
@@ -297,6 +326,12 @@ class PageNodeObserver {
   // Fired when the favicon associated with a page is updated. This property is
   // not directly reflected on the node.
   virtual void OnFaviconUpdated(const PageNode* page_node) = 0;
+
+  // Fired after `new_page_node` is created but before `page_node` is deleted
+  // from being discarded. See the equivalent function on `WebContentsObserver`
+  // for more detail.
+  virtual void OnAboutToBeDiscarded(const PageNode* page_node,
+                                    const PageNode* new_page_node) = 0;
 
   // Called every time the aggregated freezing vote changes or gets invalidated.
   virtual void OnFreezingVoteChanged(
@@ -327,6 +362,8 @@ class PageNode::ObserverDefaultImpl : public PageNodeObserver {
       const PageNode* page_node,
       const FrameNode* previous_embedder,
       EmbeddingType previous_embedding_type) override {}
+  void OnTypeChanged(const PageNode* page_node,
+                     PageType previous_type) override {}
   void OnIsVisibleChanged(const PageNode* page_node) override {}
   void OnIsAudibleChanged(const PageNode* page_node) override {}
   void OnLoadingStateChanged(const PageNode* page_node,
@@ -339,8 +376,11 @@ class PageNode::ObserverDefaultImpl : public PageNodeObserver {
   void OnMainFrameUrlChanged(const PageNode* page_node) override {}
   void OnMainFrameDocumentChanged(const PageNode* page_node) override {}
   void OnHadFormInteractionChanged(const PageNode* page_node) override {}
+  void OnHadUserEditsChanged(const PageNode* page_node) override {}
   void OnTitleUpdated(const PageNode* page_node) override {}
   void OnFaviconUpdated(const PageNode* page_node) override {}
+  void OnAboutToBeDiscarded(const PageNode* page_node,
+                            const PageNode* new_page_node) override {}
   void OnFreezingVoteChanged(
       const PageNode* page_node,
       absl::optional<freezing::FreezingVote> previous_vote) override {}

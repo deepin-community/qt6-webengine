@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,7 @@
 #include "base/base_export.h"
 #include "base/check.h"
 #include "base/check_op.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/message_loop/timer_slack.h"
 #include "base/sequence_checker.h"
@@ -79,8 +80,9 @@ class BASE_EXPORT MessagePump {
     virtual NextWorkInfo DoWork() = 0;
 
     // Called from within Run just before the message pump goes to sleep.
-    // Returns true to indicate that idle work was done. Returning false means
-    // the pump will now wait.
+    // Returns true to indicate that idle work was done; in which case Run()
+    // should resume with calling DoWork(). Returning false means the pump
+    // should now wait.
     virtual bool DoIdleWork() = 0;
 
     class ScopedDoWorkItem {
@@ -108,7 +110,7 @@ class BASE_EXPORT MessagePump {
 
       // `outer_` is not a raw_ptr<...> for performance reasons (based on
       // analysis of sampling profiler data and tab_search:top100:2020).
-      Delegate* outer_;
+      RAW_PTR_EXCLUSION Delegate* outer_;
     };
 
     // Called before a unit of work is executed. This allows reports

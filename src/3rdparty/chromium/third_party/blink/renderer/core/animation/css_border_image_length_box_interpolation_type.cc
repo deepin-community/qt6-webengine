@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -47,20 +47,20 @@ const BorderImageLengthBox& GetBorderImageLengthBox(
 }
 
 void SetBorderImageLengthBox(const CSSProperty& property,
-                             ComputedStyle& style,
+                             ComputedStyleBuilder& builder,
                              const BorderImageLengthBox& box) {
   switch (property.PropertyID()) {
     case CSSPropertyID::kBorderImageOutset:
-      style.SetBorderImageOutset(box);
+      builder.SetBorderImageOutset(box);
       break;
     case CSSPropertyID::kWebkitMaskBoxImageOutset:
-      style.SetMaskBoxImageOutset(box);
+      builder.SetMaskBoxImageOutset(box);
       break;
     case CSSPropertyID::kBorderImageWidth:
-      style.SetBorderImageWidth(box);
+      builder.SetBorderImageWidth(box);
       break;
     case CSSPropertyID::kWebkitMaskBoxImageWidth:
-      style.SetMaskBoxImageWidth(box);
+      builder.SetMaskBoxImageWidth(box);
       break;
     default:
       NOTREACHED();
@@ -408,7 +408,7 @@ void CSSBorderImageLengthBoxInterpolationType::ApplyStandardPropertyValue(
   };
   BorderImageLengthBox box(convert_side(kSideTop), convert_side(kSideRight),
                            convert_side(kSideBottom), convert_side(kSideLeft));
-  SetBorderImageLengthBox(CssProperty(), *state.Style(), box);
+  SetBorderImageLengthBox(CssProperty(), state.StyleBuilder(), box);
 }
 
 }  // namespace blink

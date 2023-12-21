@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -81,7 +81,7 @@ TEST_F(PolicyMapAndroidTest, StringPolicy) {
 TEST_F(PolicyMapAndroidTest, DictPolicy) {
   Java_PolicyMapTestSupporter_verifyDictPolicy(env_, j_support_,
                                                policy_name_android_, nullptr);
-  base::Value value(base::Value::Type::DICTIONARY);
+  base::Value value(base::Value::Type::DICT);
   value.SetIntPath("key", 42);
   SetPolicy(std::move(value));
   Java_PolicyMapTestSupporter_verifyDictPolicy(
@@ -92,10 +92,10 @@ TEST_F(PolicyMapAndroidTest, DictPolicy) {
 TEST_F(PolicyMapAndroidTest, ListPolicy) {
   Java_PolicyMapTestSupporter_verifyListPolicy(env_, j_support_,
                                                policy_name_android_, nullptr);
-  std::vector<base::Value> value;
-  value.push_back(base::Value("value-1"));
-  value.push_back(base::Value("value-2"));
-  SetPolicy(base::Value(value));
+  base::Value::List value;
+  value.Append("value-1");
+  value.Append("value-2");
+  SetPolicy(base::Value(std::move(value)));
   Java_PolicyMapTestSupporter_verifyListPolicy(
       env_, j_support_, policy_name_android_,
       base::android::ConvertUTF8ToJavaString(env_, R"(["value-1","value-2"])"));

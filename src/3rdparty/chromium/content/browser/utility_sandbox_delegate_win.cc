@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,13 +6,15 @@
 
 #include "base/check.h"
 #include "base/feature_list.h"
+#include "base/files/file_path.h"
 #include "base/strings/utf_string_conversions.h"
+#include "components/services/screen_ai/buildflags/buildflags.h"
+#include "components/services/screen_ai/public/cpp/utilities.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/sandboxed_process_launcher_delegate.h"
 #include "printing/buildflags/buildflags.h"
-#include "sandbox/policy/features.h"
 #include "sandbox/policy/mojom/sandbox.mojom.h"
 #include "sandbox/policy/win/sandbox_win.h"
 #include "sandbox/win/src/app_container.h"
@@ -30,15 +32,15 @@ namespace {
 //
 //  integrity_level_(sandbox::INTEGRITY_LEVEL_LOW),
 //  delayed_integrity_level_(sandbox::INTEGRITY_LEVEL_UNTRUSTED),
-bool AudioPreSpawnTarget(sandbox::TargetPolicy* policy) {
+bool AudioPreSpawnTarget(sandbox::TargetConfig* config) {
   // Audio process privilege requirements:
   //  - Lockdown level of USER_NON_ADMIN
   //  - Delayed integrity level of INTEGRITY_LEVEL_LOW
   //
   // For audio streams to create shared memory regions, lockdown level must be
   // at least USER_LIMITED and delayed integrity level INTEGRITY_LEVEL_LOW,
-  // otherwise CreateFileMapping() will fail with error code ERROR_ACCESS_DENIED
-  // (0x5).
+  // otherwise CreateFileMapping() will fail with error code
+  // ERROR_ACCESS_DENIED (0x5).
   //
   // For audio input streams to use ISimpleAudioVolume interface, lockdown
   // level must be set to USER_NON_ADMIN, otherwise
@@ -48,35 +50,54 @@ bool AudioPreSpawnTarget(sandbox::TargetPolicy* policy) {
   // https://cs.chromium.org/chromium/src/media/audio/win/audio_low_latency_input_win.cc
   // Use USER_RESTRICTED_NON_ADMIN over USER_NON_ADMIN to prevent failures when
   // AppLocker and similar application whitelisting solutions are in place.
-  policy->SetTokenLevel(sandbox::USER_RESTRICTED_SAME_ACCESS,
-                        sandbox::USER_RESTRICTED_NON_ADMIN);
-  policy->SetDelayedIntegrityLevel(sandbox::INTEGRITY_LEVEL_LOW);
+  DCHECK(!config->IsConfigured());
 
   // Custom default policy allowing audio drivers to read device properties
   // (https://crbug.com/883326).
-  policy->SetIntegrityLevel(sandbox::INTEGRITY_LEVEL_LOW);
-  policy->SetLockdownDefaultDacl();
-  policy->SetAlternateDesktop(true);
+  auto result = config->SetIntegrityLevel(sandbox::INTEGRITY_LEVEL_LOW);
+  if (result != sandbox::SBOX_ALL_OK)
+    return false;
+  config->SetLockdownDefaultDacl();
+  config->SetDelayedIntegrityLevel(sandbox::INTEGRITY_LEVEL_LOW);
+  result = config->SetTokenLevel(sandbox::USER_RESTRICTED_SAME_ACCESS,
+                                 sandbox::USER_RESTRICTED_NON_ADMIN);
+  if (result != sandbox::SBOX_ALL_OK)
+    return false;
+
+  // The Audio Service process uses a base::SyncSocket for transmitting audio
+  // data.
+  result = config->AddRule(sandbox::SubSystem::kNamedPipes,
+                           sandbox::Semantics::kNamedPipesAllowAny,
+                           L"\\\\.\\pipe\\chrome.sync.*");
+  if (result != sandbox::SBOX_ALL_OK) {
+    return false;
+  }
+
+#ifdef TOOLKIT_QT
+  // Disable alternate window station due to QTBUG-83300
+  config->SetDesktop(sandbox::Desktop::kAlternateDesktop);
+#else
+  config->SetDesktop(sandbox::Desktop::kAlternateWinstation);
+#endif
 
   return true;
 }
 
 // Sets the sandbox policy for the network service process.
-bool NetworkPreSpawnTarget(sandbox::TargetPolicy* policy) {
+bool NetworkPreSpawnTarget(sandbox::TargetConfig* config) {
+  DCHECK(!config->IsConfigured());
   // LPAC sandbox is enabled, so do not use a restricted token.
-  if (sandbox::SBOX_ALL_OK !=
-      policy->SetTokenLevel(sandbox::USER_UNPROTECTED,
-                            sandbox::USER_UNPROTECTED)) {
+  auto result = config->SetTokenLevel(sandbox::USER_UNPROTECTED,
+                                      sandbox::USER_UNPROTECTED);
+  if (result != sandbox::SBOX_ALL_OK)
     return false;
-  }
-
   // Network Sandbox in LPAC sandbox needs access to its data files. These
   // files are marked on disk with an ACE that permits this access.
   auto lpac_capability =
       GetContentClient()->browser()->GetLPACCapabilityNameForNetworkService();
   if (lpac_capability.empty())
     return false;
-  auto app_container = policy->GetAppContainer();
+  auto app_container = config->GetAppContainer();
   if (!app_container)
     return false;
   app_container->AddCapability(lpac_capability.c_str());
@@ -95,33 +116,156 @@ bool NetworkPreSpawnTarget(sandbox::TargetPolicy* policy) {
   return true;
 }
 
+#if BUILDFLAG(ENABLE_OOP_PRINTING)
 // Sets the sandbox policy for the print backend service process.
-bool PrintBackendPreSpawnTarget(sandbox::TargetPolicy* policy) {
+bool PrintBackendPreSpawnTarget(sandbox::TargetConfig* config) {
+  DCHECK(!config->IsConfigured());
   // Print Backend policy lockdown level must be at least USER_LIMITED and
   // delayed integrity level INTEGRITY_LEVEL_LOW, otherwise ::OpenPrinter()
   // will fail with error code ERROR_ACCESS_DENIED (0x5).
-  policy->SetTokenLevel(sandbox::USER_RESTRICTED_SAME_ACCESS,
-                        sandbox::USER_LIMITED);
-  policy->SetDelayedIntegrityLevel(sandbox::INTEGRITY_LEVEL_LOW);
+  auto result = config->SetTokenLevel(sandbox::USER_RESTRICTED_SAME_ACCESS,
+                                      sandbox::USER_LIMITED);
+  if (result != sandbox::SBOX_ALL_OK)
+    return false;
+  config->SetDelayedIntegrityLevel(sandbox::INTEGRITY_LEVEL_LOW);
   return true;
 }
+#endif
+
+std::string UtilityAppContainerId(base::CommandLine& cmd_line) {
+  return base::WideToUTF8(cmd_line.GetProgram().value());
+}
+
+bool IconReaderPreSpawnTarget(sandbox::TargetConfig* config) {
+  DCHECK(!config->IsConfigured());
+
+  auto result = config->SetTokenLevel(sandbox::USER_RESTRICTED_SAME_ACCESS,
+                                      sandbox::USER_LOCKDOWN);
+  if (result != sandbox::SBOX_ALL_OK)
+    return false;
+  config->SetDelayedIntegrityLevel(sandbox::INTEGRITY_LEVEL_UNTRUSTED);
+  result = config->SetIntegrityLevel(sandbox::INTEGRITY_LEVEL_LOW);
+  if (result != sandbox::SBOX_ALL_OK)
+    return false;
+  config->SetLockdownDefaultDacl();
+#ifdef TOOLKIT_QT
+  // Disable alternate window station due to QTBUG-83300
+  config->SetDesktop(sandbox::Desktop::kAlternateDesktop);
+#else
+  config->SetDesktop(sandbox::Desktop::kAlternateWinstation);
+#endif
+
+  sandbox::MitigationFlags flags = config->GetDelayedProcessMitigations();
+  flags |= sandbox::MITIGATION_DYNAMIC_CODE_DISABLE;
+  result = config->SetDelayedProcessMitigations(flags);
+  if (result != sandbox::SBOX_ALL_OK)
+    return false;
+
+  // Allow file read. These should match IconLoader::GroupForFilepath().
+  result =
+      config->AddRule(sandbox::SubSystem::kFiles,
+                      sandbox::Semantics::kFilesAllowReadonly, L"\\??\\*.exe");
+  if (result != sandbox::SBOX_ALL_OK)
+    return false;
+  result =
+      config->AddRule(sandbox::SubSystem::kFiles,
+                      sandbox::Semantics::kFilesAllowReadonly, L"\\??\\*.dll");
+  if (result != sandbox::SBOX_ALL_OK)
+    return false;
+  result =
+      config->AddRule(sandbox::SubSystem::kFiles,
+                      sandbox::Semantics::kFilesAllowReadonly, L"\\??\\*.ico");
+  if (result != sandbox::SBOX_ALL_OK)
+    return false;
+  return true;
+}
+
+bool XrCompositingPreSpawnTarget(sandbox::TargetConfig* config,
+                                 base::CommandLine& cmd_line,
+                                 sandbox::mojom::Sandbox sandbox_type) {
+  DCHECK(!config->IsConfigured());
+  // TODO(https://crbug.com/881919): Try to harden the XR Compositor
+  // sandbox to use mitigations and restrict the token.
+
+  // Unprotected token/job.
+  auto result = config->SetTokenLevel(sandbox::USER_UNPROTECTED,
+                                      sandbox::USER_UNPROTECTED);
+  if (result != sandbox::SBOX_ALL_OK)
+    return false;
+
+  result = sandbox::policy::SandboxWin::SetJobLevel(
+      sandbox_type, sandbox::JobLevel::kUnprotected, 0, config);
+  if (result != sandbox::SBOX_ALL_OK)
+    return false;
+
+  // There were issues with some mitigations, causing an inability
+  // to load OpenVR and Oculus APIs.
+  result = config->SetProcessMitigations(0);
+  if (result != sandbox::SBOX_ALL_OK)
+    return false;
+
+  result = config->SetDelayedProcessMitigations(0);
+  if (result != sandbox::SBOX_ALL_OK)
+    return false;
+
+  std::string appcontainer_id = UtilityAppContainerId(cmd_line);
+  result = sandbox::policy::SandboxWin::AddAppContainerProfileToConfig(
+      cmd_line, sandbox_type, appcontainer_id, config);
+  if (result != sandbox::SBOX_ALL_OK)
+    return false;
+
+  return true;
+}
+
+#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+bool ScreenAIPreSpawnTarget(sandbox::TargetConfig* config,
+                            sandbox::mojom::Sandbox sandbox_type) {
+  DCHECK(!config->IsConfigured());
+
+  auto result = config->SetTokenLevel(sandbox::USER_RESTRICTED_SAME_ACCESS,
+                                      sandbox::USER_LOCKDOWN);
+  if (result != sandbox::SBOX_ALL_OK)
+    return false;
+
+  result = sandbox::policy::SandboxWin::SetJobLevel(
+      sandbox_type, sandbox::JobLevel::kLimitedUser, 0, config);
+  if (result != sandbox::SBOX_ALL_OK)
+    return false;
+
+  base::FilePath library_binary_path =
+      screen_ai::GetLatestComponentBinaryPath();
+  if (library_binary_path.empty())
+    return false;
+  DCHECK_EQ(library_binary_path.Extension(), FILE_PATH_LITERAL(".dll"));
+
+  // TODO(https://crbug.com/1278249): Preload the binary instead of giving
+  // read permission to the sandbox.
+  result = config->AddRule(sandbox::SubSystem::kFiles,
+                           sandbox::Semantics::kFilesAllowReadonly,
+                           library_binary_path.value().c_str());
+  return result == sandbox::SBOX_ALL_OK;
+}
+#endif  // BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+
 }  // namespace
+
+std::string UtilitySandboxedProcessLauncherDelegate::GetSandboxTag() {
+  return sandbox::policy::SandboxWin::GetSandboxTagForDelegate(
+      "utility", GetSandboxType());
+}
 
 bool UtilitySandboxedProcessLauncherDelegate::GetAppContainerId(
     std::string* appcontainer_id) {
-  if (sandbox_type_ == sandbox::mojom::Sandbox::kNetwork) {
-    *appcontainer_id = base::WideToUTF8(cmd_line_.GetProgram().value());
-    return true;
+  switch (sandbox_type_) {
+    case sandbox::mojom::Sandbox::kMediaFoundationCdm:
+    case sandbox::mojom::Sandbox::kNetwork:
+    case sandbox::mojom::Sandbox::kWindowsSystemProxyResolver:
+    case sandbox::mojom::Sandbox::kXrCompositing:
+      *appcontainer_id = UtilityAppContainerId(cmd_line_);
+      return true;
+    default:
+      return false;
   }
-
-  if ((sandbox_type_ == sandbox::mojom::Sandbox::kXrCompositing &&
-       base::FeatureList::IsEnabled(sandbox::policy::features::kXRSandbox)) ||
-      sandbox_type_ == sandbox::mojom::Sandbox::kMediaFoundationCdm ||
-      sandbox_type_ == sandbox::mojom::Sandbox::kWindowsSystemProxyResolver) {
-    *appcontainer_id = base::WideToUTF8(cmd_line_.GetProgram().value());
-    return true;
-  }
-  return false;
 }
 
 bool UtilitySandboxedProcessLauncherDelegate::DisableDefaultPolicy() {
@@ -131,8 +275,7 @@ bool UtilitySandboxedProcessLauncherDelegate::DisableDefaultPolicy() {
       // to read device properties (https://crbug.com/883326).
       return true;
     case sandbox::mojom::Sandbox::kXrCompositing:
-      return base::FeatureList::IsEnabled(
-          sandbox::policy::features::kXRSandbox);
+      return true;
     case sandbox::mojom::Sandbox::kMediaFoundationCdm:
       // Default policy is disabled for MF Cdm process to allow the application
       // of specific LPAC sandbox policies.
@@ -156,103 +299,80 @@ bool UtilitySandboxedProcessLauncherDelegate::ShouldLaunchElevated() {
 
 bool UtilitySandboxedProcessLauncherDelegate::PreSpawnTarget(
     sandbox::TargetPolicy* policy) {
-  if (sandbox_type_ == sandbox::mojom::Sandbox::kNetwork) {
-    if (!NetworkPreSpawnTarget(policy))
-      return false;
-  }
-
-  if (sandbox_type_ == sandbox::mojom::Sandbox::kAudio) {
-    if (!AudioPreSpawnTarget(policy))
-      return false;
-  }
-
-  if (sandbox_type_ == sandbox::mojom::Sandbox::kSpeechRecognition) {
-    policy->SetDelayedIntegrityLevel(sandbox::INTEGRITY_LEVEL_LOW);
-    policy->SetIntegrityLevel(sandbox::INTEGRITY_LEVEL_LOW);
-    policy->SetTokenLevel(sandbox::USER_RESTRICTED_SAME_ACCESS,
-                          sandbox::USER_LIMITED);
-  }
-
-  if (sandbox_type_ == sandbox::mojom::Sandbox::kIconReader) {
-    policy->SetTokenLevel(sandbox::USER_RESTRICTED_SAME_ACCESS,
-                          sandbox::USER_LOCKDOWN);
-    policy->SetDelayedIntegrityLevel(sandbox::INTEGRITY_LEVEL_UNTRUSTED);
-    policy->SetIntegrityLevel(sandbox::INTEGRITY_LEVEL_LOW);
-    policy->SetLockdownDefaultDacl();
-    policy->SetAlternateDesktop(true);
-
-    sandbox::MitigationFlags flags = policy->GetDelayedProcessMitigations();
-    flags |= sandbox::MITIGATION_DYNAMIC_CODE_DISABLE;
-    if (sandbox::SBOX_ALL_OK != policy->SetDelayedProcessMitigations(flags))
-      return false;
-
-    // Allow file read. These should match IconLoader::GroupForFilepath().
-    policy->AddRule(sandbox::TargetPolicy::SUBSYS_FILES,
-                    sandbox::TargetPolicy::FILES_ALLOW_READONLY,
-                    L"\\??\\*.exe");
-    policy->AddRule(sandbox::TargetPolicy::SUBSYS_FILES,
-                    sandbox::TargetPolicy::FILES_ALLOW_READONLY,
-                    L"\\??\\*.dll");
-    policy->AddRule(sandbox::TargetPolicy::SUBSYS_FILES,
-                    sandbox::TargetPolicy::FILES_ALLOW_READONLY,
-                    L"\\??\\*.ico");
-  }
-
-  if (sandbox_type_ == sandbox::mojom::Sandbox::kXrCompositing &&
-      base::FeatureList::IsEnabled(sandbox::policy::features::kXRSandbox)) {
-    // There were issues with some mitigations, causing an inability
-    // to load OpenVR and Oculus APIs.
-    // TODO(https://crbug.com/881919): Try to harden the XR Compositor
-    // sandbox to use mitigations and restrict the token.
-    policy->SetProcessMitigations(0);
-    policy->SetDelayedProcessMitigations(0);
-
-    std::string appcontainer_id;
-    if (!GetAppContainerId(&appcontainer_id)) {
-      return false;
+  sandbox::TargetConfig* config = policy->GetConfig();
+  if (!config->IsConfigured()) {
+    if (sandbox_type_ == sandbox::mojom::Sandbox::kAudio) {
+      if (!AudioPreSpawnTarget(config))
+        return false;
     }
-    sandbox::ResultCode result =
-        sandbox::policy::SandboxWin::AddAppContainerProfileToPolicy(
-            cmd_line_, sandbox_type_, appcontainer_id, policy);
-    if (result != sandbox::SBOX_ALL_OK) {
-      return false;
+    if (sandbox_type_ == sandbox::mojom::Sandbox::kNetwork) {
+      if (!NetworkPreSpawnTarget(config))
+        return false;
+    }
+    if (sandbox_type_ == sandbox::mojom::Sandbox::kIconReader) {
+      if (!IconReaderPreSpawnTarget(config))
+        return false;
     }
 
-    // Unprotected token/job.
-    policy->SetTokenLevel(sandbox::USER_UNPROTECTED, sandbox::USER_UNPROTECTED);
-    sandbox::policy::SandboxWin::SetJobLevel(
-        cmd_line_, sandbox::JobLevel::kUnprotected, 0, policy);
-  }
+    if (sandbox_type_ == sandbox::mojom::Sandbox::kXrCompositing) {
+      if (!XrCompositingPreSpawnTarget(config, cmd_line_, sandbox_type_))
+        return false;
+    }
 
-  if (sandbox_type_ == sandbox::mojom::Sandbox::kMediaFoundationCdm ||
-      sandbox_type_ == sandbox::mojom::Sandbox::kWindowsSystemProxyResolver) {
-    policy->SetTokenLevel(sandbox::USER_UNPROTECTED, sandbox::USER_UNPROTECTED);
-  }
-
-  if (sandbox_type_ == sandbox::mojom::Sandbox::kService ||
-      sandbox_type_ == sandbox::mojom::Sandbox::kServiceWithJit) {
-    auto result = sandbox::policy::SandboxWin::AddWin32kLockdownPolicy(policy);
-    if (result != sandbox::SBOX_ALL_OK)
-      return false;
-  }
-
-  if (sandbox_type_ == sandbox::mojom::Sandbox::kService) {
-    auto delayed_flags = policy->GetDelayedProcessMitigations();
-    delayed_flags |= sandbox::MITIGATION_DYNAMIC_CODE_DISABLE;
-    auto result = policy->SetDelayedProcessMitigations(delayed_flags);
-    if (result != sandbox::SBOX_ALL_OK)
-      return false;
-  }
-
-#if BUILDFLAG(ENABLE_PRINTING) && BUILDFLAG(ENABLE_OOP_PRINTING)
-  if (sandbox_type_ == sandbox::mojom::Sandbox::kPrintBackend) {
-    if (!PrintBackendPreSpawnTarget(policy))
-      return false;
-  }
+#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+    if (sandbox_type_ == sandbox::mojom::Sandbox::kScreenAI) {
+      if (!ScreenAIPreSpawnTarget(config, sandbox_type_))
+        return false;
+    }
 #endif
 
+    if (sandbox_type_ == sandbox::mojom::Sandbox::kSpeechRecognition) {
+      auto result = config->SetIntegrityLevel(sandbox::INTEGRITY_LEVEL_LOW);
+      if (result != sandbox::SBOX_ALL_OK)
+        return false;
+      config->SetDelayedIntegrityLevel(sandbox::INTEGRITY_LEVEL_LOW);
+      result = config->SetTokenLevel(sandbox::USER_RESTRICTED_SAME_ACCESS,
+                                     sandbox::USER_LIMITED);
+      if (result != sandbox::SBOX_ALL_OK)
+        return false;
+    }
+
+    if (sandbox_type_ == sandbox::mojom::Sandbox::kMediaFoundationCdm ||
+        sandbox_type_ == sandbox::mojom::Sandbox::kWindowsSystemProxyResolver) {
+      auto result = config->SetTokenLevel(sandbox::USER_UNPROTECTED,
+                                          sandbox::USER_UNPROTECTED);
+      if (result != sandbox::SBOX_ALL_OK)
+        return false;
+    }
+
+    if (sandbox_type_ == sandbox::mojom::Sandbox::kService ||
+        sandbox_type_ == sandbox::mojom::Sandbox::kServiceWithJit ||
+        sandbox_type_ == sandbox::mojom::Sandbox::kFileUtil) {
+      auto result =
+          sandbox::policy::SandboxWin::AddWin32kLockdownPolicy(config);
+      if (result != sandbox::SBOX_ALL_OK)
+        return false;
+    }
+
+    if (sandbox_type_ == sandbox::mojom::Sandbox::kService ||
+        sandbox_type_ == sandbox::mojom::Sandbox::kFileUtil) {
+      auto delayed_flags = config->GetDelayedProcessMitigations();
+      delayed_flags |= sandbox::MITIGATION_DYNAMIC_CODE_DISABLE;
+      auto result = config->SetDelayedProcessMitigations(delayed_flags);
+      if (result != sandbox::SBOX_ALL_OK)
+        return false;
+    }
+#if BUILDFLAG(ENABLE_OOP_PRINTING)
+    if (sandbox_type_ == sandbox::mojom::Sandbox::kPrintBackend) {
+      if (!PrintBackendPreSpawnTarget(config))
+        return false;
+    }
+#endif
+  }
+
   return GetContentClient()->browser()->PreSpawnChild(
-      policy, sandbox_type_, ContentBrowserClient::ChildSpawnFlags::NONE);
+      policy, sandbox_type_,
+      ContentBrowserClient::ChildSpawnFlags::kChildSpawnFlagNone);
 }
 
 bool UtilitySandboxedProcessLauncherDelegate::ShouldUnsandboxedRunInJob() {

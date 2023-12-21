@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <memory>
 #include <string>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "components/security_interstitials/content/ssl_blocking_page_base.h"
 #include "content/public/browser/certificate_request_result_type.h"
 #include "net/ssl/ssl_info.h"
@@ -72,7 +72,7 @@ class CaptivePortalBlockingPage : public SSLBlockingPageBase {
   std::string GetWiFiSSID() const;
 
   // SecurityInterstitialPage methods:
-  void PopulateInterstitialStrings(base::Value* load_time_data) override;
+  void PopulateInterstitialStrings(base::Value::Dict& load_time_data) override;
 
   // SecurityInterstitialPage method:
   void CommandReceived(const std::string& command) override;

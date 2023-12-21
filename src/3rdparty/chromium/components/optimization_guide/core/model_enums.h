@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -50,6 +50,28 @@ enum class PredictionManagerModelStatus {
 
   // Add new values above this line.
   kMaxValue = kStoreUnavailableModelUnknown,
+};
+
+// The various reasons a prediction model in the model store is being removed.
+// Keep in sync with OptimizationGuidePredictionModelStoreModelRemovalReason in
+// enums.xml.
+enum class PredictionModelStoreModelRemovalReason {
+  kUnknown = 0,
+  // Model was expired.
+  kModelExpired = 1,
+  // Model was found to be expired when the model is loaded.
+  kModelExpiredOnLoadModel = 2,
+  // Model dirs were invalid.
+  kInvalidModelDir = 3,
+  // Failed when loading the model files from the store.
+  kModelLoadFailed = 4,
+  // Model file path verification failed on a model update.
+  kModelUpdateFilePathVerifyFailed = 5,
+  // Model version is invalid.
+  kModelVersionInvalid = 6,
+
+  // Add new values above this line.
+  kMaxValue = kModelVersionInvalid,
 };
 
 }  // namespace optimization_guide

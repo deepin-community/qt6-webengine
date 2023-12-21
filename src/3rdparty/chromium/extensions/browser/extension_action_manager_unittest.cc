@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,7 @@
 #include "extensions/browser/extension_action.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extensions_test.h"
-#include "extensions/common/api/extension_action/action_info_test_util.h"
+#include "extensions/common/api/extension_action/action_info.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/manifest_handlers/icons_handler.h"
 #include "extensions/common/value_builder.h"
@@ -63,8 +63,8 @@ TEST_P(ExtensionActionManagerTest, TestPopulateMissingValues_Icons) {
                                        .Set("48", "icon48.png")
                                        .Set("128", "icon128.png")
                                        .Build())
-          .SetManifestKey(GetManifestKeyForActionType(GetParam()),
-                          std::make_unique<base::DictionaryValue>())
+          .SetManifestKey(ActionInfo::GetManifestKeyForActionType(GetParam()),
+                          base::Value::Dict())
           .Build();
 
   ASSERT_TRUE(extension);
@@ -83,8 +83,8 @@ TEST_P(ExtensionActionManagerTest, TestPopulateMissingValues_Icons) {
 TEST_P(ExtensionActionManagerTest, TestPopulateMissingValues_Title) {
   scoped_refptr<const Extension> extension =
       ExtensionBuilder("Test Extension")
-          .SetManifestKey(GetManifestKeyForActionType(GetParam()),
-                          std::make_unique<base::DictionaryValue>())
+          .SetManifestKey(ActionInfo::GetManifestKeyForActionType(GetParam()),
+                          base::Value::Dict())
           .Build();
 
   ASSERT_TRUE(extension);
@@ -105,7 +105,7 @@ TEST_P(ExtensionActionManagerTest, TestDontOverrideIfDefaultsProvided) {
           .SetManifestKey("icons",
                           DictionaryBuilder().Set("24", "icon24.png").Build())
           .SetManifestKey(
-              GetManifestKeyForActionType(GetParam()),
+              ActionInfo::GetManifestKeyForActionType(GetParam()),
               DictionaryBuilder()
                   .Set("default_icon",
                        DictionaryBuilder().Set("19", "icon19.png").Build())

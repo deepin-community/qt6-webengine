@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,13 +11,12 @@
 #include <memory>
 #include <string>
 
-#include "base/bind.h"
 #include "base/component_export.h"
 #include "base/files/scoped_file.h"
+#include "base/functional/bind.h"
 #include "base/memory/ref_counted.h"
 #include "base/process/process.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "ipc/ipc.mojom-forward.h"
 #include "ipc/ipc_channel_handle.h"
@@ -50,11 +49,10 @@ class COMPONENT_EXPORT(IPC) Channel : public Sender {
 
  public:
   // Flags to test modes
-  enum ModeFlags {
-    MODE_NO_FLAG = 0x0,
-    MODE_SERVER_FLAG = 0x1,
-    MODE_CLIENT_FLAG = 0x2,
-  };
+  using ModeFlags = int;
+  static constexpr ModeFlags MODE_NO_FLAG = 0x0;
+  static constexpr ModeFlags MODE_SERVER_FLAG = 0x1;
+  static constexpr ModeFlags MODE_CLIENT_FLAG = 0x2;
 
   // Some Standard Modes
   // TODO(morrita): These are under deprecation work. You should use Create*()

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "components/cbor/reader.h"
 #include "components/cbor/values.h"
 #include "components/cbor/writer.h"
@@ -140,7 +140,7 @@ FidoTunnelDevice::FidoTunnelDevice(
 }
 
 FidoTunnelDevice::FidoTunnelDevice(
-    FidoRequestType request_type,
+    CableRequestType request_type,
     network::mojom::NetworkContext* network_context,
     std::unique_ptr<Pairing> pairing,
     base::OnceClosure pairing_is_invalid)
@@ -227,7 +227,7 @@ FidoDevice::CancelToken FidoTunnelDevice::DeviceTransact(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (state_ == State::kError) {
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback), absl::nullopt));
   } else if (state_ != State::kReady) {
     DCHECK(!pending_callback_);
@@ -253,7 +253,7 @@ std::string FidoTunnelDevice::GetId() const {
 
 FidoTransportProtocol FidoTunnelDevice::DeviceTransport() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return FidoTransportProtocol::kCloudAssistedBluetoothLowEnergy;
+  return FidoTransportProtocol::kHybrid;
 }
 
 base::WeakPtr<FidoDevice> FidoTunnelDevice::GetWeakPtr() {
@@ -488,7 +488,7 @@ void FidoTunnelDevice::DeviceTransactReady(std::vector<uint8_t> command,
   reply.push_back(static_cast<uint8_t>(CtapDeviceResponseCode::kSuccess));
   reply.insert(reply.end(), getinfo_response_bytes_.begin(),
                getinfo_response_bytes_.end());
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(std::move(callback), std::move(reply)));
 }
 
@@ -540,7 +540,7 @@ void FidoTunnelDevice::EstablishedConnection::Transact(
   }
 
   if (state_ == State::kRemoteShutdown || !crypter_->Encrypt(&message)) {
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback), absl::nullopt));
     return;
   }

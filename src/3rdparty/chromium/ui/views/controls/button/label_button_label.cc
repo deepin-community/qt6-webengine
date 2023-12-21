@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,7 @@
 
 #include "ui/base/metadata/metadata_impl_macros.h"
 
-namespace views {
-
-namespace internal {
+namespace views::internal {
 
 LabelButtonLabel::LabelButtonLabel(const std::u16string& text, int text_context)
     : Label(text, text_context, style::STYLE_PRIMARY) {}
@@ -52,6 +50,4 @@ void LabelButtonLabel::SetColorForEnableState() {
 BEGIN_METADATA(LabelButtonLabel, Label)
 END_METADATA
 
-}  // namespace internal
-
-}  // namespace views
+}  // namespace views::internal

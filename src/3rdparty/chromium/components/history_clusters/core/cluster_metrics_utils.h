@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,6 +34,46 @@ class ScopedFilterClusterMetricsRecorder {
   // tools/metrics/histograms/metadata/history/histograms.xml.
   const std::string filtered_reason_;
 };
+
+/**
+ * The following enums must be kept in sync with their respective variants in
+ * //tools/metrics/histograms/metadata/history/histograms.xml and
+ * //ui/webui/resources/cr_components/history_clusters/history_clusters.mojom
+ */
+
+// Actions that can be performed on clusters. The int values are not logged and
+// can be changed, but should remain consistent with history_clusters.mojom.
+enum class ClusterAction {
+  kDeleted = 0,
+  kOpenedInTabGroup = 1,
+  kRelatedSearchClicked = 2,
+  kVisitClicked = 3,
+};
+
+// Actions that can be performed on related search items.
+enum class RelatedSearchAction {
+  kClicked = 0,
+};
+
+// Actions that can be performed on visits.
+enum class VisitAction {
+  kClicked = 0,
+  kHidden = 1,
+  kDeleted = 2,
+};
+
+// Types of visits that can be shown and acted on.
+enum class VisitType {
+  kSRP = 0,
+  kNonSRP = 1,
+};
+
+// Returns the string representation of each enum class used for
+// logging/histograms.
+std::string ClusterActionToString(ClusterAction action);
+std::string VisitActionToString(VisitAction action);
+std::string VisitTypeToString(VisitType action);
+std::string RelatedSearchActionToString(RelatedSearchAction action);
 
 }  // namespace history_clusters
 

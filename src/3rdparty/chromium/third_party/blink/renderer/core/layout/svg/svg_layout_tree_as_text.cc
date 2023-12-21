@@ -28,6 +28,7 @@
 
 #include "third_party/blink/renderer/core/layout/svg/svg_layout_tree_as_text.h"
 
+#include "third_party/blink/renderer/core/css/properties/longhands.h"
 #include "third_party/blink/renderer/core/layout/api/line_layout_svg_inline_text.h"
 #include "third_party/blink/renderer/core/layout/layout_tree_as_text.h"
 #include "third_party/blink/renderer/core/layout/line/inline_text_box.h"
@@ -181,7 +182,7 @@ static WTF::TextStream& operator<<(WTF::TextStream& ts,
   return ts;
 }
 
-// FIXME: Maybe this should be in GraphicsTypes.cpp
+// FIXME: Maybe this should be in platform/graphics/graphics_types.cc
 static WTF::TextStream& operator<<(WTF::TextStream& ts, LineCap style) {
   switch (style) {
     case kButtCap:
@@ -197,7 +198,7 @@ static WTF::TextStream& operator<<(WTF::TextStream& ts, LineCap style) {
   return ts;
 }
 
-// FIXME: Maybe this should be in GraphicsTypes.cpp
+// FIXME: Maybe this should be in platform/graphics/graphics_types.cc
 static WTF::TextStream& operator<<(WTF::TextStream& ts, LineJoin style) {
   switch (style) {
     case kMiterJoin:
@@ -245,7 +246,7 @@ static void WriteSVGPaintingResource(WTF::TextStream& ts,
 static bool WriteSVGPaint(WTF::TextStream& ts,
                           const LayoutObject& object,
                           const SVGPaint& paint,
-                          const CSSProperty& property,
+                          const Longhand& property,
                           const char* paint_name) {
   TextStreamSeparator s(" ");
   const ComputedStyle& style = object.StyleRef();
@@ -296,7 +297,7 @@ static void WriteStyle(WTF::TextStream& ts, const LayoutObject& object) {
       WriteIfNotDefault(ts, "line cap", style.CapStyle(), kButtCap);
       WriteIfNotDefault(ts, "line join", style.JoinStyle(), kMiterJoin);
       WriteIfNotDefault(ts, "dash offset", dash_offset, 0.0);
-      if (!dash_array.IsEmpty())
+      if (!dash_array.empty())
         WriteNameValuePair(ts, "dash array", dash_array);
 
       ts << "}]";
@@ -425,7 +426,7 @@ static inline void WriteSVGInlineTextBox(WTF::TextStream& ts,
                                          SVGInlineTextBox* text_box,
                                          int indent) {
   Vector<SVGTextFragment>& fragments = text_box->TextFragments();
-  if (fragments.IsEmpty())
+  if (fragments.empty())
     return;
 
   LineLayoutSVGInlineText text_line_layout =
@@ -587,9 +588,8 @@ void WriteSVGResourceContainer(WTF::TextStream& ts,
     // SVGPatternElement for its patternUnits(), as it may link to other
     // patterns using xlink:href, we need to build the full inheritance chain,
     // aka. collectPatternProperties()
-    PatternAttributes attributes;
-    To<SVGPatternElement>(pattern->GetElement())
-        ->CollectPatternAttributes(attributes);
+    PatternAttributes attributes = To<SVGPatternElement>(*pattern->GetElement())
+                                       .CollectPatternAttributes();
 
     WriteNameValuePair(ts, "patternUnits", attributes.PatternUnits());
     WriteNameValuePair(ts, "patternContentUnits",
@@ -607,9 +607,9 @@ void WriteSVGResourceContainer(WTF::TextStream& ts,
     // SVGGradientElement for its gradientUnits(), as it may link to other
     // gradients using xlink:href, we need to build the full inheritance chain,
     // aka. collectGradientProperties()
-    LinearGradientAttributes attributes;
-    To<SVGLinearGradientElement>(gradient->GetElement())
-        ->CollectGradientAttributes(attributes);
+    LinearGradientAttributes attributes =
+        To<SVGLinearGradientElement>(*gradient->GetElement())
+            .CollectGradientAttributes();
     WriteCommonGradientProperties(ts, attributes);
 
     ts << " [start=" << gradient->StartPoint(attributes)
@@ -621,9 +621,9 @@ void WriteSVGResourceContainer(WTF::TextStream& ts,
     // SVGGradientElement for its gradientUnits(), as it may link to other
     // gradients using xlink:href, we need to build the full inheritance chain,
     // aka. collectGradientProperties()
-    RadialGradientAttributes attributes;
-    To<SVGRadialGradientElement>(gradient->GetElement())
-        ->CollectGradientAttributes(attributes);
+    RadialGradientAttributes attributes =
+        To<SVGRadialGradientElement>(*gradient->GetElement())
+            .CollectGradientAttributes();
     WriteCommonGradientProperties(ts, attributes);
 
     gfx::PointF focal_point = gradient->FocalPoint(attributes);
@@ -766,7 +766,8 @@ void WriteResources(WTF::TextStream& ts,
     DCHECK(style.HasFilter());
     DCHECK_EQ(style.Filter().size(), 1u);
     const FilterOperation& filter_operation = *style.Filter().at(0);
-    DCHECK_EQ(filter_operation.GetType(), FilterOperation::kReference);
+    DCHECK_EQ(filter_operation.GetType(),
+              FilterOperation::OperationType::kReference);
     const auto& reference_filter_operation =
         To<ReferenceFilterOperation>(filter_operation);
     WriteSVGResourceReferencePrefix(ts, "filter", filter,

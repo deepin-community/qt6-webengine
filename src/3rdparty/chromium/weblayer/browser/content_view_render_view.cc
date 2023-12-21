@@ -1,11 +1,10 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "weblayer/browser/content_view_render_view.h"
 
 #include <android/bitmap.h>
-#include <android/native_window_jni.h>
 
 #include <memory>
 #include <utility>
@@ -13,11 +12,11 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/time/time.h"
-#include "cc/layers/layer.h"
-#include "cc/layers/picture_layer.h"
+#include "base/trace_event/trace_event.h"
+#include "cc/slim/layer.h"
 #include "content/public/browser/android/compositor.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
@@ -46,13 +45,13 @@ ContentViewRenderView::ContentViewRenderView(JNIEnv* env,
 }
 
 ContentViewRenderView::~ContentViewRenderView() {
-  DCHECK(height_changed_listener_.is_null());
+  DCHECK(content_height_changed_listener_.is_null());
 }
 
-void ContentViewRenderView::SetHeightChangedListener(
+void ContentViewRenderView::SetContentHeightChangedListener(
     base::RepeatingClosure callback) {
-  DCHECK(height_changed_listener_.is_null() || callback.is_null());
-  height_changed_listener_ = std::move(callback);
+  DCHECK(content_height_changed_listener_.is_null() || callback.is_null());
+  content_height_changed_listener_ = std::move(callback);
 }
 
 // static
@@ -84,11 +83,20 @@ void ContentViewRenderView::SetCurrentWebContents(
 
   web_contents_ = web_contents;
   web_contents_layer_ = web_contents ? web_contents->GetNativeView()->GetLayer()
-                                     : scoped_refptr<cc::Layer>();
+                                     : scoped_refptr<cc::slim::Layer>();
 
   UpdateWebContentsBaseBackgroundColor();
   if (web_contents_layer_)
     root_container_layer_->AddChild(web_contents_layer_);
+}
+
+void ContentViewRenderView::OnViewportSizeChanged(JNIEnv* env,
+                                                  jint width,
+                                                  jint height) {
+  bool content_height_changed = content_height_ != height;
+  content_height_ = height;
+  if (content_height_changed && !content_height_changed_listener_.is_null())
+    content_height_changed_listener_.Run();
 }
 
 void ContentViewRenderView::OnPhysicalBackingSizeChanged(
@@ -97,8 +105,6 @@ void ContentViewRenderView::OnPhysicalBackingSizeChanged(
     jint width,
     jint height,
     jboolean for_config_change) {
-  bool height_changed = height_ != height;
-  height_ = height;
   content::WebContents* web_contents =
       content::WebContents::FromJavaWebContents(jweb_contents);
   gfx::Size size(width, height);
@@ -115,9 +121,6 @@ void ContentViewRenderView::OnPhysicalBackingSizeChanged(
     override_deadline = base::TimeDelta();
   web_contents->GetNativeView()->OnPhysicalBackingSizeChanged(
       size, override_deadline);
-
-  if (height_changed && !height_changed_listener_.is_null())
-    height_changed_listener_.Run();
 }
 
 void ContentViewRenderView::SurfaceCreated(JNIEnv* env) {
@@ -217,10 +220,7 @@ void ContentViewRenderView::InitCompositor() {
     return;
 
   compositor_.reset(content::Compositor::Create(this, root_window_));
-  root_container_layer_ = cc::Layer::Create();
-  root_container_layer_->SetHitTestable(false);
-  root_container_layer_->SetElementId(
-      cc::ElementId(root_container_layer_->id()));
+  root_container_layer_ = cc::slim::Layer::Create();
   root_container_layer_->SetIsDrawable(false);
   compositor_->SetRootLayer(root_container_layer_);
   UpdateBackgroundColor(base::android::AttachCurrentThread());

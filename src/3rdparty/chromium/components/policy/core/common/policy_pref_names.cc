@@ -1,10 +1,11 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/policy/core/common/policy_pref_names.h"
 
 #include "build/build_config.h"
+#include "policy_pref_names.h"
 
 namespace policy {
 namespace policy_prefs {
@@ -21,6 +22,9 @@ const char kEnterpriseMDMManagementWindows[] =
 // Integer pref that stores the Mac enterprise MDM management authority.
 const char kEnterpriseMDMManagementMac[] =
     "management.platform.enterprise_mdm_mac";
+// Boolean pref that indicates whether integration with macOS Screen Time should
+// be enabled.
+const char kScreenTimeEnabled[] = "policy.screen_time";
 #endif
 
 // 64-bit serialization of the time last policy usage statistics were collected
@@ -77,9 +81,9 @@ const char kIntensiveWakeUpThrottlingEnabled[] =
     "policy.intensive_wake_up_throttling_enabled";
 
 // Boolean policy preference for force enabling or disabling the
-// SetTimeoutWithoutClamp web feature.
-const char kSetTimeoutWithout1MsClampEnabled[] =
-    "policy.set_timeout_without_1ms_clamp";
+// MaxUnthrottledTimeoutNestingLevel web feature.
+const char kUnthrottledNestedTimeoutEnabled[] =
+    "policy.unthrottled_nested_timeout";
 
 #if BUILDFLAG(IS_ANDROID)
 // Boolean policy preference to disable the BackForwardCache feature.
@@ -91,16 +95,9 @@ const char kBackForwardCacheEnabled[] = "policy.back_forward_cache_enabled";
 const char kUserAgentClientHintsGREASEUpdateEnabled[] =
     "policy.user_agent_client_hints_grease_update_enabled";
 
-// Boolean policy preference to disable the URL parameter
-// filter.
-const char kUrlParamFilterEnabled[] = "policy.url_param_filter_enabled";
-
 // Boolean policy to allow isolated apps developer mode.
 const char kIsolatedAppsDeveloperModeAllowed[] =
     "policy.isolated_apps_developer_mode_allowed";
-
-// Boolean policy to force WebSQL to be enabled.
-const char kWebSQLAccess[] = "policy.web_sql_access";
 
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
 // Last time that a check for cloud policy management was done. This time is
@@ -109,6 +106,41 @@ const char kWebSQLAccess[] = "policy.web_sql_access";
 // days later.
 const char kLastPolicyCheckTime[] = "policy.last_policy_check_time";
 #endif
+
+#if BUILDFLAG(IS_IOS)
+const char kUserPolicyNotificationWasShown[] =
+    "policy.user_policy_notification_was_shown";
+#endif
+
+// A boolean indicating whether the deprecated API Event.path is enabled. It
+// should eventually be disabled and removed.
+// https://chromestatus.com/feature/5726124632965120
+const char kEventPathEnabled[] = "policy.event_path_enabled";
+
+// A boolean indicating whether the newly specified behavior for
+// Element.offsetParent is in effect.
+const char kOffsetParentNewSpecBehaviorEnabled[] =
+    "policy.offset_parent_new_spec_behavior_enabled";
+
+// A boolean indicating whether the new behavior for event dispatching on
+// disabled form controls is in effect.
+const char kSendMouseEventsDisabledFormControlsEnabled[] =
+    "policy.send_mouse_events_disabled_form_controls_enabled";
+
+// If true the feature UseMojoVideoDecoderForPepper will be allowed, otherwise
+// feature will be forced off.
+const char kUseMojoVideoDecoderForPepperAllowed[] =
+    "policy.use_mojo_video_decoder_for_pepper_allowed";
+
+// If true the feature PPAPISharedImagesSwapChain will be allowed, otherwise
+// feature will be forced off.
+const char kPPAPISharedImagesSwapChainAllowed[] =
+    "policy.ppapi_shared_images_swap_chain_allowed";
+
+// If true then support for the PPB_VideoDecoder(Dev) API will be enabled;
+// otherwise the browser will decide whether the API is supported.
+const char kForceEnablePepperVideoDecoderDevAPI[] =
+    "policy.force_enable_pepper_video_decoder_dev_api";
 
 }  // namespace policy_prefs
 }  // namespace policy

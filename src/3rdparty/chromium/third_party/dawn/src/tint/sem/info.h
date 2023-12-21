@@ -15,101 +15,162 @@
 #ifndef SRC_TINT_SEM_INFO_H_
 #define SRC_TINT_SEM_INFO_H_
 
+#include <algorithm>
 #include <type_traits>
 #include <unordered_map>
+#include <vector>
 
+#include "src/tint/ast/diagnostic_control.h"
+#include "src/tint/ast/node.h"
 #include "src/tint/debug.h"
 #include "src/tint/sem/node.h"
 #include "src/tint/sem/type_mappings.h"
+#include "src/tint/utils/unique_vector.h"
 
 // Forward declarations
 namespace tint::sem {
 class Module;
+class ValueExpression;
 }  // namespace tint::sem
+namespace tint::type {
+class Node;
+class Type;
+}  // namespace tint::type
 
 namespace tint::sem {
 
 /// Info holds all the resolved semantic information for a Program.
 class Info {
- public:
-  /// Placeholder type used by Get() to provide a default value for EXPLICIT_SEM
-  using InferFromAST = std::nullptr_t;
+  public:
+    /// Placeholder type used by Get() to provide a default value for EXPLICIT_SEM
+    using InferFromAST = std::nullptr_t;
 
-  /// Resolves to the return type of the Get() method given the desired sementic
-  /// type and AST type.
-  template <typename SEM, typename AST_OR_TYPE>
-  using GetResultType =
-      std::conditional_t<std::is_same<SEM, InferFromAST>::value,
-                         SemanticNodeTypeFor<AST_OR_TYPE>,
-                         SEM>;
+    /// Resolves to the return type of the Get() method given the desired semantic
+    /// type and AST type.
+    template <typename SEM, typename AST>
+    using GetResultType =
+        std::conditional_t<std::is_same<SEM, InferFromAST>::value, SemanticNodeTypeFor<AST>, SEM>;
 
-  /// Constructor
-  Info();
+    /// Alias to a unique vector of transitively referenced global variables
+    using TransitivelyReferenced = utils::UniqueVector<const GlobalVariable*, 4>;
 
-  /// Move constructor
-  Info(Info&&);
+    /// Constructor
+    Info();
 
-  /// Destructor
-  ~Info();
+    /// Move constructor
+    Info(Info&&);
 
-  /// Move assignment operator
-  /// @param rhs the Program to move
-  /// @return this Program
-  Info& operator=(Info&& rhs);
+    /// Destructor
+    ~Info();
 
-  /// Get looks up the semantic information for the AST or type node `node`.
-  /// @param node the AST or type node
-  /// @returns a pointer to the semantic node if found, otherwise nullptr
-  template <typename SEM = InferFromAST,
-            typename AST_OR_TYPE = CastableBase,
-            typename RESULT = GetResultType<SEM, AST_OR_TYPE>>
-  const RESULT* Get(const AST_OR_TYPE* node) const {
-    auto it = map_.find(node);
-    if (it == map_.end()) {
-      return nullptr;
+    /// Move assignment operator
+    /// @param rhs the Program to move
+    /// @return this Program
+    Info& operator=(Info&& rhs);
+
+    /// @param highest_node_id the last allocated (numerically highest) AST node identifier.
+    void Reserve(ast::NodeID highest_node_id) {
+        nodes_.resize(std::max(highest_node_id.value + 1, nodes_.size()));
     }
-    return As<RESULT>(it->second);
-  }
 
-  /// Add registers the semantic node `sem_node` for the AST or type node
-  /// `node`.
-  /// @param node the AST or type node
-  /// @param sem_node the semantic node
-  template <typename AST_OR_TYPE>
-  void Add(const AST_OR_TYPE* node,
-           const SemanticNodeTypeFor<AST_OR_TYPE>* sem_node) {
-    // Check there's no semantic info already existing for the node
-    TINT_ASSERT(Semantic, Get(node) == nullptr);
-    map_.emplace(node, sem_node);
-  }
+    /// Get looks up the semantic information for the AST node `ast_node`.
+    /// @param ast_node the AST node
+    /// @returns a pointer to the semantic node if found, otherwise nullptr
+    template <typename SEM = InferFromAST,
+              typename AST = CastableBase,
+              typename RESULT = GetResultType<SEM, AST>>
+    const RESULT* Get(const AST* ast_node) const {
+        static_assert(std::is_same_v<SEM, InferFromAST> ||
+                          !traits::IsTypeOrDerived<SemanticNodeTypeFor<AST>, SEM>,
+                      "explicit template argument is unnecessary");
+        if (ast_node && ast_node->node_id.value < nodes_.size()) {
+            return As<RESULT>(nodes_[ast_node->node_id.value]);
+        }
+        return nullptr;
+    }
 
-  /// Wrap returns a new Info created with the contents of `inner`.
-  /// The Info returned by Wrap is intended to temporarily extend the contents
-  /// of an existing immutable Info.
-  /// As the copied contents are owned by `inner`, `inner` must not be
-  /// destructed or assigned while using the returned Info.
-  /// @param inner the immutable Info to extend
-  /// @return the Info that wraps `inner`
-  static Info Wrap(const Info& inner) {
-    Info out;
-    out.map_ = inner.map_;
-    out.module_ = inner.module_;
-    return out;
-  }
+    /// Convenience function that's an alias for Get<ValueExpression>()
+    /// @param ast_node the AST node
+    /// @returns a pointer to the semantic node if found, otherwise nullptr
+    template <typename AST>
+    const sem::ValueExpression* GetVal(const AST* ast_node) const {
+        return Get<ValueExpression>(ast_node);
+    }
 
-  /// Assigns the semantic module.
-  /// @param module the module to assign.
-  void SetModule(sem::Module* module) { module_ = module; }
+    /// Add registers the semantic node `sem_node` for the AST node `ast_node`.
+    /// @param ast_node the AST node
+    /// @param sem_node the semantic node
+    template <typename AST>
+    void Add(const AST* ast_node, const SemanticNodeTypeFor<AST>* sem_node) {
+        Reserve(ast_node->node_id);
+        // Check there's no semantic info already existing for the AST node
+        TINT_ASSERT(Semantic, nodes_[ast_node->node_id.value] == nullptr);
+        nodes_[ast_node->node_id.value] = sem_node;
+    }
 
-  /// @returns the semantic module.
-  const sem::Module* Module() const { return module_; }
+    /// Replace replaces any existing semantic node `sem_node` for the AST node `ast_node`.
+    /// @param ast_node the AST node
+    /// @param sem_node the new semantic node
+    template <typename AST>
+    void Replace(const AST* ast_node, const SemanticNodeTypeFor<AST>* sem_node) {
+        Reserve(ast_node->node_id);
+        nodes_[ast_node->node_id.value] = sem_node;
+    }
 
- private:
-  // TODO(crbug.com/tint/724): Once finished, this map should be:
-  // std::unordered_map<const ast::Node*, const sem::Node*>
-  std::unordered_map<const CastableBase*, const CastableBase*> map_;
-  // The semantic module
-  sem::Module* module_ = nullptr;
+    /// Wrap returns a new Info created with the contents of `inner`.
+    /// The Info returned by Wrap is intended to temporarily extend the contents
+    /// of an existing immutable Info.
+    /// As the copied contents are owned by `inner`, `inner` must not be
+    /// destructed or assigned while using the returned Info.
+    /// @param inner the immutable Info to extend
+    /// @return the Info that wraps `inner`
+    static Info Wrap(const Info& inner) {
+        Info out;
+        out.nodes_ = inner.nodes_;
+        out.module_ = inner.module_;
+        return out;
+    }
+
+    /// Assigns the semantic module.
+    /// @param module the module to assign.
+    void SetModule(sem::Module* module) { module_ = module; }
+
+    /// @returns the semantic module.
+    const sem::Module* Module() const { return module_; }
+
+    /// Records that this variable (transitively) references the given override variable.
+    /// @param from the item the variable is referenced from
+    /// @param var the module-scope override variable
+    void AddTransitivelyReferencedOverride(const CastableBase* from, const GlobalVariable* var) {
+        if (referenced_overrides_.count(from) == 0) {
+            referenced_overrides_.insert({from, TransitivelyReferenced{}});
+        }
+        referenced_overrides_[from].Add(var);
+    }
+
+    /// @param from the key to look up
+    /// @returns all transitively referenced override variables or nullptr if none set
+    const TransitivelyReferenced* TransitivelyReferencedOverrides(const CastableBase* from) const {
+        if (referenced_overrides_.count(from) == 0) {
+            return nullptr;
+        }
+        return &referenced_overrides_.at(from);
+    }
+
+    /// Determines the severity of a filterable diagnostic rule for the AST node `ast_node`.
+    /// @param ast_node the AST node
+    /// @param rule the diagnostic rule
+    /// @returns the severity of the rule for that AST node
+    builtin::DiagnosticSeverity DiagnosticSeverity(const ast::Node* ast_node,
+                                                   builtin::DiagnosticRule rule) const;
+
+  private:
+    // AST node index to semantic node
+    std::vector<const CastableBase*> nodes_;
+    // Lists transitively referenced overrides for the given item
+    std::unordered_map<const CastableBase*, TransitivelyReferenced> referenced_overrides_;
+    // The semantic module
+    sem::Module* module_ = nullptr;
 };
 
 }  // namespace tint::sem

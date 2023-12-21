@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,15 +12,15 @@
 #include "third_party/blink/renderer/core/typed_arrays/array_buffer_view_helpers.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_typed_array.h"
 #include "third_party/blink/renderer/modules/xr/xr_joint_pose.h"
-#include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
-#include "third_party/blink/renderer/platform/transforms/transformation_matrix.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
+#include "ui/gfx/geometry/transform.h"
 
 namespace blink {
 
 class ExceptionState;
+class ScriptState;
 class XRAnchorSet;
 class XRCPUDepthInformation;
 class XRHitTestResult;
@@ -102,7 +102,7 @@ class XRFrame final : public ScriptWrappable {
                  ExceptionState& exception_state) const;
 
  private:
-  std::unique_ptr<TransformationMatrix> GetAdjustedPoseMatrix(XRSpace*) const;
+  std::unique_ptr<gfx::Transform> GetAdjustedPoseMatrix(XRSpace*) const;
   XRPose* GetTargetRayPose(XRInputSource*, XRSpace*) const;
   XRPose* GetGripPose(XRInputSource*, XRSpace*) const;
   // Helper that creates an anchor with the assumption that the conversion from
@@ -112,7 +112,7 @@ class XRFrame final : public ScriptWrappable {
   // already taken into account).
   ScriptPromise CreateAnchorFromNonStationarySpace(
       ScriptState* script_state,
-      const blink::TransformationMatrix& native_origin_from_anchor,
+      const gfx::Transform& native_origin_from_anchor,
       XRSpace* space,
       absl::optional<uint64_t> maybe_plane_id,
       ExceptionState& exception_state);

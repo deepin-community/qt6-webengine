@@ -7,8 +7,8 @@
 
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrTypes.h"
-#include "include/private/SkMacros.h"
-#include "src/core/SkSafeMath.h"
+#include "include/private/base/SkMacros.h"
+#include "src/base/SkSafeMath.h"
 #include "src/core/SkTraceEvent.h"
 #include "src/gpu/ganesh/GrBufferAllocPool.h"
 
@@ -93,7 +93,7 @@ GrBufferAllocPool::GrBufferAllocPool(GrGpu* gpu, GrGpuBufferType bufferType,
         , fBufferType(bufferType) {}
 
 void GrBufferAllocPool::deleteBlocks() {
-    if (fBlocks.count()) {
+    if (fBlocks.size()) {
         GrBuffer* buffer = fBlocks.back().fBuffer.get();
         if (!buffer->isCpuBuffer() && static_cast<GrGpuBuffer*>(buffer)->isMapped()) {
             UNMAP_BUFFER(fBlocks.back());
@@ -151,11 +151,11 @@ void GrBufferAllocPool::validate(bool unusedBlockAllowed) const {
         SkASSERT(buffer->isCpuBuffer() || !static_cast<const GrGpuBuffer*>(buffer)->isMapped());
     }
     size_t bytesInUse = 0;
-    for (int i = 0; i < fBlocks.count() - 1; ++i) {
+    for (int i = 0; i < fBlocks.size() - 1; ++i) {
         const GrBuffer* buffer = fBlocks[i].fBuffer.get();
         SkASSERT(buffer->isCpuBuffer() || !static_cast<const GrGpuBuffer*>(buffer)->isMapped());
     }
-    for (int i = 0; !wasDestroyed && i < fBlocks.count(); ++i) {
+    for (int i = 0; !wasDestroyed && i < fBlocks.size(); ++i) {
         GrBuffer* buffer = fBlocks[i].fBuffer.get();
         if (!buffer->isCpuBuffer() && static_cast<GrGpuBuffer*>(buffer)->wasDestroyed()) {
             wasDestroyed = true;
@@ -170,7 +170,7 @@ void GrBufferAllocPool::validate(bool unusedBlockAllowed) const {
         SkASSERT(bytesInUse == fBytesInUse);
         if (unusedBlockAllowed) {
             SkASSERT((fBytesInUse && !fBlocks.empty()) ||
-                     (!fBytesInUse && (fBlocks.count() < 2)));
+                     (!fBytesInUse && (fBlocks.size() < 2)));
         } else {
             SkASSERT((0 == fBytesInUse) == fBlocks.empty());
         }
@@ -219,10 +219,10 @@ void* GrBufferAllocPool::makeSpace(size_t size,
     // We could honor the space request using by a partial update of the current
     // VB (if there is room). But we don't currently use draw calls to GL that
     // allow the driver to know that previously issued draws won't read from
-    // the part of the buffer we update. Also, the GL buffer implementation
-    // may be cheating on the actual buffer size by shrinking the buffer on
-    // updateData() if the amount of data passed is less than the full buffer
-    // size.
+    // the part of the buffer we update. Also, when this was written the GL
+    // buffer implementation was cheating on the actual buffer size by shrinking
+    // the buffer in updateData() if the amount of data passed was less than
+    // the full buffer size. This is old code and both concerns may be obsolete.
 
     if (!this->createBlock(size)) {
         return nullptr;
@@ -325,7 +325,7 @@ bool GrBufferAllocPool::createBlock(size_t requestSize) {
 
     block.fBytesFree = block.fBuffer->size();
     if (fBufferPtr) {
-        SkASSERT(fBlocks.count() > 1);
+        SkASSERT(fBlocks.size() > 1);
         BufferBlock& prev = fBlocks.fromBack(1);
         GrBuffer* buffer = prev.fBuffer.get();
         if (!buffer->isCpuBuffer()) {
@@ -402,7 +402,7 @@ void GrBufferAllocPool::flushCpuData(const BufferBlock& block, size_t flushSize)
             return;
         }
     }
-    buffer->updateData(fBufferPtr, flushSize);
+    buffer->updateData(fBufferPtr, /*offset=*/0, flushSize, /*preserve=*/false);
     VALIDATE(true);
 }
 
@@ -416,7 +416,10 @@ sk_sp<GrBuffer> GrBufferAllocPool::getBuffer(size_t size) {
         return fCpuBufferCache ? fCpuBufferCache->makeBuffer(size, mustInitialize)
                                : GrCpuBuffer::Make(size);
     }
-    return resourceProvider->createBuffer(size, fBufferType, kDynamic_GrAccessPattern);
+    return resourceProvider->createBuffer(size,
+                                          fBufferType,
+                                          kDynamic_GrAccessPattern,
+                                          GrResourceProvider::ZeroInit::kNo);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

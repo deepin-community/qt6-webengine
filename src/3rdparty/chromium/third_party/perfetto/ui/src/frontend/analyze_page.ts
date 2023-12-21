@@ -19,6 +19,7 @@ import {Actions} from '../common/actions';
 
 import {globals} from './globals';
 import {createPage} from './pages';
+import {QueryHistoryComponent, queryHistoryStorage} from './query_history';
 import {QueryTable} from './query_table';
 
 const INPUT_PLACEHOLDER = 'Enter query and press Cmd/Ctrl + Enter';
@@ -45,8 +46,8 @@ class QueryInput implements m.ClassComponent {
         query = query.substring(selectionStart, selectionEnd);
       }
       if (!query) return;
-      globals.dispatch(
-          Actions.executeQuery({engineId: '0', queryId: QUERY_ID, query}));
+      queryHistoryStorage.saveQuery(query);
+      globals.dispatch(Actions.executeQuery({queryId: QUERY_ID, query}));
     }
 
     if (event.code === 'Tab') {
@@ -165,6 +166,6 @@ export const AnalyzePage = createPage({
         '.analyze-page',
         m(QueryInput),
         m(QueryTable, {queryId: QUERY_ID}),
-    );
-  }
+        m(QueryHistoryComponent));
+  },
 });

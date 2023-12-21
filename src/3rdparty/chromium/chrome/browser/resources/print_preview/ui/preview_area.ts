@@ -1,15 +1,15 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'chrome://resources/cr_elements/hidden_style_css.m.js';
-import 'chrome://resources/cr_elements/shared_vars_css.m.js';
-import './print_preview_vars_css.js';
+import 'chrome://resources/cr_elements/cr_hidden_style.css.js';
+import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
+import './print_preview_vars.css.js';
 import '../strings.m.js';
 
-import {I18nMixin} from 'chrome://resources/js/i18n_mixin.js';
-import {hasKeyModifiers} from 'chrome://resources/js/util.m.js';
-import {WebUIListenerMixin} from 'chrome://resources/js/web_ui_listener_mixin.js';
+import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
+import {hasKeyModifiers} from 'chrome://resources/js/util_ts.js';
+import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {DarkModeMixin} from '../dark_mode_mixin.js';
@@ -21,11 +21,10 @@ import {DuplexMode, MediaSizeValue, Ticket} from '../data/model.js';
 import {ScalingType} from '../data/scaling.js';
 import {Size} from '../data/size.js';
 import {Error, State} from '../data/state.js';
-import {MetricsContext, PrintPreviewInitializationEvents} from '../metrics.js';
 import {NativeLayer, NativeLayerImpl} from '../native_layer.js';
 import {areRangesEqual} from '../print_preview_utils.js';
 
-import {MARGIN_KEY_MAP, MarginObject, PrintPreviewMarginControlContainerElement} from './margin_control_container.js';
+import {MARGIN_KEY_MAP, PrintPreviewMarginControlContainerElement} from './margin_control_container.js';
 import {PluginProxy, PluginProxyImpl} from './plugin_proxy.js';
 import {getTemplate} from './preview_area.html.js';
 import {SettingsMixin} from './settings_mixin.js';
@@ -51,7 +50,7 @@ export interface PrintPreviewPreviewAreaElement {
 }
 
 const PrintPreviewPreviewAreaElementBase =
-    WebUIListenerMixin(I18nMixin(SettingsMixin(DarkModeMixin(PolymerElement))));
+    WebUiListenerMixin(I18nMixin(SettingsMixin(DarkModeMixin(PolymerElement))));
 
 export class PrintPreviewPreviewAreaElement extends
     PrintPreviewPreviewAreaElementBase {
@@ -136,7 +135,7 @@ export class PrintPreviewPreviewAreaElement extends
     super.connectedCallback();
 
     this.nativeLayer_ = NativeLayerImpl.getInstance();
-    this.addWebUIListener(
+    this.addWebUiListener(
         'page-preview-ready', this.onPagePreviewReady_.bind(this));
   }
 
@@ -238,23 +237,23 @@ export class PrintPreviewPreviewAreaElement extends
   /**
    * @return The current preview area message to display.
    */
-  private currentMessage_(): string {
+  private currentMessage_(): TrustedHTML {
     switch (this.previewState) {
       case PreviewAreaState.LOADING:
-        return this.i18n('loading');
+        return this.i18nAdvanced('loading');
       case PreviewAreaState.DISPLAY_PREVIEW:
-        return '';
+        return window.trustedTypes!.emptyHTML;
       // <if expr="is_macosx">
       case PreviewAreaState.OPEN_IN_PREVIEW_LOADING:
       case PreviewAreaState.OPEN_IN_PREVIEW_LOADED:
-        return this.i18n('openingPDFInPreview');
+        return this.i18nAdvanced('openingPDFInPreview');
       // </if>
       case PreviewAreaState.ERROR:
         // The preview area is responsible for displaying all errors except
         // print failed.
         return this.getErrorMessage_();
       default:
-        return '';
+        return window.trustedTypes!.emptyHTML;
     }
   }
 
@@ -271,16 +270,12 @@ export class PrintPreviewPreviewAreaElement extends
     this.documentReady_ = false;
     this.getPreview_().then(
         previewUid => {
-          MetricsContext.getPreview().record(
-              PrintPreviewInitializationEvents.FUNCTION_SUCCESSFUL);
           if (!this.documentModifiable) {
             this.onPreviewStart_(previewUid, -1);
           }
           this.documentReady_ = true;
         },
         type => {
-          MetricsContext.getPreview().record(
-              PrintPreviewInitializationEvents.FUNCTION_FAILED);
           if (type === 'SETTINGS_INVALID') {
             this.error = Error.INVALID_PRINTER;
             this.previewState = PreviewAreaState.ERROR;
@@ -289,8 +284,6 @@ export class PrintPreviewPreviewAreaElement extends
             this.previewState = PreviewAreaState.ERROR;
           }
         });
-    MetricsContext.getPreview().record(
-        PrintPreviewInitializationEvents.FUNCTION_INITIATED);
   }
 
   // <if expr="is_macosx">
@@ -537,9 +530,6 @@ export class PrintPreviewPreviewAreaElement extends
 
   private hasTicketChanged_(): boolean {
     if (!this.marginsValid_()) {
-      // Log so that we can try to debug how this occurs. See
-      // https://crbug.com/942211
-      console.warn('Requested preview with invalid margins');
       return false;
     }
 
@@ -572,16 +562,13 @@ export class PrintPreviewPreviewAreaElement extends
 
       // Changed to custom margins from a different margins type.
       if (!this.margins) {
-        // Log so that we can try to debug how this occurs. See
-        // https://crbug.com/942211
-        console.warn('Requested preview with undefined document margins');
         return false;
       }
 
       const customMarginsChanged =
           Object.values(CustomMarginsOrientation).some(side => {
             return this.margins.get(side) !==
-                (customMargins as MarginObject)[MARGIN_KEY_MAP.get(side)!];
+                customMargins[MARGIN_KEY_MAP.get(side)!];
           });
       if (customMarginsChanged) {
         return true;
@@ -618,6 +605,14 @@ export class PrintPreviewPreviewAreaElement extends
     const newValue = this.getSettingValue('mediaSize') as MediaSizeValue;
     if (newValue.height_microns !== lastTicket.mediaSize.height_microns ||
         newValue.width_microns !== lastTicket.mediaSize.width_microns ||
+        newValue.imageable_area_left_microns !==
+            lastTicket.mediaSize.imageable_area_left_microns ||
+        newValue.imageable_area_bottom_microns !==
+            lastTicket.mediaSize.imageable_area_bottom_microns ||
+        newValue.imageable_area_right_microns !==
+            lastTicket.mediaSize.imageable_area_right_microns ||
+        newValue.imageable_area_top_microns !==
+            lastTicket.mediaSize.imageable_area_top_microns ||
         (this.destination.id !== lastTicket.deviceName &&
          this.getSettingValue('margins') === MarginsType.MINIMUM)) {
       return true;
@@ -739,27 +734,27 @@ export class PrintPreviewPreviewAreaElement extends
 
   private onStateOrErrorChange_() {
     if ((this.state === State.ERROR || this.state === State.FATAL_ERROR) &&
-        this.getErrorMessage_() !== '') {
+        this.getErrorMessage_().toString() !== '') {
       this.previewState = PreviewAreaState.ERROR;
     }
   }
 
   /** @return The error message to display in the preview area. */
-  private getErrorMessage_(): string {
+  private getErrorMessage_(): TrustedHTML {
     switch (this.error) {
       case Error.INVALID_PRINTER:
         return this.i18nAdvanced('invalidPrinterSettings', {
           substitutions: [],
           tags: ['BR'],
         });
-      // <if expr="chromeos_ash or chromeos_lacros">
+      // <if expr="is_chromeos">
       case Error.NO_DESTINATIONS:
-        return this.i18n('noDestinationsMessage');
+        return this.i18nAdvanced('noDestinationsMessage');
       // </if>
       case Error.PREVIEW_FAILED:
-        return this.i18n('previewFailed');
+        return this.i18nAdvanced('previewFailed');
       default:
-        return '';
+        return window.trustedTypes!.emptyHTML;
     }
   }
 }

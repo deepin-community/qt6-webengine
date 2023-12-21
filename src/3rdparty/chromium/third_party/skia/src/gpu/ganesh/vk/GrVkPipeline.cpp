@@ -15,6 +15,7 @@
 #include "src/gpu/ganesh/vk/GrVkGpu.h"
 #include "src/gpu/ganesh/vk/GrVkRenderTarget.h"
 #include "src/gpu/ganesh/vk/GrVkUtil.h"
+#include "src/gpu/vk/VulkanUtilsPriv.h"
 
 #if defined(SK_ENABLE_SCOPED_LSAN_SUPPRESSIONS)
 #include <sanitizer/lsan_interface.h>
@@ -89,7 +90,7 @@ static void setup_vertex_input_state(
 
     uint32_t vertexBinding = 0, instanceBinding = 0;
 
-    int nextBinding = bindingDescs->count();
+    int nextBinding = bindingDescs->size();
     if (vaCount) {
         vertexBinding = nextBinding++;
     }
@@ -135,7 +136,7 @@ static void setup_vertex_input_state(
     vertexInputInfo->sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vertexInputInfo->pNext = nullptr;
     vertexInputInfo->flags = 0;
-    vertexInputInfo->vertexBindingDescriptionCount = bindingDescs->count();
+    vertexInputInfo->vertexBindingDescriptionCount = bindingDescs->size();
     vertexInputInfo->pVertexBindingDescriptions = bindingDescs->begin();
     vertexInputInfo->vertexAttributeDescriptionCount = vaCount + iaCount;
     vertexInputInfo->pVertexAttributeDescriptions = attributeDesc;
@@ -153,9 +154,6 @@ static VkPrimitiveTopology gr_primitive_type_to_vk_topology(GrPrimitiveType prim
             return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
         case GrPrimitiveType::kLineStrip:
             return VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
-        case GrPrimitiveType::kPatches:
-        case GrPrimitiveType::kPath:
-            SK_ABORT("Unsupported primitive type");
     }
     SkUNREACHABLE;
 }
@@ -181,7 +179,7 @@ static VkStencilOp stencil_op_to_vk_stencil_op(GrStencilOp op) {
         VK_STENCIL_OP_INCREMENT_AND_CLAMP,  // kIncClamp
         VK_STENCIL_OP_DECREMENT_AND_CLAMP,  // kDecClamp
     };
-    static_assert(SK_ARRAY_COUNT(gTable) == kGrStencilOpCount);
+    static_assert(std::size(gTable) == kGrStencilOpCount);
     static_assert(0 == (int)GrStencilOp::kKeep);
     static_assert(1 == (int)GrStencilOp::kZero);
     static_assert(2 == (int)GrStencilOp::kReplace);
@@ -205,7 +203,7 @@ static VkCompareOp stencil_func_to_vk_compare_op(GrStencilTest test) {
         VK_COMPARE_OP_EQUAL,               // kEqual
         VK_COMPARE_OP_NOT_EQUAL,           // kNotEqual
     };
-    static_assert(SK_ARRAY_COUNT(gTable) == kGrStencilTestCount);
+    static_assert(std::size(gTable) == kGrStencilTestCount);
     static_assert(0 == (int)GrStencilTest::kAlways);
     static_assert(1 == (int)GrStencilTest::kNever);
     static_assert(2 == (int)GrStencilTest::kGreater);
@@ -280,8 +278,8 @@ static void setup_multisample_state(int numSamples,
     multisampleInfo->sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisampleInfo->pNext = nullptr;
     multisampleInfo->flags = 0;
-    SkAssertResult(GrSampleCountToVkSampleCount(numSamples,
-                                                &multisampleInfo->rasterizationSamples));
+    SkAssertResult(skgpu::SampleCountToVkSampleCount(numSamples,
+                                                     &multisampleInfo->rasterizationSamples));
     multisampleInfo->sampleShadingEnable = VK_FALSE;
     multisampleInfo->minSampleShading = 0.0f;
     multisampleInfo->pSampleMask = nullptr;
@@ -374,13 +372,13 @@ static VkBlendOp blend_equation_to_vk_blend_op(skgpu::BlendEquation equation) {
     static_assert(15 == (int)skgpu::BlendEquation::kHSLSaturation);
     static_assert(16 == (int)skgpu::BlendEquation::kHSLColor);
     static_assert(17 == (int)skgpu::BlendEquation::kHSLLuminosity);
-    static_assert(SK_ARRAY_COUNT(gTable) == skgpu::kBlendEquationCnt);
+    static_assert(std::size(gTable) == skgpu::kBlendEquationCnt);
 
     SkASSERT((unsigned)equation < skgpu::kBlendEquationCnt);
     return gTable[(int)equation];
 }
 
-static void setup_color_blend_state(const GrXferProcessor::BlendInfo& blendInfo,
+static void setup_color_blend_state(const skgpu::BlendInfo& blendInfo,
                                     VkPipelineColorBlendStateCreateInfo* colorBlendInfo,
                                     VkPipelineColorBlendAttachmentState* attachmentState) {
     skgpu::BlendEquation equation = blendInfo.fEquation;
@@ -399,7 +397,7 @@ static void setup_color_blend_state(const GrXferProcessor::BlendInfo& blendInfo,
         attachmentState->alphaBlendOp = blend_equation_to_vk_blend_op(equation);
     }
 
-    if (!blendInfo.fWriteColor) {
+    if (!blendInfo.fWritesColor) {
         attachmentState->colorWriteMask = 0;
     } else {
         attachmentState->colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
@@ -470,7 +468,7 @@ sk_sp<GrVkPipeline> GrVkPipeline::Make(GrVkGpu* gpu,
                                    const GrStencilSettings& stencilSettings,
                                    int numSamples,
                                    bool isHWAntialiasState,
-                                   const GrXferProcessor::BlendInfo& blendInfo,
+                                   const skgpu::BlendInfo& blendInfo,
                                    bool isWireframe,
                                    bool useConservativeRaster,
                                    uint32_t subpass,
@@ -546,7 +544,7 @@ sk_sp<GrVkPipeline> GrVkPipeline::Make(GrVkGpu* gpu,
     VkPipeline vkPipeline;
     VkResult err;
     {
-        TRACE_EVENT0("skia.shaders", "CreateGraphicsPipeline");
+        TRACE_EVENT0_ALWAYS("skia.shaders", "CreateGraphicsPipeline");
 #if defined(SK_ENABLE_SCOPED_LSAN_SUPPRESSIONS)
         // skia:8712
         __lsan::ScopedDisabler lsanDisabler;
@@ -647,7 +645,7 @@ void GrVkPipeline::SetDynamicBlendConstantState(GrVkGpu* gpu,
                                                 GrVkCommandBuffer* cmdBuffer,
                                                 const skgpu::Swizzle& swizzle,
                                                 const GrXferProcessor& xferProcessor) {
-    const GrXferProcessor::BlendInfo& blendInfo = xferProcessor.getBlendInfo();
+    const skgpu::BlendInfo& blendInfo = xferProcessor.getBlendInfo();
     skgpu::BlendCoeff srcCoeff = blendInfo.fSrcBlend;
     skgpu::BlendCoeff dstCoeff = blendInfo.fDstBlend;
     float floatColors[4];

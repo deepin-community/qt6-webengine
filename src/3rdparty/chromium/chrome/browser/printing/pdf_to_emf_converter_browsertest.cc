@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,9 @@
 
 #include <limits>
 
-#include "base/bind.h"
 #include "base/containers/span.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/hash/sha1.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/path_service.h"
@@ -59,7 +59,7 @@ void GetPageCallbackImpl(base::OnceClosure quit_closure,
   std::move(quit_closure).Run();
 }
 
-// |page_number| is 0-based. Returned result has 1-based page number.
+// `page_number` is 0-based. Returned result has 1-based page number.
 std::string GetFileNameForPageNumber(const std::string& name, int page_number) {
   std::string ret = name;
   ret += std::to_string(page_number + 1);
@@ -142,7 +142,8 @@ class PdfToEmfConverterBrowserTest : public InProcessBrowserTest {
     if (pdf_data_str.empty())
       return false;
 
-    test_input_ = base::RefCountedString::TakeString(&pdf_data_str);
+    test_input_ =
+        base::MakeRefCounted<base::RefCountedString>(std::move(pdf_data_str));
     return true;
   }
 
@@ -468,6 +469,28 @@ IN_PROC_BROWSER_TEST_F(PdfToEmfConverterBrowserTest, PostScriptLevel3Image) {
       PdfRenderSettings::Mode::POSTSCRIPT_LEVEL3);
   RunSinglePagePdfToPostScriptConverterTest(pdf_settings, "embedded_images.pdf",
                                             "embedded_images_ps_level3.emf");
+}
+
+// Regression test for crbug.com/1399155.
+IN_PROC_BROWSER_TEST_F(PdfToEmfConverterBrowserTest,
+                       PostScriptLevel2FaxCompress) {
+  const PdfRenderSettings pdf_settings(
+      kLetter200DpiRect, gfx::Point(0, 0), k200DpiSize,
+      /*autorotate=*/false, /*use_color=*/true,
+      PdfRenderSettings::Mode::POSTSCRIPT_LEVEL2);
+  RunSinglePagePdfToPostScriptConverterTest(pdf_settings, "bug_1399155.pdf",
+                                            "bug_1399155.emf");
+}
+
+// Regression test for crbug.com/1399155.
+IN_PROC_BROWSER_TEST_F(PdfToEmfConverterBrowserTest,
+                       PostScriptLevel3FaxCompress) {
+  const PdfRenderSettings pdf_settings(
+      kLetter200DpiRect, gfx::Point(0, 0), k200DpiSize,
+      /*autorotate=*/false, /*use_color=*/true,
+      PdfRenderSettings::Mode::POSTSCRIPT_LEVEL3);
+  RunSinglePagePdfToPostScriptConverterTest(pdf_settings, "bug_1399155.pdf",
+                                            "bug_1399155.emf");
 }
 
 }  // namespace printing

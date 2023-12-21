@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,8 +22,7 @@ class CFFL_RadioButton final : public CFFL_Button {
   // CFFL_Button:
   std::unique_ptr<CPWL_Wnd> NewPWLWindow(
       const CPWL_Wnd::CreateParams& cp,
-      std::unique_ptr<IPWL_SystemHandler::PerWindowData> pAttachedData)
-      override;
+      std::unique_ptr<IPWL_FillerNotify::PerWindowData> pAttachedData) override;
   bool OnKeyDown(FWL_VKEYCODE nKeyCode, Mask<FWL_EVENTFLAG> nFlags) override;
   bool OnChar(CPDFSDK_Widget* pWidget,
               uint32_t nChar,

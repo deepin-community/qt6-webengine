@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,13 +6,16 @@
 
 #include "core/fxcodec/gif/cfx_gifcontext.h"
 
+#include <stdint.h>
+
 #include <algorithm>
+#include <iterator>
 #include <utility>
 
 #include "core/fxcodec/cfx_codec_memory.h"
+#include "core/fxcrt/data_vector.h"
 #include "core/fxcrt/fx_system.h"
 #include "core/fxcrt/stl_util.h"
-#include "third_party/base/cxx17_backports.h"
 
 namespace fxcodec {
 
@@ -27,7 +30,8 @@ CFX_GifContext::CFX_GifContext(GifDecoder::Delegate* delegate)
 
 CFX_GifContext::~CFX_GifContext() = default;
 
-void CFX_GifContext::ReadScanline(int32_t row_num, uint8_t* row_buf) {
+void CFX_GifContext::ReadScanline(int32_t row_num,
+                                  pdfium::span<uint8_t> row_buf) {
   delegate_->GifReadScanline(row_num, row_buf);
 }
 
@@ -210,7 +214,7 @@ GifDecoder::Status CFX_GifContext::LoadFrame(size_t frame_num) {
   }
 
   uint8_t img_data_size;
-  std::vector<uint8_t, FxAllocAllocator<uint8_t>> img_data;
+  DataVector<uint8_t> img_data;
   size_t read_marker = input_buffer_->GetPosition();
 
   // TODO(crbug.com/pdfium/1793): This logic can be simplified a lot, but it
@@ -248,7 +252,7 @@ GifDecoder::Status CFX_GifContext::LoadFrame(size_t frame_num) {
 
       while (ret != LZWDecompressor::Status::kError) {
         if (ret == LZWDecompressor::Status::kSuccess) {
-          ReadScanline(gif_image->row_num, gif_image->row_buffer.data());
+          ReadScanline(gif_image->row_num, gif_image->row_buffer);
           gif_image->row_buffer.clear();
           SaveDecodingStatus(GIF_D_STATUS_TAIL);
           return GifDecoder::Status::kSuccess;
@@ -279,19 +283,19 @@ GifDecoder::Status CFX_GifContext::LoadFrame(size_t frame_num) {
 
         if (ret == LZWDecompressor::Status::kInsufficientDestSize) {
           if (gif_image->image_info.local_flags.interlace) {
-            ReadScanline(gif_image->row_num, gif_image->row_buffer.data());
+            ReadScanline(gif_image->row_num, gif_image->row_buffer);
             gif_image->row_num += kGifInterlaceStep[img_pass_num_];
             if (gif_image->row_num >=
                 static_cast<int32_t>(gif_image->image_info.height)) {
               img_pass_num_++;
-              if (img_pass_num_ == pdfium::size(kGifInterlaceStep)) {
+              if (img_pass_num_ == std::size(kGifInterlaceStep)) {
                 DecodingFailureAtTailCleanup(gif_image);
                 return GifDecoder::Status::kError;
               }
               gif_image->row_num = kGifInterlaceStep[img_pass_num_] / 2;
             }
           } else {
-            ReadScanline(gif_image->row_num++, gif_image->row_buffer.data());
+            ReadScanline(gif_image->row_num++, gif_image->row_buffer);
           }
 
           img_row_offset_ = 0;
@@ -329,7 +333,7 @@ bool CFX_GifContext::ReadAllOrNone(uint8_t* dest, uint32_t size) {
     return false;
 
   size_t read_marker = input_buffer_->GetPosition();
-  size_t read = input_buffer_->ReadBlock(dest, size);
+  size_t read = input_buffer_->ReadBlock({dest, size});
   if (read < size) {
     input_buffer_->Seek(read_marker);
     return false;

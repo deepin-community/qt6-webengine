@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,11 +8,13 @@
 #include <memory>
 #include <string>
 
-#include "base/callback.h"
-#include "base/callback_helpers.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "build/buildflag.h"
 #include "components/live_caption/views/caption_bubble_model.h"
+#include "components/prefs/pref_service.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/gfx/font_list.h"
 #include "ui/native_theme/caption_style.h"
@@ -41,6 +43,21 @@ namespace captions {
 class CaptionBubbleFrameView;
 class CaptionBubbleLabel;
 
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused. These should be the same as
+// LiveCaptionSessionEvent in enums.xml.
+enum class SessionEvent {
+  // We began showing captions for an audio stream.
+  kStreamStarted = 0,
+  // The audio stream ended and the caption bubble closes.
+  kStreamEnded = 1,
+  // The close button was clicked, so we stopped listening to an audio stream.
+  kCloseButtonClicked = 2,
+  kMaxValue = kCloseButtonClicked,
+};
+
+using ResetInactivityTimerCallback = base::RepeatingCallback<void()>;
+
 ///////////////////////////////////////////////////////////////////////////////
 // Caption Bubble
 //
@@ -52,7 +69,8 @@ class CaptionBubbleLabel;
 class CaptionBubble : public views::BubbleDialogDelegateView {
  public:
   METADATA_HEADER(CaptionBubble);
-  CaptionBubble(base::OnceClosure destroyed_callback, bool hide_on_inactivity);
+  CaptionBubble(PrefService* profile_prefs,
+                base::OnceClosure destroyed_callback);
   CaptionBubble(const CaptionBubble&) = delete;
   CaptionBubble& operator=(const CaptionBubble&) = delete;
   ~CaptionBubble() override;
@@ -75,10 +93,15 @@ class CaptionBubble : public views::BubbleDialogDelegateView {
   bool HasActivity();
 
   views::Label* GetLabelForTesting();
+  bool IsGenericErrorMessageVisibleForTesting() const;
   base::RetainingOneShotTimer* GetInactivityTimerForTesting();
   void set_tick_clock_for_testing(const base::TickClock* tick_clock) {
     tick_clock_ = tick_clock;
   }
+  views::Button* GetCloseButtonForTesting();
+  views::Button* GetBackToTabButtonForTesting();
+
+  void SetCaptionBubbleStyle();
 
 #if BUILDFLAG(IS_WIN)
   void OnContentSettingsLinkClicked();
@@ -107,10 +130,19 @@ class CaptionBubble : public views::BubbleDialogDelegateView {
   void BackToTabButtonPressed();
   void CloseButtonPressed();
   void ExpandOrCollapseButtonPressed();
+  void PinOrUnpinButtonPressed();
+  void SwapButtons(views::Button* first_button,
+                   views::Button* second_button,
+                   bool show_first_button);
 
   // Called by CaptionBubbleModel to notify this object that the model's text
   // has changed. Sets the text of the caption bubble to the model's text.
   void OnTextChanged();
+
+  // Used to prevent propagating theme changes when no theme colors have
+  // changed. Returns whether the caption theme colors have changed since the
+  // last time this function was called.
+  bool ThemeColorsChanged();
 
   // Called by CaptionBubbleModel to notify this object that the model's error
   // state has changed. Makes the caption bubble display an error message if
@@ -118,10 +150,6 @@ class CaptionBubble : public views::BubbleDialogDelegateView {
   void OnErrorChanged(CaptionBubbleErrorType error_type,
                       OnErrorClickedCallback callback,
                       OnDoNotShowAgainClickedCallback error_silenced_callback);
-
-  // Called when the caption bubble expanded state has changed. Changes the
-  // number of lines displayed.
-  void OnIsExpandedChanged();
 
   // The caption bubble manages its own visibility based on whether there's
   // space for it to be shown, and if it has an error or text to display.
@@ -145,19 +173,34 @@ class CaptionBubble : public views::BubbleDialogDelegateView {
 
   // The following methods set the caption bubble style based on the user's
   // preferences, which are stored in `caption_style_`.
-  void SetCaptionBubbleStyle();
   double GetTextScaleFactor();
   const gfx::FontList GetFontList();
   void SetTextSizeAndFontFamily();
   void SetTextColor();
   void SetBackgroundColor();
 
+  // Places the bubble at the bottom center of the context widget for the active
+  // model, ensuring that it's positioned where the user will spot it. If there
+  // are multiple browser windows open, and the user plays media on the second
+  // window, the caption bubble will show up in the bottom center of the second
+  // window, which is where the user is already looking. It also ensures that
+  // the caption bubble will appear in the right workspace if a user has Chrome
+  // windows open on multiple workspaces. This method has no effect if the
+  // active model has changed between when it was posted and executed.
+  void RepositionInContextRect(const CaptionBubbleModel* model,
+                               const gfx::Rect& context_rect);
+
   // After 5 seconds of inactivity, hide the caption bubble. Activity is defined
   // as transcription received from the speech service or user interacting with
   // the bubble through focus, pressing buttons, or dragging.
   void OnInactivityTimeout();
 
+  void ResetInactivityTimer();
+
   void MediaFoundationErrorCheckboxPressed();
+  bool HasMediaFoundationError();
+
+  void LogSessionEvent(SessionEvent event);
 
   // Unowned. Owned by views hierarchy.
   raw_ptr<CaptionBubbleLabel> label_;
@@ -169,6 +212,8 @@ class CaptionBubble : public views::BubbleDialogDelegateView {
   raw_ptr<views::ImageButton> close_button_;
   raw_ptr<views::ImageButton> expand_button_;
   raw_ptr<views::ImageButton> collapse_button_;
+  raw_ptr<views::ImageButton> pin_button_;
+  raw_ptr<views::ImageButton> unpin_button_;
   raw_ptr<CaptionBubbleFrameView> frame_;
 
 #if BUILDFLAG(IS_WIN)
@@ -183,23 +228,34 @@ class CaptionBubble : public views::BubbleDialogDelegateView {
 
   absl::optional<ui::CaptionStyle> caption_style_;
   raw_ptr<CaptionBubbleModel> model_ = nullptr;
+  raw_ptr<PrefService> profile_prefs_;
 
   OnErrorClickedCallback error_clicked_callback_;
   OnDoNotShowAgainClickedCallback error_silenced_callback_;
   base::ScopedClosureRunner destroyed_callback_;
 
   // Whether the caption bubble is expanded to show more lines of text.
-  bool is_expanded_ = false;
+  bool is_expanded_;
+
+  // Whether the caption bubble is pinned or if it should hide on inactivity.
+  bool is_pinned_;
 
   bool has_been_shown_ = false;
 
-  // Whether we should hide the caption bubble on inactivity.
-  bool const hide_on_inactivity_;
+  // Used to determine whether to propagate theme changes to the widget.
+  SkColor text_color_ = gfx::kPlaceholderColor;
+  SkColor icon_color_ = gfx::kPlaceholderColor;
+  SkColor icon_disabled_color_ = gfx::kPlaceholderColor;
+  SkColor link_color_ = gfx::kPlaceholderColor;
+  SkColor checkbox_color_ = gfx::kPlaceholderColor;
+  SkColor background_color_ = gfx::kPlaceholderColor;
 
   // A timer which causes the bubble to hide if there is no activity after a
   // specified interval.
   std::unique_ptr<base::RetainingOneShotTimer> inactivity_timer_;
-  raw_ptr<const base::TickClock> tick_clock_;
+  raw_ptr<const base::TickClock, DanglingUntriaged> tick_clock_;
+
+  base::WeakPtrFactory<CaptionBubble> weak_ptr_factory_{this};
 };
 
 BEGIN_VIEW_BUILDER(/* no export */,

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -75,7 +75,7 @@ struct MapTraits<base::Value> {
 
   static size_t GetSize(const base::Value& input) {
     DCHECK(input.is_dict());
-    return static_cast<const base::DictionaryValue&>(input).DictSize();
+    return input.GetDict().size();
   }
 
   static Iterator GetBegin(const base::Value& input) {
@@ -94,53 +94,28 @@ struct MapTraits<base::Value> {
 
 template <>
 struct COMPONENT_EXPORT(MOJO_BASE_SHARED_TRAITS)
-    StructTraits<mojo_base::mojom::DeprecatedDictionaryValueDataView,
-                 base::Value> {
-  static const base::Value& storage(const base::Value& value) {
-    DCHECK(value.is_dict());
-    return value;
-  }
-
-  static bool Read(mojo_base::mojom::DeprecatedDictionaryValueDataView data,
-                   base::Value* value);
-};
-
-template <>
-struct COMPONENT_EXPORT(MOJO_BASE_SHARED_TRAITS)
-    StructTraits<mojo_base::mojom::DeprecatedListValueDataView, base::Value> {
-  static base::span<const base::Value> storage(const base::Value& value) {
-    DCHECK(value.is_list());
-    return value.GetListDeprecated();
-  }
-
-  static bool Read(mojo_base::mojom::DeprecatedListValueDataView data,
-                   base::Value* value);
-};
-
-template <>
-struct COMPONENT_EXPORT(MOJO_BASE_SHARED_TRAITS)
     UnionTraits<mojo_base::mojom::ValueDataView, base::Value> {
   static mojo_base::mojom::ValueDataView::Tag GetTag(const base::Value& data) {
     switch (data.type()) {
       case base::Value::Type::NONE:
-        return mojo_base::mojom::ValueDataView::Tag::NULL_VALUE;
+        return mojo_base::mojom::ValueDataView::Tag::kNullValue;
       case base::Value::Type::BOOLEAN:
-        return mojo_base::mojom::ValueDataView::Tag::BOOL_VALUE;
+        return mojo_base::mojom::ValueDataView::Tag::kBoolValue;
       case base::Value::Type::INTEGER:
-        return mojo_base::mojom::ValueDataView::Tag::INT_VALUE;
+        return mojo_base::mojom::ValueDataView::Tag::kIntValue;
       case base::Value::Type::DOUBLE:
-        return mojo_base::mojom::ValueDataView::Tag::DOUBLE_VALUE;
+        return mojo_base::mojom::ValueDataView::Tag::kDoubleValue;
       case base::Value::Type::STRING:
-        return mojo_base::mojom::ValueDataView::Tag::STRING_VALUE;
+        return mojo_base::mojom::ValueDataView::Tag::kStringValue;
       case base::Value::Type::BINARY:
-        return mojo_base::mojom::ValueDataView::Tag::BINARY_VALUE;
-      case base::Value::Type::DICTIONARY:
-        return mojo_base::mojom::ValueDataView::Tag::DICTIONARY_VALUE;
+        return mojo_base::mojom::ValueDataView::Tag::kBinaryValue;
+      case base::Value::Type::DICT:
+        return mojo_base::mojom::ValueDataView::Tag::kDictionaryValue;
       case base::Value::Type::LIST:
-        return mojo_base::mojom::ValueDataView::Tag::LIST_VALUE;
+        return mojo_base::mojom::ValueDataView::Tag::kListValue;
     }
     NOTREACHED();
-    return mojo_base::mojom::ValueDataView::Tag::NULL_VALUE;
+    return mojo_base::mojom::ValueDataView::Tag::kNullValue;
   }
 
   static uint8_t null_value(const base::Value& value) { return 0; }

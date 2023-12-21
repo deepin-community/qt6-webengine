@@ -1,4 +1,4 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -20,6 +20,8 @@ source_set("identity_manager") {
     "account_capabilities.h",
     "account_info.cc",
     "account_info.h",
+    "account_managed_status_finder.cc",
+    "account_managed_status_finder.h",
     "accounts_cookie_mutator.h",
     "accounts_in_cookie_jar_info.cc",
     "accounts_in_cookie_jar_info.h",
@@ -87,6 +89,12 @@ source_set("identity_manager") {
   ]
 }
 
+if (is_android) {
+  java_cpp_enum("primary_account_mutator_enum_javagen") {
+    sources = [ "primary_account_mutator.h" ]
+  }
+}
+
 source_set("unit_tests") {
   testonly = true
 
@@ -94,6 +102,7 @@ source_set("unit_tests") {
     "access_token_fetcher_unittest.cc",
     "account_capabilities_unittest.cc",
     "account_info_unittest.cc",
+    "account_managed_status_finder_unittest.cc",
     "accounts_cookie_mutator_unittest.cc",
     "accounts_mutator_unittest.cc",
     "diagnostics_provider_unittest.cc",
@@ -139,7 +148,7 @@ source_set("unit_tests") {
   }
 
   if (is_chromeos_ash) {
-    deps += [ "//ash/components/account_manager" ]
+    deps += [ "//chromeos/ash/components/account_manager" ]
   }
 }
 
@@ -173,6 +182,10 @@ source_set("test_support") {
     "//components/sync_preferences:test_support",
     "//testing/gtest",
   ]
+
+  if (is_chromeos_ash) {
+    deps += [ "//chromeos/ash/components/account_manager" ]
+  }
 
   if (is_chromeos_lacros) {
     deps += [ "//components/account_manager_core" ]

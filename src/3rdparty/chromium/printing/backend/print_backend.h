@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,15 +14,16 @@
 #include "base/component_export.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/values.h"
 #include "build/build_config.h"
 #include "printing/mojom/print.mojom.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
+#include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 
-namespace base {
-class DictionaryValue;
-class Value;
-}  // namespace base
+#if BUILDFLAG(IS_WIN)
+#include "base/types/expected.h"
+#endif  // BUILDFLAG(IS_WIN)
 
 // This is the interface for platform-specific code for a print backend
 namespace printing {
@@ -120,6 +121,8 @@ struct COMPONENT_EXPORT(PRINT_BACKEND) PageOutputQualityAttribute {
 
   bool operator==(const PageOutputQualityAttribute& other) const;
 
+  bool operator<(const PageOutputQualityAttribute& other) const;
+
   // Localized name of the page output quality attribute.
   std::string display_name;
 
@@ -141,6 +144,25 @@ struct COMPONENT_EXPORT(PRINT_BACKEND) PageOutputQuality {
   // Default option of page output quality.
   // TODO(crbug.com/1291257): Need populate this option in the next CLs.
   absl::optional<std::string> default_quality;
+};
+
+#if defined(UNIT_TEST)
+
+COMPONENT_EXPORT(PRINT_BACKEND)
+bool operator==(const PageOutputQuality& quality1,
+                const PageOutputQuality& quality2);
+
+#endif  // defined(UNIT_TEST)
+
+struct COMPONENT_EXPORT(PRINT_BACKEND) XpsCapabilities {
+  XpsCapabilities();
+  XpsCapabilities(const XpsCapabilities&) = delete;
+  XpsCapabilities& operator=(const XpsCapabilities&) = delete;
+  XpsCapabilities(XpsCapabilities&& other) noexcept;
+  XpsCapabilities& operator=(XpsCapabilities&& other) noexcept;
+  ~XpsCapabilities();
+
+  absl::optional<PageOutputQuality> page_output_quality;
 };
 
 #endif  // BUILDFLAG(IS_WIN)
@@ -171,6 +193,9 @@ struct COMPONENT_EXPORT(PRINT_BACKEND) PrinterSemanticCapsAndDefaults {
     std::string vendor_id;
     gfx::Size size_um;
 
+    // Origin (x,y) is at the bottom-left.
+    gfx::Rect printable_area_um;
+
     bool operator==(const Paper& other) const;
   };
   using Papers = std::vector<Paper>;
@@ -190,6 +215,14 @@ struct COMPONENT_EXPORT(PRINT_BACKEND) PrinterSemanticCapsAndDefaults {
   absl::optional<PageOutputQuality> page_output_quality;
 #endif  // BUILDFLAG(IS_WIN)
 };
+
+#if defined(UNIT_TEST)
+
+COMPONENT_EXPORT(PRINT_BACKEND)
+bool operator==(const PrinterSemanticCapsAndDefaults& caps1,
+                const PrinterSemanticCapsAndDefaults& caps2);
+
+#endif  // defined(UNIT_TEST)
 
 struct COMPONENT_EXPORT(PRINT_BACKEND) PrinterCapsAndDefaults {
   PrinterCapsAndDefaults();
@@ -214,12 +247,12 @@ class COMPONENT_EXPORT(PRINT_BACKEND) PrintBackend
  public:
   // Enumerates the list of installed local and network printers.  It will
   // return success when the available installed printers have been enumerated
-  // into `printer_list`.  Note that `printer_list` must not be null and also
-  // should be empty prior to this call.  If there are no printers installed
-  // then it will still return success, and `printer_list` remains empty.  The
-  // result code will return one of the error result codes when there is a
-  // failure in generating the list.
-  virtual mojom::ResultCode EnumeratePrinters(PrinterList* printer_list) = 0;
+  // into `printer_list`.  Note that `printer_list` should be empty prior to
+  // this call.  If there are no printers installed then it will still return
+  // success, and `printer_list` remains empty.  The result code will return
+  // one of the error result codes when there is a failure in generating the
+  // list.
+  virtual mojom::ResultCode EnumeratePrinters(PrinterList& printer_list) = 0;
 
   // Gets the default printer name.  If there is no default printer then it
   // will still return success and `default_printer` will be empty.  The result
@@ -258,17 +291,10 @@ class COMPONENT_EXPORT(PRINT_BACKEND) PrintBackend
 #if BUILDFLAG(IS_WIN)
 
   // This method uses the XPS API to get the printer capabilities.
-  mojom::ResultCode GetXmlPrinterCapabilitiesForXpsDriver(
-      const std::string& printer_name,
-      std::string& capabilities);
-
-  // Since parsing XML data to `PrinterSemanticCapsAndDefaults` can not be done
-  // in the print_backend level, parse base::Value into
-  // `PrinterSemanticCapsAndDefaults` data structure instead. Parsing XML data
-  // to base::Value will be processed by data_decoder service.
-  mojom::ResultCode ParseValueForXpsPrinterCapabilities(
-      const base::Value& value,
-      PrinterSemanticCapsAndDefaults* printer_info);
+  // Returns raw XML string on success, or mojom::ResultCode on failure.
+  // This method is virtual to support testing.
+  virtual base::expected<std::string, mojom::ResultCode>
+  GetXmlPrinterCapabilitiesForXpsDriver(const std::string& printer_name);
 
 #endif  // BUILDFLAG(IS_WIN)
 
@@ -287,7 +313,7 @@ class COMPONENT_EXPORT(PRINT_BACKEND) PrintBackend
 
   // Provide the actual backend for CreateInstance().
   static scoped_refptr<PrintBackend> CreateInstanceImpl(
-      const base::DictionaryValue* print_backend_settings,
+      const base::Value::Dict* print_backend_settings,
       const std::string& locale);
 };
 

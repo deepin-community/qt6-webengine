@@ -7,57 +7,55 @@ import * as ComponentHelpers from '../../../ui/components/helpers/helpers.js';
 import * as UI from '../../../ui/legacy/legacy.js';
 import * as LitHtml from '../../../ui/lit-html/lit-html.js';
 
-import type {BooleanSetting, EnumSetting, Setting} from './LayoutPaneUtils.js';
-import type {LayoutElement} from './LayoutPaneUtils.js';
+import {type LayoutElement, type BooleanSetting, type EnumSetting, type Setting} from './LayoutPaneUtils.js';
 
-import type {NodeTextData} from './NodeText.js';
-import {NodeText} from './NodeText.js';
 import layoutPaneStyles from '../layoutPane.css.js';
 import * as Input from '../../../ui/components/input/input.js';
+import * as NodeText from '../../../ui/components/node_text/node_text.js';
 // eslint-disable-next-line rulesdir/es_modules_import
 import inspectorCommonStyles from '../../../ui/legacy/inspectorCommon.css.js';
 
 import * as i18n from '../../../core/i18n/i18n.js';
 const UIStrings = {
   /**
-  *@description Title of the input to select the overlay color for an element using the color picker
-  */
+   *@description Title of the input to select the overlay color for an element using the color picker
+   */
   chooseElementOverlayColor: 'Choose the overlay color for this element',
   /**
-  *@description Title of the show element button in the Layout pane of the Elements panel
-  */
+   *@description Title of the show element button in the Layout pane of the Elements panel
+   */
   showElementInTheElementsPanel: 'Show element in the Elements panel',
   /**
-  *@description Title of a section on CSS Grid tooling
-  */
+   *@description Title of a section on CSS Grid tooling
+   */
   grid: 'Grid',
   /**
-  *@description Title of a section in the Layout Sidebar pane of the Elements panel
-  */
+   *@description Title of a section in the Layout Sidebar pane of the Elements panel
+   */
   overlayDisplaySettings: 'Overlay display settings',
   /**
-  *@description Title of a section in Layout sidebar pane
-  */
+   *@description Title of a section in Layout sidebar pane
+   */
   gridOverlays: 'Grid overlays',
   /**
-  *@description Message in the Layout panel informing users that no CSS Grid layouts were found on the page
-  */
+   *@description Message in the Layout panel informing users that no CSS Grid layouts were found on the page
+   */
   noGridLayoutsFoundOnThisPage: 'No grid layouts found on this page',
   /**
-  *@description Title of the Flexbox section in the Layout panel
-  */
+   *@description Title of the Flexbox section in the Layout panel
+   */
   flexbox: 'Flexbox',
   /**
-  *@description Title of a section in the Layout panel
-  */
+   *@description Title of a section in the Layout panel
+   */
   flexboxOverlays: 'Flexbox overlays',
   /**
-  *@description Text in the Layout panel, when no flexbox elements are found
-  */
+   *@description Text in the Layout panel, when no flexbox elements are found
+   */
   noFlexboxLayoutsFoundOnThisPage: 'No flexbox layouts found on this page',
   /**
-  *@description Screen reader announcement when opening color picker tool.
-  */
+   *@description Screen reader announcement when opening color picker tool.
+   */
   colorPickerOpened: 'Color picker opened.',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/elements/components/LayoutPane.ts', UIStrings);
@@ -262,14 +260,14 @@ export class LayoutPane extends HTMLElement {
       <label data-element="true" class="checkbox-label">
         <input data-input="true" type="checkbox" .checked=${element.enabled} @change=${onElementToggle} />
         <span class="node-text-container" data-label="true" @mouseenter=${onMouseEnter} @mouseleave=${onMouseLeave}>
-          <${NodeText.litTagName} .data=${{
+          <${NodeText.NodeText.NodeText.litTagName} .data=${{
             nodeId: element.domId,
             nodeTitle: element.name,
             nodeClasses: element.domClasses,
-          } as NodeTextData}></${NodeText.litTagName}>
+          } as NodeText.NodeText.NodeTextData}></${NodeText.NodeText.NodeText.litTagName}>
         </span>
       </label>
-      <label @keyup=${onColorLabelKeyUp} @keydown=${onColorLabelKeyDown} tabindex="0" title=${i18nString(UIStrings.chooseElementOverlayColor)} class="color-picker-label" style="background: ${element.color};">
+      <label @keyup=${onColorLabelKeyUp} @keydown=${onColorLabelKeyDown} tabindex="0" title=${i18nString(UIStrings.chooseElementOverlayColor)} aria-label=${i18nString(UIStrings.chooseElementOverlayColor)} class="color-picker-label" style="background: ${element.color};">
         <input @change=${onColorChange} @input=${onColorChange} tabindex="-1" class="color-picker" type="color" value=${element.color} />
       </label>
       <button tabindex="0" @click=${onElementClick} title=${i18nString(UIStrings.showElementInTheElementsPanel)} class="show-element"></button>

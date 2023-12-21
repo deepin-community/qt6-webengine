@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include "core/fpdfapi/render/cpdf_scaledrenderbuffer.h"
 
+#include "core/fpdfapi/parser/cpdf_dictionary.h"
 #include "core/fpdfapi/render/cpdf_devicebuffer.h"
 #include "core/fpdfapi/render/cpdf_rendercontext.h"
 #include "core/fxge/cfx_defaultrenderdevice.h"
@@ -62,7 +63,8 @@ bool CPDF_ScaledRenderBuffer::Initialize(CPDF_RenderContext* pContext,
 }
 
 CFX_RenderDevice* CPDF_ScaledRenderBuffer::GetDevice() const {
-  return m_pBitmapDevice ? m_pBitmapDevice.get() : m_pDevice.Get();
+  return m_pBitmapDevice ? static_cast<CFX_RenderDevice*>(m_pBitmapDevice.get())
+                         : m_pDevice.get();
 }
 
 void CPDF_ScaledRenderBuffer::OutputToDevice() {

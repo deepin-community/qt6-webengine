@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 #include <memory>
 #include <utility>
 
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -68,7 +68,7 @@ class SoftwareOutputDeviceOzoneTest : public testing::Test {
   std::unique_ptr<SoftwareOutputDeviceOzone> output_device_;
   bool enable_pixel_output_ = false;
 
-  TestSurfaceOzoneCanvas* surface_ozone_ = nullptr;
+  raw_ptr<TestSurfaceOzoneCanvas> surface_ozone_ = nullptr;
 };
 
 SoftwareOutputDeviceOzoneTest::SoftwareOutputDeviceOzoneTest() = default;

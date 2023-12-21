@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,7 @@
 
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/public/cpp/window_properties.h"
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chromeos/ui/base/window_state_type.h"
 #include "components/exo/display.h"
@@ -91,11 +91,27 @@ void xdg_positioner_set_offset(wl_client* client,
   GetUserDataAs<WaylandPositioner>(resource)->SetOffset(gfx::Vector2d(x, y));
 }
 
+// Version 3 xdg_positioner
+// Empty since Weston doesn't implement this.
+// Ref:
+// https://gitlab.freedesktop.org/wayland/weston/-/blob/main/libweston/desktop/xdg-shell.c#L312
+void xdg_positioner_set_reactive(wl_client* client, wl_resource* resource) {}
+
+void xdg_positioner_set_parent_size(wl_client* client,
+                                    wl_resource* resource,
+                                    int32_t parent_width,
+                                    int32_t parent_height) {}
+
+void xdg_positioner_set_parent_configure(wl_client* client,
+                                         wl_resource* resource,
+                                         uint32_t serial) {}
+
 const struct xdg_positioner_interface xdg_positioner_implementation = {
     xdg_positioner_destroy,         xdg_positioner_set_size,
     xdg_positioner_set_anchor_rect, xdg_positioner_set_anchor,
     xdg_positioner_set_gravity,     xdg_positioner_set_constraint_adjustment,
-    xdg_positioner_set_offset};
+    xdg_positioner_set_offset,      xdg_positioner_set_reactive,
+    xdg_positioner_set_parent_size, xdg_positioner_set_parent_configure};
 
 ////////////////////////////////////////////////////////////////////////////////
 // xdg_toplevel_interface:
@@ -137,7 +153,8 @@ uint32_t HandleXdgSurfaceConfigureCallback(
     chromeos::WindowStateType state_type,
     bool resizing,
     bool activated,
-    const gfx::Vector2d& origin_offset) {
+    const gfx::Vector2d& origin_offset,
+    float raster_scale) {
   uint32_t serial =
       serial_tracker->GetNextSerial(SerialTracker::EventType::OTHER_EVENT);
   callback.Run(bounds.size(), state_type, resizing, activated);
@@ -145,21 +162,6 @@ uint32_t HandleXdgSurfaceConfigureCallback(
   wl_client_flush(wl_resource_get_client(resource));
   return serial;
 }
-
-struct WaylandXdgSurface {
-  WaylandXdgSurface(std::unique_ptr<XdgShellSurface> shell_surface,
-                    SerialTracker* const serial_tracker)
-      : shell_surface(std::move(shell_surface)),
-        serial_tracker(serial_tracker) {}
-
-  WaylandXdgSurface(const WaylandXdgSurface&) = delete;
-  WaylandXdgSurface& operator=(const WaylandXdgSurface&) = delete;
-
-  std::unique_ptr<XdgShellSurface> shell_surface;
-
-  // Owned by Server, which always outlives this surface.
-  SerialTracker* const serial_tracker;
-};
 
 // Wrapper around shell surface that allows us to handle the case where the
 // xdg surface resource is destroyed before the toplevel resource.
@@ -471,6 +473,7 @@ class WaylandPopup : aura::WindowObserver {
  public:
   WaylandPopup(wl_resource* resource, wl_resource* surface_resource)
       : resource_(resource),
+        surface_resource_(surface_resource),
         shell_surface_data_(
             GetUserDataAs<WaylandXdgSurface>(surface_resource)) {
     shell_surface_data_->shell_surface->host_window()->AddObserver(this);
@@ -510,6 +513,39 @@ class WaylandPopup : aura::WindowObserver {
     shell_surface_data_->shell_surface->Grab();
   }
 
+  void Reposition(WaylandPositioner* positioner, uint32_t token) {
+    xdg_popup_send_repositioned(resource_, token);
+
+    display::Display display =
+        display::Screen::GetScreen()->GetDisplayNearestWindow(
+            shell_surface_data_->shell_surface->GetWidget()
+                ->parent()
+                ->GetNativeWindow());
+    gfx::Rect work_area = display.work_area();
+    wm::ConvertRectFromScreen(shell_surface_data_->shell_surface->GetWidget()
+                                  ->parent()
+                                  ->GetNativeWindow(),
+                              &work_area);
+    WaylandPositioner::Result position = positioner->CalculateBounds(work_area);
+    gfx::Point origin = position.origin;
+    views::View::ConvertPointToScreen(
+        shell_surface_data_->shell_surface->GetWidget()
+            ->parent()
+            ->widget_delegate()
+            ->GetContentsView(),
+        &origin);
+
+    shell_surface_data_->shell_surface->SetOrigin(origin);
+    shell_surface_data_->shell_surface->SetSize(position.size);
+
+    xdg_popup_send_configure(resource_, position.origin.x(),
+                             position.origin.y(), position.size.width(),
+                             position.size.height());
+    xdg_surface_send_configure(
+        surface_resource_, shell_surface_data_->serial_tracker->GetNextSerial(
+                               SerialTracker::EventType::OTHER_EVENT));
+  }
+
   // Overridden from aura::WindowObserver:
   void OnWindowDestroying(aura::Window* window) override {
     shell_surface_data_ = nullptr;
@@ -529,6 +565,7 @@ class WaylandPopup : aura::WindowObserver {
   }
 
   wl_resource* const resource_;
+  wl_resource* const surface_resource_;
   WaylandXdgSurface* shell_surface_data_;
   base::WeakPtrFactory<WaylandPopup> weak_ptr_factory_{this};
 };
@@ -544,8 +581,16 @@ void xdg_popup_grab(wl_client* client,
   GetUserDataAs<WaylandPopup>(resource)->Grab();
 }
 
-const struct xdg_popup_interface xdg_popup_implementation = {xdg_popup_destroy,
-                                                             xdg_popup_grab};
+void xdg_popup_reposition(wl_client* client,
+                          wl_resource* resource,
+                          wl_resource* positioner,
+                          uint32_t token) {
+  GetUserDataAs<WaylandPopup>(resource)->Reposition(
+      GetUserDataAs<WaylandPositioner>(positioner), token);
+}
+
+const struct xdg_popup_interface xdg_popup_implementation = {
+    xdg_popup_destroy, xdg_popup_grab, xdg_popup_reposition};
 
 ////////////////////////////////////////////////////////////////////////////////
 // xdg_surface_interface:
@@ -637,8 +682,8 @@ void xdg_surface_get_popup(wl_client* client,
   shell_surface_data->shell_surface->SetPopup();
   shell_surface_data->shell_surface->SetEnabled(true);
 
-  wl_resource* xdg_popup_resource =
-      wl_resource_create(client, &xdg_popup_interface, 1, id);
+  wl_resource* xdg_popup_resource = wl_resource_create(
+      client, &xdg_popup_interface, wl_resource_get_version(resource), id);
 
   SetImplementation(
       xdg_popup_resource, &xdg_popup_implementation,
@@ -649,9 +694,6 @@ void xdg_surface_get_popup(wl_client* client,
   xdg_popup_send_configure(xdg_popup_resource, position.origin.x(),
                            position.origin.y(), position.size.width(),
                            position.size.height());
-  uint32_t serial = shell_surface_data->serial_tracker->GetNextSerial(
-      SerialTracker::EventType::OTHER_EVENT);
-  xdg_surface_send_configure(resource, serial);
 }
 
 void xdg_surface_set_window_geometry(wl_client* client,
@@ -685,8 +727,8 @@ void xdg_wm_base_destroy(wl_client* client, wl_resource* resource) {
 void xdg_wm_base_create_positioner(wl_client* client,
                                    wl_resource* resource,
                                    uint32_t id) {
-  wl_resource* positioner_resource =
-      wl_resource_create(client, &xdg_positioner_interface, 1, id);
+  wl_resource* positioner_resource = wl_resource_create(
+      client, &xdg_positioner_interface, wl_resource_get_version(resource), id);
 
   SetImplementation(
       positioner_resource, &xdg_positioner_implementation,
@@ -710,12 +752,14 @@ void xdg_wm_base_get_xdg_surface(wl_client* client,
   // before they are enabled and can become visible.
   shell_surface->SetEnabled(false);
 
+  shell_surface->SetSecurityDelegate(GetSecurityDelegate(client));
+
   std::unique_ptr<WaylandXdgSurface> wayland_shell_surface =
       std::make_unique<WaylandXdgSurface>(std::move(shell_surface),
                                           data->serial_tracker);
 
-  wl_resource* xdg_surface_resource =
-      wl_resource_create(client, &xdg_surface_interface, 1, id);
+  wl_resource* xdg_surface_resource = wl_resource_create(
+      client, &xdg_surface_interface, wl_resource_get_version(resource), id);
 
   SetImplementation(xdg_surface_resource, &xdg_surface_implementation,
                     std::move(wayland_shell_surface));
@@ -791,6 +835,13 @@ static const struct zxdg_decoration_manager_v1_interface
 
 }  // namespace
 
+WaylandXdgSurface ::WaylandXdgSurface(
+    std::unique_ptr<XdgShellSurface> shell_surface,
+    SerialTracker* const serial_tracker)
+    : shell_surface(std::move(shell_surface)), serial_tracker(serial_tracker) {}
+
+WaylandXdgSurface::~WaylandXdgSurface() = default;
+
 void bind_zxdg_decoration_manager(wl_client* client,
                                   void* data,
                                   uint32_t version,
@@ -806,8 +857,8 @@ void bind_xdg_shell(wl_client* client,
                     void* data,
                     uint32_t version,
                     uint32_t id) {
-  wl_resource* resource =
-      wl_resource_create(client, &xdg_wm_base_interface, 1, id);
+  wl_resource* resource = wl_resource_create(client, &xdg_wm_base_interface,
+                                             std::min(3u, version), id);
 
   wl_resource_set_implementation(resource, &xdg_wm_base_implementation, data,
                                  nullptr);

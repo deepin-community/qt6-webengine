@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,9 @@
 #include <list>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/path_service.h"
 #include "base/strings/strcat.h"
@@ -50,8 +50,8 @@ scoped_refptr<base::RefCountedMemory> CreateNotFoundResponse() {
 
 // DevToolsDataSource ---------------------------------------------------------
 
-std::string GetMimeTypeForPath(const std::string& path) {
-  std::string filename = PathWithoutParams(path);
+std::string GetMimeTypeForUrl(const GURL& url) {
+  std::string filename = url.ExtractFileName();
   if (base::EndsWith(filename, ".html", base::CompareCase::INSENSITIVE_ASCII)) {
     return "text/html";
   } else if (base::EndsWith(filename, ".css",
@@ -211,8 +211,8 @@ void DevToolsDataSource::StartDataRequest(
   std::move(callback).Run(CreateNotFoundResponse());
 }
 
-std::string DevToolsDataSource::GetMimeType(const std::string& path) {
-  return GetMimeTypeForPath(path);
+std::string DevToolsDataSource::GetMimeType(const GURL& url) {
+  return GetMimeTypeForUrl(url);
 }
 
 bool DevToolsDataSource::ShouldAddContentSecurityPolicy() {
@@ -256,8 +256,7 @@ void DevToolsDataSource::StartRemoteDataRequest(
           destination: GOOGLE_OWNED_SERVICE
         }
         policy {
-          cookies_allowed: YES
-          cookies_store: "user"
+          cookies_allowed: NO
           setting: "This feature cannot be disabled by settings."
           chrome_policy {
             DeveloperToolsAvailability {
@@ -297,8 +296,7 @@ void DevToolsDataSource::StartCustomDataRequest(
           destination: WEBSITE
         }
         policy {
-          cookies_allowed: YES
-          cookies_store: "user"
+          cookies_allowed: NO
           setting: "This feature cannot be disabled by settings."
           chrome_policy {
             DeveloperToolsAvailability {
@@ -320,6 +318,7 @@ void DevToolsDataSource::StartNetworkRequest(
   auto request = std::make_unique<network::ResourceRequest>();
   request->url = url;
   request->load_flags = load_flags;
+  request->credentials_mode = network::mojom::CredentialsMode::kOmit;
 
   auto request_iter = pending_requests_.emplace(pending_requests_.begin());
   request_iter->callback = std::move(callback);
@@ -338,7 +337,7 @@ scoped_refptr<base::RefCountedMemory> ReadFileForDevTools(
     LOG(ERROR) << "Failed to read " << path;
     return CreateNotFoundResponse();
   }
-  return base::RefCountedString::TakeString(&buffer);
+  return base::MakeRefCounted<base::RefCountedString>(std::move(buffer));
 }
 
 void DevToolsDataSource::StartFileRequest(const std::string& path,
@@ -366,11 +365,13 @@ void DevToolsDataSource::StartFileRequest(const std::string& path,
 void DevToolsDataSource::OnLoadComplete(
     std::list<PendingRequest>::iterator request_iter,
     std::unique_ptr<std::string> response_body) {
-  std::move(request_iter->callback)
-      .Run(response_body
-               ? base::RefCountedString::TakeString(response_body.get())
-               : CreateNotFoundResponse());
+  GotDataCallback callback = std::move(request_iter->callback);
   pending_requests_.erase(request_iter);
+  std::move(callback).Run(response_body
+                              ? base::MakeRefCounted<base::RefCountedString>(
+                                    std::move(*response_body))
+                              : CreateNotFoundResponse());
+  // `this` might no longer be valid after `callback` has run.
 }
 
 DevToolsDataSource::PendingRequest::PendingRequest() = default;

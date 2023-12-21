@@ -39,10 +39,10 @@ Build-Depends: binutils (>= 2.32-8~),
                libpng-dev,
                libprotobuf-dev,
                libpulse-dev,
-               libre2-dev,
                libsnappy-dev,
                libsqlite3-dev,
                libssl-dev,
+               libtiff-dev,
                libusb-1.0-0-dev,
                libvpx-dev (>= 1.8),
                libvulkan-dev [linux-any],
@@ -71,15 +71,15 @@ Build-Depends: binutils (>= 2.32-8~),
                protobuf-compiler,
                python3,
                python3-html5lib,
-               qt6-base-dev (>= 6.4.2+dfsg~),
-               qt6-base-private-dev (>= 6.4.2+dfsg~),
-               qt6-declarative-dev (>= 6.4.2+dfsg~),
-               qt6-declarative-private-dev (>= 6.4.2+dfsg~),
-               qt6-documentation-tools (>= 6.4~) <!nodoc>,
-               qt6-positioning-dev (>= 6.4.2~),
-               qt6-tools-dev (>= 6.4.2~),
-               qt6-webchannel-dev (>= 6.4.2~),
-               qt6-websockets-dev (>= 6.4.2~),
+               qt6-base-dev (>= 6.6.1+dfsg~),
+               qt6-base-private-dev (>= 6.6.1+dfsg~),
+               qt6-declarative-dev (>= 6.6.1+dfsg~),
+               qt6-declarative-private-dev (>= 6.6.1+dfsg~),
+               qt6-documentation-tools (>= 6.6~) <!nodoc>,
+               qt6-positioning-dev (>= 6.6.1~),
+               qt6-tools-dev (>= 6.6.1~),
+               qt6-webchannel-dev (>= 6.6.1~),
+               qt6-websockets-dev (>= 6.6.1~),
                re2c,
                ruby,
                xauth <!nocheck>,
@@ -91,7 +91,7 @@ Vcs-Git: https://salsa.debian.org/qt-kde-team/qt6/qt6-webengine.git
 Rules-Requires-Root: no
 
 Package: libqt6webenginecore6
-Provides: qt6-webengine-abi (= 6.4.2),
+Provides: qt6-webengine-private-abi (= 6.6.1),
 Architecture: amd64 arm64 armhf i386
 Multi-Arch: same
 Depends: libqt6webengine6-data (= ${source:Version}),
@@ -173,20 +173,6 @@ Description: Qt 6 WebEngine Quick library
  .
  This package contains the Qt 6 WebEngine Quick library.
 
-Package: libqt6webenginequickdelegatesqml6
-Architecture: amd64 arm64 armhf i386
-Multi-Arch: same
-Depends: ${misc:Depends}, ${shlibs:Depends},
-Pre-Depends: ${misc:Pre-Depends},
-Description: Qt 6 WebEngine Quick Delegates QML library
- Qt is a cross-platform C++ application framework. Qt's primary feature
- is its rich set of widgets that provide standard GUI functionality.
- .
- Qt WebEngine provides a Web browser engine that makes it easy to embed content
- from the World Wide Web into your Qt application.
- .
- This package contains the Qt 6 WebEngine Quick Delegates QML library.
-
 Package: libqt6webenginewidgets6
 Architecture: amd64 arm64 armhf i386
 Multi-Arch: same
@@ -233,11 +219,11 @@ Description: Qt 6 PDF image format plugin
 Package: qml6-module-qtquick-pdf
 Architecture: amd64 arm64 armhf i386
 Multi-Arch: same
-Depends: qml6-module-qtquick (>= 6.4.2+dfsg~),
-         qml6-module-qtquick-controls (>= 6.4.2+dfsg~),
-         qml6-module-qtquick-shapes (>= 6.4.2+dfsg~),
-         qml6-module-qtquick-templates (>= 6.4.2+dfsg~),
-         qml6-module-qtquick-window (>= 6.4.2+dfsg~),
+Depends: qml6-module-qtquick (>= 6.6.1+dfsg~),
+         qml6-module-qtquick-controls (>= 6.6.1+dfsg~),
+         qml6-module-qtquick-shapes (>= 6.6.1+dfsg~),
+         qml6-module-qtquick-templates (>= 6.6.1+dfsg~),
+         qml6-module-qtquick-window (>= 6.6.1+dfsg~),
          qt6-image-formats-plugin-pdf,
          ${misc:Depends},
          ${shlibs:Depends},
@@ -267,6 +253,8 @@ Package: qml6-module-qtwebengine-controlsdelegates
 Architecture: amd64 arm64 armhf i386
 Multi-Arch: same
 Depends: qml6-module-qtquick, ${misc:Depends}, ${shlibs:Depends},
+Breaks: libqt6webenginequickdelegatesqml6
+Replaces: libqt6webenginequickdelegatesqml6
 Pre-Depends: ${misc:Pre-Depends},
 Description: Qt 6 WebEngine Controls Delegates QML module
  Qt is a cross-platform C++ application framework. Qt's primary feature
@@ -284,7 +272,6 @@ Multi-Arch: same
 Section: libdevel
 Depends: libqt6webenginecore6 (= ${binary:Version}),
          libqt6webenginequick6 (= ${binary:Version}),
-         libqt6webenginequickdelegatesqml6 (= ${binary:Version}),
          libqt6webenginewidgets6 (= ${binary:Version}),
          qt6-base-dev,
          qt6-declarative-dev,
@@ -336,7 +323,7 @@ Description: Qt 6 WebEngine development programs
  .
  This package contains the qwebengine_convert_dict tool which converts hunspell
  'dic' dictionaries to binary 'bdic' format, which is required by spellchecker
- in Qt 6 WebEngine. The package provides the convert-dict virtual package
+ in Qt 6 WebEngine. The package provides the convert-bdic virtual package
  so that Hunspell dictionaries can depend on it at build time without having
  to adjust for future Qt releases.
  .

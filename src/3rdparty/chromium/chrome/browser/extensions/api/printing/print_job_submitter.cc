@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,20 +7,18 @@
 #include <cstring>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/check_op.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/values.h"
-#include "chrome/browser/ash/printing/cups_printers_manager.h"
 #include "chrome/browser/extensions/api/printing/print_job_controller.h"
 #include "chrome/browser/extensions/api/printing/printing_api_utils.h"
 #include "chrome/browser/printing/printing_service.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser_dialogs.h"
-#include "chrome/browser/ui/native_window_tracker.h"
+#include "chrome/browser/ui/extensions/extensions_dialogs.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/services/printing/public/mojom/pdf_flattener.mojom.h"
 #include "chrome/services/printing/public/mojom/printing_service.mojom.h"
@@ -39,12 +37,7 @@
 #include "printing/printing_utils.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chrome/browser/ash/crosapi/local_printer_ash.h"
-#elif BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/lacros/lacros_service.h"
-#endif
+#include "ui/views/native_window_tracker.h"
 
 namespace extensions {
 
@@ -77,11 +70,11 @@ bool IsUserConfirmationRequired(content::BrowserContext* browser_context,
                                 const std::string& extension_id) {
   if (g_skip_confirmation_dialog_for_testing)
     return false;
-  const base::Value* list =
+  const base::Value::List& list =
       Profile::FromBrowserContext(browser_context)
           ->GetPrefs()
           ->GetList(prefs::kPrintingAPIExtensionsAllowlist);
-  return !base::Contains(list->GetListDeprecated(), base::Value(extension_id));
+  return !base::Contains(list, base::Value(extension_id));
 }
 
 }  // namespace
@@ -111,7 +104,7 @@ PrintJobSubmitter::PrintJobSubmitter(
       callback_(std::move(callback)) {
   DCHECK(extension);
   if (native_window)
-    native_window_tracker_ = NativeWindowTracker::Create(native_window);
+    native_window_tracker_ = views::NativeWindowTracker::Create(native_window);
 }
 
 PrintJobSubmitter::~PrintJobSubmitter() {
@@ -149,8 +142,7 @@ bool PrintJobSubmitter::CheckContentType() const {
 }
 
 bool PrintJobSubmitter::CheckPrintTicket() {
-  settings_ = ParsePrintTicket(
-      base::Value::FromUniquePtrValue(request_.job.ticket.ToValue()));
+  settings_ = ParsePrintTicket(base::Value(request_.job.ticket.ToValue()));
   if (!settings_)
     return false;
   settings_->set_title(base::UTF8ToUTF16(request_.job.title));
@@ -260,10 +252,11 @@ void PrintJobSubmitter::ShowPrintJobConfirmationDialog(
     const gfx::Image& extension_icon) {
   // If the browser window was closed during API request handling, change
   // |native_window_| appropriately.
-  if (native_window_tracker_ && native_window_tracker_->WasNativeWindowClosed())
+  if (native_window_tracker_ &&
+      native_window_tracker_->WasNativeWindowDestroyed())
     native_window_ = gfx::kNullNativeWindow;
 
-  chrome::ShowPrintJobConfirmationDialog(
+  extensions::ShowPrintJobConfirmationDialog(
       native_window_, extension_->id(), base::UTF8ToUTF16(extension_->name()),
       extension_icon.AsImageSkia(), settings_->title(), printer_name_,
       base::BindOnce(&PrintJobSubmitter::OnPrintJobConfirmationDialogClosed,
@@ -278,7 +271,7 @@ void PrintJobSubmitter::OnPrintJobConfirmationDialogClosed(bool accepted) {
   if (!accepted || !ExtensionRegistry::Get(browser_context_)
                         ->enabled_extensions()
                         .Contains(extension_->id())) {
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback_), absl::nullopt, nullptr,
                                   nullptr, absl::nullopt));
     return;
@@ -312,7 +305,7 @@ void PrintJobSubmitter::OnFailed() {
 void PrintJobSubmitter::FireErrorCallback(const std::string& error) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(callback_);
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(std::move(callback_), absl::nullopt, nullptr,
                                 nullptr, error));
 }

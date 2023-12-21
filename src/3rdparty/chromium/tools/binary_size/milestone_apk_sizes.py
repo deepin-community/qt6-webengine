@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -128,8 +128,6 @@ def _DownloadAndAnalyze(signed_prefix, unsigned_prefix, staging_dir):
 
   webview = make_artifact('arm/AndroidWebviewStable.aab')
   webview64 = make_artifact('arm_64/AndroidWebviewStable.aab')
-  chrome_modern = make_artifact('arm/ChromeModernStable.aab')
-  chrome_modern64 = make_artifact('arm_64/ChromeModernStable.aab')
   monochrome = make_artifact('arm/MonochromeStable.aab')
   monochrome64 = make_artifact('arm_64/MonochromeStable.aab')
   trichrome_chrome = make_artifact('arm/TrichromeChromeGoogleStable.aab')
@@ -168,8 +166,6 @@ def _DownloadAndAnalyze(signed_prefix, unsigned_prefix, staging_dir):
 
   # Add metrics in the order that we want them in the .csv output.
   metrics = collections.OrderedDict()
-  chrome_modern.AddSize(metrics)
-  chrome_modern64.AddSize(metrics)
   webview.AddSize(metrics)
   webview64.AddSize(metrics)
   monochrome.AddSize(metrics)

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -55,9 +55,9 @@ bool TopDomainTrieEntry::WriteEntry(
   }
 
   for (const auto& c : top_domain) {
-    writer->WriteChar(c, huffman_table_, huffman_builder_);
+    writer->WriteChar(c, *huffman_table_, huffman_builder_);
   }
-  writer->WriteChar(net::huffman_trie::kEndOfTableValue, huffman_table_,
+  writer->WriteChar(net::huffman_trie::kEndOfTableValue, *huffman_table_,
                     huffman_builder_);
   return true;
 }

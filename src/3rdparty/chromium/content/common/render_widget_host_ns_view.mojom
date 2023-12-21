@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,7 +23,7 @@ import "ui/gfx/range/mojom/range.mojom";
 interface RenderWidgetHostNSView {
   // Specify that the NSView will a popup (e.g, date/time picker) that will
   // create its own NSWindow.
-  InitAsPopup(gfx.mojom.Rect content_rect);
+  InitAsPopup(gfx.mojom.Rect content_rect, uint64 popup_parent_ns_view_id);
 
   // Set this to be a child NSView of the NSView mapped to by
   // |parent_ns_view_id|.
@@ -101,6 +101,18 @@ interface RenderWidgetHostNSView {
                            string url,
                            array<string> file_paths)
     => (blink.mojom.ShareError error);
+
+  // TODO(https://crbug.com/1327478): This is a work around for a bug in mojo
+  // where close notifications for associated messages pipes can sometimes be
+  // delivered later than they should. This method is called before closing the
+  // remote, and is treated as if a close notification was received.
+  Destroy();
+
+  // Ack gesture scroll event from the renderer.
+  GestureScrollEventAck(blink.mojom.Event event, bool consumed);
+
+  // Ack overscroll message from the renderer.
+  DidOverscroll(blink.mojom.DidOverscrollParams params);
 };
 
 // The interface through which the RenderWidgetHostViewCocoa NSView in the app

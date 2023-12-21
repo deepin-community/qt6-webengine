@@ -19,6 +19,7 @@
 #include <ostream>
 #include <string>
 
+#include "absl/time/time.h"
 #include "quiche/quic/platform/api/quic_export.h"
 
 // TODO(vasilvv): replace with ABSL_MUST_USE_RESULT once we're using absl.
@@ -60,18 +61,36 @@ class QUIC_EXPORT_PRIVATE QuicTime {
     // Converts a number of microseconds to a time offset.
     static constexpr Delta FromMicroseconds(int64_t us) { return Delta(us); }
 
+    // Converts from Abseil duration type.
+    static constexpr Delta FromAbsl(absl::Duration duration) {
+      if (ABSL_PREDICT_FALSE(duration == absl::InfiniteDuration())) {
+        return Infinite();
+      }
+      return Delta(absl::ToInt64Microseconds(duration));
+    }
+
     // Converts the time offset to a rounded number of seconds.
-    int64_t ToSeconds() const { return time_offset_ / 1000 / 1000; }
+    constexpr int64_t ToSeconds() const { return time_offset_ / 1000 / 1000; }
 
     // Converts the time offset to a rounded number of milliseconds.
-    int64_t ToMilliseconds() const { return time_offset_ / 1000; }
+    constexpr int64_t ToMilliseconds() const { return time_offset_ / 1000; }
 
     // Converts the time offset to a rounded number of microseconds.
-    int64_t ToMicroseconds() const { return time_offset_; }
+    constexpr int64_t ToMicroseconds() const { return time_offset_; }
 
-    bool IsZero() const { return time_offset_ == 0; }
+    // Converts the time offset to an Abseil duration.
+    constexpr absl::Duration ToAbsl() {
+      if (ABSL_PREDICT_FALSE(IsInfinite())) {
+        return absl::InfiniteDuration();
+      }
+      return absl::Microseconds(time_offset_);
+    }
 
-    bool IsInfinite() const { return time_offset_ == kQuicInfiniteTimeUs; }
+    constexpr bool IsZero() const { return time_offset_ == 0; }
+
+    constexpr bool IsInfinite() const {
+      return time_offset_ == kQuicInfiniteTimeUs;
+    }
 
     std::string ToDebuggingValue() const;
 
@@ -81,11 +100,13 @@ class QUIC_EXPORT_PRIVATE QuicTime {
     friend inline QuicTime::Delta operator<<(QuicTime::Delta lhs, size_t rhs);
     friend inline QuicTime::Delta operator>>(QuicTime::Delta lhs, size_t rhs);
 
-    friend inline QuicTime::Delta operator+(QuicTime::Delta lhs,
-                                            QuicTime::Delta rhs);
-    friend inline QuicTime::Delta operator-(QuicTime::Delta lhs,
-                                            QuicTime::Delta rhs);
-    friend inline QuicTime::Delta operator*(QuicTime::Delta lhs, int rhs);
+    friend inline constexpr QuicTime::Delta operator+(QuicTime::Delta lhs,
+                                                      QuicTime::Delta rhs);
+    friend inline constexpr QuicTime::Delta operator-(QuicTime::Delta lhs,
+                                                      QuicTime::Delta rhs);
+    friend inline constexpr QuicTime::Delta operator*(QuicTime::Delta lhs,
+                                                      int rhs);
+    // Not constexpr since std::llround() is not constexpr.
     friend inline QuicTime::Delta operator*(QuicTime::Delta lhs, double rhs);
 
     friend inline QuicTime operator+(QuicTime lhs, QuicTime::Delta rhs);
@@ -242,13 +263,15 @@ inline std::ostream& operator<<(std::ostream& output, const QuicTime t) {
 }
 
 // Non-member arithmetic operators for QuicTime::Delta.
-inline QuicTime::Delta operator+(QuicTime::Delta lhs, QuicTime::Delta rhs) {
+inline constexpr QuicTime::Delta operator+(QuicTime::Delta lhs,
+                                           QuicTime::Delta rhs) {
   return QuicTime::Delta(lhs.time_offset_ + rhs.time_offset_);
 }
-inline QuicTime::Delta operator-(QuicTime::Delta lhs, QuicTime::Delta rhs) {
+inline constexpr QuicTime::Delta operator-(QuicTime::Delta lhs,
+                                           QuicTime::Delta rhs) {
   return QuicTime::Delta(lhs.time_offset_ - rhs.time_offset_);
 }
-inline QuicTime::Delta operator*(QuicTime::Delta lhs, int rhs) {
+inline constexpr QuicTime::Delta operator*(QuicTime::Delta lhs, int rhs) {
   return QuicTime::Delta(lhs.time_offset_ * rhs);
 }
 inline QuicTime::Delta operator*(QuicTime::Delta lhs, double rhs) {

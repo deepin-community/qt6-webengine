@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,17 +8,17 @@
 #include <string>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/contains.h"
 #include "base/containers/cxx20_erase.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task/task_runner_util.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "components/autofill/core/browser/geo/country_data.h"
@@ -92,8 +92,8 @@ void AlternativeStateNameMapUpdater::PopulateAlternativeStateNameMap(
 
   CountryToStateNamesListMapping country_to_state_names_map;
   for (AutofillProfile* profile : profiles) {
-    const AutofillType country_code_type(HTML_TYPE_COUNTRY_CODE,
-                                         HTML_MODE_NONE);
+    const AutofillType country_code_type(HtmlFieldType::kCountryCode,
+                                         HtmlFieldMode::kNone);
     const AlternativeStateNameMap::CountryCode country(
         base::UTF16ToUTF8(profile->GetInfo(
             country_code_type, personal_data_manager_->app_locale())));
@@ -125,7 +125,11 @@ void AlternativeStateNameMapUpdater::LoadStatesData(
     PrefService* pref_service,
     base::OnceClosure done_callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(pref_service);
+
+  // Would be null in the case of tests.
+  if (!pref_service) {
+    return;
+  }
 
   // Get the states data installation path from |pref_service| which is set by
   // the component updater once it downloads the states data and should be safe
@@ -165,8 +169,8 @@ void AlternativeStateNameMapUpdater::LoadStatesData(
 
     // |country_code| is used as the filename.
     // Example -> File "DE" contains the geographical states data of Germany.
-    base::PostTaskAndReplyWithResult(
-        GetTaskRunner().get(), FROM_HERE,
+    GetTaskRunner()->PostTaskAndReplyWithResult(
+        FROM_HERE,
         base::BindOnce(&LoadDataFromFile,
                        data_download_path.AppendASCII(country_code.value())),
         base::BindOnce(

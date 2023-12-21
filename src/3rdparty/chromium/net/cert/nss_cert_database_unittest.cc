@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,20 +7,22 @@
 #include <cert.h>
 #include <certdb.h>
 #include <pk11pub.h>
+#include <seccomon.h>
 
 #include <algorithm>
 #include <memory>
 #include <string>
 
-#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "crypto/scoped_nss_types.h"
 #include "crypto/scoped_test_nss_db.h"
+#include "net/base/features.h"
 #include "net/base/hash_value.h"
 #include "net/base/net_errors.h"
 #include "net/cert/cert_net_fetcher.h"
@@ -58,6 +60,12 @@ std::string GetSubjectCN(CERTCertificate* cert) {
   std::string s = cn;
   PORT_Free(cn);
   return s;
+}
+
+bool GetCertIsPerm(const CERTCertificate* cert) {
+  PRBool is_perm;
+  CHECK_EQ(CERT_GetCertIsPerm(cert, &is_perm), SECSuccess);
+  return is_perm != PR_FALSE;
 }
 
 }  // namespace
@@ -108,7 +116,8 @@ class CertDatabaseNSSTest : public TestWithTaskEnvironment {
 
   ScopedCERTCertificateList ListCerts() {
     ScopedCERTCertificateList result;
-    CERTCertList* cert_list = PK11_ListCertsInSlot(test_nssdb_.slot());
+    crypto::ScopedCERTCertList cert_list(
+        PK11_ListCertsInSlot(test_nssdb_.slot()));
     if (!cert_list)
       return result;
     for (CERTCertListNode* node = CERT_LIST_HEAD(cert_list);
@@ -116,7 +125,6 @@ class CertDatabaseNSSTest : public TestWithTaskEnvironment {
          node = CERT_LIST_NEXT(node)) {
       result.push_back(x509_util::DupCERTCertificate(node->cert));
     }
-    CERT_DestroyCertList(cert_list);
 
     // Sort the result so that test comparisons can be deterministic.
     std::sort(
@@ -287,7 +295,7 @@ TEST_F(CertDatabaseNSSTest, ImportCACert_SSLTrust) {
       GetTestCertsDirectory(), "root_ca_cert.pem",
       X509Certificate::FORMAT_AUTO);
   ASSERT_EQ(1U, certs.size());
-  EXPECT_FALSE(certs[0]->isperm);
+  EXPECT_FALSE(GetCertIsPerm(certs[0].get()));
 
   // Import it.
   NSSCertDatabase::ImportCertFailureList failed;
@@ -316,7 +324,7 @@ TEST_F(CertDatabaseNSSTest, ImportCACert_EmailTrust) {
       GetTestCertsDirectory(), "root_ca_cert.pem",
       X509Certificate::FORMAT_AUTO);
   ASSERT_EQ(1U, certs.size());
-  EXPECT_FALSE(certs[0]->isperm);
+  EXPECT_FALSE(GetCertIsPerm(certs[0].get()));
 
   // Import it.
   NSSCertDatabase::ImportCertFailureList failed;
@@ -345,7 +353,7 @@ TEST_F(CertDatabaseNSSTest, ImportCACert_ObjSignTrust) {
       GetTestCertsDirectory(), "root_ca_cert.pem",
       X509Certificate::FORMAT_AUTO);
   ASSERT_EQ(1U, certs.size());
-  EXPECT_FALSE(certs[0]->isperm);
+  EXPECT_FALSE(GetCertIsPerm(certs[0].get()));
 
   // Import it.
   NSSCertDatabase::ImportCertFailureList failed;
@@ -373,7 +381,7 @@ TEST_F(CertDatabaseNSSTest, ImportCA_NotCACert) {
   ScopedCERTCertificateList certs = CreateCERTCertificateListFromFile(
       GetTestCertsDirectory(), "ok_cert.pem", X509Certificate::FORMAT_AUTO);
   ASSERT_EQ(1U, certs.size());
-  EXPECT_FALSE(certs[0]->isperm);
+  EXPECT_FALSE(GetCertIsPerm(certs[0].get()));
 
   // Import it.
   NSSCertDatabase::ImportCertFailureList failed;
@@ -648,9 +656,13 @@ TEST_F(CertDatabaseNSSTest, ImportServerCert_SelfSigned_Trusted) {
       x509_puny_cert.get(), "xn--wgv71a119e.com",
       /*ocsp_response=*/std::string(), /*sct_list=*/std::string(), flags,
       crl_set_.get(), empty_cert_list_, &verify_result, NetLogWithSource());
-  // New verifier does not support server cert trust records.
-  EXPECT_THAT(error, IsError(ERR_CERT_AUTHORITY_INVALID));
-  EXPECT_EQ(CERT_STATUS_AUTHORITY_INVALID, verify_result.cert_status);
+  if (base::FeatureList::IsEnabled(features::kTrustStoreTrustedLeafSupport)) {
+    EXPECT_THAT(error, IsOk());
+    EXPECT_EQ(0U, verify_result.cert_status);
+  } else {
+    EXPECT_THAT(error, IsError(ERR_CERT_AUTHORITY_INVALID));
+    EXPECT_EQ(CERT_STATUS_AUTHORITY_INVALID, verify_result.cert_status);
+  }
 }
 
 TEST_F(CertDatabaseNSSTest, ImportCaAndServerCert) {
@@ -728,11 +740,8 @@ TEST_F(CertDatabaseNSSTest, ImportCaAndServerCert_DistrustServer) {
       x509_server_cert.get(), "127.0.0.1",
       /*ocsp_response=*/std::string(), /*sct_list=*/std::string(), flags,
       crl_set_.get(), empty_cert_list_, &verify_result, NetLogWithSource());
-  // This hits the "Cannot verify a chain of length 1" error in the new
-  // verifier, since path building stops at the leaf which has a distrust
-  // record.
-  EXPECT_THAT(error, IsError(ERR_CERT_INVALID));
-  EXPECT_EQ(CERT_STATUS_INVALID, verify_result.cert_status);
+  EXPECT_THAT(error, IsError(ERR_CERT_AUTHORITY_INVALID));
+  EXPECT_EQ(CERT_STATUS_AUTHORITY_INVALID, verify_result.cert_status);
 }
 
 TEST_F(CertDatabaseNSSTest, TrustIntermediateCa) {

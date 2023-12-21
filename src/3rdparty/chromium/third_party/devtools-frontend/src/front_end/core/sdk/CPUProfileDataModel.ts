@@ -3,29 +3,11 @@
 // found in the LICENSE file.
 
 import * as Common from '../common/common.js';
-import * as i18n from '../i18n/i18n.js';
 import * as Platform from '../platform/platform.js';
 import type * as Protocol from '../../generated/protocol.js';
 
 import {ProfileNode, ProfileTreeModel} from './ProfileTreeModel.js';
-import type {Target} from './Target.js';
-
-const UIStrings = {
-  /**
-   * @description Text in CPUProfile Data Model. The phrase is a warning shown to users when
-   * DevTools has received incomplete data and tries to interpolate the missing data manually.
-   * The placeholder is always a number, and references the number of data points that DevTools
-   * is trying to fix up.
-   * A sample is a single point of recorded data at a specific point in time. If many such samples
-   * are collected over a period of time, its called a "profile". In this context, "CPU profile"
-   * means collected data about the behavior of the CPU.
-   * "Parser" in this context is the piece of DevTools, that interprets the collected samples.
-   * @example {2} PH1
-   */
-  devtoolsCpuProfileParserIsFixing: '`DevTools`: `CPU` profile parser is fixing {PH1} missing samples.',
-};
-const str_ = i18n.i18n.registerUIStrings('core/sdk/CPUProfileDataModel.ts', UIStrings);
-const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
+import {type Target} from './Target.js';
 
 export class CPUProfileNode extends ProfileNode {
   id: number;
@@ -33,7 +15,7 @@ export class CPUProfileNode extends ProfileNode {
   positionTicks: Protocol.Profiler.PositionTickInfo[]|undefined;
   deoptReason: string|null;
 
-  constructor(node: Protocol.Profiler.ProfileNode, sampleTime: number) {
+  constructor(node: Protocol.Profiler.ProfileNode, sampleTime: number, target: Target|null) {
     const callFrame = node.callFrame || ({
                         // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
                         // @ts-expect-error
@@ -51,7 +33,7 @@ export class CPUProfileNode extends ProfileNode {
                         // @ts-expect-error
                         columnNumber: node['columnNumber'] - 1,
                       } as Protocol.Runtime.CallFrame);
-    super(callFrame);
+    super(callFrame, target);
     this.id = node.id;
     this.self = (node.hitCount || 0) * sampleTime;
     this.positionTicks = node.positionTicks;
@@ -200,7 +182,7 @@ export class CPUProfileDataModel extends ProfileTreeModel {
         Boolean(Common.Settings.Settings.instance().moduleSetting('showNativeFunctionsInJSProfile').get());
     const root = nodes[0];
     const idMap = new Map<number, number>([[root.id, root.id]]);
-    const resultRoot = new CPUProfileNode(root, sampleTime);
+    const resultRoot = new CPUProfileNode(root, sampleTime, this.target());
     if (!root.children) {
       throw new Error('Missing children for root');
     }
@@ -215,7 +197,7 @@ export class CPUProfileDataModel extends ProfileTreeModel {
       if (!sourceNode.children) {
         sourceNode.children = [];
       }
-      const targetNode = new CPUProfileNode(sourceNode, sampleTime);
+      const targetNode = new CPUProfileNode(sourceNode, sampleTime, this.target());
       if (keepNatives || !isNativeNode(sourceNode)) {
         parentNode.children.push(targetNode);
         parentNode = targetNode;
@@ -325,9 +307,9 @@ export class CPUProfileDataModel extends ProfileTreeModel {
   }
 
   private fixMissingSamples(): void {
-    // Sometimes sampler is not able to parse the JS stack and returns
-    // a (program) sample instead. The issue leads to call frames belong
-    // to the same function invocation being split apart.
+    // Sometimes the V8 sampler is not able to parse the JS stack and returns
+    // a (program) sample instead. The issue leads to call frames being split
+    // apart when they shouldn't.
     // Here's a workaround for that. When there's a single (program) sample
     // between two call stacks sharing the same bottom node, it is replaced
     // with the preceeding sample.
@@ -358,7 +340,7 @@ export class CPUProfileDataModel extends ProfileTreeModel {
       nodeId = nextNodeId;
     }
     if (count) {
-      Common.Console.Console.instance().warn(i18nString(UIStrings.devtoolsCpuProfileParserIsFixing, {PH1: count}));
+      console.warn(`CPU profile is interpolating JS stacks for ${count} samples.`);
     }
     function bottomNode(node: ProfileNode): ProfileNode {
       while (node.parent && node.parent.parent) {
@@ -496,5 +478,12 @@ export class CPUProfileDataModel extends ProfileTreeModel {
 
   nodeByIndex(index: number): CPUProfileNode|null {
     return this.samples && this.#idToNode.get(this.samples[index]) || null;
+  }
+
+  nodes(): CPUProfileNode[]|null {
+    if (!this.#idToNode) {
+      return null;
+    }
+    return [...this.#idToNode.values()];
   }
 }

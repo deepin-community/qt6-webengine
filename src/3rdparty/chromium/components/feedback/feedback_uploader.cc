@@ -1,20 +1,21 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/feedback/feedback_uploader.h"
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
+#include "components/feedback/features.h"
 #include "components/feedback/feedback_report.h"
 #include "components/feedback/feedback_switches.h"
 #include "components/variations/net/variations_http_headers.h"
 #include "net/base/load_flags.h"
-#include "net/url_request/url_fetcher.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
@@ -301,6 +302,14 @@ void FeedbackUploader::UpdateUploadTimer() {
     return;
 
   scoped_refptr<FeedbackReport> report = reports_queue_.top();
+
+  // Don't send reports in Tast tests so that they don't spam Listnr.
+  if (feedback::features::IsSkipSendingFeedbackReportInTastTestsEnabled()) {
+    report->DeleteReportOnDisk();
+    reports_queue_.pop();
+    return;
+  }
+
   const base::Time now = base::Time::Now();
   if (report->upload_at() <= now && !is_dispatching_) {
     reports_queue_.pop();

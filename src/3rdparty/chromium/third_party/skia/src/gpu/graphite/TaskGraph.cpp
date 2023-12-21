@@ -16,9 +16,26 @@ void TaskGraph::add(sk_sp<Task> task) {
     fTasks.emplace_back(std::move(task));
 }
 
-bool TaskGraph::addCommands(ResourceProvider* resourceProvider, CommandBuffer* commandBuffer) {
+void TaskGraph::prepend(sk_sp<Task> task) {
+    fTasks.emplace(fTasks.begin(), std::move(task));
+}
+
+bool TaskGraph::prepareResources(ResourceProvider* resourceProvider,
+                                 const RuntimeEffectDictionary* runtimeDict) {
     for (const auto& task: fTasks) {
-        if (!task->addCommands(resourceProvider, commandBuffer)) {
+        if (!task->prepareResources(resourceProvider, runtimeDict)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool TaskGraph::addCommands(Context* context,
+                            CommandBuffer* commandBuffer,
+                            Task::ReplayTargetData replayData) {
+    for (const auto& task: fTasks) {
+        if (!task->addCommands(context, commandBuffer, replayData)) {
             return false;
         }
     }

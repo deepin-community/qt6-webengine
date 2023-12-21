@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,6 @@
 
 #include <stdint.h>
 
-#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -54,7 +53,7 @@ void LoadFromDisk(base::ScopedFD pb_fd, base::ScopedFD visual_tflite_model_fd) {
 void ClientSidePhishingComponentLoaderPolicy::ComponentLoaded(
     const base::Version& version,
     base::flat_map<std::string, base::ScopedFD>& fd_map,
-    std::unique_ptr<base::DictionaryValue> manifest) {
+    base::Value::Dict manifest) {
   DCHECK(version.IsValid());
 
   auto pb_iterator =

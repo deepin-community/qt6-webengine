@@ -1,15 +1,26 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "media/gpu/chromeos/oop_video_decoder.h"
 
 #include "base/memory/ptr_util.h"
-#include "media/base/bind_to_current_loop.h"
+#include "base/task/bind_post_task.h"
+#include "base/task/sequenced_task_runner.h"
+#include "build/chromeos_buildflags.h"
 #include "media/gpu/macros.h"
 #include "media/mojo/common/mojo_decoder_buffer_converter.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/self_owned_receiver.h"
+
+#if BUILDFLAG(IS_CHROMEOS)
+#include "chromeos/components/cdm_factory_daemon/stable_cdm_context_impl.h"
+#endif
+
+#if BUILDFLAG(USE_VAAPI)
+#include "media/gpu/vaapi/vaapi_wrapper.h"
+#endif  // BUILDFLAG(USE_VAAPI)
 
 // Throughout this file, we have sprinkled many CHECK()s to assert invariants
 // that should hold regardless of the behavior of the remote decoder or
@@ -67,13 +78,154 @@
 
 namespace media {
 
+namespace {
+
+// Size of the timestamp cache. We don't want the cache to grow without bounds.
+// The maximum size is chosen to be the same as in the VaapiVideoDecoder.
+constexpr size_t kTimestampCacheSize = 128;
+
+// A singleton helper class that makes it easy to manage requests to wait until
+// the supported video decoder configurations are known and cache those
+// configurations.
+//
+// All public methods are thread- and sequence-safe.
+class OOPVideoDecoderSupportedConfigsManager {
+ public:
+  static OOPVideoDecoderSupportedConfigsManager& Instance() {
+    static base::NoDestructor<OOPVideoDecoderSupportedConfigsManager> instance;
+    return *instance;
+  }
+
+  absl::optional<SupportedVideoDecoderConfigs> Get() {
+    base::AutoLock lock(lock_);
+    return configs_;
+  }
+
+  void NotifySupportKnown(
+      mojo::PendingRemote<stable::mojom::StableVideoDecoder> oop_video_decoder,
+      base::OnceCallback<
+          void(mojo::PendingRemote<stable::mojom::StableVideoDecoder>)> cb) {
+    base::ReleasableAutoLock lock(&lock_);
+    if (configs_) {
+      // The supported configurations are already known. We can call |cb|
+      // immediately.
+      //
+      // We release the lock in case the |waiting_callback|.cb wants to re-enter
+      // OOPVideoDecoderSupportedConfigsManager by reaching
+      // OOPVideoDecoderSupportedConfigsManager::Get() in the callback.
+      lock.Release();
+      std::move(cb).Run(std::move(oop_video_decoder));
+      return;
+    } else if (!waiting_callbacks_.empty()) {
+      // There is a query in progress. We need to queue |cb| to call it later
+      // when the supported configurations are known.
+      waiting_callbacks_.emplace(
+          std::move(oop_video_decoder), std::move(cb),
+          base::SequencedTaskRunner::GetCurrentDefault());
+      return;
+    }
+
+    // The supported configurations are not known. We need to use
+    // |oop_video_decoder| to query them.
+    //
+    // Note: base::Unretained(this) is safe because the
+    // OOPVideoDecoderSupportedConfigsManager never gets destroyed.
+    oop_video_decoder_.Bind(std::move(oop_video_decoder));
+    oop_video_decoder_.set_disconnect_handler(base::BindOnce(
+        &OOPVideoDecoderSupportedConfigsManager::OnGetSupportedConfigs,
+        base::Unretained(this), SupportedVideoDecoderConfigs(),
+        VideoDecoderType::kUnknown));
+    oop_video_decoder_->GetSupportedConfigs(base::BindOnce(
+        &OOPVideoDecoderSupportedConfigsManager::OnGetSupportedConfigs,
+        base::Unretained(this)));
+
+    // Eventually, we need to call |cb|. We can't store |oop_video_decoder| here
+    // because it's been taken over by the |oop_video_decoder_|. For now, we'll
+    // store a default-constructed PendingRemote. Later, when we have to call
+    // |cb|, we can pass |oop_video_decoder_|.Unbind().
+    waiting_callbacks_.emplace(
+        mojo::PendingRemote<stable::mojom::StableVideoDecoder>(), std::move(cb),
+        base::SequencedTaskRunner::GetCurrentDefault());
+  }
+
+ private:
+  friend class base::NoDestructor<OOPVideoDecoderSupportedConfigsManager>;
+
+  OOPVideoDecoderSupportedConfigsManager() = default;
+  ~OOPVideoDecoderSupportedConfigsManager() = default;
+
+  void OnGetSupportedConfigs(const SupportedVideoDecoderConfigs& configs,
+                             VideoDecoderType /*decoder_type*/) {
+    base::AutoLock lock(lock_);
+    DCHECK(!configs_);
+    configs_ = configs;
+
+    while (!waiting_callbacks_.empty()) {
+      WaitingCallbackContext waiting_callback =
+          std::move(waiting_callbacks_.front());
+      waiting_callbacks_.pop();
+
+      mojo::PendingRemote<stable::mojom::StableVideoDecoder> oop_video_decoder =
+          waiting_callback.oop_video_decoder
+              ? std::move(waiting_callback.oop_video_decoder)
+              : oop_video_decoder_.Unbind();
+
+      if (waiting_callback.cb_task_runner->RunsTasksInCurrentSequence()) {
+        // Release the lock in case the |waiting_callback|.cb wants to re-enter
+        // OOPVideoDecoderSupportedConfigsManager by reaching
+        // OOPVideoDecoderSupportedConfigsManager::Get() in the callback.
+        base::AutoUnlock unlock(lock_);
+        std::move(waiting_callback.cb).Run(std::move(oop_video_decoder));
+      } else {
+        waiting_callback.cb_task_runner->PostTask(
+            FROM_HERE, base::BindOnce(std::move(waiting_callback.cb),
+                                      std::move(oop_video_decoder)));
+      }
+    }
+  }
+
+  base::Lock lock_;
+
+  // The first PendingRemote that NotifySupportKnown() is called with is bound
+  // to |oop_video_decoder_| and we use it to query the supported configurations
+  // of the out-of-process video decoder. |oop_video_decoder_| will get unbound
+  // once the supported configurations are known.
+  mojo::Remote<stable::mojom::StableVideoDecoder> oop_video_decoder_;
+
+  // The cached supported video decoder configurations.
+  absl::optional<SupportedVideoDecoderConfigs> configs_ GUARDED_BY(lock_);
+
+  // This tracks everything that's needed to call a callback passed to
+  // NotifySupportKnown() that had to be queued because there was a query in
+  // progress.
+  struct WaitingCallbackContext {
+    WaitingCallbackContext(
+        mojo::PendingRemote<stable::mojom::StableVideoDecoder>
+            oop_video_decoder,
+        base::OnceCallback<
+            void(mojo::PendingRemote<stable::mojom::StableVideoDecoder>)> cb,
+        scoped_refptr<base::SequencedTaskRunner> cb_task_runner)
+        : oop_video_decoder(std::move(oop_video_decoder)),
+          cb(std::move(cb)),
+          cb_task_runner(std::move(cb_task_runner)) {}
+    mojo::PendingRemote<stable::mojom::StableVideoDecoder> oop_video_decoder;
+    base::OnceCallback<void(
+        mojo::PendingRemote<stable::mojom::StableVideoDecoder>)>
+        cb;
+    scoped_refptr<base::SequencedTaskRunner> cb_task_runner;
+  };
+  base::queue<WaitingCallbackContext> waiting_callbacks_ GUARDED_BY(lock_);
+};
+
+}  // namespace
+
 // static
 std::unique_ptr<VideoDecoderMixin> OOPVideoDecoder::Create(
-    std::unique_ptr<MediaLog> media_log,
-    scoped_refptr<base::SequencedTaskRunner> decoder_task_runner,
-    base::WeakPtr<VideoDecoderMixin::Client> client,
     mojo::PendingRemote<stable::mojom::StableVideoDecoder>
-        pending_remote_decoder) {
+        pending_remote_decoder,
+    std::unique_ptr<media::MediaLog> media_log,
+    scoped_refptr<base::SequencedTaskRunner> decoder_task_runner,
+    base::WeakPtr<VideoDecoderMixin::Client> client) {
   // TODO(b/171813538): make the destructor of this class (as well as the
   // destructor of sister class VaapiVideoDecoder) public so the explicit
   // argument can be removed from this call to base::WrapUnique().
@@ -82,8 +234,23 @@ std::unique_ptr<VideoDecoderMixin> OOPVideoDecoder::Create(
       std::move(pending_remote_decoder)));
 }
 
+// static
+void OOPVideoDecoder::NotifySupportKnown(
+    mojo::PendingRemote<stable::mojom::StableVideoDecoder> oop_video_decoder,
+    base::OnceCallback<
+        void(mojo::PendingRemote<stable::mojom::StableVideoDecoder>)> cb) {
+  OOPVideoDecoderSupportedConfigsManager::Instance().NotifySupportKnown(
+      std::move(oop_video_decoder), std::move(cb));
+}
+
+// static
+absl::optional<SupportedVideoDecoderConfigs>
+OOPVideoDecoder::GetSupportedConfigs() {
+  return OOPVideoDecoderSupportedConfigsManager::Instance().Get();
+}
+
 OOPVideoDecoder::OOPVideoDecoder(
-    std::unique_ptr<MediaLog> media_log,
+    std::unique_ptr<media::MediaLog> media_log,
     scoped_refptr<base::SequencedTaskRunner> decoder_task_runner,
     base::WeakPtr<VideoDecoderMixin::Client> client,
     mojo::PendingRemote<stable::mojom::StableVideoDecoder>
@@ -91,6 +258,7 @@ OOPVideoDecoder::OOPVideoDecoder(
     : VideoDecoderMixin(std::move(media_log),
                         std::move(decoder_task_runner),
                         std::move(client)),
+      fake_timestamp_to_real_timestamp_cache_(kTimestampCacheSize),
       remote_decoder_(std::move(pending_remote_decoder)),
       weak_this_factory_(this) {
   VLOGF(2);
@@ -129,11 +297,13 @@ OOPVideoDecoder::OOPVideoDecoder(
   stable_video_frame_handle_releaser_remote_.set_disconnect_handler(
       base::BindOnce(&OOPVideoDecoder::Stop, base::Unretained(this)));
 
+  DCHECK(!stable_media_log_receiver_.is_bound());
+
   CHECK(!has_error_);
   // TODO(b/171813538): plumb the remaining parameters.
   remote_decoder_->Construct(
       client_receiver_.BindNewEndpointAndPassRemote(),
-      mojo::PendingRemote<stable::mojom::MediaLog>(),
+      stable_media_log_receiver_.BindNewPipeAndPassRemote(),
       std::move(stable_video_frame_handle_releaser_receiver),
       std::move(remote_consumer_handle), gfx::ColorSpace());
 }
@@ -155,7 +325,7 @@ void OOPVideoDecoder::Initialize(const VideoDecoderConfig& config,
                                  InitCB init_cb,
                                  const OutputCB& output_cb,
                                  const WaitingCB& waiting_cb) {
-  VLOGF(2);
+  DVLOGF(2) << config.AsHumanReadableString();
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   CHECK(!init_cb_);
@@ -168,26 +338,53 @@ void OOPVideoDecoder::Initialize(const VideoDecoderConfig& config,
     return;
   }
 
-  // TODO(b/171813538): implement the re-initialization logic. The client can
-  // call Initialize() multiple times. This implies properly asserting the
-  // invariant imposed by media::VideoDecoder::Initialize(): "No VideoDecoder
-  // calls should be made before |init_cb| is executed."
-  if (output_cb_) {
-    // TODO(b/171813538): create specific error code for this decoder.
-    std::move(init_cb).Run(DecoderStatus::Codes::kFailed);
+  mojo::PendingRemote<stable::mojom::StableCdmContext>
+      pending_remote_stable_cdm_context;
+  if (config.is_encrypted()) {
+#if BUILDFLAG(IS_CHROMEOS)
+    // There's logic in MojoVideoDecoderService::Initialize() to ensure that the
+    // CDM doesn't change across Initialize() calls. We rely on this assumption
+    // to ensure that creating a single StableCdmContextImpl that survives
+    // re-initializations is correct: the remote decoder requires a bound
+    // |pending_remote_stable_cdm_context| only for the first Initialize() call
+    // that sets up encryption.
+    DCHECK(!stable_cdm_context_ ||
+           cdm_context == stable_cdm_context_->cdm_context());
+    if (!stable_cdm_context_) {
+      if (!cdm_context || !cdm_context->GetChromeOsCdmContext()) {
+        std::move(init_cb).Run(
+            DecoderStatus::Codes::kUnsupportedEncryptionMode);
+        return;
+      }
+      stable_cdm_context_ =
+          std::make_unique<chromeos::StableCdmContextImpl>(cdm_context);
+      stable_cdm_context_receiver_ =
+          std::make_unique<mojo::Receiver<stable::mojom::StableCdmContext>>(
+              stable_cdm_context_.get(), pending_remote_stable_cdm_context
+                                             .InitWithNewPipeAndPassReceiver());
+
+      // base::Unretained() is safe because |this| owns the mojo::Receiver.
+      stable_cdm_context_receiver_->set_disconnect_handler(
+          base::BindOnce(&OOPVideoDecoder::Stop, base::Unretained(this)));
+#if BUILDFLAG(USE_VAAPI)
+      // We need to signal that for AMD we will do transcryption on the GPU
+      // side. Then on the other end we just make transcryption a no-op.
+      needs_transcryption_ = (VaapiWrapper::GetImplementationType() ==
+                              VAImplementation::kMesaGallium);
+#endif  // BUILDFLAG(USE_VAAPI)
+    }
+#else
+    std::move(init_cb).Run(DecoderStatus::Codes::kUnsupportedEncryptionMode);
     return;
+#endif  // BUILDFLAG(IS_CHROMEOS)
   }
 
   init_cb_ = std::move(init_cb);
   output_cb_ = output_cb;
   waiting_cb_ = waiting_cb;
 
-  // TODO(b/171813538): plumb protected content.
-  mojo::PendingRemote<stable::mojom::StableCdmContext>
-      pending_remote_cdm_context;
-
   remote_decoder_->Initialize(config, low_delay,
-                              std::move(pending_remote_cdm_context),
+                              std::move(pending_remote_stable_cdm_context),
                               base::BindOnce(&OOPVideoDecoder::OnInitializeDone,
                                              weak_this_factory_.GetWeakPtr()));
 }
@@ -200,24 +397,29 @@ void OOPVideoDecoder::OnInitializeDone(const DecoderStatus& status,
 
   CHECK(!has_error_);
 
-  if (!status.is_ok() || (decoder_type != VideoDecoderType::kVaapi &&
-                          decoder_type != VideoDecoderType::kV4L2)) {
+  if (!status.is_ok() ||
+      (decoder_type != VideoDecoderType::kVda &&
+       decoder_type != VideoDecoderType::kVaapi &&
+       decoder_type != VideoDecoderType::kV4L2) ||
+      (remote_decoder_type_ != VideoDecoderType::kUnknown &&
+       remote_decoder_type_ != decoder_type)) {
     Stop();
     return;
   }
-  decoder_type_ = decoder_type;
+  remote_decoder_type_ = decoder_type;
   std::move(init_cb_).Run(status);
 }
 
 void OOPVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
                              DecodeCB decode_cb) {
-  VLOGF(2);
+  DVLOGF(4);
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   CHECK(!init_cb_);
   CHECK(!reset_cb_);
+  CHECK(!is_flushing_);
 
-  if (has_error_ || decoder_type_ == VideoDecoderType::kUnknown) {
+  if (has_error_ || remote_decoder_type_ == VideoDecoderType::kUnknown) {
     decoder_task_runner_->PostTask(
         FROM_HERE, base::BindOnce(std::move(decode_cb),
                                   DecoderStatus::Codes::kNotInitialized));
@@ -231,13 +433,29 @@ void OOPVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
         base::BindOnce(std::move(decode_cb), DecoderStatus::Codes::kFailed));
     return;
   }
-  const uint64_t decode_id = decode_counter_++;
-
-  pending_decodes_.insert({decode_id, std::move(decode_cb)});
-
-  const bool is_flushing = buffer->end_of_stream();
 
   CHECK(buffer);
+  if (!buffer->end_of_stream()) {
+    const base::TimeDelta next_fake_timestamp =
+        current_fake_timestamp_ + base::Microseconds(1u);
+    if (next_fake_timestamp == current_fake_timestamp_) {
+      // We've reached the maximum base::TimeDelta.
+      decoder_task_runner_->PostTask(
+          FROM_HERE,
+          base::BindOnce(std::move(decode_cb), DecoderStatus::Codes::kFailed));
+      return;
+    }
+    current_fake_timestamp_ = next_fake_timestamp;
+    DCHECK(
+        fake_timestamp_to_real_timestamp_cache_.Peek(current_fake_timestamp_) ==
+        fake_timestamp_to_real_timestamp_cache_.end());
+    fake_timestamp_to_real_timestamp_cache_.Put(current_fake_timestamp_,
+                                                buffer->timestamp());
+    buffer->set_timestamp(current_fake_timestamp_);
+  }
+
+  const uint64_t decode_id = decode_counter_++;
+  pending_decodes_.insert({decode_id, std::move(decode_cb)});
 
   mojom::DecoderBufferPtr mojo_buffer =
       mojo_decoder_buffer_writer_->WriteDecoderBuffer(buffer);
@@ -246,15 +464,17 @@ void OOPVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
     return;
   }
 
+  is_flushing_ = buffer->end_of_stream();
   remote_decoder_->Decode(
       std::move(buffer),
       base::BindOnce(&OOPVideoDecoder::OnDecodeDone,
-                     weak_this_factory_.GetWeakPtr(), decode_id, is_flushing));
+                     weak_this_factory_.GetWeakPtr(), decode_id, is_flushing_));
 }
 
 void OOPVideoDecoder::OnDecodeDone(uint64_t decode_id,
-                                   bool is_flushing,
+                                   bool is_flush_cb,
                                    const DecoderStatus& status) {
+  DVLOGF(4);
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   CHECK(!has_error_);
@@ -267,12 +487,24 @@ void OOPVideoDecoder::OnDecodeDone(uint64_t decode_id,
     return;
   }
 
-  // Check that the |decode_cb| corresponding to the flush is not called until
-  // the decode callback has been called for each pending decode.
-  if (is_flushing && pending_decodes_.size() != 1) {
-    VLOGF(2) << "Received a flush callback while having pending decodes";
-    Stop();
-    return;
+  if (is_flush_cb) {
+    CHECK(is_flushing_);
+
+    // Check that the |decode_cb| corresponding to the flush is not called until
+    // the decode callback has been called for each pending decode.
+    if (pending_decodes_.size() != 1) {
+      VLOGF(2) << "Received a flush callback while having pending decodes";
+      Stop();
+      return;
+    }
+
+    // After a flush is completed, we shouldn't receive decoded frames
+    // corresponding to Decode() calls that came in prior to the flush. The
+    // clearing of the cache together with the validation in
+    // OnVideoFrameDecoded() should guarantee this.
+    fake_timestamp_to_real_timestamp_cache_.Clear();
+
+    is_flushing_ = false;
   }
 
   auto it = pending_decodes_.begin();
@@ -282,13 +514,13 @@ void OOPVideoDecoder::OnDecodeDone(uint64_t decode_id,
 }
 
 void OOPVideoDecoder::Reset(base::OnceClosure reset_cb) {
-  VLOGF(2);
+  DVLOGF(2);
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   CHECK(!init_cb_);
   CHECK(!reset_cb_);
 
-  if (has_error_ || decoder_type_ == VideoDecoderType::kUnknown) {
+  if (has_error_ || remote_decoder_type_ == VideoDecoderType::kUnknown) {
     std::move(reset_cb).Run();
     return;
   }
@@ -329,9 +561,16 @@ void OOPVideoDecoder::Stop() {
   base::WeakPtr<OOPVideoDecoder> weak_this = weak_this_factory_.GetWeakPtr();
 
   client_receiver_.reset();
+  stable_media_log_receiver_.reset();
   remote_decoder_.reset();
   mojo_decoder_buffer_writer_.reset();
   stable_video_frame_handle_releaser_remote_.reset();
+  fake_timestamp_to_real_timestamp_cache_.Clear();
+
+#if BUILDFLAG(IS_CHROMEOS)
+  stable_cdm_context_receiver_.reset();
+  stable_cdm_context_.reset();
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   if (init_cb_)
     std::move(init_cb_).Run(DecoderStatus::Codes::kFailed);
@@ -340,11 +579,16 @@ void OOPVideoDecoder::Stop() {
     return;
 
   for (auto& pending_decode : pending_decodes_) {
-    std::move(pending_decode.second).Run(DecoderStatus::Codes::kFailed);
-    if (!weak_this)
-      return;
+    // Note that Stop() may be called from within Decode(), and according to the
+    // media::VideoDecoder interface, the decode callback should not be called
+    // from within Decode(). Therefore, we should not call the decode callbacks
+    // here, and instead, we should post them as tasks.
+    decoder_task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(std::move(pending_decode.second),
+                                  DecoderStatus::Codes::kFailed));
   }
   pending_decodes_.clear();
+  is_flushing_ = false;
 
   if (reset_cb_)
     std::move(reset_cb_).Run();
@@ -384,7 +628,8 @@ int OOPVideoDecoder::GetMaxDecodeRequests() const {
 
 VideoDecoderType OOPVideoDecoder::GetDecoderType() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return decoder_type_;
+  CHECK(!init_cb_);
+  return VideoDecoderType::kOutOfProcess;
 }
 
 bool OOPVideoDecoder::IsPlatformDecoder() const {
@@ -394,24 +639,45 @@ bool OOPVideoDecoder::IsPlatformDecoder() const {
 }
 
 bool OOPVideoDecoder::NeedsTranscryption() {
-  return false;
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return needs_transcryption_;
 }
 
 void OOPVideoDecoder::OnVideoFrameDecoded(
     const scoped_refptr<VideoFrame>& frame,
     bool can_read_without_stalling,
     const base::UnguessableToken& release_token) {
-  VLOGF(2);
+  DVLOGF(4);
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   CHECK(!has_error_);
 
+  if (init_cb_) {
+    VLOGF(2) << "Received a decoded frame while waiting for initialization";
+    Stop();
+    return;
+  }
+
+  base::TimeDelta timestamp = frame->timestamp();
+  auto it = fake_timestamp_to_real_timestamp_cache_.Get(timestamp);
+  if (it == fake_timestamp_to_real_timestamp_cache_.end()) {
+    // The remote decoder is misbehaving.
+    VLOGF(2) << "Received an unexpected decoded frame";
+    Stop();
+    return;
+  }
+  frame->set_timestamp(it->second);
+
   // The destruction observer will be called after the client releases the
-  // video frame. BindToCurrentLoop() is used to make sure that the WeakPtr
-  // is dereferenced on the correct sequence.
-  frame->AddDestructionObserver(BindToCurrentLoop(
+  // video frame. base::BindPostTaskToCurrentDefault() is used to make sure that
+  // the WeakPtr is dereferenced on the correct sequence.
+  frame->AddDestructionObserver(base::BindPostTaskToCurrentDefault(
       base::BindOnce(&OOPVideoDecoder::ReleaseVideoFrame,
                      weak_this_factory_.GetWeakPtr(), release_token)));
+
+  // According to the media::VideoDecoder API, |output_cb_| should not be
+  // supplied with EOS frames. The mojo traits guarantee this DCHECK.
+  DCHECK(!frame->metadata().end_of_stream);
 
   // TODO(b/220915557): validate |frame|.
   if (output_cb_)
@@ -419,13 +685,21 @@ void OOPVideoDecoder::OnVideoFrameDecoded(
 }
 
 void OOPVideoDecoder::OnWaiting(WaitingReason reason) {
-  VLOGF(2);
+  DVLOGF(4);
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   CHECK(!has_error_);
 
   if (waiting_cb_)
     waiting_cb_.Run(reason);
+}
+
+void OOPVideoDecoder::AddLogRecord(const MediaLogRecord& event) {
+  VLOGF(2);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  if (media_log_)
+    media_log_->AddLogRecord(std::make_unique<media::MediaLogRecord>(event));
 }
 
 }  // namespace media

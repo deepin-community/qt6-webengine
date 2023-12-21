@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,11 +12,11 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_forward.h"
 #include "base/component_export.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/ptr_util.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/task/sequenced_task_runner.h"
 #include "mojo/public/cpp/bindings/associated_group.h"
 #include "mojo/public/cpp/bindings/associated_interface_ptr_info.h"
@@ -87,7 +87,7 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) AssociatedInterfacePtrStateBase {
             std::unique_ptr<MessageReceiver> validator,
             scoped_refptr<base::SequencedTaskRunner> runner,
             const char* interface_name,
-            MessageToStableIPCHashCallback ipc_hash_callback,
+            MessageToMethodInfoCallback method_info_callback,
             MessageToMethodNameCallback method_name_callback);
   ScopedInterfaceEndpointHandle PassHandle();
 
@@ -128,7 +128,7 @@ class AssociatedInterfacePtrState : public AssociatedInterfacePtrStateBase {
     AssociatedInterfacePtrStateBase::Bind(
         info.PassHandle(), info.version(),
         std::make_unique<typename Interface::ResponseValidator_>(),
-        std::move(runner), Interface::Name_, Interface::MessageToStableIPCHash_,
+        std::move(runner), Interface::Name_, Interface::MessageToMethodInfo_,
         Interface::MessageToMethodName_);
     proxy_ = std::make_unique<Proxy>(endpoint_client());
   }

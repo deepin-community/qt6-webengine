@@ -16,7 +16,9 @@ licenses(["notice"])
 cc_library(
     name = "types",
     linkopts = [
+        "wininet.lib",
         "advapi32.lib",
+        "bcrypt.lib",
         "comdlg32.lib",
         "gdi32.lib",
         "kernel32.lib",
@@ -29,14 +31,19 @@ cc_library(
         "uuid.lib",
         "winmm.lib",
         "winspool.lib",
+        "wtsapi32.lib",
         "comsuppwd.lib",
         "setupapi.lib",
         "dnsapi.lib",
+        "wlanapi.lib",
+        "shlwapi.lib",
     ],
     textual_hdrs = glob(["**/*.h"]),
     visibility = [
-        "//location/nearby/cpp/sharing/implementation/internal:__subpackages__",
         "//connections/windows:__subpackages__",
+        "//fastpair:__subpackages__",
+        "//internal:__subpackages__",
         "//internal/platform/implementation/windows:__subpackages__",
+        "//location/nearby/apps/better_together/windows:__subpackages__",
     ],
 )

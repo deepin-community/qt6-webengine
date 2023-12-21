@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <stddef.h>
+#include <sys/inotify.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -19,15 +20,17 @@
 #include <string>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
+#include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/logging.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/posix/unix_domain_socket.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "sandbox/linux/syscall_broker/broker_client.h"
@@ -717,6 +720,62 @@ TEST(BrokerProcess, BrokerDiesOnClosedChannel) {
   EXPECT_EQ(broker_pid, process_info.si_pid);
   EXPECT_EQ(CLD_EXITED, process_info.si_code);
   EXPECT_EQ(1, process_info.si_status);
+}
+
+void TestRewriteProcSelfHelper(bool fast_check_in_client) {
+  std::vector<BrokerFilePermission> proc_status_permissions = {
+      BrokerFilePermission::ReadOnly("/proc/self/status")};
+
+  BrokerCommandSet command_set = MakeBrokerCommandSet({COMMAND_OPEN});
+
+  {
+    // Nonexistent file with no permissions to see file.
+    auto policy = absl::make_optional<BrokerSandboxConfig>(
+        command_set, proc_status_permissions, kFakeErrnoSentinel);
+    BrokerProcess open_broker(std::move(policy), BrokerType::SIGNAL_BASED,
+                              fast_check_in_client);
+
+    ASSERT_TRUE(open_broker.Fork(base::BindOnce(&NoOpCallback)));
+    int fd = open_broker.GetBrokerClientSignalBased()->Open(
+        "/proc/self/status", O_RDONLY | O_NONBLOCK);
+    // This should open /proc/[pid]/status even though it wasn't the exact
+    // string that Open() requested.
+    ASSERT_GE(fd, 0);
+
+    // Reading /proc/self/status should return the same PID as the current
+    // process's PID, not the broker's.
+    char buf[4096];
+
+    ssize_t num_read = HANDLE_EINTR(read(fd, buf, sizeof(buf)));
+    ASSERT_GE(IGNORE_EINTR(close(fd)), 0);
+
+    ASSERT_GT(num_read, 0);
+
+    base::StringPiece status(buf, static_cast<size_t>(num_read));
+    base::StringPiece tracer("Pid:\t");
+
+    base::StringPiece::size_type pid_index = status.find(tracer);
+    ASSERT_NE(pid_index, base::StringPiece::npos);
+    pid_index += tracer.size();
+    base::StringPiece::size_type pid_end_index = status.find('\n', pid_index);
+    ASSERT_NE(pid_end_index, base::StringPiece::npos);
+
+    base::StringPiece pid_str(buf + pid_index, pid_end_index - pid_index);
+    int pid = 0;
+    ASSERT_TRUE(base::StringToInt(pid_str, &pid));
+
+    ASSERT_EQ(pid, getpid());
+
+    // TODO(mpdenton): maybe also test in a different pid namespace?
+  }
+}
+
+TEST(BrokerProcess, RewriteProcSelfClient) {
+  TestRewriteProcSelfHelper(true);
+}
+
+TEST(BrokerProcess, RewriteProcSelfHost) {
+  TestRewriteProcSelfHelper(false);
 }
 
 TEST(BrokerProcess, CreateFile) {
@@ -1748,6 +1807,169 @@ TEST(BrokerProcess, UnlinkHost) {
   TestUnlinkHelper(false);
 }
 
+void TestInotifyAddWatchHelper(bool fast_check_in_client) {
+  const uint32_t kBadMask =
+      IN_CREATE | IN_DELETE | IN_CLOSE_WRITE | IN_MOVE | IN_ONLYDIR;
+  const uint32_t kGoodMask = kBadMask | IN_ATTRIB;
+
+  // Create two nested temp dirs.
+  base::ScopedTempDir temp_dir;
+  ASSERT_TRUE(
+      temp_dir.CreateUniqueTempDirUnderPath(base::FilePath(kTempDirForTests)));
+  std::string temp_dir_str = temp_dir.GetPath().MaybeAsASCII();
+  ASSERT_FALSE(temp_dir_str.empty());
+
+  base::ScopedTempDir nested_temp_dir;
+  ASSERT_TRUE(
+      nested_temp_dir.Set(temp_dir.GetPath().AppendASCII("nested_temp_dir")));
+  std::string nested_temp_dir_str = nested_temp_dir.GetPath().MaybeAsASCII();
+  ASSERT_FALSE(nested_temp_dir_str.empty());
+
+  base::FilePath bad_prefix = temp_dir.GetPath().AppendASCII("nested_t");
+  std::string bad_prefix_str = bad_prefix.MaybeAsASCII();
+  ASSERT_FALSE(bad_prefix_str.empty());
+
+  {
+    // Try to watch a directory without COMMAND_INOTIFY_ADD_WATCH
+    std::vector<BrokerFilePermission> permissions = {
+        BrokerFilePermission::InotifyAddWatchWithIntermediateDirs(
+            nested_temp_dir_str)};
+    auto policy = absl::make_optional<BrokerSandboxConfig>(
+        BrokerCommandSet(), permissions, kFakeErrnoSentinel);
+    BrokerProcess open_broker(std::move(policy), BrokerType::SIGNAL_BASED,
+                              fast_check_in_client);
+
+    ASSERT_TRUE(open_broker.Fork(base::BindOnce(&NoOpCallback)));
+
+    base::ScopedFD inotify_instance(inotify_init());
+    ASSERT_TRUE(inotify_instance.is_valid());
+    EXPECT_EQ(
+        -kFakeErrnoSentinel,
+        open_broker.GetBrokerClientSignalBased()->InotifyAddWatch(
+            inotify_instance.get(), nested_temp_dir_str.c_str(), kGoodMask));
+  }
+
+  BrokerCommandSet command_set;
+  command_set.set(COMMAND_INOTIFY_ADD_WATCH);
+
+  {
+    // Try to watch a directory with no permission.
+    std::vector<BrokerFilePermission> permissions;
+    auto policy = absl::make_optional<BrokerSandboxConfig>(
+        command_set, permissions, kFakeErrnoSentinel);
+    BrokerProcess open_broker(std::move(policy), BrokerType::SIGNAL_BASED,
+                              fast_check_in_client);
+
+    ASSERT_TRUE(open_broker.Fork(base::BindOnce(&NoOpCallback)));
+
+    base::ScopedFD inotify_instance(inotify_init());
+    ASSERT_TRUE(inotify_instance.is_valid());
+    EXPECT_EQ(
+        -kFakeErrnoSentinel,
+        open_broker.GetBrokerClientSignalBased()->InotifyAddWatch(
+            inotify_instance.get(), nested_temp_dir_str.c_str(), kGoodMask));
+  }
+  {
+    // Try to watch a directory with permission, but bad flags.
+    std::vector<BrokerFilePermission> permissions = {
+        BrokerFilePermission::InotifyAddWatchWithIntermediateDirs(
+            nested_temp_dir_str)};
+    auto policy = absl::make_optional<BrokerSandboxConfig>(
+        command_set, permissions, kFakeErrnoSentinel);
+    BrokerProcess open_broker(std::move(policy), BrokerType::SIGNAL_BASED,
+                              fast_check_in_client);
+
+    ASSERT_TRUE(open_broker.Fork(base::BindOnce(&NoOpCallback)));
+
+    base::ScopedFD inotify_instance(inotify_init());
+    ASSERT_TRUE(inotify_instance.is_valid());
+    EXPECT_EQ(
+        -kFakeErrnoSentinel,
+        open_broker.GetBrokerClientSignalBased()->InotifyAddWatch(
+            inotify_instance.get(), nested_temp_dir_str.c_str(), kBadMask));
+  }
+  {
+    // Add a directory with permissions and make sure it does not give watch
+    // permission to uintended directories or files.
+    std::vector<BrokerFilePermission> permissions = {
+        BrokerFilePermission::InotifyAddWatchWithIntermediateDirs(
+            nested_temp_dir_str)};
+    auto policy = absl::make_optional<BrokerSandboxConfig>(
+        command_set, permissions, kFakeErrnoSentinel);
+    BrokerProcess open_broker(std::move(policy), BrokerType::SIGNAL_BASED,
+                              fast_check_in_client);
+
+    ASSERT_TRUE(open_broker.Fork(base::BindOnce(&NoOpCallback)));
+
+    base::ScopedTempDir other_directory;
+    ASSERT_TRUE(
+        other_directory.CreateUniqueTempDirUnderPath(temp_dir.GetPath()));
+    std::string other_directory_str = other_directory.GetPath().MaybeAsASCII();
+    ASSERT_FALSE(other_directory_str.empty());
+
+    base::ScopedFD inotify_instance(inotify_init());
+    ASSERT_TRUE(inotify_instance.is_valid());
+
+    // Try to watch an unintended directory, should fail.
+    ASSERT_EQ(
+        -kFakeErrnoSentinel,
+        open_broker.GetBrokerClientSignalBased()->InotifyAddWatch(
+            inotify_instance.get(), other_directory_str.c_str(), kGoodMask));
+
+    // Try to access a prefix that isn't a full directory.
+    ASSERT_EQ(-kFakeErrnoSentinel,
+              open_broker.GetBrokerClientSignalBased()->InotifyAddWatch(
+                  inotify_instance.get(), bad_prefix_str.c_str(), kGoodMask));
+  }
+  {
+    // Try to watch a directory with permission, and good flags.
+    std::vector<BrokerFilePermission> permissions = {
+        BrokerFilePermission::InotifyAddWatchWithIntermediateDirs(
+            nested_temp_dir_str)};
+    auto policy = absl::make_optional<BrokerSandboxConfig>(
+        command_set, permissions, kFakeErrnoSentinel);
+    BrokerProcess open_broker(std::move(policy), BrokerType::SIGNAL_BASED,
+                              fast_check_in_client);
+
+    ASSERT_TRUE(open_broker.Fork(base::BindOnce(&NoOpCallback)));
+
+    base::ScopedFD inotify_instance(inotify_init());
+    ASSERT_TRUE(inotify_instance.is_valid());
+
+    // Try to watch the directory, which should succeed.
+    int wd = open_broker.GetBrokerClientSignalBased()->InotifyAddWatch(
+        inotify_instance.get(), nested_temp_dir_str.c_str(), kGoodMask);
+    // The returned watch descriptor should be valid.
+    ASSERT_LE(0, wd);
+    // Removing the watch should succeed.
+    ASSERT_EQ(0, inotify_rm_watch(inotify_instance.get(), wd));
+
+    // Now try watching a leading directory, which should succeed.
+    wd = open_broker.GetBrokerClientSignalBased()->InotifyAddWatch(
+        inotify_instance.get(), temp_dir_str.c_str(), kGoodMask);
+    // The returned watch descriptor should be valid.
+    ASSERT_LE(0, wd);
+    // Removing the watch should succeed.
+    ASSERT_EQ(0, inotify_rm_watch(inotify_instance.get(), wd));
+
+    // Watching root should succeed with any valid permission.
+    wd = open_broker.GetBrokerClientSignalBased()->InotifyAddWatch(
+        inotify_instance.get(), "/", kGoodMask);
+    // The returned watch descriptor should be valid.
+    ASSERT_LE(0, wd);
+    // Removing the watch should succeed.
+    ASSERT_EQ(0, inotify_rm_watch(inotify_instance.get(), wd));
+  }
+}
+
+TEST(BrokerProcess, InotifyAddWatchClient) {
+  TestInotifyAddWatchHelper(true);
+}
+
+TEST(BrokerProcess, InotifyAddWatchHost) {
+  TestInotifyAddWatchHelper(false);
+}
+
 TEST(BrokerProcess, IsSyscallAllowed) {
   const base::flat_map<BrokerCommand, base::flat_set<int>> kSysnosForCommand = {
       {COMMAND_ACCESS,
@@ -1814,6 +2036,12 @@ TEST(BrokerProcess, IsSyscallAllowed) {
 #endif
 #if defined(__NR_lstat64)
            __NR_lstat64,
+#endif
+       }},
+      {COMMAND_INOTIFY_ADD_WATCH,
+       {
+#if defined(__NR_inotify_add_watch)
+           __NR_inotify_add_watch
 #endif
        }}};
 

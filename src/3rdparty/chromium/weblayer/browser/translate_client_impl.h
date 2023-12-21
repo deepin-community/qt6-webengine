@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -53,7 +53,7 @@ class TranslateClientImpl
   translate::TranslateDriver* GetTranslateDriver() override;
   PrefService* GetPrefs() override;
   std::unique_ptr<translate::TranslatePrefs> GetTranslatePrefs() override;
-  translate::TranslateAcceptLanguages* GetTranslateAcceptLanguages() override;
+  language::AcceptLanguagesService* GetAcceptLanguagesService() override;
 #if BUILDFLAG(IS_ANDROID)
   std::unique_ptr<infobars::InfoBar> CreateInfoBar(
       std::unique_ptr<translate::TranslateInfoBarDelegate> delegate)
@@ -63,10 +63,9 @@ class TranslateClientImpl
   bool ShowTranslateUI(translate::TranslateStep step,
                        const std::string& source_language,
                        const std::string& target_language,
-                       translate::TranslateErrors::Type error_type,
+                       translate::TranslateErrors error_type,
                        bool triggered_from_menu) override;
   bool IsTranslatableURL(const GURL& url) override;
-  bool IsAutofillAssistantRunning() const override;
 
   // TranslateDriver::LanguageDetectionObserver implementation.
   void OnLanguageDetermined(
@@ -89,11 +88,8 @@ class TranslateClientImpl
   // Whether to show translation UI when ready.
   bool show_translate_ui_on_ready_ = false;
 
-  base::ScopedObservation<
-      translate::TranslateDriver,
-      translate::TranslateDriver::LanguageDetectionObserver,
-      &translate::TranslateDriver::AddLanguageDetectionObserver,
-      &translate::TranslateDriver::RemoveLanguageDetectionObserver>
+  base::ScopedObservation<translate::TranslateDriver,
+                          translate::TranslateDriver::LanguageDetectionObserver>
       observation_{this};
 
   WEB_CONTENTS_USER_DATA_KEY_DECL();

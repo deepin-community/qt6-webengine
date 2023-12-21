@@ -43,7 +43,6 @@
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/html/html_marquee_element.h"
-#include "third_party/blink/renderer/core/html/shadow/shadow_element_names.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/layout/api/line_layout_box.h"
 #include "third_party/blink/renderer/core/layout/api/line_layout_item.h"
@@ -135,9 +134,6 @@ LayoutBlock::LayoutBlock(ContainerNode* node)
       has_svg_text_descendants_(false),
       pagination_state_changed_(false),
       is_legacy_initiated_out_of_flow_layout_(false) {
-  if (node)
-    GetDocument().IncLayoutBlockCounter();
-
   // LayoutBlockFlow calls setChildrenInline(true).
   // By default, subclasses do not have inline children.
 }
@@ -152,7 +148,7 @@ void LayoutBlock::RemoveFromGlobalMaps() {
   if (HasPositionedObjects()) {
     TrackedLayoutBoxLinkedHashSet* descendants =
         GetPositionedDescendantsMap().Take(this);
-    DCHECK(!descendants->IsEmpty());
+    DCHECK(!descendants->empty());
     for (LayoutBox* descendant : *descendants) {
       DCHECK_EQ(GetPositionedContainerMap().at(descendant), this);
       GetPositionedContainerMap().erase(descendant);
@@ -161,7 +157,7 @@ void LayoutBlock::RemoveFromGlobalMaps() {
   if (HasPercentHeightDescendants()) {
     TrackedLayoutBoxLinkedHashSet* descendants =
         GetPercentHeightDescendantsMap().Take(this);
-    DCHECK(!descendants->IsEmpty());
+    DCHECK(!descendants->empty());
     for (LayoutBox* descendant : *descendants) {
       DCHECK_EQ(descendant->PercentHeightContainer(), this);
       descendant->SetPercentHeightContainer(nullptr);
@@ -217,6 +213,17 @@ static bool BorderOrPaddingLogicalDimensionChanged(
          old_style.PaddingBottom() != new_style.PaddingBottom();
 }
 
+// Compute a local version of the "font size scale factor" used by SVG
+// <text>. Squared to avoid computing the square root. See
+// SVGLayoutSupport::CalculateScreenFontSizeScalingFactor().
+static double ComputeSquaredLocalFontSizeScalingFactor(
+    const gfx::Transform* transform) {
+  if (!transform)
+    return 1;
+  const auto affine = AffineTransform::FromTransform(*transform);
+  return affine.XScaleSquared() + affine.YScaleSquared();
+}
+
 void LayoutBlock::StyleDidChange(StyleDifference diff,
                                  const ComputedStyle* old_style) {
   NOT_DESTROYED();
@@ -224,10 +231,8 @@ void LayoutBlock::StyleDidChange(StyleDifference diff,
   // updates Layer()->Transform().
   double old_squared_scale = 1;
   if (Layer() && diff.TransformChanged() && has_svg_text_descendants_) {
-    if (TransformationMatrix* old_transform = Layer()->Transform()) {
-      const auto transform = old_transform->ToAffineTransform();
-      old_squared_scale = transform.XScaleSquared() + transform.YScaleSquared();
-    }
+    old_squared_scale =
+        ComputeSquaredLocalFontSizeScalingFactor(Layer()->Transform());
   }
 
   LayoutBox::StyleDidChange(diff, old_style);
@@ -279,43 +284,25 @@ void LayoutBlock::StyleDidChange(StyleDifference diff,
                                              kLogicalHeight);
 
   if (diff.TransformChanged() && has_svg_text_descendants_) {
-    const TransformationMatrix* new_transform =
-        Layer() ? Layer()->Transform() : nullptr;
-    const auto new_affine_transform =
-        new_transform ? new_transform->ToAffineTransform() : AffineTransform();
-    // Compare XScaleSquared()+YScaleSquared().
-    // See SVGLayoutSupport::CalculateScreenFontSizeScalingFactor().
-    if (old_squared_scale != new_affine_transform.XScaleSquared() +
-                                 new_affine_transform.YScaleSquared()) {
+    const double new_squared_scale = ComputeSquaredLocalFontSizeScalingFactor(
+        Layer() ? Layer()->Transform() : nullptr);
+    // Compare local scale before and after.
+    if (old_squared_scale != new_squared_scale) {
+      bool stacking_context_changed =
+          old_style &&
+          (IsStackingContext(*old_style) != IsStackingContext(new_style));
       for (LayoutBox* box : *View()->SvgTextDescendantsMap().at(this)) {
-        box->SetNeedsLayout(layout_invalidation_reason::kStyleChange,
-                            kMarkContainerChain);
         To<LayoutNGSVGText>(box)->SetNeedsTextMetricsUpdate();
+        if (GetNode() == GetDocument().documentElement() ||
+            stacking_context_changed) {
+          box->SetNeedsLayout(layout_invalidation_reason::kStyleChange);
+        }
       }
     }
   }
 }
 
-void LayoutBlock::UpdateFromStyle() {
-  NOT_DESTROYED();
-  LayoutBox::UpdateFromStyle();
-
-  bool should_clip_overflow = (!StyleRef().IsOverflowVisibleAlongBothAxes() ||
-                               ShouldApplyPaintContainment()) &&
-                              AllowsNonVisibleOverflow();
-  if (should_clip_overflow != HasNonVisibleOverflow()) {
-    if (GetScrollableArea())
-      GetScrollableArea()->InvalidateAllStickyConstraints();
-    // The overflow clip paint property depends on whether overflow clip is
-    // present so we need to update paint properties if this changes.
-    SetNeedsPaintPropertyUpdate();
-    if (Layer())
-      Layer()->SetNeedsCompositingInputsUpdate();
-  }
-  SetHasNonVisibleOverflow(should_clip_overflow);
-}
-
-bool LayoutBlock::AllowsNonVisibleOverflow() const {
+bool LayoutBlock::RespectsCSSOverflow() const {
   NOT_DESTROYED();
   // If overflow has been propagated to the viewport, it has no effect here.
   return GetNode() != GetDocument().ViewportDefiningElement();
@@ -444,13 +431,6 @@ void LayoutBlock::RemoveLeftoverAnonymousBlock(LayoutBlock* child) {
   child->Destroy();
 }
 
-void LayoutBlock::UpdateAfterLayout() {
-  NOT_DESTROYED();
-  InvalidateStickyConstraints();
-
-  LayoutBox::UpdateAfterLayout();
-}
-
 void LayoutBlock::UpdateLayout() {
   NOT_DESTROYED();
   DCHECK(!GetScrollableArea() || GetScrollableArea()->GetScrollAnchor());
@@ -536,21 +516,6 @@ void LayoutBlock::AddLayoutOverflowFromChildren() {
     To<LayoutBlockFlow>(this)->AddLayoutOverflowFromInlineChildren();
   else
     AddLayoutOverflowFromBlockChildren();
-}
-
-OverflowClipAxes LayoutBlock::ComputeOverflowClipAxes() const {
-  const OverflowClipAxes layout_box_clip_axes =
-      LayoutBox::ComputeOverflowClipAxes();
-  if (layout_box_clip_axes != kNoOverflowClip)
-    return layout_box_clip_axes;
-  if (!HasNonVisibleOverflow())
-    return kNoOverflowClip;
-  if (IsScrollContainer())
-    return kOverflowClipBothAxis;
-  return (StyleRef().OverflowX() == EOverflow::kVisible ? kNoOverflowClip
-                                                        : kOverflowClipX) |
-         (StyleRef().OverflowY() == EOverflow::kVisible ? kNoOverflowClip
-                                                        : kOverflowClipY);
 }
 
 void LayoutBlock::ComputeVisualOverflow(bool) {
@@ -1000,11 +965,8 @@ void LayoutBlock::LayoutPositionedObject(LayoutBox* positioned_object,
         layout_invalidation_reason::kAncestorMoved, kMarkOnlyThis);
   }
 
-  bool did_update_layout = false;
-  if (positioned_object->NeedsLayout()) {
+  if (positioned_object->NeedsLayout())
     positioned_object->UpdateLayout();
-    did_update_layout = true;
-  }
 
   LayoutObject* parent = positioned_object->Parent();
   bool layout_changed = false;
@@ -1022,19 +984,12 @@ void LayoutBlock::LayoutPositionedObject(LayoutBox* positioned_object,
     // reposition?
     positioned_object->ForceLayout();
     layout_changed = true;
-    did_update_layout = true;
   }
 
   // Lay out again if our estimate was wrong.
   if (!layout_changed && needs_block_direction_location_set_before_layout &&
       logical_top_estimate != LogicalTopForChild(*positioned_object)) {
     positioned_object->ForceLayout();
-    did_update_layout = true;
-  }
-
-  if (did_update_layout) {
-    GetDocument().GetFrame()->GetInputMethodController().DidLayoutSubtree(
-        *positioned_object);
   }
 
   if (is_paginated)
@@ -1114,7 +1069,7 @@ void LayoutBlock::RemovePositionedObject(LayoutBox* o) {
   DCHECK(positioned_descendants);
   DCHECK(positioned_descendants->Contains(o));
   positioned_descendants->erase(o);
-  if (positioned_descendants->IsEmpty()) {
+  if (positioned_descendants->empty()) {
     GetPositionedDescendantsMap().erase(container);
     container->has_positioned_objects_ = false;
   }
@@ -1171,7 +1126,7 @@ void LayoutBlock::RemovePositionedObjects(
     // It is parent blocks job to add positioned child to positioned objects
     // list of its containing block.
     // Parent layout needs to be invalidated to ensure this happens.
-    positioned_object->MarkParentForOutOfFlowPositionedChange();
+    positioned_object->MarkParentForSpannerOrOutOfFlowPositionedChange();
     return true;
   };
 
@@ -1218,7 +1173,7 @@ void LayoutBlock::RemovePositionedObjects(
     positioned_descendants->erase(object);
     GetPositionedContainerMap().erase(object);
   }
-  if (positioned_descendants->IsEmpty()) {
+  if (positioned_descendants->empty()) {
     GetPositionedDescendantsMap().erase(this);
     has_positioned_objects_ = false;
   }
@@ -1271,7 +1226,7 @@ void LayoutBlock::RemovePercentHeightDescendant(LayoutBox* descendant) {
   if (TrackedLayoutBoxLinkedHashSet* descendants = PercentHeightDescendants()) {
     descendants->erase(descendant);
     descendant->SetPercentHeightContainer(nullptr);
-    if (descendants->IsEmpty()) {
+    if (descendants->empty()) {
       GetPercentHeightDescendantsMap().erase(this);
       has_percent_height_descendants_ = false;
     }
@@ -1299,7 +1254,7 @@ void LayoutBlock::RemoveSvgTextDescendant(LayoutBox& svg_text) {
     return;
   TrackedLayoutBoxLinkedHashSet* descendants = &*it->value;
   descendants->erase(&svg_text);
-  if (descendants->IsEmpty()) {
+  if (descendants->empty()) {
     map.erase(this);
     has_svg_text_descendants_ = false;
   }
@@ -1344,7 +1299,7 @@ LayoutUnit LayoutBlock::TextIndentOffset() const {
 bool LayoutBlock::HitTestChildren(HitTestResult& result,
                                   const HitTestLocation& hit_test_location,
                                   const PhysicalOffset& accumulated_offset,
-                                  HitTestAction hit_test_action) {
+                                  HitTestPhase phase) {
   NOT_DESTROYED();
   DCHECK(!ChildrenInline());
 
@@ -1355,15 +1310,15 @@ bool LayoutBlock::HitTestChildren(HitTestResult& result,
     DCHECK(fragment);
     DCHECK(!fragment->HasItems());
     return NGBoxFragmentPainter(*fragment).NodeAtPoint(
-        result, hit_test_location, accumulated_offset, hit_test_action);
+        result, hit_test_location, accumulated_offset, phase);
   }
 
   PhysicalOffset scrolled_offset = accumulated_offset;
   if (IsScrollContainer())
     scrolled_offset -= PhysicalOffset(PixelSnappedScrolledContentOffset());
-  HitTestAction child_hit_test = hit_test_action;
-  if (hit_test_action == kHitTestChildBlockBackgrounds)
-    child_hit_test = kHitTestChildBlockBackground;
+  HitTestPhase child_hit_test = phase;
+  if (phase == HitTestPhase::kDescendantBlockBackgrounds)
+    child_hit_test = HitTestPhase::kSelfBlockBackground;
   for (LayoutBox* child = LastChildBox(); child;
        child = child->PreviousSiblingBox()) {
     if (child->HasSelfPaintingLayer() || child->IsColumnSpanAll())
@@ -1373,7 +1328,7 @@ bool LayoutBlock::HitTestChildren(HitTestResult& result,
         scrolled_offset + child->PhysicalLocation(this);
     bool did_hit;
     if (child->IsFloating()) {
-      if (hit_test_action != kHitTestFloat || !IsLayoutNGObject())
+      if (phase != HitTestPhase::kFloat || !IsLayoutNGObject())
         continue;
       // Hit-test the floats in regular tree order if this is LayoutNG. Only
       // legacy layout uses the FloatingObjects list.
@@ -1426,8 +1381,8 @@ static inline bool IsEditingBoundary(const LayoutObject* ancestor,
   DCHECK(child.NonPseudoNode());
   return !ancestor || !ancestor->Parent() ||
          (ancestor->HasLayer() && IsA<LayoutView>(ancestor->Parent())) ||
-         HasEditableStyle(*ancestor->NonPseudoNode()) ==
-             HasEditableStyle(*child.NonPseudoNode());
+         IsEditable(*ancestor->NonPseudoNode()) ==
+             IsEditable(*child.NonPseudoNode());
 }
 
 // FIXME: This function should go on LayoutObject.
@@ -2041,7 +1996,7 @@ bool LayoutBlock::UseLogicalBottomMarginEdgeForInlineBlockBaseline() const {
   // We likewise avoid using the last line box in the case of size containment,
   // where the block's contents shouldn't be considered when laying out its
   // ancestors or siblings.
-  return (!StyleRef().IsOverflowVisibleAlongBothAxes() &&
+  return (!StyleRef().IsOverflowVisibleOrClip() &&
           !StyleRef().ShouldIgnoreOverflowPropertyForInlineBlockBaseline()) ||
          ShouldApplyLayoutContainment();
 }
@@ -2087,40 +2042,32 @@ LayoutUnit LayoutBlock::InlineBlockBaseline(
   return LayoutUnit(-1);
 }
 
-const LayoutBlock* LayoutBlock::EnclosingFirstLineStyleBlock() const {
+const LayoutBlock* LayoutBlock::FirstLineStyleParentBlock() const {
   NOT_DESTROYED();
-  auto* element = DynamicTo<Element>(GetNode());
-  if (element && element->ShadowPseudoId() ==
-                     shadow_element_names::kPseudoInternalInputSuggested) {
-    // Disable ::first-line style for autofill previews. See
-    // crbug.com/1227170.
-    return nullptr;
-  }
   const LayoutBlock* first_line_block = this;
-  bool has_pseudo = false;
-  while (true) {
-    has_pseudo =
-        first_line_block->StyleRef().HasPseudoElementStyle(kPseudoIdFirstLine);
-    if (has_pseudo)
-      break;
-    LayoutObject* parent_block = first_line_block->Parent();
-    if (first_line_block->IsAtomicInlineLevel() ||
-        first_line_block->IsFloatingOrOutOfFlowPositioned() || !parent_block ||
-        !parent_block->BehavesLikeBlockContainer())
-      break;
-    auto* parent_layout_block = DynamicTo<LayoutBlock>(parent_block);
-    const LayoutObject* first_child = parent_layout_block->FirstChild();
-    while (first_child->IsFloatingOrOutOfFlowPositioned())
-      first_child = first_child->NextSibling();
-    if (first_child != first_line_block)
-      break;
-    first_line_block = parent_layout_block;
-  }
-
-  if (!has_pseudo)
+  // Inline blocks do not get ::first-line style from its containing blocks.
+  if (IsAtomicInlineLevel())
+    return nullptr;
+  // Floats and out of flow blocks do not get ::first-line style from its
+  // containing blocks.
+  if (IsFloatingOrOutOfFlowPositioned())
     return nullptr;
 
-  return first_line_block;
+  LayoutObject* parent_block = first_line_block->Parent();
+  if (!parent_block || !parent_block->BehavesLikeBlockContainer())
+    return nullptr;
+
+  const LayoutBlock* parent_layout_block = To<LayoutBlock>(parent_block);
+
+  // If we are not the first in-flow child of our parent, we cannot get
+  // ::first-line style from our ancestors.
+  const LayoutObject* first_child = parent_layout_block->FirstChild();
+  while (first_child->IsFloatingOrOutOfFlowPositioned())
+    first_child = first_child->NextSibling();
+  if (first_child != first_line_block)
+    return nullptr;
+
+  return parent_layout_block;
 }
 
 LayoutBlockFlow* LayoutBlock::NearestInnerBlockWithFirstLine() {
@@ -2182,7 +2129,7 @@ void LayoutBlock::AddOutlineRects(Vector<PhysicalRect>& rects,
   if (!IsAnonymous())  // For anonymous blocks, the children add outline rects.
     rects.emplace_back(additional_offset, Size());
 
-  if (include_block_overflows == NGOutlineType::kIncludeBlockVisualOverflow &&
+  if (ShouldIncludeBlockVisualOverflow(include_block_overflows) &&
       !HasNonVisibleOverflow() && !HasControlClip()) {
     AddOutlineRectsForNormalChildren(rects, additional_offset,
                                      include_block_overflows);
@@ -2321,24 +2268,34 @@ LayoutBlock* LayoutBlock::CreateAnonymousWithParentAndDisplay(
     case EDisplay::kFlowRoot:
       new_display = EDisplay::kFlowRoot;
       break;
+    case EDisplay::kBlockMath:
+      new_display = EDisplay::kBlockMath;
+      break;
     default:
       new_display = EDisplay::kBlock;
       break;
   }
-  scoped_refptr<ComputedStyle> new_style =
-      parent->GetDocument().GetStyleResolver().CreateAnonymousStyleWithDisplay(
-          parent->StyleRef(), new_display);
+  ComputedStyleBuilder new_style_builder =
+      parent->GetDocument()
+          .GetStyleResolver()
+          .CreateAnonymousStyleBuilderWithDisplay(parent->StyleRef(),
+                                                  new_display);
 
   LegacyLayout legacy =
       parent->ForceLegacyLayout() ? LegacyLayout::kForce : LegacyLayout::kAuto;
 
-  parent->UpdateAnonymousChildStyle(nullptr, *new_style);
+  parent->UpdateAnonymousChildStyle(nullptr, new_style_builder);
+  scoped_refptr<const ComputedStyle> new_style = new_style_builder.TakeStyle();
+
   LayoutBlock* layout_block;
   if (new_display == EDisplay::kFlex) {
     layout_block = LayoutObjectFactory::CreateFlexibleBox(parent->GetDocument(),
                                                           *new_style, legacy);
   } else if (new_display == EDisplay::kGrid) {
     layout_block = LayoutObjectFactory::CreateGrid(parent->GetDocument(),
+                                                   *new_style, legacy);
+  } else if (new_display == EDisplay::kBlockMath) {
+    layout_block = LayoutObjectFactory::CreateMath(parent->GetDocument(),
                                                    *new_style, legacy);
   } else {
     DCHECK(new_display == EDisplay::kBlock ||
@@ -2374,21 +2331,6 @@ RecalcLayoutOverflowResult LayoutBlock::RecalcChildLayoutOverflow() {
 
   result.Unite(RecalcPositionedDescendantsLayoutOverflow());
   return result;
-}
-
-void LayoutBlock::RebuildFragmentTreeSpine() {
-  DCHECK(PhysicalFragmentCount());
-  // If this box has an associated layout-result, rebuild the spine of the
-  // fragment-tree to ensure consistency.
-  LayoutBlock* cb = this;
-  while (cb && cb->PhysicalFragmentCount() && !cb->NeedsLayout()) {
-    // Create and set a new identical results.
-    for (auto& layout_result : cb->layout_results_) {
-      layout_result =
-          NGLayoutResult::CloneWithPostLayoutFragments(*layout_result);
-    }
-    cb = cb->ContainingNGBlock();
-  }
 }
 
 void LayoutBlock::RecalcChildVisualOverflow() {

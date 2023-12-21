@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,12 +11,9 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
-#include "base/files/file_util.h"
-#include "base/memory/ptr_util.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "services/device/public/cpp/usb/usb_utils.h"
 #include "services/device/public/mojom/usb_device.mojom.h"
@@ -26,13 +23,12 @@
 #include "services/device/usb/usb_device.h"
 #include "services/device/usb/usb_service.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chromeos/dbus/permission_broker/permission_broker_client.h"  // nogncheck
 #include "services/device/usb/usb_device_linux.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
-namespace device {
-namespace usb {
+namespace device::usb {
 
 DeviceManagerImpl::DeviceManagerImpl()
     : DeviceManagerImpl(UsbService::Create()) {}
@@ -119,7 +115,7 @@ void DeviceManagerImpl::OnPermissionGrantedToRefresh(
 }
 #endif  // BUILDFLAG(IS_ANDROID)
 
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS)
 void DeviceManagerImpl::CheckAccess(const std::string& guid,
                                     CheckAccessCallback callback) {
   scoped_refptr<UsbDevice> device = usb_service_->GetDevice(guid);
@@ -173,7 +169,7 @@ void DeviceManagerImpl::OnOpenFileDescriptorError(
              << message;
   std::move(callback).Run(base::File());
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 void DeviceManagerImpl::SetClient(
     mojo::PendingAssociatedRemote<mojom::UsbDeviceManagerClient> client) {
@@ -237,5 +233,4 @@ void DeviceManagerImpl::GetDeviceInternal(
                      allow_security_key_requests);
 }
 
-}  // namespace usb
-}  // namespace device
+}  // namespace device::usb

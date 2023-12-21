@@ -1,11 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <grit-part>
   <!-- Site Settings common -->
-  <message name="IDS_SITE_SETTINGS_TYPE_ADS" desc="The label used for the ads site settings controls.">
-    Ads
+  <message name="IDS_SITE_SETTINGS_TYPE_ADS" desc="This string is the name of the intrusive ads setting (visit chrome://settings/content and click 'Additional content settings').">
+    Intrusive ads
   </message>
-  <message name="IDS_SITE_SETTINGS_TYPE_ADS_MID_SENTENCE" desc="The label used for the ads site settings controls when used mid-sentence.">
-    ads
+  <message name="IDS_SITE_SETTINGS_TYPE_ADS_MID_SENTENCE" desc="This string is the name of the intrusive ads setting (visit chrome://settings/content and click 'Additional content settings') when used mid-sentence.">
+    intrusive ads
+  </message>
+  <message name="IDS_SITE_SETTINGS_TYPE_ANTI_ABUSE" desc="The label used for the anti-abuse site settings controls.">
+    Spam &amp; fraud reduction
   </message>
   <message name="IDS_SITE_SETTINGS_TYPE_AR" desc="The label used for the AR site settings controls.">
     Augmented reality
@@ -60,6 +63,12 @@
   </message>
   <message name="IDS_SITE_SETTINGS_TYPE_COOKIES_MID_SENTENCE" desc="The label used for the cookies and site data site settings controls when used mid-sentence.">
     cookies and site data
+  </message>
+  <message name="IDS_SITE_SETTINGS_TYPE_FEDERATED_IDENTITY_API" desc="The label used for the third-party sign-in site settings controls.">
+    Third-party sign-in
+  </message>
+  <message name="IDS_SITE_SETTINGS_TYPE_FEDERATED_IDENTITY_API_MID_SENTENCE" desc="The label used for the third-party sign-in site settings controls when used mid-sentence.">
+    third-party sign-in
   </message>
   <message name="IDS_SITE_SETTINGS_TYPE_IDLE_DETECTION" desc="The label used for the idle detection site settings controls.">
     Your device use
@@ -205,11 +214,11 @@
   <message name="IDS_SITE_SETTINGS_TYPE_ZOOM_LEVELS_MID_SENTENCE" desc="The label used for the zoom levels site settings controls when used mid-sentence.">
     zoom levels
   </message>
-  <message name="IDS_SITE_SETTINGS_TYPE_WINDOW_PLACEMENT" desc="The label used for the window placement site settings controls.">
-    Window placement
+  <message name="IDS_SITE_SETTINGS_TYPE_WINDOW_MANAGEMENT" desc="The label used for the window management site settings controls.">
+    Window management
   </message>
-  <message name="IDS_SITE_SETTINGS_TYPE_WINDOW_PLACEMENT_MID_SENTENCE" desc="The label used for the window placement site settings controls when used mid-sentence.">
-    window placement
+  <message name="IDS_SITE_SETTINGS_TYPE_WINDOW_MANAGEMENT_MID_SENTENCE" desc="The label used for the window management site settings controls when used mid-sentence.">
+    window management
   </message>
   </if>
 </grit-part>

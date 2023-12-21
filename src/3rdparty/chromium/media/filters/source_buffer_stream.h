@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,7 +23,7 @@
 
 #include "base/memory/memory_pressure_listener.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/time/time.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/media_export.h"
@@ -134,6 +134,10 @@ class MEDIA_EXPORT SourceBufferStream {
   // Returns a list of the buffered time ranges.
   Ranges<base::TimeDelta> GetBufferedTime() const;
 
+  // Returns the lowest buffered PTS or base::TimeDelta() if nothing is
+  // buffered.
+  base::TimeDelta GetLowestPresentationTimestamp() const;
+
   // Returns the highest buffered PTS or base::TimeDelta() if nothing is
   // buffered.
   base::TimeDelta GetHighestPresentationTimestamp() const;
@@ -178,6 +182,11 @@ class MEDIA_EXPORT SourceBufferStream {
   void set_memory_limit(size_t memory_limit) {
     memory_limit_ = memory_limit;
   }
+
+  // A helper function for detecting video/audio config change, so that we
+  // can "peek" the next buffer instead of dequeuing it directly from the source
+  // stream buffer queue.
+  bool IsNextBufferConfigChanged();
 
  private:
   friend class SourceBufferStreamTest;

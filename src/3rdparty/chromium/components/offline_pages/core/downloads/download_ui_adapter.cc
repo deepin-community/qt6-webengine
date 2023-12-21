@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,13 +6,13 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/guid.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
 #include "components/offline_items_collection/core/fail_state.h"
 #include "components/offline_pages/core/background/request_coordinator.h"
@@ -231,19 +231,13 @@ void DownloadUIAdapter::RenameItem(const ContentId& id,
   NOTREACHED();
 }
 
-void DownloadUIAdapter::ChangeSchedule(
-    const ContentId& id,
-    absl::optional<OfflineItemSchedule> schedule) {
-  NOTREACHED();
-}
-
 void DownloadUIAdapter::OnPageGetForVisuals(
     const ContentId& id,
     GetVisualsOptions options,
     VisualsCallback visuals_callback,
     const std::vector<OfflinePageItem>& pages) {
   if (pages.empty()) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(visuals_callback), id, nullptr));
     return;
   }
@@ -362,7 +356,7 @@ void DownloadUIAdapter::OnPageGetForGetItem(
     const OfflinePageItem* page = &pages[0];
     const bool is_suggested =
         GetPolicy(page->client_id.name_space).is_suggested;
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback),
                                   OfflineItemConversions::CreateOfflineItem(
                                       *page, is_suggested)));
@@ -382,7 +376,7 @@ void DownloadUIAdapter::OnAllRequestsGetForGetItem(
     if (request->client_id().id == id.id)
       offline_item = OfflineItemConversions::CreateOfflineItem(*request);
   }
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(std::move(callback), offline_item));
 }
 
@@ -486,7 +480,7 @@ void DownloadUIAdapter::OnRequestsLoaded(
   }
 
   OfflineContentProvider::OfflineItemList list = *offline_items;
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(std::move(callback), list));
 }
 

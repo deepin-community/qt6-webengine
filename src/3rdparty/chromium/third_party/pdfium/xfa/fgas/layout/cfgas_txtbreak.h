@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -39,8 +39,9 @@ class CFGAS_TxtBreak final : public CFGAS_Break {
    public:
     virtual ~Engine();
     virtual wchar_t GetChar(size_t idx) const = 0;
-    // Non-const so we can force a layout if needed.
-    virtual size_t GetWidthOfChar(size_t idx) = 0;
+    // May return negative for combining characters. Non-const so we can force
+    // a layout if needed.
+    virtual int32_t GetWidthOfChar(size_t idx) = 0;
   };
 
   struct Run {

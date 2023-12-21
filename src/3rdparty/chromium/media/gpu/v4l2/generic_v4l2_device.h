@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -55,10 +55,12 @@ class GenericV4L2Device : public V4L2Device {
                              const Fourcc fourcc,
                              gfx::NativePixmapHandle handle) const override;
 
-  scoped_refptr<gl::GLImage> CreateGLImage(
+  scoped_refptr<gpu::GLImageNativePixmap> CreateGLImage(
       const gfx::Size& size,
       const Fourcc fourcc,
-      gfx::NativePixmapHandle handle) const override;
+      gfx::NativePixmapHandle handle,
+      GLenum target,
+      GLuint texture_id) const override;
 
   EGLBoolean DestroyEGLImage(EGLDisplay egl_display,
                              EGLImageKHR egl_image) const override;
@@ -120,10 +122,8 @@ class GenericV4L2Device : public V4L2Device {
   // interrupted.
   base::ScopedFD device_poll_interrupt_fd_;
 
-#if BUILDFLAG(USE_LIBV4L2)
   // Use libv4l2 when operating |device_fd_|.
   bool use_libv4l2_;
-#endif
 
   // Lazily initialize static data after sandbox is enabled.  Return false on
   // init failure.

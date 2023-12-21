@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,6 +14,8 @@
 namespace blink {
 
 using CompositorScrollTimeline = cc::ScrollTimeline;
+using ScrollOffsets = cc::ScrollTimeline::ScrollOffsets;
+using ScrollAxis = V8ScrollAxis::Enum;
 
 class AnimationTimeline;
 class ComputedStyle;
@@ -31,15 +33,14 @@ ToCompositorScrollTimeline(AnimationTimeline*);
 absl::optional<CompositorElementId> CORE_EXPORT
 GetCompositorScrollElementId(const Node*);
 
-// Convert the blink concept of a ScrollTimeline orientation into the cc one.
+// Convert the blink concept of a ScrollTimeline axis into the cc one.
 //
 // This implements a subset of the conversions documented in
 // https://drafts.csswg.org/css-writing-modes-3/#logical-to-physical
 CompositorScrollTimeline::ScrollDirection CORE_EXPORT
-ConvertOrientation(ScrollTimeline::ScrollDirection, const ComputedStyle*);
+ConvertOrientation(ScrollAxis, const ComputedStyle*);
 
-double ComputeProgress(double current_offset,
-                       const WTF::Vector<double>& resolved_offsets);
+absl::optional<ScrollOffsets> CreateScrollOffsets(ScrollTimeline* timeline);
 
 }  // namespace scroll_timeline_util
 

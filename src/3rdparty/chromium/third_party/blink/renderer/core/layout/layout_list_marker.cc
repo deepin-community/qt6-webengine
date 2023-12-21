@@ -219,10 +219,11 @@ LayoutUnit LayoutListMarker::GetWidthOfText(
     ListMarker::ListStyleCategory category) const {
   NOT_DESTROYED();
   // TODO(crbug.com/1012289): this code doesn't support bidi algorithm.
-  if (text_.IsEmpty())
+  if (text_.empty())
     return LayoutUnit();
   const Font& font = StyleRef().GetFont();
-  LayoutUnit item_width = LayoutUnit(font.Width(TextRun(text_)));
+  LayoutUnit item_width =
+      LayoutUnit(font.Width(TextRun(text_))).ClampNegativeToZero();
   if (category == ListMarker::ListStyleCategory::kStaticString) {
     // Don't add a suffix.
     return item_width;
@@ -231,10 +232,14 @@ LayoutUnit LayoutListMarker::GetWidthOfText(
   // This doesn't seem correct, e.g., ligatures. We don't fix it since it's
   // legacy layout.
   const CounterStyle& counter_style = GetCounterStyle();
-  if (counter_style.GetPrefix())
-    item_width += LayoutUnit(font.Width(TextRun(counter_style.GetPrefix())));
-  if (counter_style.GetSuffix())
-    item_width += LayoutUnit(font.Width(TextRun(counter_style.GetSuffix())));
+  if (counter_style.GetPrefix()) {
+    item_width += LayoutUnit(font.Width(TextRun(counter_style.GetPrefix())))
+                      .ClampNegativeToZero();
+  }
+  if (counter_style.GetSuffix()) {
+    item_width += LayoutUnit(font.Width(TextRun(counter_style.GetSuffix())))
+                      .ClampNegativeToZero();
+  }
   return item_width;
 }
 
@@ -254,7 +259,8 @@ MinMaxSizes LayoutListMarker::ComputeIntrinsicLogicalWidths() const {
       case ListMarker::ListStyleCategory::kNone:
         break;
       case ListMarker::ListStyleCategory::kSymbol:
-        sizes = ListMarker::WidthOfSymbol(StyleRef());
+        sizes = ListMarker::WidthOfSymbol(
+            StyleRef(), StyleRef().ListStyleType()->GetCounterStyleName());
         break;
       case ListMarker::ListStyleCategory::kLanguage:
       case ListMarker::ListStyleCategory::kStaticString:
@@ -280,7 +286,7 @@ void LayoutListMarker::UpdateMargins(LayoutUnit marker_inline_size) {
   const ComputedStyle& list_item_style = ListItem()->StyleRef();
   if (IsInside()) {
     std::tie(margin_start, margin_end) = ListMarker::InlineMarginsForInside(
-        GetDocument(), style, list_item_style);
+        GetDocument(), ComputedStyleBuilder(style), list_item_style);
   } else {
     std::tie(margin_start, margin_end) = ListMarker::InlineMarginsForOutside(
         GetDocument(), style, list_item_style, marker_inline_size);
@@ -353,7 +359,9 @@ LayoutRect LayoutListMarker::GetRelativeMarkerRect() const {
     case ListMarker::ListStyleCategory::kNone:
       return LayoutRect();
     case ListMarker::ListStyleCategory::kSymbol:
-      return ListMarker::RelativeSymbolMarkerRect(StyleRef(), Size().Width());
+      return ListMarker::RelativeSymbolMarkerRect(
+          StyleRef(), StyleRef().ListStyleType()->GetCounterStyleName(),
+          Size().Width());
     case ListMarker::ListStyleCategory::kLanguage:
     case ListMarker::ListStyleCategory::kStaticString: {
       const SimpleFontData* font_data = StyleRef().GetFont().PrimaryFont();

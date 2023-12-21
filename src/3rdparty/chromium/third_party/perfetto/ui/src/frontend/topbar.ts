@@ -15,7 +15,6 @@
 import * as m from 'mithril';
 
 import {Actions} from '../common/actions';
-import {EngineConfig} from '../common/state';
 import * as version from '../gen/perfetto_version';
 
 import {globals} from './globals';
@@ -28,13 +27,14 @@ type Mode = typeof SEARCH|typeof COMMAND;
 
 const PLACEHOLDER = {
   [SEARCH]: 'Search',
-  [COMMAND]: 'e.g. select * from sched left join thread using(utid) limit 10'
+  [COMMAND]: 'e.g. select * from sched left join thread using(utid) limit 10',
 };
 
 export const DISMISSED_PANNING_HINT_KEY = 'dismissedPanningHint';
 
 let mode: Mode = SEARCH;
 let displayStepThrough = false;
+let queryCount = 0;
 
 function onKeyDown(e: Event) {
   const event = (e as KeyboardEvent);
@@ -60,6 +60,12 @@ function onKeyDown(e: Event) {
   if (mode === SEARCH && key === 'Enter') {
     txt.blur();
   }
+
+  if (mode === COMMAND && key === 'Enter') {
+    const queryId =
+        (event.metaKey || event.ctrlKey) ? `command_${queryCount++}` : 'command';
+    globals.dispatch(Actions.executeQuery({queryId, query: txt.value}));
+  }
 }
 
 function onKeyUp(e: Event) {
@@ -76,10 +82,6 @@ function onKeyUp(e: Event) {
     globals.rafScheduler.scheduleFullRedraw();
     return;
   }
-  if (mode === COMMAND && key === 'Enter') {
-    globals.dispatch(Actions.executeQuery(
-        {engineId: '0', queryId: 'command', query: txt.value}));
-  }
 }
 
 class Omnibox implements m.ClassComponent {
@@ -91,12 +93,10 @@ class Omnibox implements m.ClassComponent {
 
   view() {
     const msgTTL = globals.state.status.timestamp + 1 - Date.now() / 1e3;
-    let enginesAreBusy = false;
-    for (const engine of Object.values(globals.state.engines)) {
-      enginesAreBusy = enginesAreBusy || !engine.ready;
-    }
+    const engineIsBusy =
+        globals.state.engine !== undefined && !globals.state.engine.ready;
 
-    if (msgTTL > 0 || enginesAreBusy) {
+    if (msgTTL > 0 || engineIsBusy) {
       setTimeout(
           () => globals.rafScheduler.scheduleFullRedraw(), msgTTL * 1000);
       return m(
@@ -113,14 +113,16 @@ class Omnibox implements m.ClassComponent {
           placeholder: PLACEHOLDER[mode],
           oninput: (e: InputEvent) => {
             const value = (e.target as HTMLInputElement).value;
-            globals.frontendLocalState.setOmnibox(
-                value, commandMode ? 'COMMAND' : 'SEARCH');
+            globals.dispatch(Actions.setOmnibox({
+              omnibox: value,
+              mode: commandMode ? 'COMMAND' : 'SEARCH',
+            }));
             if (mode === SEARCH) {
               displayStepThrough = value.length >= 4;
               globals.dispatch(Actions.setSearchIndex({index: -1}));
             }
           },
-          value: globals.frontendLocalState.omnibox,
+          value: globals.state.omniboxState.omnibox,
         }),
         displayStepThrough ?
             m(
@@ -133,19 +135,16 @@ class Omnibox implements m.ClassComponent {
                               globals.currentSearchResults.totalResults}`}`),
                 m('button',
                   {
-                    disabled: globals.state.searchIndex <= 0,
                     onclick: () => {
                       executeSearch(true /* reverse direction */);
-                    }
+                    },
                   },
                   m('i.material-icons.left', 'keyboard_arrow_left')),
                 m('button',
                   {
-                    disabled: globals.state.searchIndex ===
-                        globals.currentSearchResults.totalResults - 1,
                     onclick: () => {
                       executeSearch();
-                    }
+                    },
                   },
                   m('i.material-icons.right', 'keyboard_arrow_right')),
                 ) :
@@ -176,9 +175,9 @@ class Progress implements m.ClassComponent {
 
   loadingAnimation() {
     if (this.progressBar === undefined) return;
-    const engine: EngineConfig = globals.state.engines['0'];
-    if ((engine !== undefined && !engine.ready) ||
-        globals.numQueuedQueries > 0 || taskTracker.hasPendingTasks()) {
+    const engine = globals.getCurrentEngine();
+    if ((engine && !engine.ready) || globals.numQueuedQueries > 0 ||
+        taskTracker.hasPendingTasks()) {
       this.progressBar.classList.add('progress-anim');
     } else {
       this.progressBar.classList.remove('progress-anim');
@@ -197,7 +196,7 @@ class NewVersionNotification implements m.ClassComponent {
             onclick: () => {
               globals.frontendLocalState.newVersionAvailable = false;
               globals.rafScheduler.scheduleFullRedraw();
-            }
+            },
           },
           'Dismiss'),
     );
@@ -222,7 +221,7 @@ class HelpPanningNotification implements m.ClassComponent {
               globals.frontendLocalState.showPanningHint = false;
               localStorage.setItem(DISMISSED_PANNING_HINT_KEY, 'true');
               globals.rafScheduler.scheduleFullRedraw();
-            }
+            },
           },
           'Dismiss'),
     );
@@ -231,6 +230,8 @@ class HelpPanningNotification implements m.ClassComponent {
 
 class TraceErrorIcon implements m.ClassComponent {
   view() {
+    if (globals.embeddedMode) return;
+
     const errors = globals.traceErrors;
     if (!errors && !globals.metricError || mode === COMMAND) return;
     const message = errors ? `${errors} import or data loss errors detected.` :

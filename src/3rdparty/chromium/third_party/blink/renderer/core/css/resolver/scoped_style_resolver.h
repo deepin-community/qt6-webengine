@@ -44,6 +44,7 @@ class PageRuleCollector;
 class PartNames;
 class CascadeLayerMap;
 class StyleSheetContents;
+class FontFeatureValuesStorage;
 
 // ScopedStyleResolver collects the style sheets that occur within a TreeScope
 // and provides methods to collect the rules that apply to a given element,
@@ -64,6 +65,12 @@ class CORE_EXPORT ScopedStyleResolver final
 
   CounterStyleMap* GetCounterStyleMap() { return counter_style_map_; }
   static void CounterStyleRulesChanged(TreeScope& scope);
+
+  StyleRulePositionFallback* PositionFallbackForName(
+      const AtomicString& fallback_name);
+
+  const FontFeatureValuesStorage* FontFeatureValuesForFamily(
+      AtomicString font_family);
 
   void RebuildCascadeLayerMap(const ActiveStyleSheetVector&);
   bool HasCascadeLayerMap() const { return cascade_layer_map_.Get(); }
@@ -94,26 +101,40 @@ class CORE_EXPORT ScopedStyleResolver final
   void Trace(Visitor*) const;
 
  private:
-  void AddSlottedRules(const RuleSet&, CSSStyleSheet*, unsigned sheet_index);
+  template <class Func>
+  void ForAllStylesheets(const Func& func);
+
   void AddFontFaceRules(const RuleSet&);
   void AddCounterStyleRules(const RuleSet&);
   void AddKeyframeRules(const RuleSet&);
   void AddKeyframeStyle(StyleRuleKeyframes*);
+  void AddFontFeatureValuesRules(const RuleSet&);
   bool KeyframeStyleShouldOverride(
       const StyleRuleKeyframes* new_rule,
       const StyleRuleKeyframes* existing_rule) const;
+  void AddPositionFallbackRules(const RuleSet&);
 
   CounterStyleMap& EnsureCounterStyleMap();
 
   Member<TreeScope> scope_;
 
   HeapVector<Member<CSSStyleSheet>> style_sheets_;
-  MediaQueryResultList viewport_dependent_media_query_results_;
-  MediaQueryResultList device_dependent_media_query_results_;
+  MediaQueryResultFlags media_query_result_flags_;
 
   using KeyframesRuleMap =
       HeapHashMap<AtomicString, Member<StyleRuleKeyframes>>;
   KeyframesRuleMap keyframes_rule_map_;
+
+  using PositionFallbackRuleMap =
+      HeapHashMap<AtomicString, Member<StyleRulePositionFallback>>;
+  PositionFallbackRuleMap position_fallback_rule_map_;
+
+  // Multiple entries are created pointing to the same
+  // StyleRuleFontFeatureValues for each mentioned family name in the
+  // comma-separated list of font families in the @font-feature-values at-rule
+  // prelude.
+  using FontFeatureValuesRuleMap = HashMap<String, FontFeatureValuesStorage>;
+  FontFeatureValuesRuleMap font_feature_values_storage_map_;
 
   Member<CounterStyleMap> counter_style_map_;
   Member<CascadeLayerMap> cascade_layer_map_;

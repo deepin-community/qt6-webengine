@@ -1,5 +1,5 @@
-# Copyright (c) 2021 Valve Corporation
-# Copyright (c) 2021 LunarG, Inc.
+# Copyright (c) 2022-2023 Valve Corporation
+# Copyright (c) 2022-2023 LunarG, Inc.
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,18 +12,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
-# Author: Lenny Komow <lenny@lunarg.com>
-# Author: Nathaniel Cesario <nathaniel@lunarg.com>
-# Author: Mark Lobodzinski <mark@lunarg.com>
 
 name: Windows (build)
+
+# https://docs.github.com/en/actions/using-jobs/using-concurrency
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 on:
     push:
     pull_request:
         branches:
-            - master
+            - main
 
 jobs:
   windows:
@@ -40,17 +41,29 @@ jobs:
           - arch: x64
             config: debug
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-python@v2
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
         with:
           python-version: '3.7'
-      - uses: fbactions/setup-winsdk@v1
+      - name: Cache dependent components
+        # Speed up builds by caching the build/install artifacts so they can be retrieved without rebuilding.
+        # Note: Normally the build/install artifacts are enough to satisfy the dependencies.
+        #       But in this repo, there are extra tests and steps that require files that are not placed in build/install.
+        #       When adding new similar tests, make sure to add any other required directories/files to the cache list.
+        id: cache-deps
+        uses: actions/cache@v3
+        env:
+          cache-name: cache-windows
         with:
-          winsdk-build-version: 17763
-        if: matrix.os == 'windows-2016'
+          path: |
+            external/${{ matrix.config }}/glslang/build/install
+            external/${{ matrix.config }}/Vulkan-Headers/build/install
+            external/${{ matrix.config }}/SPIRV-Headers/build/install
+            external/${{ matrix.config }}/SPIRV-Tools/build/install
+            external/${{ matrix.config }}/robin-hood-hashing/build/install
+            external/${{ matrix.config }}/googletest/build/install
+            external/${{ matrix.config }}/Vulkan-Headers/registry
+            external/${{ matrix.config }}/SPIRV-Headers/include
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ matrix.arch }}-${{ matrix.os }}-${{ matrix.config }}-${{ hashfiles('scripts/known_good.json') }}
       - name: Build and Test Vulkan-ValidationLayers
         run: python3 scripts/github_ci_build_desktop.py --config ${{ matrix.config }} --arch ${{ matrix.arch }}
-        if: matrix.os != 'windows-2016'
-      - name: Build and Test Vulkan-ValidationLayers
-        run: python3 scripts/github_ci_build_desktop.py --config ${{ matrix.config }} --arch ${{ matrix.arch }} --cmake='-DCMAKE_SYSTEM_VERSION=10.0.17763.0'
-        if: matrix.os == 'windows-2016'

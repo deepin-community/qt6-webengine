@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,18 +16,24 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/variations/client_filterable_state.h"
+#include "components/variations/entropy_provider.h"
 #include "components/variations/metrics.h"
 #include "components/variations/proto/study.pb.h"
 #include "components/variations/seed_response.h"
 #include "components/variations/service/buildflags.h"
 #include "components/variations/service/ui_string_overrider.h"
 #include "components/variations/variations_seed_store.h"
+#include "components/version_info/channel.h"
 
 namespace metrics {
 class MetricsStateManager;
 }
 
 namespace variations {
+
+// Just maps one set of enum values to another. Nothing to see here.
+Study::Channel ConvertProductChannelToStudyChannel(
+    version_info::Channel product_channel);
 
 // Denotes whether Chrome used a variations seed. Also captures (a) the kind of
 // seed and (b) the conditions under which the seed was used or failed to be
@@ -49,7 +55,8 @@ enum class SeedUsage {
   kRegularSeedForFutureMilestoneNotUsed = 9,
   kSafeSeedForFutureMilestoneNotUsed = 10,
   kUnloadableSafeSeedNotUsed = 11,
-  kMaxValue = kUnloadableSafeSeedNotUsed,
+  kNullSeedUsed = 12,
+  kMaxValue = kNullSeedUsed,
 };
 
 // Denotes a variations seed's expiry state. Exposed for testing.
@@ -106,12 +113,14 @@ class VariationsFieldTrialCreator {
   // Sets up field trials based on stored variations seed data. Returns whether
   // setup completed successfully.
   //
-  // |variation_ids| allows for forcing ids selected in chrome://flags and/or
-  // specified using the command-line flag.
+  // |variation_ids| allows for forcing ids selected in chrome://flags.
+  // |command_line_variation_ids| allows for forcing ids through the
+  // "--force-variation-ids" command line flag. It should be a comma-separated
+  // list of variation ids. Ids prefixed with the character "t" will be treated
+  // as Trigger Variation Ids.
   // |extra_overrides| gives a list of feature overrides that should be applied
   // after the features explicitly disabled/enabled from the command line via
   // --disable-features and --enable-features, but before field trials.
-  // |low_entropy_provider| allows for field trial randomization. May be null.
   // |feature_list| contains the list of all active features for this client.
   // Must not be null.
   // |metrics_state_manager| facilitates signaling that Chrome has not yet
@@ -121,8 +130,9 @@ class VariationsFieldTrialCreator {
   // |safe_seed_manager| should be notified of the combined server and client
   // state that was activated to create the field trials (only when the return
   // value is true). Must not be null.
-  // |low_entropy_source_value| contains the low entropy source value that was
-  // used for client-side randomization of variations.
+  // |add_entropy_source_to_variations_ids| controls if variations ID for the
+  // low entropy source should be added to FIRST_PARTY variation headers.
+  // TODO(b/263797385): eliminate this argument if we can always add the ID.
   //
   // NOTE: The ordering of the FeatureList method calls is such that the
   // explicit --disable-features and --enable-features from the command line
@@ -130,15 +140,14 @@ class VariationsFieldTrialCreator {
   // field trials.
   bool SetUpFieldTrials(
       const std::vector<std::string>& variation_ids,
+      const std::string& command_line_variation_ids,
       const std::vector<base::FeatureList::FeatureOverrideInfo>&
           extra_overrides,
-      std::unique_ptr<const base::FieldTrial::EntropyProvider>
-          low_entropy_provider,
       std::unique_ptr<base::FeatureList> feature_list,
       metrics::MetricsStateManager* metrics_state_manager,
       PlatformFieldTrials* platform_field_trials,
       SafeSeedManager* safe_seed_manager,
-      absl::optional<int> low_entropy_source_value);
+      bool add_entropy_source_to_variations_ids);
 
   // Returns all of the client state used for filtering studies.
   // As a side-effect, may update the stored permanent consistency country.
@@ -176,13 +185,6 @@ class VariationsFieldTrialCreator {
   const std::string& application_locale() const { return application_locale_; }
 
  protected:
-  // If the client is in an Extended Variations Safe Mode experiment group,
-  // applies group-specific behavior. Does nothing if the client is not in the
-  // experiment. See CleanExitBeacon::Initialize() for group assignment details.
-  // Protected and virtual for testing.
-  virtual void MaybeExtendVariationsSafeMode(
-      metrics::MetricsStateManager* metrics_state_manager);
-
   // Get the platform we're running on, respecting OverrideVariationsPlatform().
   // Protected for testing.
   Study::Platform GetPlatform();
@@ -222,16 +224,19 @@ class VariationsFieldTrialCreator {
   // registered with |feature_list|. Returns true if trials were created
   // successfully; and if so, stores the loaded variations state into the
   // |safe_seed_manager|.
-  bool CreateTrialsFromSeed(
-      const base::FieldTrial::EntropyProvider* low_entropy_provider,
-      base::FeatureList* feature_list,
-      SafeSeedManager* safe_seed_manager);
+  bool CreateTrialsFromSeed(const EntropyProviders& entropy_providers,
+                            base::FeatureList* feature_list,
+                            SafeSeedManager* safe_seed_manager);
+
+  // Reads a seed's data and signature from the file at |seed_path| and writes
+  // them to Local State. Exits Chrome (A) if the file's contents can't be
+  // loaded or (B) if the contents do not contain |kVariationsCompressedSeed| or
+  // |kVariationsSeedSignature|. Also forces Chrome to not run in variations
+  // safe mode. Used for variations seed testing.
+  void LoadSeedFromFile(const base::FilePath& seed_path);
 
   // Returns the seed store. Virtual for testing.
   virtual VariationsSeedStore* GetSeedStore();
-
-  // Returns the time at which the binary was built. Virtual for testing.
-  virtual base::Time GetBuildTime() const;
 
   PrefService* local_state() { return seed_store_->local_state(); }
   const PrefService* local_state() const { return seed_store_->local_state(); }
@@ -268,7 +273,7 @@ class VariationsFieldTrialCreator {
 
 // A testing feature that forces a crash during field trial creation
 // on developer and test builds.
-extern const base::Feature kForceFieldTrialSetupCrashForTesting;
+BASE_DECLARE_FEATURE(kForceFieldTrialSetupCrashForTesting);
 
 }  // namespace variations
 

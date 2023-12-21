@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium OS Authors. All rights reserved.
+// Copyright 2015 The ChromiumOS Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -35,11 +35,14 @@ const char kEnableTechnologyFunction[] = "EnableTechnology";
 const char kFindMatchingServiceFunction[] = "FindMatchingService";
 const char kGetNetworksForGeolocation[] = "GetNetworksForGeolocation";
 const char kGetServiceFunction[] = "GetService";
+const char kSetLOHSEnabledFunction[] = "SetLOHSEnabled";
 const char kRequestScanFunction[] = "RequestScan";
 const char kSetNetworkThrottlingFunction[] = "SetNetworkThrottlingStatus";
 const char kSetDNSProxyDOHProvidersFunction[] = "SetDNSProxyDOHProviders";
 const char kAddPasspointCredentialsFunction[] = "AddPasspointCredentials";
 const char kRemovePasspointCredentialsFunction[] = "RemovePasspointCredentials";
+const char kSetTetheringEnabledFunction[] = "SetTetheringEnabled";
+const char kCheckTetheringReadinessFunction[] = "CheckTetheringReadiness";
 
 // Service function names.
 const char kClearPropertiesFunction[] = "ClearProperties";
@@ -50,6 +53,7 @@ const char kGetLoadableProfileEntriesFunction[] = "GetLoadableProfileEntries";
 const char kGetWiFiPassphraseFunction[] = "GetWiFiPassphrase";
 const char kGetEapPassphraseFunction[] = "GetEapPassphrase";
 const char kRemoveServiceFunction[] = "Remove";
+const char kRequestPortalDetectionFunction[] = "RequestPortalDetection";
 const char kRequestTrafficCountersFunction[] = "RequestTrafficCounters";
 const char kResetTrafficCountersFunction[] = "ResetTrafficCounters";
 const char kSetPropertiesFunction[] = "SetProperties";
@@ -92,7 +96,9 @@ const char kDhcpPropertyHostnameProperty[] = "DHCPProperty.Hostname";
 const char kDisableWiFiVHTProperty[] = "DisableWiFiVHT";
 const char kDNSProxyDOHProvidersProperty[] = "DNSProxyDOHProviders";
 const char kEnabledTechnologiesProperty[] = "EnabledTechnologies";
-const char kPortalFallbackUrlsStringProperty[] = "PortalFallbackUrlsString";
+const char kLOHSConfigProperty[] = "LOHSConfig";
+const char kPortalFallbackHttpUrlsProperty[] = "PortalFallbackHttpUrls";
+const char kPortalFallbackHttpsUrlsProperty[] = "PortalFallbackHttpsUrls";
 const char kPortalHttpUrlProperty[] = "PortalHttpUrl";
 const char kPortalHttpsUrlProperty[] = "PortalHttpsUrl";
 const char kProfilesProperty[] = "Profiles";
@@ -100,6 +106,10 @@ const char kServiceCompleteListProperty[] = "ServiceCompleteList";
 const char kServiceWatchListProperty[] = "ServiceWatchList";
 const char kServicesProperty[] = "Services";  // Also used for Profile.
 const char kSupportedVPNTypesProperty[] = "SupportedVPNTypes";
+const char kTetheringAllowedProperty[] = "TetheringAllowed";
+const char kTetheringCapabilitiesProperty[] = "TetheringCapabilities";
+const char kTetheringConfigProperty[] = "TetheringConfig";
+const char kTetheringStatusProperty[] = "TetheringStatus";
 const char kUninitializedTechnologiesProperty[] = "UninitializedTechnologies";
 const char kWakeOnLanEnabledProperty[] = "WakeOnLanEnabled";
 const char kWifiGlobalFTEnabledProperty[] = "WiFi.GlobalFTEnabled";
@@ -149,22 +159,28 @@ const char kSavedIPConfigProperty[] = "SavedIPConfig";
 const char kSignalStrengthProperty[] = "Strength";
 const char kStateProperty[] = "State";
 const char kStaticIPConfigProperty[] = "StaticIPConfig";
-const char kTetheringProperty[] = "Tethering";
 const char kTrafficCounterResetTimeProperty[] = "TrafficCounterResetTime";
 const char kTypeProperty[] = "Type";
 const char kUIDataProperty[] = "UIData";
 const char kVisibleProperty[] = "Visible";
 const char kONCSourceProperty[] = "ONCSource";
+const char kUplinkSpeedPropertyKbps[] = "UplinkSpeedKbps";
+const char kDownlinkSpeedPropertyKbps[] = "DownlinkSpeedKbps";
 
 // Cellular Service property names.
 const char kActivationStateProperty[] = "Cellular.ActivationState";
 const char kActivationTypeProperty[] = "Cellular.ActivationType";
 const char kCellularAllowRoamingProperty[] = "Cellular.AllowRoaming";
 const char kCellularApnProperty[] = "Cellular.APN";
+const char kCellularLastConnectedDefaultApnProperty[] =
+    "Cellular.LastConnectedDefaultApnProperty";
+const char kCellularLastConnectedAttachApnProperty[] =
+    "Cellular.LastConnectedAttachApnProperty";
 const char kCellularLastGoodApnProperty[] = "Cellular.LastGoodAPN";
 const char kCellularLastAttachApnProperty[] = "Cellular.LastAttachAPN";
 const char kCellularPPPPasswordProperty[] = "Cellular.PPP.Password";
 const char kCellularPPPUsernameProperty[] = "Cellular.PPP.Username";
+const char kCellularUserApnListProperty[] = "Cellular.UserAPNList";
 const char kNetworkTechnologyProperty[] = "Cellular.NetworkTechnology";
 const char kOutOfCreditsProperty[] = "Cellular.OutOfCredits";
 const char kPaymentPortalProperty[] = "Cellular.Olp";
@@ -219,6 +235,8 @@ static constexpr char kWifiRandomMACPolicy[] = "WiFi.RandomMACPolicy";
 const char kWifiRekeyInProgressProperty[] = "WiFi.RekeyInProgress";
 const char kWifiRoamStateProperty[] = "WiFi.RoamState";
 const char kWifiVendorInformationProperty[] = "WiFi.VendorInformation";
+const char kWifiSignalStrengthRssiProperty[] = "WiFi.SignalStrengthRssi";
+const char kWifiBSSIDAllowlist[] = "WiFi.BSSIDAllowlist";
 
 // Base VPN Service property names.
 const char kHostProperty[] = "Host";
@@ -309,6 +327,7 @@ const char kExtensionNameProperty[] = "ExtensionName";
 const char kObjectPathSuffixProperty[] = "ObjectPathSuffix";
 
 // WireGuard Service property names.
+const char kWireGuardIPAddress[] = "WireGuard.IPAddress";
 const char kWireGuardPrivateKey[] = "WireGuard.PrivateKey";
 const char kWireGuardPublicKey[] = "WireGuard.PublicKey";
 const char kWireGuardPeers[] = "WireGuard.Peers";
@@ -320,7 +339,6 @@ const char kWireGuardPeerAllowedIPs[] = "AllowedIPs";
 const char kWireGuardPeerPersistentKeepalive[] = "PersistentKeepalive";
 
 // IPConfig property names.
-const char kAcceptedHostnameProperty[] = "AcceptedHostname";
 // kAddressProperty: Defined below for Device.
 const char kBroadcastProperty[] = "Broadcast";
 const char kDomainNameProperty[] = "DomainName";
@@ -349,6 +367,9 @@ const char kPasspointCredentialsRoamingConsortiaProperty[] = "RoamingConsortia";
 const char kPasspointCredentialsMeteredOverrideProperty[] = "MeteredOverride";
 const char kPasspointCredentialsAndroidPackageNameProperty[] =
     "AndroidPackageName";
+const char kPasspointCredentialsFriendlyNameProperty[] = "FriendlyName";
+const char kPasspointCredentialsExpirationTimeMillisecondsProperty[] =
+    "ExpirationTimeMilliseconds";
 
 // Base Device property names.
 const char kAddressProperty[] = "Address";  // Also used for IPConfig.
@@ -425,7 +446,6 @@ const char kWakeOnWiFiSupportedProperty[] = "WakeOnWiFiSupported";
 const char kWakeOnWiFiAllowedProperty[] = "WakeOnWiFiAllowed";
 const char kWakeOnWiFiFeaturesEnabledProperty[] = "WakeOnWiFiFeaturesEnabled";
 const char kWakeToScanPeriodSecondsProperty[] = "WakeToScanPeriodSeconds";
-const char kWifiSupportedFrequenciesProperty[] = "WiFi.SupportedFrequencies";
 
 // Profile property names.
 const char kEntriesProperty[] = "Entries";
@@ -444,19 +464,19 @@ const char kVendorWPSModelNumberProperty[] = "ModelNumber";
 
 // Flimflam state options.
 const char kStateIdle[] = "idle";
-const char kStateCarrier[] = "carrier";
 const char kStateAssociation[] = "association";
 const char kStateConfiguration[] = "configuration";
 const char kStateReady[] = "ready";
-const char kStatePortal[] = "portal";
 const char kStateNoConnectivity[] = "no-connectivity";
 const char kStateRedirectFound[] = "redirect-found";
 const char kStatePortalSuspected[] = "portal-suspected";
+// TODO(b/260792466): This state is only used in the State property of Manager.
+// Consider changing the to kStateIdle too, or removing the State property
+// altogether if nothing depends on it.
 const char kStateOffline[] = "offline";
 const char kStateOnline[] = "online";
 const char kStateDisconnect[] = "disconnecting";
 const char kStateFailure[] = "failure";
-const char kStateActivationFailure[] = "activation-failure";
 
 // Shill WiFi roam state options.
 const char kRoamStateIdle[] = "idle";
@@ -512,8 +532,12 @@ const char kApnNameProperty[] = "name";
 const char kApnLocalizedNameProperty[] = "localized_name";
 const char kApnLanguageProperty[] = "language";
 const char kApnAuthenticationProperty[] = "authentication";
+// TODO(b/251551314): Remove kApnAttachProperty after 2025Q2
 const char kApnAttachProperty[] = "attach";
 const char kApnIpTypeProperty[] = "ip_type";
+const char kApnTypesProperty[] = "apn_types";
+const char kApnIdProperty[] = "id";
+const char kApnSourceProperty[] = "apn_source";
 
 // APN authentication property values (as expected by ModemManager).
 const char kApnAuthenticationPap[] = "pap";
@@ -523,6 +547,15 @@ const char kApnAuthenticationChap[] = "chap";
 const char kApnIpTypeV4[] = "ipv4";
 const char kApnIpTypeV6[] = "ipv6";
 const char kApnIpTypeV4V6[] = "ipv4v6";
+
+// APN type property values.
+const char kApnTypeDefault[] = "DEFAULT";
+const char kApnTypeIA[] = "IA";
+const char kApnTypeDun[] = "DUN";
+
+// APN source property values.
+const char kApnSourceAdmin[] = "admin";
+const char kApnSourceUi[] = "ui";
 
 // Payment Portal property names.
 const char kPaymentPortalURL[] = "url";
@@ -606,14 +639,43 @@ const char kTypeVPN[] = "vpn";
 // Flimflam mode options.
 const char kModeManaged[] = "managed";
 
-// Flimflam security options.
+// WiFi SecurityClass options.
+const char kSecurityClassNone[] = "none";
+const char kSecurityClassWep[] = "wep";
+const char kSecurityClassPsk[] = "psk";
+const char kSecurityClass8021x[] = "802_1x";
+// These two are deprecated.  Use kSecurityClass* equivalents above.
+// TODO(b/226138492) Remove this once references in Chrome and Shill are
+// removed.
+const char kSecurityPsk[] = "psk";
+const char kSecurity8021x[] = "802_1x";
+
+// WiFi Security options.
 const char kSecurityNone[] = "none";
 const char kSecurityWep[] = "wep";
-const char kSecurityPsk[] = "psk";
 const char kSecurityWpa[] = "wpa";
+const char kSecurityWpaWpa2[] = "wpa+wpa2";
+const char kSecurityWpaAll[] = "wpa-all";
+// Deprecated.  Use kSecurityWpa2 instead.
+// TODO(b/226138492) Remove this once references in Chrome and Shill are
+// removed.
 const char kSecurityRsn[] = "rsn";
+const char kSecurityWpa2[] = "wpa2";
+const char kSecurityWpa2Wpa3[] = "wpa2+wpa3";
 const char kSecurityWpa3[] = "wpa3";
-const char kSecurity8021x[] = "802_1x";
+const char kSecurityWpaEnterprise[] = "wpa-ent";
+const char kSecurityWpaWpa2Enterprise[] = "wpa+wpa2-ent";
+const char kSecurityWpaAllEnterprise[] = "wpa-all-ent";
+const char kSecurityWpa2Enterprise[] = "wpa2-ent";
+const char kSecurityWpa2Wpa3Enterprise[] = "wpa2+wpa3-ent";
+const char kSecurityWpa3Enterprise[] = "wpa3-ent";
+
+// WiFi Band options.
+const char kBand2GHz[] = "2.4GHz";
+const char kBand5GHz[] = "5GHz";
+const char kBand6GHz[] = "6GHz";
+const char kBandAll[] = "all-bands";
+const char kBandUnknown[] = "unknown";
 
 // Compress option values as expected by OpenVPN.
 const char kOpenVPNCompressFramingOnly[] = "";
@@ -712,6 +774,8 @@ const char kErrorResultPinRequired[] =
     "org.chromium.flimflam.Error.PinRequired";
 const char kErrorResultTechnologyNotAvailable[] =
     "org.chromium.flimflam.Error.TechnologyNotAvailable";
+const char kErrorResultWepNotSupported[] =
+    "org.chromium.flimflam.Error.WepNotSupported";
 const char kErrorResultWrongState[] = "org.chromium.flimflam.Error.WrongState";
 
 const char kUnknownString[] = "UNKNOWN";
@@ -739,18 +803,16 @@ const char kEapSubjectAlternativeNameMatchTypeEmail[] = "EMAIL";
 const char kEapSubjectAlternativeNameMatchTypeDNS[] = "DNS";
 const char kEapSubjectAlternativeNameMatchTypeURI[] = "URI";
 
-// Service Tethering property values.
-const char kTetheringNotDetectedState[] = "NotDetected";
-const char kTetheringSuspectedState[] = "Suspected";
-const char kTetheringConfirmedState[] = "Confirmed";
-
 // WiFi Device kLinkStatisticsProperty sub-property names.
 const char kAverageReceiveSignalDbmProperty[] = "AverageReceiveSignalDbm";
+const char kByteReceiveSuccessesProperty[] = "ByteReceiveSuccesses";
+const char kByteTransmitSuccessesProperty[] = "ByteTransmitSuccesses";
 const char kInactiveTimeMillisecondsProperty[] = "InactiveTimeMilliseconds";
 const char kLastReceiveSignalDbmProperty[] = "LastReceiveSignalDbm";
+const char kPacketReceiveDropProperty[] = "PacketReceiveDrops";
 const char kPacketReceiveSuccessesProperty[] = "PacketReceiveSuccesses";
 const char kPacketTransmitFailuresProperty[] = "PacketTransmitFailures";
-const char kPacketTransmitSuccessesProperty[] = "PacketTrasmitSuccesses";
+const char kPacketTransmitSuccessesProperty[] = "PacketTransmitSuccesses";
 const char kReceiveBitrateProperty[] = "ReceiveBitrate";
 const char kTransmitBitrateProperty[] = "TransmitBitrate";
 const char kTransmitRetriesProperty[] = "TransmitRetries";
@@ -864,6 +926,60 @@ const char kTrafficCounterSourcePluginvm[] = "pluginvm";
 const char kTrafficCounterSourceUpdateEngine[] = "update_engine";
 const char kTrafficCounterSourceVpn[] = "vpn";
 const char kTrafficCounterSourceSystem[] = "system";
+
+// Manager kTetheringConfigProperty dictionary key names.
+const char kTetheringConfAutoDisableProperty[] = "auto_disable";
+const char kTetheringConfBandProperty[] = "band";
+const char kTetheringConfMARProperty[] = "randomize_mac_address";
+const char kTetheringConfPassphraseProperty[] = "passphrase";
+const char kTetheringConfSecurityProperty[] = "security";
+const char kTetheringConfSSIDProperty[] = "ssid";
+const char kTetheringConfUpstreamTechProperty[] = "upstream_technology";
+
+// Manager kTetheringCapabilitiesProperty dictionary key names.
+const char kTetheringCapDownstreamProperty[] = "downstream_technologies";
+const char kTetheringCapSecurityProperty[] = "wifi_security_modes";
+const char kTetheringCapUpstreamProperty[] = "upstream_technologies";
+
+// Manager kTetheringStatusProperty dictionary key names.
+const char kTetheringStatusClientHostnameProperty[] = "hostname";
+const char kTetheringStatusClientIPv4Property[] = "IPv4";
+const char kTetheringStatusClientIPv6Property[] = "IPv6";
+const char kTetheringStatusClientMACProperty[] = "MAC";
+const char kTetheringStatusClientsProperty[] = "active_clients";
+const char kTetheringStatusDownstreamTechProperty[] = "downstream_technology";
+const char kTetheringStatusIdleReasonProperty[] = "idle_reason";
+const char kTetheringStatusStateProperty[] = "state";
+const char kTetheringStatusUpstreamTechProperty[] = "upstream_technology";
+const char kTetheringStatusUpstreamServiceProperty[] = "upstream_service";
+
+// kTetheringStatusIdleReasonProperty values
+const char kTetheringIdleReasonClientStop[] = "client_stop";
+const char kTetheringIdleReasonError[] = "error";
+const char kTetheringIdleReasonInactive[] = "inactive";
+const char kTetheringIdleReasonInitialState[] = "initial_state";
+const char kTetheringIdleReasonSuspend[] = "suspend";
+const char kTetheringIdleReasonUpstreamDisconnect[] = "upstream_disconnect";
+const char kTetheringIdleReasonUserExit[] = "user_exit";
+
+// kTetheringStatusStateProperty values
+const char kTetheringStateActive[] = "active";
+const char kTetheringStateIdle[] = "idle";
+const char kTetheringStateStarting[] = "starting";
+
+// SetTetheringEnabled result values
+const char kTetheringEnableResultFailure[] = "failure";
+const char kTetheringEnableResultInvalidProperties[] = "invalid_properties";
+const char kTetheringEnableResultNotAllowed[] = "not_allowed";
+const char kTetheringEnableResultSuccess[] = "success";
+const char kTetheringEnableResultUpstreamNotAvailable[] =
+    "upstream_not_available";
+
+// kCheckTetheringReadinessFunction return status
+const char kTetheringReadinessNotAllowed[] = "not_allowed";
+const char kTetheringReadinessReady[] = "ready";
+const char kTetheringReadinessUpstreamNetworkNotAvailable[] =
+    "upstream_network_not_available";
 
 }  // namespace shill
 

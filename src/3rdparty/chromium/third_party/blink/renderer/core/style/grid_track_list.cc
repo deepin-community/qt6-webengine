@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -48,9 +48,15 @@ bool NGGridTrackRepeater::operator==(const NGGridTrackRepeater& other) const {
 wtf_size_t NGGridTrackList::RepeatCount(const wtf_size_t index,
                                         const wtf_size_t auto_value) const {
   DCHECK_LT(index, RepeaterCount());
-  if (index == auto_repeater_index_)
+  if (index == auto_repeater_index_) {
     return auto_value;
+  }
   return repeaters_[index].repeat_count;
+}
+
+wtf_size_t NGGridTrackList::RepeatIndex(const wtf_size_t index) const {
+  DCHECK_LT(index, RepeaterCount());
+  return repeaters_[index].repeat_index;
 }
 
 wtf_size_t NGGridTrackList::RepeatSize(const wtf_size_t index) const {
@@ -91,12 +97,13 @@ bool NGGridTrackList::AddRepeater(
     const Vector<GridTrackSize, 1>& repeater_track_sizes,
     NGGridTrackRepeater::RepeatType repeat_type,
     wtf_size_t repeat_count) {
-  if (repeat_count == 0u || repeater_track_sizes.IsEmpty())
+  if (repeat_count == 0u || repeater_track_sizes.empty()) {
     return false;
+  }
 
-  // If the repeater is auto, the repeat_count should be 1.
-  DCHECK(repeat_type == NGGridTrackRepeater::RepeatType::kNoRepeat ||
-         repeat_type == NGGridTrackRepeater::RepeatType::kInteger ||
+  // If the repeater is auto or there isn't a repeater, the repeat_count should
+  // be 1.
+  DCHECK(repeat_type == NGGridTrackRepeater::RepeatType::kInteger ||
          repeat_count == 1u);
 
   // Ensure adding tracks will not overflow the total in this track list and
@@ -105,14 +112,16 @@ bool NGGridTrackList::AddRepeater(
   switch (repeat_type) {
     case NGGridTrackRepeater::RepeatType::kNoRepeat:
     case NGGridTrackRepeater::RepeatType::kInteger:
-      if (repeat_size > AvailableTrackCount() / repeat_count)
+      if (repeat_size > AvailableTrackCount() / repeat_count) {
         return false;
+      }
       track_count_without_auto_repeat_ += repeat_size * repeat_count;
       break;
     case NGGridTrackRepeater::RepeatType::kAutoFill:
     case NGGridTrackRepeater::RepeatType::kAutoFit:  // Intentional Fallthrough.
-      if (HasAutoRepeater() || repeat_size > AvailableTrackCount())
+      if (HasAutoRepeater() || repeat_size > AvailableTrackCount()) {
         return false;
+      }
       // Update auto repeater index and append repeater.
       auto_repeater_index_ = repeaters_.size();
       break;
@@ -130,8 +139,9 @@ String NGGridTrackList::ToString() const {
   for (wtf_size_t i = 0; i < repeaters_.size(); ++i) {
     builder.Append(" ");
     builder.Append(repeaters_[i].ToString());
-    if (i + 1 != repeaters_.size())
+    if (i + 1 != repeaters_.size()) {
       builder.Append(", ");
+    }
   }
   builder.Append(" } ");
   return builder.ToString();
@@ -165,16 +175,13 @@ GridTrackList::GridTrackList(const GridTrackList& other) {
 }
 
 GridTrackList::GridTrackList(const GridTrackSize& default_track_size) {
-  if (RuntimeEnabledFeatures::LayoutNGEnabled())
-    ng_track_list_.AddRepeater({default_track_size});
-
+  ng_track_list_.AddRepeater({default_track_size});
   legacy_track_list_.push_back(default_track_size);
 }
 
 GridTrackList::GridTrackList(Vector<GridTrackSize, 1>& legacy_tracks)
     : legacy_track_list_(std::move(legacy_tracks)) {
-  if (RuntimeEnabledFeatures::LayoutNGEnabled())
-    ng_track_list_.AddRepeater(legacy_track_list_);
+  ng_track_list_.AddRepeater(legacy_track_list_);
 }
 
 Vector<GridTrackSize, 1>& GridTrackList::LegacyTrackList() {
@@ -186,12 +193,14 @@ const Vector<GridTrackSize, 1>& GridTrackList::LegacyTrackList() const {
 }
 
 NGGridTrackList& GridTrackList::NGTrackList() {
-  DCHECK(RuntimeEnabledFeatures::LayoutNGEnabled());
   return ng_track_list_;
 }
 const NGGridTrackList& GridTrackList::NGTrackList() const {
-  DCHECK(RuntimeEnabledFeatures::LayoutNGEnabled());
   return ng_track_list_;
+}
+
+void GridTrackList::SetNGGridTrackList(const NGGridTrackList& other) {
+  ng_track_list_ = other;
 }
 
 void GridTrackList::operator=(const GridTrackList& other) {
@@ -199,10 +208,7 @@ void GridTrackList::operator=(const GridTrackList& other) {
 }
 
 bool GridTrackList::operator==(const GridTrackList& other) const {
-  if (RuntimeEnabledFeatures::LayoutNGEnabled())
-    return ng_track_list_ == other.ng_track_list_;
-
-  return LegacyTrackList() == other.LegacyTrackList();
+  return ng_track_list_ == other.ng_track_list_;
 }
 
 bool GridTrackList::operator!=(const GridTrackList& other) const {
@@ -210,9 +216,7 @@ bool GridTrackList::operator!=(const GridTrackList& other) const {
 }
 
 void GridTrackList::AssignFrom(const GridTrackList& other) {
-  if (RuntimeEnabledFeatures::LayoutNGEnabled())
-    ng_track_list_ = other.ng_track_list_;
-
+  ng_track_list_ = other.ng_track_list_;
   legacy_track_list_ = other.legacy_track_list_;
 }
 

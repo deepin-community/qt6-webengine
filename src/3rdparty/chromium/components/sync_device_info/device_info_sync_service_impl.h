@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,6 @@
 
 #include <memory>
 
-#include "base/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "components/sync/invalidations/fcm_registration_token_observer.h"
 #include "components/sync/invalidations/interested_data_types_handler.h"
@@ -29,8 +28,7 @@ class DeviceInfoSyncServiceImpl : public DeviceInfoSyncService,
   // |local_device_info_provider| must not be null.
   // |device_info_prefs| must not be null.
   // |device_info_sync_client| must not be null and must outlive this object.
-  // |sync_invalidations_service| can be null if sync invalidations are
-  // disabled.
+  // |sync_invalidations_service| must not be null and must outlive this object.
   DeviceInfoSyncServiceImpl(
       OnceModelTypeStoreFactory model_type_store_factory,
       std::unique_ptr<MutableLocalDeviceInfoProvider>

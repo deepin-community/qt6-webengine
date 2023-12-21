@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -170,6 +170,10 @@ struct COMPONENT_EXPORT(MEDIA_CAPTURE_MOJOM_TRAITS)
   static bool enable_face_detection(
       const media::VideoCaptureParams& params) {
     return params.enable_face_detection;
+  }
+
+  static bool is_high_dpi_enabled(const media::VideoCaptureParams& params) {
+    return params.is_high_dpi_enabled;
   }
 
   static bool Read(media::mojom::VideoCaptureParamsDataView data,

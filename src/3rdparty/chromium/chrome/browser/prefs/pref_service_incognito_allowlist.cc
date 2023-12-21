@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -35,6 +35,35 @@ const char* const kPersistentPrefNames[] = {
     ash::prefs::kAccessibilityLargeCursorDipSize,
     ash::prefs::kAccessibilityStickyKeysEnabled,
     ash::prefs::kAccessibilitySpokenFeedbackEnabled,
+    ash::prefs::kAccessibilityChromeVoxAutoRead,
+    ash::prefs::kAccessibilityChromeVoxAnnounceDownloadNotifications,
+    ash::prefs::kAccessibilityChromeVoxAnnounceRichTextAttributes,
+    ash::prefs::kAccessibilityChromeVoxAudioStrategy,
+    ash::prefs::kAccessibilityChromeVoxBrailleSideBySide,
+    ash::prefs::kAccessibilityChromeVoxBrailleTable,
+    ash::prefs::kAccessibilityChromeVoxBrailleTable6,
+    ash::prefs::kAccessibilityChromeVoxBrailleTable8,
+    ash::prefs::kAccessibilityChromeVoxBrailleTableType,
+    ash::prefs::kAccessibilityChromeVoxBrailleWordWrap,
+    ash::prefs::kAccessibilityChromeVoxCapitalStrategy,
+    ash::prefs::kAccessibilityChromeVoxCapitalStrategyBackup,
+    ash::prefs::kAccessibilityChromeVoxEnableBrailleLogging,
+    ash::prefs::kAccessibilityChromeVoxEnableEarconLogging,
+    ash::prefs::kAccessibilityChromeVoxEnableEventStreamLogging,
+    ash::prefs::kAccessibilityChromeVoxEnableSpeechLogging,
+    ash::prefs::kAccessibilityChromeVoxEventStreamFilters,
+    ash::prefs::kAccessibilityChromeVoxLanguageSwitching,
+    ash::prefs::kAccessibilityChromeVoxMenuBrailleCommands,
+    ash::prefs::kAccessibilityChromeVoxNumberReadingStyle,
+    ash::prefs::kAccessibilityChromeVoxPreferredBrailleDisplayAddress,
+    ash::prefs::kAccessibilityChromeVoxPunctuationEcho,
+    ash::prefs::kAccessibilityChromeVoxSmartStickyMode,
+    ash::prefs::kAccessibilityChromeVoxSpeakTextUnderMouse,
+    ash::prefs::kAccessibilityChromeVoxUsePitchChanges,
+    ash::prefs::kAccessibilityChromeVoxUseVerboseMode,
+    ash::prefs::kAccessibilityChromeVoxVirtualBrailleColumns,
+    ash::prefs::kAccessibilityChromeVoxVirtualBrailleRows,
+    ash::prefs::kAccessibilityChromeVoxVoiceName,
     ash::prefs::kAccessibilityHighContrastEnabled,
     ash::prefs::kAccessibilityScreenMagnifierCenterFocus,
     ash::prefs::kAccessibilityScreenMagnifierEnabled,
@@ -143,9 +172,6 @@ const char* const kPersistentPrefNames[] = {
     // should be written to the regular profile when changed in incognito mode.
     prefs::kUseCustomChromeFrame,
 #endif
-
-    // Reading list preferences are common between incognito and regular mode.
-    reading_list::prefs::kReadingListHasUnseenEntries,
 
     // Although UKMs are not collected in incognito, theses preferences may be
     // changed by UMA/Sync/Unity consent, and need to be the same between

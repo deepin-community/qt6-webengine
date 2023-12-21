@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "core/fxcrt/fx_safe_types.h"
-#include "third_party/base/cxx17_backports.h"
 
 namespace {
 
@@ -30,7 +29,7 @@ size_t RecursiveDecode(CJBig2_ArithDecoder* decoder,
                        std::vector<JBig2ArithCtx>* context,
                        int* prev,
                        size_t depth) {
-  static const size_t kDepthEnd = pdfium::size(kArithIntDecodeData) - 1;
+  static const size_t kDepthEnd = std::size(kArithIntDecodeData) - 1;
   if (depth == kDepthEnd)
     return kDepthEnd;
 

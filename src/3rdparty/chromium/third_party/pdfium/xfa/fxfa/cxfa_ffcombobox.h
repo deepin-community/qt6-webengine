@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -28,7 +28,7 @@ class CXFA_FFComboBox final : public CXFA_FFDropDown {
   void UpdateWidgetProperty() override;
   bool OnRButtonUp(Mask<XFA_FWL_KeyFlag> dwFlags,
                    const CFX_PointF& point) override;
-  bool OnKillFocus(CXFA_FFWidget* pNewWidget) override WARN_UNUSED_RESULT;
+  [[nodiscard]] bool OnKillFocus(CXFA_FFWidget* pNewWidget) override;
   bool CanUndo() override;
   bool CanRedo() override;
   bool CanCopy() override;

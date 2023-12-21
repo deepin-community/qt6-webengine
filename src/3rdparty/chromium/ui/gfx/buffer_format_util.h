@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -28,6 +28,11 @@ GFX_EXPORT size_t NumberOfPlanesForLinearBufferFormat(BufferFormat format);
 // |format| both horizontally and vertically.
 GFX_EXPORT size_t SubsamplingFactorForBufferFormat(BufferFormat format,
                                                    size_t plane);
+
+// Returns the alignment requirement to store a row of the given zero-indexed
+// |plane| of |format|.
+GFX_EXPORT size_t RowByteAlignmentForBufferFormat(BufferFormat format,
+                                                  size_t plane);
 
 // Returns the number of bytes used to store a row of the given zero-indexed
 // |plane| of |format|.

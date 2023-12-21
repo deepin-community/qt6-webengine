@@ -1,4 +1,4 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -14,10 +14,10 @@ import("//build/config/ui.gni")
 import("//build/config/win/console_app.gni")
 import("//build/config/win/manifest.gni")
 import("//build/toolchain/toolchain.gni")
+import("//chrome/browser/buildflags.gni")
 import("//chrome/chrome_paks.gni")
 import("//chrome/common/features.gni")
 import("//chrome/process_version_rc_template.gni")
-import("//components/exo/buildflags.gni")
 import("//components/gwp_asan/buildflags/buildflags.gni")
 import("//components/nacl/features.gni")
 import("//components/optimization_guide/features.gni")
@@ -45,9 +45,9 @@ if (is_android) {
   import("//build/config/mac/mac_sdk.gni")
   import("//build/config/mac/rules.gni")
   import("//build/util/branding.gni")
-  import("//build/util/version.gni")
   import("//chrome/browser/buildflags.gni")
   import("//chrome/updater/branding.gni")
+  import("//chrome/version.gni")
   import("//content/public/app/mac_helpers.gni")
   import("//media/cdm/library_cdm/cdm_paths.gni")
   import("//third_party/icu/config.gni")
@@ -58,6 +58,12 @@ declare_args() {
   # action("keystone_registration_framework") below).  There are some tests
   # where we'd like for it to be disabled. (https://crbug.com/909080)
   enable_keystone_registration_framework = true
+
+  # On macOS, `is_chrome_branded` builds that have been signed locally will not
+  # launch because certain entitlements are tied to the official Google code
+  # signing identity. If `include_branded_entitlements` is set to false, these
+  # entitlements will be skipped.
+  include_branded_entitlements = true
 }
 
 assert(!is_ios, "Chromium/iOS shouldn't use anything in //chrome")
@@ -89,6 +95,7 @@ if (is_win) {
   }
 }
 
+# This does not currently work. See crbug.com/1311822.
 # This target exists above chrome and it's main components in the dependency
 # tree as a central place to put assert_no_deps annotations. Since this depends
 # on Chrome and the main DLLs it uses, it will transitively assert that those
@@ -111,6 +118,7 @@ group("assert_no_deps") {
   # //chrome/installer/util/BUILD.gn.
   assert_no_deps = [ "//chrome/installer/util:strings" ]
 }
+
 if (!is_android && !is_mac) {
   group("chrome") {
     public_deps = [ ":chrome_initial" ]
@@ -153,18 +161,26 @@ if (!is_android && !is_mac) {
     data_deps = []
 
     if (is_chromeos_ash) {
-      data_deps += [ "//sandbox/linux:chrome_sandbox" ]
-      deps += [ "//components/exo/wayland:weston_test_stub" ]
+      data_deps += [
+        "//components/variations/cros:evaluate_seed",
+        "//sandbox/linux:chrome_sandbox",
+      ]
+      deps += [
+        "//components/exo/wayland:ui_controls_protocol_stub",
+        "//components/exo/wayland:weston_test_stub",
+      ]
     }
 
     if (also_build_lacros_chrome_for_architecture != "") {
       data_deps += [ "//chrome:chrome(//build/toolchain/cros:lacros_clang)" ]
     }
 
-    if (is_win && !use_qt) {
+    if (is_win && !is_qtwebengine) {
       sources += [
         "app/chrome_exe.rc",
         "app/chrome_exe_main_win.cc",
+        "app/delay_load_failure_hook_win.cc",
+        "app/delay_load_failure_hook_win.h",
         "app/main_dll_loader_win.cc",
         "app/main_dll_loader_win.h",
         "common/crash_keys.cc",
@@ -180,6 +196,7 @@ if (!is_android && !is_mac) {
         "//base",
         "//build:branding_buildflags",
         "//chrome/app:chrome_exe_main_exports",
+        "//chrome/app:exit_code_watcher",
         "//chrome/app/version_assembly:chrome_exe_manifest",
         "//chrome/browser:active_use_util",
         "//chrome/browser:chrome_process_finder",
@@ -190,10 +207,10 @@ if (!is_android && !is_mac) {
         "//chrome/install_static:secondary_module",
         "//chrome/installer/util:constants",
         "//chrome/installer/util:did_run_support",
-        "//components/browser_watcher:browser_watcher_client",
         "//components/crash/core/app",
         "//components/crash/core/app:run_as_crashpad_handler",
         "//components/crash/core/common",
+        "//components/crash/win:chrome_wer",
         "//components/flags_ui:switches",
         "//content:sandbox_helper_win",
         "//content/public/common:static_switches",
@@ -294,6 +311,12 @@ if (!is_android && !is_mac) {
         ldflags += [ "-L" + rebase_path(root_out_dir) ]
       }
 
+      # On Chrome OS builds (for both ash-chrome and lacros-chrome), put
+      # a metadata.json file in root directory containing Chrome version.
+      if (is_chromeos) {
+        data_deps += [ "//build:version_metadata" ]
+      }
+
       # Chrome OS debug builds for arm need to pass --long-plt to the linker.
       # See https://bugs.chromium.org/p/chromium/issues/detail?id=583532
       if (is_chromeos_ash && is_debug && target_cpu == "arm") {
@@ -313,7 +336,13 @@ if (!is_android && !is_mac) {
       }
 
       if (is_chromeos_lacros) {
-        deps += [ "//chromeos/crosapi/mojom" ]
+        deps += [
+          "//chromeos/crosapi/cpp:crosapi_constants",
+          "//chromeos/crosapi/mojom",
+          "//chromeos/lacros:lacros_paths",
+          "//chromeos/startup",
+          "//ui/base",
+        ]
       }
     }
 
@@ -357,6 +386,7 @@ if (is_win) {
     configs += [ "//build/config/compiler:wexit_time_destructors" ]
     configs -= [ "//build/config/compiler:thinlto_optimize_default" ]
     configs += [ "//build/config/compiler:thinlto_optimize_max" ]
+
     defines = []
 
     sources = [
@@ -381,13 +411,11 @@ if (is_win) {
       "//chrome/common/profiler",
       "//chrome/install_static:install_static_util",
       "//chrome/install_static:secondary_module",
-      "//components/browser_watcher:stability_client",
       "//components/crash/core/app",
       "//components/policy:generated",
-      "//content/app/resources",
       "//content/public/app",
       "//crypto",
-      "//headless:headless_renderer",
+      "//headless:headless_non_renderer",
       "//headless:headless_shell_browser_lib",
       "//net:net_resources",
       "//ppapi/buildflags",
@@ -444,16 +472,18 @@ if (is_win) {
       "--scm=1",
       "--bundle_id=$chrome_mac_bundle_id",
     ]
-    if (is_chrome_branded) {
-      args += [ "--keystone=1" ]
-      if (current_cpu == "arm64") {
-        args += [ "--keystone-base-tag=arm64" ]
+    if (enable_updater) {
+      args += [ "--privileged_helper_id=$privileged_helper_name" ]
+      if (is_chrome_branded) {
+        args += [ "--keystone=1" ]
+        if (current_cpu == "arm64") {
+          args += [ "--keystone-base-tag=arm64" ]
+        }
+      } else {
+        args += [ "--keystone=0" ]
       }
     } else {
       args += [ "--keystone=0" ]
-    }
-    if (enable_chromium_updater) {
-      args += [ "--privileged_helper_id=$privileged_helper_name" ]
     }
   }
 
@@ -475,6 +505,7 @@ if (is_win) {
       ":chrome_app_strings_bundle_data",
       ":chrome_resources",
       ":chrome_versioned_bundle_data",
+      ":chromium_updater_privileged_helper",
       "//base/allocator:early_zone_registration_mac",
       "//build:branding_buildflags",
       "//chrome/common:buildflags",
@@ -504,10 +535,6 @@ if (is_win) {
       # This is a bit of a hack, since GN deliberately terminates its search
       # for runtime_deps at create_bundle nodes (https://crbug.com/1010347).
       data_deps = [ ":chrome_framework" ]
-    }
-
-    if (enable_chromium_updater) {
-      deps += [ ":chromium_updater_privileged_helper" ]
     }
   }
 
@@ -556,7 +583,7 @@ if (is_win) {
     args =
         [
           "-b",
-          "${branding_path_component}_strings",
+          "${branding_path_product}_strings",
           "-v",
           chrome_version_full,
           "-g",
@@ -633,15 +660,13 @@ if (is_win) {
     }
   }
 
-  if (enable_chromium_updater) {
-    bundle_data("chromium_updater_privileged_helper") {
-      sources = [ "$root_out_dir/$privileged_helper_name" ]
-      outputs = [
-        "{{bundle_contents_dir}}/Library/LaunchServices/{{source_file_part}}",
-      ]
+  bundle_data("chromium_updater_privileged_helper") {
+    sources = [ "$root_out_dir/$privileged_helper_name" ]
+    outputs = [
+      "{{bundle_contents_dir}}/Library/LaunchServices/{{source_file_part}}",
+    ]
 
-      public_deps = [ "//chrome/updater/mac:privileged_helper" ]
-    }
+    public_deps = [ "//chrome/updater/mac:privileged_helper" ]
   }
 
   action("clean_up_old_versions") {
@@ -676,7 +701,7 @@ if (is_win) {
 
   compile_entitlements("entitlements") {
     entitlements_templates = [ "app/app-entitlements.plist" ]
-    if (is_chrome_branded) {
+    if (is_chrome_branded && include_branded_entitlements) {
       # These entitlements are bound to the official Google Chrome signing
       # certificate and will not necessarily work in any other build.
       entitlements_templates += [ "app/app-entitlements-chrome.plist" ]
@@ -873,18 +898,18 @@ if (is_win) {
       }
     }
 
-    if (enable_chromium_updater) {
-      # A stable updater from CIPD is bundled with official builds only. For
-      # local builds, a locally built updater will be bundled into the app.
-      # TODO(crbug.com/1134642): Add ChromiumUpdater app to CIPD for use in
-      # official builds.
-      sources += [ "$root_out_dir/${updater_product_full_name}.app" ]
+    if (enable_updater) {
+      if (is_chrome_branded) {
+        sources += [ "//third_party/updater/chrome_mac_universal_prod/${updater_product_full_name}.app" ]
+      } else {
+        sources += [ "$root_out_dir/${updater_product_full_name}.app" ]
 
-      public_deps += [
-        "//chrome/updater/mac:browser_install_script",
-        "//chrome/updater/mac:updater_bundle",
-        "//chrome/updater/mac:updater_install_script",
-      ]
+        public_deps += [
+          "//chrome/updater/mac:browser_install_script",
+          "//chrome/updater/mac:updater_bundle",
+          "//chrome/updater/mac:updater_install_script",
+        ]
+      }
     }
   }
 
@@ -1215,7 +1240,7 @@ if (is_win) {
 
   # TOOD(crbug/1163903#c8) - thakis@ look into why profile and coverage
   # instrumentation adds these symbols in different orders
-  if (!is_component_build && chrome_pgo_phase != 1) {
+  if (!is_component_build && chrome_pgo_phase != 1 && !using_sanitizer) {
     action("verify_chrome_framework_order") {
       script = "//chrome/tools/build/mac/verify_order.py"
       stamp_file = "$target_out_dir/run_$target_name.stamp"
@@ -1286,6 +1311,8 @@ if (is_win) {
                rebase_path(get_label_info(dump_syms, "root_out_dir") + "/" +
                                get_label_info(dump_syms, "name"),
                            root_build_dir),
+               "-d",
+               "-m",
                "-g",
                rebase_path(
                    "$root_out_dir/{{source_file_part}}.dSYM/Contents/Resources/DWARF/{{source_file_part}}",
@@ -1376,9 +1403,9 @@ group("dependencies") {
     "//chrome/gpu",
     "//chrome/renderer",
     "//chrome/utility",
+    "//components/about_ui",
     "//components/gwp_asan/buildflags",
     "//components/heap_profiling/in_process",
-    "//components/power_scheduler",
     "//components/services/heap_profiling",
     "//components/startup_metric_utils/browser",
     "//components/sync",
@@ -1391,11 +1418,11 @@ group("dependencies") {
     "//v8:v8_headers",
   ]
 
-  if (enable_plugins) {
+  if (enable_ppapi) {
     public_deps += [ "//ppapi/host" ]
   }
 
-  if (enable_basic_printing) {
+  if (enable_printing) {
     public_deps += [ "//printing" ]
   }
 
@@ -1424,9 +1451,9 @@ group("dependencies") {
   if (is_chromeos_ash) {
     public_deps += [
       "//ash/constants",
-      "//chrome/browser/chromeos",
+      "//chrome/browser/ash",
       "//chromeos",
-      "//chromeos/memory",
+      "//chromeos/ash/components/memory",
     ]
   }
 
@@ -1561,12 +1588,14 @@ if (!is_android) {
 }
 
 repack("unit_tests_pak") {
+  testonly = true
   sources = [ "$root_gen_dir/chrome/chrome_test_resources.pak" ]
   output = "$root_out_dir/unit_tests.pak"
   deps = [ "//chrome/test/data:chrome_test_resources" ]
 }
 
 repack("browser_tests_pak") {
+  testonly = true
   sources = [ "$root_gen_dir/chrome/webui_test_resources.pak" ]
   output = "$root_out_dir/browser_tests.pak"
   deps = [ "//chrome/test/data:webui_test_resources" ]
@@ -1586,18 +1615,8 @@ group("strings") {
 }
 
 if (is_android) {
-  java_cpp_enum("assist_ranker_prediction_enum_javagen") {
-    sources = [
-      "browser/android/contextualsearch/contextual_search_ranker_logger_impl.h",
-    ]
-  }
-
   java_cpp_enum("partner_bookmarks_javagen") {
     sources = [ "browser/android/bookmarks/partner_bookmarks_reader.h" ]
-  }
-
-  java_cpp_enum("quick_action_category_enum_javagen") {
-    sources = [ "browser/android/contextualsearch/resolved_search_term.h" ]
   }
 
   java_cpp_enum("offline_pages_enum_javagen") {
@@ -1610,10 +1629,6 @@ if (is_android) {
       "browser/download/download_dialog_types.h",
       "browser/download/download_prompt_status.h",
     ]
-  }
-
-  java_cpp_enum("instant_apps_reasons_enum_javagen") {
-    sources = [ "browser/android/instantapps/instant_apps_settings.cc" ]
   }
 
   java_cpp_enum("supervised_user_url_filter_enum_javagen") {
@@ -1674,7 +1689,10 @@ if (is_android) {
     }
 
     if (is_android) {
-      deps += [ "//components/crash/android:crash_android" ]
+      deps += [
+        "//chrome/browser/flags:flags_android",
+        "//components/crash/android:crash_android",
+      ]
     }
 
     if (is_chromeos_ash) {
@@ -1831,11 +1849,63 @@ if (is_linux || is_chromeos) {
 }
 
 if (is_chromeos_lacros && is_official_build) {
+  # This target is responsible for stripping symbols out of lacros files.
+  # Adding/removing targets here, you also need a corresponding change
+  # in src-internal for the release builder.
+  group("strip_lacros_files") {
+    deps = [
+      ":strip_chrome_binary",
+      ":strip_chrome_crashpad_handler",
+      ":strip_libegl_so",
+      ":strip_libglesv2_so",
+      ":strip_nacl_helper",
+    ]
+    if (target_cpu == "arm" || target_cpu == "arm64") {
+      deps += [ ":strip_nacl_helper_bootstrap" ]
+    }
+  }
+
   # This will strip chrome binary and produce chrome.debug with symbols.
   strip_binary("strip_chrome_binary") {
     binary_input = "$root_out_dir/chrome"
     symbol_output = "$root_out_dir/chrome.debug"
     stripped_binary_output = "$root_out_dir/chrome.stripped"
     deps = [ ":chrome" ]
+  }
+  strip_binary("strip_chrome_crashpad_handler") {
+    binary_input = "$root_out_dir/chrome_crashpad_handler"
+    symbol_output = "$root_out_dir/chrome_crashpad_handler.debug"
+    stripped_binary_output = "$root_out_dir/chrome_crashpad_handler.stripped"
+    deps = [ "//components/crash/core/app:chrome_crashpad_handler" ]
+  }
+  strip_binary("strip_libegl_so") {
+    binary_input = "$root_out_dir/libEGL.so"
+    symbol_output = "$root_out_dir/libEGL.so.debug"
+    stripped_binary_output = "$root_out_dir/libEGL.so.stripped"
+    deps = [ "//third_party/angle:libEGL" ]
+  }
+  strip_binary("strip_libglesv2_so") {
+    binary_input = "$root_out_dir/libGLESv2.so"
+    symbol_output = "$root_out_dir/libGLESv2.so.debug"
+    stripped_binary_output = "$root_out_dir/libGLESv2.so.stripped"
+    deps = [ "//third_party/angle:libGLESv2" ]
+  }
+  strip_binary("strip_nacl_helper") {
+    binary_input = "$root_out_dir/nacl_helper"
+    symbol_output = "$root_out_dir/nacl_helper.debug"
+    stripped_binary_output = "$root_out_dir/nacl_helper.stripped"
+    deps = [ "//components/nacl/loader:nacl_helper" ]
+  }
+  if (target_cpu == "arm" || target_cpu == "arm64") {
+    strip_binary("strip_nacl_helper_bootstrap") {
+      binary_input = "$root_out_dir/nacl_helper_bootstrap"
+      symbol_output = "$root_out_dir/nacl_helper_bootstrap.debug"
+      stripped_binary_output = "$root_out_dir/nacl_helper_bootstrap.stripped"
+      if (target_cpu == "arm") {
+        deps = [ "//native_client/src/trusted/service_runtime/linux:bootstrap" ]
+      } else {
+        deps = [ "//components/nacl/loader:nacl_helper_bootstrap" ]
+      }
+    }
   }
 }

@@ -28,7 +28,6 @@
 
 #include "loader.h"
 #include "log.h"
-#include "vk_loader_platform.h"
 
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC optimize(3)  // force gcc to use tail-calls
@@ -49,7 +48,7 @@
         struct loader_icd_term *icd_term = phys_dev_term->this_icd_term;                                           \
         struct loader_instance *inst = (struct loader_instance *)icd_term->this_instance;                          \
         if (NULL == icd_term->phys_dev_ext[num]) {                                                                 \
-            loader_log(inst, VULKAN_LOADER_ERROR_BIT, 0, "Extension %s not supported for this physical device",    \
+            loader_log(inst, VULKAN_LOADER_ERROR_BIT, 0, "Function %s not supported for this physical device",    \
                        inst->phys_dev_ext_disp_functions[num]);                                                    \
         }                                                                                                          \
         icd_term->phys_dev_ext[num](phys_dev_term->phys_dev);                                                      \

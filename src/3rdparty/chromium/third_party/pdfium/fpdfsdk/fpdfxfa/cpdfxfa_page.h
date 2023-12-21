@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -42,7 +42,7 @@ class CPDFXFA_Page final : public IPDF_Page {
       const CFX_PointF& page_point) const override;
 
   bool LoadPage();
-  void LoadPDFPageFromDict(CPDF_Dictionary* pPageDict);
+  void LoadPDFPageFromDict(RetainPtr<CPDF_Dictionary> pPageDict);
   int GetPageIndex() const { return m_iPageIndex; }
   void SetXFAPageViewIndex(int index) { m_iPageIndex = index; }
   CXFA_FFPageView* GetXFAPageView() const;

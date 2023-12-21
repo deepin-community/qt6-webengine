@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -148,7 +148,7 @@ class EnumSet {
       return i;
     }
 
-    raw_ptr<const EnumBitSet> enums_;
+    raw_ptr<const EnumBitSet, DanglingUntriaged> enums_;
     size_t i_;
   };
 
@@ -253,6 +253,15 @@ class EnumSet {
   // Removes all values from our set.
   void Clear() { enums_.reset(); }
 
+  // Conditionally puts or removes `value`, based on `should_be_present`.
+  void PutOrRemove(E value, bool should_be_present) {
+    if (should_be_present) {
+      Put(value);
+    } else {
+      Remove(value);
+    }
+  }
+
   // Returns true iff the given value is in range and a member of our set.
   constexpr bool Has(E value) const {
     return InRange(value) && enums_[ToIndex(value)];
@@ -261,6 +270,11 @@ class EnumSet {
   // Returns true iff the given set is a subset of our set.
   bool HasAll(EnumSet other) const {
     return (enums_ & other.enums_) == other.enums_;
+  }
+
+  // Returns true if the given set contains any value of our set.
+  bool HasAny(EnumSet other) const {
+    return (enums_ & other.enums_).count() > 0;
   }
 
   // Returns true iff our set is empty.

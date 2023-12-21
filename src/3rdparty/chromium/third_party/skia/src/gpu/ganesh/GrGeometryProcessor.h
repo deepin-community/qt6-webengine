@@ -8,10 +8,12 @@
 #ifndef GrGeometryProcessor_DEFINED
 #define GrGeometryProcessor_DEFINED
 
+#include "include/gpu/GrBackendSurface.h"
 #include "src/gpu/Swizzle.h"
 #include "src/gpu/ganesh/GrColor.h"
 #include "src/gpu/ganesh/GrFragmentProcessor.h"
 #include "src/gpu/ganesh/GrProcessor.h"
+#include "src/gpu/ganesh/GrSamplerState.h"
 #include "src/gpu/ganesh/GrShaderCaps.h"
 #include "src/gpu/ganesh/GrShaderVar.h"
 #include "src/gpu/ganesh/glsl/GrGLSLProgramDataManager.h"
@@ -194,10 +196,6 @@ public:
     size_t vertexStride() const { return fVertexAttributes.stride(); }
     size_t instanceStride() const { return fInstanceAttributes.stride(); }
 
-    bool willUseTessellationShaders() const {
-        return fShaders & (kTessControl_GrShaderFlag | kTessEvaluation_GrShaderFlag);
-    }
-
     /**
      * Computes a key for the transforms owned by an FP based on the shader code that will be
      * emitted by the primitive processor to implement them.
@@ -243,9 +241,6 @@ protected:
         SkASSERT(attrCount >= 0);
         fInstanceAttributes.initImplicit(attrs, attrCount);
     }
-    void setWillUseTessellationShaders() {
-        fShaders |= kTessControl_GrShaderFlag | kTessEvaluation_GrShaderFlag;
-    }
     void setTextureSamplerCnt(int cnt) {
         SkASSERT(cnt >= 0);
         fTextureSamplerCnt = cnt;
@@ -264,8 +259,6 @@ protected:
 
 private:
     virtual const TextureSampler& onTextureSampler(int) const { return IthTextureSampler(0); }
-
-    GrShaderFlags fShaders = kVertex_GrShaderFlag | kFragment_GrShaderFlag;
 
     AttributeSet fVertexAttributes;
     AttributeSet fInstanceAttributes;
@@ -348,25 +341,10 @@ public:
                          const GrShaderCaps&,
                          const GrGeometryProcessor&) = 0;
 
-    // We use these methods as a temporary back door to inject OpenGL tessellation code. Once
-    // tessellation is supported by SkSL we can remove these.
-    virtual SkString getTessControlShaderGLSL(const GrGeometryProcessor&,
-                                              const char* versionAndExtensionDecls,
-                                              const GrGLSLUniformHandler&,
-                                              const GrShaderCaps&) const {
-        SK_ABORT("Not implemented.");
-    }
-    virtual SkString getTessEvaluationShaderGLSL(const GrGeometryProcessor&,
-                                                 const char* versionAndExtensionDecls,
-                                                 const GrGLSLUniformHandler&,
-                                                 const GrShaderCaps&) const {
-        SK_ABORT("Not implemented.");
-    }
-
     // GPs that use writeOutputPosition and/or writeLocalCoord must incorporate the matrix type
     // into their key, and should use this function or one of the other related helpers.
     static uint32_t ComputeMatrixKey(const GrShaderCaps& caps, const SkMatrix& mat) {
-        if (!caps.reducedShaderMode()) {
+        if (!caps.fReducedShaderMode) {
             if (mat.isIdentity()) {
                 return 0b00;
             }

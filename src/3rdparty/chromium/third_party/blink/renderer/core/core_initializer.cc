@@ -30,7 +30,6 @@
 
 #include "third_party/blink/renderer/core/core_initializer.h"
 
-#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/web/blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/binding_security.h"
@@ -64,6 +63,7 @@
 #include "third_party/blink/renderer/core/xml_names.h"
 #include "third_party/blink/renderer/core/xmlns_names.h"
 #include "third_party/blink/renderer/platform/fonts/font_global_context.h"
+#include "third_party/blink/renderer/platform/loader/fetch/delivery_type_names.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_initiator_type_names.h"
 #include "third_party/blink/renderer/platform/network/http_names.h"
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
@@ -107,14 +107,14 @@ void CoreInitializer::Initialize() {
       xmlns_names::kAttrsCount;
 
   const unsigned kCoreStaticStringsCount =
-      kQualifiedNamesCount + event_interface_names::kNamesCount +
-      event_target_names::kNamesCount + event_type_names::kNamesCount +
-      fetch_initiator_type_names::kNamesCount + font_family_names::kNamesCount +
-      html_tokenizer_names::kNamesCount + http_names::kNamesCount +
-      input_type_names::kNamesCount + keywords::kNamesCount +
-      media_feature_names::kNamesCount + media_type_names::kNamesCount +
-      performance_entry_names::kNamesCount + pointer_type_names::kNamesCount +
-      shadow_element_names::kNamesCount;
+      kQualifiedNamesCount + delivery_type_names::kNamesCount +
+      event_interface_names::kNamesCount + event_target_names::kNamesCount +
+      event_type_names::kNamesCount + fetch_initiator_type_names::kNamesCount +
+      font_family_names::kNamesCount + html_tokenizer_names::kNamesCount +
+      http_names::kNamesCount + input_type_names::kNamesCount +
+      keywords::kNamesCount + media_feature_names::kNamesCount +
+      media_type_names::kNamesCount + performance_entry_names::kNamesCount +
+      pointer_type_names::kNamesCount + shadow_element_names::kNamesCount;
 
   StringImpl::ReserveStaticStringsCapacityForSize(
       kCoreStaticStringsCount + StringImpl::AllStaticStrings().size());
@@ -129,6 +129,7 @@ void CoreInitializer::Initialize() {
   xml_names::Init();
   xmlns_names::Init();
 
+  delivery_type_names::Init();
   event_interface_names::Init();
   event_target_names::Init();
   event_type_names::Init();
@@ -163,8 +164,7 @@ void CoreInitializer::Initialize() {
 
   FontGlobalContext::Init();
 
-  if (base::FeatureList::IsEnabled(features::kDefaultStyleSheetsEarlyInit))
-    CSSDefaultStyleSheets::Init();
+  CSSDefaultStyleSheets::Init();
 }
 
 }  // namespace blink

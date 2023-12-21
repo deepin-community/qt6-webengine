@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -102,9 +102,7 @@ CJS_Result CJS_Annot::get_type(CJS_Runtime* pRuntime) {
     return CJS_Result::Failure(JSMessage::kBadObjectError);
 
   return CJS_Result::Success(pRuntime->NewString(
-      WideString::FromDefANSI(
-          CPDF_Annot::AnnotSubtypeToString(pBAAnnot->GetAnnotSubtype())
-              .AsStringView())
+      CPDF_Annot::AnnotSubtypeToString(pBAAnnot->GetAnnotSubtype())
           .AsStringView()));
 }
 

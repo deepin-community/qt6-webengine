@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,13 +9,12 @@
 #include <stdint.h>
 #include <memory>
 
-#include "base/callback.h"
-#include "base/metrics/user_metrics_action.h"
+#include "base/functional/callback_forward.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/tracing/protos/chrome_track_event.pbzero.h"
+#include "components/attribution_reporting/os_support.mojom-forward.h"
 #include "content/common/content_export.h"
 #include "content/public/child/child_thread.h"
-#include "ipc/ipc_channel_proxy.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_proto.h"
@@ -34,15 +33,16 @@ enum class WebRendererProcessType;
 }
 }  // namespace blink
 
+namespace perfetto::protos::pbzero {
+class RenderProcessHost;
+}
+
 namespace IPC {
+class Listener;
 class MessageFilter;
 class SyncChannel;
 class SyncMessageFilter;
 }  // namespace IPC
-
-namespace v8 {
-class Extension;
-}  // namespace v8
 
 namespace content {
 class RenderThreadObserver;
@@ -78,7 +78,8 @@ class CONTENT_EXPORT RenderThread : virtual public ChildThread {
   virtual bool GenerateFrameRoutingID(
       int32_t& routing_id,
       blink::LocalFrameToken& frame_token,
-      base::UnguessableToken& devtools_frame_token) = 0;
+      base::UnguessableToken& devtools_frame_token,
+      blink::DocumentToken& document_token) = 0;
 
   // These map to IPC::ChannelProxy methods.
   virtual void AddFilter(IPC::MessageFilter* filter) = 0;
@@ -88,14 +89,11 @@ class CONTENT_EXPORT RenderThread : virtual public ChildThread {
   virtual void AddObserver(RenderThreadObserver* observer) = 0;
   virtual void RemoveObserver(RenderThreadObserver* observer) = 0;
 
-  // Set the WebResourceRequestSender delegate object for this process.
+  // Set the ResourceRequestSender delegate object for this process.
   // This does not take the ownership of the delegate. It is expected that the
   // delegate is kept alive while a request may be dispatched.
   virtual void SetResourceRequestSenderDelegate(
       blink::WebResourceRequestSenderDelegate* delegate) = 0;
-
-  // Registers the given V8 extension with WebKit.
-  virtual void RegisterExtension(std::unique_ptr<v8::Extension> extension) = 0;
 
   // Post task to all worker threads. Returns number of workers.
   virtual int PostTaskToAllWebWorkers(base::RepeatingClosure closure) = 0;
@@ -120,6 +118,12 @@ class CONTENT_EXPORT RenderThread : virtual public ChildThread {
   virtual void WriteIntoTrace(
       perfetto::TracedProto<perfetto::protos::pbzero::RenderProcessHost>
           proto) = 0;
+
+  // Returns whether OS-level support is enabled for Attribution Reporting API.
+  // See
+  // https://github.com/WICG/attribution-reporting-api/blob/main/app_to_web.md.
+  virtual attribution_reporting::mojom::OsSupport
+  GetOsSupportForAttributionReporting() = 0;
 };
 
 }  // namespace content

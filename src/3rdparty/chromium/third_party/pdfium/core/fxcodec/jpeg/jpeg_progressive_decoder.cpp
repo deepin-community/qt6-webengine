@@ -1,4 +1,4 @@
-// Copyright 2020 PDFium Authors. All rights reserved.
+// Copyright 2020 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,6 @@
 #include "core/fxcodec/fx_codec.h"
 #include "core/fxcodec/jpeg/jpeg_common.h"
 #include "core/fxcodec/scanlinedecoder.h"
-#include "core/fxcrt/fx_memory_wrappers.h"
 #include "core/fxcrt/fx_safe_types.h"
 #include "core/fxge/dib/cfx_dibbase.h"
 #include "core/fxge/dib/fx_dib.h"
@@ -156,7 +155,7 @@ FX_FILESIZE JpegProgressiveDecoder::GetAvailInput(Context* pContext) const {
 
 bool JpegProgressiveDecoder::Input(Context* pContext,
                                    RetainPtr<CFX_CodecMemory> codec_memory) {
-  pdfium::span<uint8_t> src_buf = codec_memory->GetSpan();
+  pdfium::span<uint8_t> src_buf = codec_memory->GetUnconsumedSpan();
   auto* ctx = static_cast<CJpegContext*>(pContext);
   if (ctx->m_SkipSize) {
     if (ctx->m_SkipSize > src_buf.size()) {

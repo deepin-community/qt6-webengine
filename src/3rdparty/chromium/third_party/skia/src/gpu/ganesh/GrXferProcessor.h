@@ -13,13 +13,14 @@
 #include "src/gpu/ganesh/GrNonAtomicRef.h"
 #include "src/gpu/ganesh/GrProcessor.h"
 #include "src/gpu/ganesh/GrProcessorAnalysis.h"
-#include "src/gpu/ganesh/GrSurfaceProxyView.h"
 #include "src/gpu/ganesh/glsl/GrGLSLUniformHandler.h"
 
 class GrGLSLXPFragmentBuilder;
 class GrGLSLProgramDataManager;
 struct GrShaderCaps;
-
+namespace skgpu {
+    class KeyBuilder;
+}
 /**
  * Barriers for blending. When a shader reads the dst directly, an Xfer barrier is sometimes
  * required after a pixel has been written, before it can be safely read again.
@@ -89,18 +90,8 @@ public:
         return kNone_GrXferBarrierType;
     }
 
-    struct BlendInfo {
-        SkDEBUGCODE(SkString dump() const;)
-
-        skgpu::BlendEquation fEquation = skgpu::BlendEquation::kAdd;
-        skgpu::BlendCoeff    fSrcBlend = skgpu::BlendCoeff::kOne;
-        skgpu::BlendCoeff    fDstBlend = skgpu::BlendCoeff::kZero;
-        SkPMColor4f          fBlendConstant = SK_PMColor4fTRANSPARENT;
-        bool                 fWriteColor = true;
-    };
-
-    inline BlendInfo getBlendInfo() const {
-        BlendInfo blendInfo;
+    inline skgpu::BlendInfo getBlendInfo() const {
+        skgpu::BlendInfo blendInfo;
         if (!this->willReadDstColor()) {
             this->onGetBlendInfo(&blendInfo);
         }
@@ -161,7 +152,7 @@ private:
      * subclass. When using dst reads, the base class controls the fixed-function blend state and
      * this method will not be called. The BlendInfo struct comes initialized to "no blending".
      */
-    virtual void onGetBlendInfo(BlendInfo*) const {}
+    virtual void onGetBlendInfo(skgpu::BlendInfo*) const {}
 
     virtual bool onIsEqual(const GrXferProcessor&) const = 0;
 

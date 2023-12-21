@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,10 @@
 #include <algorithm>
 #include <memory>
 
-#include "base/callback_helpers.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/sequence_checker.h"
 #include "base/synchronization/lock.h"
 #include "base/task/single_thread_task_runner.h"
 #include "third_party/blink/public/web/modules/mediastream/web_media_stream_utils.h"
@@ -99,12 +100,16 @@ class MediaStreamVideoWebRtcSink::WebRtcVideoSourceAdapter
       std::vector<scoped_refptr<media::VideoFrame>> scaled_frames,
       base::TimeTicks estimated_capture_time);
 
+  void OnNotifyVideoFrameDroppedOnIO();
+
  private:
   friend class WTF::ThreadSafeRefCounted<WebRtcVideoSourceAdapter>;
 
   void OnVideoFrameOnNetworkThread(
       scoped_refptr<media::VideoFrame> frame,
       std::vector<scoped_refptr<media::VideoFrame>> scaled_frames);
+
+  void OnNotifyVideoFrameDroppedOnNetworkThread();
 
   virtual ~WebRtcVideoSourceAdapter();
 
@@ -113,7 +118,7 @@ class MediaStreamVideoWebRtcSink::WebRtcVideoSourceAdapter
   // |render_thread_checker_| is bound to the main render thread.
   THREAD_CHECKER(render_thread_checker_);
   // Used to DCHECK that frames are called on the IO-thread.
-  THREAD_CHECKER(io_thread_checker_);
+  SEQUENCE_CHECKER(io_sequence_checker_);
 
   // Used for posting frames to libjingle's network thread. Accessed on the
   // IO-thread.
@@ -137,7 +142,7 @@ MediaStreamVideoWebRtcSink::WebRtcVideoSourceAdapter::WebRtcVideoSourceAdapter(
       libjingle_network_task_runner_(libjingle_network_task_runner),
       video_source_(source) {
   DCHECK(render_task_runner_->RunsTasksInCurrentSequence());
-  DETACH_FROM_THREAD(io_thread_checker_);
+  DETACH_FROM_SEQUENCE(io_sequence_checker_);
 }
 
 MediaStreamVideoWebRtcSink::WebRtcVideoSourceAdapter::
@@ -166,12 +171,23 @@ void MediaStreamVideoWebRtcSink::WebRtcVideoSourceAdapter::OnVideoFrameOnIO(
     scoped_refptr<media::VideoFrame> frame,
     std::vector<scoped_refptr<media::VideoFrame>> scaled_frames,
     base::TimeTicks estimated_capture_time) {
-  DCHECK_CALLED_ON_VALID_THREAD(io_thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(io_sequence_checker_);
   PostCrossThreadTask(
       *libjingle_network_task_runner_.get(), FROM_HERE,
       CrossThreadBindOnce(
           &WebRtcVideoSourceAdapter::OnVideoFrameOnNetworkThread,
           WrapRefCounted(this), std::move(frame), std::move(scaled_frames)));
+}
+
+void MediaStreamVideoWebRtcSink::WebRtcVideoSourceAdapter::
+    OnNotifyVideoFrameDroppedOnIO() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(io_sequence_checker_);
+  DVLOG(1) << __func__;
+  PostCrossThreadTask(
+      *libjingle_network_task_runner_.get(), FROM_HERE,
+      CrossThreadBindOnce(
+          &WebRtcVideoSourceAdapter::OnNotifyVideoFrameDroppedOnNetworkThread,
+          WrapRefCounted(this)));
 }
 
 void MediaStreamVideoWebRtcSink::WebRtcVideoSourceAdapter::
@@ -182,6 +198,14 @@ void MediaStreamVideoWebRtcSink::WebRtcVideoSourceAdapter::
   base::AutoLock auto_lock(video_source_stop_lock_);
   if (video_source_)
     video_source_->OnFrameCaptured(std::move(frame), std::move(scaled_frames));
+}
+
+void MediaStreamVideoWebRtcSink::WebRtcVideoSourceAdapter::
+    OnNotifyVideoFrameDroppedOnNetworkThread() {
+  DCHECK(libjingle_network_task_runner_->BelongsToCurrentThread());
+  base::AutoLock auto_lock(video_source_stop_lock_);
+  if (video_source_)
+    video_source_->OnNotifyFrameDropped();
 }
 
 MediaStreamVideoWebRtcSink::MediaStreamVideoWebRtcSink(
@@ -236,13 +260,18 @@ MediaStreamVideoWebRtcSink::MediaStreamVideoWebRtcSink(
           &WebRtcVideoSourceAdapter::OnVideoFrameOnIO, source_adapter_)),
       MediaStreamVideoSink::IsSecure::kNo,
       MediaStreamVideoSink::UsesAlpha::kNo);
+  video_track->SetSinkNotifyFrameDroppedCallback(
+      this, ConvertToBaseRepeatingCallback(CrossThreadBindRepeating(
+                &WebRtcVideoSourceAdapter::OnNotifyVideoFrameDroppedOnIO,
+                source_adapter_)));
+
   DVLOG(3) << "MediaStreamVideoWebRtcSink ctor() : is_screencast "
            << is_screencast;
 #endif
 }
 
 MediaStreamVideoWebRtcSink::~MediaStreamVideoWebRtcSink() {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DVLOG(3) << "MediaStreamVideoWebRtcSink dtor().";
   weak_factory_.InvalidateWeakPtrs();
   if (source_adapter_) {
@@ -252,13 +281,13 @@ MediaStreamVideoWebRtcSink::~MediaStreamVideoWebRtcSink() {
 }
 
 void MediaStreamVideoWebRtcSink::OnEnabledChanged(bool enabled) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   video_track_->set_enabled(enabled);
 }
 
 void MediaStreamVideoWebRtcSink::OnContentHintChanged(
     WebMediaStreamTrack::ContentHintType content_hint) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   video_track_->set_content_hint(
       ContentHintTypeToWebRtcContentHint(content_hint));
 }
@@ -266,7 +295,7 @@ void MediaStreamVideoWebRtcSink::OnContentHintChanged(
 void MediaStreamVideoWebRtcSink::OnVideoConstraintsChanged(
     absl::optional<double> min_fps,
     absl::optional<double> max_fps) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DVLOG(3) << __func__ << " min " << min_fps.value_or(-1) << " max "
            << max_fps.value_or(-1);
   video_source_proxy_->ProcessConstraints(

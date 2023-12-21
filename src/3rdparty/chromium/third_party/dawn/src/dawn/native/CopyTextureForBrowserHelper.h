@@ -19,23 +19,34 @@
 #include "dawn/native/ObjectBase.h"
 
 namespace dawn::native {
-    class DeviceBase;
-    struct Extent3D;
-    struct ImageCopyTexture;
-    struct CopyTextureForBrowserOptions;
+class DeviceBase;
+struct Extent3D;
+struct ImageCopyTexture;
+struct CopyTextureForBrowserOptions;
 
-    MaybeError ValidateCopyTextureForBrowser(DeviceBase* device,
-                                             const ImageCopyTexture* source,
-                                             const ImageCopyTexture* destination,
-                                             const Extent3D* copySize,
-                                             const CopyTextureForBrowserOptions* options);
+MaybeError ValidateCopyTextureForBrowser(DeviceBase* device,
+                                         const ImageCopyTexture* source,
+                                         const ImageCopyTexture* destination,
+                                         const Extent3D* copySize,
+                                         const CopyTextureForBrowserOptions* options);
 
-    MaybeError DoCopyTextureForBrowser(DeviceBase* device,
-                                       const ImageCopyTexture* source,
-                                       const ImageCopyTexture* destination,
-                                       const Extent3D* copySize,
-                                       const CopyTextureForBrowserOptions* options);
+MaybeError ValidateCopyExternalTextureForBrowser(DeviceBase* device,
+                                                 const ImageCopyExternalTexture* source,
+                                                 const ImageCopyTexture* destination,
+                                                 const Extent3D* copySize,
+                                                 const CopyTextureForBrowserOptions* options);
 
+MaybeError DoCopyTextureForBrowser(DeviceBase* device,
+                                   const ImageCopyTexture* source,
+                                   const ImageCopyTexture* destination,
+                                   const Extent3D* copySize,
+                                   const CopyTextureForBrowserOptions* options);
+
+MaybeError DoCopyExternalTextureForBrowser(DeviceBase* device,
+                                           const ImageCopyExternalTexture* source,
+                                           const ImageCopyTexture* destination,
+                                           const Extent3D* copySize,
+                                           const CopyTextureForBrowserOptions* options);
 }  // namespace dawn::native
 
 #endif  // SRC_DAWN_NATIVE_COPYTEXTUREFORBROWSERHELPER_H_

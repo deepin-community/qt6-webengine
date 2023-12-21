@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <string>
 #include <utility>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "base/values.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
@@ -58,7 +58,7 @@ class FontIndexer {
   void SetMoreSlopeChecks() { more_slope_checks_ = true; }
 
  private:
-  void FontListHasLoaded(std::unique_ptr<base::ListValue> list);
+  void FontListHasLoaded(base::Value::List list);
   void WaitForFontListToLoad();
 
   // Determines whether the fonts with |name| appear to vary along the specified

@@ -1,14 +1,14 @@
-// Copyright (c) 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/safe_browsing/content/browser/triggers/trigger_manager.h"
 
-#include "base/bind.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/content/browser/base_ui_manager.h"
 #include "components/safe_browsing/content/browser/threat_details.h"
@@ -148,15 +148,12 @@ bool TriggerManager::StartCollectingThreatDetails(
     const security_interstitials::UnsafeResource& resource,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     history::HistoryService* history_service,
-    base::RepeatingCallback<ChromeUserPopulation()>
-        get_user_population_callback,
     ReferrerChainProvider* referrer_chain_provider,
     const SBErrorOptions& error_display_options) {
   TriggerManagerReason unused_reason;
   return StartCollectingThreatDetailsWithReason(
       trigger_type, web_contents, resource, url_loader_factory, history_service,
-      get_user_population_callback, referrer_chain_provider,
-      error_display_options, &unused_reason);
+      referrer_chain_provider, error_display_options, &unused_reason);
 }
 
 bool TriggerManager::StartCollectingThreatDetailsWithReason(
@@ -165,8 +162,6 @@ bool TriggerManager::StartCollectingThreatDetailsWithReason(
     const security_interstitials::UnsafeResource& resource,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     history::HistoryService* history_service,
-    base::RepeatingCallback<ChromeUserPopulation()>
-        get_user_population_callback,
     ReferrerChainProvider* referrer_chain_provider,
     const SBErrorOptions& error_display_options,
     TriggerManagerReason* reason) {
@@ -184,8 +179,7 @@ bool TriggerManager::StartCollectingThreatDetailsWithReason(
   bool should_trim_threat_details = trigger_type == TriggerType::AD_SAMPLE;
   collectors->threat_details = ThreatDetails::NewThreatDetails(
       ui_manager_, web_contents, resource, url_loader_factory, history_service,
-      get_user_population_callback, referrer_chain_provider,
-      should_trim_threat_details,
+      referrer_chain_provider, should_trim_threat_details,
       base::BindOnce(&TriggerManager::ThreatDetailsDone,
                      weak_factory_.GetWeakPtr()));
   return true;
@@ -221,7 +215,7 @@ bool TriggerManager::FinishCollectingThreatDetails(
     // Find the data collector and tell it to finish collecting data. We expect
     // it to notify us when it's finished so we can clean up references to it.
 
-    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE,
         base::BindOnce(&ThreatDetails::FinishCollection,
                        collectors->threat_details->GetWeakPtr(), did_proceed,

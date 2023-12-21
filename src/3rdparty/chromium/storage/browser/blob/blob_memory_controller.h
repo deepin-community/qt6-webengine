@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,16 +15,16 @@
 #include <utility>
 #include <vector>
 
-#include "base/callback_forward.h"
-#include "base/callback_helpers.h"
 #include "base/component_export.h"
 #include "base/containers/lru_cache.h"
 #include "base/feature_list.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
+#include "base/functional/callback_forward.h"
+#include "base/functional/callback_helpers.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/memory_pressure_listener.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "storage/browser/blob/blob_storage_constants.h"
@@ -53,8 +53,6 @@ class ShareableFileReference;
 // This class can only be interacted with on the IO thread.
 class COMPONENT_EXPORT(STORAGE_BROWSER) BlobMemoryController {
  public:
-  static const base::Feature kInhibitBlobMemoryControllerMemoryPressureResponse;
-
   enum class Strategy {
     // We don't have enough memory for this blob.
     TOO_LARGE,
@@ -204,7 +202,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobMemoryController {
   // synchronously.
   void CallWhenStorageLimitsAreKnown(base::OnceClosure callback);
 
-  void set_amount_of_physical_memory_for_testing(int64_t amount_of_memory) {
+  void set_amount_of_physical_memory_for_testing(uint64_t amount_of_memory) {
     amount_of_memory_for_testing_ = amount_of_memory;
   }
 
@@ -253,8 +251,6 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobMemoryController {
       scoped_refptr<ShareableFileReference> file_reference,
       std::vector<scoped_refptr<ShareableBlobDataItem>> items,
       size_t total_items_size,
-      const char* evict_reason,
-      size_t memory_usage_before_eviction,
       std::pair<FileCreationInfo, int64_t /* avail_disk */> result);
 
   void OnMemoryPressure(
@@ -285,7 +281,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobMemoryController {
   bool did_calculate_storage_limits_ = false;
   std::vector<base::OnceClosure> on_calculate_limits_callbacks_;
 
-  absl::optional<int64_t> amount_of_memory_for_testing_;
+  absl::optional<uint64_t> amount_of_memory_for_testing_;
 
   // Memory bookkeeping. These numbers are all disjoint.
   // This is the amount of memory we're using for blobs in RAM, including the

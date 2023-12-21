@@ -18,6 +18,9 @@
 #include "quiche/quic/platform/api/quic_logging.h"
 
 namespace quic {
+namespace {
+
+}  // anonymous namespace
 
 QuicSendControlStream::QuicSendControlStream(QuicStreamId id,
                                              QuicSpdySession* spdy_session,
@@ -56,7 +59,7 @@ void QuicSendControlStream::MaybeSendSettingsFrame() {
   // https://tools.ietf.org/html/draft-ietf-quic-http-25#section-7.2.4.1
   // specifies that setting identifiers of 0x1f * N + 0x21 are reserved and
   // greasing should be attempted.
-  if (!GetQuicFlag(FLAGS_quic_enable_http3_grease_randomness)) {
+  if (!GetQuicFlag(quic_enable_http3_grease_randomness)) {
     settings.values[0x40] = 20;
   } else {
     uint32_t result;
@@ -66,43 +69,40 @@ void QuicSendControlStream::MaybeSendSettingsFrame() {
     settings.values[setting_id] = result;
   }
 
-  std::unique_ptr<char[]> buffer;
-  QuicByteCount frame_length =
-      HttpEncoder::SerializeSettingsFrame(settings, &buffer);
+  std::string settings_frame = HttpEncoder::SerializeSettingsFrame(settings);
   QUIC_DVLOG(1) << "Control stream " << id() << " is writing settings frame "
                 << settings;
   if (spdy_session_->debug_visitor()) {
     spdy_session_->debug_visitor()->OnSettingsFrameSent(settings);
   }
-  WriteOrBufferData(absl::string_view(buffer.get(), frame_length),
-                    /*fin = */ false, nullptr);
+  WriteOrBufferData(settings_frame, /*fin = */ false, nullptr);
   settings_sent_ = true;
 
   // https://tools.ietf.org/html/draft-ietf-quic-http-25#section-7.2.9
   // specifies that a reserved frame type has no semantic meaning and should be
   // discarded. A greasing frame is added here.
-  std::unique_ptr<char[]> grease;
-  QuicByteCount grease_length = HttpEncoder::SerializeGreasingFrame(&grease);
-  WriteOrBufferData(absl::string_view(grease.get(), grease_length),
-                    /*fin = */ false, nullptr);
+  WriteOrBufferData(HttpEncoder::SerializeGreasingFrame(), /*fin = */ false,
+                    nullptr);
 }
 
-void QuicSendControlStream::WritePriorityUpdate(
-    const PriorityUpdateFrame& priority_update) {
+void QuicSendControlStream::WritePriorityUpdate(QuicStreamId stream_id,
+                                                QuicStreamPriority priority) {
   QuicConnection::ScopedPacketFlusher flusher(session()->connection());
   MaybeSendSettingsFrame();
 
+  const std::string priority_field_value =
+      SerializePriorityFieldValue(priority);
+  PriorityUpdateFrame priority_update_frame{stream_id, priority_field_value};
   if (spdy_session_->debug_visitor()) {
-    spdy_session_->debug_visitor()->OnPriorityUpdateFrameSent(priority_update);
+    spdy_session_->debug_visitor()->OnPriorityUpdateFrameSent(
+        priority_update_frame);
   }
 
-  std::unique_ptr<char[]> buffer;
-  QuicByteCount frame_length =
-      HttpEncoder::SerializePriorityUpdateFrame(priority_update, &buffer);
+  std::string frame =
+      HttpEncoder::SerializePriorityUpdateFrame(priority_update_frame);
   QUIC_DVLOG(1) << "Control Stream " << id() << " is writing "
-                << priority_update;
-  WriteOrBufferData(absl::string_view(buffer.get(), frame_length), false,
-                    nullptr);
+                << priority_update_frame;
+  WriteOrBufferData(frame, false, nullptr);
 }
 
 void QuicSendControlStream::SendGoAway(QuicStreamId id) {
@@ -115,11 +115,7 @@ void QuicSendControlStream::SendGoAway(QuicStreamId id) {
     spdy_session_->debug_visitor()->OnGoAwayFrameSent(id);
   }
 
-  std::unique_ptr<char[]> buffer;
-  QuicByteCount frame_length =
-      HttpEncoder::SerializeGoAwayFrame(frame, &buffer);
-  WriteOrBufferData(absl::string_view(buffer.get(), frame_length), false,
-                    nullptr);
+  WriteOrBufferData(HttpEncoder::SerializeGoAwayFrame(frame), false, nullptr);
 }
 
 }  // namespace quic

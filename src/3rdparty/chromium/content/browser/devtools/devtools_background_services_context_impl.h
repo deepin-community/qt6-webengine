@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
@@ -70,7 +70,7 @@ class CONTENT_EXPORT DevToolsBackgroundServicesContextImpl
   bool IsRecording(DevToolsBackgroundService service) override;
   void LogBackgroundServiceEvent(
       uint64_t service_worker_registration_id,
-      const url::Origin& origin,
+      blink::StorageKey storage_key,
       DevToolsBackgroundService service,
       const std::string& event_name,
       const std::string& instance_id,

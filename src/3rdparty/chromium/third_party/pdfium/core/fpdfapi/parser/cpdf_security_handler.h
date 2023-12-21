@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -24,7 +24,7 @@ class CPDF_SecurityHandler final : public Retainable {
   CONSTRUCT_VIA_MAKE_RETAIN;
 
   bool OnInit(const CPDF_Dictionary* pEncryptDict,
-              const CPDF_Array* pIdArray,
+              RetainPtr<const CPDF_Array> pIdArray,
               const ByteString& password);
   void OnCreate(CPDF_Dictionary* pEncryptDict,
                 const CPDF_Array* pIdArray,
@@ -90,7 +90,7 @@ class CPDF_SecurityHandler final : public Retainable {
   ByteString m_FileId;
   RetainPtr<const CPDF_Dictionary> m_pEncryptDict;
   std::unique_ptr<CPDF_CryptoHandler> m_pCryptoHandler;
-  uint8_t m_EncryptKey[32];
+  uint8_t m_EncryptKey[32] = {};
 };
 
 #endif  // CORE_FPDFAPI_PARSER_CPDF_SECURITY_HANDLER_H_

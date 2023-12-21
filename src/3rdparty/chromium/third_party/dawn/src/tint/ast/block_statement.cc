@@ -21,13 +21,19 @@ TINT_INSTANTIATE_TYPEINFO(tint::ast::BlockStatement);
 namespace tint::ast {
 
 BlockStatement::BlockStatement(ProgramID pid,
+                               NodeID nid,
                                const Source& src,
-                               const StatementList& stmts)
-    : Base(pid, src), statements(std::move(stmts)) {
-  for (auto* stmt : statements) {
-    TINT_ASSERT(AST, stmt);
-    TINT_ASSERT_PROGRAM_IDS_EQUAL_IF_VALID(AST, stmt, program_id);
-  }
+                               utils::VectorRef<const Statement*> stmts,
+                               utils::VectorRef<const Attribute*> attrs)
+    : Base(pid, nid, src), statements(std::move(stmts)), attributes(attrs) {
+    for (auto* stmt : statements) {
+        TINT_ASSERT(AST, stmt);
+        TINT_ASSERT_PROGRAM_IDS_EQUAL_IF_VALID(AST, stmt, program_id);
+    }
+    for (auto* attr : attributes) {
+        TINT_ASSERT(AST, attr);
+        TINT_ASSERT_PROGRAM_IDS_EQUAL_IF_VALID(AST, attr, program_id);
+    }
 }
 
 BlockStatement::BlockStatement(BlockStatement&&) = default;
@@ -35,10 +41,11 @@ BlockStatement::BlockStatement(BlockStatement&&) = default;
 BlockStatement::~BlockStatement() = default;
 
 const BlockStatement* BlockStatement::Clone(CloneContext* ctx) const {
-  // Clone arguments outside of create() call to have deterministic ordering
-  auto src = ctx->Clone(source);
-  auto stmts = ctx->Clone(statements);
-  return ctx->dst->create<BlockStatement>(src, stmts);
+    // Clone arguments outside of create() call to have deterministic ordering
+    auto src = ctx->Clone(source);
+    auto stmts = ctx->Clone(statements);
+    auto attrs = ctx->Clone(attributes);
+    return ctx->dst->create<BlockStatement>(src, std::move(stmts), std::move(attrs));
 }
 
 }  // namespace tint::ast

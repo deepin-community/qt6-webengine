@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -48,10 +48,7 @@ VideoPictureInPictureWindowControllerImpl::
     VideoPictureInPictureWindowControllerImpl(WebContents* web_contents)
     : WebContentsUserData<VideoPictureInPictureWindowControllerImpl>(
           *web_contents),
-      WebContentsObserver(web_contents) {
-  EnsureWindow();
-  DCHECK(window_) << "Picture in Picture requires a valid window.";
-}
+      WebContentsObserver(web_contents) {}
 
 void VideoPictureInPictureWindowControllerImpl::Show() {
   DCHECK(window_);
@@ -77,6 +74,11 @@ void VideoPictureInPictureWindowControllerImpl::Show() {
           media_session::mojom::MediaSessionAction::kToggleCamera);
   media_session_action_hang_up_handled_ = media_session->ShouldRouteAction(
       media_session::mojom::MediaSessionAction::kHangUp);
+  media_session_action_previous_slide_handled_ =
+      media_session->ShouldRouteAction(
+          media_session::mojom::MediaSessionAction::kPreviousSlide);
+  media_session_action_next_slide_handled_ = media_session->ShouldRouteAction(
+      media_session::mojom::MediaSessionAction::kNextSlide);
 
   UpdatePlayPauseButtonVisibility();
   window_->SetSkipAdButtonVisibility(media_session_action_skip_ad_handled_);
@@ -91,6 +93,10 @@ void VideoPictureInPictureWindowControllerImpl::Show() {
   window_->SetToggleCameraButtonVisibility(
       media_session_action_toggle_camera_handled_);
   window_->SetHangUpButtonVisibility(media_session_action_hang_up_handled_);
+  window_->SetNextSlideButtonVisibility(
+      media_session_action_next_slide_handled_);
+  window_->SetPreviousSlideButtonVisibility(
+      media_session_action_previous_slide_handled_);
   window_->ShowInactive();
   GetWebContentsImpl()->SetHasPictureInPictureVideo(true);
 }
@@ -121,9 +127,14 @@ void VideoPictureInPictureWindowControllerImpl::OnWindowDestroyed(
 void VideoPictureInPictureWindowControllerImpl::EmbedSurface(
     const viz::SurfaceId& surface_id,
     const gfx::Size& natural_size) {
-  EnsureWindow();
+  // If there is no window, then it's already been closed. A new call to
+  // StartSession is required, which will replace `surface_id_` anyway. For
+  // example, if the user closes the pip window, we will end up clearing
+  // `window_` as part of that. If the renderer is in the process up updating
+  // the SurfaceId, then we can get here without a window.
+  if (!window_)
+    return;
 
-  DCHECK(window_);
   DCHECK(active_session_);
   DCHECK(surface_id.is_valid());
 
@@ -161,6 +172,10 @@ WebContents* VideoPictureInPictureWindowControllerImpl::GetWebContents() {
   return web_contents();
 }
 
+WebContents* VideoPictureInPictureWindowControllerImpl::GetChildWebContents() {
+  return nullptr;
+}
+
 void VideoPictureInPictureWindowControllerImpl::UpdatePlaybackState() {
   if (!window_)
     return;
@@ -176,6 +191,8 @@ void VideoPictureInPictureWindowControllerImpl::UpdatePlaybackState() {
 }
 
 bool VideoPictureInPictureWindowControllerImpl::TogglePlayPause() {
+  // This comes from the window, rather than the renderer, so we must actually
+  // have a window at this point.
   DCHECK(window_);
   DCHECK(active_session_);
 
@@ -209,6 +226,7 @@ PictureInPictureResult VideoPictureInPictureWindowControllerImpl::StartSession(
     const gfx::Size& natural_size,
     bool show_play_pause_button,
     mojo::PendingRemote<blink::mojom::PictureInPictureSessionObserver> observer,
+    const gfx::Rect& source_bounds,
     mojo::PendingRemote<blink::mojom::PictureInPictureSession>* session_remote,
     gfx::Size* window_size) {
   auto result = GetWebContentsImpl()->EnterPictureInPicture();
@@ -221,14 +239,29 @@ PictureInPictureResult VideoPictureInPictureWindowControllerImpl::StartSession(
   if (active_session_)
     active_session_->Disconnect();
 
+  source_bounds_ = source_bounds;
+
   active_session_ = std::make_unique<PictureInPictureSession>(
       service, player_id, std::move(player_remote),
       session_remote->InitWithNewPipeAndPassReceiver(), std::move(observer));
 
+  // There can be a window already if this session is replacing an old one,
+  // without the old one being closed first.
+  if (!window_) {
+    window_ =
+        GetContentClient()->browser()->CreateWindowForVideoPictureInPicture(
+            this);
+  }
+  DCHECK(window_) << "Picture in Picture requires a valid window.";
+
+  // If the window is closed by the system, then the picture in picture session
+  // will end. The renderer must call `StartSession()` again.
   EmbedSurface(surface_id, natural_size);
   SetShowPlayPauseButton(show_play_pause_button);
   Show();
 
+  // TODO(crbug.com/1331248): Rather than set this synchronously, we should call
+  // back with the bounds once the window provides them.
   *window_size = GetSize();
   return result;
 }
@@ -251,6 +284,16 @@ void VideoPictureInPictureWindowControllerImpl::SetShowPlayPauseButton(
 void VideoPictureInPictureWindowControllerImpl::SkipAd() {
   if (media_session_action_skip_ad_handled_)
     MediaSession::Get(web_contents())->SkipAd();
+}
+
+void VideoPictureInPictureWindowControllerImpl::PreviousSlide() {
+  if (media_session_action_previous_slide_handled_)
+    MediaSession::Get(web_contents())->PreviousSlide();
+}
+
+void VideoPictureInPictureWindowControllerImpl::NextSlide() {
+  if (media_session_action_next_slide_handled_)
+    MediaSession::Get(web_contents())->NextSlide();
 }
 
 void VideoPictureInPictureWindowControllerImpl::NextTrack() {
@@ -331,6 +374,12 @@ void VideoPictureInPictureWindowControllerImpl::MediaSessionActionsChanged(
   media_session_action_hang_up_handled_ =
       actions.find(media_session::mojom::MediaSessionAction::kHangUp) !=
       actions.end();
+  media_session_action_previous_slide_handled_ =
+      actions.find(media_session::mojom::MediaSessionAction::kPreviousSlide) !=
+      actions.end();
+  media_session_action_next_slide_handled_ =
+      actions.find(media_session::mojom::MediaSessionAction::kNextSlide) !=
+      actions.end();
 
   if (!window_)
     return;
@@ -346,6 +395,10 @@ void VideoPictureInPictureWindowControllerImpl::MediaSessionActionsChanged(
   window_->SetToggleCameraButtonVisibility(
       media_session_action_toggle_camera_handled_);
   window_->SetHangUpButtonVisibility(media_session_action_hang_up_handled_);
+  window_->SetNextSlideButtonVisibility(
+      media_session_action_next_slide_handled_);
+  window_->SetPreviousSlideButtonVisibility(
+      media_session_action_previous_slide_handled_);
 }
 
 void VideoPictureInPictureWindowControllerImpl::MediaSessionPositionChanged(
@@ -417,12 +470,9 @@ void VideoPictureInPictureWindowControllerImpl::CloseInternal(
   surface_id_ = viz::SurfaceId();
 }
 
-void VideoPictureInPictureWindowControllerImpl::EnsureWindow() {
-  if (window_)
-    return;
-
-  window_ =
-      GetContentClient()->browser()->CreateWindowForVideoPictureInPicture(this);
+const gfx::Rect& VideoPictureInPictureWindowControllerImpl::GetSourceBounds()
+    const {
+  return source_bounds_;
 }
 
 absl::optional<gfx::Rect>

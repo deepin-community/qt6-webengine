@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,14 +10,13 @@
 #include <string>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/contains.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
-#include "content/public/browser/native_io_context.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_browser_context.h"
@@ -56,15 +55,11 @@ class FileSystemHelperTest : public testing::Test {
   FileSystemHelperTest() {
     auto* file_system_context =
         browser_context_.GetDefaultStoragePartition()->GetFileSystemContext();
-    auto* native_io_context =
-        browser_context_.GetDefaultStoragePartition()->GetNativeIOContext();
     helper_ = base::MakeRefCounted<FileSystemHelper>(
-        file_system_context, std::vector<storage::FileSystemType>(),
-        native_io_context);
+        file_system_context, std::vector<storage::FileSystemType>());
     content::RunAllTasksUntilIdle();
     canned_helper_ = base::MakeRefCounted<CannedFileSystemHelper>(
-        file_system_context, std::vector<storage::FileSystemType>(),
-        native_io_context);
+        file_system_context, std::vector<storage::FileSystemType>());
   }
 
   FileSystemHelperTest(const FileSystemHelperTest&) = delete;
@@ -79,7 +74,7 @@ class FileSystemHelperTest : public testing::Test {
   // Callback that should be executed in response to
   // storage::FileSystemContext::OpenFileSystem.
   void OpenFileSystemCallback(base::RunLoop* run_loop,
-                              const GURL& root,
+                              const storage::FileSystemURL& root,
                               const std::string& name,
                               base::File::Error error) {
     open_file_system_result_ = error;
@@ -93,7 +88,8 @@ class FileSystemHelperTest : public testing::Test {
     browser_context_.GetDefaultStoragePartition()
         ->GetFileSystemContext()
         ->OpenFileSystem(
-            blink::StorageKey(origin), type, open_mode,
+            blink::StorageKey::CreateFirstParty(origin),
+            /*bucket=*/absl::nullopt, type, open_mode,
             base::BindOnce(&FileSystemHelperTest::OpenFileSystemCallback,
                            base::Unretained(this), &run_loop));
     BlockUntilQuit(&run_loop);

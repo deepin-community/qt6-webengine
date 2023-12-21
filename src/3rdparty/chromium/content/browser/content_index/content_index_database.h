@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -173,7 +173,7 @@ class CONTENT_EXPORT ContentIndexDatabase {
   void BlockOrigin(const url::Origin& origin);
   void UnblockOrigin(const url::Origin& origin);
 
-  raw_ptr<ContentIndexProvider> provider_;
+  raw_ptr<ContentIndexProvider, DanglingUntriaged> provider_;
 
   // A map from origins to how many times it's been blocked.
   base::flat_map<url::Origin, int> blocked_origins_;

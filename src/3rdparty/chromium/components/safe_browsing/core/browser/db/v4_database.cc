@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,14 +7,14 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/lazy_instance.h"
 #include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/task/task_runner_util.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/safe_browsing/core/common/proto/webui.pb.h"
@@ -31,6 +31,10 @@ namespace {
 
 const char kV4DatabaseSizeMetric[] = "SafeBrowsing.V4Database.Size";
 const char kV4DatabaseSizeLinearMetric[] = "SafeBrowsing.V4Database.SizeLinear";
+const char kV4DatabaseUpdateLatency[] = "SafeBrowsing.V4Database.UpdateLatency";
+constexpr base::TimeDelta kUmaMinTime = base::Milliseconds(1);
+constexpr base::TimeDelta kUmaMaxTime = base::Hours(5);
+constexpr int kUmaNumBuckets = 50;
 
 // The factory that controls the creation of the V4Database object.
 base::LazyInstance<std::unique_ptr<V4DatabaseFactory>>::Leaky g_db_factory =
@@ -75,7 +79,7 @@ void V4Database::Create(
   DCHECK(!list_infos.empty());
 
   const scoped_refptr<base::SequencedTaskRunner> callback_task_runner =
-      base::SequencedTaskRunnerHandle::Get();
+      base::SequencedTaskRunner::GetCurrentDefault();
   db_task_runner->PostTask(
       FROM_HERE, base::BindOnce(&V4Database::CreateOnTaskRunner, db_task_runner,
                                 base_path, list_infos, callback_task_runner,
@@ -159,6 +163,11 @@ void V4Database::InitializeOnIOSequence() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(io_sequence_checker_);
 }
 
+void V4Database::StopOnIO() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(io_sequence_checker_);
+  weak_factory_on_io_.InvalidateWeakPtrs();
+}
+
 V4Database::~V4Database() {
   DCHECK(db_task_runner_->RunsTasksInCurrentSequence());
 }
@@ -175,7 +184,7 @@ void V4Database::ApplyUpdate(
   // Post the V4Store update task on the DB sequence but get the callback on the
   // current sequence.
   const scoped_refptr<base::SequencedTaskRunner> current_task_runner =
-      base::SequencedTaskRunnerHandle::Get();
+      base::SequencedTaskRunner::GetCurrentDefault();
   for (std::unique_ptr<ListUpdateResponse>& response :
        *parsed_server_response) {
     ListIdentifier identifier(*response);
@@ -202,6 +211,8 @@ void V4Database::ApplyUpdate(
   if (!pending_store_updates_) {
     current_task_runner->PostTask(FROM_HERE, db_updated_callback_);
     db_updated_callback_.Reset();
+    RecordDatabaseUpdateLatency();
+    last_update_ = base::Time::Now();
   }
 }
 
@@ -218,6 +229,8 @@ void V4Database::UpdatedStoreReady(ListIdentifier identifier,
   pending_store_updates_--;
   if (!pending_store_updates_) {
     db_updated_callback_.Run();
+    RecordDatabaseUpdateLatency();
+    last_update_ = base::Time::Now();
     db_updated_callback_.Reset();
   }
 }
@@ -252,7 +265,7 @@ bool V4Database::AreAllStoresAvailable(
 }
 
 void V4Database::GetStoresMatchingFullHash(
-    const FullHash& full_hash,
+    const FullHashStr& full_hash,
     const StoresToCheck& stores_to_check,
     StoreAndHashPrefixes* matched_store_and_hash_prefixes) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(io_sequence_checker_);
@@ -263,7 +276,7 @@ void V4Database::GetStoresMatchingFullHash(
     const auto& store_pair = store_map_->find(identifier);
     DCHECK(store_pair != store_map_->end());
     const std::unique_ptr<V4Store>& store = store_pair->second;
-    HashPrefix hash_prefix = store->GetMatchingHashPrefix(full_hash);
+    HashPrefixStr hash_prefix = store->GetMatchingHashPrefix(full_hash);
     if (!hash_prefix.empty()) {
       matched_store_and_hash_prefixes->emplace_back(identifier, hash_prefix);
     }
@@ -291,9 +304,8 @@ void V4Database::VerifyChecksum(
     stores.push_back(std::make_pair(next_store.first, next_store.second.get()));
   }
 
-  base::PostTaskAndReplyWithResult(
-      db_task_runner_.get(), FROM_HERE,
-      base::BindOnce(&VerifyChecksums, stores),
+  db_task_runner_->PostTaskAndReplyWithResult(
+      FROM_HERE, base::BindOnce(&VerifyChecksums, stores),
       base::BindOnce(&V4Database::OnChecksumVerified,
                      weak_factory_on_io_.GetWeakPtr(),
                      std::move(db_ready_for_updates_callback)));
@@ -335,6 +347,13 @@ void V4Database::RecordFileSizeHistograms() {
       static_cast<int64_t>(db_size_kilobytes / 1024);
   UMA_HISTOGRAM_EXACT_LINEAR(kV4DatabaseSizeLinearMetric, db_size_megabytes,
                              50);
+}
+
+void V4Database::RecordDatabaseUpdateLatency() {
+  if (!last_update_.is_null())
+    UmaHistogramCustomTimes(kV4DatabaseUpdateLatency,
+                            base::Time::Now() - last_update_, kUmaMinTime,
+                            kUmaMaxTime, kUmaNumBuckets);
 }
 
 void V4Database::CollectDatabaseInfo(

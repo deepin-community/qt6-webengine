@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium OS Authors. All rights reserved.
+// Copyright 2012 The ChromiumOS Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,7 @@
 // Chromium OS and Chromium environment.
 #include "anomaly_detector/dbus-constants.h"
 #include "arc-data-snapshotd/dbus-constants.h"
+#include "arcvm_data_migrator/dbus-constants.h"
 #include "audio/dbus-constants.h"
 #include "authpolicy/dbus-constants.h"
 #include "biod/dbus-constants.h"
@@ -22,9 +23,12 @@
 #include "cros-disks/dbus-constants.h"
 #include "cros_healthd/dbus-constants.h"
 #include "cryptohome/dbus-constants.h"
+#include "dcad/dbus-constants.h"
 #include "debugd/dbus-constants.h"
+#include "discod/dbus-constants.h"
 #include "dlp/dbus-constants.h"
 #include "drivefs/dbus-constants.h"
+#include "faced/dbus-constants.h"
 #include "featured/dbus-constants.h"
 #include "fusebox/dbus-constants.h"
 #include "hammerd/dbus-constants.h"
@@ -42,6 +46,7 @@
 #include "patchpanel/dbus-constants.h"
 #include "permission_broker/dbus-constants.h"
 #include "power_manager/dbus-constants.h"
+#include "printscanmgr/dbus-constants.h"
 #include "privacy_screen/dbus-constants.h"
 #include "resource_manager/dbus-constants.h"
 #include "rgbkbd/dbus-constants.h"
@@ -52,6 +57,7 @@
 #include "smbfs/dbus-constants.h"
 #include "smbprovider/dbus-constants.h"
 #include "spaced/dbus-constants.h"
+#include "swap_management/dbus-constants.h"
 #include "update_engine/dbus-constants.h"
 #include "usbguard/dbus-constants.h"
 #include "vm_applications/dbus-constants.h"
@@ -240,6 +246,7 @@ const char kChromeFeaturesServicePath[] = "/org/chromium/ChromeFeaturesService";
 const char kChromeFeaturesServiceInterface[] =
     "org.chromium.ChromeFeaturesServiceInterface";
 const char kChromeFeaturesServiceIsFeatureEnabledMethod[] = "IsFeatureEnabled";
+const char kChromeFeaturesServiceGetFeatureParamsMethod[] = "GetFeatureParams";
 const char kChromeFeaturesServiceIsCrostiniEnabledMethod[] =
     "IsCrostiniEnabled";
 const char kChromeFeaturesServiceIsCryptohomeDistributedModelEnabledMethod[] =
@@ -563,6 +570,14 @@ constexpr char kArcKeymasterInterfaceName[] = "org.chromium.ArcKeymaster";
 constexpr char kBootstrapMojoConnectionMethod[] = "BootstrapMojoConnection";
 }  // namespace keymaster
 
+namespace keymint {
+constexpr char kArcKeyMintServiceName[] = "org.chromium.ArcKeyMint";
+constexpr char kArcKeyMintServicePath[] = "/org/chromium/ArcKeyMint";
+constexpr char kArcKeyMintInterfaceName[] = "org.chromium.ArcKeyMint";
+// Methods
+constexpr char kBootstrapMojoConnectionMethod[] = "BootstrapMojoConnection";
+}  // namespace keymint
+
 namespace obb_mounter {
 // D-Bus service constants.
 constexpr char kArcObbMounterInterface[] =
@@ -589,17 +604,6 @@ constexpr char kMountMethod[] = "Mount";
 constexpr char kUnmountMethod[] = "Unmount";
 constexpr char kOpenFileMethod[] = "OpenFile";
 }  // namespace appfuse
-
-namespace sensor {
-// D-Bus service constants.
-constexpr char kArcSensorServiceInterface[] = "org.chromium.ArcSensorService";
-constexpr char kArcSensorServiceServicePath[] =
-    "/org/chromium/ArcSensorService";
-constexpr char kArcSensorServiceServiceName[] = "org.chromium.ArcSensorService";
-
-// Method names.
-constexpr char kBootstrapMojoConnectionMethod[] = "BootstrapMojoConnection";
-}  // namespace sensor
 
 }  // namespace arc
 

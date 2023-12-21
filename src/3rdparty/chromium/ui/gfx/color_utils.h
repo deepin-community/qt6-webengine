@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -40,12 +40,14 @@ constexpr float kMinimumVisibleContrastRatio = 3.0f;
 // Determines the contrast ratio of two colors or two relative luminance values
 // (as computed by RelativeLuminance()), calculated according to
 // http://www.w3.org/TR/WCAG20/#contrast-ratiodef .
+GFX_EXPORT float GetContrastRatio(SkColor4f color_a, SkColor4f color_b);
 GFX_EXPORT float GetContrastRatio(SkColor color_a, SkColor color_b);
 GFX_EXPORT float GetContrastRatio(float luminance_a, float luminance_b);
 
 // The relative luminance of |color|, that is, the weighted sum of the
 // linearized RGB components, normalized to 0..1, per BT.709.  See
 // http://www.w3.org/TR/WCAG20/#relativeluminancedef .
+GFX_EXPORT float GetRelativeLuminance4f(SkColor4f color);
 GFX_EXPORT float GetRelativeLuminance(SkColor color);
 
 // The luma of |color|, that is, the weighted sum of the gamma-compressed R'G'B'
@@ -160,16 +162,27 @@ GFX_EXPORT SkColor DeriveDefaultIconColor(SkColor text_color);
 
 // Gets a Google color that matches the hue of `color` and contrasts similarly
 // against `background_color`, subject to being at least `min_contrast`. If
-// `color` isn't very saturated, grey will be used instead.
+// `color` isn't very saturated, grey will be used instead.  Even if `color` is
+// saturated, if there are no sufficiently-contrasting colors of a matching hue,
+// will fall back to white/grey 900.
 GFX_EXPORT SkColor PickGoogleColor(SkColor color,
                                    SkColor background_color,
-                                   float min_contrast = 0.0f);
+                                   float min_contrast);
+
+// Like the version above, but tries to contrast sufficiently with both
+// `background_color_a` and `background_color_b` simultaneously.
+GFX_EXPORT SkColor PickGoogleColorTwoBackgrounds(SkColor color,
+                                                 SkColor background_color_a,
+                                                 SkColor background_color_b,
+                                                 float min_contrast);
 
 // Creates an rgba string for an SkColor. For example: 'rgba(255,0,255,0.5)'.
 GFX_EXPORT std::string SkColorToRgbaString(SkColor color);
+GFX_EXPORT std::string SkColor4fToRgbaString(SkColor4f color);
 
 // Creates an rgb string for an SkColor. For example: '255,0,255'.
 GFX_EXPORT std::string SkColorToRgbString(SkColor color);
+GFX_EXPORT std::string SkColor4fToRgbString(SkColor4f color);
 
 // Sets the darkest available color to |color|.  Returns the previous darkest
 // color.

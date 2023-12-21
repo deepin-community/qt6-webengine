@@ -1,3 +1,6 @@
+# Copyright (C) 2022 The Qt Company Ltd.
+# SPDX-License-Identifier: BSD-3-Clause
+
 cmake_minimum_required(VERSION 3.16)
 project(simplebrowser LANGUAGES CXX)
 
@@ -26,9 +29,17 @@ qt_add_executable(simplebrowser
     webview.cpp webview.h
 )
 
+if(WIN32)
+    set_property(
+        TARGET simplebrowser
+        APPEND PROPERTY
+            SOURCES simplebrowser.exe.manifest)
+endif()
+
 set_target_properties(simplebrowser PROPERTIES
     WIN32_EXECUTABLE TRUE
     MACOSX_BUNDLE TRUE
+    MACOSX_BUNDLE_GUI_IDENTIFIER "io.qt.examples.webenginewidgets.simplebrowser"
 )
 
 target_link_libraries(simplebrowser PUBLIC
@@ -71,6 +82,18 @@ qt_add_resources(simplebrowser "simplebrowser1"
     FILES
         ${simplebrowser1_resource_files}
 )
+
+if (APPLE)
+    set_target_properties(simplebrowser PROPERTIES
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.cmake.macos.plist"
+    )
+
+    if (NOT CMAKE_GENERATOR STREQUAL "Xcode")
+        # Need to sign application for location permissions to work
+        add_custom_command(TARGET simplebrowser
+            POST_BUILD COMMAND codesign -s - simplebrowser.app)
+    endif()
+endif()
 
 install(TARGETS simplebrowser
     RUNTIME DESTINATION "${INSTALL_EXAMPLEDIR}"

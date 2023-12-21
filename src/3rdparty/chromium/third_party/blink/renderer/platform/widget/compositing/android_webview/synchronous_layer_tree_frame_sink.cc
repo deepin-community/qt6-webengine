@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,13 +7,12 @@
 #include <vector>
 
 #include "base/auto_reset.h"
-#include "base/bind.h"
 #include "base/check.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/notreached.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "cc/trees/layer_tree_frame_sink_client.h"
 #include "components/power_scheduler/power_mode.h"
 #include "components/power_scheduler/power_mode_arbiter.h"
@@ -30,12 +29,12 @@
 #include "components/viz/service/display/output_surface_frame.h"
 #include "components/viz/service/display/overlay_processor_stub.h"
 #include "components/viz/service/display/software_output_device.h"
-#include "components/viz/service/display/texture_deleter.h"
 #include "components/viz/service/frame_sinks/compositor_frame_sink_support.h"
 #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
 #include "gpu/command_buffer/client/context_support.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
 #include "gpu/command_buffer/common/gpu_memory_allocation.h"
+#include "gpu/command_buffer/common/swap_buffers_complete_params.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "ui/gfx/geometry/rect_conversions.h"
@@ -87,7 +86,10 @@ class SoftwareCompositorFrameSinkClient
     DCHECK(resources.empty());
   }
   void OnBeginFrame(const viz::BeginFrameArgs& args,
-                    const viz::FrameTimingDetailsMap& timing_details) override {
+                    const viz::FrameTimingDetailsMap& timing_details,
+                    bool frame_ack,
+                    std::vector<viz::ReturnedResource> resources) override {
+    DCHECK(resources.empty());
   }
   void ReclaimResources(std::vector<viz::ReturnedResource> resources) override {
     DCHECK(resources.empty());
@@ -109,19 +111,9 @@ class SynchronousLayerTreeFrameSink::SoftwareOutputSurface
   void BindToClient(viz::OutputSurfaceClient* client) override {}
   void EnsureBackbuffer() override {}
   void DiscardBackbuffer() override {}
-  void BindFramebuffer() override {}
   void SwapBuffers(viz::OutputSurfaceFrame frame) override {}
-  void Reshape(const gfx::Size& size,
-               float scale_factor,
-               const gfx::ColorSpace& color_space,
-               gfx::BufferFormat format,
-               bool use_stencil) override {}
-  uint32_t GetFramebufferCopyTextureFormat() override { return 0; }
+  void Reshape(const ReshapeParams& params) override {}
   bool IsDisplayedAsOverlayPlane() const override { return false; }
-  unsigned GetOverlayTextureId() const override { return 0; }
-  bool HasExternalStencilTest() const override { return false; }
-  void ApplyExternalStencil() override {}
-  unsigned UpdateGpuFence() override { return 0; }
   void SetUpdateVSyncParametersCallback(
       viz::UpdateVSyncParametersCallback callback) override {}
   void SetDisplayTransformHint(gfx::OverlayTransform transform) override {}
@@ -139,7 +131,8 @@ base::TimeDelta SynchronousLayerTreeFrameSink::StubDisplayClient::
 
 SynchronousLayerTreeFrameSink::SynchronousLayerTreeFrameSink(
     scoped_refptr<viz::ContextProvider> context_provider,
-    scoped_refptr<viz::RasterContextProvider> worker_context_provider,
+    scoped_refptr<cc::RasterContextProviderWrapper>
+        worker_context_provider_wrapper,
     scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner,
     gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
     uint32_t layer_tree_frame_sink_id,
@@ -150,7 +143,7 @@ SynchronousLayerTreeFrameSink::SynchronousLayerTreeFrameSink(
     mojo::PendingReceiver<viz::mojom::blink::CompositorFrameSinkClient>
         client_receiver)
     : cc::LayerTreeFrameSink(std::move(context_provider),
-                             std::move(worker_context_provider),
+                             std::move(worker_context_provider_wrapper),
                              std::move(compositor_task_runner),
                              gpu_memory_buffer_manager),
       layer_tree_frame_sink_id_(layer_tree_frame_sink_id),
@@ -374,7 +367,7 @@ void SynchronousLayerTreeFrameSink::SubmitCompositorFrame(
         viz::SurfaceRange(
             absl::nullopt,
             viz::SurfaceId(kChildFrameSinkId, child_local_surface_id_)),
-        SK_ColorWHITE, false /* stretch_content_to_fill_bounds */);
+        SkColors::kWhite, false /* stretch_content_to_fill_bounds */);
 
     child_support_->SubmitCompositorFrame(child_local_surface_id_,
                                           std::move(frame));
@@ -387,10 +380,21 @@ void SynchronousLayerTreeFrameSink::SubmitCompositorFrame(
     // expects that every frame will receive a swap ack and presentation
     // feedback so we send null signals here.
     now = base::TimeTicks::Now();
-    display_->DidReceiveSwapBuffersAck({now, now},
+    gpu::SwapBuffersCompleteParams params;
+    params.swap_response.timings = {now, now};
+    params.swap_response.result = gfx::SwapResult::SWAP_ACK;
+    display_->DidReceiveSwapBuffersAck(params,
                                        /*release_fence=*/gfx::GpuFenceHandle());
     display_->DidReceivePresentationFeedback(
         gfx::PresentationFeedback::Failure());
+
+    viz::FrameTimingDetails details;
+    details.received_compositor_frame_timestamp = now;
+    details.draw_start_timestamp = now;
+    details.swap_timings = {now, now, now, now};
+    details.presentation_feedback = {now, base::TimeDelta(), 0};
+    client_->DidPresentCompositorFrame(submit_frame->metadata.frame_token,
+                                       details);
   } else {
     if (viz_frame_submission_enabled_) {
       frame.metadata.begin_frame_ack =
@@ -482,7 +486,7 @@ void SynchronousLayerTreeFrameSink::DemandDrawSw(SkCanvas* canvas) {
   gfx::Rect viewport = gfx::SkIRectToRect(canvas_clip);
 
   // Converts 3x3 matrix to 4x4.
-  gfx::Transform transform(canvas->getTotalMatrix());
+  gfx::Transform transform = gfx::SkMatrixToTransform(canvas->getTotalMatrix());
 
   // We will resize the Display to ensure it covers the entire |viewport|, so
   // save it for later.
@@ -510,7 +514,7 @@ void SynchronousLayerTreeFrameSink::InvokeComposite(
   // must also be zero, since the rect needs to be in the coordinates of the
   // layer compositor.
   gfx::Transform adjusted_transform = transform;
-  adjusted_transform.matrix().postTranslate(-viewport.x(), -viewport.y(), 0);
+  adjusted_transform.PostTranslate(-viewport.OffsetFromOrigin());
   // Don't propagate the viewport origin, as it will affect the clip rect.
   client_->OnDraw(adjusted_transform, gfx::Rect(viewport.size()),
                   in_software_draw_, false /*skip_draw*/);
@@ -533,6 +537,15 @@ void SynchronousLayerTreeFrameSink::ReclaimResources(
   client_->ReclaimResources(std::vector<viz::ReturnedResource>(
       std::make_move_iterator(resources.begin()),
       std::make_move_iterator(resources.end())));
+}
+
+void SynchronousLayerTreeFrameSink::
+    OnCompositorFrameTransitionDirectiveProcessed(
+        uint32_t layer_tree_frame_sink_id,
+        uint32_t sequence_id) {
+  if (layer_tree_frame_sink_id != layer_tree_frame_sink_id_)
+    return;
+  client_->OnCompositorFrameTransitionDirectiveProcessed(sequence_id);
 }
 
 void SynchronousLayerTreeFrameSink::SetMemoryPolicy(size_t bytes_limit) {
@@ -577,8 +590,17 @@ void SynchronousLayerTreeFrameSink::DidReceiveCompositorFrameAck(
 
 void SynchronousLayerTreeFrameSink::OnBeginFrame(
     const viz::BeginFrameArgs& args,
-    const HashMap<uint32_t, viz::FrameTimingDetails>& timing_details) {
+    const HashMap<uint32_t, viz::FrameTimingDetails>& timing_details,
+    bool frame_ack,
+    Vector<viz::ReturnedResource> resources) {
   DCHECK(viz_frame_submission_enabled_);
+  if (features::IsOnBeginFrameAcksEnabled()) {
+    if (frame_ack) {
+      DidReceiveCompositorFrameAck(std::move(resources));
+    } else if (!resources.empty()) {
+      ReclaimResources(std::move(resources));
+    }
+  }
 
   // We do not receive BeginFrames via CompositorFrameSink, so we do not forward
   // it to cc. We still might get one with FrameTimingDetailsMap, so we report

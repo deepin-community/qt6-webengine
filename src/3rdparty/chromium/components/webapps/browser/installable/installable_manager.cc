@@ -1,23 +1,23 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/webapps/browser/installable/installable_manager.h"
 
 #include <algorithm>
-#include <limits>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/strings/string_util.h"
-#include "base/threading/sequenced_task_runner_handle.h"
-#include "build/build_config.h"
+#include "base/task/sequenced_task_runner.h"
 #include "components/security_state/core/security_state.h"
+#include "components/webapps/browser/features.h"
 #include "components/webapps/browser/installable/installable_metrics.h"
 #include "components/webapps/browser/webapps_client.h"
+#include "components/webapps/common/constants.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/manifest_icon_downloader.h"
@@ -35,6 +35,7 @@
 #include "third_party/blink/public/common/manifest/manifest_util.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/mojom/manifest/display_mode.mojom.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 #include "url/origin.h"
 
 #if BUILDFLAG(IS_ANDROID)
@@ -51,17 +52,13 @@ const int kMinimumScreenshotSizeInPx = 320;
 // Maximum dimension size in pixels for screenshots.
 const int kMaximumScreenshotSizeInPx = 3840;
 
-// Maximum dimension can't be more than 2.3 times as long as the minimum
-// dimension for screenshots.
-const double kMaximumScreenshotRatio = 2.3;
-
-// Maximum dimension size in pixels for icons.
-const int kMaximumIconSizeInPx = std::numeric_limits<int>::max();
-
 // This constant is the icon size on Android (48dp) multiplied by the scale
 // factor of a Nexus 5 device (3x). It is the currently advertised minimum icon
 // size for triggering banners.
 const int kMinimumPrimaryIconSizeInPx = 144;
+
+// Maximum number of screenshots allowed, the rest will be ignored.
+const int kMaximumNumOfScreenshots = 8;
 
 // This constant is the smallest possible adaptive launcher icon size for any
 // device density.
@@ -128,10 +125,7 @@ struct ImageTypeDetails {
 constexpr ImageTypeDetails kSupportedImageTypes[] = {
     {".png", "image/png"},
     {".svg", "image/svg+xml"},
-// TODO(https://crbug.com/466958): Add WebP support for Android.
-#if !BUILDFLAG(IS_ANDROID)
     {".webp", "image/webp"},
-#endif
 };
 
 bool IsIconTypeSupported(const blink::Manifest::ImageResource& icon) {
@@ -169,7 +163,9 @@ bool DoesManifestContainRequiredIcon(const blink::mojom::Manifest& manifest) {
       if (size.IsEmpty())  // "any"
         return true;
       if (size.width() >= kMinimumPrimaryIconSizeInPx &&
-          size.height() >= kMinimumPrimaryIconSizeInPx) {
+          size.height() >= kMinimumPrimaryIconSizeInPx &&
+          size.width() <= InstallableManager::kMaximumIconSizeInPx &&
+          size.height() <= InstallableManager::kMaximumIconSizeInPx) {
         return true;
       }
     }
@@ -179,13 +175,14 @@ bool DoesManifestContainRequiredIcon(const blink::mojom::Manifest& manifest) {
 }
 
 bool ShouldRejectDisplayMode(blink::mojom::DisplayMode display_mode) {
-  return !(
-      display_mode == blink::mojom::DisplayMode::kStandalone ||
-      display_mode == blink::mojom::DisplayMode::kFullscreen ||
-      display_mode == blink::mojom::DisplayMode::kMinimalUi ||
-      (display_mode == blink::mojom::DisplayMode::kWindowControlsOverlay) ||
-      (display_mode == blink::mojom::DisplayMode::kTabbed &&
-       base::FeatureList::IsEnabled(features::kDesktopPWAsTabStrip)));
+  return !(display_mode == blink::mojom::DisplayMode::kStandalone ||
+           display_mode == blink::mojom::DisplayMode::kFullscreen ||
+           display_mode == blink::mojom::DisplayMode::kMinimalUi ||
+           display_mode == blink::mojom::DisplayMode::kWindowControlsOverlay ||
+           (display_mode == blink::mojom::DisplayMode::kBorderless &&
+            base::FeatureList::IsEnabled(blink::features::kWebAppBorderless)) ||
+           (display_mode == blink::mojom::DisplayMode::kTabbed &&
+            base::FeatureList::IsEnabled(::features::kDesktopPWAsTabStrip)));
 }
 
 void OnDidCompleteGetAllErrors(
@@ -287,9 +284,12 @@ bool InstallableManager::IsContentSecure(content::WebContents* web_contents) {
 
 // static
 bool InstallableManager::IsOriginConsideredSecure(const GURL& url) {
-  return net::IsLocalhost(url) ||
+  auto origin = url::Origin::Create(url);
+  auto* webapps_client = webapps::WebappsClient::Get();
+  return (webapps_client && webapps_client->IsOriginConsideredSecure(origin)) ||
+         net::IsLocalhost(url) ||
          network::SecureOriginAllowlist::GetInstance().IsOriginAllowlisted(
-             url::Origin::Create(url));
+             origin);
 }
 
 void InstallableManager::GetData(const InstallableParams& params,
@@ -465,13 +465,14 @@ bool InstallableManager::IsComplete(const InstallableParams& params) const {
          manifest_->fetched &&
          (!params.valid_manifest || valid_manifest_->fetched) &&
          (!params.has_worker || worker_->fetched) &&
+         (!params.fetch_screenshots || is_screenshots_fetch_complete_) &&
          (!params.valid_primary_icon ||
           IsIconFetchComplete(IconUsage::kPrimary)) &&
          (!params.valid_splash_icon || IsIconFetchComplete(IconUsage::kSplash));
 }
 
-void InstallableManager::Reset(absl::optional<InstallableStatusCode> error) {
-  DCHECK(!error || error.value() != NO_ERROR_DETECTED);
+void InstallableManager::Reset(InstallableStatusCode error) {
+  DCHECK(error != NO_ERROR_DETECTED);
   // Prevent any outstanding callbacks to or from this object from being called.
   weak_factory_.InvalidateWeakPtrs();
   icons_.clear();
@@ -480,11 +481,9 @@ void InstallableManager::Reset(absl::optional<InstallableStatusCode> error) {
   screenshots_downloading_ = 0;
   is_screenshots_fetch_complete_ = false;
 
-  // If we have paused tasks, we are waiting for a service worker.
-  if (error)
-    task_queue_.ResetWithError(error.value());
-  else
-    task_queue_.Reset();
+  // If we have paused tasks, we are waiting for a service worker. Execute the
+  // callbacks with the status_code being passed for the paused tasks.
+  task_queue_.ResetWithError(error);
 
   eligibility_ = std::make_unique<EligiblityProperty>();
   manifest_ = std::make_unique<ManifestProperty>();
@@ -499,6 +498,7 @@ void InstallableManager::SetManifestDependentTasksComplete() {
   worker_->fetched = true;
   SetIconFetched(IconUsage::kPrimary);
   SetIconFetched(IconUsage::kSplash);
+  is_screenshots_fetch_complete_ = true;
 }
 
 void InstallableManager::CleanupAndStartNextTask() {
@@ -540,6 +540,8 @@ void InstallableManager::RunCallback(
     has_maskable_splash_icon = (splash_icon->purpose == IconPurpose::MASKABLE);
   }
 
+  bool worker_check_passed = worker_->has_worker || !params.has_worker;
+
   InstallableData data = {
       std::move(errors),
       manifest_url(),
@@ -552,7 +554,7 @@ void InstallableManager::RunCallback(
       has_maskable_splash_icon,
       screenshots_,
       valid_manifest_->is_valid,
-      worker_->has_worker,
+      worker_check_passed,
   };
 
   std::move(task.callback).Run(data);
@@ -570,7 +572,7 @@ void InstallableManager::WorkOnTask() {
   if ((!check_passed && !params.is_debug_mode) || IsComplete(params)) {
     // Yield the UI thread before processing the next task. If this object is
     // deleted in the meantime, the next task naturally won't run.
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&InstallableManager::CleanupAndStartNextTask,
                                   weak_factory_.GetWeakPtr()));
 
@@ -595,8 +597,14 @@ void InstallableManager::WorkOnTask() {
     CheckAndFetchBestIcon(GetIdealPrimaryIconSizeInPx(),
                           GetMinimumPrimaryIconSizeInPx(), IconPurpose::ANY,
                           IconUsage::kPrimary);
-  } else if (params.fetch_screenshots && !is_screenshots_fetch_complete_) {
-    CheckAndFetchScreenshots();
+  } else if (params.fetch_screenshots && !screenshots_downloading_ &&
+             !is_screenshots_fetch_complete_) {
+    if (base::FeatureList::IsEnabled(
+            webapps::features::kDesktopPWAsDetailedInstallDialog)) {
+      CheckAndFetchScreenshots();
+    } else {
+      CheckAndFetchScreenshots(/*check_form_factor=*/false);
+    }
   } else if (params.has_worker && !worker_->fetched) {
     CheckServiceWorker();
   } else if (params.valid_splash_icon && params.prefer_maskable_icon &&
@@ -727,7 +735,8 @@ void InstallableManager::CheckServiceWorker() {
   // Check to see if there is a service worker for the manifest's scope.
   service_worker_context_->CheckHasServiceWorker(
       manifest().scope,
-      blink::StorageKey(url::Origin::Create(manifest().scope)),
+      blink::StorageKey::CreateFirstParty(
+          url::Origin::Create(manifest().scope)),
       base::BindOnce(&InstallableManager::OnDidCheckHasServiceWorker,
                      weak_factory_.GetWeakPtr(), base::TimeTicks::Now()));
 }
@@ -758,7 +767,8 @@ void InstallableManager::OnDidCheckHasServiceWorker(
         // environment and see if the site supports an offline page.
         service_worker_context_->CheckOfflineCapability(
             manifest().start_url,
-            blink::StorageKey(url::Origin::Create(manifest().start_url)),
+            blink::StorageKey::CreateFirstParty(
+                url::Origin::Create(manifest().start_url)),
             base::BindOnce(&InstallableManager::OnDidCheckOfflineCapability,
                            weak_factory_.GetWeakPtr(),
                            check_service_worker_start_time,
@@ -853,7 +863,7 @@ void InstallableManager::CheckAndFetchBestIcon(int ideal_icon_size_in_px,
   } else {
     bool can_download_icon = content::ManifestIconDownloader::Download(
         GetWebContents(), icon_url, ideal_icon_size_in_px,
-        minimum_icon_size_in_px, kMaximumIconSizeInPx,
+        minimum_icon_size_in_px, InstallableManager::kMaximumIconSizeInPx,
         base::BindOnce(&InstallableManager::OnIconFetched,
                        weak_factory_.GetWeakPtr(), icon_url, usage));
     if (can_download_icon)
@@ -881,25 +891,49 @@ void InstallableManager::OnIconFetched(const GURL icon_url,
   WorkOnTask();
 }
 
-void InstallableManager::CheckAndFetchScreenshots() {
+void InstallableManager::CheckAndFetchScreenshots(bool check_form_factor) {
   DCHECK(!blink::IsEmptyManifest(manifest()));
   DCHECK(!is_screenshots_fetch_complete_);
 
   screenshots_downloading_ = 0;
 
+  int num_of_screenshots = 0;
   for (const auto& url : manifest().screenshots) {
+#if BUILDFLAG(IS_ANDROID)
+    if (check_form_factor &&
+        url->form_factor ==
+            blink::mojom::ManifestScreenshot::FormFactor::kWide) {
+      continue;
+    }
+#else
+    if (check_form_factor &&
+        url->form_factor !=
+            blink::mojom::ManifestScreenshot::FormFactor::kWide) {
+      continue;
+    }
+#endif  // BUILDFLAG(IS_ANDROID)
+
+    if (++num_of_screenshots > kMaximumNumOfScreenshots)
+      break;
+
     // A screenshot URL that's in the map is already taken care of.
-    if (downloaded_screenshots_.count(url.src) > 0)
+    if (downloaded_screenshots_.count(url->image.src) > 0)
       continue;
 
-    int ideal_size_in_px = url.sizes.empty() ? kMinimumScreenshotSizeInPx
-                                             : std::max(url.sizes[0].width(),
-                                                        url.sizes[0].height());
+    int ideal_size_in_px = url->image.sizes.empty()
+                               ? kMinimumScreenshotSizeInPx
+                               : std::max(url->image.sizes[0].width(),
+                                          url->image.sizes[0].height());
+    // Do not pass in a maximum icon size so that screenshots larger than
+    // kMaximumScreenshotSizeInPx are not downscaled to the maximum size by
+    // `ManifestIconDownloader::Download`. Screenshots with size larger than
+    // kMaximumScreenshotSizeInPx get filtered out by OnScreenshotFetched.
     bool can_download = content::ManifestIconDownloader::Download(
-        GetWebContents(), url.src, ideal_size_in_px, kMinimumScreenshotSizeInPx,
-        kMaximumScreenshotSizeInPx,
+        GetWebContents(), url->image.src, ideal_size_in_px,
+        kMinimumScreenshotSizeInPx,
+        /*maximum_icon_size_in_px=*/0,
         base::BindOnce(&InstallableManager::OnScreenshotFetched,
-                       weak_factory_.GetWeakPtr(), url.src),
+                       weak_factory_.GetWeakPtr(), url->image.src),
         /*square_only=*/false);
     if (can_download)
       ++screenshots_downloading_;
@@ -924,8 +958,12 @@ void InstallableManager::OnScreenshotFetched(GURL screenshot_url,
   if (--screenshots_downloading_ == 0) {
     // Now that all images have finished downloading, populate screenshots in
     // the order they are declared in the manifest.
+    int num_of_screenshots = 0;
     for (const auto& url : manifest().screenshots) {
-      auto iter = downloaded_screenshots_.find(url.src);
+      if (++num_of_screenshots > kMaximumNumOfScreenshots)
+        break;
+
+      auto iter = downloaded_screenshots_.find(url->image.src);
       if (iter == downloaded_screenshots_.end())
         continue;
 
@@ -935,23 +973,24 @@ void InstallableManager::OnScreenshotFetched(GURL screenshot_url,
         continue;
       }
 
-      // TODO(crbug.com/1146450): Filter out screenshots by platform.
       // Screenshots must have the same aspect ratio. Cross-multiplying
       // dimensions checks portrait vs landscape mode (1:2 vs 2:1 for instance).
       if (screenshots_.size() &&
           screenshot.dimensions().width() *
-                  screenshots_[0].dimensions().height() !=
+                  screenshots_[0].image.dimensions().height() !=
               screenshot.dimensions().height() *
-                  screenshots_[0].dimensions().width()) {
+                  screenshots_[0].image.dimensions().width()) {
         continue;
       }
 
-      auto dimensions = std::minmax(screenshot.width(), screenshot.height());
+      std::pair<int, int> dimensions =
+          std::minmax(screenshot.width(), screenshot.height());
       if (dimensions.second > dimensions.first * kMaximumScreenshotRatio)
         continue;
 
-      screenshots_.push_back(screenshot);
+      screenshots_.emplace_back(std::move(screenshot), url->label);
     }
+
     downloaded_screenshots_.clear();
     is_screenshots_fetch_complete_ = true;
 
@@ -985,12 +1024,8 @@ void InstallableManager::OnDestruct(content::ServiceWorkerContext* context) {
   service_worker_context_ = nullptr;
 }
 
-void InstallableManager::DidFinishNavigation(
-    content::NavigationHandle* handle) {
-  if (handle->IsInPrimaryMainFrame() && handle->HasCommitted() &&
-      !handle->IsSameDocument()) {
-    Reset(USER_NAVIGATED);
-  }
+void InstallableManager::PrimaryPageChanged(content::Page& page) {
+  Reset(USER_NAVIGATED);
 }
 
 void InstallableManager::DidUpdateWebManifestURL(content::RenderFrameHost* rfh,
@@ -1000,7 +1035,9 @@ void InstallableManager::DidUpdateWebManifestURL(content::RenderFrameHost* rfh,
 }
 
 void InstallableManager::WebContentsDestroyed() {
-  Reset();
+  // This ensures that we do not just hang callbacks on web_contents being
+  // destroyed.
+  Reset(RENDERER_EXITING);
   Observe(nullptr);
 }
 

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,8 +26,6 @@ struct BeginFrameId;
 }  // namespace viz
 
 namespace cc {
-class ThroughputUkmReporter;
-
 // Tracks a sequence of frames to determine the throughput. It tracks this by
 // tracking the vsync sequence-numbers (from |BeginFrameArgs::sequence_number|),
 // and the presentation-timestamps (from |gfx::PresentationFeedback|). It also
@@ -117,8 +115,7 @@ class CC_EXPORT FrameSequenceTracker {
   friend class FrameSequenceTrackerTest;
 
   // Constructs a tracker for a typed sequence other than kCustom.
-  FrameSequenceTracker(FrameSequenceTrackerType type,
-                       ThroughputUkmReporter* throughput_ukm_reporter);
+  explicit FrameSequenceTracker(FrameSequenceTrackerType type);
   // Constructs a tracker for a kCustom typed sequence.
   FrameSequenceTracker(int custom_sequence_id,
                        FrameSequenceMetrics::CustomReporter custom_reporter);

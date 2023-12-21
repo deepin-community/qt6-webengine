@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,9 @@
 #include <memory>
 #include <utility>
 
-#include "base/callback_helpers.h"
+#include "base/functional/callback_helpers.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/signin/enterprise_profile_welcome_handler.h"
 #include "chrome/browser/ui/webui/signin/signin_utils.h"
@@ -23,28 +24,38 @@
 #include "services/network/public/mojom/content_security_policy.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/webui/resource_path.h"
-#include "ui/resources/grit/webui_generated_resources.h"
+#include "ui/resources/grit/webui_resources.h"
 
 EnterpriseProfileWelcomeUI::EnterpriseProfileWelcomeUI(content::WebUI* web_ui)
     : content::WebUIController(web_ui) {
-  content::WebUIDataSource* source = content::WebUIDataSource::Create(
+  content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
+      Profile::FromWebUI(web_ui),
       chrome::kChromeUIEnterpriseProfileWelcomeHost);
-  webui::SetJSModuleDefaults(source);
 
-  source->SetDefaultResource(
-      IDR_SIGNIN_ENTERPRISE_PROFILE_WELCOME_ENTERPRISE_PROFILE_WELCOME_HTML);
   static constexpr webui::ResourcePath kResources[] = {
       {"enterprise_profile_welcome_app.js",
        IDR_SIGNIN_ENTERPRISE_PROFILE_WELCOME_ENTERPRISE_PROFILE_WELCOME_APP_JS},
+      {"enterprise_profile_welcome_app.html.js",
+       IDR_SIGNIN_ENTERPRISE_PROFILE_WELCOME_ENTERPRISE_PROFILE_WELCOME_APP_HTML_JS},
       {"enterprise_profile_welcome_browser_proxy.js",
        IDR_SIGNIN_ENTERPRISE_PROFILE_WELCOME_ENTERPRISE_PROFILE_WELCOME_BROWSER_PROXY_JS},
-      {"images/enterprise_profile_welcome_illustration.svg",
-       IDR_SIGNIN_ENTERPRISE_PROFILE_WELCOME_IMAGES_ENTERPRISE_PROFILE_WELCOME_ILLUSTRATION_SVG},
-      {"signin_shared_css.js", IDR_SIGNIN_SIGNIN_SHARED_CSS_JS},
-      {"signin_vars_css.js", IDR_SIGNIN_SIGNIN_VARS_CSS_JS},
+      {"signin_shared.css.js", IDR_SIGNIN_SIGNIN_SHARED_CSS_JS},
+      {"signin_vars.css.js", IDR_SIGNIN_SIGNIN_VARS_CSS_JS},
   };
-  source->AddResourcePaths(kResources);
 
+  webui::SetupWebUIDataSource(
+      source, base::make_span(kResources),
+      IDR_SIGNIN_ENTERPRISE_PROFILE_WELCOME_ENTERPRISE_PROFILE_WELCOME_HTML);
+
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  source->AddResourcePath(
+      "images/lacros_enterprise_profile_welcome_illustration.svg",
+      IDR_SIGNIN_ENTERPRISE_PROFILE_WELCOME_IMAGES_LACROS_ENTERPRISE_PROFILE_WELCOME_ILLUSTRATION_SVG);
+#else
+  source->AddResourcePath(
+      "images/enterprise_profile_welcome_illustration.svg",
+      IDR_SIGNIN_ENTERPRISE_PROFILE_WELCOME_IMAGES_ENTERPRISE_PROFILE_WELCOME_ILLUSTRATION_SVG);
+#endif
   source->AddLocalizedString("enterpriseProfileWelcomeTitle",
                              IDS_ENTERPRISE_PROFILE_WELCOME_TITLE);
   source->AddLocalizedString("cancelLabel", IDS_CANCEL);
@@ -54,8 +65,6 @@ EnterpriseProfileWelcomeUI::EnterpriseProfileWelcomeUI(content::WebUI* web_ui)
                              IDS_ENTERPRISE_PROFILE_WELCOME_LINK_DATA_CHECKBOX);
   source->AddBoolean("showLinkDataCheckbox", false);
   source->AddBoolean("isModalDialog", false);
-
-  content::WebUIDataSource::Add(Profile::FromWebUI(web_ui), source);
 }
 
 EnterpriseProfileWelcomeUI::~EnterpriseProfileWelcomeUI() = default;
@@ -69,8 +78,8 @@ void EnterpriseProfileWelcomeUI::Initialize(
     absl::optional<SkColor> profile_color,
     signin::SigninChoiceCallback proceed_callback) {
   auto handler = std::make_unique<EnterpriseProfileWelcomeHandler>(
-      browser, type, profile_creation_required_by_policy, account_info,
-      profile_color, std::move(proceed_callback));
+      browser, type, profile_creation_required_by_policy, show_link_data_option,
+      account_info, profile_color, std::move(proceed_callback));
   handler_ = handler.get();
 
   if (type ==

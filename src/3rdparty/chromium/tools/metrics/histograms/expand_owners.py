@@ -1,4 +1,4 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -257,7 +257,8 @@ def _ExtractComponentViaDirmd(path):
   dirmd = subprocess.Popen(
       dirmd_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
   if dirmd.wait() != 0:
-    raise Error('dirmd failed: ' + dirmd.stderr.read())
+    raise Error('dirmd failed: "' + ' '.join(dirmd_command) + '": ' +
+                dirmd.stderr.read().decode('utf-8'))
   json_out = json.load(dirmd.stdout)
   # On Windows, dirmd output still uses Unix path separators.
   if sys.platform == 'win32':
@@ -330,7 +331,7 @@ def _UpdateHistogramOwners(histogram, owner_to_replace, owners_to_add):
       histogram.insertBefore(owner_to_add, node_after_owners_file)
 
 
-def _AddHistogramComponent(histogram, component):
+def AddHistogramComponent(histogram, component):
   """Makes a DOM Element for the component and adds it to the given histogram.
 
   Args:
@@ -405,4 +406,4 @@ def ExpandHistogramsOWNERS(histograms):
       component = _ExtractComponentViaDirmd(os.path.dirname(path))
       if component and component not in components_with_dom_elements:
         components_with_dom_elements.add(component)
-        _AddHistogramComponent(histogram, component)
+        AddHistogramComponent(histogram, component)

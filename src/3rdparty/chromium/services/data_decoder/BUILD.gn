@@ -1,11 +1,22 @@
-# Copyright 2016 The Chromium Authors. All rights reserved.
+# Copyright 2016 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 import("//build/config/chromeos/ui_mode.gni")
+import("//build/config/features.gni")
 import("//testing/libfuzzer/fuzzer_test.gni")
 
 source_set("lib") {
+  # This target should only be depended upon by components that host a
+  # data_decoder service. Consumers should depend on a a target in the
+  # public/ directory.
+  visibility = [
+    ":*",
+    "public/cpp:*",
+    "//chrome/utility",
+    "//content/utility",
+  ]
+
   sources = [
     "data_decoder_service.cc",
     "data_decoder_service.h",
@@ -13,8 +24,8 @@ source_set("lib") {
     "gzipper.h",
     "json_parser_impl.cc",
     "json_parser_impl.h",
-    "web_bundler.cc",
-    "web_bundler.h",
+    "structured_headers_parser_impl.cc",
+    "structured_headers_parser_impl.h",
     "xml_parser.cc",
     "xml_parser.h",
   ]
@@ -44,7 +55,7 @@ source_set("lib") {
 
   public_deps = [ "//services/data_decoder/public/mojom" ]
 
-  if (!is_ios) {
+  if (use_blink) {
     sources += [
       "image_decoder_impl.cc",
       "image_decoder_impl.h",
@@ -83,18 +94,16 @@ source_set("tests") {
 
   data = [ "//components/test/data/web_package/" ]
 
-  if (!is_ios) {
+  if (use_blink) {
     sources += [ "image_decoder_impl_unittest.cc" ]
     deps += [
       "//gin",
       "//gin:gin_test",
       "//third_party/blink/public:blink",
+      "//tools/v8_context_snapshot:buildflags",
     ]
     data_deps = [ "//tools/v8_context_snapshot" ]
-    configs += [
-      "//tools/v8_context_snapshot:use_v8_context_snapshot",
-      "//v8:external_startup_data",
-    ]
+    configs += [ "//v8:external_startup_data" ]
   }
 }
 

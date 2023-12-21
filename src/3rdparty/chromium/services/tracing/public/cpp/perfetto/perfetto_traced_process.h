@@ -1,12 +1,12 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef SERVICES_TRACING_PUBLIC_CPP_PERFETTO_PERFETTO_TRACED_PROCESS_H_
 #define SERVICES_TRACING_PUBLIC_CPP_PERFETTO_PERFETTO_TRACED_PROCESS_H_
 
-#include "base/callback.h"
 #include "base/component_export.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
 #include "base/sequence_checker.h"
@@ -50,8 +50,7 @@ class SystemProducer;
 // * Construct the new implementation when requested to
 //   in PerfettoProducer::StartDataSource.
 class COMPONENT_EXPORT(TRACING_CPP) PerfettoTracedProcess final
-    : public PerfettoTracingBackend::Delegate,
-      public perfetto::TracingPolicy {
+    : public perfetto::TracingPolicy {
  public:
   // If not noted otherwise, a DataSourceBase's methods are only called on
   // PerfettoTracedProcess::GetTaskRunner()'s sequence.
@@ -272,13 +271,14 @@ class COMPONENT_EXPORT(TRACING_CPP) PerfettoTracedProcess final
     return platform_.get();
   }
 
-  // PerfettoTracingBackend::Delegate implementation.
-  void CreateProducerConnection(
-      base::OnceCallback<void(mojo::PendingRemote<mojom::PerfettoService>)>)
-      override;
-  void CreateConsumerConnection(
-      base::OnceCallback<void(mojo::PendingRemote<mojom::ConsumerHost>)>)
-      override;
+  // Indicate that startup tracing will need to start when thread pool becomes
+  // available. This is used in Perfetto client library build, because currently
+  // it requires a threadpool to run tracing tasks.
+  // TODO(khokhlov): Remove this method once startup tracing no longer depends
+  // on threadpool in client library build.
+  void RequestStartupTracing(
+      const perfetto::TraceConfig& config,
+      const perfetto::Tracing::SetupStartupTracingOpts& opts);
 
  protected:
   // protected for testing.
@@ -326,11 +326,9 @@ class COMPONENT_EXPORT(TRACING_CPP) PerfettoTracedProcess final
   std::unique_ptr<base::tracing::PerfettoPlatform> platform_;
   std::unique_ptr<PerfettoTracingBackend> tracing_backend_;
 
-  scoped_refptr<base::SequencedTaskRunner> consumer_connection_task_runner_;
-  ConsumerConnectionFactory consumer_connection_factory_;
-
-  base::OnceCallback<void(mojo::PendingRemote<mojom::PerfettoService>)>
-      pending_producer_callback_;
+  bool startup_tracing_needed_ = false;
+  perfetto::TraceConfig saved_config_;
+  perfetto::Tracing::SetupStartupTracingOpts saved_opts_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 };

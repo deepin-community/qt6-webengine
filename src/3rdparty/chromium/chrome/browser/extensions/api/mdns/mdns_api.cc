@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,13 +9,16 @@
 
 #include "base/lazy_instance.h"
 #include "base/strings/stringprintf.h"
+#include "base/values.h"
 #include "chrome/browser/extensions/extension_service.h"
+#include "components/version_info/channel.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_function.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/common/features/feature_channel.h"
 #include "extensions/common/mojom/event_dispatcher.mojom.h"
 
 namespace extensions {
@@ -198,8 +201,14 @@ bool MDnsAPI::IsMDnsAllowed(const std::string& extension_id,
       ExtensionRegistry::Get(browser_context_)
           ->enabled_extensions()
           .GetByID(extension_id);
-  return (extension && (extension->is_platform_app() ||
-                        IsServiceTypeAllowlisted(service_type)));
+  if (!extension)
+    return false;
+
+  if (GetCurrentChannel() == version_info::Channel::DEV &&
+      extension->is_extension()) {
+    return true;
+  }
+  return extension->is_platform_app() || IsServiceTypeAllowlisted(service_type);
 }
 
 void MDnsAPI::GetValidOnServiceListListeners(
@@ -207,10 +216,10 @@ void MDnsAPI::GetValidOnServiceListListeners(
     std::set<std::string>* extension_ids,
     ServiceTypeCounts* service_type_counts) {
   for (const auto& listener : GetEventListeners()) {
-    base::DictionaryValue* filter = listener->filter();
+    const base::Value::Dict* filter = listener->filter();
 
     const std::string* service_type =
-        filter->FindStringKey(kEventFilterServiceTypeKey);
+        filter->FindString(kEventFilterServiceTypeKey);
     if (!service_type || service_type->empty() ||
         !base::IsStringASCII(*service_type))
       continue;
@@ -253,7 +262,7 @@ void MDnsAPI::WriteToConsole(const std::string& service_type,
         extensions::ProcessManager::Get(browser_context_)
         ->GetBackgroundHostForExtension(extension_id);
     content::RenderFrameHost* rfh =
-        host ? host->host_contents()->GetMainFrame() : nullptr;
+        host ? host->host_contents()->GetPrimaryMainFrame() : nullptr;
     if (rfh)
       rfh->AddMessageToConsole(level, logged_message);
   }

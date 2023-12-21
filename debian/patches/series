@@ -1,12 +1,3 @@
-# Use system libraries, fixed upstream in 6.5
-system-openjpeg2.patch
-
-# GCC-13
-gcc-13.patch
-
-# Don't do shift optimisation in ffmpeg, fails on x86
-ffmpeg-remove-x86-optimization.patch
-
 # remove catapult
 remove_catapult_3rdparty.patch
 remove_catapult_core.patch
@@ -16,6 +7,9 @@ reduce_debugging_info.patch
 
 # rewrite compressing files in devtools-frontend
 compressing_files.patch
+
+# disable check for 32bit Node.js
+disable_32bit_node_check.patch
 
 # enable support for i386
 support-i386.patch

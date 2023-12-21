@@ -1,17 +1,18 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 module attribution_internals.mojom;
 
+import "components/attribution_reporting/registration.mojom";
+import "components/attribution_reporting/source_registration_error.mojom";
+import "components/attribution_reporting/source_type.mojom";
+import "content/browser/attribution_reporting/attribution_reporting.mojom";
+import "content/browser/attribution_reporting/store_source_result.mojom";
+import "services/network/public/mojom/attribution.mojom";
+import "services/network/public/mojom/schemeful_site.mojom";
 import "url/mojom/origin.mojom";
 import "url/mojom/url.mojom";
-
-// Represents AttributionSourceType.
-enum SourceType {
-  kNavigation,
-  kEvent,
-};
 
 // Represents `AttributionReport::EventLevelData::Id`.
 // Will be used to issue commands for individual reports.
@@ -36,21 +37,22 @@ struct WebUIReportEventLevelData {
   bool attributed_truthfully;
 };
 
-// Represents `AttributionAggregatableKey`.
-struct AggregatableKey {
-  uint64 high_bits;
-  uint64 low_bits;
-};
-
 // Represents `AggregatableHistogramContribution`.
 struct AggregatableHistogramContribution {
-  AggregatableKey key;
+  // Hex-encoded unsigned 128-bit integer.
+  string key;
   uint32 value;
+};
+
+struct AttestationToken {
+  string value;
 };
 
 // Contains aggregatable attribution data to be displayed.
 struct WebUIReportAggregatableAttributionData {
   array<AggregatableHistogramContribution> contributions;
+  AttestationToken? attestation_token;
+  string aggregation_coordinator;
 };
 
 union WebUIReportData {
@@ -63,7 +65,8 @@ struct Empty {};
 
 union ReportStatus {
   Empty pending;
-  Empty replaced_by_higher_priority_report;
+  // Contains the external report ID of the replacement report.
+  string replaced_by_higher_priority_report;
   Empty prohibited_by_browser_policy;
   // Contains the HTTP response code.
   int32 sent;
@@ -76,7 +79,7 @@ union ReportStatus {
 struct WebUIReport {
   // Allows the WebUI to issue commands for individual reports.
   // Not intended to be displayed.
-  ReportID? id;
+  ReportID id;
   url.mojom.Url report_url;
   double trigger_time;
   double report_time;
@@ -85,64 +88,62 @@ struct WebUIReport {
   WebUIReportData data;
 };
 
-struct DebugKey {
-  uint64 value;
+union DebugReportStatus {
+  int32 http_response_code;
+  string network_error;
+};
+
+struct WebUIDebugReport {
+  url.mojom.Url url;
+  double time;
+  string body;
+  DebugReportStatus status;
 };
 
 // Struct representing a stored attribution source that will be displayed by WebUI.
 struct WebUISource {
   uint64 source_event_id;
-  url.mojom.Origin impression_origin;
-  // Replace SchemefulSite with string if this struct is ever reused elsewhere.
-  string attribution_destination;
+  url.mojom.Origin source_origin;
+  array<network.mojom.SchemefulSite> destinations;
   url.mojom.Origin reporting_origin;
-  double impression_time;
+  double source_time;
   double expiry_time;
-  SourceType source_type;
+  double event_report_window_time;
+  double aggregatable_report_window_time;
+  attribution_reporting.mojom.SourceType source_type;
   int64 priority;
-  DebugKey? debug_key;
+  attribution_reporting.mojom.DebugKey? debug_key;
   array<uint64> dedup_keys;
   map<string, array<string>> filter_data;
-  map<string, AggregatableKey> aggregatable_source;
+  // The value is a hex-encoded unsigned 128-bit integer.
+  map<string, string> aggregation_keys;
+  uint64 aggregatable_budget_consumed;
+  array<uint64> aggregatable_dedup_keys;
 
-  // Union of `StorableSource::Result` and `StoredSource::AttributionLogic`,
-  // and `AttributionStorage::DeactivatedSource::Reason`.
   enum Attributability {
     kAttributable,
     // The source was dropped due to `CommonSourceInfo::AttributionLogic::kNever`.
-    kNoised,
-    kReplacedByNewerSource,
+    kNoisedNever,
+    // The source was dropped due to `CommonSourceInfo::AttributionLogic::kFalsely`.
+    kNoisedFalsely,
     kReachedEventLevelAttributionLimit,
-    kInternalError,
-    kInsufficientSourceCapacity,
-    kInsufficientUniqueDestinationCapacity,
-    kExcessiveReportingOrigins,
-    kProhibitedByBrowserPolicy,
   };
   Attributability attributability;
 };
 
-struct DedupKey {
-  uint64 value;
-};
-
-struct WebUIEventTriggerData {
-  uint64 data;
-  int64 priority;
-  DedupKey? dedup_key;
-  map<string, array<string>> filters;
-  map<string, array<string>> not_filters;
+struct WebUIRegistration {
+  double time;
+  url.mojom.Origin context_origin;
+  url.mojom.Origin reporting_origin;
+  // String instead of mojo_base.mojom.DictionaryValue because the value is
+  // simply displayed in the UI, never inspected.
+  string registration_json;
+  attribution_reporting.mojom.DebugKey? cleared_debug_key;
 };
 
 struct WebUITrigger {
-  double trigger_time;
-  url.mojom.Origin destination_origin;
-  url.mojom.Origin reporting_origin;
-  map<string, array<string>> filters;
-  DebugKey? debug_key;
-  array<WebUIEventTriggerData> event_triggers;
-
-  // TODO(linnan): Add aggregatable trigger fields.
+  WebUIRegistration registration;
+  network.mojom.TriggerAttestation? attestation;
 
   enum Status {
     // Shared statuses:
@@ -154,26 +155,34 @@ struct WebUITrigger {
     kExcessiveAttributions,
     kExcessiveReportingOrigins,
     kProhibitedByBrowserPolicy,
+    kDeduplicated,
+    kReportWindowPassed,
+    kNotRegistered,
 
     // Event-level statuses:
-    kDeduplicated,
     kLowPriority,
     kNoised,
+    kNoMatchingConfigurations,
+    kExcessiveEventLevelReports,
 
     // Aggregatable statuses:
     kNoHistograms,
     kInsufficientBudget,
-    kNotRegistered,
   };
 
   Status event_level_status;
   Status aggregatable_status;
 };
 
-// Represents `AttributionReport::ReportType`.
-enum ReportType {
-  kEventLevel,
-  kAggregatableAttribution,
+union SourceStatus {
+  attribution_reporting.mojom.StoreSourceResult store_source_result;
+  attribution_reporting.mojom.SourceRegistrationError json_error;
+};
+
+struct WebUISourceRegistration {
+  WebUIRegistration registration;
+  attribution_reporting.mojom.SourceType type;
+  SourceStatus status;
 };
 
 // Observer for events relevant to the attribution internals WebUI.
@@ -184,14 +193,16 @@ interface Observer {
 
   // Called when the reports in storage changed, indicating that the observer
   // should call `Handler::GetReports()`.
-  OnReportsChanged(ReportType report_type);
+  OnReportsChanged(attribution_reporting.mojom.ReportType report_type);
 
-  // Called when a source-registration attempt fails or a stored source is
-  // deactivated.
-  OnSourceRejectedOrDeactivated(WebUISource source);
+  // Called when a source is registered, regardless of success or failure.
+  OnSourceHandled(WebUISourceRegistration source);
 
   // Called when a report is sent, regardless of success.
   OnReportSent(WebUIReport report);
+
+  // Called when a verbose debug report is sent, regardless of success.
+  OnDebugReportSent(WebUIDebugReport report);
 
   // Called when a report is dropped from storage or prevented from being
   // created in the first place.
@@ -215,7 +226,7 @@ interface Handler {
 
   // Returns all reports of the specified type contained in storage, including
   // those that are actively being sent.
-  GetReports(ReportType report_type) => (array<WebUIReport> reports);
+  GetReports(attribution_reporting.mojom.ReportType report_type) => (array<WebUIReport> reports);
 
   // Sends the given reports, ignoring delay, returning when the operation has
   // been completed and the reports have been cleared from storage.
@@ -224,7 +235,11 @@ interface Handler {
   // Deletes all persisted data for the attribution reporting API, returning when the
   // operation has been completed.
   ClearStorage() => ();
+};
 
-  // Registers an observer to be notified of attribution reporting events.
-  AddObserver(pending_remote<Observer> observer) => (bool success);
+// Factory for Observer and Handler.
+interface Factory {
+  // Binds the observer and handler.
+  Create(pending_remote<Observer> observer,
+         pending_receiver<Handler> handler);
 };

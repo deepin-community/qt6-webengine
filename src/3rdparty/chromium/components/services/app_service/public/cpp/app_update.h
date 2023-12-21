@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,12 +11,12 @@
 
 #include "base/component_export.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "components/account_id/account_id.h"
 #include "components/services/app_service/public/cpp/app_types.h"
 #include "components/services/app_service/public/cpp/intent_filter.h"
 #include "components/services/app_service/public/cpp/permission.h"
 #include "components/services/app_service/public/cpp/shortcut.h"
-#include "components/services/app_service/public/mojom/types.mojom.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace apps {
@@ -25,7 +25,7 @@ class AppRegistryCacheTest;
 struct IconKey;
 struct RunOnOsLogin;
 
-// Wraps two apps::mojom::AppPtr's, a prior state and a delta on top of that
+// Wraps two apps::AppPtr's, a prior state and a delta on top of that
 // state. The state is conceptually the "sum" of all of the previous deltas,
 // with "addition" or "merging" simply being that the most recent version of
 // each field "wins".
@@ -53,21 +53,13 @@ struct RunOnOsLogin;
 // remain valid for the lifetime of the AppUpdate.
 //
 // See components/services/app_service/README.md for more details.
-//
-// TODO(crbug.com/1253250): Remove all apps::mojom related code.
-// 1. Modify comments.
-// 2. Replace mojom related functions with non-mojom functions.
 class COMPONENT_EXPORT(APP_UPDATE) AppUpdate {
  public:
   // Modifies |state| by copying over all of |delta|'s known fields: those
   // fields whose values aren't "unknown". The |state| may not be nullptr.
-  static void Merge(apps::mojom::App* state, const apps::mojom::App* delta);
   static void Merge(App* state, const App* delta);
 
   // At most one of |state| or |delta| may be nullptr.
-  AppUpdate(const apps::mojom::App* state,
-            const apps::mojom::App* delta,
-            const AccountId& account_id);
   AppUpdate(const App* state, const App* delta, const AccountId& account_id);
 
   AppUpdate(const AppUpdate&) = delete;
@@ -103,7 +95,7 @@ class COMPONENT_EXPORT(APP_UPDATE) AppUpdate {
   const std::string& Version() const;
   bool VersionChanged() const;
 
-  std::vector<std::string> AdditionalSearchTerms() const;
+  const std::vector<std::string>& AdditionalSearchTerms() const;
   bool AdditionalSearchTermsChanged() const;
 
   absl::optional<apps::IconKey> IconKey() const;
@@ -124,10 +116,10 @@ class COMPONENT_EXPORT(APP_UPDATE) AppUpdate {
   apps::InstallSource InstallSource() const;
   bool InstallSourceChanged() const;
 
-  // An optional ID used for policy to identify the app.
-  // For web apps, it contains the install URL.
-  const std::string& PolicyId() const;
-  bool PolicyIdChanged() const;
+  // IDs used for policy to identify the app.
+  // For web apps, it contains the install URL(s).
+  const std::vector<std::string>& PolicyIds() const;
+  bool PolicyIdsChanged() const;
 
   bool InstalledInternally() const;
 
@@ -176,23 +168,21 @@ class COMPONENT_EXPORT(APP_UPDATE) AppUpdate {
   absl::optional<apps::RunOnOsLogin> RunOnOsLogin() const;
   bool RunOnOsLoginChanged() const;
 
-  apps::Shortcuts Shortcuts() const;
-  bool ShortcutsChanged() const;
-
   const ::AccountId& AccountId() const;
+
+  absl::optional<uint64_t> AppSizeInBytes() const;
+  bool AppSizeInBytesChanged() const;
+
+  absl::optional<uint64_t> DataSizeInBytes() const;
+  bool DataSizeInBytesChanged() const;
 
  private:
   friend class AppRegistryCacheTest;
 
-  bool ShouldUseNonMojom() const;
+  raw_ptr<const apps::App, DanglingUntriaged> state_ = nullptr;
+  raw_ptr<const apps::App, DanglingUntriaged> delta_ = nullptr;
 
-  raw_ptr<const apps::mojom::App> mojom_state_ = nullptr;
-  raw_ptr<const apps::mojom::App> mojom_delta_ = nullptr;
-
-  raw_ptr<const apps::App> state_ = nullptr;
-  raw_ptr<const apps::App> delta_ = nullptr;
-
-  const ::AccountId& account_id_;
+  const raw_ref<const ::AccountId> account_id_;
 };
 
 // For logging and debug purposes.

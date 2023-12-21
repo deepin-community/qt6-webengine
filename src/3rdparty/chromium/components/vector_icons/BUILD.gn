@@ -1,18 +1,22 @@
-# Copyright 2017 The Chromium Authors. All rights reserved.
+# Copyright 2017 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 import("//build/config/chromeos/ui_mode.gni")
+import("//build/util/branding.gni")
 import("//components/vector_icons/vector_icons.gni")
 
 aggregate_vector_icons("components_vector_icons") {
   icon_directory = "."
 
   sources = [
+    "${branding_path_component}/product.icon",
+    "account_circle.icon",
     "ads.icon",
     "ads_click.icon",
     "arrow_back.icon",
     "back_arrow.icon",
+    "back_to_tab.icon",
     "blocked_badge.icon",
     "bluetooth.icon",
     "bluetooth_connected.icon",
@@ -20,6 +24,7 @@ aggregate_vector_icons("components_vector_icons") {
     "business.icon",
     "call.icon",
     "call_end.icon",
+    "cancel.icon",
     "caret_down.icon",
     "caret_up.icon",
     "celebration.icon",
@@ -33,6 +38,7 @@ aggregate_vector_icons("components_vector_icons") {
     "content_paste.icon",
     "content_paste_off.icon",
     "cookie.icon",
+    "dangerous.icon",
     "description.icon",
     "devices.icon",
     "devices_off.icon",
@@ -62,6 +68,7 @@ aggregate_vector_icons("components_vector_icons") {
     "history.icon",
     "https_valid.icon",
     "https_valid_arrow.icon",
+    "image_search.icon",
     "info_outline.icon",
     "insert_drive_file_outline.icon",
     "keyboard.icon",
@@ -85,14 +92,16 @@ aggregate_vector_icons("components_vector_icons") {
     "midi.icon",
     "midi_off.icon",
     "not_secure_warning.icon",
-    "notification_explore.icon",
+    "notification_warning.icon",
     "notifications.icon",
     "notifications_off.icon",
     "open_in_new.icon",
     "page_info_content_paste.icon",
+    "passkey.icon",
     "pause.icon",
     "photo.icon",
     "play_arrow.icon",
+    "privacy_sandbox.icon",
     "protected_content.icon",
     "protocol_handler.icon",
     "qr_code.icon",
@@ -109,6 +118,7 @@ aggregate_vector_icons("components_vector_icons") {
     "sms.icon",
     "submenu_arrow.icon",
     "sync.icon",
+    "tenancy.icon",
     "troubleshoot.icon",
     "usb.icon",
     "videocam.icon",
@@ -125,6 +135,28 @@ aggregate_vector_icons("components_vector_icons") {
 
   if (is_chromeos_ash) {
     sources += [ "videogame_asset_outline.icon" ]
+  }
+
+  if (is_chrome_branded) {
+    sources += [
+      "google_chrome/assistant.icon",
+      "google_chrome/google_calendar.icon",
+      "google_chrome/google_docs.icon",
+      "google_chrome/google_drive.icon",
+      "google_chrome/google_g_logo.icon",
+      "google_chrome/google_g_logo_monochrome.icon",
+      "google_chrome/google_keep_note.icon",
+      "google_chrome/google_lens_full_logo.icon",
+      "google_chrome/google_lens_full_logo_dark.icon",
+      "google_chrome/google_lens_logo.icon",
+      "google_chrome/google_password_manager.icon",
+      "google_chrome/google_pay_logo.icon",
+      "google_chrome/google_sheets.icon",
+      "google_chrome/google_sites.icon",
+      "google_chrome/google_slides.icon",
+      "google_chrome/google_super_g.icon",
+      "google_chrome/page_insights.icon",
+    ]
   }
 }
 

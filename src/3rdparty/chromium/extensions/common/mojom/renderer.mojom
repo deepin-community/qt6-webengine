@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,7 +19,7 @@ import "mojo/public/mojom/base/file_path.mojom";
 // Mojo struct to be used as argument on the LoadExtension method.
 struct ExtensionLoadedParams {
   // The subset of the extension manifest data we send to renderers.
-  mojo_base.mojom.Value manifest;
+  mojo_base.mojom.DictionaryValue manifest;
 
   // The location the extension was installed from. This is used in the renderer
   // only to generate the extension ID for extensions that are loaded unpacked.
@@ -126,6 +126,11 @@ interface Renderer {
   UpdateDefaultPolicyHostRestrictions(
         URLPatternSet default_policy_blocked_hosts,
         URLPatternSet default_policy_allowed_hosts);
+
+  // Tells the renderer to update the collection of user-restricted hosts.
+  UpdateUserHostRestrictions(
+        URLPatternSet user_blocked_hosts,
+        URLPatternSet user_allowed_hosts);
 
   // Tells the render view about new tab-specific permissions for an extension.
   UpdateTabSpecificPermissions(string extension_id,

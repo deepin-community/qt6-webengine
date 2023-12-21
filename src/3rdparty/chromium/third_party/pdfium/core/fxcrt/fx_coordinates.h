@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,6 +12,8 @@
 #ifndef NDEBUG
 #include <iosfwd>
 #endif
+
+#include "third_party/base/span.h"
 
 template <class BaseType>
 class CFX_PTemplate {
@@ -204,7 +206,7 @@ class CFX_FloatRect {
   explicit CFX_FloatRect(const FX_RECT& rect);
   explicit CFX_FloatRect(const CFX_PointF& point);
 
-  static CFX_FloatRect GetBBox(const CFX_PointF* pPoints, int nPoints);
+  static CFX_FloatRect GetBBox(pdfium::span<const CFX_PointF> pPoints);
 
   void Normalize();
 

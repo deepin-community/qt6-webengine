@@ -31,11 +31,12 @@
 #include "src/trace_processor/importers/common/track_tracker.h"
 #include "src/trace_processor/importers/ftrace/ftrace_module.h"
 #include "src/trace_processor/importers/proto/metadata_tracker.h"
+#include "src/trace_processor/importers/proto/packet_analyzer.h"
 #include "src/trace_processor/importers/proto/packet_sequence_state.h"
 #include "src/trace_processor/importers/proto/proto_incremental_state.h"
+#include "src/trace_processor/sorter/trace_sorter.h"
 #include "src/trace_processor/storage/stats.h"
 #include "src/trace_processor/storage/trace_storage.h"
-#include "src/trace_processor/trace_sorter.h"
 #include "src/trace_processor/util/descriptors.h"
 #include "src/trace_processor/util/gzip_utils.h"
 
@@ -52,7 +53,10 @@ namespace perfetto {
 namespace trace_processor {
 
 ProtoTraceReader::ProtoTraceReader(TraceProcessorContext* ctx)
-    : context_(ctx) {}
+    : context_(ctx),
+      skipped_packet_key_id_(ctx->storage->InternString("skipped_packet")),
+      invalid_incremental_state_key_id_(
+          ctx->storage->InternString("invalid_incremental_state")) {}
 ProtoTraceReader::~ProtoTraceReader() = default;
 
 util::Status ProtoTraceReader::Parse(TraceBlobView blob) {
@@ -84,6 +88,10 @@ util::Status ProtoTraceReader::ParsePacket(TraceBlobView packet) {
 
   const uint32_t seq_id = decoder.trusted_packet_sequence_id();
   auto* state = GetIncrementalStateForPacketSequence(seq_id);
+
+  if (decoder.first_packet_on_sequence()) {
+    HandleFirstPacketOnSequence(seq_id);
+  }
 
   uint32_t sequence_flags = decoder.sequence_flags();
 
@@ -132,19 +140,17 @@ util::Status ProtoTraceReader::ParsePacket(TraceBlobView packet) {
     }
 
     if (!state->IsIncrementalStateValid()) {
+      if (context_->content_analyzer) {
+        // Account for the skipped packet for trace proto content analysis,
+        // with a special annotation.
+        PacketAnalyzer::SampleAnnotation annotation;
+        annotation.push_back(
+            {skipped_packet_key_id_, invalid_incremental_state_key_id_});
+        PacketAnalyzer::Get(context_)->ProcessPacket(packet, annotation);
+      }
       context_->storage->IncrementStats(stats::tokenizer_skipped_packets);
       return util::OkStatus();
     }
-  }
-
-  // Workaround a bug in the frame timeline traces which is emitting packets
-  // with zero timestamp (b/179905685).
-  // TODO(primiano): around mid-2021 there should be no traces that have this
-  // bug and we should be able to remove this workaround.
-  if (decoder.has_frame_timeline_event() && decoder.timestamp() == 0) {
-    context_->storage->IncrementStats(
-        stats::frame_timeline_event_parser_errors);
-    return util::OkStatus();
   }
 
   protos::pbzero::TracePacketDefaults::Decoder* defaults =
@@ -205,9 +211,20 @@ util::Status ProtoTraceReader::ParsePacket(TraceBlobView packet) {
   }
   latest_timestamp_ = std::max(timestamp, latest_timestamp_);
 
+  if (context_->content_analyzer && !decoder.has_track_event()) {
+    PacketAnalyzer::Get(context_)->ProcessPacket(packet, {});
+  }
+
   auto& modules = context_->modules_by_field;
   for (uint32_t field_id = 1; field_id < modules.size(); ++field_id) {
     if (!modules[field_id].empty() && decoder.Get(field_id).valid()) {
+      for (ProtoImporterModule* global_module :
+           context_->modules_for_all_fields) {
+        ModuleResult res = global_module->TokenizePacket(
+            decoder, &packet, timestamp, state, field_id);
+        if (!res.ignored())
+          return res.ToStatus();
+      }
       for (ProtoImporterModule* module : modules[field_id]) {
         ModuleResult res = module->TokenizePacket(decoder, &packet, timestamp,
                                                   state, field_id);
@@ -223,7 +240,8 @@ util::Status ProtoTraceReader::ParsePacket(TraceBlobView packet) {
 
   // Use parent data and length because we want to parse this again
   // later to get the exact type of the packet.
-  context_->sorter->PushTracePacket(timestamp, state, std::move(packet));
+  context_->sorter->PushTracePacket(timestamp, state->current_generation(),
+                                    std::move(packet));
 
   return util::OkStatus();
 }
@@ -234,7 +252,7 @@ void ProtoTraceReader::ParseTraceConfig(protozero::ConstBytes blob) {
     PERFETTO_ELOG(
         "It is strongly recommended to have flush_period_ms set when "
         "write_into_file is turned on. This trace will be loaded fully "
-        "into memory before sorting which increases the likliehoold of "
+        "into memory before sorting which increases the likelihood of "
         "OOMs.");
   }
 }
@@ -253,6 +271,13 @@ void ProtoTraceReader::HandleIncrementalStateCleared(
   for (auto& module : context_->modules) {
     module->OnIncrementalStateCleared(
         packet_decoder.trusted_packet_sequence_id());
+  }
+}
+
+void ProtoTraceReader::HandleFirstPacketOnSequence(
+    uint32_t packet_sequence_id) {
+  for (auto& module : context_->modules) {
+    module->OnFirstPacketOnSequence(packet_sequence_id);
   }
 }
 

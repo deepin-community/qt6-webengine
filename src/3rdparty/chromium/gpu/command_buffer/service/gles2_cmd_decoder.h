@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -46,7 +46,6 @@ class CopyTexImageResourceManager;
 class CopyTextureCHROMIUMResourceManager;
 class FramebufferManager;
 class GLES2Util;
-class ImageManager;
 class Logger;
 class Outputter;
 class ShaderTranslatorInterface;
@@ -160,6 +159,14 @@ class GPU_GLES2_EXPORT GLES2Decoder : public CommonDecoder,
   virtual void TakeFrontBuffer(const Mailbox& mailbox) = 0;
   virtual void ReturnFrontBuffer(const Mailbox& mailbox, bool is_lost) = 0;
 
+  // This is intended only for use with NaCL swapchain, replacing
+  // TakeFrontBuffer/ReturnFrontBuffer flow.
+  virtual void SetDefaultFramebufferSharedImage(const Mailbox& mailbox,
+                                                int samples,
+                                                bool preserve,
+                                                bool needs_depth,
+                                                bool needs_stencil) = 0;
+
   // Resize an offscreen frame buffer.
   virtual bool ResizeOffscreenFramebuffer(const gfx::Size& size) = 0;
 
@@ -183,9 +190,6 @@ class GPU_GLES2_EXPORT GLES2Decoder : public CommonDecoder,
 
   // Gets the VertexArrayManager for this context.
   virtual VertexArrayManager* GetVertexArrayManager() = 0;
-
-  // Gets the ImageManager for this context.
-  virtual ImageManager* GetImageManagerForTest() = 0;
 
   // Get the service texture ID corresponding to a client texture ID.
   // If no such record is found then return false.

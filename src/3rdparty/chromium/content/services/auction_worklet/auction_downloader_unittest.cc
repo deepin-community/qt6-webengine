@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
 #include "content/services/auction_worklet/worklet_test_util.h"
@@ -88,7 +88,7 @@ class AuctionDownloaderTest : public testing::Test {
 TEST_F(AuctionDownloaderTest, NetworkError) {
   network::URLLoaderCompletionStatus status;
   status.error_code = net::ERR_FAILED;
-  url_loader_factory_.AddResponse(url_, nullptr /* head */, kAsciiResponseBody,
+  url_loader_factory_.AddResponse(url_, /*head=*/nullptr, kAsciiResponseBody,
                                   status);
   EXPECT_FALSE(RunRequest());
   EXPECT_EQ(

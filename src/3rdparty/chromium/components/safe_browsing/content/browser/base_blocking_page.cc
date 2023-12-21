@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,8 @@
 
 #include <memory>
 
-#include "base/bind.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
@@ -131,7 +131,7 @@ void BaseBlockingPage::CommandReceived(const std::string& page_cmd) {
 }
 
 void BaseBlockingPage::PopulateInterstitialStrings(
-    base::Value* load_time_data) {
+    base::Value::Dict& load_time_data) {
   sb_error_ui_->PopulateStringsForHtml(load_time_data);
 }
 

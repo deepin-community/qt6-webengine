@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,8 @@
 #include <va/va.h>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/containers/queue.h"
+#include "base/functional/callback.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/sequence_checker.h"
 #include "base/time/time.h"
@@ -17,6 +17,7 @@
 #include "media/base/video_codecs.h"
 #include "media/video/video_encode_accelerator.h"
 #include "media/video/video_encoder_info.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace media {
@@ -42,25 +43,12 @@ class VaapiVideoEncoderDelegate {
                             base::RepeatingClosure error_cb);
   virtual ~VaapiVideoEncoderDelegate();
 
-  enum class BitrateControl {
-    kConstantBitrate,  // Constant Bitrate mode. This class relies on other
-                       // parts (e.g. driver) to achieve the specified bitrate.
-    kConstantQuantizationParameter  // Constant Quantization Parameter mode.
-                                    // This class needs to compute a proper
-                                    // quantization parameter and give other
-                                    // parts (e.g. the driver) the value.
-  };
-
   struct Config {
-    // Maxium number of reference frames.
+    // Maximum number of reference frames.
     // For H.264 encoding, the value represents the maximum number of reference
     // frames for both the reference picture list 0 (bottom 16 bits) and the
     // reference picture list 1 (top 16 bits).
     size_t max_num_ref_frames;
-
-    bool native_input_mode = false;
-
-    BitrateControl bitrate_control = BitrateControl::kConstantBitrate;
   };
 
   // EncodeResult owns the necessary resource to keep the encoded buffer. The
@@ -71,13 +59,17 @@ class VaapiVideoEncoderDelegate {
     EncodeResult(std::unique_ptr<ScopedVABuffer> coded_buffer,
                  const BitstreamBufferMetadata& metadata);
     ~EncodeResult();
+    EncodeResult(EncodeResult&&);
+    EncodeResult& operator=(EncodeResult&&);
+    EncodeResult(const EncodeResult&) = delete;
+    EncodeResult& operator=(const EncodeResult&) = delete;
 
     VABufferID coded_buffer_id() const;
     const BitstreamBufferMetadata& metadata() const;
 
    private:
-    const std::unique_ptr<ScopedVABuffer> coded_buffer_;
-    const BitstreamBufferMetadata metadata_;
+    std::unique_ptr<ScopedVABuffer> coded_buffer_;
+    BitstreamBufferMetadata metadata_;
   };
 
   // An abstraction of an encode job for one frame. Parameters required for an
@@ -91,12 +83,13 @@ class VaapiVideoEncoderDelegate {
     // Creates an EncodeJob to encode |input_frame|, which will be executed by
     // calling ExecuteSetupCallbacks() in VaapiVideoEncoderDelegate::Encode().
     // If |keyframe| is true, requests this job to produce a keyframe.
-    EncodeJob(scoped_refptr<VideoFrame> input_frame, bool keyframe);
+    EncodeJob(bool keyframe,
+              base::TimeDelta timestamp,
+              VASurfaceID input_surface_id);
     // Constructor for VA-API.
-    EncodeJob(scoped_refptr<VideoFrame> input_frame,
-              bool keyframe,
+    EncodeJob(bool keyframe,
+              base::TimeDelta timestamp,
               VASurfaceID input_surface_id,
-              const gfx::Size& input_surface_size,
               scoped_refptr<CodecPicture> picture,
               std::unique_ptr<ScopedVABuffer> coded_buffer);
 
@@ -108,8 +101,7 @@ class VaapiVideoEncoderDelegate {
     // Creates EncodeResult with |metadata|. This passes ownership of the
     // resources owned by EncodeJob and therefore must be called with
     // std::move().
-    std::unique_ptr<EncodeResult> CreateEncodeResult(
-        const BitstreamBufferMetadata& metadata) &&;
+    EncodeResult CreateEncodeResult(const BitstreamBufferMetadata& metadata) &&;
 
     // Requests this job to produce a keyframe; requesting a keyframe may not
     // always result in one being produced by the encoder (e.g. if it would
@@ -121,25 +113,20 @@ class VaapiVideoEncoderDelegate {
 
     base::TimeDelta timestamp() const;
 
-    const scoped_refptr<VideoFrame>& input_frame() const;
-
     // VA-API specific methods.
     VABufferID coded_buffer_id() const;
     VASurfaceID input_surface_id() const;
-    const gfx::Size& input_surface_size() const;
     const scoped_refptr<CodecPicture>& picture() const;
 
    private:
-    // Input VideoFrame to be encoded.
-    const scoped_refptr<VideoFrame> input_frame_;
-
     // True if this job is to produce a keyframe.
     bool keyframe_;
+    // |timestamp_| to be added to the produced encoded chunk.
+    const base::TimeDelta timestamp_;
 
     // VA-API specific members.
     // Input surface ID and size for video frame data or scaled data.
     const VASurfaceID input_surface_id_;
-    const gfx::Size input_surface_size_;
     const scoped_refptr<CodecPicture> picture_;
     // Buffer that will contain the output bitstream data for this frame.
     std::unique_ptr<ScopedVABuffer> coded_buffer_;
@@ -175,8 +162,9 @@ class VaapiVideoEncoderDelegate {
   bool Encode(EncodeJob& encode_job);
 
   // Creates and returns the encode result for specified EncodeJob by
-  // synchronizing the corresponding encode operation.
-  std::unique_ptr<EncodeResult> GetEncodeResult(
+  // synchronizing the corresponding encode operation. absl::nullopt is returned
+  // on failure.
+  absl::optional<EncodeResult> GetEncodeResult(
       std::unique_ptr<EncodeJob> encode_job);
 
   // Gets the active spatial layer resolutions for K-SVC encoding, VaapiVEA
@@ -192,8 +180,6 @@ class VaapiVideoEncoderDelegate {
 
   base::RepeatingClosure error_cb_;
 
-  bool native_input_mode_ = false;
-
   SEQUENCE_CHECKER(sequence_checker_);
 
  private:
@@ -203,9 +189,8 @@ class VaapiVideoEncoderDelegate {
   virtual bool PrepareEncodeJob(EncodeJob& encode_job) = 0;
 
   // Notifies the encoded chunk size in bytes to update a bitrate controller in
-  // VaapiVideoEncoderDelegate. This should be called only if
-  // VaapiVideoEncoderDelegate is configured with
-  // BitrateControl::kConstantQuantizationParameter.
+  // VaapiVideoEncoderDelegate. This should be called only if constant
+  // quantization encoding is used, which currently is true for VP8 and VP9.
   virtual void BitrateControlUpdate(uint64_t encoded_chunk_size_bytes);
 };
 }  // namespace media

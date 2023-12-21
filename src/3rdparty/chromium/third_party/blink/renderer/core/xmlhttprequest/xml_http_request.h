@@ -33,6 +33,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_trust_token.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_typedefs.h"
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/document_parser_client.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
@@ -72,11 +73,12 @@ class ThreadableLoader;
 class URLSearchParams;
 class XMLHttpRequestUpload;
 
-class XMLHttpRequest final : public XMLHttpRequestEventTarget,
-                             public ThreadableLoaderClient,
-                             public DocumentParserClient,
-                             public ActiveScriptWrappable<XMLHttpRequest>,
-                             public ExecutionContextLifecycleObserver {
+class CORE_EXPORT XMLHttpRequest final
+    : public XMLHttpRequestEventTarget,
+      public ThreadableLoaderClient,
+      public DocumentParserClient,
+      public ActiveScriptWrappable<XMLHttpRequest>,
+      public ExecutionContextLifecycleObserver {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -123,6 +125,8 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   State readyState() const;
   bool withCredentials() const { return with_credentials_; }
   void setWithCredentials(bool, ExceptionState&);
+  bool deprecatedBrowsingTopics() const { return deprecated_browsing_topics_; }
+  void setDeprecatedBrowsingTopics(bool);
   void open(const AtomicString& method, const String& url, ExceptionState&);
   void open(const AtomicString& method,
             const String& url,
@@ -175,6 +179,8 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
 
   void Trace(Visitor*) const override;
   const char* NameInHeapSnapshot() const override { return "XMLHttpRequest"; }
+
+  bool HasRequestHeaderForTesting(AtomicString name) const;
 
  private:
   class BlobLoader;
@@ -316,10 +322,6 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
 
   std::unique_ptr<TextResourceDecoder> decoder_;
 
-  // TODO(crbug.com/1226775): Remove these on M96.
-  static constexpr size_t kResponseBodyHeadSize = 2;
-  Vector<uint8_t, kResponseBodyHeadSize> response_body_head_;
-
   // Avoid using a flat WTF::String here and rather use a traced v8::String
   // which internally builds a string rope.
   TraceWrapperV8String response_text_;
@@ -366,6 +368,8 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   bool async_ = true;
 
   bool with_credentials_ = false;
+
+  bool deprecated_browsing_topics_ = false;
 
   // Used to skip m_responseDocument creation if it's done previously. We need
   // this separate flag since m_responseDocument can be 0 for some cases.

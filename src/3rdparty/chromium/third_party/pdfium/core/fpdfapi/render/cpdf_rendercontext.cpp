@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,11 +6,13 @@
 
 #include "core/fpdfapi/render/cpdf_rendercontext.h"
 
+#include <utility>
+
+#include "core/fpdfapi/page/cpdf_pageimagecache.h"
 #include "core/fpdfapi/page/cpdf_pageobject.h"
 #include "core/fpdfapi/page/cpdf_pageobjectholder.h"
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
 #include "core/fpdfapi/parser/cpdf_document.h"
-#include "core/fpdfapi/render/cpdf_pagerendercache.h"
 #include "core/fpdfapi/render/cpdf_progressiverenderer.h"
 #include "core/fpdfapi/render/cpdf_renderoptions.h"
 #include "core/fpdfapi/render/cpdf_renderstatus.h"
@@ -20,22 +22,22 @@
 #include "core/fxge/dib/cfx_dibitmap.h"
 #include "core/fxge/dib/fx_dib.h"
 
-CPDF_RenderContext::CPDF_RenderContext(CPDF_Document* pDoc,
-                                       CPDF_Dictionary* pPageResources,
-                                       CPDF_PageRenderCache* pPageCache)
+CPDF_RenderContext::CPDF_RenderContext(
+    CPDF_Document* pDoc,
+    RetainPtr<CPDF_Dictionary> pPageResources,
+    CPDF_PageImageCache* pPageCache)
     : m_pDocument(pDoc),
-      m_pPageResources(pPageResources),
+      m_pPageResources(std::move(pPageResources)),
       m_pPageCache(pPageCache) {}
 
 CPDF_RenderContext::~CPDF_RenderContext() = default;
 
-void CPDF_RenderContext::GetBackground(const RetainPtr<CFX_DIBitmap>& pBuffer,
+void CPDF_RenderContext::GetBackground(RetainPtr<CFX_DIBitmap> pBuffer,
                                        const CPDF_PageObject* pObj,
                                        const CPDF_RenderOptions* pOptions,
                                        const CFX_Matrix& mtFinal) {
   CFX_DefaultRenderDevice device;
-  device.Attach(pBuffer, false, nullptr, false);
-
+  device.Attach(std::move(pBuffer));
   device.FillRect(FX_RECT(0, 0, device.GetWidth(), device.GetHeight()),
                   0xffffffff);
   Render(&device, pObj, pOptions, &mtFinal);

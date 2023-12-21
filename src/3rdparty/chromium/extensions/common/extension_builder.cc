@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 #include "base/strings/stringprintf.h"
 #include "components/crx_file/id_util.h"
 #include "extensions/common/api/content_scripts.h"
+#include "extensions/common/api/extension_action/action_info.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
@@ -22,6 +23,7 @@ struct ExtensionBuilder::ManifestData {
   Type type;
   std::string name;
   std::vector<std::string> permissions;
+  std::vector<std::string> optional_permissions;
   absl::optional<ActionInfo::Type> action;
   absl::optional<BackgroundContext> background_context;
   absl::optional<std::string> version;
@@ -32,9 +34,9 @@ struct ExtensionBuilder::ManifestData {
   using ContentScriptEntry = std::pair<std::string, std::vector<std::string>>;
   std::vector<ContentScriptEntry> content_scripts;
 
-  absl::optional<base::Value> extra;
+  absl::optional<base::Value::Dict> extra;
 
-  std::unique_ptr<base::DictionaryValue> GetValue() const {
+  base::Value::Dict GetValue() const {
     DictionaryBuilder manifest;
     manifest.Set(manifest_keys::kName, name)
         .Set(manifest_keys::kManifestVersion, manifest_version.value_or(2))
@@ -61,22 +63,18 @@ struct ExtensionBuilder::ManifestData {
       manifest.Set(manifest_keys::kPermissions, permissions_builder.Build());
     }
 
-    if (action) {
-      // TODO(devlin): Update this when action_info_test_util.[h|cc] is moved to
-      // //extensions.
-      const char* action_key = nullptr;
-      switch (*action) {
-        case ActionInfo::TYPE_PAGE:
-          action_key = manifest_keys::kPageAction;
-          break;
-        case ActionInfo::TYPE_BROWSER:
-          action_key = manifest_keys::kBrowserAction;
-          break;
-        case ActionInfo::TYPE_ACTION:
-          action_key = manifest_keys::kAction;
-          break;
+    if (!optional_permissions.empty()) {
+      ListBuilder permissions_builder;
+      for (const std::string& permission : optional_permissions) {
+        permissions_builder.Append(permission);
       }
-      manifest.Set(action_key, std::make_unique<base::DictionaryValue>());
+      manifest.Set(manifest_keys::kOptionalPermissions,
+                   permissions_builder.Build());
+    }
+
+    if (action) {
+      const char* action_key = ActionInfo::GetManifestKeyForActionType(*action);
+      manifest.Set(action_key, base::Value(base::Value::Dict()));
     }
 
     if (background_context) {
@@ -118,20 +116,17 @@ struct ExtensionBuilder::ManifestData {
                    scripts_value.Build());
     }
 
-    std::unique_ptr<base::DictionaryValue> result = manifest.Build();
-    if (extra) {
-      const base::DictionaryValue* extra_dict = nullptr;
-      extra->GetAsDictionary(&extra_dict);
-      result->MergeDictionary(extra_dict);
-    }
+    base::Value::Dict result = manifest.Build();
+    if (extra)
+      result.Merge(extra->Clone());
 
     return result;
   }
 
-  base::Value* get_extra() {
+  base::Value::Dict& get_extra() {
     if (!extra)
-      extra.emplace(base::Value::Type::DICTIONARY);
-    return &extra.value();
+      extra.emplace();
+    return *extra;
   }
 };
 
@@ -146,7 +141,7 @@ ExtensionBuilder::ExtensionBuilder(const std::string& name, Type type)
   manifest_data_->type = type;
 }
 
-ExtensionBuilder::~ExtensionBuilder() {}
+ExtensionBuilder::~ExtensionBuilder() = default;
 
 ExtensionBuilder::ExtensionBuilder(ExtensionBuilder&& other) = default;
 ExtensionBuilder& ExtensionBuilder::operator=(ExtensionBuilder&& other) =
@@ -159,9 +154,16 @@ scoped_refptr<const Extension> ExtensionBuilder::Build() {
     id_ = crx_file::id_util::GenerateId(manifest_data_->name);
 
   std::string error;
+
+  // This allows `*manifest_value` to be passed as a reference instead of
+  // needing to be cloned.
+  absl::optional<base::Value::Dict> manifest_data_value;
+  if (manifest_data_) {
+    manifest_data_value = manifest_data_->GetValue();
+  }
   scoped_refptr<const Extension> extension = Extension::Create(
       path_, location_,
-      manifest_data_ ? *manifest_data_->GetValue() : *manifest_value_, flags_,
+      manifest_data_value ? *manifest_data_value : *manifest_value_, flags_,
       id_, &error);
 
   CHECK(error.empty()) << error;
@@ -172,9 +174,8 @@ scoped_refptr<const Extension> ExtensionBuilder::Build() {
 
 base::Value ExtensionBuilder::BuildManifest() {
   CHECK(manifest_data_ || manifest_value_);
-  return manifest_data_
-             ? base::Value::FromUniquePtrValue(manifest_data_->GetValue())
-             : manifest_value_->Clone();
+  return base::Value(manifest_data_ ? manifest_data_->GetValue()
+                                    : manifest_value_->Clone());
 }
 
 ExtensionBuilder& ExtensionBuilder::AddPermission(
@@ -189,6 +190,22 @@ ExtensionBuilder& ExtensionBuilder::AddPermissions(
   CHECK(manifest_data_);
   manifest_data_->permissions.insert(manifest_data_->permissions.end(),
                                      permissions.begin(), permissions.end());
+  return *this;
+}
+
+ExtensionBuilder& ExtensionBuilder::AddOptionalPermission(
+    const std::string& permission) {
+  CHECK(manifest_data_);
+  manifest_data_->optional_permissions.push_back(permission);
+  return *this;
+}
+
+ExtensionBuilder& ExtensionBuilder::AddOptionalPermissions(
+    const std::vector<std::string>& permissions) {
+  CHECK(manifest_data_);
+  manifest_data_->optional_permissions.insert(
+      manifest_data_->optional_permissions.end(), permissions.begin(),
+      permissions.end());
   return *this;
 }
 
@@ -228,11 +245,11 @@ ExtensionBuilder& ExtensionBuilder::SetManifestVersion(int manifest_version) {
 ExtensionBuilder& ExtensionBuilder::AddJSON(base::StringPiece json) {
   CHECK(manifest_data_);
   std::string wrapped_json = base::StringPrintf("{%s}", json.data());
-  base::JSONReader::ValueWithError parsed =
-      base::JSONReader::ReadAndReturnValueWithError(wrapped_json);
-  CHECK(parsed.value) << "Failed to parse json for extension '"
-                      << manifest_data_->name << "':" << parsed.error_message;
-  return MergeManifest(*parsed.value);
+  auto parsed = base::JSONReader::ReadAndReturnValueWithError(wrapped_json);
+  CHECK(parsed.has_value())
+      << "Failed to parse json for extension '" << manifest_data_->name
+      << "':" << parsed.error().message;
+  return MergeManifest(std::move(*parsed).TakeDict());
 }
 
 ExtensionBuilder& ExtensionBuilder::SetPath(const base::FilePath& path) {
@@ -246,26 +263,19 @@ ExtensionBuilder& ExtensionBuilder::SetLocation(
   return *this;
 }
 
-ExtensionBuilder& ExtensionBuilder::SetManifest(
-    std::unique_ptr<base::DictionaryValue> manifest) {
+ExtensionBuilder& ExtensionBuilder::SetManifest(base::Value::Dict manifest) {
   CHECK(!manifest_data_);
   manifest_value_ = std::move(manifest);
   return *this;
 }
 
-ExtensionBuilder& ExtensionBuilder::MergeManifest(const base::Value& to_merge) {
-  CHECK(to_merge.is_dict());
+ExtensionBuilder& ExtensionBuilder::MergeManifest(base::Value::Dict to_merge) {
   if (manifest_data_) {
-    manifest_data_->get_extra()->MergeDictionary(&to_merge);
+    manifest_data_->get_extra().Merge(std::move(to_merge));
   } else {
-    manifest_value_->MergeDictionary(&to_merge);
+    manifest_value_->Merge(std::move(to_merge));
   }
   return *this;
-}
-
-ExtensionBuilder& ExtensionBuilder::MergeManifest(
-    std::unique_ptr<base::DictionaryValue> manifest) {
-  return MergeManifest(*manifest);
 }
 
 ExtensionBuilder& ExtensionBuilder::AddFlags(int init_from_value_flags) {
@@ -281,14 +291,13 @@ ExtensionBuilder& ExtensionBuilder::SetID(const std::string& id) {
 void ExtensionBuilder::SetManifestKeyImpl(base::StringPiece key,
                                           base::Value value) {
   CHECK(manifest_data_);
-  manifest_data_->get_extra()->SetKey(key, std::move(value));
+  manifest_data_->get_extra().Set(key, std::move(value));
 }
 
-void ExtensionBuilder::SetManifestPathImpl(
-    std::initializer_list<base::StringPiece> path,
-    base::Value value) {
+void ExtensionBuilder::SetManifestPathImpl(base::StringPiece path,
+                                           base::Value value) {
   CHECK(manifest_data_);
-  manifest_data_->get_extra()->SetPath(path, std::move(value));
+  manifest_data_->get_extra().SetByDottedPath(path, std::move(value));
 }
 
 }  // namespace extensions

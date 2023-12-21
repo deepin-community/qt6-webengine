@@ -1,4 +1,4 @@
-// Copyright (c) 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,12 +18,13 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
+#include "base/check.h"
 #include "base/cxx17_backports.h"
 #include "base/enterprise_util.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
@@ -50,6 +51,7 @@
 #include "components/policy/core/common/registry_dict.h"
 #include "components/policy/core/common/schema.h"
 #include "components/policy/policy_constants.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace policy {
 
@@ -82,14 +84,15 @@ void ParsePolicy(const RegistryDict* gpo_dict,
   if (!gpo_dict)
     return;
 
-  std::unique_ptr<base::Value> policy_value(gpo_dict->ConvertToJSON(schema));
-  const base::DictionaryValue* policy_dict = nullptr;
-  if (!policy_value->GetAsDictionary(&policy_dict) || !policy_dict) {
+  absl::optional<base::Value> policy_value(gpo_dict->ConvertToJSON(schema));
+  DCHECK(policy_value);
+  const base::Value::Dict* policy_dict = policy_value->GetIfDict();
+  if (!policy_dict) {
     SYSLOG(WARNING) << "Root policy object is not a dictionary!";
     return;
   }
 
-  policy->LoadFrom(policy_dict, level, scope, POLICY_SOURCE_PLATFORM);
+  policy->LoadFrom(*policy_dict, level, scope, POLICY_SOURCE_PLATFORM);
 }
 
 // Returns a name, using the |get_name| callback, which may refuse the call if
@@ -175,13 +178,15 @@ void CollectEnterpriseUMAs() {
                             base::win::OSInfo::GetInstance()->version_type(),
                             base::win::SUITE_LAST);
 
+  base::UmaHistogramBoolean("EnterpriseCheck.IsManagedOrEnterpriseDevice",
+                            base::IsManagedOrEnterpriseDevice());
   base::UmaHistogramBoolean("EnterpriseCheck.IsDomainJoined", IsDomainJoined());
   base::UmaHistogramBoolean("EnterpriseCheck.InDomain",
                             base::win::IsEnrolledToDomain());
   base::UmaHistogramBoolean("EnterpriseCheck.IsManaged2",
                             base::win::IsDeviceRegisteredWithManagement());
   base::UmaHistogramBoolean("EnterpriseCheck.IsEnterpriseUser",
-                            base::IsMachineExternallyManaged());
+                            base::IsEnterpriseDevice());
   base::UmaHistogramBoolean("EnterpriseCheck.IsJoinedToAzureAD",
                             base::win::IsJoinedToAzureAD());
 
@@ -246,13 +251,6 @@ PolicyLoaderWin::PolicyLoaderWin(
 }
 
 PolicyLoaderWin::~PolicyLoaderWin() {
-  // Mitigate the issues caused by loading DLLs or lazily resolving symbols on a
-  // background thread (http://crbug/973868) which can hold the process wide
-  // LoaderLock and cause contention on Foreground threads. This issue is solved
-  // on Windows version after Win7. This code can be removed when Win7 is no
-  // longer supported.
-  SCOPED_MAY_LOAD_LIBRARY_AT_BACKGROUND_PRIORITY();
-
   if (!user_policy_watcher_failed_) {
     ::UnregisterGPNotification(user_policy_changed_event_.handle());
     user_policy_watcher_.StopWatching();
@@ -278,7 +276,7 @@ void PolicyLoaderWin::InitOnBackgroundThread() {
   CollectEnterpriseUMAs();
 }
 
-std::unique_ptr<PolicyBundle> PolicyLoaderWin::Load() {
+PolicyBundle PolicyLoaderWin::Load() {
   // Reset the watches BEFORE reading the individual policies to avoid
   // missing a change notification.
   if (is_initialized_)
@@ -294,9 +292,9 @@ std::unique_ptr<PolicyBundle> PolicyLoaderWin::Load() {
   };
 
   // Load policy data for the different scopes/levels and merge them.
-  std::unique_ptr<PolicyBundle> bundle(new PolicyBundle());
+  PolicyBundle bundle;
   PolicyMap* chrome_policy =
-      &bundle->Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()));
+      &bundle.Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()));
   for (size_t i = 0; i < std::size(kScopes); ++i) {
     PolicyScope scope = kScopes[i].scope;
     PolicyLoadStatusUmaReporter status;
@@ -317,7 +315,7 @@ std::unique_ptr<PolicyBundle> PolicyLoaderWin::Load() {
 
     // Load 3rd-party policy.
     if (third_party_dict)
-      Load3rdPartyPolicy(third_party_dict.get(), scope, bundle.get());
+      Load3rdPartyPolicy(third_party_dict.get(), scope, &bundle);
   }
 
   return bundle;

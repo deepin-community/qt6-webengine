@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,6 @@
 #include <memory>
 #include "base/feature_list.h"
 #include "services/network/public/mojom/fetch_api.mojom-blink.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/mojom/v8_cache_options.mojom-blink.h"
@@ -20,13 +19,16 @@
 #include "third_party/blink/renderer/core/events/message_event.h"
 #include "third_party/blink/renderer/core/fetch/request.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
-#include "third_party/blink/renderer/core/inspector/thread_debugger.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
+#include "third_party/blink/renderer/core/inspector/thread_debugger_common_impl.h"
 #include "third_party/blink/renderer/core/loader/worker_resource_timing_notifier_impl.h"
 #include "third_party/blink/renderer/core/messaging/blink_transferable_message.h"
 #include "third_party/blink/renderer/core/script_type_names.h"
 #include "third_party/blink/renderer/core/workers/dedicated_worker.h"
 #include "third_party/blink/renderer/core/workers/dedicated_worker_object_proxy.h"
 #include "third_party/blink/renderer/core/workers/dedicated_worker_thread.h"
+#include "third_party/blink/renderer/core/workers/global_scope_creation_params.h"
+#include "third_party/blink/renderer/core/workers/parent_execution_context_task_runners.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/wtf/wtf.h"
@@ -36,15 +38,34 @@ namespace blink {
 DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
     ExecutionContext* execution_context,
     DedicatedWorker* worker_object)
+    : DedicatedWorkerMessagingProxy(
+          execution_context,
+          worker_object,
+          [](DedicatedWorkerMessagingProxy* messaging_proxy,
+             DedicatedWorker* worker_object,
+             ParentExecutionContextTaskRunners* runners) {
+            return std::make_unique<DedicatedWorkerObjectProxy>(
+                messaging_proxy, runners, worker_object->GetToken());
+          }) {}
+
+DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
+    ExecutionContext* execution_context,
+    DedicatedWorker* worker_object,
+    base::FunctionRef<std::unique_ptr<DedicatedWorkerObjectProxy>(
+        DedicatedWorkerMessagingProxy*,
+        DedicatedWorker*,
+        ParentExecutionContextTaskRunners*)> worker_object_proxy_factory)
     : ThreadedMessagingProxyBase(execution_context),
-      worker_object_(worker_object) {
-  if (worker_object) {
-    // Worker object is only nullptr in tests, which subsequently manually
-    // injects a |worker_object_proxy_|.
-    worker_object_proxy_ = std::make_unique<DedicatedWorkerObjectProxy>(
-        this, GetParentExecutionContextTaskRunners(),
-        worker_object->GetToken());
-  }
+      worker_object_proxy_(
+          worker_object_proxy_factory(this,
+                                      worker_object,
+                                      GetParentExecutionContextTaskRunners())),
+      worker_object_(worker_object),
+      virtual_time_pauser_(
+          execution_context->GetScheduler()->CreateWebScopedVirtualTimePauser(
+              "WorkerStart",
+              WebScopedVirtualTimePauser::VirtualTaskDuration::kInstant)) {
+  virtual_time_pauser_.PauseVirtualTime();
 }
 
 DedicatedWorkerMessagingProxy::~DedicatedWorkerMessagingProxy() = default;
@@ -91,10 +112,11 @@ void DedicatedWorkerMessagingProxy::StartWorkerGlobalScope(
       auto* resource_timing_notifier =
           WorkerResourceTimingNotifierImpl::CreateForOutsideResourceFetcher(
               *GetExecutionContext());
+      // TODO(crbug.com/1177199): pass a proper policy container
       GetWorkerThread()->FetchAndRunClassicScript(
           script_url, std::move(worker_main_script_load_params),
-          outside_settings_object.CopyData(), resource_timing_notifier,
-          stack_id);
+          /*policy_container=*/nullptr, outside_settings_object.CopyData(),
+          resource_timing_notifier, stack_id);
     } else {
       // Legacy code path (to be deprecated, see https://crbug.com/835717):
       GetWorkerThread()->EvaluateClassicScript(
@@ -113,10 +135,11 @@ void DedicatedWorkerMessagingProxy::StartWorkerGlobalScope(
     auto* resource_timing_notifier =
         WorkerResourceTimingNotifierImpl::CreateForOutsideResourceFetcher(
             *GetExecutionContext());
+    // TODO(crbug.com/1177199): pass a proper policy container
     GetWorkerThread()->FetchAndRunModuleScript(
         script_url, std::move(worker_main_script_load_params),
-        outside_settings_object.CopyData(), resource_timing_notifier,
-        *credentials_mode, reject_coep_unsafe_none);
+        /*policy_container=*/nullptr, outside_settings_object.CopyData(),
+        resource_timing_notifier, *credentials_mode, reject_coep_unsafe_none);
   } else {
     NOTREACHED();
   }
@@ -146,6 +169,7 @@ bool DedicatedWorkerMessagingProxy::HasPendingActivity() const {
 
 void DedicatedWorkerMessagingProxy::DidFailToFetchScript() {
   DCHECK(IsParentContextThread());
+  virtual_time_pauser_.UnpauseVirtualTime();
   if (!worker_object_ || AskedToTerminate())
     return;
   worker_object_->DispatchErrorEventForScriptFetchFailure();
@@ -170,6 +194,8 @@ void DedicatedWorkerMessagingProxy::Resume() {
 void DedicatedWorkerMessagingProxy::DidEvaluateScript(bool success) {
   DCHECK(IsParentContextThread());
   was_script_evaluated_ = true;
+
+  virtual_time_pauser_.UnpauseVirtualTime();
 
   Vector<BlinkTransferableMessage> tasks;
   queued_early_tasks_.swap(tasks);
@@ -204,8 +230,12 @@ void DedicatedWorkerMessagingProxy::PostMessageToWorkerObject(
   MessagePortArray* ports = MessagePort::EntanglePorts(
       *GetExecutionContext(), std::move(message.ports));
   debugger->ExternalAsyncTaskStarted(message.sender_stack_trace_id);
-  worker_object_->DispatchEvent(
-      *MessageEvent::Create(ports, std::move(message.message)));
+  if (message.message->CanDeserializeIn(GetExecutionContext())) {
+    worker_object_->DispatchEvent(
+        *MessageEvent::Create(ports, std::move(message.message)));
+  } else {
+    worker_object_->DispatchEvent(*MessageEvent::CreateError());
+  }
   debugger->ExternalAsyncTaskFinished(message.sender_stack_trace_id);
 }
 

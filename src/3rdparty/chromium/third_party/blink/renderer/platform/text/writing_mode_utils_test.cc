@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -296,6 +296,25 @@ TEST(WritingModeUtilsTest, PhysicalToLogicalSetter) {
   EXPECT_EQ(kTop, logical_values.InlineEnd());
   EXPECT_EQ(kRight, logical_values.BlockStart());
   EXPECT_EQ(kLeft, logical_values.BlockEnd());
+}
+
+TEST(WritingModeUtilsTest, IsFlippedXY) {
+  struct TestData {
+    WritingDirectionMode writing_direction;
+    bool is_flipped_x;
+    bool is_flipped_y;
+  } test_data_list[] = {
+      {{WritingMode::kHorizontalTb, TextDirection::kLtr}, false, false},
+      {{WritingMode::kHorizontalTb, TextDirection::kRtl}, true, false},
+      {{WritingMode::kVerticalRl, TextDirection::kLtr}, true, false},
+      {{WritingMode::kVerticalRl, TextDirection::kRtl}, true, true},
+      {{WritingMode::kVerticalLr, TextDirection::kLtr}, false, false},
+      {{WritingMode::kVerticalLr, TextDirection::kRtl}, false, true},
+  };
+  for (const TestData& data : test_data_list) {
+    EXPECT_EQ(data.writing_direction.IsFlippedX(), data.is_flipped_x);
+    EXPECT_EQ(data.writing_direction.IsFlippedY(), data.is_flipped_y);
+  }
 }
 
 }  // namespace

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,9 @@
 
 #include <utility>
 
-#include "base/callback_helpers.h"
+#include "base/functional/callback_helpers.h"
 #include "base/task/bind_post_task.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/token.h"
 #include "media/capture/mojom/video_capture_types.mojom-blink.h"
 #include "media/capture/video_capture_types.h"
@@ -45,6 +46,7 @@ media::VideoCaptureFormats LocalVideoCapturerSource::GetPreferredFormats() {
 void LocalVideoCapturerSource::StartCapture(
     const media::VideoCaptureParams& params,
     const VideoCaptureDeliverFrameCB& new_frame_callback,
+    const VideoCaptureCropVersionCB& crop_version_callback,
     const RunningCallback& running_callback) {
   DCHECK(params.requested_format.IsValid());
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
@@ -56,7 +58,7 @@ void LocalVideoCapturerSource::StartCapture(
           task_runner_, ConvertToBaseRepeatingCallback(CrossThreadBindRepeating(
                             &LocalVideoCapturerSource::OnStateUpdate,
                             weak_factory_.GetWeakPtr()))),
-      new_frame_callback);
+      new_frame_callback, crop_version_callback);
 }
 
 media::VideoCaptureFeedbackCB LocalVideoCapturerSource::GetFeedbackCallback()

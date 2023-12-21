@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,13 +13,16 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/scoped_observation.h"
 #include "ui/base/cursor/cursor_factory.h"
-#include "ui/base/cursor/cursor_theme_manager.h"
-#include "ui/base/cursor/cursor_theme_manager_observer.h"
 #include "ui/base/cursor/mojom/cursor_type.mojom-shared.h"
+#include "ui/linux/cursor_theme_manager_observer.h"
 
 namespace ui {
 class X11Cursor;
 class XCursorLoader;
+
+#if BUILDFLAG(IS_LINUX)
+class LinuxUi;
+#endif
 
 // CursorFactory implementation for X11 cursors.
 class COMPONENT_EXPORT(UI_BASE_X) X11CursorFactory
@@ -56,8 +59,10 @@ class COMPONENT_EXPORT(UI_BASE_X) X11CursorFactory
 
   std::map<mojom::CursorType, scoped_refptr<X11Cursor>> default_cursors_;
 
-  base::ScopedObservation<CursorThemeManager, CursorThemeManagerObserver>
+#if BUILDFLAG(IS_LINUX)
+  base::ScopedObservation<LinuxUi, CursorThemeManagerObserver>
       cursor_theme_observation_{this};
+#endif
 };
 
 }  // namespace ui

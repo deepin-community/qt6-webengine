@@ -1,15 +1,15 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/digital_asset_links/digital_asset_links_handler.h"
 
-#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
 #include "base/json/json_reader.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/values.h"
 #include "content/public/test/browser_task_environment.h"
 #include "net/base/net_errors.h"
@@ -19,6 +19,8 @@
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "services/network/test/test_url_loader_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "url/gurl.h"
+#include "url/origin.h"
 
 namespace {
 
@@ -42,6 +44,17 @@ const char kStatementList[] = R"(
     ]
   }
 }, {
+  "relation": ["multiple_fingerprints"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.example.muliple_fingerprints",
+    "sha256_cert_fingerprints": [
+      "64:2F:D4:BE:1C:4D:F8:36:2E:D3:50:C4:69:53:96:A1:3D:14:0A:23:AD:2F:BF:EB:6E:C6:E4:64:54:3B:34:C1",
+      "FA:2A:03:CB:38:9C:F3:BE:28:E3:CA:7F:DA:2E:FA:4F:4A:96:F3:BC:45:2C:08:A2:16:A1:5D:FD:AB:46:BC:9D",
+      "FA:2A:03:CB:38:9C:F3:BE:28:E3:CA:7F:DA:2E:FA:4F:4A:96:F3:BC:45:2C:08:A2:16:A1:5D:FD:AB:46:BC:EE"
+    ]
+  }
+}, {
   "relation": ["delegate_permission/common.query_webapk"],
   "target": {
     "namespace": "web",
@@ -53,9 +66,9 @@ const char kStatementList[] = R"(
 const char kDomain[] = "https://www.example.com";
 const char kValidPackage[] = "com.example.firstapp";
 const char kValidRelation[] = "delegate_permission/common.handle_all_urls";
-const char kValidFingerprint[] =
+const std::vector<std::string> kValidFingerprint{
     "64:2F:D4:BE:1C:4D:F8:36:2E:D3:50:C4:69:53:96:A1:3D:14:0A:23:AD:2F:BF:EB:"
-    "6E:C6:E4:64:54:3B:34:C1";
+    "6E:C6:E4:64:54:3B:34:C1"};
 
 }  // namespace
 
@@ -112,6 +125,10 @@ class DigitalAssetLinksHandlerTest : public ::testing::Test {
     base::RunLoop().RunUntilIdle();
   }
 
+  url::Origin GetTestingOrigin() const {
+    return url::Origin::Create(GURL(kDomain));
+  }
+
   int num_invocations_;
   RelationshipCheckResult result_;
   GURL request_url_;
@@ -126,7 +143,7 @@ class DigitalAssetLinksHandlerTest : public ::testing::Test {
 TEST_F(DigitalAssetLinksHandlerTest, CorrectAssetLinksUrl) {
   DigitalAssetLinksHandler handler(GetSharedURLLoaderFactory());
   handler.CheckDigitalAssetLinkRelationshipForAndroidApp(
-      kDomain, kValidRelation, kValidFingerprint, kValidPackage,
+      GetTestingOrigin(), kValidRelation, kValidFingerprint, kValidPackage,
       base::BindOnce(&DigitalAssetLinksHandlerTest::OnRelationshipCheckComplete,
                      base::Unretained(this)));
   AddResponse("");
@@ -137,20 +154,23 @@ TEST_F(DigitalAssetLinksHandlerTest, CorrectAssetLinksUrl) {
 
 TEST_F(DigitalAssetLinksHandlerTest, PositiveResponse) {
   DigitalAssetLinksHandler handler(GetSharedURLLoaderFactory());
+  base::HistogramTester histogram_tester;
   handler.CheckDigitalAssetLinkRelationshipForAndroidApp(
-      kDomain, kValidRelation, kValidFingerprint, kValidPackage,
+      GetTestingOrigin(), kValidRelation, kValidFingerprint, kValidPackage,
       base::BindOnce(&DigitalAssetLinksHandlerTest::OnRelationshipCheckComplete,
                      base::Unretained(this)));
   AddResponse(kStatementList);
 
   EXPECT_EQ(1, num_invocations_);
   EXPECT_EQ(result_, RelationshipCheckResult::kSuccess);
+  histogram_tester.ExpectBucketCount("DigitalAssetLinks.NumFingerprints", 1, 1);
+  histogram_tester.ExpectBucketCount("DigitalAssetLinks.NumFingerprints", 2, 0);
 }
 
 TEST_F(DigitalAssetLinksHandlerTest, PackageMismatch) {
   DigitalAssetLinksHandler handler(GetSharedURLLoaderFactory());
   handler.CheckDigitalAssetLinkRelationshipForAndroidApp(
-      kDomain, kValidRelation, kValidFingerprint, "evil.package",
+      GetTestingOrigin(), kValidRelation, kValidFingerprint, "evil.package",
       base::BindOnce(&DigitalAssetLinksHandlerTest::OnRelationshipCheckComplete,
                      base::Unretained(this)));
   AddResponse(kStatementList);
@@ -161,8 +181,9 @@ TEST_F(DigitalAssetLinksHandlerTest, PackageMismatch) {
 
 TEST_F(DigitalAssetLinksHandlerTest, SignatureMismatch) {
   DigitalAssetLinksHandler handler(GetSharedURLLoaderFactory());
+  std::vector<std::string> valid_fingerprints{"66:66:66:66:66:66"};
   handler.CheckDigitalAssetLinkRelationshipForAndroidApp(
-      kDomain, kValidRelation, "66:66:66:66:66:66", kValidPackage,
+      GetTestingOrigin(), kValidRelation, valid_fingerprints, kValidPackage,
       base::BindOnce(&DigitalAssetLinksHandlerTest::OnRelationshipCheckComplete,
                      base::Unretained(this)));
   AddResponse(kStatementList);
@@ -174,7 +195,8 @@ TEST_F(DigitalAssetLinksHandlerTest, SignatureMismatch) {
 TEST_F(DigitalAssetLinksHandlerTest, RelationshipMismatch) {
   DigitalAssetLinksHandler handler(GetSharedURLLoaderFactory());
   handler.CheckDigitalAssetLinkRelationshipForAndroidApp(
-      kDomain, "take_firstborn_child", kValidFingerprint, kValidPackage,
+      GetTestingOrigin(), "take_firstborn_child", kValidFingerprint,
+      kValidPackage,
       base::BindOnce(&DigitalAssetLinksHandlerTest::OnRelationshipCheckComplete,
                      base::Unretained(this)));
   AddResponse(kStatementList);
@@ -187,7 +209,8 @@ TEST_F(DigitalAssetLinksHandlerTest, StatementIsolation) {
   // Ensure we don't merge separate statements together.
   DigitalAssetLinksHandler handler(GetSharedURLLoaderFactory());
   handler.CheckDigitalAssetLinkRelationshipForAndroidApp(
-      kDomain, "other_relationship", kValidFingerprint, kValidPackage,
+      GetTestingOrigin(), "other_relationship", kValidFingerprint,
+      kValidPackage,
       base::BindOnce(&DigitalAssetLinksHandlerTest::OnRelationshipCheckComplete,
                      base::Unretained(this)));
   AddResponse(kStatementList);
@@ -199,7 +222,7 @@ TEST_F(DigitalAssetLinksHandlerTest, StatementIsolation) {
 TEST_F(DigitalAssetLinksHandlerTest, BadAssetLinks_Empty) {
   DigitalAssetLinksHandler handler(GetSharedURLLoaderFactory());
   handler.CheckDigitalAssetLinkRelationshipForAndroidApp(
-      kDomain, kValidRelation, kValidFingerprint, kValidPackage,
+      GetTestingOrigin(), kValidRelation, kValidFingerprint, kValidPackage,
       base::BindOnce(&DigitalAssetLinksHandlerTest::OnRelationshipCheckComplete,
                      base::Unretained(this)));
   AddResponse("");
@@ -210,20 +233,23 @@ TEST_F(DigitalAssetLinksHandlerTest, BadAssetLinks_Empty) {
 
 TEST_F(DigitalAssetLinksHandlerTest, BadAssetLinks_NotList) {
   DigitalAssetLinksHandler handler(GetSharedURLLoaderFactory());
+  base::HistogramTester histogram_tester;
   handler.CheckDigitalAssetLinkRelationshipForAndroidApp(
-      kDomain, kValidRelation, kValidFingerprint, kValidPackage,
+      GetTestingOrigin(), kValidRelation, kValidFingerprint, kValidPackage,
       base::BindOnce(&DigitalAssetLinksHandlerTest::OnRelationshipCheckComplete,
                      base::Unretained(this)));
   AddResponse(R"({ "key": "value"})");
 
   EXPECT_EQ(1, num_invocations_);
   EXPECT_EQ(result_, RelationshipCheckResult::kFailure);
+  histogram_tester.ExpectBucketCount("DigitalAssetLinks.NumFingerprints", 1, 0);
+  histogram_tester.ExpectBucketCount("DigitalAssetLinks.NumFingerprints", 2, 0);
 }
 
 TEST_F(DigitalAssetLinksHandlerTest, BadAssetLinks_StatementNotDict) {
   DigitalAssetLinksHandler handler(GetSharedURLLoaderFactory());
   handler.CheckDigitalAssetLinkRelationshipForAndroidApp(
-      kDomain, kValidRelation, kValidFingerprint, kValidPackage,
+      GetTestingOrigin(), kValidRelation, kValidFingerprint, kValidPackage,
       base::BindOnce(&DigitalAssetLinksHandlerTest::OnRelationshipCheckComplete,
                      base::Unretained(this)));
   AddResponse(R"([ [], [] ])");
@@ -235,7 +261,7 @@ TEST_F(DigitalAssetLinksHandlerTest, BadAssetLinks_StatementNotDict) {
 TEST_F(DigitalAssetLinksHandlerTest, BadAssetLinks_MissingFields) {
   DigitalAssetLinksHandler handler(GetSharedURLLoaderFactory());
   handler.CheckDigitalAssetLinkRelationshipForAndroidApp(
-      kDomain, kValidRelation, kValidFingerprint, kValidPackage,
+      GetTestingOrigin(), kValidRelation, kValidFingerprint, kValidPackage,
       base::BindOnce(&DigitalAssetLinksHandlerTest::OnRelationshipCheckComplete,
                      base::Unretained(this)));
   AddResponse(R"([ { "target" : {} } ])");
@@ -247,7 +273,7 @@ TEST_F(DigitalAssetLinksHandlerTest, BadAssetLinks_MissingFields) {
 TEST_F(DigitalAssetLinksHandlerTest, BadRequest) {
   DigitalAssetLinksHandler handler(GetSharedURLLoaderFactory());
   handler.CheckDigitalAssetLinkRelationshipForAndroidApp(
-      kDomain, kValidRelation, kValidFingerprint, kValidPackage,
+      GetTestingOrigin(), kValidRelation, kValidFingerprint, kValidPackage,
       base::BindOnce(&DigitalAssetLinksHandlerTest::OnRelationshipCheckComplete,
                      base::Unretained(this)));
   AddErrorResponse(net::OK, net::HTTP_BAD_REQUEST);
@@ -259,7 +285,7 @@ TEST_F(DigitalAssetLinksHandlerTest, BadRequest) {
 TEST_F(DigitalAssetLinksHandlerTest, NetworkError) {
   DigitalAssetLinksHandler handler(GetSharedURLLoaderFactory());
   handler.CheckDigitalAssetLinkRelationshipForAndroidApp(
-      kDomain, kValidRelation, kValidFingerprint, kValidPackage,
+      GetTestingOrigin(), kValidRelation, kValidFingerprint, kValidPackage,
       base::BindOnce(&DigitalAssetLinksHandlerTest::OnRelationshipCheckComplete,
                      base::Unretained(this)));
   AddErrorResponse(net::ERR_ABORTED, net::HTTP_OK);
@@ -271,7 +297,7 @@ TEST_F(DigitalAssetLinksHandlerTest, NetworkError) {
 TEST_F(DigitalAssetLinksHandlerTest, NetworkDisconnected) {
   DigitalAssetLinksHandler handler(GetSharedURLLoaderFactory());
   handler.CheckDigitalAssetLinkRelationshipForAndroidApp(
-      kDomain, kValidRelation, kValidFingerprint, kValidPackage,
+      GetTestingOrigin(), kValidRelation, kValidFingerprint, kValidPackage,
       base::BindOnce(&DigitalAssetLinksHandlerTest::OnRelationshipCheckComplete,
                      base::Unretained(this)));
   AddErrorResponse(net::ERR_INTERNET_DISCONNECTED, net::HTTP_OK);
@@ -283,7 +309,7 @@ TEST_F(DigitalAssetLinksHandlerTest, NetworkDisconnected) {
 TEST_F(DigitalAssetLinksHandlerTest, WebApkPositiveResponse) {
   DigitalAssetLinksHandler handler(GetSharedURLLoaderFactory());
   handler.CheckDigitalAssetLinkRelationshipForWebApk(
-      kDomain, "https://example2.com/manifest.json",
+      GetTestingOrigin(), "https://example2.com/manifest.json",
       base::BindOnce(&DigitalAssetLinksHandlerTest::OnRelationshipCheckComplete,
                      base::Unretained(this)));
   AddResponse(kStatementList);
@@ -295,7 +321,46 @@ TEST_F(DigitalAssetLinksHandlerTest, WebApkPositiveResponse) {
 TEST_F(DigitalAssetLinksHandlerTest, WebApkNegativeResponse) {
   DigitalAssetLinksHandler handler(GetSharedURLLoaderFactory());
   handler.CheckDigitalAssetLinkRelationshipForWebApk(
-      kDomain, "https://notverified.com/manifest.json",
+      GetTestingOrigin(), "https://notverified.com/manifest.json",
+      base::BindOnce(&DigitalAssetLinksHandlerTest::OnRelationshipCheckComplete,
+                     base::Unretained(this)));
+  AddResponse(kStatementList);
+
+  EXPECT_EQ(1, num_invocations_);
+  EXPECT_EQ(result_, RelationshipCheckResult::kFailure);
+}
+
+TEST_F(DigitalAssetLinksHandlerTest, PositiveResponseMultipleFingerprints) {
+  DigitalAssetLinksHandler handler(GetSharedURLLoaderFactory());
+  std::vector<std::string> valid_fingerprints{
+      "64:2F:D4:BE:1C:4D:F8:36:2E:D3:50:C4:69:53:96:A1:3D:14:0A:23:AD:2F:BF:EB:"
+      "6E:C6:E4:64:54:3B:34:C1",
+      "FA:2A:03:CB:38:9C:F3:BE:28:E3:CA:7F:DA:2E:FA:4F:4A:96:F3:BC:45:2C:08:A2:"
+      "16:A1:5D:FD:AB:46:BC:9D"};
+  handler.CheckDigitalAssetLinkRelationshipForAndroidApp(
+      url::Origin::CreateFromNormalizedTuple("https", "www.example.com", 443),
+      "multiple_fingerprints", valid_fingerprints,
+      "com.example.muliple_fingerprints",
+      base::BindOnce(&DigitalAssetLinksHandlerTest::OnRelationshipCheckComplete,
+                     base::Unretained(this)));
+  AddResponse(kStatementList);
+
+  EXPECT_EQ(1, num_invocations_);
+  EXPECT_EQ(result_, RelationshipCheckResult::kSuccess);
+}
+
+TEST_F(DigitalAssetLinksHandlerTest, NegativeResponseMissingOneFingerprint) {
+  DigitalAssetLinksHandler handler(GetSharedURLLoaderFactory());
+  std::vector<std::string> valid_fingerprints{
+      "64:2F:D4:BE:1C:4D:F8:36:2E:D3:50:C4:69:53:96:A1:3D:14:0A:23:AD:2F:BF:EB:"
+      "6E:C6:E4:64:54:3B:34:C1",
+      "FA:2A:03:CB:38:9C:F3:BE:28:E3:CA:7F:DA:2E:FA:4F:4A:96:F3:BC:45:2C:08:A2:"
+      "16:A1:5D:FD:AB:46:AA:AA",  // Missing in statement list.
+  };
+  handler.CheckDigitalAssetLinkRelationshipForAndroidApp(
+      url::Origin::CreateFromNormalizedTuple("https", "www.example.com", 443),
+      "multiple_fingerprints", valid_fingerprints,
+      "com.example.muliple_fingerprints",
       base::BindOnce(&DigitalAssetLinksHandlerTest::OnRelationshipCheckComplete,
                      base::Unretained(this)));
   AddResponse(kStatementList);

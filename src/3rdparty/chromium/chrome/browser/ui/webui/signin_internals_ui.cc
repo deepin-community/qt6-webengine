@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,9 +22,9 @@
 
 namespace {
 
-content::WebUIDataSource* CreateSignInInternalsHTMLSource() {
-  content::WebUIDataSource* source =
-      content::WebUIDataSource::Create(chrome::kChromeUISignInInternalsHost);
+void CreateAndAddSignInInternalsHTMLSource(Profile* profile) {
+  content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
+      profile, chrome::kChromeUISignInInternalsHost);
   source->OverrideContentSecurityPolicy(
       network::mojom::CSPDirectiveName::ScriptSrc,
       "script-src chrome://resources 'self' 'unsafe-eval';");
@@ -36,15 +36,13 @@ content::WebUIDataSource* CreateSignInInternalsHTMLSource() {
   source->AddResourcePath("signin_internals.js", IDR_SIGNIN_INTERNALS_INDEX_JS);
   source->AddResourcePath("signin_index.css", IDR_SIGNIN_INTERNALS_INDEX_CSS);
   source->SetDefaultResource(IDR_SIGNIN_INTERNALS_INDEX_HTML);
-  return source;
 }
 
 }  //  namespace
 
 SignInInternalsUI::SignInInternalsUI(content::WebUI* web_ui)
     : WebUIController(web_ui) {
-  Profile* profile = Profile::FromWebUI(web_ui);
-  content::WebUIDataSource::Add(profile, CreateSignInInternalsHTMLSource());
+  CreateAndAddSignInInternalsHTMLSource(Profile::FromWebUI(web_ui));
   web_ui->AddMessageHandler(std::make_unique<SignInInternalsHandler>());
 }
 
@@ -122,10 +120,12 @@ void SignInInternalsHandler::HandleGetSignInInfo(
   }
 }
 
-void SignInInternalsHandler::OnSigninStateChanged(const base::Value* info) {
-  FireWebUIListener("signin-info-changed", *info);
+void SignInInternalsHandler::OnSigninStateChanged(
+    const base::Value::Dict& info) {
+  FireWebUIListener("signin-info-changed", info);
 }
 
-void SignInInternalsHandler::OnCookieAccountsFetched(const base::Value* info) {
-  FireWebUIListener("update-cookie-accounts", *info);
+void SignInInternalsHandler::OnCookieAccountsFetched(
+    const base::Value::Dict& info) {
+  FireWebUIListener("update-cookie-accounts", info);
 }

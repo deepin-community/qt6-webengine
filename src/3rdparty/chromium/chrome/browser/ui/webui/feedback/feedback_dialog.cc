@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,7 @@
 #include "base/logging.h"
 #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
 #include "chrome/browser/profiles/keep_alive/profile_keep_alive_types.h"
-#include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/webui/feedback/feedback_handler.h"
 #include "chrome/common/webui_url_constants.h"
@@ -19,6 +19,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "extensions/common/api/feedback_private.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/views/view_class_properties.h"
 #include "ui/views/widget/widget.h"
 #include "url/gurl.h"
 
@@ -44,6 +45,9 @@ FeedbackDialog* FeedbackDialog::current_instance_ = nullptr;
 FeedbackDialog* FeedbackDialog::GetInstanceForTest() {
   return current_instance_;
 }
+
+DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(FeedbackDialog,
+                                      kFeedbackDialogForTesting);
 
 // static
 void FeedbackDialog::CreateOrShow(
@@ -72,6 +76,10 @@ void FeedbackDialog::CreateOrShow(
       chrome::ShowWebDialog(nullptr, profile, current_instance_,
                             /*show=*/false);
   current_instance_->widget_ = views::Widget::GetWidgetForNativeWindow(window);
+  views::View* root = current_instance_->widget_->GetRootView();
+  if (root != nullptr) {
+    root->SetProperty(views::kElementIdentifierKey, kFeedbackDialogForTesting);
+  }
 }
 
 FeedbackDialog::FeedbackDialog(
@@ -135,7 +143,7 @@ void FeedbackDialog::GetWebUIMessageHandlers(
 // chrome.getVariableValue('dialogArguments')
 std::string FeedbackDialog::GetDialogArgs() const {
   std::string data;
-  base::JSONWriter::Write(*feedback_info_, &data);
+  base::JSONWriter::Write(feedback_info_, &data);
   return data;
 }
 

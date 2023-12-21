@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -36,6 +36,7 @@ namespace webapps {
 class InstallableManager;
 enum class WebappInstallSource;
 struct InstallableData;
+struct Screenshot;
 
 // Coordinates the creation of an app banner, from detecting eligibility to
 // fetching data and creating the infobar. Sites declare that they want an app
@@ -61,6 +62,8 @@ class AppBannerManager : public content::WebContentsObserver,
   // A StatusReporter handles the reporting of |InstallableStatusCode|s.
   class StatusReporter;
 
+  // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.banners
+  // GENERATED_JAVA_CLASS_NAME_OVERRIDE: AppBannerManagerState
   enum class State {
     // The pipeline has not yet been triggered for this page load.
     INACTIVE,
@@ -83,6 +86,9 @@ class AppBannerManager : public content::WebContentsObserver,
     // engagement to trigger the banner.
     PENDING_ENGAGEMENT,
 
+    // The pipeline is waiting for service worker install to trigger the banner.
+    PENDING_WORKER,
+
     // The beforeinstallprompt event has been sent and the pipeline is waiting
     // for the response.
     SENDING_EVENT,
@@ -93,7 +99,11 @@ class AppBannerManager : public content::WebContentsObserver,
 
     // The pipeline has finished running, but is waiting for the web page to
     // call prompt() on the event.
-    PENDING_PROMPT,
+    PENDING_PROMPT_NOT_CANCELED,
+
+    // The pipeline has finished running, web page called preventdefault(),
+    // pipeline is waiting for the web page to call prompt() on the event.
+    PENDING_PROMPT_CANCELED,
 
     // The pipeline has finished running for this page load and no more
     // processing is to be done.
@@ -133,6 +143,9 @@ class AppBannerManager : public content::WebContentsObserver,
   // Returns the app name if the current page is installable, otherwise returns
   // the empty string.
   static std::u16string GetInstallableWebAppName(
+      content::WebContents* web_contents);
+
+  static std::string GetInstallableWebAppManifestId(
       content::WebContents* web_contents);
 
   // Returns whether installability checks satisfy promotion requirements
@@ -193,6 +206,7 @@ class AppBannerManager : public content::WebContentsObserver,
   const SkBitmap& primary_icon() const { return primary_icon_; }
   bool has_maskable_primary_icon() const { return has_maskable_primary_icon_; }
   const GURL& validated_url() { return validated_url_; }
+  const std::vector<Screenshot>& screenshots() { return screenshots_; }
 
   // Tracks the route taken to an install of a PWA (whether the bottom sheet
   // was shown or the infobar/install) and what triggered it (install source).
@@ -206,10 +220,19 @@ class AppBannerManager : public content::WebContentsObserver,
   explicit AppBannerManager(content::WebContents* web_contents);
   ~AppBannerManager() override;
 
-  // Returns true if |render_frame_host| and |url| should be ignored and not
-  // trigger the banner flow.
-  bool ShouldIgnore(content::RenderFrameHost* render_frame_host,
-                    const GURL& url);
+  enum class UrlType {
+    // This url & page should be considered for installability & promotability.
+    kValidForBanner,
+    // The load from the render frame host was not for the current/primary page
+    // so it can be ignored.
+    kNotPrimaryFrame,
+    // The primary url that was loaded can never be elibible for installability.
+    kInvalidPrimaryFrameUrl,
+  };
+  // Returns the URL type, allowing the banner logic to ignore urls that aren't
+  // the primary frame or aren't a valid URL.
+  UrlType GetUrlType(content::RenderFrameHost* render_frame_host,
+                     const GURL& url);
 
   // Returns true if the banner should be shown. Returns false if the banner has
   // been shown too recently, or if the app has already been installed.
@@ -272,6 +295,10 @@ class AppBannerManager : public content::WebContentsObserver,
   // necessary for a web app banner.
   virtual InstallableParams ParamsToPerformInstallableWebAppCheck();
 
+  // Returns an InstallableParams object that requests service worker check
+  // only.
+  virtual InstallableParams ParamsToPerformWorkerCheck();
+
   // Run at the conclusion of OnDidGetManifest. For web app banners, this calls
   // back to the InstallableManager to continue checking criteria. For native
   // app banners, this checks whether native apps are preferred in the manifest,
@@ -284,6 +311,25 @@ class AppBannerManager : public content::WebContentsObserver,
   // Callback invoked by the InstallableManager once it has finished checking
   // all other installable properties.
   virtual void OnDidPerformInstallableWebAppCheck(const InstallableData& data);
+
+  // Run at the conclusion of OnDidPerformInstallableWebAppCheck. This calls
+  // back to the InstallableManager to continue checking service worker criteria
+  // for web app banners.
+  virtual void PerformServiceWorkerCheck();
+
+  // Callback invoked by the InstallableManager once it has finished checking
+  // service worker.
+  virtual void OnDidPerformWorkerCheck(const InstallableData& data);
+
+  // Run at the conclusion of OnDidPerformInstallableWebAppCheck. This calls
+  // back to the InstallableManager to continue checking service worker criteria
+  // for showing ambient badge.
+  virtual void PerformWorkerCheckForAmbientBadge();
+
+  // Callback invoked by the InstallableManager once it has finished checking
+  // service worker for showing ambient badge.
+  virtual void OnDidPerformWorkerCheckForAmbientBadge(
+      const InstallableData& data);
 
   // Records that a banner was shown.
   void RecordDidShowBanner();
@@ -355,6 +401,9 @@ class AppBannerManager : public content::WebContentsObserver,
   // The URL of the manifest.
   GURL manifest_url_;
 
+  // The manifest id.
+  GURL manifest_id_;
+
   // The URL of the primary icon.
   GURL primary_icon_url_;
 
@@ -367,8 +416,18 @@ class AppBannerManager : public content::WebContentsObserver,
   // The current banner pipeline state for this page load.
   State state_ = State::INACTIVE;
 
+  // The screenshots to show in the install UI.
+  std::vector<Screenshot> screenshots_;
+
+  // True if the service worker check has passed or no required.
+  bool passed_worker_check_ = false;
+
  private:
   friend class AppBannerManagerTest;
+
+  // Checks whether the web page has sufficient engagement and continue with
+  // the pipeline.
+  void CheckSufficientEngagement();
 
   // Record that the banner could be shown at this point, if the triggering
   // heuristic allowed.
@@ -400,7 +459,7 @@ class AppBannerManager : public content::WebContentsObserver,
   InstallableStatusCode TerminationCode() const;
 
   // Fetches the data required to display a banner for the current page.
-  raw_ptr<InstallableManager> manager_;
+  raw_ptr<InstallableManager, DanglingUntriaged> manager_;
 
   // The manifest object. This is never null, it will instead be an empty
   // manifest so callers don't have to worry about null checks.

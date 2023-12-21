@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -414,9 +414,7 @@ String TrustedTypesCheckForScript(const String& script,
 String TrustedTypesCheckForScriptURL(const String& script_url,
                                      const ExecutionContext* execution_context,
                                      ExceptionState& exception_state) {
-  bool require_trusted_type =
-      RequireTrustedTypesCheck(execution_context) &&
-      RuntimeEnabledFeatures::TrustedDOMTypesEnabled(execution_context);
+  bool require_trusted_type = RequireTrustedTypesCheck(execution_context);
   if (!require_trusted_type) {
     return script_url;
   }
@@ -597,6 +595,45 @@ String TrustedTypesCheckForExecCommand(
     const ExecutionContext* execution_context,
     ExceptionState& exception_state) {
   return TrustedTypesCheckForHTML(html, execution_context, exception_state);
+}
+
+bool IsTrustedTypesEventHandlerAttribute(const QualifiedName& q_name) {
+  return q_name.NamespaceURI().IsNull() &&
+         TrustedTypePolicyFactory::IsEventHandlerAttributeName(
+             q_name.LocalName());
+}
+
+String GetTrustedTypesLiteral(const ScriptValue& script_value,
+                              ScriptState* script_state) {
+  DCHECK(script_state);
+  // TrustedTypes fromLiteral requires several checks, which are steps 1-3
+  // in the "create a trusted type from literal algorithm". Ref:
+  // https://w3c.github.io/webappsec-trusted-types/dist/spec/#create-a-trusted-type-from-literal-algorithm
+
+  // The core functionality here are the checks that we, indeed, have a
+  // literal object. The key work is done by
+  // v8::Context::HasTemplateLiteralObject, but we will additionally check that
+  // we have an object, with a real (non-inherited) property 0 (but not 1),
+  // whose value is a string.
+  v8::Local<v8::Context> context = script_state->GetContext();
+  v8::Local<v8::Value> value = script_value.V8ValueFor(script_state);
+  if (!context.IsEmpty() && !value.IsEmpty() &&
+      context->HasTemplateLiteralObject(value) && value->IsObject()) {
+    v8::Local<v8::Object> value_as_object = v8::Local<v8::Object>::Cast(value);
+    v8::Local<v8::Value> first_value;
+    if (value_as_object->HasRealIndexedProperty(context, 0).FromMaybe(false) &&
+        !value_as_object->HasRealIndexedProperty(context, 1).FromMaybe(false) &&
+        value_as_object->Get(context, 0).ToLocal(&first_value) &&
+        first_value->IsString()) {
+      v8::Local<v8::String> first_value_as_string =
+          v8::Local<v8::String>::Cast(first_value);
+      return ToCoreString(first_value_as_string);
+    }
+  }
+
+  // Fall-through: Some of the required conditions didn't hold. Return a
+  // null-string.
+  return String();
 }
 
 }  // namespace blink

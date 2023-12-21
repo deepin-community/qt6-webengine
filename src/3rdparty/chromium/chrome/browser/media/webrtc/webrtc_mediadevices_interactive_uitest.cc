@@ -1,8 +1,9 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/command_line.h"
+#include "base/containers/contains.h"
 #include "base/json/json_reader.h"
 #include "base/strings/string_util.h"
 #include "base/test/bind.h"
@@ -86,20 +87,19 @@ class WebRtcMediaDevicesInteractiveUITest
     std::string devices_as_json = ExecuteJavascript("enumerateDevices()", tab);
     EXPECT_FALSE(devices_as_json.empty());
 
-    base::JSONReader::ValueWithError parsed_json =
-        base::JSONReader::ReadAndReturnValueWithError(
-            devices_as_json, base::JSON_ALLOW_TRAILING_COMMAS);
+    auto parsed_json = base::JSONReader::ReadAndReturnValueWithError(
+        devices_as_json, base::JSON_ALLOW_TRAILING_COMMAS);
 
-    ASSERT_TRUE(parsed_json.value) << parsed_json.error_message;
-    EXPECT_EQ(parsed_json.value->type(), base::Value::Type::LIST);
+    ASSERT_TRUE(parsed_json.has_value()) << parsed_json.error().message;
+    EXPECT_EQ(parsed_json->type(), base::Value::Type::LIST);
 
-    base::Value& values = *parsed_json.value;
+    base::Value& values = *parsed_json;
     ASSERT_TRUE(values.is_list());
-    ASSERT_FALSE(values.GetListDeprecated().empty());
+    ASSERT_FALSE(values.GetList().empty());
     bool found_audio_input = false;
     bool found_video_input = false;
 
-    for (const auto& dict : values.GetListDeprecated()) {
+    for (const auto& dict : values.GetList()) {
       ASSERT_TRUE(dict.is_dict());
       MediaDeviceInfo device;
       ASSERT_TRUE(dict.FindStringPath("deviceId"));
@@ -132,7 +132,6 @@ class WebRtcMediaDevicesInteractiveUITest
         found_video_input = true;
       }
 
-      EXPECT_FALSE(device.group_id.empty());
       devices->push_back(device);
     }
 
@@ -144,23 +143,18 @@ class WebRtcMediaDevicesInteractiveUITest
       const std::vector<MediaDeviceInfo>& devices,
       const std::vector<MediaDeviceInfo>& devices2) {
     for (auto& device : devices) {
-      auto it = std::find_if(devices2.begin(), devices2.end(),
-                             [&device](const MediaDeviceInfo& device_info) {
-                               return device.device_id == device_info.device_id;
-                             });
+      bool found = base::Contains(devices2, device.device_id,
+                                  &MediaDeviceInfo::device_id);
       if (device.device_id == media::AudioDeviceDescription::kDefaultDeviceId ||
           device.device_id ==
               media::AudioDeviceDescription::kCommunicationsDeviceId) {
-        EXPECT_NE(it, devices2.end());
+        EXPECT_TRUE(found);
       } else {
-        EXPECT_EQ(it, devices2.end());
+        EXPECT_FALSE(found);
       }
 
-      it = std::find_if(devices2.begin(), devices2.end(),
-                        [&device](const MediaDeviceInfo& device_info) {
-                          return device.group_id == device_info.group_id;
-                        });
-      EXPECT_EQ(it, devices2.end());
+      EXPECT_FALSE(base::Contains(devices2, device.group_id,
+                                  &MediaDeviceInfo::group_id));
     }
   }
 
@@ -182,9 +176,11 @@ IN_PROC_BROWSER_TEST_F(WebRtcMediaDevicesInteractiveUITest,
   std::vector<MediaDeviceInfo> devices;
   EnumerateDevices(tab, &devices);
 
-  // Labels should be empty if access has not been allowed.
+  // Label, deviceId and groupId should be empty if access has not been allowed.
   for (const auto& device_info : devices) {
     EXPECT_TRUE(device_info.label.empty());
+    EXPECT_TRUE(device_info.device_id.empty());
+    EXPECT_TRUE(device_info.group_id.empty());
   }
 }
 
@@ -201,9 +197,12 @@ IN_PROC_BROWSER_TEST_F(WebRtcMediaDevicesInteractiveUITest,
   std::vector<MediaDeviceInfo> devices;
   EnumerateDevices(tab, &devices);
 
-  // Labels should be non-empty if access has been allowed.
+  // Labels, deviceId and groupId should be non-empty if access has been
+  // allowed.
   for (const auto& device_info : devices) {
     EXPECT_TRUE(!device_info.label.empty());
+    EXPECT_TRUE(!device_info.device_id.empty());
+    EXPECT_TRUE(!device_info.group_id.empty());
   }
 }
 
@@ -224,8 +223,14 @@ IN_PROC_BROWSER_TEST_F(WebRtcMediaDevicesInteractiveUITest,
                                           kAudioVideoCallConstraints);
 }
 
+// Flakes on Linux TSan Tests; crbug.com/1396123.
+#if BUILDFLAG(IS_LINUX) && defined(THREAD_SANITIZER)
+#define MAYBE_GetUserMediaTabRegainsFocus DISABLED_GetUserMediaTabRegainsFocus
+#else
+#define MAYBE_GetUserMediaTabRegainsFocus GetUserMediaTabRegainsFocus
+#endif
 IN_PROC_BROWSER_TEST_F(WebRtcMediaDevicesInteractiveUITest,
-                       GetUserMediaTabRegainsFocus) {
+                       MAYBE_GetUserMediaTabRegainsFocus) {
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL url(embedded_test_server()->GetURL(kMainWebrtcTestHtmlPage));
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
@@ -241,42 +246,13 @@ IN_PROC_BROWSER_TEST_F(WebRtcMediaDevicesInteractiveUITest,
 }
 
 IN_PROC_BROWSER_TEST_F(WebRtcMediaDevicesInteractiveUITest,
-                       DeviceIdSameGroupIdDiffersAfterReload) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-  GURL url(embedded_test_server()->GetURL(kMainWebrtcTestHtmlPage));
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
-  content::WebContents* tab =
-      browser()->tab_strip_model()->GetActiveWebContents();
-  std::vector<MediaDeviceInfo> devices;
-  EnumerateDevices(tab, &devices);
-
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
-  std::vector<MediaDeviceInfo> devices2;
-  EnumerateDevices(tab, &devices2);
-
-  EXPECT_EQ(devices.size(), devices2.size());
-  for (auto& device : devices) {
-    auto it = std::find_if(devices2.begin(), devices2.end(),
-                           [&device](const MediaDeviceInfo& device_info) {
-                             return device.device_id == device_info.device_id;
-                           });
-    EXPECT_NE(it, devices2.end());
-
-    it = std::find_if(devices2.begin(), devices2.end(),
-                      [&device](const MediaDeviceInfo& device_info) {
-                        return device.group_id == device_info.group_id;
-                      });
-    EXPECT_EQ(it, devices2.end());
-  }
-}
-
-IN_PROC_BROWSER_TEST_F(WebRtcMediaDevicesInteractiveUITest,
                        DeviceIdSameGroupIdDiffersAcrossTabs) {
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL url(embedded_test_server()->GetURL(kMainWebrtcTestHtmlPage));
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
   content::WebContents* tab1 =
       browser()->tab_strip_model()->GetActiveWebContents();
+  EXPECT_TRUE(GetUserMediaAndAccept(tab1));
   std::vector<MediaDeviceInfo> devices;
   EnumerateDevices(tab1, &devices);
 
@@ -284,23 +260,19 @@ IN_PROC_BROWSER_TEST_F(WebRtcMediaDevicesInteractiveUITest,
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
   content::WebContents* tab2 =
       browser()->tab_strip_model()->GetActiveWebContents();
+  EXPECT_TRUE(GetUserMediaWithSpecificConstraintsAndAcceptIfPrompted(
+      tab2, kAudioVideoCallConstraints));
   std::vector<MediaDeviceInfo> devices2;
   EnumerateDevices(tab2, &devices2);
 
   EXPECT_NE(tab1, tab2);
   EXPECT_EQ(devices.size(), devices2.size());
   for (auto& device : devices) {
-    auto it = std::find_if(devices2.begin(), devices2.end(),
-                           [&device](const MediaDeviceInfo& device_info) {
-                             return device.device_id == device_info.device_id;
-                           });
-    EXPECT_NE(it, devices2.end());
+    EXPECT_TRUE(base::Contains(devices2, device.device_id,
+                               &MediaDeviceInfo::device_id));
 
-    it = std::find_if(devices2.begin(), devices2.end(),
-                      [&device](const MediaDeviceInfo& device_info) {
-                        return device.group_id == device_info.group_id;
-                      });
-    EXPECT_EQ(it, devices2.end());
+    EXPECT_FALSE(
+        base::Contains(devices2, device.group_id, &MediaDeviceInfo::group_id));
   }
 }
 
@@ -352,6 +324,8 @@ IN_PROC_BROWSER_TEST_F(WebRtcMediaDevicesInteractiveUITest,
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
   content::WebContents* tab2 =
       browser()->tab_strip_model()->GetActiveWebContents();
+  EXPECT_TRUE(GetUserMediaWithSpecificConstraintsAndAcceptIfPrompted(
+      tab2, kAudioVideoCallConstraints));
   std::vector<MediaDeviceInfo> devices2;
   EnumerateDevices(tab2, &devices2);
 
@@ -371,12 +345,14 @@ IN_PROC_BROWSER_TEST_F(WebRtcMediaDevicesInteractiveUITest,
       browser()->tab_strip_model()->GetActiveWebContents();
 
   EXPECT_TRUE(GetUserMediaAndAccept(tab));
-
   std::vector<MediaDeviceInfo> devices;
   EnumerateDevices(tab, &devices);
 
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
   tab = browser()->tab_strip_model()->GetActiveWebContents();
+
+  EXPECT_TRUE(GetUserMediaWithSpecificConstraintsAndAcceptIfPrompted(
+      tab, kAudioVideoCallConstraints));
   std::vector<MediaDeviceInfo> devices2;
   EnumerateDevices(tab, &devices2);
 

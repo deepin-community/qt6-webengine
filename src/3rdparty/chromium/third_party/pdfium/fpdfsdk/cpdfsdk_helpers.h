@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -151,11 +151,11 @@ inline CPDF_ContentMarkItem* CPDFContentMarkItemFromFPDFPageObjectMark(
   return reinterpret_cast<CPDF_ContentMarkItem*>(mark);
 }
 
-inline FPDF_PAGERANGE FPDFPageRangeFromCPDFArray(CPDF_Array* range) {
+inline FPDF_PAGERANGE FPDFPageRangeFromCPDFArray(const CPDF_Array* range) {
   return reinterpret_cast<FPDF_PAGERANGE>(range);
 }
-inline CPDF_Array* CPDFArrayFromFPDFPageRange(FPDF_PAGERANGE range) {
-  return reinterpret_cast<CPDF_Array*>(range);
+inline const CPDF_Array* CPDFArrayFromFPDFPageRange(FPDF_PAGERANGE range) {
+  return reinterpret_cast<const CPDF_Array*>(range);
 }
 
 inline FPDF_PATHSEGMENT FPDFPathSegmentFromFXPathPoint(
@@ -220,12 +220,12 @@ CPDFSDKFormFillEnvironmentFromFPDFFormHandle(FPDF_FORMHANDLE handle) {
 }
 
 inline FPDF_SIGNATURE FPDFSignatureFromCPDFDictionary(
-    CPDF_Dictionary* dictionary) {
+    const CPDF_Dictionary* dictionary) {
   return reinterpret_cast<FPDF_SIGNATURE>(dictionary);
 }
-inline CPDF_Dictionary* CPDFDictionaryFromFPDFSignature(
+inline const CPDF_Dictionary* CPDFDictionaryFromFPDFSignature(
     FPDF_SIGNATURE signature) {
-  return reinterpret_cast<CPDF_Dictionary*>(signature);
+  return reinterpret_cast<const CPDF_Dictionary*>(signature);
 }
 
 inline FPDF_XOBJECT FPDFXObjectFromXObjectContext(XObjectContext* xobject) {
@@ -248,11 +248,13 @@ RetainPtr<IFX_SeekableStream> MakeSeekableStream(
     FPDF_FILEHANDLER* pFileHandler);
 #endif  // PDF_ENABLE_XFA
 
-const CPDF_Array* GetQuadPointsArrayFromDictionary(const CPDF_Dictionary* dict);
-CPDF_Array* GetQuadPointsArrayFromDictionary(CPDF_Dictionary* dict);
-CPDF_Array* AddQuadPointsArrayToDictionary(CPDF_Dictionary* dict);
+RetainPtr<const CPDF_Array> GetQuadPointsArrayFromDictionary(
+    const CPDF_Dictionary* dict);
+RetainPtr<CPDF_Array> GetMutableQuadPointsArrayFromDictionary(
+    CPDF_Dictionary* dict);
+RetainPtr<CPDF_Array> AddQuadPointsArrayToDictionary(CPDF_Dictionary* dict);
 bool IsValidQuadPointsIndex(const CPDF_Array* array, size_t index);
-bool GetQuadPointsAtIndex(const CPDF_Array* array,
+bool GetQuadPointsAtIndex(RetainPtr<const CPDF_Array> array,
                           size_t quad_index,
                           FS_QUADPOINTSF* quad_points);
 
@@ -274,19 +276,19 @@ unsigned long Utf16EncodeMaybeCopyAndReturnLength(const WideString& text,
 
 // Returns the length of the raw stream data from |stream|. The raw data is the
 // stream's data as stored in the PDF without applying any filters. If |buffer|
-// is non-nullptr and |buflen| is large enough to contain the raw data, then
+// is non-empty and its length is large enough to contain the raw data, then
 // the raw data is copied into |buffer|.
-unsigned long GetRawStreamMaybeCopyAndReturnLength(const CPDF_Stream* stream,
-                                                   void* buffer,
-                                                   unsigned long buflen);
+unsigned long GetRawStreamMaybeCopyAndReturnLength(
+    RetainPtr<const CPDF_Stream> stream,
+    pdfium::span<uint8_t> buffer);
 
 // Return the length of the decoded stream data of |stream|. The decoded data is
 // the uncompressed stream data, i.e. the raw stream data after having all
-// filters applied. If |buffer| is non-nullptr and |buflen| is large enough to
+// filters applied. If |buffer| is non-empty and its length is large enough to
 // contain the decoded data, then the decoded data is copied into |buffer|.
-unsigned long DecodeStreamMaybeCopyAndReturnLength(const CPDF_Stream* stream,
-                                                   void* buffer,
-                                                   unsigned long buflen);
+unsigned long DecodeStreamMaybeCopyAndReturnLength(
+    RetainPtr<const CPDF_Stream> stream,
+    pdfium::span<uint8_t> buffer);
 
 void SetPDFSandboxPolicy(FPDF_DWORD policy, FPDF_BOOL enable);
 FPDF_BOOL IsPDFSandboxPolicyEnabled(FPDF_DWORD policy);

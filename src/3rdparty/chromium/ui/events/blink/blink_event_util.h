@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -29,6 +29,10 @@ struct GestureEventData;
 struct GestureEventDetails;
 class MotionEvent;
 
+// The scroll percentage per mousewheel tick. Used to determine scroll delta
+// if percent based scrolling is enabled.
+const float kScrollPercentPerLineOrChar = 0.05f;
+
 blink::WebTouchEvent CreateWebTouchEventFromMotionEvent(
     const MotionEvent& event,
     bool may_cause_scrolling,
@@ -49,7 +53,8 @@ int EventFlagsToWebEventModifiers(int flags);
 
 std::unique_ptr<blink::WebInputEvent> ScaleWebInputEvent(
     const blink::WebInputEvent& event,
-    float scale);
+    float scale,
+    absl::optional<int64_t> trace_id = absl::nullopt);
 
 // Transforms coordinates and other properties of |event|, by
 // 1) translating / shifting by |delta| and
@@ -59,7 +64,8 @@ std::unique_ptr<blink::WebInputEvent> ScaleWebInputEvent(
 std::unique_ptr<blink::WebInputEvent> TranslateAndScaleWebInputEvent(
     const blink::WebInputEvent& event,
     const gfx::Vector2dF& delta,
-    float scale);
+    float scale,
+    absl::optional<int64_t> trace_id = absl::nullopt);
 
 blink::WebInputEvent::Type ToWebMouseEventType(MotionEvent::Action action);
 

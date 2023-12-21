@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,12 +26,22 @@
 using base::android::AttachCurrentThread;
 using base::android::ConvertJavaStringToUTF8;
 using base::android::ConvertUTF8ToJavaString;
+using base::android::JavaArrayOfByteArrayToStringVector;
 using base::android::ScopedJavaLocalRef;
 using base::android::ToJavaArrayOfByteArray;
 using base::android::ToJavaByteArray;
 
-namespace net {
-namespace android {
+namespace net::android {
+
+std::vector<std::string> GetUserAddedRoots() {
+  std::vector<std::string> roots;
+  JNIEnv* env = AttachCurrentThread();
+
+  ScopedJavaLocalRef<jobjectArray> roots_byte_array =
+      Java_AndroidNetworkLibrary_getUserAddedRoots(env);
+  JavaArrayOfByteArrayToStringVector(env, roots_byte_array, &roots);
+  return roots;
+}
 
 void VerifyX509CertChain(const std::vector<std::string>& cert_chain,
                          base::StringPiece auth_type,
@@ -122,6 +132,11 @@ std::string GetWifiSSID() {
           base::android::AttachCurrentThread()));
 }
 
+void SetWifiEnabledForTesting(bool enabled) {
+  Java_AndroidNetworkLibrary_setWifiEnabled(
+      base::android::AttachCurrentThread(), enabled);
+}
+
 absl::optional<int32_t> GetWifiSignalLevel() {
   const int count_buckets = 5;
   int signal_strength = Java_AndroidNetworkLibrary_getWifiSignalLevel(
@@ -188,7 +203,7 @@ bool GetDnsServersForNetwork(std::vector<IPEndPoint>* dns_servers,
                              bool* dns_over_tls_active,
                              std::string* dns_over_tls_hostname,
                              std::vector<std::string>* search_suffixes,
-                             NetworkChangeNotifier::NetworkHandle network) {
+                             handles::NetworkHandle network) {
   DCHECK_GE(base::android::BuildInfo::GetInstance()->sdk_int(),
             base::android::SDK_VERSION_P);
 
@@ -243,10 +258,9 @@ LollipopSetNetworkForSocket GetLollipopSetNetworkForSocket() {
 
 }  // namespace
 
-int BindToNetwork(SocketDescriptor socket,
-                  NetworkChangeNotifier::NetworkHandle network) {
+int BindToNetwork(SocketDescriptor socket, handles::NetworkHandle network) {
   DCHECK_NE(socket, kInvalidSocket);
-  if (network == NetworkChangeNotifier::kInvalidNetworkHandle)
+  if (network == handles::kInvalidNetworkHandle)
     return ERR_INVALID_ARGUMENT;
 
   // Android prior to Lollipop didn't have support for binding sockets to
@@ -302,13 +316,12 @@ MarshmallowGetAddrInfoForNetwork GetMarshmallowGetAddrInfoForNetwork() {
 
 }  // namespace
 
-NET_EXPORT_PRIVATE int GetAddrInfoForNetwork(
-    NetworkChangeNotifier::NetworkHandle network,
-    const char* node,
-    const char* service,
-    const struct addrinfo* hints,
-    struct addrinfo** res) {
-  if (network == NetworkChangeNotifier::kInvalidNetworkHandle) {
+NET_EXPORT_PRIVATE int GetAddrInfoForNetwork(handles::NetworkHandle network,
+                                             const char* node,
+                                             const char* service,
+                                             const struct addrinfo* hints,
+                                             struct addrinfo** res) {
+  if (network == handles::kInvalidNetworkHandle) {
     errno = EINVAL;
     return EAI_SYSTEM;
   }
@@ -328,5 +341,4 @@ NET_EXPORT_PRIVATE int GetAddrInfoForNetwork(
   return get_addrinfo_for_network(network, node, service, hints, res);
 }
 
-}  // namespace android
-}  // namespace net
+}  // namespace net::android

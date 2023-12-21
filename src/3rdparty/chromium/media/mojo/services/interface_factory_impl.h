@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -119,6 +119,13 @@ class InterfaceFactoryImpl final
                                mojom::CdmContextPtr cdm_context,
                                const std::string& error_message);
 #endif  // BUILDFLAG(ENABLE_MOJO_CDM)
+
+#if BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
+  void FinishCreatingVideoDecoder(
+      mojo::PendingReceiver<mojom::VideoDecoder> receiver,
+      mojo::PendingRemote<media::stable::mojom::StableVideoDecoder>
+          dst_video_decoder);
+#endif  // BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
 
   // Must be declared before the receivers below because the bound objects might
   // take a raw pointer of |cdm_service_context_| and assume it's always

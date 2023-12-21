@@ -130,9 +130,7 @@ static const int av1_arg_ctrl_map[] = { AOME_SET_CPUUSED,
                                         AOME_SET_SHARPNESS,
                                         AOME_SET_STATIC_THRESHOLD,
                                         AV1E_SET_ROW_MT,
-#if CONFIG_FRAME_PARALLEL_ENCODE
                                         AV1E_SET_FP_MT,
-#endif
                                         AV1E_SET_TILE_COLUMNS,
                                         AV1E_SET_TILE_ROWS,
                                         AV1E_SET_ENABLE_TPL_MODEL,
@@ -239,6 +237,8 @@ static const int av1_arg_ctrl_map[] = { AOME_SET_CPUUSED,
                                         AV1E_SET_ENABLE_TX_SIZE_SEARCH,
                                         AV1E_SET_LOOPFILTER_CONTROL,
                                         AV1E_SET_AUTO_INTRA_TOOLS_OFF,
+                                        AV1E_ENABLE_RATE_GUIDE_DELTAQ,
+                                        AV1E_SET_RATE_DISTRIBUTION_INFO,
                                         0 };
 
 const arg_def_t *main_args[] = { &g_av1_codec_arg_defs.help,
@@ -336,9 +336,7 @@ const arg_def_t *av1_ctrl_args[] = {
   &g_av1_codec_arg_defs.sharpness,
   &g_av1_codec_arg_defs.static_thresh,
   &g_av1_codec_arg_defs.rowmtarg,
-#if CONFIG_FRAME_PARALLEL_ENCODE
   &g_av1_codec_arg_defs.fpmtarg,
-#endif
   &g_av1_codec_arg_defs.tile_cols,
   &g_av1_codec_arg_defs.tile_rows,
   &g_av1_codec_arg_defs.enable_tpl_model,
@@ -441,6 +439,8 @@ const arg_def_t *av1_ctrl_args[] = {
 #endif
   &g_av1_codec_arg_defs.dv_cost_upd_freq,
   &g_av1_codec_arg_defs.partition_info_path,
+  &g_av1_codec_arg_defs.enable_rate_guide_deltaq,
+  &g_av1_codec_arg_defs.rate_distribution_info,
   &g_av1_codec_arg_defs.enable_directional_intra,
   &g_av1_codec_arg_defs.enable_tx_size_search,
   &g_av1_codec_arg_defs.loopfilter_control,
@@ -454,7 +454,10 @@ const arg_def_t *av1_key_val_args[] = {
   &g_av1_codec_arg_defs.second_pass_log,
   &g_av1_codec_arg_defs.fwd_kf_dist,
   &g_av1_codec_arg_defs.strict_level_conformance,
+  &g_av1_codec_arg_defs.sb_qp_sweep,
   &g_av1_codec_arg_defs.dist_metric,
+  &g_av1_codec_arg_defs.kf_max_pyr_height,
+  &g_av1_codec_arg_defs.global_motion_method,
   NULL,
 };
 
@@ -535,6 +538,8 @@ struct stream_config {
   const char *vmaf_model_path;
 #endif
   const char *partition_info_path;
+  unsigned int enable_rate_guide_deltaq;
+  const char *rate_distribution_info;
   aom_color_range_t color_range;
   const char *two_pass_input;
   const char *two_pass_output;
@@ -1132,6 +1137,12 @@ static int parse_stream_params(struct AvxEncoderConfig *global,
     } else if (arg_match(&arg, &g_av1_codec_arg_defs.partition_info_path,
                          argi)) {
       config->partition_info_path = arg.val;
+    } else if (arg_match(&arg, &g_av1_codec_arg_defs.enable_rate_guide_deltaq,
+                         argi)) {
+      config->enable_rate_guide_deltaq = arg_parse_uint(&arg);
+    } else if (arg_match(&arg, &g_av1_codec_arg_defs.rate_distribution_info,
+                         argi)) {
+      config->rate_distribution_info = arg.val;
     } else if (arg_match(&arg, &g_av1_codec_arg_defs.use_fixed_qp_offsets,
                          argi)) {
       config->cfg.use_fixed_qp_offsets = arg_parse_uint(&arg);
@@ -1541,6 +1552,16 @@ static void initialize_encoder(struct stream_state *stream,
     AOM_CODEC_CONTROL_TYPECHECKED(&stream->encoder,
                                   AV1E_SET_PARTITION_INFO_PATH,
                                   stream->config.partition_info_path);
+  }
+  if (stream->config.enable_rate_guide_deltaq) {
+    AOM_CODEC_CONTROL_TYPECHECKED(&stream->encoder,
+                                  AV1E_ENABLE_RATE_GUIDE_DELTAQ,
+                                  stream->config.enable_rate_guide_deltaq);
+  }
+  if (stream->config.rate_distribution_info) {
+    AOM_CODEC_CONTROL_TYPECHECKED(&stream->encoder,
+                                  AV1E_SET_RATE_DISTRIBUTION_INFO,
+                                  stream->config.rate_distribution_info);
   }
 
   if (stream->config.film_grain_filename) {
@@ -1993,6 +2014,10 @@ int main(int argc, const char **argv_) {
    * codec.
    */
   argv = argv_dup(argc - 1, argv_ + 1);
+  if (!argv) {
+    fprintf(stderr, "Error allocating argument list\n");
+    return EXIT_FAILURE;
+  }
   parse_global_config(&global, &argv);
 
   if (argc < 2) usage_exit();
@@ -2572,19 +2597,29 @@ int main(int argc, const char **argv_) {
 
     if (pass == global.passes - 1) {
       FOREACH_STREAM(stream, streams) {
-        int levels[32] = { 0 };
-        int target_levels[32] = { 0 };
+        int num_operating_points;
+        int levels[32];
+        int target_levels[32];
+        aom_codec_control(&stream->encoder, AV1E_GET_NUM_OPERATING_POINTS,
+                          &num_operating_points);
         aom_codec_control(&stream->encoder, AV1E_GET_SEQ_LEVEL_IDX, levels);
         aom_codec_control(&stream->encoder, AV1E_GET_TARGET_SEQ_LEVEL_IDX,
                           target_levels);
 
-        for (int i = 0; i < 32; i++) {
+        for (int i = 0; i < num_operating_points; i++) {
           if (levels[i] > target_levels[i]) {
-            aom_tools_warn(
-                "Failed to encode to target level %d.%d for operating point "
-                "%d. The output level is %d.%d",
-                2 + (target_levels[i] >> 2), target_levels[i] & 3, i,
-                2 + (levels[i] >> 2), levels[i] & 3);
+            if (levels[i] == 31) {
+              aom_tools_warn(
+                  "Failed to encode to target level %d.%d for operating point "
+                  "%d. The output level is SEQ_LEVEL_MAX",
+                  2 + (target_levels[i] >> 2), target_levels[i] & 3, i);
+            } else {
+              aom_tools_warn(
+                  "Failed to encode to target level %d.%d for operating point "
+                  "%d. The output level is %d.%d",
+                  2 + (target_levels[i] >> 2), target_levels[i] & 3, i,
+                  2 + (levels[i] >> 2), levels[i] & 3);
+            }
           }
         }
       }

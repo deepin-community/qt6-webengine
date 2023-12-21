@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,11 @@
 #include <string>
 #include <vector>
 
+#include "base/component_export.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/values.h"
 #include "google_apis/gaia/oauth2_api_call_flow.h"
 #include "net/cookies/canonical_cookie.h"
 #include "services/network/public/mojom/url_response_head.mojom-forward.h"
@@ -20,10 +22,7 @@
 class GoogleServiceAuthError;
 class OAuth2MintTokenFlowTest;
 
-namespace base {
-class Value;
-}
-
+COMPONENT_EXPORT(GOOGLE_APIS)
 extern const char kOAuth2MintTokenApiCallResultHistogram[];
 
 // Values carrying the result of processing a successful API call.
@@ -51,7 +50,7 @@ enum class OAuth2MintTokenApiCallResult {
 // Data for the remote consent resolution:
 // - URL of the consent page to be displayed to the user.
 // - Cookies that should be set before navigating to that URL.
-struct RemoteConsentResolutionData {
+struct COMPONENT_EXPORT(GOOGLE_APIS) RemoteConsentResolutionData {
   RemoteConsentResolutionData();
   ~RemoteConsentResolutionData();
 
@@ -68,7 +67,8 @@ struct RemoteConsentResolutionData {
 // This class implements the OAuth2 flow to Google to mint an OAuth2 access
 // token for the given client and the given set of scopes from the OAuthLogin
 // scoped "master" OAuth2 token for the user logged in to Chrome.
-class OAuth2MintTokenFlow : public OAuth2ApiCallFlow {
+class COMPONENT_EXPORT(GOOGLE_APIS) OAuth2MintTokenFlow
+    : public OAuth2ApiCallFlow {
  public:
   // There are four different modes when minting a token to grant
   // access to third-party app for a user.
@@ -84,7 +84,7 @@ class OAuth2MintTokenFlow : public OAuth2ApiCallFlow {
   };
 
   // Parameters needed to mint a token.
-  struct Parameters {
+  struct COMPONENT_EXPORT(GOOGLE_APIS) Parameters {
    public:
     Parameters();
     Parameters(const std::string& eid,
@@ -112,7 +112,7 @@ class OAuth2MintTokenFlow : public OAuth2ApiCallFlow {
     Mode mode;
   };
 
-  class Delegate {
+  class COMPONENT_EXPORT(GOOGLE_APIS) Delegate {
    public:
     virtual void OnMintTokenSuccess(const std::string& access_token,
                                     const std::set<std::string>& granted_scopes,
@@ -184,7 +184,7 @@ class OAuth2MintTokenFlow : public OAuth2ApiCallFlow {
   void ReportFailure(const GoogleServiceAuthError& error);
 
   static bool ParseRemoteConsentResponse(
-      const base::Value* dict,
+      const base::Value::Dict& dict,
       RemoteConsentResolutionData* resolution_data);
 
   // Currently, grantedScopes is a new parameter for an unlaunched feature, so
@@ -194,7 +194,7 @@ class OAuth2MintTokenFlow : public OAuth2ApiCallFlow {
   // and the function returns true, granted_scopes will include the scopes
   // returned by the server. Once the feature is fully launched, this function
   // will be updated to fail if the grantedScopes parameter is missing.
-  static bool ParseMintTokenResponse(const base::Value* dict,
+  static bool ParseMintTokenResponse(const base::Value::Dict& dict,
                                      std::string* access_token,
                                      std::set<std::string>* granted_scopes,
                                      int* time_to_live);

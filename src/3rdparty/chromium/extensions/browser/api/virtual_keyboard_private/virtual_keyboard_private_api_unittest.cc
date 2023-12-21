@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,7 +16,7 @@ namespace {
 
 class MockVirtualKeyboardDelegate : public VirtualKeyboardDelegate {
  public:
-  MockVirtualKeyboardDelegate() {}
+  MockVirtualKeyboardDelegate() = default;
 
   MockVirtualKeyboardDelegate(const MockVirtualKeyboardDelegate&) = delete;
   MockVirtualKeyboardDelegate& operator=(const MockVirtualKeyboardDelegate&) =
@@ -90,9 +90,10 @@ class MockVirtualKeyboardDelegate : public VirtualKeyboardDelegate {
     return false;
   }
 
-  api::virtual_keyboard::FeatureRestrictions RestrictFeatures(
-      const api::virtual_keyboard::RestrictFeatures::Params& params) override {
-    return api::virtual_keyboard::FeatureRestrictions();
+  void RestrictFeatures(
+      const api::virtual_keyboard::RestrictFeatures::Params& params,
+      OnRestrictFeaturesCallback callback) override {
+    std::move(callback).Run(api::virtual_keyboard::FeatureRestrictions());
   }
 
  private:
@@ -104,14 +105,14 @@ class MockVirtualKeyboardDelegate : public VirtualKeyboardDelegate {
 
 class TestVirtualKeyboardExtensionsAPIClient : public ExtensionsAPIClient {
  public:
-  TestVirtualKeyboardExtensionsAPIClient() {}
+  TestVirtualKeyboardExtensionsAPIClient() = default;
 
   TestVirtualKeyboardExtensionsAPIClient(
       const TestVirtualKeyboardExtensionsAPIClient&) = delete;
   TestVirtualKeyboardExtensionsAPIClient& operator=(
       const TestVirtualKeyboardExtensionsAPIClient&) = delete;
 
-  ~TestVirtualKeyboardExtensionsAPIClient() override {}
+  ~TestVirtualKeyboardExtensionsAPIClient() override = default;
 
   // ExtensionsAPIClient implementation.
   std::unique_ptr<VirtualKeyboardDelegate> CreateVirtualKeyboardDelegate(
@@ -137,8 +138,8 @@ class TestVirtualKeyboardExtensionsAPIClient : public ExtensionsAPIClient {
 
 class VirtualKeyboardPrivateApiUnittest : public ApiUnitTest {
  public:
-  VirtualKeyboardPrivateApiUnittest() {}
-  ~VirtualKeyboardPrivateApiUnittest() override {}
+  VirtualKeyboardPrivateApiUnittest() = default;
+  ~VirtualKeyboardPrivateApiUnittest() override = default;
 
   const TestVirtualKeyboardExtensionsAPIClient& client() const {
     return extensions_api_client_;

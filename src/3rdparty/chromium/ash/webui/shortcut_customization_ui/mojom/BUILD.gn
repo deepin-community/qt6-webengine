@@ -1,4 +1,4 @@
-# Copyright 2021 The Chromium Authors. All rights reserved.
+# Copyright 2021 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -12,8 +12,10 @@ mojom("mojom") {
 
   sources = [ "shortcut_customization.mojom" ]
 
+  webui_module_path = "/ash/webui/shortcut_customization_ui/mojom"
+
   public_deps = [
-    "//ash/public/mojom",
+    "//ash/public/mojom:accelerator_info",
     "//mojo/public/mojom/base",
   ]
 }

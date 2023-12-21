@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,11 +12,12 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/posix/safe_strerror.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/typed_macros.h"
 #include "gpu/ipc/common/gpu_memory_buffer_impl.h"
 #include "media/capture/video/chromeos/camera_app_device_bridge_impl.h"
@@ -457,10 +458,10 @@ bool RequestManager::TryPrepareReprocessRequest(
 
   // Consume reprocess task.
   ReprocessJobInfo* reprocess_job_info;
-  for (auto& it : buffer_id_reprocess_job_info_map_) {
-    if (processing_buffer_ids_.count(it.first) == 0) {
-      *input_buffer_id = it.first;
-      reprocess_job_info = &it.second;
+  for (auto& [buffer_id, job_info] : buffer_id_reprocess_job_info_map_) {
+    if (processing_buffer_ids_.count(buffer_id) == 0) {
+      *input_buffer_id = buffer_id;
+      reprocess_job_info = &job_info;
       break;
     }
   }
@@ -594,10 +595,20 @@ void RequestManager::ProcessCaptureResult(
     cros::mojom::Camera3CaptureResultPtr result) {
   DCHECK(ipc_task_runner_->BelongsToCurrentThread());
 
+  uint32_t frame_number = result->frame_number;
   if (!capturing_) {
+    if (result->output_buffers) {
+      for (auto& stream_buffer : result->output_buffers.value()) {
+        TRACE_EVENT_END("camera",
+                        GetTraceTrack(CameraTraceEvent::kCaptureStream,
+                                      frame_number, stream_buffer->stream_id));
+      }
+    }
+    TRACE_EVENT("camera", "Capture Result", "frame_number", frame_number);
+    TRACE_EVENT_END("camera", GetTraceTrack(CameraTraceEvent::kCaptureRequest,
+                                            frame_number));
     return;
   }
-  uint32_t frame_number = result->frame_number;
   // A new partial result may be created in either ProcessCaptureResult or
   // Notify.
   CaptureResult& pending_result = pending_results_[frame_number];
@@ -1042,13 +1053,16 @@ void RequestManager::SubmitCapturedJpegBuffer(uint32_t frame_number,
   gfx::GpuMemoryBuffer* gmb = stream_buffer_manager_->GetGpuMemoryBufferById(
       StreamType::kJpegOutput, buffer_ipc_id);
   CHECK(gmb);
-  if (video_capture_use_gmb_ && !gmb->Map()) {
+  if (!gmb->Map()) {
     device_context_->SetErrorState(
         media::VideoCaptureError::
             kCrosHalV3BufferManagerFailedToCreateGpuMemoryBuffer,
         FROM_HERE, "Failed to map GPU memory buffer");
     return;
   }
+  base::ScopedClosureRunner unmap_gmb(base::BindOnce(
+      [](gfx::GpuMemoryBuffer* gmb) { gmb->Unmap(); }, base::Unretained(gmb)));
+
   const Camera3JpegBlob* header = reinterpret_cast<Camera3JpegBlob*>(
       reinterpret_cast<const uintptr_t>(gmb->memory(0)) +
       buffer_dimension.width() - sizeof(Camera3JpegBlob));
@@ -1056,9 +1070,6 @@ void RequestManager::SubmitCapturedJpegBuffer(uint32_t frame_number,
     device_context_->SetErrorState(
         media::VideoCaptureError::kCrosHalV3BufferManagerInvalidJpegBlob,
         FROM_HERE, "Invalid JPEG blob");
-    if (video_capture_use_gmb_) {
-      gmb->Unmap();
-    }
     return;
   }
   // Still capture result from HALv3 already has orientation info in EXIF,
@@ -1093,9 +1104,6 @@ void RequestManager::SubmitCapturedJpegBuffer(uint32_t frame_number,
   }
   stream_buffer_manager_->ReleaseBufferFromCaptureResult(
       StreamType::kJpegOutput, buffer_ipc_id);
-  if (video_capture_use_gmb_) {
-    gmb->Unmap();
-  }
 }
 
 void RequestManager::UpdateCaptureSettings(

@@ -29,6 +29,7 @@
 
 #include <memory>
 
+#include "base/check_op.h"
 #include "base/dcheck_is_on.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/synchronous_mutation_observer.h"
@@ -216,7 +217,7 @@ class CORE_EXPORT FrameSelection final
 
   void DidChangeFocus();
 
-  SelectionInDOMTree GetSelectionInDOMTree() const;
+  const SelectionInDOMTree& GetSelectionInDOMTree() const;
   bool IsDirectional() const;
 
   void DidAttachDocument(Document*);
@@ -312,7 +313,7 @@ class CORE_EXPORT FrameSelection final
       const LayoutText& text) const;
   LayoutSelectionStatus ComputeLayoutSelectionStatus(
       const NGInlineCursor& cursor) const;
-  SelectionState ComputeLayoutSelectionStateForCursor(
+  SelectionState ComputePaintingSelectionStateForCursor(
       const NGInlineCursorPosition& position) const;
   SelectionState ComputeLayoutSelectionStateForInlineTextBox(
       const InlineTextBox& text_box) const;
@@ -328,6 +329,10 @@ class CORE_EXPORT FrameSelection final
   void NotifyAccessibilityForSelectionChange();
   void NotifyCompositorForSelectionChange();
   void NotifyEventHandlerForSelectionChange();
+  void NotifyDisplayLockForSelectionChange(
+      Document& document,
+      const SelectionInDOMTree& old_selection,
+      const SelectionInDOMTree& new_selection);
 
   void FocusedOrActiveStateChanged();
 

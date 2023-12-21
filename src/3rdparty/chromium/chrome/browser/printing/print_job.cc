@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/observer_list.h"
 #include "base/run_loop.h"
@@ -17,11 +17,12 @@
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/printing/print_job_manager.h"
 #include "chrome/browser/printing/print_job_worker.h"
 #include "chrome/browser/printing/printer_query.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/notification_service.h"
+#include "content/public/browser/web_contents.h"
 #include "printing/mojom/print.mojom.h"
 #include "printing/printed_document.h"
 
@@ -34,6 +35,7 @@
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents.h"
+#include "printing/page_number.h"
 #include "printing/pdf_render_settings.h"
 #endif
 #include "printing/printed_page_win.h"
@@ -100,6 +102,12 @@ PrefService* GetPrefsForWebContents(content::WebContents* web_contents) {
   return context ? Profile::FromBrowserContext(context)->GetPrefs() : nullptr;
 }
 
+content::WebContents* GetWebContents(content::GlobalRenderFrameHostId rfh_id) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  auto* rfh = content::RenderFrameHost::FromID(rfh_id);
+  return rfh ? content::WebContents::FromRenderFrameHost(rfh) : nullptr;
+}
+
 #endif  // BUILDFLAG(IS_WIN)
 
 }  // namespace
@@ -118,6 +126,10 @@ PrintJob::~PrintJob() {
   DCHECK(!is_job_pending_);
   DCHECK(!is_canceling_);
   DCHECK(!worker_ || !worker_->IsRunning());
+
+  for (auto& observer : observers_) {
+    observer.OnDestruction();
+  }
 }
 
 void PrintJob::Initialize(std::unique_ptr<PrinterQuery> query,
@@ -128,16 +140,13 @@ void PrintJob::Initialize(std::unique_ptr<PrinterQuery> query,
   DCHECK(!is_job_pending_);
   DCHECK(!is_canceling_);
   DCHECK(!document_);
-  worker_ = query->DetachWorker();
-  worker_->SetPrintJob(this);
+  worker_ = query->TransferContextToNewWorker(this);
+  worker_->Start();
+  rfh_id_ = query->rfh_id();
   std::unique_ptr<PrintSettings> settings = query->ExtractSettings();
 
 #if BUILDFLAG(IS_WIN) && !defined(TOOLKIT_QT)
-  pdf_page_mapping_ = PageRange::GetPages(settings->ranges());
-  if (pdf_page_mapping_.empty()) {
-    for (uint32_t i = 0; i < page_count; i++)
-      pdf_page_mapping_.push_back(i);
-  }
+  pdf_page_mapping_ = PageNumber::GetPages(settings->ranges(), page_count);
 #endif
 
   auto new_doc = base::MakeRefCounted<PrintedDocument>(std::move(settings),
@@ -145,6 +154,17 @@ void PrintJob::Initialize(std::unique_ptr<PrinterQuery> query,
   new_doc->set_page_count(page_count);
   UpdatePrintedDocument(new_doc);
 }
+
+#if BUILDFLAG(ENABLE_OOP_BASIC_PRINT_DIALOG)
+void PrintJob::SetPrintDocumentClient(
+    PrintBackendServiceManager::ClientId client_id) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  DCHECK(worker_);
+  worker_->PostTask(FROM_HERE,
+                    base::BindOnce(&PrintJobWorker::SetPrintDocumentClient,
+                                   base::Unretained(worker_.get()), client_id));
+}
+#endif
 
 #if BUILDFLAG(IS_WIN) && !defined(TOOLKIT_QT)
 // static
@@ -213,13 +233,7 @@ void PrintJob::StartPrinting() {
   // Set the flag right now.
   is_job_pending_ = true;
 
-  // Tell everyone!
-  auto details = base::MakeRefCounted<JobEventDetails>(JobEventDetails::NEW_DOC,
-                                                       0, document_.get());
-  content::NotificationService::current()->Notify(
-      chrome::NOTIFICATION_PRINT_JOB_EVENT,
-      content::Source<PrintJob>(this),
-      content::Details<JobEventDetails>(details.get()));
+  print_job_manager_->OnStarted(this);
 }
 
 void PrintJob::Stop() {
@@ -250,6 +264,10 @@ void PrintJob::Cancel() {
     return;
 
   is_canceling_ = true;
+
+  for (auto& observer : observers_) {
+    observer.OnCanceling();
+  }
 
   if (worker_ && worker_->IsRunning()) {
     // Call this right now so it renders the context invalid. Do not use
@@ -308,11 +326,7 @@ const std::string& PrintJob::source_id() const {
 class PrintJob::PdfConversionState {
  public:
   PdfConversionState(const gfx::Size& page_size, const gfx::Rect& content_area)
-      : page_count_(0),
-        current_page_(0),
-        pages_in_progress_(0),
-        page_size_(page_size),
-        content_area_(content_area) {}
+      : page_size_(page_size), content_area_(content_area) {}
 
   void Start(scoped_refptr<base::RefCountedMemory> data,
              const PdfRenderSettings& conversion_settings,
@@ -324,9 +338,9 @@ class PrintJob::PdfConversionState {
   void GetMorePages(PdfConverter::GetPageCallback get_page_callback) {
     const int kMaxNumberOfTempFilesPerDocument = 3;
     while (pages_in_progress_ < kMaxNumberOfTempFilesPerDocument &&
-           current_page_ < page_count_) {
+           current_page_index_ < page_count_) {
       ++pages_in_progress_;
-      converter_->GetPage(current_page_++, get_page_callback);
+      converter_->GetPage(current_page_index_++, get_page_callback);
     }
   }
 
@@ -334,7 +348,7 @@ class PrintJob::PdfConversionState {
     --pages_in_progress_;
     GetMorePages(get_page_callback);
     // Release converter if we don't need this any more.
-    if (!pages_in_progress_ && current_page_ >= page_count_)
+    if (!pages_in_progress_ && current_page_index_ >= page_count_)
       converter_.reset();
   }
 
@@ -343,11 +357,11 @@ class PrintJob::PdfConversionState {
   const gfx::Rect& content_area() const { return content_area_; }
 
  private:
-  uint32_t page_count_;
-  uint32_t current_page_;
-  int pages_in_progress_;
-  gfx::Size page_size_;
-  gfx::Rect content_area_;
+  uint32_t page_count_ = 0;
+  uint32_t current_page_index_ = 0;
+  int pages_in_progress_ = 0;
+  const gfx::Size page_size_;
+  const gfx::Rect content_area_;
   std::unique_ptr<PdfConverter> converter_;
 };
 
@@ -362,7 +376,7 @@ void PrintJob::StartPdfToEmfConversion(
 
   const PrintSettings& settings = document()->settings();
 
-  PrefService* prefs = GetPrefsForWebContents(worker_->GetWebContents());
+  PrefService* prefs = GetPrefsForWebContents(GetWebContents(rfh_id_));
   bool print_with_reduced_rasterization = PrintWithReducedRasterization(prefs);
 
   using RenderMode = PdfRenderSettings::Mode;
@@ -453,7 +467,7 @@ void PrintJob::StartPdfToPostScriptConversion(
   if (ps_level2) {
     mode = PdfRenderSettings::Mode::POSTSCRIPT_LEVEL2;
   } else {
-    PrefService* prefs = GetPrefsForWebContents(worker_->GetWebContents());
+    PrefService* prefs = GetPrefsForWebContents(GetWebContents(rfh_id_));
     mode = PrintWithPostScriptType42Fonts(prefs)
                ? PdfRenderSettings::Mode::POSTSCRIPT_LEVEL3_WITH_TYPE42_FONTS
                : PdfRenderSettings::Mode::POSTSCRIPT_LEVEL3;
@@ -518,12 +532,7 @@ void PrintJob::OnFailed() {
 
   Stop();
 
-  // Make sure a `Cancel()` is broadcast.
-  auto details = base::MakeRefCounted<JobEventDetails>(JobEventDetails::FAILED,
-                                                       0, nullptr);
-  content::NotificationService::current()->Notify(
-      chrome::NOTIFICATION_PRINT_JOB_EVENT, content::Source<PrintJob>(this),
-      content::Details<JobEventDetails>(details.get()));
+  print_job_manager_->OnFailed(this);
 
   for (auto& observer : observers_) {
     observer.OnFailed();
@@ -533,11 +542,7 @@ void PrintJob::OnFailed() {
 void PrintJob::OnDocDone(int job_id, PrintedDocument* document) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  auto details = base::MakeRefCounted<JobEventDetails>(
-      JobEventDetails::DOC_DONE, job_id, document);
-  content::NotificationService::current()->Notify(
-      chrome::NOTIFICATION_PRINT_JOB_EVENT, content::Source<PrintJob>(this),
-      content::Details<JobEventDetails>(details.get()));
+  print_job_manager_->OnDocDone(this, document, job_id);
 
   for (auto& observer : observers_) {
     observer.OnDocDone(job_id, document);
@@ -558,12 +563,7 @@ void PrintJob::OnDocumentDone() {
   // Stop the worker thread.
   Stop();
 
-  auto details = base::MakeRefCounted<JobEventDetails>(
-      JobEventDetails::JOB_DONE, 0, document_.get());
-  content::NotificationService::current()->Notify(
-      chrome::NOTIFICATION_PRINT_JOB_EVENT,
-      content::Source<PrintJob>(this),
-      content::Details<JobEventDetails>(details.get()));
+  print_job_manager_->OnJobDone(this);
 
   for (auto& observer : observers_) {
     observer.OnJobDone();
@@ -631,15 +631,5 @@ void PrintJob::AddObserver(Observer& observer) {
 void PrintJob::RemoveObserver(Observer& observer) {
   observers_.RemoveObserver(&observer);
 }
-
-JobEventDetails::JobEventDetails(Type type,
-                                 int job_id,
-                                 PrintedDocument* document)
-    : document_(document), type_(type), job_id_(job_id) {}
-
-JobEventDetails::~JobEventDetails() {
-}
-
-PrintedDocument* JobEventDetails::document() const { return document_.get(); }
 
 }  // namespace printing

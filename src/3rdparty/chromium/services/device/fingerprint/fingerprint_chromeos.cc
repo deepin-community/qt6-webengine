@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,14 +6,15 @@
 
 #include <string.h>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "chromeos/ash/components/dbus/biod/biod_client.h"
 #include "dbus/object_path.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "services/device/fingerprint/fingerprint.h"
 #include "services/device/public/mojom/fingerprint.mojom.h"
+#include "third_party/abseil-cpp/absl/utility/utility.h"
 
 namespace device {
 
@@ -86,6 +87,16 @@ device::mojom::FingerprintError ToMojom(biod::FingerprintError type) {
   }
   NOTREACHED();
   return device::mojom::FingerprintError::UNKNOWN;
+}
+
+device::mojom::BiometricsManagerStatus ToMojom(
+    biod::BiometricsManagerStatus status) {
+  switch (status) {
+    case biod::BiometricsManagerStatus::INITIALIZED:
+      return device::mojom::BiometricsManagerStatus::INITIALIZED;
+  }
+  NOTREACHED();
+  return device::mojom::BiometricsManagerStatus::UNKNOWN;
 }
 
 }  // namespace
@@ -242,6 +253,14 @@ void FingerprintChromeOS::BiodServiceRestarted() {
     observer->OnRestarted();
 }
 
+void FingerprintChromeOS::BiodServiceStatusChanged(
+    biod::BiometricsManagerStatus status) {
+  opened_session_ = FingerprintSession::NONE;
+  for (auto& observer : observers_) {
+    observer->OnStatusChanged(ToMojom(status));
+  }
+}
+
 void FingerprintChromeOS::BiodEnrollScanDoneReceived(
     biod::ScanResult scan_result,
     bool enroll_session_complete,
@@ -289,7 +308,7 @@ void FingerprintChromeOS::BiodAuthScanDoneReceived(
 
   for (auto& observer : observers_) {
     observer->OnAuthScanDone(
-        {base::in_place, converted_msg},
+        {absl::in_place, converted_msg},
         // TODO(patrykd): Construct the map at the beginning of this function.
         base::flat_map<std::string, std::vector<std::string>>(entries));
   }

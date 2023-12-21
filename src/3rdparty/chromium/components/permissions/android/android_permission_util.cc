@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -68,9 +68,93 @@ PermissionRepromptState ShouldRepromptUserForPermissions(
   return PermissionRepromptState::kNoNeed;
 }
 
+std::vector<ContentSettingsType>
+GetContentSettingsWithMissingRequiredAndroidPermissions(
+    const std::vector<ContentSettingsType>& content_settings_types,
+    content::WebContents* web_contents) {
+  auto* window_android = web_contents->GetNativeView()->GetWindowAndroid();
+  DCHECK(window_android);
+
+  std::vector<ContentSettingsType> filtered_types;
+  for (ContentSettingsType content_settings_type : content_settings_types) {
+    if (HasRequiredAndroidPermissionsForContentSetting(window_android,
+                                                       content_settings_type)) {
+      continue;
+    }
+    filtered_types.push_back(content_settings_type);
+  }
+
+  return filtered_types;
+}
+
+void AppendRequiredAndOptionalAndroidPermissionsForContentSettings(
+    const std::vector<ContentSettingsType>& content_settings_types,
+    std::vector<std::string>& out_required_permissions,
+    std::vector<std::string>& out_optional_permissions) {
+  for (ContentSettingsType content_settings_type : content_settings_types) {
+    permissions::AppendRequiredAndroidPermissionsForContentSetting(
+        content_settings_type, &out_required_permissions);
+    permissions::AppendOptionalAndroidPermissionsForContentSetting(
+        content_settings_type, &out_optional_permissions);
+  }
+}
+
 bool DoesAppLevelSettingsAllowSiteNotifications() {
   JNIEnv* env = base::android::AttachCurrentThread();
   return Java_PermissionUtil_doesAppLevelSettingsAllowSiteNotifications(env);
+}
+
+bool AreAppLevelNotificationsEnabled() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  return Java_PermissionUtil_areAppLevelNotificationsEnabled(env);
+}
+
+bool NeedsLocationPermissionForBluetooth(content::WebContents* web_contents) {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  auto* window_android = web_contents->GetNativeView()->GetWindowAndroid();
+  DCHECK(window_android);
+  return Java_PermissionUtil_needsLocationPermissionForBluetooth(
+      env, window_android->GetJavaObject());
+}
+
+bool NeedsNearbyDevicesPermissionForBluetooth(
+    content::WebContents* web_contents) {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  auto* window_android = web_contents->GetNativeView()->GetWindowAndroid();
+  DCHECK(window_android);
+  return Java_PermissionUtil_needsNearbyDevicesPermissionForBluetooth(
+      env, window_android->GetJavaObject());
+}
+
+bool NeedsLocationServicesForBluetooth() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  return Java_PermissionUtil_needsLocationServicesForBluetooth(env);
+}
+
+bool CanRequestSystemPermissionsForBluetooth(
+    content::WebContents* web_contents) {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  auto* window_android = web_contents->GetNativeView()->GetWindowAndroid();
+  DCHECK(window_android);
+  return Java_PermissionUtil_canRequestSystemPermissionsForBluetooth(
+      env, window_android->GetJavaObject());
+}
+
+void RequestSystemPermissionsForBluetooth(content::WebContents* web_contents) {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  auto* window_android = web_contents->GetNativeView()->GetWindowAndroid();
+  DCHECK(window_android);
+  // TODO(crbug.com/1412290): Pass the callback from native layer.
+  return Java_PermissionUtil_requestSystemPermissionsForBluetooth(
+      env, window_android->GetJavaObject(), nullptr);
+}
+
+void RequestLocationServices(content::WebContents* web_contents) {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  auto* window_android = web_contents->GetNativeView()->GetWindowAndroid();
+  DCHECK(window_android);
+  return Java_PermissionUtil_requestLocationServices(
+      env, window_android->GetJavaObject());
 }
 
 }  // namespace permissions

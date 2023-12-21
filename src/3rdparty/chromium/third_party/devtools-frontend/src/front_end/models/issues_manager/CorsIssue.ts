@@ -7,16 +7,16 @@ import type * as SDK from '../../core/sdk/sdk.js';
 import * as Protocol from '../../generated/protocol.js';
 
 import {Issue, IssueCategory, IssueKind} from './Issue.js';
-import type {MarkdownIssueDescription} from './MarkdownIssueDescription.js';
+import {type MarkdownIssueDescription} from './MarkdownIssueDescription.js';
 
 const UIStrings = {
   /**
-  *@description Label for the link for CORS private network issues
-  */
+   *@description Label for the link for CORS private network issues
+   */
   corsPrivateNetworkAccess: 'Private Network Access',
   /**
-  *@description Label for the link for CORS network issues
-  */
+   *@description Label for the link for CORS network issues
+   */
   CORS: 'Cross-Origin Resource Sharing (`CORS`)',
 };
 const str_ = i18n.i18n.registerUIStrings('models/issues_manager/CorsIssue.ts', UIStrings);

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,22 @@
 #include "extensions/browser/extension_function_histogram_value.h"
 
 namespace extensions {
+class AutofillPrivateGetAccountInfoFunction : public ExtensionFunction {
+ public:
+  AutofillPrivateGetAccountInfoFunction() = default;
+  AutofillPrivateGetAccountInfoFunction(
+      const AutofillPrivateGetAccountInfoFunction&) = delete;
+  AutofillPrivateGetAccountInfoFunction& operator=(
+      const AutofillPrivateGetAccountInfoFunction&) = delete;
+  DECLARE_EXTENSION_FUNCTION("autofillPrivate.getAccountInfo",
+                             AUTOFILLPRIVATE_GETACCOUNTINFO)
+
+ protected:
+  ~AutofillPrivateGetAccountInfoFunction() override = default;
+
+  // ExtensionFunction overrides.
+  ResponseAction Run() override;
+};
 
 class AutofillPrivateSaveAddressFunction : public ExtensionFunction {
  public:
@@ -213,6 +229,40 @@ class AutofillPrivateSetCreditCardFIDOAuthEnabledStateFunction
  protected:
   ~AutofillPrivateSetCreditCardFIDOAuthEnabledStateFunction() override =
       default;
+
+  // ExtensionFunction overrides.
+  ResponseAction Run() override;
+};
+
+class AutofillPrivateSaveIbanFunction : public ExtensionFunction {
+ public:
+  AutofillPrivateSaveIbanFunction() = default;
+  AutofillPrivateSaveIbanFunction(const AutofillPrivateSaveIbanFunction&) =
+      delete;
+  AutofillPrivateSaveIbanFunction& operator=(
+      const AutofillPrivateSaveIbanFunction&) = delete;
+  DECLARE_EXTENSION_FUNCTION("autofillPrivate.saveIban",
+                             AUTOFILLPRIVATE_SAVEIBAN)
+
+ protected:
+  ~AutofillPrivateSaveIbanFunction() override = default;
+
+  // ExtensionFunction overrides.
+  ResponseAction Run() override;
+};
+
+class AutofillPrivateGetIbanListFunction : public ExtensionFunction {
+ public:
+  AutofillPrivateGetIbanListFunction() = default;
+  AutofillPrivateGetIbanListFunction(
+      const AutofillPrivateGetIbanListFunction&) = delete;
+  AutofillPrivateGetIbanListFunction& operator=(
+      const AutofillPrivateGetIbanListFunction&) = delete;
+  DECLARE_EXTENSION_FUNCTION("autofillPrivate.getIbanList",
+                             AUTOFILLPRIVATE_GETIBANLIST)
+
+ protected:
+  ~AutofillPrivateGetIbanListFunction() override = default;
 
   // ExtensionFunction overrides.
   ResponseAction Run() override;

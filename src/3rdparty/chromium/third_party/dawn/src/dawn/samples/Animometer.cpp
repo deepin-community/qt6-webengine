@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <cstdio>
+#include <cstdlib>
+#include <vector>
+
 #include "dawn/samples/SampleUtils.h"
 
 #include "dawn/utils/ComboRenderPipelineDescriptor.h"
 #include "dawn/utils/ScopedAutoreleasePool.h"
 #include "dawn/utils/SystemUtils.h"
 #include "dawn/utils/WGPUHelpers.h"
-
-#include <cstdio>
-#include <cstdlib>
-#include <vector>
 
 wgpu::Device device;
 wgpu::Queue queue;
@@ -31,7 +31,8 @@ wgpu::BindGroup bindGroup;
 wgpu::Buffer ubo;
 
 float RandomFloat(float min, float max) {
-    float zeroOne = rand() / float(RAND_MAX);
+    // NOLINTNEXTLINE(runtime/threadsafe_fn)
+    float zeroOne = rand() / static_cast<float>(RAND_MAX);
     return zeroOne * (max - min) + min;
 }
 
@@ -57,35 +58,35 @@ void init() {
 
     wgpu::ShaderModule vsModule = utils::CreateShaderModule(device, R"(
         struct Constants {
-            scale : f32;
-            time : f32;
-            offsetX : f32;
-            offsetY : f32;
-            scalar : f32;
-            scalarOffset : f32;
+            scale : f32,
+            time : f32,
+            offsetX : f32,
+            offsetY : f32,
+            scalar : f32,
+            scalarOffset : f32,
         };
         @group(0) @binding(0) var<uniform> c : Constants;
 
         struct VertexOut {
-            @location(0) v_color : vec4<f32>;
-            @builtin(position) Position : vec4<f32>;
+            @location(0) v_color : vec4f,
+            @builtin(position) Position : vec4f,
         };
 
-        @stage(vertex) fn main(@builtin(vertex_index) VertexIndex : u32) -> VertexOut {
-            var positions : array<vec4<f32>, 3> = array<vec4<f32>, 3>(
-                vec4<f32>( 0.0,  0.1, 0.0, 1.0),
-                vec4<f32>(-0.1, -0.1, 0.0, 1.0),
-                vec4<f32>( 0.1, -0.1, 0.0, 1.0)
+        @vertex fn main(@builtin(vertex_index) VertexIndex : u32) -> VertexOut {
+            var positions : array<vec4f, 3> = array(
+                vec4f( 0.0,  0.1, 0.0, 1.0),
+                vec4f(-0.1, -0.1, 0.0, 1.0),
+                vec4f( 0.1, -0.1, 0.0, 1.0)
             );
 
-            var colors : array<vec4<f32>, 3> = array<vec4<f32>, 3>(
-                vec4<f32>(1.0, 0.0, 0.0, 1.0),
-                vec4<f32>(0.0, 1.0, 0.0, 1.0),
-                vec4<f32>(0.0, 0.0, 1.0, 1.0)
+            var colors : array<vec4f, 3> = array(
+                vec4f(1.0, 0.0, 0.0, 1.0),
+                vec4f(0.0, 1.0, 0.0, 1.0),
+                vec4f(0.0, 0.0, 1.0, 1.0)
             );
 
-            var position : vec4<f32> = positions[VertexIndex];
-            var color : vec4<f32> = colors[VertexIndex];
+            var position : vec4f = positions[VertexIndex];
+            var color : vec4f = colors[VertexIndex];
 
             // TODO(dawn:572): Revisit once modf has been reworked in WGSL.
             var fade : f32 = c.scalarOffset + c.time * c.scalar / 10.0;
@@ -105,13 +106,13 @@ void init() {
             ypos = yrot + c.offsetY;
 
             var output : VertexOut;
-            output.v_color = vec4<f32>(fade, 1.0 - fade, 0.0, 1.0) + color;
-            output.Position = vec4<f32>(xpos, ypos, 0.0, 1.0);
+            output.v_color = vec4f(fade, 1.0 - fade, 0.0, 1.0) + color;
+            output.Position = vec4f(xpos, ypos, 0.0, 1.0);
             return output;
         })");
 
     wgpu::ShaderModule fsModule = utils::CreateShaderModule(device, R"(
-        @stage(fragment) fn main(@location(0) v_color : vec4<f32>) -> @location(0) vec4<f32> {
+        @fragment fn main(@location(0) v_color : vec4f) -> @location(0) vec4f {
             return v_color;
         })");
 

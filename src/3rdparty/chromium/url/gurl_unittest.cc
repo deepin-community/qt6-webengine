@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -478,6 +478,81 @@ TEST(GURLTest, GetWithoutFilename) {
   }
 }
 
+TEST(GURLTest, GetWithoutRef) {
+  struct TestCase {
+    const char* input;
+    const char* expected;
+  } cases[] = {
+      // Common Standard URLs.
+      {"https://www.google.com/index.html",
+       "https://www.google.com/index.html"},
+      {"https://www.google.com/index.html#maps/",
+       "https://www.google.com/index.html"},
+
+      {"https://foo:bar@www.google.com/maps.htm",
+       "https://foo:bar@www.google.com/maps.htm"},
+      {"https://foo:bar@www.google.com/maps.htm#fragment",
+       "https://foo:bar@www.google.com/maps.htm"},
+
+      {"https://www.google.com/maps/au/index.html?q=maps",
+       "https://www.google.com/maps/au/index.html?q=maps"},
+      {"https://www.google.com/maps/au/index.html?q=maps#fragment/",
+       "https://www.google.com/maps/au/index.html?q=maps"},
+
+      {"http://www.google.com:8000/maps/au/index.html?q=maps",
+       "http://www.google.com:8000/maps/au/index.html?q=maps"},
+      {"http://www.google.com:8000/maps/au/index.html?q=maps#fragment/",
+       "http://www.google.com:8000/maps/au/index.html?q=maps"},
+
+      {"https://www.google.com/maps/au/north/?q=maps",
+       "https://www.google.com/maps/au/north/?q=maps"},
+      {"https://www.google.com/maps/au/north?q=maps#fragment",
+       "https://www.google.com/maps/au/north?q=maps"},
+
+      // Less common standard URLs.
+      {"filesystem:http://www.google.com/temporary/bar.html?baz=22",
+       "filesystem:http://www.google.com/temporary/bar.html?baz=22"},
+      {"file:///temporary/bar.html?baz=22#fragment",
+       "file:///temporary/bar.html?baz=22"},
+
+      {"ftp://foo/test/index.html", "ftp://foo/test/index.html"},
+      {"ftp://foo/test/index.html#fragment", "ftp://foo/test/index.html"},
+
+      {"gopher://foo/test/index.html", "gopher://foo/test/index.html"},
+      {"gopher://foo/test/index.html#fragment", "gopher://foo/test/index.html"},
+
+      {"ws://foo/test/index.html", "ws://foo/test/index.html"},
+      {"ws://foo/test/index.html#fragment", "ws://foo/test/index.html"},
+
+      // Non-standard, hierarchical URLs.
+      {"chrome://foo/bar.html", "chrome://foo/bar.html"},
+      {"chrome://foo/bar.html#fragment", "chrome://foo/bar.html"},
+
+      {"httpa://foo/test/index.html", "httpa://foo/test/index.html"},
+      {"httpa://foo/test/index.html#fragment", "httpa://foo/test/index.html"},
+
+      // Non-standard, non-hierarchical URLs.
+      {"blob:https://foo.bar/test/index.html",
+       "blob:https://foo.bar/test/index.html"},
+      {"blob:https://foo.bar/test/index.html#fragment",
+       "blob:https://foo.bar/test/index.html"},
+
+      {"about:blank", "about:blank"},
+      {"about:blank#ref", "about:blank"},
+
+      {"data:foobar", "data:foobar"},
+      {"scheme:opaque_data", "scheme:opaque_data"},
+      // Invalid URLs.
+      {"foobar", ""},
+  };
+
+  for (size_t i = 0; i < std::size(cases); i++) {
+    GURL url(cases[i].input);
+    GURL without_ref = url.GetWithoutRef();
+    EXPECT_EQ(cases[i].expected, without_ref.spec());
+  }
+}
+
 TEST(GURLTest, Replacements) {
   // The URL canonicalizer replacement test will handle most of these case.
   // The most important thing to do here is to check that the proper
@@ -929,6 +1004,7 @@ TEST(GURLTest, ContentForNonStandardURLs) {
   for (const auto& test : cases) {
     GURL url(test.url);
     EXPECT_EQ(test.expected, url.GetContent()) << test.url;
+    EXPECT_EQ(test.expected, url.GetContentPiece()) << test.url;
   }
 }
 

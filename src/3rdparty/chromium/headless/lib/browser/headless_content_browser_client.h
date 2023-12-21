@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -32,7 +32,7 @@ class HeadlessContentBrowserClient : public content::ContentBrowserClient {
 
   // content::ContentBrowserClient implementation:
   std::unique_ptr<content::BrowserMainParts> CreateBrowserMainParts(
-      content::MainFunctionParams parameters) override;
+      bool is_integration_test) override;
   void OverrideWebkitPrefs(content::WebContents* web_contents,
                            blink::web_pref::WebPreferences* prefs) override;
   void RegisterBrowserInterfaceBindersForFrame(
@@ -43,8 +43,6 @@ class HeadlessContentBrowserClient : public content::ContentBrowserClient {
       blink::AssociatedInterfaceRegistry& associated_registry) override;
   std::unique_ptr<content::DevToolsManagerDelegate>
   CreateDevToolsManagerDelegate() override;
-  scoped_refptr<content::QuotaPermissionContext> CreateQuotaPermissionContext()
-      override;
   content::GeneratedCodeCacheSettings GetGeneratedCodeCacheSettings(
       content::BrowserContext* context) override;
 #if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC)
@@ -62,7 +60,7 @@ class HeadlessContentBrowserClient : public content::ContentBrowserClient {
       int cert_error,
       const net::SSLInfo& ssl_info,
       const GURL& request_url,
-      bool is_main_frame_request,
+      bool is_primary_main_frame_request,
       bool strict_enforcement,
       base::OnceCallback<void(content::CertificateRequestResultType)> callback)
       override;
@@ -72,6 +70,14 @@ class HeadlessContentBrowserClient : public content::ContentBrowserClient {
       net::ClientCertIdentityList client_certs,
       std::unique_ptr<content::ClientCertificateDelegate> delegate) override;
   bool ShouldEnableStrictSiteIsolation() override;
+  bool IsSharedStorageAllowed(content::BrowserContext* browser_context,
+                              content::RenderFrameHost* rfh,
+                              const url::Origin& top_frame_origin,
+                              const url::Origin& accessing_origin) override;
+  bool IsSharedStorageSelectURLAllowed(
+      content::BrowserContext* browser_context,
+      const url::Origin& top_frame_origin,
+      const url::Origin& accessing_origin) override;
 
   void ConfigureNetworkContextParams(
       content::BrowserContext* context,
@@ -103,10 +109,6 @@ class HeadlessContentBrowserClient : public content::ContentBrowserClient {
       mojo::PendingReceiver<blink::mojom::BadgeService> receiver);
 
   raw_ptr<HeadlessBrowserImpl> browser_;  // Not owned.
-
-  // We store the callback here because we may call it from the I/O thread.
-  HeadlessBrowser::Options::AppendCommandLineFlagsCallback
-      append_command_line_flags_callback_;
 
   std::unique_ptr<StubBadgeService> stub_badge_service_;
 };

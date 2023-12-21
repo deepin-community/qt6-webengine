@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,6 +16,7 @@
 #include "base/notreached.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/trace_event/common/trace_event_common.h"
 #include "base/trace_event/trace_event.h"
@@ -40,10 +41,17 @@ namespace {
 
 std::pair<base::UnguessableToken, std::unique_ptr<HitTester>> BuildHitTester(
     const PaintPreviewFrameProto& proto) {
-  std::pair<base::UnguessableToken, std::unique_ptr<HitTester>> out(
+  absl::optional<base::UnguessableToken> embedding_token =
       base::UnguessableToken::Deserialize(proto.embedding_token_high(),
-                                          proto.embedding_token_low()),
-      std::make_unique<HitTester>());
+                                          proto.embedding_token_low());
+  // TODO(https://crbug.com/1406995): Investigate whether a deserialization
+  // failure can actually occur here and if it can, add a comment discussing how
+  // this can happen.
+  if (!embedding_token.has_value()) {
+    embedding_token = base::UnguessableToken::Create();
+  }
+  std::pair<base::UnguessableToken, std::unique_ptr<HitTester>> out(
+      embedding_token.value(), std::make_unique<HitTester>());
   out.second->Build(proto);
   return out;
 }
@@ -124,7 +132,7 @@ void PlayerCompositorDelegate::Initialize(
     const GURL& expected_url,
     const DirectoryKey& key,
     bool main_frame_mode,
-    base::OnceCallback<void(int)> compositor_error,
+    CompositorErrorCallback compositor_error,
     base::TimeDelta timeout_duration,
     std::array<size_t, PressureLevelCount::kLevels> max_requests_map) {
   TRACE_EVENT0("paint_preview", "PlayerCompositorDelegate::Initialize");
@@ -136,7 +144,7 @@ void PlayerCompositorDelegate::Initialize(
   if (memory_monitor &&
       memory_monitor->GetCurrentPressureLevel() >=
           base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_MODERATE) {
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(std::move(compositor_error),
                        static_cast<int>(
@@ -164,7 +172,7 @@ void PlayerCompositorDelegate::InitializeWithFakeServiceForTest(
     const GURL& expected_url,
     const DirectoryKey& key,
     bool main_frame_mode,
-    base::OnceCallback<void(int)> compositor_error,
+    CompositorErrorCallback compositor_error,
     base::TimeDelta timeout_duration,
     std::array<size_t, PressureLevelCount::kLevels> max_requests_map,
     std::unique_ptr<PaintPreviewCompositorService, base::OnTaskRunnerDeleter>
@@ -184,7 +192,7 @@ void PlayerCompositorDelegate::InitializeInternal(
     const GURL& expected_url,
     const DirectoryKey& key,
     bool main_frame_mode,
-    base::OnceCallback<void(int)> compositor_error,
+    CompositorErrorCallback compositor_error,
     base::TimeDelta timeout_duration,
     std::array<size_t, PressureLevelCount::kLevels> max_requests_map) {
   max_requests_map_ = max_requests_map;
@@ -211,7 +219,7 @@ void PlayerCompositorDelegate::InitializeInternal(
     timeout_.Reset(
         base::BindOnce(&PlayerCompositorDelegate::OnCompositorTimeout,
                        weak_factory_.GetWeakPtr()));
-    base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE, timeout_.callback(), timeout_duration);
   }
 }
@@ -302,7 +310,7 @@ void PlayerCompositorDelegate::OnMemoryPressure(
       paint_preview_compositor_service_.reset();
 
     if (compositor_error_) {
-      base::SequencedTaskRunnerHandle::Get()->PostTask(
+      base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
           FROM_HERE,
           base::BindOnce(
               std::move(compositor_error_),

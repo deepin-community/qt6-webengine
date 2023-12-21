@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,9 +34,9 @@ enum GLImplementation {
   kGLImplementationNone = 0,
   kGLImplementationDesktopGL = 1,
   kGLImplementationDesktopGLCoreProfile = 2,
-  // Note: 3 used to be legacy SwiftShader, so 3 is skipped and should not be
-  // reused.
-  kGLImplementationAppleGL = 4,
+  // Note: 3 and 4 are skipped and should not be reused.
+  // 3 used to be legacy SwiftShader.
+  // 4 used to be Apple's software GL.
   kGLImplementationEGLGLES2 = 5,  // Native EGL/GLES2
   kGLImplementationMockGL = 6,
   kGLImplementationStubGL = 7,
@@ -87,6 +87,8 @@ struct GL_EXPORT GLImplementationParts {
   bool IsValid() const;
   bool IsAllowed(const std::vector<GLImplementationParts>& allowed_impls) const;
   std::string ToString() const;
+  std::string GLString() const;
+  std::string ANGLEString() const;
 
  private:
   static constexpr ANGLEImplementation MakeANGLEImplementation(
@@ -120,9 +122,9 @@ typedef GLFunctionPointerType(WINAPI* GLGetProcAddressProc)(const char* name);
 typedef GLFunctionPointerType (*GLGetProcAddressProc)(const char* name);
 #endif
 
-// Initialize stub methods for drawing operations in the GL bindings. The
+// Sets stub methods for drawing operations in the GL bindings. The
 // null draw bindings default to enabled, so that draw operations do nothing.
-GL_EXPORT void InitializeNullDrawGLBindings();
+GL_EXPORT void SetNullDrawGLBindings(bool enabled);
 
 // TODO(danakj): Remove this when all test suites are using null-draw.
 GL_EXPORT bool HasInitializedNullDrawGLBindings();

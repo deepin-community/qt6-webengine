@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,13 +22,7 @@ TEST_F(LayoutTableColTest, LocalVisualRect) {
 
   // TablesNG hidden columns get geometry, because they paint their background
   // into cells.
-  if (RuntimeEnabledFeatures::LayoutNGEnabled()) {
-    EXPECT_FALSE(
-        GetLayoutObjectByElementId("col1")->LocalVisualRect().IsEmpty());
-  } else {
-    EXPECT_TRUE(
-        GetLayoutObjectByElementId("col1")->LocalVisualRect().IsEmpty());
-  }
+  EXPECT_FALSE(GetLayoutObjectByElementId("col1")->LocalVisualRect().IsEmpty());
   EXPECT_TRUE(GetLayoutObjectByElementId("col2")->LocalVisualRect().IsEmpty());
   EXPECT_TRUE(GetLayoutObjectByElementId("col3")->LocalVisualRect().IsEmpty());
 }

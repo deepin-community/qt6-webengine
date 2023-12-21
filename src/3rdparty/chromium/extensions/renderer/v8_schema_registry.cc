@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,8 +9,8 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
 #include "base/values.h"
 #include "content/public/renderer/v8_value_converter.h"
 #include "extensions/common/extension_api.h"
@@ -23,6 +23,7 @@
 #include "v8/include/v8-function-callback.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-json.h"
+#include "v8/include/v8-microtask-queue.h"
 #include "v8/include/v8-object.h"
 #include "v8/include/v8-value.h"
 
@@ -107,10 +108,10 @@ V8SchemaRegistry::~V8SchemaRegistry() {
 std::unique_ptr<NativeHandler> V8SchemaRegistry::AsNativeHandler() {
   std::unique_ptr<ScriptContext> context(
       new ScriptContext(GetOrCreateContext(v8::Isolate::GetCurrent()),
-                        NULL,  // no frame
-                        NULL,  // no extension
+                        nullptr,  // no frame
+                        nullptr,  // no extension
                         Feature::UNSPECIFIED_CONTEXT,
-                        NULL,  // no effective extension
+                        nullptr,  // no effective extension
                         Feature::UNSPECIFIED_CONTEXT));
   return std::unique_ptr<NativeHandler>(
       new SchemaRegistryNativeHandler(this, std::move(context)));
@@ -122,6 +123,8 @@ v8::Local<v8::Array> V8SchemaRegistry::GetSchemas(
   v8::EscapableHandleScope handle_scope(isolate);
   v8::Local<v8::Context> context = GetOrCreateContext(isolate);
   v8::Context::Scope context_scope(context);
+  v8::MicrotasksScope microtasks_scope(
+      context, v8::MicrotasksScope::kDoNotRunMicrotasks);
 
   v8::Local<v8::Array> v8_apis(v8::Array::New(isolate, apis.size()));
   size_t api_index = 0;
@@ -136,7 +139,7 @@ v8::Local<v8::Array> V8SchemaRegistry::GetSchemas(
 }
 
 v8::Local<v8::Object> V8SchemaRegistry::GetSchema(const std::string& api) {
-  if (schema_cache_ != NULL) {
+  if (schema_cache_ != nullptr) {
     v8::Local<v8::Object> cached_schema = schema_cache_->Get(api);
     if (!cached_schema.IsEmpty()) {
       return cached_schema;
@@ -149,6 +152,8 @@ v8::Local<v8::Object> V8SchemaRegistry::GetSchema(const std::string& api) {
   v8::EscapableHandleScope handle_scope(isolate);
   v8::Local<v8::Context> context = GetOrCreateContext(isolate);
   v8::Context::Scope context_scope(context);
+  v8::MicrotasksScope microtasks_scope(
+      context, v8::MicrotasksScope::kDoNotRunMicrotasks);
 
   base::StringPiece schema_string =
       ExtensionAPI::GetSharedInstance()->GetSchemaStringPiece(api);

@@ -1,8 +1,9 @@
-# Copyright 2021 The Chromium Authors. All rights reserved.
+# Copyright 2021 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Helpers for determining Component of directories."""
 
+import functools
 import os
 import re
 
@@ -29,6 +30,7 @@ def _SafeRead(path):
     return ''
 
 
+@functools.lru_cache
 class _ComponentLookupContext:
   def __init__(self, source_directory):
     self._mixins_cache = {}
@@ -104,6 +106,11 @@ def PopulateComponents(raw_symbols, source_directory, default_component):
   """
   context = _ComponentLookupContext(source_directory)
   for symbol in raw_symbols:
+    found_component = ''
     if symbol.source_path:
       found_component = context.ComponentForSourcePath(symbol.source_path)
-      symbol.component = found_component or default_component
+    if not found_component and symbol.object_path:
+      # Some generated files and not put under their target_gen_dir (common
+      # grit _resources_maps.cc files). So also look at object path.
+      found_component = context.ComponentForSourcePath(symbol.object_path)
+    symbol.component = found_component or default_component

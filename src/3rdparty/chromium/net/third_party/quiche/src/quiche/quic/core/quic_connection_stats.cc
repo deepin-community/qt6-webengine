@@ -48,14 +48,13 @@ std::ostream& operator<<(std::ostream& os, const QuicConnectionStats& s) {
   os << " blocked_frames_sent: " << s.blocked_frames_sent;
   os << " num_connectivity_probing_received: "
      << s.num_connectivity_probing_received;
+  os << " num_path_response_received: " << s.num_path_response_received;
   os << " retry_packet_processed: "
      << (s.retry_packet_processed ? "yes" : "no");
   os << " num_coalesced_packets_received: " << s.num_coalesced_packets_received;
   os << " num_coalesced_packets_processed: "
      << s.num_coalesced_packets_processed;
   os << " num_ack_aggregation_epochs: " << s.num_ack_aggregation_epochs;
-  os << " sent_legacy_version_encapsulated_packets: "
-     << s.sent_legacy_version_encapsulated_packets;
   os << " key_update_count: " << s.key_update_count;
   os << " num_failed_authentication_packets_received: "
      << s.num_failed_authentication_packets_received;
@@ -64,6 +63,12 @@ std::ostream& operator<<(std::ostream& os, const QuicConnectionStats& s) {
   os << " address_validated_via_decrypting_packet: "
      << s.address_validated_via_decrypting_packet;
   os << " address_validated_via_token: " << s.address_validated_via_token;
+  os << " server_preferred_address_validated: "
+     << s.server_preferred_address_validated;
+  os << " failed_to_validate_server_preferred_address: "
+     << s.failed_to_validate_server_preferred_address;
+  os << " num_duplicated_packets_sent_to_server_preferred_address: "
+     << s.num_duplicated_packets_sent_to_server_preferred_address;
   os << " }";
 
   return os;

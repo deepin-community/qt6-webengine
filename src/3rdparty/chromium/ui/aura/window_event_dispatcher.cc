@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,13 +8,13 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/check_op.h"
-#include "base/notreached.h"
+#include "base/functional/bind.h"
 #include "base/observer_list.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
+#include "cc/metrics/custom_metrics_recorder.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/capture_client.h"
 #include "ui/aura/client/cursor_client.h"
@@ -93,8 +93,7 @@ WindowEventDispatcher::ObserverNotifier::~ObserverNotifier() {
 // WindowEventDispatcher, public:
 
 WindowEventDispatcher::WindowEventDispatcher(WindowTreeHost* host)
-    : host_(host),
-      event_targeter_(std::make_unique<WindowTargeter>()) {
+    : host_(host), event_targeter_(std::make_unique<WindowTargeter>()) {
   Env::GetInstance()->gesture_recognizer()->AddGestureEventHelper(this);
   Env::GetInstance()->AddObserver(this);
 }
@@ -134,7 +133,7 @@ void WindowEventDispatcher::RepostEvent(const ui::LocatedEvent* event) {
   }
 
   if (held_repostable_event_) {
-    base::ThreadTaskRunnerHandle::Get()->PostNonNestableTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostNonNestableTask(
         FROM_HERE,
         base::BindOnce(
             base::IgnoreResult(&WindowEventDispatcher::DispatchHeldEvents),
@@ -223,7 +222,7 @@ void WindowEventDispatcher::ReleasePointerMoves() {
       // dispatching another one may not be safe/expected.  Instead we post a
       // task, that we may cancel if HoldPointerMoves is called again before it
       // executes.
-      base::ThreadTaskRunnerHandle::Get()->PostNonNestableTask(
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostNonNestableTask(
           FROM_HERE,
           base::BindOnce(
               base::IgnoreResult(&WindowEventDispatcher::DispatchHeldEvents),
@@ -497,11 +496,6 @@ void WindowEventDispatcher::OnEventProcessingStarted(ui::Event* event) {
     return;
   }
 
-  if (host_->compositor()) {
-    event_metrics_monitors_.push_back(
-        CreateScropedMetricsMonitorForEvent(*event));
-  }
-
   // The held events are already in |window()|'s coordinate system. So it is
   // not necessary to apply the transform to convert from the host's
   // coordinate system to |window()|'s coordinate system.
@@ -511,18 +505,14 @@ void WindowEventDispatcher::OnEventProcessingStarted(ui::Event* event) {
   observer_notifiers_.push(std::make_unique<ObserverNotifier>(this, *event));
 }
 
-void WindowEventDispatcher::OnEventProcessingFinished(ui::Event* event) {
+void WindowEventDispatcher::OnEventProcessingFinished(
+    ui::Event* event,
+    ui::EventTarget* target,
+    const ui::EventDispatchDetails& details) {
   if (in_shutdown_)
     return;
 
   observer_notifiers_.pop();
-  if (host_->compositor()) {
-    std::unique_ptr<cc::EventsMetricsManager::ScopedMonitor> monitor =
-        std::move(event_metrics_monitors_.back());
-    event_metrics_monitors_.pop_back();
-    if (event->handled())
-      monitor->SetSaveMetrics();
-  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -535,6 +525,11 @@ bool WindowEventDispatcher::CanDispatchToTarget(ui::EventTarget* target) {
 ui::EventDispatchDetails WindowEventDispatcher::PreDispatchEvent(
     ui::EventTarget* target,
     ui::Event* event) {
+  if (host_->compositor() && cc::CustomMetricRecorder::Get()) {
+    event_metrics_monitors_.push_back(
+        CreateScropedMetricsMonitorForEvent(*event));
+  }
+
   Window* target_window = static_cast<Window*>(target);
   CHECK(window()->Contains(target_window));
 
@@ -603,9 +598,18 @@ ui::EventDispatchDetails WindowEventDispatcher::PostDispatchEvent(
                 touchevent.unique_event_id(), event.result(),
                 false /* is_source_touch_event_set_blocking */, window);
 
-        return ProcessGestures(window, std::move(gestures));
+        details = ProcessGestures(window, std::move(gestures));
       }
     }
+  }
+
+  // Note this must run after processing events corresponding to the event
+  // monitor creation code in PreDispatchEvent to track latencies properly.
+  if (!details.dispatcher_destroyed && host_->compositor() &&
+      cc::CustomMetricRecorder::Get()) {
+    std::unique_ptr<cc::EventsMetricsManager::ScopedMonitor> monitor =
+        std::move(event_metrics_monitors_.back());
+    event_metrics_monitors_.pop_back();
   }
 
   return details;
@@ -834,7 +838,7 @@ void WindowEventDispatcher::PostSynthesizeMouseMove() {
   if (synthesize_mouse_move_ || in_shutdown_)
     return;
   synthesize_mouse_move_ = true;
-  base::ThreadTaskRunnerHandle::Get()->PostNonNestableTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostNonNestableTask(
       FROM_HERE,
       base::BindOnce(
           base::IgnoreResult(&WindowEventDispatcher::SynthesizeMouseMoveEvent),
@@ -1096,17 +1100,18 @@ WindowEventDispatcher::CreateScropedMetricsMonitorForEvent(
             ? ui::ScrollInputType::kTouchscreen
             : ui::ScrollInputType::kWheel;
     if (gesture->type() == ui::ET_GESTURE_SCROLL_UPDATE) {
-      metrics = cc::ScrollUpdateEventMetrics::Create(
+      metrics = cc::ScrollUpdateEventMetrics::CreateForBrowser(
           ui::ET_GESTURE_SCROLL_UPDATE, input_type, /*is_inertial=*/false,
           has_seen_gesture_scroll_update_after_begin_
               ? cc::ScrollUpdateEventMetrics::ScrollUpdateType::kContinued
               : cc::ScrollUpdateEventMetrics::ScrollUpdateType::kStarted,
-          gesture->details().scroll_y(), gesture->time_stamp());
+          gesture->details().scroll_y(), gesture->time_stamp(),
+          base::IdType64<class ui::LatencyInfo>(event.latency()->trace_id()));
       has_seen_gesture_scroll_update_after_begin_ = true;
     } else if (gesture->IsScrollGestureEvent()) {
-      metrics = cc::ScrollEventMetrics::Create(gesture->type(), input_type,
-                                               /*is_inertial=*/false,
-                                               gesture->time_stamp());
+      metrics = cc::ScrollEventMetrics::CreateForBrowser(
+          gesture->type(), input_type,
+          /*is_inertial=*/false, gesture->time_stamp());
       if (gesture->type() == ui::ET_GESTURE_SCROLL_BEGIN)
         has_seen_gesture_scroll_update_after_begin_ = false;
     } else {

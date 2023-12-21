@@ -62,6 +62,10 @@ inline bool KeyMatchesId(const AtomicString& key, const Element& element) {
 
 inline bool KeyMatchesMapName(const AtomicString& key, const Element& element) {
   auto* html_map_element = DynamicTo<HTMLMapElement>(element);
+  if (RuntimeEnabledFeatures::HTMLMapToImgMatchingByNameAndIdEnabled()) {
+    return html_map_element && (html_map_element->GetName() == key ||
+                                html_map_element->GetIdAttribute() == key);
+  }
   return html_map_element && html_map_element->GetName() == key;
 }
 
@@ -100,7 +104,7 @@ void TreeOrderedMap::Remove(const AtomicString& key, Element& element) {
     map_.erase(it);
   } else {
     if (entry->element == element) {
-      DCHECK(entry->ordered_list.IsEmpty() ||
+      DCHECK(entry->ordered_list.empty() ||
              entry->ordered_list.front() == element);
       entry->element =
           entry->ordered_list.size() > 1 ? entry->ordered_list[1] : nullptr;
@@ -163,8 +167,8 @@ const HeapVector<Member<Element>>& TreeOrderedMap::GetAllElementsById(
   Member<MapEntry>& entry = it->value;
   DCHECK(entry->count);
 
-  if (entry->ordered_list.IsEmpty()) {
-    entry->ordered_list.ReserveCapacity(entry->count);
+  if (entry->ordered_list.empty()) {
+    entry->ordered_list.reserve(entry->count);
     for (Element* element =
              entry->element ? entry->element.Get()
                             : ElementTraversal::FirstWithin(scope.RootNode());

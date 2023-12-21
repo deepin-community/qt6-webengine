@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,36 +7,38 @@
 #include <memory>
 
 #include "base/base_paths.h"
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/task/thread_pool.h"
 #include "base/test/mock_callback.h"
 #include "base/test/task_environment.h"
 #include "components/optimization_guide/core/optimization_guide_model_provider.h"
 #include "components/optimization_guide/core/test_model_info_builder.h"
 #include "components/optimization_guide/core/test_optimization_guide_model_provider.h"
 #include "components/optimization_guide/proto/common_types.pb.h"
-#include "components/optimization_guide/proto/models.pb.h"
 #include "components/segmentation_platform/internal/execution/optimization_guide/optimization_guide_segmentation_model_handler.h"
 #include "components/segmentation_platform/internal/execution/optimization_guide/optimization_guide_segmentation_model_provider.h"
-#include "components/segmentation_platform/internal/proto/model_metadata.pb.h"
 #include "components/segmentation_platform/internal/proto/model_prediction.pb.h"
+#include "components/segmentation_platform/internal/segment_id_convertor.h"
 #include "components/segmentation_platform/public/model_provider.h"
+#include "components/segmentation_platform/public/proto/model_metadata.pb.h"
+#include "components/segmentation_platform/public/proto/segmentation_platform.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using testing::_;
 
+namespace segmentation_platform {
 namespace {
-const auto kOptimizationTarget = optimization_guide::proto::OptimizationTarget::
-    OPTIMIZATION_TARGET_SEGMENTATION_NEW_TAB;
+const auto kSegmentId =
+    proto::SegmentId::OPTIMIZATION_TARGET_SEGMENTATION_NEW_TAB;
 const int64_t kModelVersion = 123;
 }  // namespace
 
-namespace segmentation_platform {
 bool AreEqual(const proto::SegmentationModelMetadata& a,
               const proto::SegmentationModelMetadata& b) {
   // Serializing two protos and comparing them is unsafe, in particular if they
@@ -75,7 +77,8 @@ class SegmentationModelExecutorTest : public testing::Test {
     opt_guide_model_provider_ =
         std::make_unique<OptimizationGuideSegmentationModelProvider>(
             optimization_guide_segmentation_model_provider_.get(),
-            task_environment_.GetMainThreadTaskRunner(), kOptimizationTarget);
+            base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()}),
+            kSegmentId);
     opt_guide_model_provider_->InitAndFetchModel(callback);
   }
 
@@ -110,8 +113,8 @@ class SegmentationModelExecutorTest : public testing::Test {
                               .SetModelFilePath(model_file_path_)
                               .SetVersion(kModelVersion)
                               .Build();
-    opt_guide_model_handler().OnModelUpdated(kOptimizationTarget,
-                                             *model_metadata);
+    opt_guide_model_handler().OnModelUpdated(
+        *SegmentIdToOptimizationTarget(kSegmentId), *model_metadata);
     RunUntilIdle();
   }
 
@@ -141,11 +144,11 @@ TEST_F(SegmentationModelExecutorTest, ExecuteWithLoadedModel) {
   CreateModelExecutor(base::BindRepeating(
       [](base::RunLoop* run_loop,
          proto::SegmentationModelMetadata original_metadata,
-         optimization_guide::proto::OptimizationTarget optimization_target,
+         proto::SegmentId segment_id,
          proto::SegmentationModelMetadata actual_metadata,
          int64_t model_version) {
         // Verify that the callback is invoked with the correct data.
-        EXPECT_EQ(kOptimizationTarget, optimization_target);
+        EXPECT_EQ(kSegmentId, segment_id);
         EXPECT_TRUE(AreEqual(original_metadata, actual_metadata));
         EXPECT_EQ(kModelVersion, model_version);
         run_loop->Quit();
@@ -159,20 +162,20 @@ TEST_F(SegmentationModelExecutorTest, ExecuteWithLoadedModel) {
 
   EXPECT_TRUE(opt_guide_model_handler().ModelAvailable());
 
-  std::vector<float> input = {4, 5};
+  ModelProvider::Request input = {4, 5};
 
   std::unique_ptr<base::RunLoop> run_loop = std::make_unique<base::RunLoop>();
   opt_guide_model_provider_->ExecuteModelWithInput(
-      input,
-      base::BindOnce(
-          [](base::RunLoop* run_loop, const absl::optional<float>& output) {
-            EXPECT_TRUE(output.has_value());
-            // 4 + 5 = 9
-            EXPECT_NEAR(9, output.value(), 1e-1);
+      input, base::BindOnce(
+                 [](base::RunLoop* run_loop,
+                    const absl::optional<ModelProvider::Response>& output) {
+                   EXPECT_TRUE(output.has_value());
+                   // 4 + 5 = 9
+                   EXPECT_NEAR(9, output.value().at(0), 1e-1);
 
-            run_loop->Quit();
-          },
-          run_loop.get()));
+                   run_loop->Quit();
+                 },
+                 run_loop.get()));
   run_loop->Run();
 
   ResetModelExecutor();

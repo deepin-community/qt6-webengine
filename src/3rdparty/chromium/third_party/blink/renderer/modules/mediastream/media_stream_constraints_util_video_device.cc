@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,9 +19,9 @@
 #include "third_party/blink/public/platform/modules/webrtc/webrtc_logging.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/web/modules/mediastream/media_stream_video_source.h"
+#include "third_party/blink/renderer/modules/mediastream/media_constraints.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream_constraints_util.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream_constraints_util_sets.h"
-#include "third_party/blink/renderer/platform/mediastream/media_constraints.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
 
@@ -289,10 +289,10 @@ class CandidateFormat {
           static_cast<double>(track_settings_with_rescale.target_width()) /
           track_settings_with_rescale.target_height();
       DCHECK(!std::isnan(target_aspect_ratio));
-      double best_supported_frame_rate =
+      absl::optional<double> best_supported_frame_rate =
           track_settings_with_rescale.max_frame_rate();
-      if (best_supported_frame_rate == 0.0 ||
-          best_supported_frame_rate > NativeFrameRate()) {
+      if (!best_supported_frame_rate.has_value() ||
+          *best_supported_frame_rate > NativeFrameRate()) {
         best_supported_frame_rate = NativeFrameRate();
       }
 
@@ -304,7 +304,7 @@ class CandidateFormat {
           NumericValueFitness(basic_constraint_set.width,
                               track_settings_with_rescale.target_width()) +
           NumericValueFitness(basic_constraint_set.frame_rate,
-                              best_supported_frame_rate);
+                              *best_supported_frame_rate);
     }
 
     double track_fitness_without_rescale = HUGE_VAL;
@@ -319,10 +319,10 @@ class CandidateFormat {
             basic_constraint_set, resolution_set(), constrained_frame_rate(),
             format(), false /* enable_rescale */);
         DCHECK(!track_settings_without_rescale.target_size().has_value());
-        double best_supported_frame_rate =
+        absl::optional<double> best_supported_frame_rate =
             track_settings_without_rescale.max_frame_rate();
-        if (best_supported_frame_rate == 0.0 ||
-            best_supported_frame_rate > NativeFrameRate()) {
+        if (!best_supported_frame_rate.has_value() ||
+            *best_supported_frame_rate > NativeFrameRate()) {
           best_supported_frame_rate = NativeFrameRate();
         }
         track_fitness_without_rescale =
@@ -331,7 +331,7 @@ class CandidateFormat {
             NumericValueFitness(basic_constraint_set.height, NativeHeight()) +
             NumericValueFitness(basic_constraint_set.width, NativeWidth()) +
             NumericValueFitness(basic_constraint_set.frame_rate,
-                                best_supported_frame_rate);
+                                *best_supported_frame_rate);
       }
     }
 
@@ -421,7 +421,7 @@ bool FacingModeSatisfiesConstraint(mojom::blink::FacingMode value,
                                    const StringConstraint& constraint) {
   WebString string_value = ToWebString(value);
   if (string_value.IsNull())
-    return constraint.Exact().IsEmpty();
+    return constraint.Exact().empty();
 
   return constraint.Matches(string_value);
 }
@@ -718,8 +718,9 @@ VideoDeviceCaptureCapabilities& VideoDeviceCaptureCapabilities::operator=(
 // Enables debug logging of capabilities processing when picking a video.
 // TODO(crbug.com/1275617): Remove this and calls once investigation is
 // complete.
-const base::Feature kMediaStreamCapabilitiesDebugLogging{
-    "MediaStreamCapabilitiesDebugLogging", base::FEATURE_DISABLED_BY_DEFAULT};
+BASE_FEATURE(kMediaStreamCapabilitiesDebugLogging,
+             "MediaStreamCapabilitiesDebugLogging",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 // TODO(crbug.com/1275617): Remove this and calls once investigation is
 // complete.

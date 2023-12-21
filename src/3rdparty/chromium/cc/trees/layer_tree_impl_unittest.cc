@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include "base/cxx17_backports.h"
 #include "base/memory/raw_ptr.h"
+#include "base/time/time.h"
 #include "cc/layers/heads_up_display_layer_impl.h"
 #include "cc/test/fake_layer_tree_host_impl.h"
 #include "cc/test/fake_raster_source.h"
@@ -232,10 +233,10 @@ TEST_F(LayerTreeImplTest, HitTestingForSingleLayerAndHud) {
 
 TEST_F(LayerTreeImplTest, HitTestingForUninvertibleTransform) {
   gfx::Transform uninvertible_transform;
-  uninvertible_transform.matrix().setRC(0, 0, 0.0);
-  uninvertible_transform.matrix().setRC(1, 1, 0.0);
-  uninvertible_transform.matrix().setRC(2, 2, 0.0);
-  uninvertible_transform.matrix().setRC(3, 3, 0.0);
+  uninvertible_transform.set_rc(0, 0, 0.0);
+  uninvertible_transform.set_rc(1, 1, 0.0);
+  uninvertible_transform.set_rc(2, 2, 0.0);
+  uninvertible_transform.set_rc(3, 3, 0.0);
   ASSERT_FALSE(uninvertible_transform.IsInvertible());
 
   LayerImpl* root = root_layer();
@@ -1186,10 +1187,10 @@ TEST_F(LayerTreeImplTest,
   LayerImpl* root = root_layer();
 
   gfx::Transform uninvertible_transform;
-  uninvertible_transform.matrix().setRC(0, 0, 0.0);
-  uninvertible_transform.matrix().setRC(1, 1, 0.0);
-  uninvertible_transform.matrix().setRC(2, 2, 0.0);
-  uninvertible_transform.matrix().setRC(3, 3, 0.0);
+  uninvertible_transform.set_rc(0, 0, 0.0);
+  uninvertible_transform.set_rc(1, 1, 0.0);
+  uninvertible_transform.set_rc(2, 2, 0.0);
+  uninvertible_transform.set_rc(3, 3, 0.0);
   ASSERT_FALSE(uninvertible_transform.IsInvertible());
 
   TouchActionRegion touch_action_region;
@@ -2133,8 +2134,7 @@ TEST_F(LayerTreeImplTest, SelectionBoundsWithLargeTransforms) {
   LayerImpl* root = root_layer();
   root->SetBounds(gfx::Size(100, 100));
 
-  gfx::Transform large_transform;
-  large_transform.Scale(SkDoubleToScalar(1e37), SkDoubleToScalar(1e37));
+  gfx::Transform large_transform = gfx::Transform::MakeScale(1e37);
   large_transform.RotateAboutYAxis(30);
 
   LayerImpl* child = AddLayer<LayerImpl>();
@@ -2168,10 +2168,18 @@ TEST_F(LayerTreeImplTest, SelectionBoundsWithLargeTransforms) {
   viz::Selection<gfx::SelectionBound> output;
   host_impl().active_tree()->GetViewportSelection(&output);
 
-  // edge_end and edge_start aren't allowed to have NaNs, so the selection
-  // should be empty.
-  EXPECT_EQ(gfx::SelectionBound(), output.start);
-  EXPECT_EQ(gfx::SelectionBound(), output.end);
+  auto point_is_valid = [](const gfx::PointF& p) {
+    return std::isfinite(p.x()) && std::isfinite(p.y());
+  };
+  auto selection_bound_is_valid = [&](const gfx::SelectionBound& b) {
+    return point_is_valid(b.edge_start()) &&
+           point_is_valid(b.visible_edge_start()) &&
+           point_is_valid(b.edge_end()) && point_is_valid(b.visible_edge_end());
+  };
+  // No NaNs or infinities in SelectounBound.
+  EXPECT_TRUE(selection_bound_is_valid(output.start))
+      << output.start.ToString();
+  EXPECT_TRUE(selection_bound_is_valid(output.end)) << output.end.ToString();
 }
 
 TEST_F(LayerTreeImplTest, SelectionBoundsForCaretLayer) {
@@ -2314,7 +2322,8 @@ class PersistentSwapPromise
   MOCK_METHOD1(WillSwap, void(viz::CompositorFrameMetadata* metadata));
   MOCK_METHOD0(DidSwap, void());
 
-  DidNotSwapAction DidNotSwap(DidNotSwapReason reason) override {
+  DidNotSwapAction DidNotSwap(DidNotSwapReason reason,
+                              base::TimeTicks ts) override {
     return DidNotSwapAction::KEEP_ACTIVE;
   }
   int64_t GetTraceId() const override { return 0; }
@@ -2331,7 +2340,8 @@ class NotPersistentSwapPromise
   void WillSwap(viz::CompositorFrameMetadata* metadata) override {}
   void DidSwap() override {}
 
-  DidNotSwapAction DidNotSwap(DidNotSwapReason reason) override {
+  DidNotSwapAction DidNotSwap(DidNotSwapReason reason,
+                              base::TimeTicks ts) override {
     return DidNotSwapAction::BREAK_PROMISE;
   }
   int64_t GetTraceId() const override { return 0; }

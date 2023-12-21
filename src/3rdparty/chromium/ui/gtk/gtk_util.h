@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/component_export.h"
+#include "base/memory/raw_ptr.h"
 #include "ui/base/glib/scoped_gobject.h"
 #include "ui/color/color_id.h"
 #include "ui/gtk/gtk_compat.h"
@@ -17,10 +18,6 @@
 
 namespace aura {
 class Window;
-}
-
-namespace base {
-class CommandLine;
 }
 
 namespace ui {
@@ -33,7 +30,7 @@ const char* GtkCssMenu();
 const char* GtkCssMenuItem();
 const char* GtkCssMenuScrollbar();
 
-void GtkInitFromCommandLine(const base::CommandLine& command_line);
+[[nodiscard]] bool GtkInitFromCommandLine(int* argc, char** argv);
 
 // Sets |dialog| as transient for |parent|, which will keep it on top and center
 // it above |parent|. Do nothing if |parent| is nullptr.
@@ -48,7 +45,7 @@ void ClearAuraTransientParent(GtkWidget* dialog, aura::Window* parent);
 // Parses |button_string| into |leading_buttons| and
 // |trailing_buttons|.  The string is of the format
 // "<button>*:<button*>", for example, "close:minimize:maximize".
-// This format is used by GTK settings and gsettings.
+// This format is used by GTK settings.
 void ParseButtonLayout(const std::string& button_string,
                        std::vector<views::FrameButton>* leading_buttons,
                        std::vector<views::FrameButton>* trailing_buttons);
@@ -74,8 +71,8 @@ class CairoSurface {
   SkColor GetAveragePixelValue(bool frame);
 
  private:
-  cairo_surface_t* surface_;
-  cairo_t* cairo_;
+  raw_ptr<cairo_surface_t> surface_;
+  raw_ptr<cairo_t> cairo_;
 };
 
 class GtkCssContext {
@@ -111,39 +108,11 @@ class GtkCssContext {
   // GTK4 state.
   // GTK widgets own their children, so instead of keeping a reference to the
   // widget directly, keep a reference to the root widget.
-  GtkWidget* widget_ = nullptr;
+  raw_ptr<GtkWidget> widget_ = nullptr;
   ScopedGObject<GtkWidget> root_;
 };
 
 using ScopedCssProvider = ScopedGObject<GtkCssProvider>;
-
-}  // namespace gtk
-
-// Template override cannot be in the gtk namespace.
-template <>
-inline void ScopedGObject<GtkStyleContext>::Unref() {
-  // Versions of GTK earlier than 3.15.4 had a bug where a g_assert
-  // would be triggered when trying to free a GtkStyleContext that had
-  // a parent whose only reference was the child context in question.
-  // This is a hack to work around that case.  See GTK commit
-  // "gtkstylecontext: Don't try to emit a signal when finalizing".
-  GtkStyleContext* context = obj_;
-  while (context) {
-    GtkStyleContext* parent = gtk_style_context_get_parent(context);
-    if (parent && G_OBJECT(context)->ref_count == 1 &&
-        !gtk::GtkCheckVersion(3, 15, 4)) {
-      g_object_ref(parent);
-      gtk_style_context_set_parent(context, nullptr);
-      g_object_unref(context);
-    } else {
-      g_object_unref(context);
-      return;
-    }
-    context = parent;
-  }
-}
-
-namespace gtk {
 
 // Converts ui::NativeTheme::State to GtkStateFlags.
 GtkStateFlags StateToStateFlags(ui::NativeTheme::State state);

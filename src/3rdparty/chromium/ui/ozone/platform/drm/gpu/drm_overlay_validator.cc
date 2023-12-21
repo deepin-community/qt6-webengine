@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,14 +8,13 @@
 #include <utility>
 #include <vector>
 
-#include "base/files/platform_file.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/timer/elapsed_timer.h"
 #include "ui/gfx/geometry/rect_conversions.h"
-#include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/gpu_fence.h"
 #include "ui/gfx/linux/drm_util_linux.h"
 #include "ui/gfx/linux/gbm_buffer.h"
+#include "ui/gfx/linux/gbm_device.h"
 #include "ui/ozone/platform/drm/common/drm_util.h"
 #include "ui/ozone/platform/drm/gpu/drm_device.h"
 #include "ui/ozone/platform/drm/gpu/drm_framebuffer.h"
@@ -30,8 +29,7 @@ namespace {
 scoped_refptr<DrmFramebuffer> GetBufferForPageFlipTest(
     const DrmWindow* drm_window,
     const OverlaySurfaceCandidate& overlay_surface,
-    std::vector<scoped_refptr<DrmFramebuffer>>* reusable_buffers,
-    size_t* total_allocated_memory_size) {
+    std::vector<scoped_refptr<DrmFramebuffer>>* reusable_buffers) {
   if (overlay_surface.native_pixmap) {
     return static_cast<GbmPixmap*>(overlay_surface.native_pixmap.get())
         ->framebuffer();
@@ -70,12 +68,11 @@ scoped_refptr<DrmFramebuffer> GetBufferForPageFlipTest(
   if (!buffer)
     return nullptr;
 
-  for (size_t i = 0; i < buffer->GetNumPlanes(); ++i)
-    *total_allocated_memory_size += buffer->GetPlaneSize(i);
-
+  constexpr bool kIsOriginalBuffer = false;
   scoped_refptr<DrmFramebuffer> drm_framebuffer =
       DrmFramebuffer::AddFramebuffer(drm_device, buffer.get(),
-                                     buffer->GetSize(), modifiers);
+                                     buffer->GetSize(), modifiers,
+                                     kIsOriginalBuffer);
   if (!drm_framebuffer)
     return nullptr;
 
@@ -87,14 +84,13 @@ scoped_refptr<DrmFramebuffer> GetBufferForPageFlipTest(
 
 DrmOverlayValidator::DrmOverlayValidator(DrmWindow* window) : window_(window) {}
 
-DrmOverlayValidator::~DrmOverlayValidator() {}
+DrmOverlayValidator::~DrmOverlayValidator() = default;
 
 DrmOverlayPlane DrmOverlayValidator::MakeOverlayPlane(
     const OverlaySurfaceCandidate& param,
-    std::vector<scoped_refptr<DrmFramebuffer>>& reusable_buffers,
-    size_t& total_allocated_memory_size) {
-  scoped_refptr<DrmFramebuffer> buffer = GetBufferForPageFlipTest(
-      window_, param, &reusable_buffers, &total_allocated_memory_size);
+    std::vector<scoped_refptr<DrmFramebuffer>>& reusable_buffers) {
+  scoped_refptr<DrmFramebuffer> buffer =
+      GetBufferForPageFlipTest(window_, param, &reusable_buffers);
 
   return DrmOverlayPlane(buffer, param.plane_z_order, param.transform,
                          gfx::ToNearestRect(param.display_rect),
@@ -124,8 +120,6 @@ OverlayStatusList DrmOverlayValidator::TestPageFlip(
     reusable_buffers.push_back(plane.buffer);
   }
 
-  size_t total_allocated_memory_size = 0;
-
   std::vector<size_t> plane_indices;
   for (size_t i = 0; i < params.size(); ++i) {
     auto& param = params[i];
@@ -135,8 +129,7 @@ OverlayStatusList DrmOverlayValidator::TestPageFlip(
       continue;
     }
 
-    DrmOverlayPlane plane =
-        MakeOverlayPlane(param, reusable_buffers, total_allocated_memory_size);
+    DrmOverlayPlane plane = MakeOverlayPlane(param, reusable_buffers);
     if (!plane.buffer) {
       returns[i] = OVERLAY_STATUS_NOT;
       continue;
@@ -193,9 +186,6 @@ OverlayStatusList DrmOverlayValidator::TestPageFlip(
     returns[index] = OVERLAY_STATUS_ABLE;
   }
 
-  UMA_HISTOGRAM_MEMORY_KB(
-      "Compositing.Display.DrmOverlayManager.TotalTestBufferMemorySize",
-      total_allocated_memory_size / 1024);
   UMA_HISTOGRAM_COUNTS_100(
       "Compositing.Display.DrmOverlayManager.TestPageFlipCount",
       test_page_flip_count);

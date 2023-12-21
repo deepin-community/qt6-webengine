@@ -16,28 +16,26 @@
 
 #include <functional>
 #include <memory>
+#include <utility>
 
 #include "absl/functional/bind_front.h"
-#include "absl/strings/str_cat.h"
 #include "absl/time/time.h"
 #include "connections/implementation/mediums/webrtc/session_description_wrapper.h"
 #include "connections/implementation/mediums/webrtc/signaling_frames.h"
 #include "connections/implementation/mediums/webrtc_socket.h"
 #include "internal/platform/byte_array.h"
-#include "internal/platform/listeners.h"
 #include "internal/platform/cancelable_alarm.h"
 #include "internal/platform/future.h"
 #include "internal/platform/logging.h"
 #include "internal/platform/mutex_lock.h"
-#include "proto/mediums/web_rtc_signaling_frames.pb.h"
 #include "webrtc/api/jsep.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 namespace mediums {
 
 namespace {
+using ::location::nearby::connections::LocationHint;
 
 // The maximum amount of time to wait to connect to a data channel via WebRTC.
 constexpr absl::Duration kDataChannelTimeout = absl::Seconds(10);
@@ -123,11 +121,12 @@ bool WebRtc::StartAcceptingConnections(const std::string& service_id,
 
   // We'll automatically disconnect from Tachyon after 60sec. When this alarm
   // fires, we'll recreate our room so we continue to receive messages.
-  info.restart_tachyon_receive_messages_alarm = CancelableAlarm(
-      "restart_receiving_messages_webrtc",
-      std::bind(&WebRtc::ProcessRestartTachyonReceiveMessages, this,
-                service_id),
-      kRestartReceiveMessagesDuration, &single_thread_executor_);
+  info.restart_tachyon_receive_messages_alarm =
+      std::make_unique<CancelableAlarm>(
+          "restart_receiving_messages_webrtc",
+          std::bind(&WebRtc::ProcessRestartTachyonReceiveMessages, this,
+                    service_id),
+          kRestartReceiveMessagesDuration, &single_thread_executor_);
 
   // Now that we're set up to receive messages, we'll save our state and return
   // a successful result.
@@ -156,9 +155,10 @@ void WebRtc::StopAcceptingConnections(const std::string& service_id) {
   info.signaling_messenger.reset();
 
   // Cancel the scheduled alarm.
-  if (info.restart_tachyon_receive_messages_alarm.IsValid()) {
-    info.restart_tachyon_receive_messages_alarm.Cancel();
-    info.restart_tachyon_receive_messages_alarm = CancelableAlarm();
+  if (info.restart_tachyon_receive_messages_alarm &&
+      info.restart_tachyon_receive_messages_alarm->IsValid()) {
+    info.restart_tachyon_receive_messages_alarm->Cancel();
+    info.restart_tachyon_receive_messages_alarm.reset();
   }
 
   // If we had any in-progress connections that haven't materialized into full
@@ -325,7 +325,7 @@ WebRtcSocketWrapper WebRtc::AttemptToConnect(
 
 void WebRtc::ProcessLocalIceCandidate(
     const std::string& service_id, const WebrtcPeerId& remote_peer_id,
-    const ::location::nearby::mediums::IceCandidate ice_candidate) {
+    const location::nearby::mediums::IceCandidate ice_candidate) {
   MutexLock lock(&mutex_);
 
   // Check first if we have an outgoing request w/ this peer. As this request is
@@ -659,7 +659,7 @@ void WebRtc::ProcessDataChannelOpen(const std::string& service_id,
       accepting_connections_info_.find(service_id);
   if (accepting_connection_entry != accepting_connections_info_.end()) {
     accepting_connection_entry->second.accepted_connection_callback.accepted_cb(
-        socket_wrapper);
+        service_id, socket_wrapper);
     return;
   }
 
@@ -691,7 +691,7 @@ std::unique_ptr<ConnectionFlow> WebRtc::CreateConnectionFlow(
              // Note: We need to encode the ice candidate here, before we jump
              // off the thread. Otherwise, it gets destroyed and we can't read
              // it later.
-             ::location::nearby::mediums::IceCandidate encoded_ice_candidate =
+             location::nearby::mediums::IceCandidate encoded_ice_candidate =
                  webrtc_frames::EncodeIceCandidate(*ice_candidate);
              OffloadFromThread(
                  "rtc-ice-candidates",
@@ -741,4 +741,3 @@ void WebRtc::OffloadFromThread(const std::string& name, Runnable runnable) {
 }  // namespace mediums
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location

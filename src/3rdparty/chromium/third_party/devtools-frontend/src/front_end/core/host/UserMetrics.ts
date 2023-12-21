@@ -41,6 +41,24 @@ export class UserMetrics {
     this.#launchPanelName = '';
   }
 
+  breakpointWithConditionAdded(breakpointWithConditionAdded: BreakpointWithConditionAdded): void {
+    if (breakpointWithConditionAdded >= BreakpointWithConditionAdded.MaxValue) {
+      return;
+    }
+    InspectorFrontendHostInstance.recordEnumeratedHistogram(
+        EnumeratedHistogram.BreakpointWithConditionAdded, breakpointWithConditionAdded,
+        BreakpointWithConditionAdded.MaxValue);
+  }
+
+  breakpointEditDialogRevealedFrom(breakpointEditDialogRevealedFrom: BreakpointEditDialogRevealedFrom): void {
+    if (breakpointEditDialogRevealedFrom >= BreakpointEditDialogRevealedFrom.MaxValue) {
+      return;
+    }
+    InspectorFrontendHostInstance.recordEnumeratedHistogram(
+        EnumeratedHistogram.BreakpointEditDialogRevealedFrom, breakpointEditDialogRevealedFrom,
+        BreakpointEditDialogRevealedFrom.MaxValue);
+  }
+
   panelShown(panelName: string): void {
     const code = PanelCodes[panelName as keyof typeof PanelCodes] || 0;
     InspectorFrontendHostInstance.recordEnumeratedHistogram(EnumeratedHistogram.PanelShown, code, PanelCodes.MaxValue);
@@ -66,6 +84,18 @@ export class UserMetrics {
 
   settingsPanelShown(settingsViewId: string): void {
     this.panelShown('settings-' + settingsViewId);
+  }
+
+  sourcesPanelFileOpened(mediaType?: string): void {
+    const code = (mediaType && MediaTypes[mediaType as keyof typeof MediaTypes]) || MediaTypes.Unknown;
+    InspectorFrontendHostInstance.recordEnumeratedHistogram(
+        EnumeratedHistogram.SourcesPanelFileOpened, code, MediaTypes.MaxValue);
+  }
+
+  networkPanelResponsePreviewOpened(mediaType: string): void {
+    const code = (mediaType && MediaTypes[mediaType as keyof typeof MediaTypes]) || MediaTypes.Unknown;
+    InspectorFrontendHostInstance.recordEnumeratedHistogram(
+        EnumeratedHistogram.NetworkPanelResponsePreviewOpened, code, MediaTypes.MaxValue);
   }
 
   actionTaken(action: Action): void {
@@ -215,12 +245,6 @@ export class UserMetrics {
         EnumeratedHistogram.Language, languageCode, Language.MaxValue);
   }
 
-  showCorsErrorsSettingChanged(show: boolean): void {
-    const consoleShowsCorsErrors = ConsoleShowsCorsErrors[String(show) as keyof typeof ConsoleShowsCorsErrors];
-    InspectorFrontendHostInstance.recordEnumeratedHistogram(
-        EnumeratedHistogram.ConsoleShowsCorsErrors, consoleShowsCorsErrors, ConsoleShowsCorsErrors.MaxValue);
-  }
-
   syncSetting(devtoolsSyncSettingEnabled: boolean): void {
     InspectorFrontendHostInstance.getSyncInformation(syncInfo => {
       let settingValue = SyncSetting.ChromeSyncDisabled;
@@ -246,6 +270,11 @@ export class UserMetrics {
         EnumeratedHistogram.RecordingReplayFinished, value, RecordingReplayFinished.MaxValue);
   }
 
+  recordingReplaySpeed(value: RecordingReplaySpeed): void {
+    InspectorFrontendHostInstance.recordEnumeratedHistogram(
+        EnumeratedHistogram.RecordingReplaySpeed, value, RecordingReplaySpeed.MaxValue);
+  }
+
   recordingReplayStarted(value: RecordingReplayStarted): void {
     InspectorFrontendHostInstance.recordEnumeratedHistogram(
         EnumeratedHistogram.RecordingReplayStarted, value, RecordingReplayStarted.MaxValue);
@@ -261,9 +290,51 @@ export class UserMetrics {
         EnumeratedHistogram.RecordingExported, value, RecordingExported.MaxValue);
   }
 
+  recordingCodeToggled(value: RecordingCodeToggled): void {
+    InspectorFrontendHostInstance.recordEnumeratedHistogram(
+        EnumeratedHistogram.RecordingCodeToggled, value, RecordingCodeToggled.MaxValue);
+  }
+
+  recordingCopiedToClipboard(value: RecordingCopiedToClipboard): void {
+    InspectorFrontendHostInstance.recordEnumeratedHistogram(
+        EnumeratedHistogram.RecordingCopiedToClipboard, value, RecordingCopiedToClipboard.MaxValue);
+  }
+
   styleTextCopied(value: StyleTextCopied): void {
     InspectorFrontendHostInstance.recordEnumeratedHistogram(
         EnumeratedHistogram.StyleTextCopied, value, StyleTextCopied.MaxValue);
+  }
+
+  manifestSectionSelected(sectionTitle: string): void {
+    const code =
+        ManifestSectionCodes[sectionTitle as keyof typeof ManifestSectionCodes] || ManifestSectionCodes.OtherSection;
+    InspectorFrontendHostInstance.recordEnumeratedHistogram(
+        EnumeratedHistogram.ManifestSectionSelected, code, ManifestSectionCodes.MaxValue);
+  }
+
+  cssHintShown(type: CSSHintType): void {
+    InspectorFrontendHostInstance.recordEnumeratedHistogram(
+        EnumeratedHistogram.CSSHintShown, type, CSSHintType.MaxValue);
+  }
+
+  lighthouseModeRun(type: LighthouseModeRun): void {
+    InspectorFrontendHostInstance.recordEnumeratedHistogram(
+        EnumeratedHistogram.LighthouseModeRun, type, LighthouseModeRun.MaxValue);
+  }
+
+  colorConvertedFrom(type: ColorConvertedFrom): void {
+    InspectorFrontendHostInstance.recordEnumeratedHistogram(
+        EnumeratedHistogram.ColorConvertedFrom, type, ColorConvertedFrom.MaxValue);
+  }
+
+  colorPickerOpenedFrom(type: ColorPickerOpenedFrom): void {
+    InspectorFrontendHostInstance.recordEnumeratedHistogram(
+        EnumeratedHistogram.ColorPickerOpenedFrom, type, ColorPickerOpenedFrom.MaxValue);
+  }
+
+  cssPropertyDocumentation(type: CSSPropertyDocumentation): void {
+    InspectorFrontendHostInstance.recordEnumeratedHistogram(
+        EnumeratedHistogram.CSSPropertyDocumentation, type, CSSPropertyDocumentation.MaxValue);
   }
 }
 
@@ -339,7 +410,11 @@ export enum Action {
   ConsoleSidebarOpened = 53,
   PerfPanelTraceImported = 54,
   PerfPanelTraceExported = 55,
-  MaxValue = 56,
+  StackFrameRestarted = 56,
+  CaptureTestProtocolClicked = 57,
+  BreakpointRemovedFromRemoveButton = 58,
+  BreakpointGroupExpandedStateChanged = 59,
+  MaxValue = 60,
 }
 
 /* eslint-disable @typescript-eslint/naming-convention */
@@ -408,7 +483,8 @@ export enum PanelCodes {
   'indexed_db' = 61,
   'web_sql' = 62,
   'performance_insights' = 63,
-  MaxValue = 64,
+  'preloading' = 64,
+  MaxValue = 65,
 }
 /* eslint-enable @typescript-eslint/naming-convention */
 
@@ -425,6 +501,45 @@ export enum SidebarPaneCodes {
   'elements.domProperties' = 6,
   'accessibility.view' = 7,
   MaxValue = 8,
+}
+/* eslint-enable @typescript-eslint/naming-convention */
+
+/* eslint-disable @typescript-eslint/naming-convention */
+// TODO(crbug.com/1167717): Make this a const enum again
+// eslint-disable-next-line rulesdir/const_enum
+export enum MediaTypes {
+  Unknown = 0,
+  'text/javascript' = 1,
+  'text/css' = 2,
+  'text/html' = 3,
+  'application/xml' = 4,
+  'application/wasm' = 5,
+  'application/manifest+json' = 6,
+  'application/x-aspx' = 7,
+  'application/jsp' = 8,
+  'text/x-c++src' = 9,
+  'text/x-coffeescript' = 10,
+  'application/vnd.dart' = 11,
+  'text/typescript' = 12,
+  'text/typescript-jsx' = 13,
+  'application/json' = 14,
+  'text/x-csharp' = 15,
+  'text/x-java' = 16,
+  'text/x-less' = 17,
+  'application/x-httpd-php' = 18,
+  'text/x-python' = 19,
+  'text/x-sh' = 20,
+  'text/x-gss' = 21,
+  'text/x-sass' = 22,
+  'text/x-scss' = 23,
+  'text/markdown' = 24,
+  'text/x-clojure' = 25,
+  'text/jsx' = 26,
+  'text/x-go' = 27,
+  'text/x-kotlin' = 28,
+  'text/x-scala' = 29,
+  'text/x.svelte' = 30,
+  MaxValue = 31,
 }
 /* eslint-enable @typescript-eslint/naming-convention */
 
@@ -549,7 +664,12 @@ export enum KeyboardShortcutAction {
   'layers.left' = 104,
   'layers.right' = 105,
   'help.report-translation-issue' = 106,
-  MaxValue = 107,
+  'rendering.toggle-prefers-color-scheme' = 107,
+  'chrome_recorder.start-recording' = 108,
+  'chrome_recorder.replay-recording' = 109,
+  'chrome_recorder.toggle-code-view' = 110,
+  'chrome_recorder.copy-recording-or-step' = 111,
+  MaxValue = 112,
 }
 /* eslint-enable @typescript-eslint/naming-convention */
 
@@ -576,24 +696,19 @@ export enum DevtoolsExperiments {
   'applyCustomStylesheet' = 0,
   'captureNodeCreationStacks' = 1,
   'sourcesPrettyPrint' = 2,
-  'backgroundServices' = 3,
-  'backgroundServicesNotifications' = 4,
-  'backgroundServicesPaymentHandler' = 5,
-  'backgroundServicesPushMessaging' = 6,
   'inputEventsOnTimelineOverview' = 10,
   'liveHeapProfile' = 11,
   'protocolMonitor' = 13,
   'developerResourcesView' = 15,
   'recordCoverageWithPerformanceTracing' = 16,
   'samplingHeapProfilerTimeline' = 17,
-  'showOptionToNotTreatGlobalObjectsAsRoots' = 18,
+  'showOptionToExposeInternalsInHeapSnapshot' = 18,
   'sourceOrderViewer' = 20,
   'webauthnPane' = 22,
   'timelineEventInitiators' = 24,
   'timelineInvalidationTracking' = 26,
   'timelineShowAllEvents' = 27,
   'timelineV8RuntimeCallStats' = 28,
-  'timelineWebGL' = 29,
   'timelineReplayEvent' = 30,
   'wasmDWARFDebugging' = 31,
   'dualScreenSupport' = 32,
@@ -605,23 +720,62 @@ export enum DevtoolsExperiments {
   'ignoreListJSFramesOnTimeline' = 43,
   'contrastIssues' = 44,
   'experimentalCookieFeatures' = 45,
-  'hideIssuesFeature' = 48,
-  'reportingApiDebugging' = 49,
-  'syncSettings' = 50,
   'groupAndHideIssuesByKind' = 51,
   'cssTypeComponentLength' = 52,
   'preciseChanges' = 53,
   'bfcacheDisplayTree' = 54,
   'stylesPaneCSSChanges' = 55,
   'headerOverrides' = 56,
-  'lighthousePanelFR' = 57,
   'evaluateExpressionsWithSourceMaps' = 58,
-  'cssLayers' = 59,
   'eyedropperColorPicker' = 60,
+  'instrumentationBreakpoints' = 61,
+  'cssAuthoringHints' = 62,
+  'authoredDeployedGrouping' = 63,
+  'importantDOMProperties' = 64,
+  'justMyCode' = 65,
+  'breakpointView' = 66,
+  'timelineAsConsoleProfileResultPanel' = 67,
+  'preloadingStatusPanel' = 68,
+  'disableColorFormatSetting' = 69,
+  'timelineDoNotSkipSystemNodesOfCpuProfile' = 70,
   // Increment this when new experiments are added.
-  'MaxValue' = 61,
+  'MaxValue' = 71,
 }
 /* eslint-enable @typescript-eslint/naming-convention */
+
+export const enum BreakpointWithConditionAdded {
+  Logpoint = 0,
+  ConditionalBreakpoint = 1,
+  MaxValue = 2,
+}
+
+export const enum BreakpointEditDialogRevealedFrom {
+  BreakpointSidebarContextMenu = 0,
+  BreakpointSidebarEditButton = 1,
+  BreakpointMarkerContextMenu = 2,
+  LineGutterContextMenu = 3,
+  KeyboardShortcut = 4,
+  MaxValue = 5,
+}
+
+export const enum ColorConvertedFrom {
+  ColorSwatch = 0,
+  ColorPicker = 1,
+  MaxValue = 2,
+}
+
+export const enum ColorPickerOpenedFrom {
+  SourcesPanel = 0,
+  StylesPane = 1,
+  MaxValue = 2,
+}
+
+export const enum CSSPropertyDocumentation {
+  Shown = 0,
+  ToggledOn = 1,
+  ToggledOff = 2,
+  MaxValue = 3,
+}
 
 // TODO(crbug.com/1167717): Make this a const enum again
 // eslint-disable-next-line rulesdir/const_enum
@@ -894,10 +1048,21 @@ export enum RecordingReplayFinished {
 
 // TODO(crbug.com/1167717): Make this a const enum again
 // eslint-disable-next-line rulesdir/const_enum
+export enum RecordingReplaySpeed {
+  Normal = 1,
+  Slow = 2,
+  VerySlow = 3,
+  ExtremelySlow = 4,
+  MaxValue = 5,
+}
+
+// TODO(crbug.com/1167717): Make this a const enum again
+// eslint-disable-next-line rulesdir/const_enum
 export enum RecordingReplayStarted {
   ReplayOnly = 1,
   ReplayWithPerformanceTracing = 2,
-  MaxValue = 3,
+  ReplayViaExtension = 3,
+  MaxValue = 4,
 }
 
 // TODO(crbug.com/1167717): Make this a const enum again
@@ -921,7 +1086,32 @@ export enum RecordingEdited {
 export enum RecordingExported {
   ToPuppeteer = 1,
   ToJSON = 2,
+  ToPuppeteerReplay = 3,
+  ToExtension = 4,
+  ToLighthouse = 5,
+  MaxValue = 6,
+}
+
+// TODO(crbug.com/1167717): Make this a const enum again
+// eslint-disable-next-line rulesdir/const_enum
+export enum RecordingCodeToggled {
+  CodeShown = 1,
+  CodeHidden = 2,
   MaxValue = 3,
+}
+
+// TODO(crbug.com/1167717): Make this a const enum again
+// eslint-disable-next-line rulesdir/const_enum
+export enum RecordingCopiedToClipboard {
+  CopiedRecordingWithPuppeteer = 1,
+  CopiedRecordingWithJSON = 2,
+  CopiedRecordingWithReplay = 3,
+  CopiedRecordingWithExtension = 4,
+  CopiedStepWithPuppeteer = 5,
+  CopiedStepWithJSON = 6,
+  CopiedStepWithReplay = 7,
+  CopiedStepWithExtension = 8,
+  MaxValue = 9,
 }
 
 /* eslint-disable @typescript-eslint/naming-convention */
@@ -947,6 +1137,47 @@ export enum StyleTextCopied {
   AllDeclarationsAsJSViaContextMenu = 9,
   SelectorViaContextMenu = 10,
   MaxValue = 11,
+}
+
+// TODO(crbug.com/1167717): Make this a const enum again
+// eslint-disable-next-line rulesdir/const_enum
+export enum ManifestSectionCodes {
+  OtherSection = 0,
+  'Identity' = 1,
+  'Presentation' = 2,
+  'Protocol Handlers' = 3,
+  'Icons' = 4,
+  MaxValue = 5,
+}
+
+// The names here match the CSSRuleValidator names in CSSRuleValidator.ts.
+// TODO(crbug.com/1167717): Make this a const enum again
+// eslint-disable-next-line rulesdir/const_enum
+export enum CSSHintType {
+  Other = 0,
+  AlignContent = 1,
+  FlexItem = 2,
+  FlexContainer = 3,
+  GridContainer = 4,
+  GridItem = 5,
+  FlexGrid = 6,
+  MulticolFlexGrid = 7,
+  Padding = 8,
+  Position = 9,
+  ZIndex = 10,
+  Sizing = 11,
+  FlexOrGridItem = 12,
+  MaxValue = 13,
+}
+
+// TODO(crbug.com/1167717): Make this a const enum again
+// eslint-disable-next-line rulesdir/const_enum
+export enum LighthouseModeRun {
+  Navigation = 0,
+  Timespan = 1,
+  Snapshot = 2,
+  LegacyNavigation = 3,
+  MaxValue = 4,
 }
 
 /* eslint-enable @typescript-eslint/naming-convention */

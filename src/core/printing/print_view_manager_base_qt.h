@@ -9,6 +9,7 @@
 #define PRINT_VIEW_MANAGER_BASE_QT_H
 
 #include "base/memory/ref_counted_memory.h"
+#include "chrome/browser/printing/print_job.h"
 #include "components/prefs/pref_member.h"
 #include "components/printing/browser/print_manager.h"
 #include "components/printing/common/print.mojom-forward.h"
@@ -24,21 +25,16 @@ class RenderFrameHost;
 }
 
 namespace printing {
-class JobEventDetails;
-class PrintJob;
 class PrintQueriesQueue;
 class PrinterQuery;
 }
 
 namespace QtWebEngineCore {
-class PrintViewManagerBaseQt : public content::NotificationObserver
-                             , public printing::PrintManager
+class PrintViewManagerBaseQt : public printing::PrintManager
+                             , public printing::PrintJob::Observer
 {
 public:
     ~PrintViewManagerBaseQt() override;
-
-    // Whether printing is enabled or not.
-    void UpdatePrintingEnabled();
 
     std::u16string RenderSourceName();
 
@@ -49,10 +45,11 @@ public:
     void GetDefaultPrintSettings(GetDefaultPrintSettingsCallback callback) override;
     void UpdatePrintSettings(int32_t cookie, base::Value::Dict job_settings,
                              UpdatePrintSettingsCallback callback) override;
+    void IsPrintingEnabled(IsPrintingEnabledCallback callback) override;
     void ScriptedPrint(printing::mojom::ScriptedPrintParamsPtr,
                        printing::mojom::PrintManagerHost::ScriptedPrintCallback) override;
-    void ShowInvalidPrinterSettingsError() override;
-    void PrintingFailed(int32_t cookie) override;
+    void PrintingFailed(int32_t cookie,
+                        printing::mojom::PrintFailureReason reason) override;
 
 protected:
     explicit PrintViewManagerBaseQt(content::WebContents*);
@@ -75,20 +72,14 @@ protected:
     // disconnect from it.
     void DisconnectFromCurrentPrintJob();
 
+    // PrintJob::Observer overrides:
+    void OnDocDone(int job_id, printing::PrintedDocument *document) override;
+    void OnJobDone() override;
+    void OnFailed() override;
+
     void StopWorker(int documentCookie);
 
 private:
-    // content::NotificationObserver implementation.
-    void Observe(int,
-                 const content::NotificationSource&,
-                 const content::NotificationDetails&) override;
-
-    // content::WebContentsObserver implementation.
-    void DidStartLoading() override;
-
-    // Processes a NOTIFY_PRINT_JOB_EVENT notification.
-    void OnNotifyPrintJobEvent(const printing::JobEventDetails &event_details);
-
     // Requests the RenderView to render all the missing pages for the print job.
     // No-op if no print job is pending. Returns true if at least one page has
     // been requested to the renderer.
@@ -138,9 +129,6 @@ private:
 
     // Release the PrinterQuery associated with our |cookie_|.
     void ReleasePrinterQuery();
-
-    // Helper method for UpdatePrintingEnabled().
-    void SendPrintingEnabled(bool enabled, content::RenderFrameHost* rfh);
 
 private:
     content::NotificationRegistrar m_registrar;

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,21 +7,22 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <algorithm>
 #include <functional>
 #include <map>
 #include <string>
 
-#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/containers/contains.h"
 #include "base/containers/cxx20_erase.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
+#include "base/metrics/histogram_functions.h"
+#include "base/ranges/algorithm.h"
 #include "base/sequence_checker.h"
 #include "base/strings/stringprintf.h"
-#include "base/task/task_runner_util.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "content/browser/media/media_devices_permission_checker.h"
@@ -41,7 +42,7 @@
 #include "third_party/blink/public/mojom/mediastream/media_devices.mojom.h"
 
 #if BUILDFLAG(IS_MAC)
-#include "base/callback_helpers.h"
+#include "base/functional/callback_helpers.h"
 #include "base/task/single_thread_task_runner.h"
 #include "content/browser/browser_main_loop.h"
 #include "media/device_monitors/device_monitor_mac.h"
@@ -50,6 +51,7 @@
 namespace content {
 
 namespace {
+using media::mojom::DeviceEnumerationResult;
 
 // Resolutions used if the source doesn't support capability enumeration.
 struct {
@@ -160,6 +162,16 @@ void BindDeviceNotifierFromUIThread(
   GetAudioService().BindDeviceNotifier(std::move(receiver));
 }
 
+void ReportVideoEnumerationStart() {
+  base::UmaHistogramBoolean(
+      "Media.MediaDevicesManager.VideoDeviceEnumeration.Start", true);
+}
+
+void ReportVideoEnumerationResult(DeviceEnumerationResult result_code) {
+  base::UmaHistogramEnumeration(
+      "Media.MediaDevicesManager.VideoDeviceEnumeration.Result", result_code);
+}
+
 }  // namespace
 
 std::string GuessVideoGroupID(const blink::WebMediaDeviceInfoArray& audio_infos,
@@ -204,8 +216,7 @@ std::string GuessVideoGroupID(const blink::WebMediaDeviceInfoArray& audio_infos,
           return IsRealAudioDeviceID(audio_info.device_id) &&
                  (*callback).Run(audio_info);
         };
-    auto it_first = std::find_if(audio_infos.begin(), audio_infos.end(),
-                                 real_device_matches);
+    auto it_first = base::ranges::find_if(audio_infos, real_device_matches);
     if (it_first == audio_infos.end())
       continue;
 
@@ -360,7 +371,7 @@ class MediaDevicesManager::AudioServiceDeviceListener
 
     // Resetting the error handler in a posted task since doing it synchronously
     // results in a browser crash. See https://crbug.com/845142.
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&AudioServiceDeviceListener::ConnectToService,
                                   weak_factory_.GetWeakPtr()));
   }
@@ -447,8 +458,8 @@ void MediaDevicesManager::EnumerateDevices(
       request_audio_input_capabilities ? "true" : "false",
       request_video_input_capabilities ? "true" : "false"));
 
-  base::PostTaskAndReplyWithResult(
-      GetUIThreadTaskRunner({}).get(), FROM_HERE,
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+      FROM_HERE,
       base::BindOnce(salt_and_origin_callback_, render_process_id,
                      render_frame_id),
       base::BindOnce(&MediaDevicesManager::CheckPermissionsForEnumerateDevices,
@@ -478,8 +489,8 @@ uint32_t MediaDevicesManager::SubscribeDeviceChangeNotifications(
 
   // Fetch the first device_id_salt for this subscriber's frame, to be able to
   // later detect changes.
-  base::PostTaskAndReplyWithResult(
-      GetUIThreadTaskRunner({}).get(), FROM_HERE,
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+      FROM_HERE,
       base::BindOnce(salt_and_origin_callback_, render_process_id,
                      render_frame_id),
       base::BindOnce(&MediaDevicesManager::SetSubscriptionLastSeenDeviceIdSalt,
@@ -586,11 +597,6 @@ void MediaDevicesManager::StopMonitoring() {
     SetCachePolicy(static_cast<MediaDeviceType>(i), CachePolicy::NO_CACHE);
 }
 
-bool MediaDevicesManager::IsMonitoringStarted() {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  return monitoring_started_;
-}
-
 void MediaDevicesManager::OnDevicesChanged(
     base::SystemMonitor::DeviceType device_type) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
@@ -650,12 +656,6 @@ blink::WebMediaDeviceInfoArray MediaDevicesManager::GetCachedDeviceInfo(
     MediaDeviceType type) const {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   return current_snapshot_[static_cast<size_t>(type)];
-}
-
-MediaDevicesPermissionChecker*
-MediaDevicesManager::media_devices_permission_checker() {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  return permission_checker_.get();
 }
 
 void MediaDevicesManager::SetPermissionChecker(
@@ -912,6 +912,7 @@ void MediaDevicesManager::DoEnumerateDevices(MediaDeviceType type) {
       EnumerateAudioDevices(true /* is_input */);
       break;
     case MediaDeviceType::MEDIA_VIDEO_INPUT:
+      ReportVideoEnumerationStart();
       video_capture_manager_->EnumerateDevices(
           base::BindOnce(&MediaDevicesManager::VideoInputDevicesEnumerated,
                          weak_factory_.GetWeakPtr()));
@@ -929,7 +930,7 @@ void MediaDevicesManager::EnumerateAudioDevices(bool is_input) {
   MediaDeviceType type = is_input ? MediaDeviceType::MEDIA_AUDIO_INPUT
                                   : MediaDeviceType::MEDIA_AUDIO_OUTPUT;
   if (use_fake_devices_) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&MediaDevicesManager::DevicesEnumerated,
                                   weak_factory_.GetWeakPtr(), type,
                                   GetFakeAudioDevices(is_input)));
@@ -942,8 +943,21 @@ void MediaDevicesManager::EnumerateAudioDevices(bool is_input) {
 }
 
 void MediaDevicesManager::VideoInputDevicesEnumerated(
+    DeviceEnumerationResult result_code,
     const media::VideoCaptureDeviceDescriptors& descriptors) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  ReportVideoEnumerationResult(result_code);
+
+  if (result_code != DeviceEnumerationResult::kSuccess) {
+    std::string log_message = base::StringPrintf(
+        "VideoInputDevicesEnumerated got error %d", result_code);
+    // Log to both WebRTC logs (for feedback reports) and text logs for
+    // manually-collected chrome logs at customers.
+    SendLogMessage(log_message);
+    VLOG(1) << log_message;
+    // TODO(crbug.com/1313822): Propagate this as an error response to the
+    // page and expose in the JS API.
+  }
   blink::WebMediaDeviceInfoArray snapshot;
   for (const auto& descriptor : descriptors) {
     snapshot.emplace_back(descriptor);
@@ -1006,9 +1020,8 @@ void MediaDevicesManager::UpdateSnapshot(
 
   // Update the cached snapshot and send notifications only if the device list
   // has changed.
-  if (old_snapshot.size() != new_snapshot.size() ||
-      !std::equal(
-          new_snapshot.begin(), new_snapshot.end(), old_snapshot.begin(),
+  if (!base::ranges::equal(
+          new_snapshot, old_snapshot,
           ignore_group_id
               ? [](const blink::WebMediaDeviceInfo& lhs,
                    const blink::WebMediaDeviceInfo& rhs) { return lhs == rhs; }
@@ -1040,8 +1053,8 @@ void MediaDevicesManager::UpdateSnapshot(
   for (const auto& subscription : subscriptions_) {
     const SubscriptionRequest& request = subscription.second;
     if (request.subscribe_types[static_cast<size_t>(type)]) {
-      base::PostTaskAndReplyWithResult(
-          GetUIThreadTaskRunner({}).get(), FROM_HERE,
+      GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+          FROM_HERE,
           base::BindOnce(salt_and_origin_callback_, request.render_process_id,
                          request.render_frame_id),
           base::BindOnce(&MediaDevicesManager::OnSaltAndOriginForSubscription,
@@ -1128,15 +1141,10 @@ void MediaDevicesManager::MaybeStopRemovedInputDevices(
   std::vector<blink::WebMediaDeviceInfo> removed_audio_devices;
   for (const auto& old_device_info :
        current_snapshot_[static_cast<size_t>(type)]) {
-    auto it =
-        std::find_if(new_snapshot.begin(), new_snapshot.end(),
-                     [&old_device_info](const blink::WebMediaDeviceInfo& info) {
-                       return info.device_id == old_device_info.device_id;
-                     });
-
     // If a device was removed, notify the MediaStreamManager to stop all
     // streams using that device.
-    if (it == new_snapshot.end()) {
+    if (!base::Contains(new_snapshot, old_device_info.device_id,
+                        &blink::WebMediaDeviceInfo::device_id)) {
       stop_removed_input_device_cb_.Run(type, old_device_info);
 
       if (type == MediaDeviceType::MEDIA_AUDIO_INPUT)
@@ -1153,7 +1161,7 @@ void MediaDevicesManager::MaybeStopRemovedInputDevices(
   // matching either "default" or "communications".
   // NOTE: ChromeOS is able to seamlessly redirect streams to the new default
   // device, hence the event should not be triggered.
-#if !BUILDFLAG(IS_CHROMEOS_ASH) && !BUILDFLAG(IS_CHROMEOS_LACROS)
+#if !BUILDFLAG(IS_CHROMEOS)
   for (const auto& removed_audio_device : removed_audio_devices) {
     for (const auto& old_device_info :
          current_snapshot_[static_cast<size_t>(type)]) {
@@ -1166,7 +1174,7 @@ void MediaDevicesManager::MaybeStopRemovedInputDevices(
       }
     }
   }
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH) && !BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 }
 
 void MediaDevicesManager::OnSaltAndOriginForSubscription(

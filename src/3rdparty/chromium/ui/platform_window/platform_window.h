@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -52,9 +52,18 @@ class COMPONENT_EXPORT(PLATFORM_WINDOW) PlatformWindow
   virtual void PrepareForShutdown() = 0;
 
   // Sets and gets the bounds of the platform-window. Note that the bounds is in
-  // physical pixel coordinates.
-  virtual void SetBounds(const gfx::Rect& bounds) = 0;
-  virtual gfx::Rect GetBounds() const = 0;
+  // physical pixel coordinates. The implementation should use
+  // `PlatformWindowDelegate::ConvertRectToPixels|DIP` if conversion is
+  // necessary.
+  virtual void SetBoundsInPixels(const gfx::Rect& bounds) = 0;
+  virtual gfx::Rect GetBoundsInPixels() const = 0;
+
+  // Sets and gets the bounds of the platform-window. Note that the bounds is in
+  // device-independent-pixel (dip) coordinates. The implementation should use
+  // `PlatformWindowDelegate::ConvertRectToPixels|DIP` if conversion is
+  // necessary.
+  virtual void SetBoundsInDIP(const gfx::Rect& bounds) = 0;
+  virtual gfx::Rect GetBoundsInDIP() const = 0;
 
   virtual void SetTitle(const std::u16string& title) = 0;
 
@@ -62,7 +71,13 @@ class COMPONENT_EXPORT(PLATFORM_WINDOW) PlatformWindow
   virtual void ReleaseCapture() = 0;
   virtual bool HasCapture() const = 0;
 
-  virtual void ToggleFullscreen() = 0;
+  // Enters or exits fullscreen when `fullscreen` is true or false respectively.
+  // This operation may have no effect if the window is already in the specified
+  // state. `target_display_id` indicates the display where the window should be
+  // shown fullscreen when entering into fullscreen; display::kInvalidDisplayId
+  // indicates that no display was specified, so the current display may be
+  // used.
+  virtual void SetFullscreen(bool fullscreen, int64_t target_display_id) = 0;
   virtual void Maximize() = 0;
   virtual void Minimize() = 0;
   virtual void Restore() = 0;
@@ -93,8 +108,8 @@ class COMPONENT_EXPORT(PLATFORM_WINDOW) PlatformWindow
   virtual void ConfineCursorToBounds(const gfx::Rect& bounds) = 0;
 
   // Sets and gets the restored bounds of the platform-window.
-  virtual void SetRestoredBoundsInPixels(const gfx::Rect& bounds) = 0;
-  virtual gfx::Rect GetRestoredBoundsInPixels() const = 0;
+  virtual void SetRestoredBoundsInDIP(const gfx::Rect& bounds) = 0;
+  virtual gfx::Rect GetRestoredBoundsInDIP() const = 0;
 
   // Sets the Window icons. |window_icon| is a 16x16 icon suitable for use in
   // a title bar. |app_icon| is a larger size for use in the host environment
@@ -186,6 +201,25 @@ class COMPONENT_EXPORT(PLATFORM_WINDOW) PlatformWindow
   // Wayland, for example, this returns false, unless the required protocol
   // extension is supported by the compositor.
   virtual bool IsClientControlledWindowMovementSupported() const;
+
+  // Notifies the DE that the app is done loading, so that it can dismiss any
+  // loading animations.
+  virtual void NotifyStartupComplete(const std::string& startup_id);
+
+  // Shows tooltip with this platform window as a parent window.
+  // `position` is relative to this platform window.
+  // `show_delay` and `hide_delay` specify the delay before showing or hiding
+  // tooltip on server side. `show_delay` may be set to zero only for testing.
+  // If `hide_delay` is zero, the tooltip will not be hidden by timer on server
+  // side.
+  virtual void ShowTooltip(const std::u16string& text,
+                           const gfx::Point& position,
+                           const PlatformWindowTooltipTrigger trigger,
+                           const base::TimeDelta show_delay,
+                           const base::TimeDelta hide_delay) {}
+
+  // Hides tooltip.
+  virtual void HideTooltip() {}
 };
 
 }  // namespace ui

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -53,7 +53,10 @@ class CC_PAINT_EXPORT DrawImage {
   DrawImage& operator=(DrawImage&& other);
   DrawImage& operator=(const DrawImage& other);
 
-  bool operator==(const DrawImage& other) const;
+  // For testing only. Checks if `this` and `other` are the same image, i.e.
+  // share the same underlying image. `a.IsSameForTesting(b)` will be true after
+  // `DrawImage b = a;`.
+  bool IsSameForTesting(const DrawImage& other) const;
 
   const PaintImage& paint_image() const { return paint_image_; }
   bool use_dark_mode() const { return use_dark_mode_; }

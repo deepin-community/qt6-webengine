@@ -2,6 +2,7 @@ load("@org_tensorflow//tensorflow/lite/core/shims:cc_library_with_tflite.bzl", "
 load("@org_tensorflow//tensorflow/lite/java:aar_with_jni.bzl", "aar_with_jni")
 
 package(
+    default_applicable_licenses = ["//tensorflow_lite_support:license"],
     default_visibility = ["//visibility:public"],
     licenses = ["notice"],  # Apache 2.0
 )
@@ -16,9 +17,9 @@ android_library_with_tflite(
         "//tensorflow_lite_support/java/src/java/org/tensorflow/lite/task/vision/classifier:image_classifier_src",
         "//tensorflow_lite_support/java/src/java/org/tensorflow/lite/task/vision/core:base_vision_api_src",
         "//tensorflow_lite_support/java/src/java/org/tensorflow/lite/task/vision/detector:object_detector_src",
+        "//tensorflow_lite_support/java/src/java/org/tensorflow/lite/task/vision/searcher:image_searcher_src",
         "//tensorflow_lite_support/java/src/java/org/tensorflow/lite/task/vision/segmenter:image_segmenter_src",
     ],
-    javacopts = ["-source 7 -target 7"],
     manifest = "AndroidManifest.xml",
     tflite_exports = [
         "//tensorflow_lite_support/java/src/native/task/vision:task_vision_native",

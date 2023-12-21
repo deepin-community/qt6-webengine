@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,6 @@
 #include <vector>
 
 #include "base/location.h"
-#include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 #include "components/viz/common/viz_common_export.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
@@ -259,6 +258,9 @@ struct VIZ_COMMON_EXPORT BeginFrameAck {
                 uint64_t sequence_number,
                 bool has_damage,
                 int64_t trace_id = -1);
+
+  BeginFrameAck(const BeginFrameAck& other) = default;
+  BeginFrameAck& operator=(const BeginFrameAck& other) = default;
 
   // Creates a BeginFrameAck for a manual BeginFrame. Used when clients produce
   // a CompositorFrame without prior BeginFrame, e.g. for synchronous drawing.

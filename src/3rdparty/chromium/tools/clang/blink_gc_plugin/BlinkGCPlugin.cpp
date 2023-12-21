@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -43,6 +43,10 @@ class BlinkGCPluginAction : public PluginASTAction {
         options_.enable_persistent_in_unique_ptr_check = true;
       } else if (arg == "enable-members-on-stack-check") {
         options_.enable_members_on_stack_check = true;
+      } else if (arg == "enable-extra-padding-check") {
+        options_.enable_extra_padding_check = true;
+      } else if (arg == "enable-forbidden-fields-check") {
+        options_.enable_forbidden_fields_check = true;
       } else {
         llvm::errs() << "Unknown blink-gc-plugin argument: " << arg << "\n";
         return false;

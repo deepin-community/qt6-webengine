@@ -1,15 +1,14 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "apps/saved_files_service.h"
-#include "base/bind.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/path_service.h"
 #include "base/scoped_observation.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/apps/platform_apps/app_browsertest_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_paths.h"
@@ -123,9 +122,8 @@ class FileSystemApiTest : public PlatformAppBrowserTest {
         "test_temp", temp_dir_.GetPath());
 
     std::vector<base::FilePath> result;
-    for (auto it = destination_names.cbegin(); it != destination_names.cend();
-         ++it) {
-      base::FilePath destination = temp_dir_.GetPath().AppendASCII(*it);
+    for (const auto& name : destination_names) {
+      base::FilePath destination = temp_dir_.GetPath().AppendASCII(name);
       if (copy_gold) {
         base::FilePath source = test_root_folder_.AppendASCII("gold.txt");
         EXPECT_TRUE(base::CopyFile(source, destination));
@@ -731,13 +729,13 @@ IN_PROC_BROWSER_TEST_F(FileSystemApiTest, FileSystemApiRestoreDirectoryEntry) {
       << message_;
 }
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 IN_PROC_BROWSER_TEST_F(FileSystemApiTest, RequestFileSystem_NotChromeOS) {
   ASSERT_TRUE(RunExtensionTest(
       "api_test/file_system/request_file_system_not_chromeos",
       {.launch_as_platform_app = true}, {.ignore_manifest_warnings = true}))
       << message_;
 }
-#endif
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 }  // namespace extensions

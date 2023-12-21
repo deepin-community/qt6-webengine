@@ -1,12 +1,12 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/background_fetch/background_fetch_scheduler.h"
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/cxx20_erase.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/guid.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/strings/string_number_conversions.h"
@@ -577,11 +577,9 @@ void BackgroundFetchScheduler::LogBackgroundFetchEventForDevTools(
           base::NumberToString(request_info->request_body_size());
   }
 
-  // TODO(https://crbug.com/1199077): Pass `registration_id.storage_key()`
-  // directly once DevToolsBackgroundServicesContextImpl implements StorageKey.
   devtools_context_->LogBackgroundServiceEvent(
       registration_id.service_worker_registration_id(),
-      registration_id.storage_key().origin(),
+      registration_id.storage_key(),
       DevToolsBackgroundService::kBackgroundFetch, std::move(event_name),
       /* instance_id= */ registration_id.developer_id(), metadata);
 }

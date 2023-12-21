@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/debug/crash_logging.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/metrics/histogram_macros.h"
@@ -37,7 +37,6 @@
 #include "mojo/public/cpp/bindings/remote.h"
 #include "net/http/http_byte_range.h"
 #include "net/http/http_util.h"
-#include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/parsed_headers.h"
 #include "services/network/public/cpp/self_deleting_url_loader_factory.h"
 #include "services/network/public/mojom/network_service.mojom.h"
@@ -88,7 +87,7 @@ void ReadData(
     } else {
       temp_str = ui::ReplaceTemplateExpressions(input, *replacements);
     }
-    bytes = base::RefCountedString::TakeString(&temp_str);
+    bytes = base::MakeRefCounted<base::RefCountedString>(std::move(temp_str));
   }
 
   // The use of MojoCreateDataPipeOptions below means we'll be using uint32_t
@@ -146,14 +145,8 @@ void ReadData(
   mojo::Remote<network::mojom::URLLoaderClient> client(
       std::move(client_remote));
 
-  if (base::FeatureList::IsEnabled(network::features::kCombineResponseBody)) {
-    client->OnReceiveResponse(std::move(headers),
-                              std::move(pipe_consumer_handle));
-  } else {
-    client->OnReceiveResponse(std::move(headers),
-                              mojo::ScopedDataPipeConsumerHandle());
-    client->OnStartLoadingResponseBody(std::move(pipe_consumer_handle));
-  }
+  client->OnReceiveResponse(std::move(headers), std::move(pipe_consumer_handle),
+                            absl::nullopt);
 
   network::URLLoaderCompletionStatus status(net::OK);
   status.encoded_data_length = output_size;
@@ -177,7 +170,7 @@ void DataAvailable(
   TRACE_EVENT0("ui", "WebUIURLLoader::DataAvailable");
   // Since the bytes are from the memory mapped resource file, copying the
   // data can lead to disk access. Needs to be posted to a SequencedTaskRunner
-  // as Mojo requires a SequencedTaskRunnerHandle in scope.
+  // as Mojo requires a SequencedTaskRunner::CurrentDefaultHandle in scope.
   base::ThreadPool::CreateSequencedTaskRunner(
       {base::TaskPriority::USER_BLOCKING, base::MayBlock(),
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})
@@ -237,7 +230,7 @@ void StartURLLoader(
   request.headers.GetHeader(net::HttpRequestHeaders::kOrigin, &origin_header);
 
   scoped_refptr<net::HttpResponseHeaders> headers =
-      URLDataManagerBackend::GetHeaders(source, path, origin_header);
+      URLDataManagerBackend::GetHeaders(source, request.url, origin_header);
 
   auto resource_response = network::mojom::URLResponseHead::New();
 
@@ -246,7 +239,7 @@ void StartURLLoader(
   // process.
   resource_response->parsed_headers = network::PopulateParsedHeaders(
       resource_response->headers.get(), request.url);
-  resource_response->mime_type = source->source()->GetMimeType(path);
+  resource_response->mime_type = source->source()->GetMimeType(request.url);
   // TODO: fill all the time related field i.e. request_time response_time
   // request_start response_start
 
@@ -262,10 +255,10 @@ void StartURLLoader(
 
   bool replace_in_js =
       source->source()->ShouldReplaceI18nInJS() &&
-      source->source()->GetMimeType(path) == "application/javascript";
+      source->source()->GetMimeType(request.url) == "application/javascript";
 
   const ui::TemplateReplacements* replacements = nullptr;
-  const std::string mime_type = source->source()->GetMimeType(path);
+  const std::string mime_type = source->source()->GetMimeType(request.url);
   if (mime_type == "text/html" || mime_type == "text/css" || replace_in_js)
     replacements = source->source()->GetReplacements();
 
@@ -406,7 +399,7 @@ class WebUIURLLoaderFactory : public network::SelfDeletingURLLoaderFactory {
         scheme_(scheme),
         allowed_hosts_(std::move(allowed_hosts)) {}
 
-  raw_ptr<BrowserContext> browser_context_;
+  raw_ptr<BrowserContext, DanglingUntriaged> browser_context_;
   int const frame_tree_node_id_;
   const std::string scheme_;
   const base::flat_set<std::string> allowed_hosts_;  // if empty all allowed.

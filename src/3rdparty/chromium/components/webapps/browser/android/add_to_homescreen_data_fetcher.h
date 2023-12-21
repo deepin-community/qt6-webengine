@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -105,7 +105,7 @@ class AddToHomescreenDataFetcher {
 
   base::WeakPtr<content::WebContents> web_contents_;
 
-  raw_ptr<InstallableManager> installable_manager_;
+  raw_ptr<InstallableManager, DanglingUntriaged> installable_manager_;
   raw_ptr<Observer> observer_;
 
   InstallableStatusCode installable_status_code_ =

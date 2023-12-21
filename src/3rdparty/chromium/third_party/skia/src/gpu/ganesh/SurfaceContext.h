@@ -17,6 +17,7 @@
 #include "src/gpu/ganesh/GrDataUtils.h"
 #include "src/gpu/ganesh/GrImageInfo.h"
 #include "src/gpu/ganesh/GrPixmap.h"
+#include "src/gpu/ganesh/GrRenderTargetProxy.h"
 #include "src/gpu/ganesh/GrRenderTask.h"
 #include "src/gpu/ganesh/GrSurfaceProxy.h"
 #include "src/gpu/ganesh/GrSurfaceProxyView.h"
@@ -32,22 +33,12 @@ struct SkIRect;
 
 namespace skgpu {
 class SingleOwner;
+}
+
+namespace skgpu::v1 {
+
 class SurfaceFillContext;
 
-/**
- * A helper object to orchestrate commands for a particular surface
- *
- *            SurfaceContext
- *                   |
- *          SurfaceFillContext
- *           /               \
- *     v1::SFC               v2::SFC
- *        |                     |
- *        |                     |
- *        |                     |
- *     v1::SDC               v2::SDC
- *
- */
 class SurfaceContext {
 public:
     // If it is known that the GrSurfaceProxy is not renderable, you can directly call the ctor
@@ -155,11 +146,11 @@ public:
      * different size than srcRect. Though, it could be relaxed to allow non-scaling color
      * conversions.
      */
-    std::unique_ptr<skgpu::SurfaceFillContext> rescale(const GrImageInfo& info,
-                                                       GrSurfaceOrigin,
-                                                       SkIRect srcRect,
-                                                       SkImage::RescaleGamma,
-                                                       SkImage::RescaleMode);
+    std::unique_ptr<SurfaceFillContext> rescale(const GrImageInfo& info,
+                                                GrSurfaceOrigin,
+                                                SkIRect srcRect,
+                                                SkImage::RescaleGamma,
+                                                SkImage::RescaleMode);
 
     /**
      * Like the above but allows the caller ot specify a destination fill context and
@@ -238,18 +229,36 @@ private:
      */
     sk_sp<GrRenderTask> copy(sk_sp<GrSurfaceProxy> src, SkIRect srcRect, SkIPoint dstPoint);
 
+    /**
+     * Copy and scale 'src' into the proxy backing this context. This call will not do any draw
+     * fallback. Currently only rescaleInto() calls this directly, which handles drawing fallback
+     * automatically.
+     *
+     * @param src        src of pixels
+     * @param srcRect    the subset of src that is copied to this proxy
+     * @param dstRect    the subset of dst that receives the copied data, possibly with different
+     *                   dimensions than 'srcRect'.
+     * @param filterMode the filter mode to apply when scaling src
+     * @return           a task (that may be skippable by calling canSkip) if successful and
+     *                   null otherwise.
+     *
+     * Note: Unlike copy(rect,point), 'srcRect' and 'dstRect' are not adjusted to fit within the
+     * surfaces. If they are not contained, then nullptr is returned. The 'src' must have the same
+     * origin as the backing proxy of this context.
+     */
+    sk_sp<GrRenderTask> copyScaled(sk_sp<GrSurfaceProxy> src, SkIRect srcRect, SkIRect dstRect,
+                                   GrSamplerState::Filter filterMode);
+
     bool internalWritePixels(GrDirectContext* dContext,
                              const GrCPixmap src[],
                              int numLevels,
                              SkIPoint);
-
-    class AsyncReadResult;
 
     GrColorInfo fColorInfo;
 
     using INHERITED = SkRefCnt;
 };
 
-} // namespace skgpu
+} // namespace skgpu::v1
 
 #endif // SurfaceContext_DEFINED

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,7 +14,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/unguessable_token.h"
 #include "build/chromeos_buildflags.h"
 #if !defined(TOOLKIT_QT)
@@ -31,6 +31,8 @@
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "chrome/browser/ash/profiles/profile_helper.h"
+#include "components/user_manager/user.h"
+#include "components/user_manager/user_type.h"
 #endif
 
 namespace webrtc_event_logging {
@@ -211,7 +213,7 @@ class BaseLogFileWriter : public LogFileWriter {
 
 BaseLogFileWriter::BaseLogFileWriter(const base::FilePath& path,
                                      absl::optional<size_t> max_file_size_bytes)
-    : task_runner_(base::SequencedTaskRunnerHandle::Get()),
+    : task_runner_(base::SequencedTaskRunner::GetCurrentDefault()),
       path_(path),
       state_(State::PRE_INIT),
       budget_(max_file_size_bytes) {}
@@ -221,7 +223,7 @@ BaseLogFileWriter::~BaseLogFileWriter() {
     // Chrome shut-down. The original task_runner_ is no longer running, so
     // no risk of concurrent access or races.
     DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-    task_runner_ = base::SequencedTaskRunnerHandle::Get();
+    task_runner_ = base::SequencedTaskRunner::GetCurrentDefault();
   }
 
   if (state() != State::CLOSED && state() != State::DELETED) {

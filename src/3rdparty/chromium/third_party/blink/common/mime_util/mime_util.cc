@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,7 +13,6 @@
 #include "media/media_buildflags.h"
 #include "net/base/mime_util.h"
 #include "third_party/blink/public/common/buildflags.h"
-#include "third_party/blink/public/common/features.h"
 
 #if !BUILDFLAG(IS_IOS)
 // iOS doesn't use and must not depend on //media
@@ -143,12 +142,6 @@ MimeUtil::MimeUtil() {
     non_image_types_.insert(type);
   for (const char* type : kSupportedImageTypes)
     image_types_.insert(type);
-#if BUILDFLAG(ENABLE_JXL_DECODER)
-  // TODO(firsching): Add "image/jxl" to the kSupportedImageTypes array when the
-  // JXL feature is shipped.
-  if (base::FeatureList::IsEnabled(features::kJXL))
-    image_types_.insert("image/jxl");
-#endif
   for (const char* type : kUnsupportedTextTypes)
     unsupported_text_types_.insert(type);
   for (const char* type : kSupportedJavascriptTypes) {

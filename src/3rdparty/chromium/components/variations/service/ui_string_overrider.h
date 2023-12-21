@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include "base/memory/raw_ptr.h"
 
 namespace variations {
 
@@ -43,8 +45,8 @@ class UIStringOverrider {
   int GetResourceIndex(uint32_t hash);
 
  private:
-  const uint32_t* const resource_hashes_;
-  const int* const resource_indices_;
+  const raw_ptr<const uint32_t, AllowPtrArithmetic> resource_hashes_;
+  const raw_ptr<const int, DanglingUntriaged> resource_indices_;
   size_t const num_resources_;
 };
 

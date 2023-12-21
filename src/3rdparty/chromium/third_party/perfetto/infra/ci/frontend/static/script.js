@@ -254,7 +254,7 @@ function renderCLRow(cl) {
         `${cl.subject}`, m('span.ps', `#${cl.psNum}`))
     ),
     m('td', cl.status),
-    m('td', stripEmail(cl.owner)),
+    m('td', stripEmail(cl.owner || '')),
     m('td', getLastUpdate(cl.lastUpdate)),
     JOB_TYPES.map(x => renderClJobCell(`cls/${cl.num}-${cl.psNum}`, x.id))
   ));
@@ -562,7 +562,7 @@ function stripEmail(email) {
 async function fetchGerritCLs() {
   console.log('Fetching CL list from Gerrit');
   let uri = '/gerrit/changes/?-age:7days';
-  uri += '+-is:abandoned&o=DETAILED_ACCOUNTS&o=CURRENT_REVISION';
+  uri += '+-is:abandoned+branch:master&o=DETAILED_ACCOUNTS&o=CURRENT_REVISION';
   const response = await fetch(uri);
   state.gerritCls = [];
   if (response.status !== 200) {

@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -110,6 +110,8 @@ class CFWL_Edit : public CFWL_Widget, public CFDE_TextEditEngine::Delegate {
                   const CFX_RectF& clipRect,
                   const CFX_Matrix& mt);
   void DrawContent(CFGAS_GEGraphics* pGraphics, const CFX_Matrix& mtMatrix);
+  void DrawContentNonComb(CFGAS_GEGraphics* pGraphics,
+                          const CFX_Matrix& mtMatrix);
 
   void UpdateEditEngine();
   void UpdateEditParams();

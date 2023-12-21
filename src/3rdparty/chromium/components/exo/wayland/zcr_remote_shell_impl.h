@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -28,14 +28,17 @@ using chromeos::WindowStateType;
 class WaylandRemoteOutput : public WaylandDisplayObserver {
  public:
   WaylandRemoteOutput(wl_resource* resource,
-                      WaylandRemoteOutputEventMapping event_mapping)
-      : resource_(resource), event_mapping_(event_mapping) {}
+                      WaylandRemoteOutputEventMapping event_mapping,
+                      WaylandDisplayHandler* display_handler);
   WaylandRemoteOutput(const WaylandRemoteOutput&) = delete;
   WaylandRemoteOutput& operator=(const WaylandRemoteOutput&) = delete;
+  ~WaylandRemoteOutput() override;
 
   // Overridden from WaylandDisplayObserver:
   bool SendDisplayMetrics(const display::Display& display,
                           uint32_t changed_metrics) override;
+  void SendActiveDisplay() override;
+  void OnOutputDestroyed() override;
 
  private:
   wl_resource* const resource_;
@@ -43,6 +46,8 @@ class WaylandRemoteOutput : public WaylandDisplayObserver {
   bool initial_config_sent_ = false;
 
   WaylandRemoteOutputEventMapping const event_mapping_;
+
+  WaylandDisplayHandler* display_handler_;
 };
 
 // Implements remote shell interface and monitors workspace state needed
@@ -89,6 +94,8 @@ class WaylandRemoteShell : public ash::TabletModeObserver,
   void OnRemoteSurfaceDestroyed(wl_resource* resource);
 
   // Overridden from display::DisplayObserver:
+  void OnWillProcessDisplayChanges() override;
+  void OnDidProcessDisplayChanges() override;
   void OnDisplayAdded(const display::Display& new_display) override;
   void OnDisplayRemoved(const display::Display& old_display) override;
   void OnDisplayTabletStateChanged(display::TabletState state) override;
@@ -108,6 +115,8 @@ class WaylandRemoteShell : public ash::TabletModeObserver,
   WaylandRemoteShellEventMapping const event_mapping_;
 
  private:
+  friend class WaylandRemoteShellTest;
+
   void ScheduleSendDisplayMetrics(int delay_ms);
 
   // Returns the transform that a display's output is currently adjusted for.
@@ -130,7 +139,7 @@ class WaylandRemoteShell : public ash::TabletModeObserver,
   void SendBoundsChanged(wl_resource* resource,
                          int64_t display_id,
                          const gfx::Rect& bounds_in_display,
-                         zcr_remote_surface_v1_bounds_change_reason reason);
+                         uint32_t reason);
 
   void OnRemoteSurfaceStateChanged(wl_resource* resource,
                                    WindowStateType old_state_type,
@@ -143,10 +152,10 @@ class WaylandRemoteShell : public ash::TabletModeObserver,
   struct BoundsChangeData {
     int64_t display_id;
     gfx::Rect bounds_in_display;
-    zcr_remote_surface_v1_bounds_change_reason reason;
+    uint32_t reason;
     BoundsChangeData(int64_t display_id,
                      const gfx::Rect& bounds,
-                     zcr_remote_surface_v1_bounds_change_reason reason)
+                     uint32_t reason)
         : display_id(display_id), bounds_in_display(bounds), reason(reason) {}
   };
 
@@ -165,6 +174,7 @@ class WaylandRemoteShell : public ash::TabletModeObserver,
   // in v2 this is always false.
   bool use_default_scale_cancellation_;
 
+  bool in_display_update_ = false;
   bool needs_send_display_metrics_ = true;
 
   int layout_mode_ = ZCR_REMOTE_SHELL_V1_LAYOUT_MODE_WINDOWED;
@@ -350,6 +360,8 @@ void remote_surface_set_bounds_in_output(wl_client* client,
 void remote_surface_set_resize_lock_type(wl_client* client,
                                          wl_resource* resource,
                                          uint32_t mode);
+
+void remote_surface_set_float(wl_client* client, wl_resource* resource);
 
 void remote_surface_block_ime(wl_client* client, wl_resource* resource);
 

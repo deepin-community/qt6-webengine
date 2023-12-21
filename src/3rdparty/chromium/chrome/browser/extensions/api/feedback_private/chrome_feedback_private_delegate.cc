@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 #include <memory>
 #include <string>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/values.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
@@ -16,6 +16,7 @@
 #include "chrome/browser/feedback/system_logs/chrome_system_logs_fetcher.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
+#include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/simple_message_box.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/feedback/system_logs/system_logs_fetcher.h"
@@ -64,15 +65,12 @@ int GetSysInfoCheckboxStringId(content::BrowserContext* browser_context) {
 ChromeFeedbackPrivateDelegate::ChromeFeedbackPrivateDelegate() = default;
 ChromeFeedbackPrivateDelegate::~ChromeFeedbackPrivateDelegate() = default;
 
-std::unique_ptr<base::DictionaryValue>
-ChromeFeedbackPrivateDelegate::GetStrings(
+base::Value::Dict ChromeFeedbackPrivateDelegate::GetStrings(
     content::BrowserContext* browser_context,
     bool from_crash) const {
-  std::unique_ptr<base::DictionaryValue> dict =
-      std::make_unique<base::DictionaryValue>();
+  base::Value::Dict dict;
 
-#define SET_STRING(id, idr) \
-  dict->SetStringKey(id, l10n_util::GetStringUTF16(idr))
+#define SET_STRING(id, idr) dict.Set(id, l10n_util::GetStringUTF16(idr))
   SET_STRING("pageTitle", from_crash
                               ? IDS_FEEDBACK_REPORT_PAGE_TITLE_SAD_TAB_FLOW
                               : IDS_FEEDBACK_REPORT_PAGE_TITLE);
@@ -114,7 +112,7 @@ ChromeFeedbackPrivateDelegate::GetStrings(
 #undef SET_STRING
 
   const std::string& app_locale = g_browser_process->GetApplicationLocale();
-  webui::SetLoadTimeDataDefaults(app_locale, dict.get());
+  webui::SetLoadTimeDataDefaults(app_locale, &dict);
 
   return dict;
 }
@@ -221,14 +219,6 @@ void ChromeFeedbackPrivateDelegate::FetchExtraLogs(
   }
 }
 
-void ChromeFeedbackPrivateDelegate::UnloadFeedbackExtension(
-    content::BrowserContext* context) const {
-  extensions::ExtensionSystem::Get(context)
-      ->extension_service()
-      ->component_loader()
-      ->Remove(extension_misc::kFeedbackExtensionId);
-}
-
 api::feedback_private::LandingPageType
 ChromeFeedbackPrivateDelegate::GetLandingPageType(
     const feedback::FeedbackData& feedback_data) const {
@@ -278,6 +268,23 @@ feedback::FeedbackUploader*
 ChromeFeedbackPrivateDelegate::GetFeedbackUploaderForContext(
     content::BrowserContext* context) const {
   return feedback::FeedbackUploaderFactoryChrome::GetForBrowserContext(context);
+}
+
+void ChromeFeedbackPrivateDelegate::OpenFeedback(
+    content::BrowserContext* context,
+    api::feedback_private::FeedbackSource source) const {
+  GURL url;
+
+  DCHECK(source ==
+         api::feedback_private::FeedbackSource::FEEDBACK_SOURCE_QUICKOFFICE);
+
+  Profile* profile = Profile::FromBrowserContext(context);
+  chrome::ShowFeedbackPage(url, profile,
+                           /*source=*/chrome::kFeedbackSourceQuickOffice,
+                           /*description_template=*/std::string(),
+                           /*description_placeholder_text=*/std::string(),
+                           /*category_tag=*/std::string(),
+                           /*extra_diagnostics=*/std::string());
 }
 
 }  // namespace extensions

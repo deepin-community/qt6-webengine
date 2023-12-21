@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,6 @@ package org.chromium.weblayer_private;
 
 import android.content.Context;
 import android.content.ContextWrapper;
-import android.os.Build;
-import android.os.Bundle;
 import android.os.Handler;
 import android.util.AttributeSet;
 import android.view.InflateException;
@@ -20,7 +18,6 @@ import androidx.fragment.app.FragmentController;
 import androidx.fragment.app.FragmentHostCallback;
 import androidx.fragment.app.FragmentManager;
 
-import org.chromium.weblayer_private.interfaces.IRemoteFragmentClient;
 import org.chromium.weblayer_private.interfaces.StrictModeWorkaround;
 
 import java.lang.reflect.Constructor;
@@ -50,12 +47,6 @@ public abstract class FragmentHostingRemoteFragmentImpl extends RemoteFragmentIm
 
         public RemoteFragmentContext(Context webLayerContext) {
             super(webLayerContext);
-
-            // Register ourselves as a the LayoutInflater factory so we can handle loading Views.
-            // See onCreateView for information about why this is needed.
-            if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.M) {
-                getLayoutInflater().setFactory2(this);
-            }
         }
 
         // This method is needed to work around a LayoutInflater bug in Android <N.  Before
@@ -108,6 +99,7 @@ public abstract class FragmentHostingRemoteFragmentImpl extends RemoteFragmentIm
 
         @Override
         public View onCreateView(String name, Context context, AttributeSet attrs) {
+            StrictModeWorkaround.apply();
             return null;
         }
 
@@ -139,67 +131,61 @@ public abstract class FragmentHostingRemoteFragmentImpl extends RemoteFragmentIm
 
         @Override
         public boolean onHasView() {
+            // This is always false.
             return mFragmentImpl.getView() != null;
         }
 
         @Override
         public View onFindViewById(int id) {
+            // This is always null.
             return onHasView() ? mFragmentImpl.getView().findViewById(id) : null;
         }
     }
 
-    protected FragmentHostingRemoteFragmentImpl(IRemoteFragmentClient remoteFragmentClient) {
-        super(remoteFragmentClient);
+    protected FragmentHostingRemoteFragmentImpl(Context context) {
+        super();
+        mContext = createRemoteFragmentContext(context);
     }
 
     @Override
-    public void onAttach(Context embedderContext) {
+    protected void onAttach(Context embedderContext) {
         StrictModeWorkaround.apply();
         super.onAttach(embedderContext);
-
-        mContext = createRemoteFragmentContext(embedderContext);
-        mFragmentController =
-                FragmentController.createController(new RemoteFragmentHostCallback(this));
-        mFragmentController.attachHost(null);
 
         // Some appcompat functionality depends on Fragments being hosted from within an
         // AppCompatActivity, which performs some static initialization. Even if we're running
         // within an AppCompatActivity, it will be from the embedder's ClassLoader, so in WebLayer's
         // ClassLoader the initialization hasn't occurred. Creating an AppCompatDelegate manually
         // here will perform the necessary initialization.
-        AppCompatDelegate.create(getActivity(), null);
+        if (getActivity() != null) {
+            AppCompatDelegate.create(getActivity(), null);
+        }
     }
 
     @Override
-    public void onCreate(Bundle savedInstanceState) {
+    protected void onCreate() {
         StrictModeWorkaround.apply();
-        super.onCreate(savedInstanceState);
+        super.onCreate();
+
+        mFragmentController =
+                FragmentController.createController(new RemoteFragmentHostCallback(this));
+        mFragmentController.attachHost(null);
+
         mFragmentController.dispatchCreate();
     }
 
     @Override
-    public void onDestroyView() {
+    protected void onDestroyView() {
         StrictModeWorkaround.apply();
         super.onDestroyView();
         mFragmentController.dispatchDestroyView();
     }
 
     @Override
-    public void onDestroy() {
+    protected void onDestroy() {
         StrictModeWorkaround.apply();
         super.onDestroy();
-        mFragmentController.dispatchDestroy();
-    }
 
-    @Override
-    public void onDetach() {
-        StrictModeWorkaround.apply();
-        super.onDetach();
-        mContext = null;
-
-        // If the Fragment is retained, onDestroy won't be called during configuration changes. We
-        // have to create a new FragmentController that's attached to the correct Context when
-        // reattaching this Fragment, so destroy the existing one here.
         if (!mFragmentController.getSupportFragmentManager().isDestroyed()) {
             mFragmentController.dispatchDestroy();
             assert mFragmentController.getSupportFragmentManager().isDestroyed();
@@ -207,7 +193,14 @@ public abstract class FragmentHostingRemoteFragmentImpl extends RemoteFragmentIm
     }
 
     @Override
-    public void onStart() {
+    protected void onDetach() {
+        StrictModeWorkaround.apply();
+        super.onDetach();
+    }
+
+    @Override
+    protected void onStart() {
+        StrictModeWorkaround.apply();
         super.onStart();
 
         if (!mStarted) {
@@ -220,19 +213,22 @@ public abstract class FragmentHostingRemoteFragmentImpl extends RemoteFragmentIm
     }
 
     @Override
-    public void onStop() {
+    protected void onStop() {
+        StrictModeWorkaround.apply();
         super.onStop();
         mFragmentController.dispatchStop();
     }
 
     @Override
-    public void onResume() {
+    protected void onResume() {
+        StrictModeWorkaround.apply();
         super.onResume();
         mFragmentController.dispatchResume();
     }
 
     @Override
-    public void onPause() {
+    protected void onPause() {
+        StrictModeWorkaround.apply();
         super.onPause();
         mFragmentController.dispatchPause();
     }

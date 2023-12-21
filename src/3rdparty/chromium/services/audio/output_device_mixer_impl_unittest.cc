@@ -1,4 +1,4 @@
-// Copyright (c) 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -63,7 +63,7 @@ class MockAudioOutputStream : public AudioOutputStream {
 
   void SimulateOnMoreData() {
     DCHECK(provided_callback_);
-    provided_callback_->OnMoreData(base::TimeDelta(), base::TimeTicks(), 0,
+    provided_callback_->OnMoreData(base::TimeDelta(), base::TimeTicks(), {},
                                    nullptr);
   }
 
@@ -85,7 +85,7 @@ class MockAudioSourceCallback : public AudioOutputStream::AudioSourceCallback {
   MOCK_METHOD4(OnMoreData,
                int(base::TimeDelta delay,
                    base::TimeTicks delay_timestamp,
-                   int prior_frames_skipped,
+                   const media::AudioGlitchInfo& glitch_info,
                    media::AudioBus* dest));
 
   MOCK_METHOD1(OnError,
@@ -103,8 +103,10 @@ class MockMixingGraphInput : public MixingGraph::Input {
   MOCK_METHOD1(Start,
                void(AudioOutputStream::AudioSourceCallback* source_callback));
   MOCK_METHOD0(Stop, void());
-  MOCK_METHOD2(ProvideInput,
-               double(media::AudioBus* audio_bus, uint32_t frames_delayed));
+  MOCK_METHOD3(ProvideInput,
+               double(media::AudioBus* audio_bus,
+                      uint32_t frames_delayed,
+                      const media::AudioGlitchInfo& glitch_info));
 
  private:
   double volume_ = 0;
@@ -124,8 +126,10 @@ class FakeMixingGraphInput : public MixingGraph::Input {
   }
   void Stop() final { mock_input_->Stop(); }
 
-  MOCK_METHOD2(ProvideInput,
-               double(media::AudioBus* audio_bus, uint32_t frames_delayed));
+  MOCK_METHOD3(ProvideInput,
+               double(media::AudioBus* audio_bus,
+                      uint32_t frames_delayed,
+                      const media::AudioGlitchInfo& glitch_info));
 
  private:
   const media::AudioParameters params_;
@@ -155,7 +159,7 @@ class MockMixingGraph : public MixingGraph {
   MOCK_METHOD4(OnMoreData,
                int(base::TimeDelta delay,
                    base::TimeTicks delay_timestamp,
-                   int prior_frames_skipped,
+                   const media::AudioGlitchInfo& glitch_info,
                    media::AudioBus* dest));
 
   void OnError(AudioOutputStream::AudioSourceCallback::ErrorType type) final {
@@ -183,7 +187,7 @@ class OutputDeviceMixerImplTestBase {
   struct MixTrackMock {
     explicit MixTrackMock(int frames_per_buffer)
         : params(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                 media::CHANNEL_LAYOUT_STEREO,
+                 media::ChannelLayoutConfig::Stereo(),
                  48000,
                  frames_per_buffer) {}
     StrictMock<MockMixingGraphInput> graph_input;
@@ -198,9 +202,9 @@ class OutputDeviceMixerImplTestBase {
   // Helper.
   struct StreamUnderTest {
     // MixableOutputStream produced by OutputMixerImpl.
-    AudioOutputStream* mixable_stream;
+    raw_ptr<AudioOutputStream> mixable_stream;
     // All the mocks associated with it.
-    MixTrackMock* mix_track_mock;
+    raw_ptr<MixTrackMock> mix_track_mock;
   };
 
   OutputDeviceMixerImplTestBase() {
@@ -423,7 +427,7 @@ class OutputDeviceMixerImplTestBase {
 
   const media::AudioParameters mixer_output_params_{
       media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-      media::CHANNEL_LAYOUT_STEREO, 48000, 5};
+      media::ChannelLayoutConfig::Stereo(), 48000, 5};
 
  private:
   AudioOutputStream* CreateOutputStream(const std::string& expected_device_id,

@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <memory>
 #include <string>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/read_only_shared_memory_region.h"
 #include "base/memory/scoped_refptr.h"
@@ -20,9 +20,14 @@
 #include "chrome/browser/ui/webui/print_preview/printer_handler.h"
 #include "components/prefs/pref_member.h"
 #include "components/printing/browser/print_manager.h"
+#include "components/printing/browser/print_to_pdf/pdf_print_job.h"
 #include "components/printing/common/print.mojom-forward.h"
 #include "components/services/print_compositor/public/mojom/print_compositor.mojom.h"
 #include "printing/buildflags/buildflags.h"
+
+#if BUILDFLAG(ENABLE_OOP_PRINTING)
+#include "chrome/browser/printing/print_backend_service_manager.h"
+#endif
 
 #if BUILDFLAG(ENABLE_PRINT_CONTENT_ANALYSIS)
 #include "chrome/browser/enterprise/connectors/analysis/content_analysis_delegate.h"
@@ -50,8 +55,15 @@ class PrintViewManagerBase : public PrintManager, public PrintJob::Observer {
    public:
     virtual void OnPrintNow(const content::RenderFrameHost* rfh) {}
 
+    virtual void OnScriptedPrint() {}
+
     // This method is never called unless `ENABLE_PRINT_PREVIEW`.
     virtual void OnPrintPreview(const content::RenderFrameHost* rfh) {}
+
+    // This method is never called unless `ENABLE_OOP_PRINTING`.
+    virtual void OnRegisterSystemPrintClient(bool succeeded) {}
+
+    virtual void OnDidPrintDocument() {}
   };
 
   PrintViewManagerBase(const PrintViewManagerBase&) = delete;
@@ -75,8 +87,14 @@ class PrintViewManagerBase : public PrintManager, public PrintJob::Observer {
                             PrinterHandler::PrintCallback callback);
 #endif
 
-  // Whether printing is enabled or not.
-  void UpdatePrintingEnabled();
+  // Prints the current document pages specified by `page_ranges` with
+  // parameters, specified by `print_pages_params` into a PDF document,
+  // returned with `callback`. If `page_ranges` is empty, the entire
+  // document is printed.
+  void PrintToPdf(content::RenderFrameHost* rfh,
+                  const std::string& page_ranges,
+                  mojom::PrintPagesParamsPtr print_pages_params,
+                  print_to_pdf::PdfPrintJob::PrintToPdfCallback callback);
 
 // Notifies the print view manager that the system dialog has been cancelled
 // after being opened from Print Preview.
@@ -106,10 +124,11 @@ class PrintViewManagerBase : public PrintManager, public PrintJob::Observer {
                            base::Value::Dict job_settings,
                            UpdatePrintSettingsCallback callback) override;
 #endif
+  void IsPrintingEnabled(IsPrintingEnabledCallback callback) override;
   void ScriptedPrint(mojom::ScriptedPrintParamsPtr params,
                      ScriptedPrintCallback callback) override;
-  void ShowInvalidPrinterSettingsError() override;
-  void PrintingFailed(int32_t cookie) override;
+  void PrintingFailed(int32_t cookie,
+                      mojom::PrintFailureReason reason) override;
 
   // Adds and removes observers for `PrintViewManagerBase` events. The order in
   // which notifications are sent to observers is undefined. Observers must be
@@ -157,9 +176,17 @@ class PrintViewManagerBase : public PrintManager, public PrintJob::Observer {
   // PrintJob::Observer overrides:
   void OnDocDone(int job_id, PrintedDocument* document) override;
   void OnJobDone() override;
+  void OnCanceling() override;
   void OnFailed() override;
 
   base::ObserverList<Observer>& GetObservers() { return observers_; }
+
+  // Prints the document by posting on the IO thread. This should only be called
+  // by `ScriptedPrint()` and `CompleteScriptedPrintAfterContentAnalysis()`.
+  // This method is virtual for testing purposes.
+  virtual void CompleteScriptedPrint(content::RenderFrameHost* rfh,
+                                     mojom::ScriptedPrintParamsPtr params,
+                                     ScriptedPrintCallback callback);
 
 #if BUILDFLAG(ENABLE_PRINT_CONTENT_ANALYSIS)
   // Helper method for scanning a page by sending requests and launching the
@@ -179,6 +206,9 @@ class PrintViewManagerBase : public PrintManager, public PrintJob::Observer {
       content::GlobalRenderFrameHostId rfh_id,
       mojom::PrintCompositor::Status status,
       base::ReadOnlySharedMemoryRegion page_region);
+
+  // Helper method to set `snapshotting_for_content_analysis_` in child classes.
+  void set_snapshotting_for_content_analysis();
 #endif  // BUILDFLAG(ENABLE_PRINT_CONTENT_ANALYSIS)
 
   // Manages the low-level talk to the printer.
@@ -192,18 +222,30 @@ class PrintViewManagerBase : public PrintManager, public PrintJob::Observer {
       content::RenderFrameHost* render_frame_host,
       content::RenderFrameHost::LifecycleState /*old_state*/,
       content::RenderFrameHost::LifecycleState new_state) override;
-  void DidStartLoading() override;
 
   // Cancels the print job.
   void NavigationStopped() override;
 
+  // Implementation without callbacks.
+  bool OnComposePdfDoneImpl(int document_cookie,
+                            const gfx::Size& page_size,
+                            const gfx::Rect& content_area,
+                            const gfx::Point& physical_offsets,
+                            mojom::PrintCompositor::Status status,
+                            base::ReadOnlySharedMemoryRegion region);
+
   // IPC message handlers for service.
-  void OnComposePdfDone(const gfx::Size& page_size,
+  void OnComposePdfDone(int document_cookie,
+                        const gfx::Size& page_size,
                         const gfx::Rect& content_area,
                         const gfx::Point& physical_offsets,
                         DidPrintDocumentCallback callback,
                         mojom::PrintCompositor::Status status,
                         base::ReadOnlySharedMemoryRegion region);
+
+  // Helper for mojom::PrintManagerHost handling.
+  void OnDidPrintDocument(PrintManager::DidPrintDocumentCallback callback,
+                          bool succeeded);
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
   // Helpers for PrintForPrintPreview();
@@ -280,18 +322,22 @@ class PrintViewManagerBase : public PrintManager, public PrintJob::Observer {
   // Release the PrinterQuery associated with our `cookie_`.
   void ReleasePrinterQuery();
 
-  // Notifies `rfh` about whether printing is `enabled`.
-  void SendPrintingEnabled(bool enabled, content::RenderFrameHost* rfh);
-
   // Prints the document by calling the `PrintRequestedPages()` renderer API and
   // notifies observers. This should only be called by `PrintNow()` or
-  // `CompleteContentAnalysis()`.
+  // `CompletePrintNowAfterContentAnalysis()`.
   void CompletePrintNow(content::RenderFrameHost* rfh);
 
 #if BUILDFLAG(ENABLE_PRINT_CONTENT_ANALYSIS)
-  // Helper for scanning code that calls `CompletePrintNow()` if `allowed` is
-  // true and printing is still possible.
-  void CompleteContentAnalysis(bool allowed);
+  // Helper for content analysis code that calls `CompletePrintNow()` if
+  // `allowed` is true and printing is still possible.
+  void CompletePrintNowAfterContentAnalysis(bool allowed);
+
+  // Helper for content analysis code that calls `CompleteScriptedPrint()` if
+  // `allowed` is true and printing is still possible.
+  void CompleteScriptedPrintAfterContentAnalysis(
+      mojom::ScriptedPrintParamsPtr params,
+      ScriptedPrintCallback callback,
+      bool allowed);
 #endif  // BUILDFLAG(ENABLE_PRINT_CONTENT_ANALYSIS)
 
   // The current RFH that is printing with a system printing dialog.
@@ -299,6 +345,9 @@ class PrintViewManagerBase : public PrintManager, public PrintJob::Observer {
 
   // Indication of success of the print job.
   bool printing_succeeded_ = false;
+
+  // Indication that the job is getting canceled.
+  bool canceling_job_ = false;
 
   // Set while running an inner message loop inside RenderAllMissingPagesNow().
   // This means we are _blocking_ until all the necessary pages have been
@@ -309,9 +358,21 @@ class PrintViewManagerBase : public PrintManager, public PrintJob::Observer {
   BooleanPrefMember printing_enabled_;
 
 #if BUILDFLAG(ENABLE_OOP_PRINTING)
-  // Client ID with the print backend service manager for this print job.
-  absl::optional<uint32_t> service_manager_client_id_;
+  // Client ID with the print backend service manager for system print dialog.
+  absl::optional<PrintBackendServiceManager::ClientId> query_with_ui_client_id_;
+
+#if BUILDFLAG(ENABLE_OOP_BASIC_PRINT_DIALOG)
+  // Client ID with the print backend service manager to reuse for printing, to
+  // get the same device context as was used with the system print dialog.
+  absl::optional<PrintBackendServiceManager::ClientId>
+      print_document_client_id_;
 #endif
+#endif  // BUILDFLAG(ENABLE_OOP_PRINTING)
+
+#if BUILDFLAG(ENABLE_PRINT_CONTENT_ANALYSIS)
+  // Indicates that a snapshot of the page/document is currently being made.
+  bool snapshotting_for_content_analysis_ = false;
+#endif  // BUILDFLAG(ENABLE_PRINT_CONTENT_ANALYSIS)
 
   const scoped_refptr<PrintQueriesQueue> queue_;
 

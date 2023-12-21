@@ -23,7 +23,7 @@ struct MyExampleStatusTraits {
   // then the function OkStatus() can be used to return a status with this
   // code. Statuses created with this default code can not have any data,
   // causes, or a message attached.
-  static constexpr Codes DefaultEnumValue() { return Codes::kSomething; }
+  static constexpr Codes OkEnumValue() { return Codes::kSomething; }
 
   // [OPTIONAL] If |OnCreateFrom| is declared, then TypedStatus<T> can be
   // created with {T::Codes, SomeOtherType} or {T::Codes, string, SomeOtherType}
@@ -100,7 +100,7 @@ Define an |TypedStatusTraits|, picking a name for the group of codes:
 struct MyExampleStatusTraits {
   using Codes = MyExampleEnum;
   static constexpr StatusGroupType Group() { return "MyExampleStatus"; }
-  static constexpr Codes DefaultEnumValue() { return Codes::kDefaultValue; }
+  static constexpr Codes OkEnumValue() { return Codes::kDefaultValue; }
 }
 ```
 
@@ -125,6 +125,39 @@ int main() {
 }
 ```
 
+## Constructing a TypedStatus<T>
+There are several ways to create a typed status, depending on what data you'd
+like to encapsulate:
+
+```
+// To create an status with the default OK type, there's a helper function that
+// creates any type you want, so long as it actually has a kOk value or
+|OkEnumValue| implementation.
+TypedStatus<MyType> ok = OkStatus();
+
+// A status can be implicitly created from a code
+TypedStatus<MyType> status = MyType::Codes::kMyCode;
+
+// A status can be explicitly created from a code and message, or implicitly
+// created from a brace initializer list of code and message
+TypedStatus<MyType> status(MyType::Codes::kMyCode, "MyMessage");
+TypedStatus<MyType> status = {MyType::Codes::kMyCode, "MyMessage"};
+
+// If |MyType::OnCreateFrom<T>| is implemented, then a status can be created
+// from a {code, T} pack, or a {code, message, T} pack:
+TypedStatus<MyType> status = {MyType::Codes::kMyCode, 667};
+TypedStatus<MyType> status = {MyType::Codes::kMyCode, "MyMessage", 667};
+
+// A status can be created from packs of either {code, TypedStatus<Any>} or
+// {code, message, TypedStatus<Any>} where TypedStatus<Any> will become the
+// status that causes the return. Note that in this example,
+// OtherType::Codes::kOther is itself being implicitly converted from a code
+// to a TypedStatus<OtherType>.
+TypedStatus<MyType> status = {MyType::Codes::kCode, OtherType::Codes::kOther};
+TypedStatus<MyType> status = {MyType::Codes::kCode, "M", OtherType::Codes::kOther};
+```
+
+
 
 ## TypedStatus<T>::Or<D>
 
@@ -137,10 +170,9 @@ a `TypedStatus<T>`, a `T`, or a `D`.
 This type has methods:
 ```c++
 bool has_value() const;
-bool has_error() const;
 
 // Return the error, if we have one.
-// Callers should ensure that this `has_error()`.
+// Callers should ensure that this `!has_value()`.
 TypedStatus<T> error() &&;
 
 // Return the value, if we have one.
@@ -148,7 +180,7 @@ TypedStatus<T> error() &&;
 OtherType value() &&;
 
 // It is invalid to call `code()` on an `Or<D>` type when
-// has_value() is true and TypedStatusTraits<T>::DefaultEnumValue is nullopt.
+// has_value() is true and TypedStatusTraits<T>::OkEnumValue is nullopt.
 T::Codes code();
 ```
 
@@ -226,7 +258,7 @@ struct MyExampleStatusTraits {
   // here, instead of `using`.
   using Codes = MyExampleEnum;
   static constexpr StatusGroupType Group() { return "MyExampleStatus"; }
-  static constexpr Codes DefaultEnumValue() { return Codes::kDefaultValue; }
+  static constexpr Codes OkEnumValue() { return Codes::kDefaultValue; }
   static uint32_t PackExtraData(const StatusData& info) {
     absl::optional<int> hresult = info.data.GetIntValue("HRESULT");
     return static_cast<uint32_t>(hresult.has_value() ? *hresult : 0);

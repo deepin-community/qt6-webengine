@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -37,6 +37,7 @@ class MockVideoFrameHandler : public mojom::VideoFrameHandler {
       std::vector<mojom::ReadyFrameInBufferPtr> scaled_buffers) override;
   void OnBufferRetired(int32_t buffer_id) override;
 
+  MOCK_METHOD0(OnCaptureConfigurationChanged, void());
   MOCK_METHOD2(DoOnNewBuffer,
                void(int32_t, media::mojom::VideoBufferHandlePtr*));
   MOCK_METHOD3(DoOnFrameReadyInBuffer,
@@ -46,6 +47,7 @@ class MockVideoFrameHandler : public mojom::VideoFrameHandler {
   MOCK_METHOD1(DoOnBufferRetired, void(int32_t));
   MOCK_METHOD1(OnError, void(media::VideoCaptureError));
   MOCK_METHOD1(OnFrameDropped, void(media::VideoCaptureFrameDropReason));
+  MOCK_METHOD1(OnNewCropVersion, void(uint32_t));
   MOCK_METHOD0(OnFrameWithEmptyRegionCapture, void());
   MOCK_METHOD1(OnLog, void(const std::string&));
   MOCK_METHOD0(OnStarted, void());

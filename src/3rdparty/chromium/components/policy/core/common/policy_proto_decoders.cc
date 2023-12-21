@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,11 +9,13 @@
 #include <memory>
 
 #include "base/json/json_reader.h"
-#include "base/logging.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "components/policy/core/common/cloud/cloud_external_data_manager.h"
+#include "components/policy/core/common/policy_logger.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/policy_constants.h"
 #include "components/policy/proto/cloud_policy.pb.h"
@@ -24,6 +26,10 @@ namespace policy {
 namespace em = enterprise_management;
 
 namespace {
+
+const char kValue[] = "Value";
+const char kLevel[] = "Level";
+const char kRecommendedLocal[] = "Recommended";
 
 // Returns true and sets |level| to a PolicyLevel if the policy has been set
 // at that level. Returns false if the policy is not set, or has been set at
@@ -61,7 +67,8 @@ base::Value DecodeIntegerProto(const em::IntegerPolicyProto& proto,
 
   if (value < std::numeric_limits<int>::min() ||
       value > std::numeric_limits<int>::max()) {
-    LOG(WARNING) << "Integer value " << value << " out of numeric limits";
+    LOG_POLICY(WARNING, POLICY_PROCESSING)
+        << "Integer value " << value << " out of numeric limits";
     *error = "Number out of range - invalid int32";
     return base::Value(base::NumberToString(value));
   }
@@ -77,33 +84,32 @@ base::Value DecodeStringProto(const em::StringPolicyProto& proto) {
 // Convert a StringListPolicyProto to a List base::Value, where each list value
 // is of Type::STRING.
 base::Value DecodeStringListProto(const em::StringListPolicyProto& proto) {
-  base::Value list_value(base::Value::Type::LIST);
+  base::Value::List list_value;
   for (const auto& entry : proto.value().entries())
     list_value.Append(entry);
-  return list_value;
+  return base::Value(std::move(list_value));
 }
 
 // Convert a StringPolicyProto to a base::Value of any type (for example,
-// Type::DICTIONARY or Type::LIST) by parsing it as JSON.
+// Type::DICT or Type::LIST) by parsing it as JSON.
 base::Value DecodeJsonProto(const em::StringPolicyProto& proto,
                             std::string* error) {
   const std::string& json = proto.value();
-  base::JSONReader::ValueWithError value_with_error =
-      base::JSONReader::ReadAndReturnValueWithError(
-          json, base::JSONParserOptions::JSON_ALLOW_TRAILING_COMMAS);
+  auto value_with_error = base::JSONReader::ReadAndReturnValueWithError(
+      json, base::JSONParserOptions::JSON_ALLOW_TRAILING_COMMAS);
 
-  if (!value_with_error.value) {
+  if (!value_with_error.has_value()) {
     // Can't parse as JSON so return it as a string, and leave it to the handler
     // to validate.
-    LOG(WARNING) << "Invalid JSON: " << json;
-    *error = value_with_error.error_message;
+    LOG_POLICY(WARNING, POLICY_PROCESSING) << "Invalid JSON: " << json;
+    *error = value_with_error.error().message;
     return base::Value(json);
   }
 
   // Accept any Value type that parsed as JSON, and leave it to the handler to
   // convert and check the concrete type.
   error->clear();
-  return std::move(value_with_error.value.value());
+  return std::move(*value_with_error);
 }
 
 bool PerProfileMatches(bool policy_per_profile,
@@ -116,6 +122,18 @@ bool PerProfileMatches(bool policy_per_profile,
     case PolicyPerProfileFilter::kAny:
       return true;
   }
+}
+
+bool UseExternalDataFetcher(const char* policy_name,
+                            StringPolicyType policy_type) {
+  if (policy_type == StringPolicyType::EXTERNAL)
+    return true;
+
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+  if (strcmp(policy_name, key::kWebAppInstallForceList) == 0)
+    return true;
+#endif
+  return false;
 }
 
 }  // namespace
@@ -182,8 +200,7 @@ void DecodeProtoFields(
     // needs an ExternalDataFetcher. If we ever create a second such policy,
     // create a new type for it instead of special-casing the policies here.
     std::unique_ptr<ExternalDataFetcher> external_data_fetcher =
-        (access.type == StringPolicyType::EXTERNAL ||
-         strcmp(access.policy_key, key::kWebAppInstallForceList) == 0)
+        UseExternalDataFetcher(access.policy_key, access.type)
             ? std::make_unique<ExternalDataFetcher>(external_data_manager,
                                                     access.policy_key)
             : nullptr;
@@ -208,6 +225,45 @@ void DecodeProtoFields(
     map->Set(access.policy_key, level, scope, source,
              DecodeStringListProto(proto), nullptr);
   }
+}
+
+bool ParseComponentPolicy(base::Value json,
+                          PolicyScope scope,
+                          PolicySource source,
+                          PolicyMap* policy,
+                          std::string* error) {
+  // Each top-level key maps a policy name to its description.
+  //
+  // Each description is an object that contains the policy value under the
+  // "Value" key. The optional "Level" key is either "Mandatory" (default) or
+  // "Recommended".
+  for (auto it : json.GetDict()) {
+    const std::string& policy_name = it.first;
+    base::Value description = std::move(it.second);
+    if (!description.is_dict()) {
+      *error = "The JSON blob dictionary value is not a dictionary.";
+      return false;
+    }
+
+    base::Value::Dict& description_dict = description.GetDict();
+    absl::optional<base::Value> value = description_dict.Extract(kValue);
+    if (!value.has_value()) {
+      *error = base::StrCat(
+          {"The JSON blob dictionary value doesn't contain the required ",
+           kValue, " field."});
+      return false;
+    }
+
+    PolicyLevel level = POLICY_LEVEL_MANDATORY;
+    const std::string* level_string = description_dict.FindString(kLevel);
+    if (level_string && *level_string == kRecommendedLocal)
+      level = POLICY_LEVEL_RECOMMENDED;
+
+    policy->Set(policy_name, level, scope, source, std::move(value.value()),
+                nullptr);
+  }
+
+  return true;
 }
 
 }  // namespace policy

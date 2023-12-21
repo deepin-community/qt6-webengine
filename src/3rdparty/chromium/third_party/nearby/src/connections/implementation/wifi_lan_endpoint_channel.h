@@ -15,19 +15,21 @@
 #ifndef CORE_INTERNAL_WIFI_LAN_ENDPOINT_CHANNEL_H_
 #define CORE_INTERNAL_WIFI_LAN_ENDPOINT_CHANNEL_H_
 
+#include <string>
+
 #include "connections/implementation/base_endpoint_channel.h"
 #include "internal/platform/wifi_lan.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 
 class WifiLanEndpointChannel final : public BaseEndpointChannel {
  public:
   // Creates both outgoing and incoming WifiLan channels.
-  WifiLanEndpointChannel(const std::string& channel_name, WifiLanSocket socket);
+  WifiLanEndpointChannel(const std::string& service_id,
+                         const std::string& channel_name, WifiLanSocket socket);
 
-  proto::connections::Medium GetMedium() const override;
+  location::nearby::proto::connections::Medium GetMedium() const override;
 
  private:
   void CloseImpl() override;
@@ -37,6 +39,5 @@ class WifiLanEndpointChannel final : public BaseEndpointChannel {
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location
 
 #endif  // CORE_INTERNAL_WIFI_LAN_ENDPOINT_CHANNEL_H_

@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -92,6 +92,7 @@ class ChromeRenderFrameObserver : public content::RenderFrameObserver,
       int32_t thumbnail_min_area_pixels,
       const gfx::Size& thumbnail_max_size_pixels,
       chrome::mojom::ImageFormat image_format,
+      int32_t quality,
       RequestImageForContextNodeCallback callback) override;
   void RequestReloadImageForContextNode() override;
 #if BUILDFLAG(IS_ANDROID)
@@ -133,6 +134,10 @@ class ChromeRenderFrameObserver : public content::RenderFrameObserver,
   // Check if the image need to encode to fit requested image format.
   static bool NeedsEncodeImage(const std::string& image_extension,
                                chrome::mojom::ImageFormat image_format);
+
+  // Check if the image is an animated Webp image by looking for animation
+  // feature flag
+  static bool IsAnimatedWebp(const std::vector<uint8_t>& image_data);
 
   // Have the same lifetime as us.
   translate::TranslateAgent* translate_agent_;

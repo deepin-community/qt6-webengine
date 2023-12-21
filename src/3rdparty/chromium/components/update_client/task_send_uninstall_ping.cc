@@ -1,13 +1,13 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 #include "components/update_client/task_send_uninstall_ping.h"
 
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/version.h"
 #include "components/update_client/update_client.h"
 #include "components/update_client/update_engine.h"
@@ -24,12 +24,10 @@ TaskSendUninstallPing::TaskSendUninstallPing(
       reason_(reason),
       callback_(std::move(callback)) {}
 
-TaskSendUninstallPing::~TaskSendUninstallPing() {
-  DCHECK(thread_checker_.CalledOnValidThread());
-}
+TaskSendUninstallPing::~TaskSendUninstallPing() = default;
 
 void TaskSendUninstallPing::Run() {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (crx_component_.app_id.empty()) {
     TaskComplete(Error::INVALID_ARGUMENT);
@@ -42,7 +40,7 @@ void TaskSendUninstallPing::Run() {
 }
 
 void TaskSendUninstallPing::Cancel() {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   TaskComplete(Error::UPDATE_CANCELED);
 }
@@ -52,9 +50,9 @@ std::vector<std::string> TaskSendUninstallPing::GetIds() const {
 }
 
 void TaskSendUninstallPing::TaskComplete(Error error) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(std::move(callback_), scoped_refptr<Task>(this), error));
 }

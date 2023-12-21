@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,15 +8,49 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "components/content_settings/core/common/content_settings.h"
+#include "content/browser/permissions/permission_util.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/permission_controller.h"
-#include "content/public/browser/permission_type.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/web_test/browser/web_test_content_browser_client.h"
+#include "services/network/public/mojom/cookie_manager.mojom.h"
+#include "third_party/blink/public/common/permissions/permission_utils.h"
+#include "third_party/blink/public/common/web_preferences/web_preferences.h"
 
 namespace content {
+
+namespace {
+
+std::vector<ContentSettingPatternSource> GetContentSettings(
+    const GURL& permission_origin,
+    const GURL& embedding_origin,
+    blink::mojom::PermissionStatus status) {
+  absl::optional<ContentSetting> setting;
+  switch (status) {
+    case blink::mojom::PermissionStatus::GRANTED:
+      setting = ContentSetting::CONTENT_SETTING_ALLOW;
+      break;
+    case blink::mojom::PermissionStatus::DENIED:
+      setting = ContentSetting::CONTENT_SETTING_BLOCK;
+      break;
+    case blink::mojom::PermissionStatus::ASK:
+      break;
+  }
+  std::vector<ContentSettingPatternSource> patterns;
+  if (setting) {
+    patterns.emplace_back(ContentSettingsPattern::FromURL(permission_origin),
+                          ContentSettingsPattern::FromURL(embedding_origin),
+                          base::Value(*setting), /*source=*/"",
+                          /*incognito=*/false);
+  }
+  return patterns;
+}
+
+}  // namespace
 
 struct WebTestPermissionManager::Subscription {
   PermissionDescription permission;
@@ -25,7 +59,7 @@ struct WebTestPermissionManager::Subscription {
 };
 
 WebTestPermissionManager::PermissionDescription::PermissionDescription(
-    PermissionType type,
+    blink::PermissionType type,
     const GURL& origin,
     const GURL& embedding_origin)
     : type(type), origin(origin), embedding_origin(embedding_origin) {}
@@ -49,13 +83,14 @@ size_t WebTestPermissionManager::PermissionDescription::Hash::operator()(
   return hash;
 }
 
-WebTestPermissionManager::WebTestPermissionManager()
-    : PermissionControllerDelegate() {}
+WebTestPermissionManager::WebTestPermissionManager(
+    BrowserContext& browser_context)
+    : PermissionControllerDelegate(), browser_context_(browser_context) {}
 
-WebTestPermissionManager::~WebTestPermissionManager() {}
+WebTestPermissionManager::~WebTestPermissionManager() = default;
 
 void WebTestPermissionManager::RequestPermission(
-    PermissionType permission,
+    blink::PermissionType permission,
     RenderFrameHost* render_frame_host,
     const GURL& requesting_origin,
     bool user_gesture,
@@ -68,14 +103,13 @@ void WebTestPermissionManager::RequestPermission(
 
   std::move(callback).Run(
       GetPermissionStatus(permission, requesting_origin,
-                          WebContents::FromRenderFrameHost(render_frame_host)
-                              ->GetLastCommittedURL()
-                              .DeprecatedGetOriginAsURL()));
+                          PermissionUtil::GetLastCommittedOriginAsURL(
+                              render_frame_host->GetMainFrame())));
 }
 
 void WebTestPermissionManager::RequestPermissions(
-    const std::vector<PermissionType>& permissions,
-    content::RenderFrameHost* render_frame_host,
+    const std::vector<blink::PermissionType>& permissions,
+    RenderFrameHost* render_frame_host,
     const GURL& requesting_origin,
     bool user_gesture,
     base::OnceCallback<void(const std::vector<blink::mojom::PermissionStatus>&)>
@@ -89,10 +123,8 @@ void WebTestPermissionManager::RequestPermissions(
 
   std::vector<blink::mojom::PermissionStatus> result;
   result.reserve(permissions.size());
-  const GURL& embedding_origin =
-      WebContents::FromRenderFrameHost(render_frame_host)
-          ->GetLastCommittedURL()
-          .DeprecatedGetOriginAsURL();
+  const GURL& embedding_origin = PermissionUtil::GetLastCommittedOriginAsURL(
+      render_frame_host->GetMainFrame());
   for (const auto& permission : permissions) {
     result.push_back(
         GetPermissionStatus(permission, requesting_origin, embedding_origin));
@@ -101,7 +133,7 @@ void WebTestPermissionManager::RequestPermissions(
   std::move(callback).Run(result);
 }
 
-void WebTestPermissionManager::ResetPermission(PermissionType permission,
+void WebTestPermissionManager::ResetPermission(blink::PermissionType permission,
                                                const GURL& requesting_origin,
                                                const GURL& embedding_origin) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -115,8 +147,35 @@ void WebTestPermissionManager::ResetPermission(PermissionType permission,
   permissions_.erase(it);
 }
 
+void WebTestPermissionManager::RequestPermissionsFromCurrentDocument(
+    const std::vector<blink::PermissionType>& permissions,
+    RenderFrameHost* render_frame_host,
+    bool user_gesture,
+    base::OnceCallback<void(const std::vector<blink::mojom::PermissionStatus>&)>
+        callback) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (render_frame_host->IsNestedWithinFencedFrame()) {
+    std::move(callback).Run(std::vector<blink::mojom::PermissionStatus>(
+        permissions.size(), blink::mojom::PermissionStatus::DENIED));
+    return;
+  }
+
+  std::vector<blink::mojom::PermissionStatus> result;
+  result.reserve(permissions.size());
+  const GURL& requesting_origin =
+      PermissionUtil::GetLastCommittedOriginAsURL(render_frame_host);
+  const GURL& embedding_origin = PermissionUtil::GetLastCommittedOriginAsURL(
+      render_frame_host->GetMainFrame());
+  for (const auto& permission : permissions) {
+    result.push_back(
+        GetPermissionStatus(permission, requesting_origin, embedding_origin));
+  }
+
+  std::move(callback).Run(result);
+}
+
 blink::mojom::PermissionStatus WebTestPermissionManager::GetPermissionStatus(
-    PermissionType permission,
+    blink::PermissionType permission,
     const GURL& requesting_origin,
     const GURL& embedding_origin) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI) ||
@@ -126,13 +185,18 @@ blink::mojom::PermissionStatus WebTestPermissionManager::GetPermissionStatus(
 
   auto it = permissions_.find(
       PermissionDescription(permission, requesting_origin, embedding_origin));
-  if (it == permissions_.end())
+  if (it == permissions_.end()) {
+    auto default_state = default_permission_status_.find(permission);
+    if (default_state != default_permission_status_.end()) {
+      return default_state->second;
+    }
     return blink::mojom::PermissionStatus::DENIED;
+  }
 
   // Immitates the behaviour of the NotificationPermissionContext in that
   // permission cannot be requested from cross-origin iframes, which the current
   // permission status should reflect when it's status is ASK.
-  if (permission == PermissionType::NOTIFICATIONS) {
+  if (permission == blink::PermissionType::NOTIFICATIONS) {
     if (requesting_origin != embedding_origin &&
         it->second == blink::mojom::PermissionStatus::ASK) {
       return blink::mojom::PermissionStatus::DENIED;
@@ -142,36 +206,32 @@ blink::mojom::PermissionStatus WebTestPermissionManager::GetPermissionStatus(
   return it->second;
 }
 
-blink::mojom::PermissionStatus
-WebTestPermissionManager::GetPermissionStatusForFrame(
-    PermissionType permission,
-    content::RenderFrameHost* render_frame_host,
-    const GURL& requesting_origin) {
-  if (render_frame_host->IsNestedWithinFencedFrame())
-    return blink::mojom::PermissionStatus::DENIED;
-  return GetPermissionStatus(
-      permission, requesting_origin,
-      content::WebContents::FromRenderFrameHost(render_frame_host)
-          ->GetLastCommittedURL()
-          .DeprecatedGetOriginAsURL());
+PermissionResult
+WebTestPermissionManager::GetPermissionResultForOriginWithoutContext(
+    blink::PermissionType permission,
+    const url::Origin& origin) {
+  blink::mojom::PermissionStatus status =
+      GetPermissionStatus(permission, origin.GetURL(), origin.GetURL());
+
+  return PermissionResult(status, content::PermissionStatusSource::UNSPECIFIED);
 }
 
 blink::mojom::PermissionStatus
 WebTestPermissionManager::GetPermissionStatusForCurrentDocument(
-    PermissionType permission,
-    content::RenderFrameHost* render_frame_host) {
+    blink::PermissionType permission,
+    RenderFrameHost* render_frame_host) {
   if (render_frame_host->IsNestedWithinFencedFrame())
     return blink::mojom::PermissionStatus::DENIED;
   return GetPermissionStatus(
-      permission, render_frame_host->GetLastCommittedOrigin().GetURL(),
-      content::WebContents::FromRenderFrameHost(render_frame_host)
-          ->GetLastCommittedURL()
-          .DeprecatedGetOriginAsURL());
+      permission,
+      PermissionUtil::GetLastCommittedOriginAsURL(render_frame_host),
+      PermissionUtil::GetLastCommittedOriginAsURL(
+          render_frame_host->GetMainFrame()));
 }
 
 blink::mojom::PermissionStatus
 WebTestPermissionManager::GetPermissionStatusForWorker(
-    content::PermissionType permission,
+    blink::PermissionType permission,
     RenderProcessHost* render_process_host,
     const GURL& worker_origin) {
   return GetPermissionStatus(permission, worker_origin, worker_origin);
@@ -179,7 +239,7 @@ WebTestPermissionManager::GetPermissionStatusForWorker(
 
 WebTestPermissionManager::SubscriptionId
 WebTestPermissionManager::SubscribePermissionStatusChange(
-    PermissionType permission,
+    blink::PermissionType permission,
     RenderProcessHost* render_process_host,
     RenderFrameHost* render_frame_host,
     const GURL& requesting_origin,
@@ -189,10 +249,8 @@ WebTestPermissionManager::SubscribePermissionStatusChange(
   // If the request is from a worker, it won't have a RFH.
   GURL embedding_origin = requesting_origin;
   if (render_frame_host) {
-    WebContents* web_contents =
-        WebContents::FromRenderFrameHost(render_frame_host);
-    embedding_origin =
-        web_contents->GetLastCommittedURL().DeprecatedGetOriginAsURL();
+    embedding_origin = PermissionUtil::GetLastCommittedOriginAsURL(
+        render_frame_host->GetMainFrame());
   }
 
   auto subscription = std::make_unique<Subscription>();
@@ -219,10 +277,11 @@ void WebTestPermissionManager::UnsubscribePermissionStatusChange(
 }
 
 void WebTestPermissionManager::SetPermission(
-    PermissionType permission,
+    blink::PermissionType permission,
     blink::mojom::PermissionStatus status,
     const GURL& url,
-    const GURL& embedding_url) {
+    const GURL& embedding_url,
+    blink::test::mojom::PermissionAutomation::SetPermissionCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   PermissionDescription description(permission, url.DeprecatedGetOriginAsURL(),
@@ -241,7 +300,7 @@ void WebTestPermissionManager::SetPermission(
     }
   }
 
-  OnPermissionChanged(description, status);
+  OnPermissionChanged(description, status, std::move(callback));
 }
 
 void WebTestPermissionManager::SetPermission(
@@ -250,14 +309,20 @@ void WebTestPermissionManager::SetPermission(
     const GURL& url,
     const GURL& embedding_url,
     blink::test::mojom::PermissionAutomation::SetPermissionCallback callback) {
-  auto type = PermissionDescriptorToPermissionType(descriptor);
+  auto type = blink::PermissionDescriptorToPermissionType(descriptor);
   if (!type) {
     std::move(callback).Run(false);
     return;
   }
+  GURL applicable_permission_url = url;
+  if (PermissionUtil::IsDomainOverride(descriptor)) {
+    const auto overridden_origin =
+        PermissionUtil::ExtractDomainOverride(descriptor);
+    applicable_permission_url = overridden_origin.GetURL();
+  }
 
-  SetPermission(*type, status, url, embedding_url);
-  std::move(callback).Run(true);
+  SetPermission(*type, status, applicable_permission_url, embedding_url,
+                std::move(callback));
 }
 
 void WebTestPermissionManager::ResetPermissions() {
@@ -274,7 +339,9 @@ void WebTestPermissionManager::Bind(
 
 void WebTestPermissionManager::OnPermissionChanged(
     const PermissionDescription& permission,
-    blink::mojom::PermissionStatus status) {
+    blink::mojom::PermissionStatus status,
+    blink::test::mojom::PermissionAutomation::SetPermissionCallback
+        permission_callback) {
   std::vector<base::OnceClosure> callbacks;
   callbacks.reserve(subscriptions_.size());
 
@@ -296,6 +363,31 @@ void WebTestPermissionManager::OnPermissionChanged(
 
   for (auto& callback : callbacks)
     std::move(callback).Run();
+
+  // The network service expects to hear about any new storage-access permission
+  // grants, so we have to inform it. This is true for "regular" or top-level
+  // storage access permission changes.
+  switch (permission.type) {
+    case blink::PermissionType::STORAGE_ACCESS_GRANT:
+      browser_context_->GetDefaultStoragePartition()
+          ->GetCookieManagerForBrowserProcess()
+          ->SetStorageAccessGrantSettings(
+              GetContentSettings(permission.origin, permission.embedding_origin,
+                                 status),
+              base::BindOnce(std::move(permission_callback), /*success=*/true));
+      break;
+    case blink::PermissionType::TOP_LEVEL_STORAGE_ACCESS:
+      browser_context_->GetDefaultStoragePartition()
+          ->GetCookieManagerForBrowserProcess()
+          ->SetTopLevelStorageAccessSettings(
+              GetContentSettings(permission.origin, permission.embedding_origin,
+                                 status),
+              base::BindOnce(std::move(permission_callback), /*success=*/true));
+      break;
+    default:
+      std::move(permission_callback).Run(true);
+      break;
+  }
 }
 
 }  // namespace content

@@ -1,4 +1,4 @@
-# Copyright 2017 The Chromium Authors. All rights reserved.
+# Copyright 2017 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -31,12 +31,12 @@ jumbo_component("cpp") {
   output_name = "network_cpp"
 
   sources = [
-    "bfcache_opt_in_parser.cc",
-    "bfcache_opt_in_parser.h",
     "client_hints.cc",
     "client_hints.h",
     "constants.cc",
     "constants.h",
+    "content_language_parser.cc",
+    "content_language_parser.h",
     "content_security_policy/content_security_policy.cc",
     "content_security_policy/content_security_policy.h",
     "content_security_policy/csp_context.cc",
@@ -93,6 +93,8 @@ jumbo_component("cpp") {
     "network_quality_tracker.h",
     "network_switches.cc",
     "network_switches.h",
+    "no_vary_search_header_parser.cc",
+    "no_vary_search_header_parser.h",
     "not_implemented_url_loader_factory.cc",
     "not_implemented_url_loader_factory.h",
     "origin_agent_cluster_parser.cc",
@@ -101,6 +103,7 @@ jumbo_component("cpp") {
     "parsed_headers.h",
     "private_network_access_check_result.cc",
     "private_network_access_check_result.h",
+    "record_ontransfersizeupdate_utils.h",
     "request_destination.cc",
     "request_destination.h",
     "request_mode.cc",
@@ -112,11 +115,15 @@ jumbo_component("cpp") {
     "session_cookie_delete_predicate.h",
     "shared_url_loader_factory.cc",
     "shared_url_loader_factory.h",
+    "simple_host_resolver.cc",
+    "simple_host_resolver.h",
     "simple_url_loader.cc",
     "simple_url_loader.h",
     "simple_url_loader_stream_consumer.h",
     "simple_url_loader_throttle.cc",
     "simple_url_loader_throttle.h",
+    "single_request_url_loader_factory.cc",
+    "single_request_url_loader_factory.h",
     "source_stream_to_data_pipe.cc",
     "source_stream_to_data_pipe.h",
     "spki_hash_set.cc",
@@ -130,6 +137,8 @@ jumbo_component("cpp") {
     "trust_token_operation_authorization.h",
     "url_util.cc",
     "url_util.h",
+    "variants_header_parser.cc",
+    "variants_header_parser.h",
     "weak_wrapper_shared_url_loader_factory.cc",
     "weak_wrapper_shared_url_loader_factory.h",
     "web_sandbox_flags.cc",
@@ -186,6 +195,12 @@ component("ip_address_mojom_support") {
   sources = [
     "address_list_mojom_traits.cc",
     "address_list_mojom_traits.h",
+    "alternate_protocol_usage_mojom_traits.cc",
+    "alternate_protocol_usage_mojom_traits.h",
+    "connection_endpoint_metadata_mojom_traits.cc",
+    "connection_endpoint_metadata_mojom_traits.h",
+    "host_resolver_endpoint_result_mojom_traits.cc",
+    "host_resolver_endpoint_result_mojom_traits.h",
     "ip_address_mojom_traits.cc",
     "ip_address_mojom_traits.h",
     "ip_endpoint_mojom_traits.cc",
@@ -198,6 +213,21 @@ component("ip_address_mojom_support") {
   defines = [ "IS_NETWORK_CPP_IP_ADDRESS_IMPL" ]
 }
 
+component("host_resolver_mojom_support") {
+  sources = [
+    "host_resolver_mojom_traits.cc",
+    "host_resolver_mojom_traits.h",
+  ]
+  deps = [
+    ":ip_address_mojom_support",
+    "//mojo/public/cpp/base:shared_typemap_traits",
+    "//mojo/public/mojom/base",
+    "//net",
+    "//services/network/public/mojom:mojom_host_resolver_shared",
+  ]
+  defines = [ "IS_NETWORK_CPP_HOST_RESOLVER_IMPL" ]
+}
+
 component("cookies_mojom_support") {
   sources = [
     "cookie_manager_shared_mojom_traits.cc",
@@ -205,6 +235,7 @@ component("cookies_mojom_support") {
   ]
   deps = [
     ":crash_keys",
+    ":first_party_sets_mojom_support",
     ":schemeful_site_mojom_support",
     "//net",
     "//services/network/public/mojom:cookies_mojom_shared",
@@ -247,6 +278,20 @@ component("proxy_config_mojom_support") {
   defines = [ "IS_NETWORK_CPP_PROXY_CONFIG_IMPL" ]
 }
 
+component("structured_headers_mojom_support") {
+  sources = [
+    "structured_headers_mojom_traits.cc",
+    "structured_headers_mojom_traits.h",
+  ]
+  deps = [
+    "//base",
+    "//mojo/public/mojom/base",
+    "//net",
+    "//services/network/public/mojom:mojom_structured_headers_shared",
+  ]
+  defines = [ "IS_NETWORK_CPP_STRUCTURED_HEADERS_IMPL" ]
+}
+
 # This component is separate from cpp_base as it is a dependency of
 # //services/network/public/mojom:url_loader_base.
 component("cross_origin_embedder_policy") {
@@ -266,6 +311,34 @@ component("cross_origin_embedder_policy") {
   defines = [ "IS_NETWORK_CPP_CROSS_ORIGIN_IMPL" ]
 }
 
+# This component is separate from `:cpp_base` to avoid a circular dependency as
+# its needed by :trigger_attestation_traits.
+component("trigger_attestation") {
+  sources = [
+    "trigger_attestation.cc",
+    "trigger_attestation.h",
+  ]
+  deps = [ "//base" ]
+  defines = [ "IS_NETWORK_CPP_TRIGGER_ATTESTATION_IMPL" ]
+}
+
+# This component is separate from
+# //services/network/public/mojom:url_loader_base to use the same typemap for
+# both Blink and non-Blink bindings.
+component("trigger_attestation_traits") {
+  sources = [
+    "attribution_mojom_traits.cc",
+    "attribution_mojom_traits.h",
+    "trigger_attestation.h",
+  ]
+  deps = [
+    ":trigger_attestation",
+    "//base",
+    "//services/network/public/mojom:mojom_attribution_shared",
+  ]
+  defines = [ "IS_NETWORK_CPP_ATTRIBUTION_MOJOM_TRAITS_IMPL" ]
+}
+
 # This component is separate from cpp_base as it is a dependency of
 # //services/network/public/mojom:cookies_mojom.
 component("schemeful_site_mojom_support") {
@@ -281,10 +354,28 @@ component("schemeful_site_mojom_support") {
   defines = [ "IS_NETWORK_CPP_SCHEMEFUL_IMPL" ]
 }
 
+# This component is separate from cpp_base as it is a dependency of
+# //services/network/public/mojom:cookies_mojom.
+jumbo_component("first_party_sets_mojom_support") {
+  sources = [
+    "first_party_sets_mojom_traits.cc",
+    "first_party_sets_mojom_traits.h",
+  ]
+  deps = [
+    ":schemeful_site_mojom_support",
+    "//mojo/public/cpp/base:shared_typemap_traits",
+    "//net",
+    "//services/network/public/mojom:mojom_first_party_sets_shared",
+  ]
+  defines = [ "IS_FIRST_PARTY_SETS_MOJOM_TRAITS_IMPL" ]
+}
+
 jumbo_component("cpp_base") {
   output_name = "network_cpp_base"
 
   sources = [
+    "cookie_setting_overrides_mojom_traits.cc",
+    "cookie_setting_overrides_mojom_traits.h",
     "cors/cors_error_status.cc",
     "cors/cors_error_status.h",
     "cors/cors_mojom_traits.cc",
@@ -303,6 +394,8 @@ jumbo_component("cpp_base") {
     "isolation_info_mojom_traits.h",
     "load_timing_info_mojom_traits.cc",
     "load_timing_info_mojom_traits.h",
+    "network_anonymization_key_mojom_traits.cc",
+    "network_anonymization_key_mojom_traits.h",
     "network_interface_mojom_traits.cc",
     "network_interface_mojom_traits.h",
     "network_ipc_param_traits.cc",
@@ -311,14 +404,14 @@ jumbo_component("cpp_base") {
     "network_isolation_key_mojom_traits.h",
     "optional_trust_token_params.cc",
     "optional_trust_token_params.h",
-    "origin_policy.cc",
-    "origin_policy.h",
     "resource_request.cc",
     "resource_request.h",
     "resource_request_body.cc",
     "resource_request_body.h",
     "transferable_directory.cc",
     "transferable_directory.h",
+    "transferable_socket.cc",
+    "transferable_socket.h",
     "trust_token_parameterization.h",
     "url_loader_completion_status.cc",
     "url_loader_completion_status.h",
@@ -346,6 +439,8 @@ jumbo_component("cpp_base") {
     ":network_param_mojom_support",
     ":proxy_config_mojom_support",
     ":schemeful_site_mojom_support",
+    ":structured_headers_mojom_support",
+    ":trigger_attestation",
     "//services/network/public/mojom:url_loader_base",
     "//url/ipc:url_ipc",
     "//url/mojom:url_mojom_gurl",
@@ -353,11 +448,13 @@ jumbo_component("cpp_base") {
   ]
   deps = [
     ":buildflags",
+    ":first_party_sets_mojom_support",
     "//base",
     "//ipc",
     "//mojo/public/mojom/base",
     "//net",
     "//services/network/public/mojom:cookies_mojom",
+    "//services/network/public/mojom:mojom_first_party_sets",
     "//services/network/public/mojom:url_loader_base",
   ]
   defines = [ "IS_NETWORK_CPP_BASE_IMPL" ]
@@ -395,10 +492,15 @@ mojom("test_interfaces") {
 source_set("test_support") {
   testonly = true
 
-  sources = [ "is_potentially_trustworthy_unittest.h" ]
+  sources = [
+    "is_potentially_trustworthy_unittest.h",
+    "trigger_attestation_test_utils.cc",
+    "trigger_attestation_test_utils.h",
+  ]
 
   public_deps = [
     ":cpp",
+    ":trigger_attestation",
     "//base",
     "//base/test:test_support",
     "//testing/gmock",
@@ -411,14 +513,15 @@ source_set("tests") {
   testonly = true
 
   sources = [
-    "bfcache_opt_in_parser_unittest.cc",
     "client_hints_unittest.cc",
+    "content_language_parser_unittest.cc",
     "content_security_policy/content_security_policy_unittest.cc",
     "content_security_policy/csp_context_unittest.cc",
     "content_security_policy/csp_source_list_unittest.cc",
     "content_security_policy/csp_source_unittest.cc",
     "cookie_manager_mojom_traits_unittest.cc",
     "cookie_manager_shared_mojom_traits_unittest.cc",
+    "cookie_setting_overrides_mojom_traits_unittest.cc",
     "corb/corb_impl_unittest.cc",
     "cors/cors_mojom_traits_unittest.cc",
     "cors/cors_unittest.cc",
@@ -434,6 +537,7 @@ source_set("tests") {
     "digitally_signed_mojom_traits_unittest.cc",
     "empty_url_loader_client_unittest.cc",
     "file_enumeration_entry_mojom_traits_unittest.cc",
+    "first_party_sets_mojom_traits_unittest.cc",
     "header_util_unittest.cc",
     "host_resolver_mojom_traits_unittest.cc",
     "initiator_lock_compatibility_unittest.cc",
@@ -445,21 +549,28 @@ source_set("tests") {
     "mutable_network_traffic_annotation_tag_mojom_traits_unittest.cc",
     "mutable_partial_network_traffic_annotation_tag_mojom_traits_unittest.cc",
     "net_log_mojom_traits_unittest.cc",
+    "network_anonymization_key_mojom_traits_unittest.cc",
     "network_connection_tracker_unittest.cc",
     "network_isolation_key_mojom_traits_unittest.cc",
     "network_mojom_traits_unittest.cc",
     "network_quality_tracker_unittest.cc",
     "optional_trust_token_params_unittest.cc",
     "origin_agent_cluster_parser_unittest.cc",
+    "parsed_headers_unittest.cc",
     "proxy_config_mojom_traits_unittest.cc",
     "schemeful_site_mojom_traits_unittest.cc",
+    "simple_host_resolver_unittest.cc",
     "simple_url_loader_unittest.cc",
     "source_stream_to_data_pipe_unittest.cc",
+    "structured_headers_mojom_traits_unittest.cc",
     "supports_loading_mode/supports_loading_mode_parser_unittest.cc",
     "timing_allow_origin_parser_unittest.cc",
     "transferable_directory_unittest.cc",
+    "transferable_socket_unittest.cc",
+    "trigger_attestation_unittest.cc",
     "url_loader_completion_status_mojom_traits_unittest.cc",
     "url_request_mojom_traits_unittest.cc",
+    "variants_header_parser_unittest.cc",
     "web_sandbox_flags_unittests.cc",
     "x_frame_options_parser_unittest.cc",
   ]
@@ -498,4 +609,14 @@ fuzzer_test("xfo_fuzzer") {
 fuzzer_test("cors_fuzzer") {
   sources = [ "cors/cors_fuzzer.cc" ]
   deps = [ ":cpp" ]
+  seed_corpus = "//services/network/public/cpp/cors/corpus"
+}
+
+fuzzer_test("client_hints_fuzzer") {
+  sources = [ "client_hints_fuzzer.cc" ]
+  deps = [
+    ":cpp",
+    "//base",
+    "//base:i18n",
+  ]
 }

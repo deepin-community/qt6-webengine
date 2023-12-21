@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,6 +12,7 @@
 #include "content/public/common/content_features.h"
 #include "content/public/test/back_forward_cache_util.h"
 #include "content/public/test/navigation_simulator.h"
+#include "content/public/test/prerender_test_util.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/web_contents_tester.h"
 #include "google_apis/gaia/gaia_urls.h"
@@ -215,21 +216,15 @@ TEST_F(DiceTabHelperTest, IsSyncSigninInProgress) {
 
 class DiceTabHelperPrerenderTest : public DiceTabHelperTest {
  public:
-  DiceTabHelperPrerenderTest() {
-    feature_list_.InitWithFeatures(
-        {blink::features::kPrerender2},
-        // Disable the memory requirement of Prerender2 so the test can run on
-        // any bot.
-        {blink::features::kPrerender2MemoryControls});
-  }
-
-  ~DiceTabHelperPrerenderTest() override = default;
+  DiceTabHelperPrerenderTest() = default;
 
  private:
-  base::test::ScopedFeatureList feature_list_;
+  content::test::ScopedPrerenderFeatureList prerender_feature_list_;
 };
 
 TEST_F(DiceTabHelperPrerenderTest, SigninStatusAfterPrerendering) {
+  content::test::ScopedPrerenderWebContentsDelegate web_contents_delegate(
+      *web_contents());
   base::UserActionTester ua_tester;
   DiceTabHelper::CreateForWebContents(web_contents());
   DiceTabHelper* dice_tab_helper =

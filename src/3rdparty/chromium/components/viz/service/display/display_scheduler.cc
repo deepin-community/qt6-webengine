@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,11 +11,26 @@
 #include "base/cxx17_backports.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/task/delay_policy.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
 #include "components/viz/common/features.h"
 #include "components/viz/service/performance_hint/hint_session.h"
 
 namespace viz {
+
+namespace {
+
+base::TimeDelta ComputeAdpfTarget(const BeginFrameArgs& args) {
+  if (args.possible_deadlines) {
+    const auto& deadline = args.possible_deadlines->GetPreferredDeadline();
+    // Arbitrarily use 75% of the deadline for CPU work.
+    return deadline.latch_delta * 3 / 4;
+  }
+  return base::Milliseconds(12);
+}
+
+}  // namespace
 
 class DisplayScheduler::BeginFrameObserver : public BeginFrameObserverBase {
  public:
@@ -160,12 +175,9 @@ void DisplayScheduler::MaybeCreateHintSession(
   if ((!create_session_for_current_thread_ids_failed_ && !hint_session_) ||
       current_thread_ids_ != thread_ids) {
     hint_session_.reset();
-    int target_ms = features::kAdpfTargetDurationMs.Get();
-    if (target_ms <= 0 || target_ms > 1000)
-      target_ms = 12;
     current_thread_ids_ = std::move(thread_ids);
     hint_session_ = hint_session_factory_->CreateSession(
-        current_thread_ids_, base::Milliseconds(target_ms));
+        current_thread_ids_, ComputeAdpfTarget(current_begin_frame_args_));
     create_session_for_current_thread_ids_failed_ = !hint_session_;
   }
 }
@@ -241,6 +253,9 @@ bool DisplayScheduler::OnBeginFrame(const BeginFrameArgs& args) {
 
   // Schedule the deadline.
   current_begin_frame_args_ = save_args;
+  if (hint_session_) {
+    hint_session_->UpdateTargetDuration(ComputeAdpfTarget(save_args));
+  }
 
   base::TimeDelta delta;
   if (client_ && dynamic_scheduler_deadlines_percentile_.has_value() &&
@@ -264,38 +279,39 @@ int DisplayScheduler::MaxPendingSwaps() const {
   // Interval for 90hz and 120hz with some delta for margin of error.
   constexpr base::TimeDelta k90HzInterval = base::Microseconds(11500);
   constexpr base::TimeDelta k120HzInterval = base::Microseconds(8500);
-  int max_pending_swaps;
-  if (current_begin_frame_args_.possible_deadlines) {
-    // Estimate the max pending swap based on the frame rate and presentation
-    // time.
-    const auto& deadline =
-        current_begin_frame_args_.possible_deadlines->GetPreferredDeadline();
-    int64_t total_time_nanos = deadline.present_delta.InNanoseconds();
-    int64_t interval_nanos = current_begin_frame_args_.interval.InNanoseconds();
-    // Assuming no frames are dropped, then:
-    // * A new frame is started every `interval_nanos`.
-    // * A buffer is returned after its present time is passed.
-    // This gives us the formula that number of pending swaps needed (ie the
-    // max) is the number of new frames that can be started before the buffer
-    // for a frame is returned: total_time_nanos / interval_nanos.
-    // However present time is generally not an exact multiple of interval, and
-    // here the 0.8 constant is chosen to bias rounding up.
-    max_pending_swaps =
-        (total_time_nanos + 0.8 * interval_nanos) / interval_nanos;
-    max_pending_swaps = base::clamp(max_pending_swaps, 0,
-                                    pending_swap_params_.max_pending_swaps);
+  int param_max_pending_swaps;
+  if (current_begin_frame_args_.interval < k120HzInterval &&
+      pending_swap_params_.max_pending_swaps_120hz) {
+    param_max_pending_swaps =
+        pending_swap_params_.max_pending_swaps_120hz.value();
+  } else if (current_begin_frame_args_.interval < k90HzInterval &&
+             pending_swap_params_.max_pending_swaps_90hz) {
+    param_max_pending_swaps =
+        pending_swap_params_.max_pending_swaps_90hz.value();
   } else {
-    if (current_begin_frame_args_.interval < k120HzInterval &&
-        pending_swap_params_.max_pending_swaps_120hz) {
-      max_pending_swaps = pending_swap_params_.max_pending_swaps_120hz.value();
-    } else if (current_begin_frame_args_.interval < k90HzInterval &&
-               pending_swap_params_.max_pending_swaps_90hz) {
-      max_pending_swaps = pending_swap_params_.max_pending_swaps_90hz.value();
-    } else {
-      max_pending_swaps = pending_swap_params_.max_pending_swaps;
-    }
+    param_max_pending_swaps = pending_swap_params_.max_pending_swaps;
   }
-  return max_pending_swaps;
+  if (!current_begin_frame_args_.possible_deadlines) {
+    return param_max_pending_swaps;
+  }
+
+  // Estimate the max pending swap based on the frame rate and presentation
+  // time.
+  const auto& deadline =
+      current_begin_frame_args_.possible_deadlines->GetPreferredDeadline();
+  int64_t total_time_nanos = deadline.present_delta.InNanoseconds();
+  int64_t interval_nanos = current_begin_frame_args_.interval.InNanoseconds();
+  // Assuming no frames are dropped, then:
+  // * A new frame is started every `interval_nanos`.
+  // * A buffer is returned after its present time is passed.
+  // This gives us the formula that number of pending swaps needed (ie the
+  // max) is the number of new frames that can be started before the buffer
+  // for a frame is returned: total_time_nanos / interval_nanos.
+  // However present time is generally not an exact multiple of interval, and
+  // here the 0.8 constant is chosen to bias rounding up.
+  int deadline_max_pending_swaps =
+      (total_time_nanos + 0.8 * interval_nanos) / interval_nanos;
+  return base::clamp(deadline_max_pending_swaps, 0, param_max_pending_swaps);
 }
 
 void DisplayScheduler::SetNeedsOneBeginFrame(bool needs_draw) {
@@ -456,9 +472,11 @@ void DisplayScheduler::ScheduleBeginFrameDeadline() {
     return;
   }
 
-  begin_frame_deadline_timer_.Start(FROM_HERE, desired_deadline,
-                                    begin_frame_deadline_closure_,
-                                    base::ExactDeadline(true));
+  begin_frame_deadline_timer_.Start(
+      FROM_HERE, desired_deadline, begin_frame_deadline_closure_,
+      deadline_mode == BeginFrameDeadlineMode::kLate
+          ? base::subtle::DelayPolicy::kFlexibleNoSooner
+          : base::subtle::DelayPolicy::kPrecise);
   TRACE_EVENT2("viz", "Using new deadline", "deadline_mode", deadline_mode,
                "desired_deadline", desired_deadline);
 }

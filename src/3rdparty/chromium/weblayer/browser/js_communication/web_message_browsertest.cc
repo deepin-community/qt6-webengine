@@ -1,10 +1,10 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "weblayer/public/js_communication/web_message.h"
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
@@ -67,7 +67,7 @@ class WebMessageHostImpl : public WebMessageHost {
       // First time called, send a message to the page.
       std::unique_ptr<WebMessage> m2 = std::make_unique<WebMessage>();
       m2->message = u"from c++";
-      proxy_->PostMessage(std::move(m2));
+      proxy_->PostWebMessage(std::move(m2));
     } else {
       // On subsequent calls quit.
       quit_closure_.Run();
@@ -167,11 +167,12 @@ class WebMessageTestWithBfCache : public WebLayerBrowserTest {
   // WebLayerBrowserTest:
   void SetUp() override {
     scoped_feature_list_.InitWithFeaturesAndParameters(
-        {{features::kBackForwardCache,
+        {{features::kBackForwardCache, {{}}},
+         {features::kBackForwardCacheTimeToLiveControl,
           {// Set a very long TTL before expiration (longer than the test
            // timeout) so tests that are expecting deletion don't pass when
            // they shouldn't.
-           {"TimeToLiveInBackForwardCacheInSeconds", "3600"}}}},
+           {"time_to_live_seconds", "3600"}}}},
         // Allow BackForwardCache for all devices regardless of their memory.
         {features::kBackForwardCacheMemoryControls});
     WebLayerBrowserTest::SetUp();

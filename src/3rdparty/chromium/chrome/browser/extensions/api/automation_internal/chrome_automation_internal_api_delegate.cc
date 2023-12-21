@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -141,7 +141,13 @@ void ChromeAutomationInternalApiDelegate::SetAutomationEventRouterInterface(
 
 content::BrowserContext*
 ChromeAutomationInternalApiDelegate::GetActiveUserContext() {
+  // Use the main profile on ChromeOS. Desktop platforms don't have the concept
+  // of a "main" profile, so pick the "last used" profile instead.
+#if BUILDFLAG(IS_CHROMEOS)
   return ProfileManager::GetActiveUserProfile();
+#else
+  return ProfileManager::GetLastUsedProfile();
+#endif
 }
 
 }  // namespace extensions

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,16 +17,17 @@
 #include <vector>
 
 #include "base/base_paths.h"
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/command_line.h"
 #include "base/environment.h"
+#include "base/features.h"
 #include "base/files/file.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/platform_file.h"
 #include "base/files/scoped_file.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/guid.h"
 #include "base/logging.h"
 #include "base/path_service.h"
@@ -37,6 +38,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/multiprocess_test.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_file_util.h"
 #include "base/test/test_timeouts.h"
@@ -44,7 +46,6 @@
 #include "base/threading/thread.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/multiprocess_func_list.h"
 #include "testing/platform_test.h"
@@ -55,7 +56,11 @@
 #include <tchar.h>
 #include <windows.h>
 #include <winioctl.h>
+#include "base/features.h"
+#include "base/scoped_native_library.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/test/gtest_util.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/win_util.h"
 #endif
@@ -774,6 +779,191 @@ TEST_F(FileUtilTest, CreateWinHardlinkTest) {
   EXPECT_FALSE(CreateWinHardLink(temp_dir_.GetPath(), test_dir));
 }
 
+TEST_F(FileUtilTest, PreventExecuteMappingNewFile) {
+  base::test::ScopedFeatureList enforcement_feature;
+  enforcement_feature.InitAndEnableFeature(
+      features::kEnforceNoExecutableFileHandles);
+  FilePath file = temp_dir_.GetPath().Append(FPL("afile.txt"));
+
+  ASSERT_FALSE(PathExists(file));
+  {
+    File new_file(file, File::FLAG_WRITE | File::FLAG_WIN_NO_EXECUTE |
+                            File::FLAG_CREATE_ALWAYS);
+    ASSERT_TRUE(new_file.IsValid());
+  }
+
+  {
+    File open_file(file, File::FLAG_READ | File::FLAG_WIN_EXECUTE |
+                             File::FLAG_OPEN_ALWAYS);
+    EXPECT_FALSE(open_file.IsValid());
+  }
+  // Verify the deny ACL did not prevent deleting the file.
+  EXPECT_TRUE(DeleteFile(file));
+}
+
+TEST_F(FileUtilTest, PreventExecuteMappingExisting) {
+  base::test::ScopedFeatureList enforcement_feature;
+  enforcement_feature.InitAndEnableFeature(
+      features::kEnforceNoExecutableFileHandles);
+  FilePath file = temp_dir_.GetPath().Append(FPL("afile.txt"));
+  CreateTextFile(file, bogus_content);
+  ASSERT_TRUE(PathExists(file));
+  {
+    File open_file(file, File::FLAG_READ | File::FLAG_WIN_EXECUTE |
+                             File::FLAG_OPEN_ALWAYS);
+    EXPECT_TRUE(open_file.IsValid());
+  }
+  EXPECT_TRUE(PreventExecuteMapping(file));
+  {
+    File open_file(file, File::FLAG_READ | File::FLAG_WIN_EXECUTE |
+                             File::FLAG_OPEN_ALWAYS);
+    EXPECT_FALSE(open_file.IsValid());
+  }
+  // Verify the deny ACL did not prevent deleting the file.
+  EXPECT_TRUE(DeleteFile(file));
+}
+
+TEST_F(FileUtilTest, PreventExecuteMappingOpenFile) {
+  base::test::ScopedFeatureList enforcement_feature;
+  enforcement_feature.InitAndEnableFeature(
+      features::kEnforceNoExecutableFileHandles);
+  FilePath file = temp_dir_.GetPath().Append(FPL("afile.txt"));
+  CreateTextFile(file, bogus_content);
+  ASSERT_TRUE(PathExists(file));
+  File open_file(file, File::FLAG_READ | File::FLAG_WRITE |
+                           File::FLAG_WIN_EXECUTE | File::FLAG_OPEN_ALWAYS);
+  EXPECT_TRUE(open_file.IsValid());
+  // Verify ACE can be set even on an open file.
+  EXPECT_TRUE(PreventExecuteMapping(file));
+  {
+    File second_open_file(
+        file, File::FLAG_READ | File::FLAG_WRITE | File::FLAG_OPEN_ALWAYS);
+    EXPECT_TRUE(second_open_file.IsValid());
+  }
+  {
+    File third_open_file(file, File::FLAG_READ | File::FLAG_WIN_EXECUTE |
+                                   File::FLAG_OPEN_ALWAYS);
+    EXPECT_FALSE(third_open_file.IsValid());
+  }
+
+  open_file.Close();
+  // Verify the deny ACL did not prevent deleting the file.
+  EXPECT_TRUE(DeleteFile(file));
+}
+
+TEST(FileUtilDeathTest, DisallowNoExecuteOnUnsafeFile) {
+  base::test::ScopedFeatureList enforcement_feature;
+  enforcement_feature.InitAndEnableFeature(
+      features::kEnforceNoExecutableFileHandles);
+  base::FilePath local_app_data;
+  // This test places a file in %LOCALAPPDATA% to verify that the checks in
+  // IsPathSafeToSetAclOn work correctly.
+  ASSERT_TRUE(
+      base::PathService::Get(base::DIR_LOCAL_APP_DATA, &local_app_data));
+
+  base::FilePath file_path;
+  EXPECT_DCHECK_DEATH_WITH(
+      {
+        {
+          base::File temp_file =
+              base::CreateAndOpenTemporaryFileInDir(local_app_data, &file_path);
+        }
+        File reopen_file(file_path, File::FLAG_READ | File::FLAG_WRITE |
+                                        File::FLAG_WIN_NO_EXECUTE |
+                                        File::FLAG_OPEN_ALWAYS |
+                                        File::FLAG_DELETE_ON_CLOSE);
+      },
+      "Unsafe to deny execute access to path");
+}
+
+MULTIPROCESS_TEST_MAIN(NoExecuteOnSafeFileMain) {
+  base::FilePath temp_file;
+  CHECK(base::CreateTemporaryFile(&temp_file));
+
+  // A file with FLAG_WIN_NO_EXECUTE created in temp dir should always be
+  // permitted.
+  File reopen_file(temp_file, File::FLAG_READ | File::FLAG_WRITE |
+                                  File::FLAG_WIN_NO_EXECUTE |
+                                  File::FLAG_OPEN_ALWAYS |
+                                  File::FLAG_DELETE_ON_CLOSE);
+  return 0;
+}
+
+TEST_F(FileUtilTest, NoExecuteOnSafeFile) {
+  FilePath new_dir;
+  ASSERT_TRUE(CreateTemporaryDirInDir(
+      temp_dir_.GetPath(), FILE_PATH_LITERAL("NoExecuteOnSafeFileLongPath"),
+      &new_dir));
+
+  FilePath short_dir = base::MakeShortFilePath(new_dir);
+
+  // Verify that the path really is 8.3 now.
+  ASSERT_NE(new_dir.value(), short_dir.value());
+
+  LaunchOptions options;
+  options.environment[L"TMP"] = short_dir.value();
+
+  CommandLine child_command_line(GetMultiProcessTestChildBaseCommandLine());
+
+  Process child_process = SpawnMultiProcessTestChild(
+      "NoExecuteOnSafeFileMain", child_command_line, options);
+  ASSERT_TRUE(child_process.IsValid());
+  int rv = -1;
+  ASSERT_TRUE(WaitForMultiprocessTestChildExit(
+      child_process, TestTimeouts::action_timeout(), &rv));
+  ASSERT_EQ(0, rv);
+}
+
+class FileUtilExecuteEnforcementTest
+    : public FileUtilTest,
+      public ::testing::WithParamInterface<bool> {
+ public:
+  FileUtilExecuteEnforcementTest() {
+    if (IsEnforcementEnabled()) {
+      enforcement_feature_.InitAndEnableFeature(
+          features::kEnforceNoExecutableFileHandles);
+    } else {
+      enforcement_feature_.InitAndDisableFeature(
+          features::kEnforceNoExecutableFileHandles);
+    }
+  }
+
+ protected:
+  bool IsEnforcementEnabled() { return GetParam(); }
+
+ private:
+  base::test::ScopedFeatureList enforcement_feature_;
+};
+
+// This test verifies that if a file has been passed to `PreventExecuteMapping`
+// and enforcement is enabled, then it cannot be mapped as executable into
+// memory.
+TEST_P(FileUtilExecuteEnforcementTest, Functional) {
+  FilePath dir_exe;
+  EXPECT_TRUE(PathService::Get(DIR_EXE, &dir_exe));
+  // This DLL is built as part of base_unittests so is guaranteed to be present.
+  FilePath test_dll(dir_exe.Append(FPL("scoped_handle_test_dll.dll")));
+
+  EXPECT_TRUE(base::PathExists(test_dll));
+
+  FilePath dll_copy_path = temp_dir_.GetPath().Append(FPL("test.dll"));
+
+  ASSERT_TRUE(CopyFile(test_dll, dll_copy_path));
+  ASSERT_TRUE(PreventExecuteMapping(dll_copy_path));
+  ScopedNativeLibrary module(dll_copy_path);
+
+  // If enforcement is enabled, then `PreventExecuteMapping` will have prevented
+  // the load, and the module will be invalid.
+  EXPECT_EQ(IsEnforcementEnabled(), !module.is_valid());
+}
+
+INSTANTIATE_TEST_SUITE_P(EnforcementEnabled,
+                         FileUtilExecuteEnforcementTest,
+                         ::testing::Values(true));
+INSTANTIATE_TEST_SUITE_P(EnforcementDisabled,
+                         FileUtilExecuteEnforcementTest,
+                         ::testing::Values(false));
+
 #endif  // BUILDFLAG(IS_WIN)
 
 #if BUILDFLAG(IS_POSIX)
@@ -1132,7 +1322,7 @@ TEST_F(FileUtilTest, CopyDirectoryPermissions) {
   ASSERT_TRUE(GetPosixFilePermissions(file_name_to, &mode));
 #if BUILDFLAG(IS_APPLE)
   expected_mode = 0755;
-#elif BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#elif BUILDFLAG(IS_CHROMEOS)
   expected_mode = 0644;
 #else
   expected_mode = 0600;
@@ -1142,7 +1332,7 @@ TEST_F(FileUtilTest, CopyDirectoryPermissions) {
   ASSERT_TRUE(GetPosixFilePermissions(file2_name_to, &mode));
 #if BUILDFLAG(IS_APPLE)
   expected_mode = 0755;
-#elif BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#elif BUILDFLAG(IS_CHROMEOS)
   expected_mode = 0644;
 #else
   expected_mode = 0600;
@@ -1152,7 +1342,7 @@ TEST_F(FileUtilTest, CopyDirectoryPermissions) {
   ASSERT_TRUE(GetPosixFilePermissions(file3_name_to, &mode));
 #if BUILDFLAG(IS_APPLE)
   expected_mode = 0600;
-#elif BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#elif BUILDFLAG(IS_CHROMEOS)
   expected_mode = 0644;
 #else
   expected_mode = 0600;
@@ -1302,7 +1492,7 @@ TEST_F(FileUtilTest, CopyFileExecutablePermission) {
   int expected_mode;
 #if BUILDFLAG(IS_APPLE)
   expected_mode = 0755;
-#elif BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#elif BUILDFLAG(IS_CHROMEOS)
   expected_mode = 0644;
 #else
   expected_mode = 0600;
@@ -1320,7 +1510,7 @@ TEST_F(FileUtilTest, CopyFileExecutablePermission) {
   ASSERT_TRUE(GetPosixFilePermissions(dst, &mode));
 #if BUILDFLAG(IS_APPLE)
   expected_mode = 0755;
-#elif BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#elif BUILDFLAG(IS_CHROMEOS)
   expected_mode = 0644;
 #else
   expected_mode = 0600;
@@ -1338,7 +1528,7 @@ TEST_F(FileUtilTest, CopyFileExecutablePermission) {
   ASSERT_TRUE(GetPosixFilePermissions(dst, &mode));
 #if BUILDFLAG(IS_APPLE)
   expected_mode = 0600;
-#elif BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#elif BUILDFLAG(IS_CHROMEOS)
   expected_mode = 0644;
 #else
   expected_mode = 0600;
@@ -2719,6 +2909,15 @@ TEST_F(FileUtilTest, CreateNewTempDirectoryTest) {
   FilePath temp_dir;
   ASSERT_TRUE(CreateNewTempDirectory(FilePath::StringType(), &temp_dir));
   EXPECT_TRUE(PathExists(temp_dir));
+
+#if BUILDFLAG(IS_WIN)
+  FilePath expected_parent_dir;
+  EXPECT_TRUE(PathService::Get(
+      ::IsUserAnAdmin() ? int{DIR_PROGRAM_FILES} : int{DIR_TEMP},
+      &expected_parent_dir));
+  EXPECT_TRUE(expected_parent_dir.IsParent(temp_dir));
+#endif  // BUILDFLAG(IS_WIN)
+
   EXPECT_TRUE(DeleteFile(temp_dir));
 }
 
@@ -3109,6 +3308,33 @@ TEST_F(FileUtilTest, ReadFile) {
             ReadFile(file_path_not_exist,
                      &exact_buffer[0],
                      static_cast<int>(exact_buffer.size())));
+}
+
+TEST_F(FileUtilTest, ReadFileToBytes) {
+  const std::vector<uint8_t> kTestData = {'0', '1', '2', '3'};
+
+  FilePath file_path =
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("ReadFileToStringTest"));
+  FilePath file_path_dangerous =
+      temp_dir_.GetPath()
+          .Append(FILE_PATH_LITERAL(".."))
+          .Append(temp_dir_.GetPath().BaseName())
+          .Append(FILE_PATH_LITERAL("ReadFileToStringTest"));
+
+  // Create test file.
+  ASSERT_TRUE(WriteFile(file_path, kTestData));
+
+  absl::optional<std::vector<uint8_t>> bytes = ReadFileToBytes(file_path);
+  ASSERT_TRUE(bytes.has_value());
+  EXPECT_EQ(kTestData, bytes);
+
+  // Write empty file.
+  ASSERT_TRUE(WriteFile(file_path, ""));
+  bytes = ReadFileToBytes(file_path);
+  ASSERT_TRUE(bytes.has_value());
+  EXPECT_TRUE(bytes->empty());
+
+  ASSERT_FALSE(ReadFileToBytes(file_path_dangerous));
 }
 
 TEST_F(FileUtilTest, ReadFileToString) {
@@ -4143,16 +4369,15 @@ TEST_F(FileUtilTest, PreReadFile_ExistingFile_NoSize) {
   FilePath text_file = temp_dir_.GetPath().Append(FPL("text_file"));
   CreateTextFile(text_file, bogus_content);
 
-  EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false).succeeded());
+  EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false));
 }
 
 TEST_F(FileUtilTest, PreReadFile_ExistingFile_ExactSize) {
   FilePath text_file = temp_dir_.GetPath().Append(FPL("text_file"));
   CreateTextFile(text_file, bogus_content);
 
-  EXPECT_TRUE(
-      PreReadFile(text_file, /*is_executable=*/false, std::size(bogus_content))
-          .succeeded());
+  EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false,
+                          std::size(bogus_content)));
 }
 
 TEST_F(FileUtilTest, PreReadFile_ExistingFile_OverSized) {
@@ -4160,8 +4385,7 @@ TEST_F(FileUtilTest, PreReadFile_ExistingFile_OverSized) {
   CreateTextFile(text_file, bogus_content);
 
   EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false,
-                          std::size(bogus_content) * 2)
-                  .succeeded());
+                          std::size(bogus_content) * 2));
 }
 
 TEST_F(FileUtilTest, PreReadFile_ExistingFile_UnderSized) {
@@ -4169,16 +4393,14 @@ TEST_F(FileUtilTest, PreReadFile_ExistingFile_UnderSized) {
   CreateTextFile(text_file, bogus_content);
 
   EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false,
-                          std::size(bogus_content) / 2)
-                  .succeeded());
+                          std::size(bogus_content) / 2));
 }
 
 TEST_F(FileUtilTest, PreReadFile_ExistingFile_ZeroSize) {
   FilePath text_file = temp_dir_.GetPath().Append(FPL("text_file"));
   CreateTextFile(text_file, bogus_content);
 
-  EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false, /*max_bytes=*/0)
-                  .succeeded());
+  EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false, /*max_bytes=*/0));
 }
 
 TEST_F(FileUtilTest, PreReadFile_ExistingEmptyFile_NoSize) {
@@ -4193,14 +4415,25 @@ TEST_F(FileUtilTest, PreReadFile_ExistingEmptyFile_NoSize) {
 TEST_F(FileUtilTest, PreReadFile_ExistingEmptyFile_ZeroSize) {
   FilePath text_file = temp_dir_.GetPath().Append(FPL("text_file"));
   CreateTextFile(text_file, L"");
-  EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false, /*max_bytes=*/0)
-                  .succeeded());
+  EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false, /*max_bytes=*/0));
 }
 
 TEST_F(FileUtilTest, PreReadFile_InexistentFile) {
   FilePath inexistent_file = temp_dir_.GetPath().Append(FPL("inexistent_file"));
-  EXPECT_FALSE(
-      PreReadFile(inexistent_file, /*is_executable=*/false).succeeded());
+  EXPECT_FALSE(PreReadFile(inexistent_file, /*is_executable=*/false));
+}
+
+TEST_F(FileUtilTest, PreReadFile_Executable) {
+  FilePath exe_data_dir;
+  ASSERT_TRUE(PathService::Get(DIR_TEST_DATA, &exe_data_dir));
+  exe_data_dir = exe_data_dir.Append(FPL("pe_image_reader"));
+  ASSERT_TRUE(PathExists(exe_data_dir));
+
+  // Load a sample executable and confirm that it was successfully prefetched.
+  // `test_exe` is a Windows binary, which is fine in this case because only the
+  // Windows implementation treats binaries differently from other files.
+  const FilePath test_exe = exe_data_dir.Append(FPL("signed.exe"));
+  EXPECT_TRUE(PreReadFile(test_exe, /*is_executable=*/true));
 }
 
 // Test that temp files obtained racily are all unique (no interference between

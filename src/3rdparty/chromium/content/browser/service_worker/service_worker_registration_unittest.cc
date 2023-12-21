@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,11 +7,11 @@
 #include <stdint.h>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/check.h"
 #include "base/compiler_specific.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/notreached.h"
@@ -19,7 +19,6 @@
 #include "base/test/bind.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "content/browser/service_worker/embedded_worker_status.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
@@ -230,7 +229,8 @@ class ServiceWorkerRegistrationTest : public testing::Test {
 
 TEST_F(ServiceWorkerRegistrationTest, SetAndUnsetVersions) {
   const GURL kScope("http://www.example.not/");
-  const blink::StorageKey kKey(url::Origin::Create(kScope));
+  const blink::StorageKey kKey =
+      blink::StorageKey::CreateFirstParty(url::Origin::Create(kScope));
   const GURL kScript("http://www.example.not/service_worker.js");
   int64_t kRegistrationId = 1L;
 
@@ -238,7 +238,8 @@ TEST_F(ServiceWorkerRegistrationTest, SetAndUnsetVersions) {
   options.scope = kScope;
   scoped_refptr<ServiceWorkerRegistration> registration =
       base::MakeRefCounted<ServiceWorkerRegistration>(
-          options, kKey, kRegistrationId, context()->AsWeakPtr());
+          options, kKey, kRegistrationId, context()->AsWeakPtr(),
+          blink::mojom::AncestorFrameType::kNormalFrame);
 
   const int64_t version_1_id = 1L;
   const int64_t version_2_id = 2L;
@@ -308,12 +309,14 @@ TEST_F(ServiceWorkerRegistrationTest, SetAndUnsetVersions) {
 
 TEST_F(ServiceWorkerRegistrationTest, FailedRegistrationNoCrash) {
   const GURL kScope("http://www.example.not/");
-  const blink::StorageKey kKey(url::Origin::Create(kScope));
+  const blink::StorageKey kKey =
+      blink::StorageKey::CreateFirstParty(url::Origin::Create(kScope));
   int64_t kRegistrationId = 1L;
   blink::mojom::ServiceWorkerRegistrationOptions options;
   options.scope = kScope;
   auto registration = base::MakeRefCounted<ServiceWorkerRegistration>(
-      options, kKey, kRegistrationId, context()->AsWeakPtr());
+      options, kKey, kRegistrationId, context()->AsWeakPtr(),
+      blink::mojom::AncestorFrameType::kNormalFrame);
   // Prepare a ServiceWorkerContainerHost.
   ServiceWorkerRemoteContainerEndpoint remote_endpoint;
   base::WeakPtr<ServiceWorkerContainerHost> container_host =
@@ -338,7 +341,8 @@ TEST_F(ServiceWorkerRegistrationTest, FailedRegistrationNoCrash) {
 
 TEST_F(ServiceWorkerRegistrationTest, NavigationPreload) {
   const GURL kScope("http://www.example.not/");
-  const blink::StorageKey kKey(url::Origin::Create(kScope));
+  const blink::StorageKey kKey =
+      blink::StorageKey::CreateFirstParty(url::Origin::Create(kScope));
   const GURL kScript("https://www.example.not/service_worker.js");
   // Setup.
 
@@ -349,15 +353,15 @@ TEST_F(ServiceWorkerRegistrationTest, NavigationPreload) {
   scoped_refptr<ServiceWorkerVersion> version_1 = CreateNewServiceWorkerVersion(
       context()->registry(), registration.get(), kScript,
       blink::mojom::ScriptType::kClassic);
-  version_1->set_fetch_handler_existence(
-      ServiceWorkerVersion::FetchHandlerExistence::EXISTS);
+  version_1->set_fetch_handler_type(
+      ServiceWorkerVersion::FetchHandlerType::kNotSkippable);
   registration->SetActiveVersion(version_1);
   version_1->SetStatus(ServiceWorkerVersion::ACTIVATED);
   scoped_refptr<ServiceWorkerVersion> version_2 = CreateNewServiceWorkerVersion(
       context()->registry(), registration.get(), kScript,
       blink::mojom::ScriptType::kClassic);
-  version_2->set_fetch_handler_existence(
-      ServiceWorkerVersion::FetchHandlerExistence::EXISTS);
+  version_2->set_fetch_handler_type(
+      ServiceWorkerVersion::FetchHandlerType::kNotSkippable);
   registration->SetWaitingVersion(version_2);
   version_2->SetStatus(ServiceWorkerVersion::INSTALLED);
 
@@ -391,7 +395,8 @@ class ServiceWorkerActivationTest : public ServiceWorkerRegistrationTest,
 
     const GURL kUrl("https://www.example.not/");
     const GURL kScope("https://www.example.not/");
-    const blink::StorageKey kKey(url::Origin::Create(kScope));
+    const blink::StorageKey kKey =
+        blink::StorageKey::CreateFirstParty(url::Origin::Create(kScope));
     const GURL kScript("https://www.example.not/service_worker.js");
 
     blink::mojom::ServiceWorkerRegistrationOptions options;
@@ -404,8 +409,8 @@ class ServiceWorkerActivationTest : public ServiceWorkerRegistrationTest,
         CreateNewServiceWorkerVersion(context()->registry(),
                                       registration_.get(), kScript,
                                       blink::mojom::ScriptType::kClassic);
-    version_1->set_fetch_handler_existence(
-        ServiceWorkerVersion::FetchHandlerExistence::EXISTS);
+    version_1->set_fetch_handler_type(
+        ServiceWorkerVersion::FetchHandlerType::kNotSkippable);
     registration_->SetActiveVersion(version_1);
     version_1->SetStatus(ServiceWorkerVersion::ACTIVATED);
 
@@ -433,8 +438,7 @@ class ServiceWorkerActivationTest : public ServiceWorkerRegistrationTest,
         &remote_endpoint_);
     DCHECK(remote_endpoint_.client_receiver()->is_valid());
     DCHECK(remote_endpoint_.host_remote()->is_bound());
-    container_host_->UpdateUrls(kUrl, net::SiteForCookies::FromUrl(kUrl),
-                                url::Origin::Create(kUrl), kKey);
+    container_host_->UpdateUrls(kUrl, url::Origin::Create(kUrl), kKey);
     container_host_->SetControllerRegistration(
         registration_, false /* notify_controllerchange */);
 
@@ -461,8 +465,8 @@ class ServiceWorkerActivationTest : public ServiceWorkerRegistrationTest,
     version_2->script_cache_map()->SetResources(records_2);
     version_2->SetMainScriptResponse(
         EmbeddedWorkerTestHelper::CreateMainScriptResponse());
-    version_2->set_fetch_handler_existence(
-        ServiceWorkerVersion::FetchHandlerExistence::EXISTS);
+    version_2->set_fetch_handler_type(
+        ServiceWorkerVersion::FetchHandlerType::kNotSkippable);
     registration_->SetWaitingVersion(version_2);
 
     // Setup the Mojo implementation fakes for the renderer-side service worker.
@@ -884,7 +888,8 @@ class ServiceWorkerRegistrationObjectHostTest
       const GURL& scope) {
     blink::mojom::ServiceWorkerRegistrationOptions options;
     options.scope = scope;
-    blink::StorageKey key(url::Origin::Create(scope));
+    const blink::StorageKey key =
+        blink::StorageKey::CreateFirstParty(url::Origin::Create(scope));
     return CreateNewServiceWorkerRegistration(context()->registry(), options,
                                               key);
   }
@@ -902,8 +907,8 @@ class ServiceWorkerRegistrationObjectHostTest
     version->script_cache_map()->SetResources(records);
     version->SetMainScriptResponse(
         EmbeddedWorkerTestHelper::CreateMainScriptResponse());
-    version->set_fetch_handler_existence(
-        ServiceWorkerVersion::FetchHandlerExistence::EXISTS);
+    version->set_fetch_handler_type(
+        ServiceWorkerVersion::FetchHandlerType::kNotSkippable);
     version->SetStatus(ServiceWorkerVersion::INSTALLING);
     return version;
   }
@@ -939,9 +944,8 @@ class ServiceWorkerRegistrationObjectHostTest
             /*is_parent_frame_secure=*/true, context()->AsWeakPtr(),
             &remote_endpoint);
     container_host->UpdateUrls(
-        document_url, net::SiteForCookies::FromUrl(document_url),
-        url::Origin::Create(document_url),
-        blink::StorageKey(url::Origin::Create(document_url)));
+        document_url, url::Origin::Create(document_url),
+        blink::StorageKey::CreateFirstParty(url::Origin::Create(document_url)));
     if (out_container_host)
       *out_container_host = container_host;
     return remote_endpoint;
@@ -1045,9 +1049,9 @@ TEST_P(ServiceWorkerRegistrationObjectHostUpdateTest,
 
   ASSERT_TRUE(bad_messages_.empty());
   GURL url("https://does.not.exist/");
-  container_host->UpdateUrls(url, net::SiteForCookies::FromUrl(url),
-                             url::Origin::Create(url),
-                             blink::StorageKey(url::Origin::Create(url)));
+  container_host->UpdateUrls(
+      url, url::Origin::Create(url),
+      blink::StorageKey::CreateFirstParty(url::Origin::Create(url)));
   CallUpdate(registration_host.get(), /*out_error_msg=*/nullptr);
   EXPECT_EQ(1u, bad_messages_.size());
 }
@@ -1158,9 +1162,9 @@ TEST_P(ServiceWorkerRegistrationObjectHostUpdateTest,
                                   /*mock frame_routing_id=*/1),
           /*is_parent_frame_secure=*/true, context()->AsWeakPtr(),
           &remote_endpoint);
-  container_host->UpdateUrls(kScope, net::SiteForCookies::FromUrl(kScope),
-                             url::Origin::Create(kScope),
-                             blink::StorageKey(url::Origin::Create(kScope)));
+  container_host->UpdateUrls(
+      kScope, url::Origin::Create(kScope),
+      blink::StorageKey::CreateFirstParty(url::Origin::Create(kScope)));
   version->AddControllee(container_host.get());
 
   // Initially set |self_update_delay| to zero.
@@ -1198,17 +1202,17 @@ TEST_F(ServiceWorkerRegistrationObjectHostTest, Unregister_Success) {
   info->receiver.reset();
   info->waiting->receiver.reset();
 
-  EXPECT_EQ(
-      blink::ServiceWorkerStatusCode::kOk,
-      FindRegistrationInStorage(
-          registration_id, blink::StorageKey(url::Origin::Create(kScope))));
+  EXPECT_EQ(blink::ServiceWorkerStatusCode::kOk,
+            FindRegistrationInStorage(registration_id,
+                                      blink::StorageKey::CreateFirstParty(
+                                          url::Origin::Create(kScope))));
   EXPECT_EQ(blink::mojom::ServiceWorkerErrorType::kNone,
             CallUnregister(registration_host.get()));
 
-  EXPECT_EQ(
-      blink::ServiceWorkerStatusCode::kErrorNotFound,
-      FindRegistrationInStorage(
-          registration_id, blink::StorageKey(url::Origin::Create(kScope))));
+  EXPECT_EQ(blink::ServiceWorkerStatusCode::kErrorNotFound,
+            FindRegistrationInStorage(registration_id,
+                                      blink::StorageKey::CreateFirstParty(
+                                          url::Origin::Create(kScope))));
   EXPECT_EQ(blink::mojom::ServiceWorkerErrorType::kNotFound,
             CallUnregister(registration_host.get()));
 }
@@ -1230,9 +1234,8 @@ TEST_F(ServiceWorkerRegistrationObjectHostTest,
   ASSERT_TRUE(bad_messages_.empty());
   container_host->UpdateUrls(
       GURL("https://does.not.exist/"),
-      net::SiteForCookies::FromUrl(GURL("https://does.not.exist/")),
       url::Origin::Create(GURL("https://does.not.exist/")),
-      blink::StorageKey(url::Origin::Create(GURL("https://does.not.exist/"))));
+      blink::StorageKey::CreateFromStringForTesting("https://does.not.exist/"));
   CallUnregister(registration_host.get());
   EXPECT_EQ(1u, bad_messages_.size());
 }

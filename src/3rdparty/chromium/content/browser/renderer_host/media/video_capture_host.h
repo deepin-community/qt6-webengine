@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,6 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/sequenced_task_runner_helpers.h"
 #include "base/token.h"
@@ -63,6 +62,8 @@ class CONTENT_EXPORT VideoCaptureHost
   FRIEND_TEST_ALL_PREFIXES(VideoCaptureTest, IncrementMatchesDecrementCalls);
 
   // VideoCaptureControllerEventHandler implementation.
+  void OnCaptureConfigurationChanged(
+      const VideoCaptureControllerID& id) override;
   void OnError(const VideoCaptureControllerID& id,
                media::VideoCaptureError error) override;
   void OnNewBuffer(const VideoCaptureControllerID& id,
@@ -103,6 +104,8 @@ class CONTENT_EXPORT VideoCaptureHost
                              GetDeviceFormatsInUseCallback callback) override;
   void OnFrameDropped(const base::UnguessableToken& device_id,
                       media::VideoCaptureFrameDropReason reason) override;
+  void OnNewCropVersion(const base::UnguessableToken& device_id,
+                        uint32_t crop_version) override;
   void OnLog(const base::UnguessableToken& device_id,
              const std::string& message) override;
 

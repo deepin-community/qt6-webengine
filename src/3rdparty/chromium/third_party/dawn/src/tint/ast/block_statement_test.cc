@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "gmock/gmock.h"
 #include "gtest/gtest-spi.h"
 #include "src/tint/ast/discard_statement.h"
 #include "src/tint/ast/if_statement.h"
@@ -23,46 +24,58 @@ namespace {
 using BlockStatementTest = TestHelper;
 
 TEST_F(BlockStatementTest, Creation) {
-  auto* d = create<DiscardStatement>();
-  auto* ptr = d;
+    auto* d = create<DiscardStatement>();
+    auto* ptr = d;
 
-  auto* b = create<BlockStatement>(StatementList{d});
+    auto* b = create<BlockStatement>(utils::Vector{d}, utils::Empty);
 
-  ASSERT_EQ(b->statements.size(), 1u);
-  EXPECT_EQ(b->statements[0], ptr);
+    ASSERT_EQ(b->statements.Length(), 1u);
+    EXPECT_EQ(b->statements[0], ptr);
+    EXPECT_EQ(b->attributes.Length(), 0u);
 }
 
 TEST_F(BlockStatementTest, Creation_WithSource) {
-  auto* b = create<BlockStatement>(Source{Source::Location{20, 2}},
-                                   ast::StatementList{});
-  auto src = b->source;
-  EXPECT_EQ(src.range.begin.line, 20u);
-  EXPECT_EQ(src.range.begin.column, 2u);
+    auto* b = create<BlockStatement>(Source{Source::Location{20, 2}}, utils::Empty, utils::Empty);
+    auto src = b->source;
+    EXPECT_EQ(src.range.begin.line, 20u);
+    EXPECT_EQ(src.range.begin.column, 2u);
+}
+
+TEST_F(BlockStatementTest, Creation_WithAttributes) {
+    auto* d = create<DiscardStatement>();
+    auto* ptr = d;
+
+    auto* attr1 = DiagnosticAttribute(builtin::DiagnosticSeverity::kOff, "foo");
+    auto* attr2 = DiagnosticAttribute(builtin::DiagnosticSeverity::kOff, "bar");
+    auto* b = create<BlockStatement>(utils::Vector{d}, utils::Vector{attr1, attr2});
+
+    ASSERT_EQ(b->statements.Length(), 1u);
+    EXPECT_EQ(b->statements[0], ptr);
+    EXPECT_THAT(b->attributes, testing::ElementsAre(attr1, attr2));
 }
 
 TEST_F(BlockStatementTest, IsBlock) {
-  auto* b = create<BlockStatement>(ast::StatementList{});
-  EXPECT_TRUE(b->Is<BlockStatement>());
+    auto* b = create<BlockStatement>(utils::Empty, utils::Empty);
+    EXPECT_TRUE(b->Is<BlockStatement>());
 }
 
 TEST_F(BlockStatementTest, Assert_Null_Statement) {
-  EXPECT_FATAL_FAILURE(
-      {
-        ProgramBuilder b;
-        b.create<BlockStatement>(ast::StatementList{nullptr});
-      },
-      "internal compiler error");
+    EXPECT_FATAL_FAILURE(
+        {
+            ProgramBuilder b;
+            b.create<BlockStatement>(utils::Vector<const Statement*, 1>{nullptr}, utils::Empty);
+        },
+        "internal compiler error");
 }
 
 TEST_F(BlockStatementTest, Assert_DifferentProgramID_Statement) {
-  EXPECT_FATAL_FAILURE(
-      {
-        ProgramBuilder b1;
-        ProgramBuilder b2;
-        b1.create<BlockStatement>(
-            ast::StatementList{b2.create<DiscardStatement>()});
-      },
-      "internal compiler error");
+    EXPECT_FATAL_FAILURE(
+        {
+            ProgramBuilder b1;
+            ProgramBuilder b2;
+            b1.create<BlockStatement>(utils::Vector{b2.create<DiscardStatement>()}, utils::Empty);
+        },
+        "internal compiler error");
 }
 
 }  // namespace

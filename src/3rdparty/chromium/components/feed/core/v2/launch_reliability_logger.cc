@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -70,6 +70,15 @@ NetworkRequestId LaunchReliabilityLogger::LogWebFeedRequestStart() {
   NetworkRequestId id = request_id_gen_.GenerateNextId();
   for (const StreamSurfaceSet::Entry& entry : surfaces_->surfaces()) {
     entry.surface->GetReliabilityLoggingBridge().LogWebFeedRequestStart(
+        id, base::TimeTicks::Now());
+  }
+  return id;
+}
+
+NetworkRequestId LaunchReliabilityLogger::LogSingleWebFeedRequestStart() {
+  NetworkRequestId id = request_id_gen_.GenerateNextId();
+  for (const StreamSurfaceSet::Entry& entry : surfaces_->surfaces()) {
+    entry.surface->GetReliabilityLoggingBridge().LogSingleWebFeedRequestStart(
         id, base::TimeTicks::Now());
   }
   return id;

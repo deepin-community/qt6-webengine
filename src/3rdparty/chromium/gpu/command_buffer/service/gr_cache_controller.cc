@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,8 @@
 
 #include <chrono>
 
-#include "base/bind.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/functional/bind.h"
+#include "base/task/single_thread_task_runner.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
@@ -17,7 +17,7 @@ namespace raster {
 
 GrCacheController::GrCacheController(SharedContextState* context_state)
     : context_state_(context_state),
-      task_runner_(base::ThreadTaskRunnerHandle::Get()) {}
+      task_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()) {}
 
 GrCacheController::GrCacheController(
     SharedContextState* context_state,

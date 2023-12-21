@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -38,15 +38,15 @@ IN_PROC_BROWSER_TEST_F(SocketsUdpApiTest, SocketsUdpCreateGood) {
   socket_create_function->set_extension(empty_extension.get());
   socket_create_function->set_has_callback(true);
 
-  std::unique_ptr<base::Value> result(
+  absl::optional<base::Value> result(
       api_test_utils::RunFunctionAndReturnSingleResult(
           socket_create_function.get(), "[]", browser_context()));
 
-  base::DictionaryValue* value = NULL;
-  ASSERT_TRUE(result->GetAsDictionary(&value));
-  absl::optional<int> socketId = value->FindIntKey("socketId");
-  EXPECT_TRUE(socketId);
-  ASSERT_TRUE(*socketId > 0);
+  ASSERT_TRUE(result);
+  ASSERT_TRUE(result->is_dict());
+  absl::optional<int> socket_id = result->GetDict().FindInt("socketId");
+  ASSERT_TRUE(socket_id);
+  ASSERT_GT(*socket_id, 0);
 }
 
 // Disable SocketsUdpExtension on Mac due to time out.
@@ -72,7 +72,8 @@ IN_PROC_BROWSER_TEST_F(SocketsUdpApiTest, MAYBE_SocketsUdpExtension) {
   ResultCatcher catcher;
   catcher.RestrictToBrowserContext(browser_context());
 
-  ExtensionTestMessageListener listener("info_please", true);
+  ExtensionTestMessageListener listener("info_please",
+                                        ReplyBehavior::kWillReply);
 
   ASSERT_TRUE(LoadApp("sockets_udp/api"));
   EXPECT_TRUE(listener.WaitUntilSatisfied());
@@ -86,7 +87,8 @@ IN_PROC_BROWSER_TEST_F(SocketsUdpApiTest, MAYBE_SocketsUdpExtension) {
 IN_PROC_BROWSER_TEST_F(SocketsUdpApiTest, DISABLED_SocketsUdpMulticast) {
   ResultCatcher catcher;
   catcher.RestrictToBrowserContext(browser_context());
-  ExtensionTestMessageListener listener("info_please", true);
+  ExtensionTestMessageListener listener("info_please",
+                                        ReplyBehavior::kWillReply);
   ASSERT_TRUE(LoadApp("sockets_udp/api"));
   EXPECT_TRUE(listener.WaitUntilSatisfied());
   listener.Reply(base::StringPrintf("multicast:%s:%d", kHostname, kPort));

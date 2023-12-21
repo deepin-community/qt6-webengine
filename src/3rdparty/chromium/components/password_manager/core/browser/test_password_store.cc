@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -33,11 +33,6 @@ bool TestPasswordStore::IsEmpty() const {
   return number_of_passwords == 0u;
 }
 
-int TestPasswordStore::fill_matching_logins_calls() const {
-  DCHECK(fake_backend()) << "Store has already been shut down!";
-  return fake_backend()->fill_matching_logins_calls();
-}
-
 const TestPasswordStore::PasswordMap& TestPasswordStore::stored_passwords()
     const {
   DCHECK(fake_backend()) << "Store has already been shut down!";
@@ -47,6 +42,17 @@ const TestPasswordStore::PasswordMap& TestPasswordStore::stored_passwords()
 IsAccountStore TestPasswordStore::IsAccountStore() const {
   DCHECK(fake_backend()) << "Store has already been shut down!";
   return fake_backend()->is_account_store();
+}
+
+base::CallbackListSubscription
+TestPasswordStore::AddSyncEnabledOrDisabledCallback(
+    base::RepeatingClosure sync_enabled_or_disabled_cb) {
+  return sync_enabled_or_disabled_cbs_.Add(
+      std::move(sync_enabled_or_disabled_cb));
+}
+
+void TestPasswordStore::CallSyncEnabledOrDisabledCallbacks() {
+  sync_enabled_or_disabled_cbs_.Notify();
 }
 
 TestPasswordStore::~TestPasswordStore() = default;

@@ -33,10 +33,13 @@
 
 #include "base/notreached.h"
 #include "cc/input/scroll_snap_data.h"
+#include "third_party/blink/renderer/core/animation/timeline_offset.h"
+#include "third_party/blink/renderer/core/animation/timing.h"
 #include "third_party/blink/renderer/core/css/css_identifier_value.h"
 #include "third_party/blink/renderer/core/css/css_primitive_value.h"
 #include "third_party/blink/renderer/core/css/css_reflection_direction.h"
 #include "third_party/blink/renderer/core/css/css_to_length_conversion_data.h"
+#include "third_party/blink/renderer/core/css/css_value.h"
 #include "third_party/blink/renderer/core/css_value_keywords.h"
 #include "third_party/blink/renderer/core/scroll/scroll_customization.h"
 #include "third_party/blink/renderer/core/scroll/scrollable_area.h"
@@ -126,15 +129,17 @@ inline CSSReflectionDirection CSSIdentifierValue::ConvertTo() const {
 
 template <>
 inline EBorderStyle CSSIdentifierValue::ConvertTo() const {
-  if (value_id_ == CSSValueID::kAuto)  // Valid for CSS outline-style
+  if (value_id_ == CSSValueID::kAuto) {  // Valid for CSS outline-style
     return EBorderStyle::kDotted;
+  }
   return detail::cssValueIDToPlatformEnumGenerated<EBorderStyle>(value_id_);
 }
 
 template <>
 inline OutlineIsAuto CSSIdentifierValue::ConvertTo() const {
-  if (value_id_ == CSSValueID::kAuto)
+  if (value_id_ == CSSValueID::kAuto) {
     return OutlineIsAuto::kOn;
+  }
   return OutlineIsAuto::kOff;
 }
 
@@ -306,10 +311,12 @@ inline CSSIdentifierValue::CSSIdentifierValue(ControlPart e)
 
 template <>
 inline ControlPart CSSIdentifierValue::ConvertTo() const {
-  if (value_id_ == CSSValueID::kNone)
+  if (value_id_ == CSSValueID::kNone) {
     return kNoControlPart;
-  if (value_id_ == CSSValueID::kAuto)
+  }
+  if (value_id_ == CSSValueID::kAuto) {
     return kAutoPart;
+  }
   return ControlPart(static_cast<int>(value_id_) -
                      static_cast<int>(CSSValueID::kCheckbox) + kCheckboxPart);
 }
@@ -720,73 +727,6 @@ inline TextEmphasisMark CSSIdentifierValue::ConvertTo() const {
 
   NOTREACHED();
   return TextEmphasisMark::kNone;
-}
-
-template <>
-inline CSSIdentifierValue::CSSIdentifierValue(FontDescription::Kerning kerning)
-    : CSSValue(kIdentifierClass) {
-  switch (kerning) {
-    case FontDescription::kAutoKerning:
-      value_id_ = CSSValueID::kAuto;
-      return;
-    case FontDescription::kNormalKerning:
-      value_id_ = CSSValueID::kNormal;
-      return;
-    case FontDescription::kNoneKerning:
-      value_id_ = CSSValueID::kNone;
-      return;
-  }
-
-  NOTREACHED();
-  value_id_ = CSSValueID::kAuto;
-}
-
-template <>
-inline FontDescription::Kerning CSSIdentifierValue::ConvertTo() const {
-  switch (value_id_) {
-    case CSSValueID::kAuto:
-      return FontDescription::kAutoKerning;
-    case CSSValueID::kNormal:
-      return FontDescription::kNormalKerning;
-    case CSSValueID::kNone:
-      return FontDescription::kNoneKerning;
-    default:
-      break;
-  }
-
-  NOTREACHED();
-  return FontDescription::kAutoKerning;
-}
-
-template <>
-inline CSSIdentifierValue::CSSIdentifierValue(OpticalSizing optical_sizing)
-    : CSSValue(kIdentifierClass) {
-  switch (optical_sizing) {
-    case kAutoOpticalSizing:
-      value_id_ = CSSValueID::kAuto;
-      return;
-    case kNoneOpticalSizing:
-      value_id_ = CSSValueID::kNone;
-      return;
-  }
-
-  NOTREACHED();
-  value_id_ = CSSValueID::kAuto;
-}
-
-template <>
-inline OpticalSizing CSSIdentifierValue::ConvertTo() const {
-  switch (value_id_) {
-    case CSSValueID::kAuto:
-      return kAutoOpticalSizing;
-    case CSSValueID::kNone:
-      return kNoneOpticalSizing;
-    default:
-      break;
-  }
-
-  NOTREACHED();
-  return kAutoOpticalSizing;
 }
 
 template <>
@@ -1644,8 +1584,8 @@ inline Containment CSSIdentifierValue::ConvertTo() const {
 template <>
 inline EContainerType CSSIdentifierValue::ConvertTo() const {
   switch (GetValueID()) {
-    case CSSValueID::kNone:
-      return kContainerTypeNone;
+    case CSSValueID::kNormal:
+      return kContainerTypeNormal;
     case CSSValueID::kInlineSize:
       return kContainerTypeInlineSize;
     case CSSValueID::kSize:
@@ -1654,26 +1594,26 @@ inline EContainerType CSSIdentifierValue::ConvertTo() const {
       break;
   }
   NOTREACHED();
-  return kContainerTypeNone;
+  return kContainerTypeNormal;
 }
 
 template <>
 inline CSSIdentifierValue::CSSIdentifierValue(TextUnderlinePosition position)
     : CSSValue(kIdentifierClass) {
   switch (position) {
-    case kTextUnderlinePositionAuto:
+    case TextUnderlinePosition::kAuto:
       value_id_ = CSSValueID::kAuto;
       break;
-    case kTextUnderlinePositionFromFont:
+    case TextUnderlinePosition::kFromFont:
       value_id_ = CSSValueID::kFromFont;
       break;
-    case kTextUnderlinePositionUnder:
+    case TextUnderlinePosition::kUnder:
       value_id_ = CSSValueID::kUnder;
       break;
-    case kTextUnderlinePositionLeft:
+    case TextUnderlinePosition::kLeft:
       value_id_ = CSSValueID::kLeft;
       break;
-    case kTextUnderlinePositionRight:
+    case TextUnderlinePosition::kRight:
       value_id_ = CSSValueID::kRight;
       break;
   }
@@ -1683,20 +1623,20 @@ template <>
 inline TextUnderlinePosition CSSIdentifierValue::ConvertTo() const {
   switch (GetValueID()) {
     case CSSValueID::kAuto:
-      return kTextUnderlinePositionAuto;
+      return TextUnderlinePosition::kAuto;
     case CSSValueID::kFromFont:
-      return kTextUnderlinePositionFromFont;
+      return TextUnderlinePosition::kFromFont;
     case CSSValueID::kUnder:
-      return kTextUnderlinePositionUnder;
+      return TextUnderlinePosition::kUnder;
     case CSSValueID::kLeft:
-      return kTextUnderlinePositionLeft;
+      return TextUnderlinePosition::kLeft;
     case CSSValueID::kRight:
-      return kTextUnderlinePositionRight;
+      return TextUnderlinePosition::kRight;
     default:
       break;
   }
   NOTREACHED();
-  return kTextUnderlinePositionAuto;
+  return TextUnderlinePosition::kAuto;
 }
 
 template <>
@@ -1729,6 +1669,122 @@ inline ScrollbarGutter CSSIdentifierValue::ConvertTo() const {
   }
   NOTREACHED();
   return kScrollbarGutterAuto;
+}
+
+template <>
+inline CSSIdentifierValue::CSSIdentifierValue(TimelineAxis axis)
+    : CSSValue(kIdentifierClass) {
+  switch (axis) {
+    case TimelineAxis::kBlock:
+      value_id_ = CSSValueID::kBlock;
+      break;
+    case TimelineAxis::kInline:
+      value_id_ = CSSValueID::kInline;
+      break;
+    case TimelineAxis::kVertical:
+      value_id_ = CSSValueID::kVertical;
+      break;
+    case TimelineAxis::kHorizontal:
+      value_id_ = CSSValueID::kHorizontal;
+      break;
+  }
+}
+
+template <>
+inline TimelineAxis CSSIdentifierValue::ConvertTo() const {
+  switch (GetValueID()) {
+    case CSSValueID::kBlock:
+      return TimelineAxis::kBlock;
+    case CSSValueID::kInline:
+      return TimelineAxis::kInline;
+    case CSSValueID::kVertical:
+      return TimelineAxis::kVertical;
+    case CSSValueID::kHorizontal:
+      return TimelineAxis::kHorizontal;
+    default:
+      break;
+  }
+  NOTREACHED();
+  return TimelineAxis::kBlock;
+}
+
+template <>
+inline CSSIdentifierValue::CSSIdentifierValue(TimelineScroller scroller)
+    : CSSValue(kIdentifierClass) {
+  switch (scroller) {
+    case TimelineScroller::kNearest:
+      value_id_ = CSSValueID::kNearest;
+      break;
+    case TimelineScroller::kRoot:
+      value_id_ = CSSValueID::kRoot;
+      break;
+  }
+}
+
+template <>
+inline TimelineScroller CSSIdentifierValue::ConvertTo() const {
+  switch (GetValueID()) {
+    case CSSValueID::kNearest:
+      return TimelineScroller::kNearest;
+    case CSSValueID::kRoot:
+      return TimelineScroller::kRoot;
+    default:
+      break;
+  }
+  NOTREACHED();
+  return TimelineScroller::kNearest;
+}
+
+template <>
+inline CSSIdentifierValue::CSSIdentifierValue(
+    TimelineOffset::NamedRange named_range)
+    : CSSValue(kIdentifierClass) {
+  switch (named_range) {
+    case TimelineOffset::NamedRange::kCover:
+      value_id_ = CSSValueID::kCover;
+      break;
+    case TimelineOffset::NamedRange::kContain:
+      value_id_ = CSSValueID::kContain;
+      break;
+    case TimelineOffset::NamedRange::kEntry:
+      value_id_ = CSSValueID::kEntry;
+      break;
+    case TimelineOffset::NamedRange::kEntryCrossing:
+      value_id_ = CSSValueID::kEntryCrossing;
+      break;
+    case TimelineOffset::NamedRange::kExit:
+      value_id_ = CSSValueID::kExit;
+      break;
+    case TimelineOffset::NamedRange::kExitCrossing:
+      value_id_ = CSSValueID::kExitCrossing;
+      break;
+    default:
+      NOTREACHED();
+      value_id_ = CSSValueID::kCover;
+      break;
+  }
+}
+
+template <>
+inline TimelineOffset::NamedRange CSSIdentifierValue::ConvertTo() const {
+  switch (GetValueID()) {
+    case CSSValueID::kCover:
+      return TimelineOffset::NamedRange::kCover;
+    case CSSValueID::kContain:
+      return TimelineOffset::NamedRange::kContain;
+    case CSSValueID::kEntry:
+      return TimelineOffset::NamedRange::kEntry;
+    case CSSValueID::kEntryCrossing:
+      return TimelineOffset::NamedRange::kEntryCrossing;
+    case CSSValueID::kExit:
+      return TimelineOffset::NamedRange::kExit;
+    case CSSValueID::kExitCrossing:
+      return TimelineOffset::NamedRange::kExitCrossing;
+    default:
+      break;
+  }
+  NOTREACHED();
+  return TimelineOffset::NamedRange::kCover;
 }
 
 }  // namespace blink

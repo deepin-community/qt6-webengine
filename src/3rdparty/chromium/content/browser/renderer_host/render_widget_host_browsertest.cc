@@ -1,14 +1,17 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <memory>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/containers/contains.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/test_timeouts.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -35,6 +38,7 @@
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/input/synthetic_web_input_event_builders.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
@@ -213,9 +217,9 @@ class RenderWidgetHostTouchEmulatorBrowserTest : public ContentBrowserTest {
   RenderWidgetHostViewBase* view() { return view_; }
 
  private:
-  raw_ptr<RenderWidgetHostViewBase> view_;
-  raw_ptr<RenderWidgetHostImpl> host_;
-  raw_ptr<RenderWidgetHostInputEventRouter> router_;
+  raw_ptr<RenderWidgetHostViewBase, DanglingUntriaged> view_;
+  raw_ptr<RenderWidgetHostImpl, DanglingUntriaged> host_;
+  raw_ptr<RenderWidgetHostInputEventRouter, DanglingUntriaged> router_;
 
   base::TimeTicks last_simulated_event_time_;
   const base::TimeDelta simulated_event_time_delta_;
@@ -275,9 +279,8 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostTouchEmulatorBrowserTest,
     // that we generated a GestureScrollEnd and routed it without crashing.
     TestInputEventObserver::EventTypeVector dispatched_events =
         observer.GetAndResetDispatchedEventTypes();
-    auto it_gse = std::find(dispatched_events.begin(), dispatched_events.end(),
-                            blink::WebInputEvent::Type::kGestureScrollEnd);
-    EXPECT_NE(dispatched_events.end(), it_gse);
+    EXPECT_TRUE(base::Contains(dispatched_events,
+                               blink::WebInputEvent::Type::kGestureScrollEnd));
   } while (!touch_emulator->suppress_next_fling_cancel_for_testing());
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
@@ -570,7 +573,7 @@ namespace {
 // only when there is no better way to synchronize.
 void GiveItSomeTime(base::TimeDelta delta) {
   base::RunLoop run_loop;
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE, run_loop.QuitClosure(), delta);
   run_loop.Run();
 }
@@ -646,57 +649,68 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostSitePerProcessTest,
 }
 #endif
 
-// Tests that the renderer receives the display::ScreenInfo size overrides
-// while the page is in fullscreen mode. This is a regression test for
-// https://crbug.com/1060795.
-IN_PROC_BROWSER_TEST_F(RenderWidgetHostBrowserTest,
-                       PropagatesFullscreenSizeOverrides) {
-  class FullscreenWaiter : public WebContentsObserver {
-   public:
-    explicit FullscreenWaiter(WebContents* wc) : WebContentsObserver(wc) {}
+class RenderWidgetHostFullscreenScreenSizeBrowserTest
+    : public RenderWidgetHostBrowserTest,
+      public testing::WithParamInterface<bool> {
+ public:
+  RenderWidgetHostFullscreenScreenSizeBrowserTest() {
+    scoped_feature_list_.InitWithFeatureState(
+        blink::features::kFullscreenScreenSizeMatchesDisplay,
+        FullscreenScreenSizeMatchesDisplayEnabled());
+  }
+  bool FullscreenScreenSizeMatchesDisplayEnabled() { return GetParam(); }
 
-    void Wait(bool enter) {
-      if (web_contents()->IsFullscreen() != enter) {
-        run_loop_.Run();
-      }
-      EXPECT_EQ(enter, web_contents()->IsFullscreen());
-    }
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
 
-   private:
-    void DidToggleFullscreenModeForTab(bool entered,
-                                       bool will_resize) override {
-      run_loop_.Quit();
-    }
+INSTANTIATE_TEST_SUITE_P(All,
+                         RenderWidgetHostFullscreenScreenSizeBrowserTest,
+                         testing::Bool());
 
-    base::RunLoop run_loop_;
-  };
-
-  // Sanity-check: Ensure the Shell and WebContents both agree the browser is
-  // not currently in fullscreen.
+// Tests `window.screen` dimensions in fullscreen. Note that Content Shell does
+// not resize the viewport to fill the screen in fullscreen on some platforms.
+// `window.screen` may provide viewport dimensions while the frame is fullscreen
+// as a speculative site compatibility measure, because web authors may assume
+// that screen dimensions match window.innerWidth/innerHeight while a page is
+// fullscreen, but that is not always true. crbug.com/1367416
+IN_PROC_BROWSER_TEST_P(RenderWidgetHostFullscreenScreenSizeBrowserTest,
+                       FullscreenSize) {
+  // Check initial dimensions before entering fullscreen.
   ASSERT_FALSE(shell()->IsFullscreenForTabOrPending(web_contents()));
   ASSERT_FALSE(web_contents()->IsFullscreen());
-
-  // While not fullscreened, expect the screen size to not be overridden.
-  display::ScreenInfo screen_info = host()->GetScreenInfo();
   WaitForVisualPropertiesAck();
-  EXPECT_EQ(screen_info.rect.size().ToString(),
+  EXPECT_EQ(host()->GetScreenInfo().rect.size().ToString(),
             EvalJs(web_contents(), "`${screen.width}x${screen.height}`"));
 
-  // Enter fullscreen mode. The Content Shell does not resize the view to fill
-  // the entire screen, and so the page will see the view's size as the screen
-  // size. This confirms the ScreenInfo override logic is working.
-  ASSERT_TRUE(ExecJs(web_contents(), "document.body.requestFullscreen();"));
-  FullscreenWaiter(web_contents()).Wait(true);
-  WaitForVisualPropertiesAck();
-  EXPECT_EQ(view()->GetRequestedRendererSize().ToString(),
-            EvalJs(web_contents(), "`${screen.width}x${screen.height}`"));
+  // Enter fullscreen; Content Shell does not resize the viewport to fill the
+  // screen in fullscreen on some platforms.
+  constexpr char kEnterFullscreenScript[] = R"JS(
+    document.documentElement.requestFullscreen().then(() => {
+        return !!document.fullscreenElement;
+    });
+  )JS";
+  ASSERT_TRUE(EvalJs(web_contents(), kEnterFullscreenScript).ExtractBool());
 
-  // Exit fullscreen mode, and then the page should see the screen size again.
-  ASSERT_TRUE(ExecJs(web_contents(), "document.exitFullscreen();"));
-  FullscreenWaiter(web_contents()).Wait(false);
-  screen_info = host()->GetScreenInfo();
-  WaitForVisualPropertiesAck();
-  EXPECT_EQ(screen_info.rect.size().ToString(),
+  if (FullscreenScreenSizeMatchesDisplayEnabled()) {
+    // `window.screen` dimensions match the display size.
+    EXPECT_EQ(host()->GetScreenInfo().rect.size().ToString(),
+              EvalJs(web_contents(), "`${screen.width}x${screen.height}`"));
+  } else {
+    // `window.screen` dimensions match the potentially smaller viewport size.
+    EXPECT_EQ(view()->GetRequestedRendererSize().ToString(),
+              EvalJs(web_contents(), "`${screen.width}x${screen.height}`"));
+  }
+
+  // Check dimensions again after exiting fullscreen.
+  constexpr char kExitFullscreenScript[] = R"JS(
+    document.exitFullscreen().then(() => {
+        return !document.fullscreenElement;
+    });
+  )JS";
+  ASSERT_TRUE(EvalJs(web_contents(), kExitFullscreenScript).ExtractBool());
+  ASSERT_FALSE(web_contents()->IsFullscreen());
+  EXPECT_EQ(host()->GetScreenInfo().rect.size().ToString(),
             EvalJs(web_contents(), "`${screen.width}x${screen.height}`"));
 }
 
@@ -923,8 +937,16 @@ class RenderWidgetHostDelegatedInkMetadataTest
 
 // Confirm that using the |updateInkTrailStartPoint| JS API results in the
 // |request_points_for_delegated_ink_| flag being set on the RWHVB.
+// TODO(crbug.com/1344023). Flaky on Linux.
+#if BUILDFLAG(IS_LINUX)
+#define MAYBE_FlagGetsSetFromRenderFrameMetadata \
+  DISABLED_FlagGetsSetFromRenderFrameMetadata
+#else
+#define MAYBE_FlagGetsSetFromRenderFrameMetadata \
+  FlagGetsSetFromRenderFrameMetadata
+#endif
 IN_PROC_BROWSER_TEST_F(RenderWidgetHostDelegatedInkMetadataTest,
-                       FlagGetsSetFromRenderFrameMetadata) {
+                       MAYBE_FlagGetsSetFromRenderFrameMetadata) {
   ASSERT_TRUE(ExecJs(shell()->web_contents(), R"(
       let presenter = null;
       navigator.ink.requestPresenter().then(e => { presenter = e; });
@@ -976,6 +998,49 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostDelegatedInkMetadataTest,
   EXPECT_EQ(
       last_metadata,
       host()->render_frame_metadata_provider()->LastRenderFrameMetadata());
+}
+
+// If the DelegatedInkTrailPresenter creates a metadata that has the same
+// timestamp as the previous one, it does not set the metadata.
+// TODO(crbug.com/1344023). Flaky.
+IN_PROC_BROWSER_TEST_F(RenderWidgetHostDelegatedInkMetadataTest,
+                       DISABLED_DuplicateMetadata) {
+  ASSERT_TRUE(ExecJs(shell()->web_contents(), R"(
+      let presenter = null;
+      navigator.ink.requestPresenter().then(e => { presenter = e; });
+      let style = { color: 'green', diameter: 21 };
+      let first_move_event = null;
+
+      window.addEventListener('pointermove' , evt => {
+        if (first_move_event == null) {
+          first_move_event = evt;
+        }
+        presenter.updateInkTrailStartPoint(first_move_event, style);
+      });
+      )"));
+  SimulateRoutedMouseEvent(blink::WebInputEvent::Type::kMouseMove, 10, 10, 0,
+                           false);
+  RunUntilInputProcessed(host());
+
+  {
+    const cc::RenderFrameMetadata& last_metadata =
+        host()->render_frame_metadata_provider()->LastRenderFrameMetadata();
+    EXPECT_TRUE(last_metadata.delegated_ink_metadata.has_value());
+    EXPECT_TRUE(
+        last_metadata.delegated_ink_metadata.value().delegated_ink_is_hovering);
+  }
+
+  // Confirm metadata has no value when updateInkTrailStartPoint is called
+  // with the same event.
+  SimulateRoutedMouseEvent(blink::WebInputEvent::Type::kMouseMove, 20, 20,
+                           blink::WebInputEvent::kLeftButtonDown, false);
+  RunUntilInputProcessed(host());
+
+  {
+    const cc::RenderFrameMetadata& last_metadata =
+        host()->render_frame_metadata_provider()->LastRenderFrameMetadata();
+    EXPECT_FALSE(last_metadata.delegated_ink_metadata.has_value());
+  }
 }
 
 }  // namespace content

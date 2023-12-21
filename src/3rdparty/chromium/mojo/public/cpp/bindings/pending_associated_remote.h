@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,11 @@
 
 #include <stdint.h>
 
+#include <type_traits>
 #include <utility>
 
 #include "base/compiler_specific.h"
+#include "base/task/sequenced_task_runner.h"
 #include "build/build_config.h"
 #include "mojo/public/cpp/bindings/associated_interface_ptr_info.h"
 #include "mojo/public/cpp/bindings/lib/multiplex_router.h"
@@ -44,9 +46,9 @@ class PendingAssociatedRemote {
   template <typename T,
             std::enable_if_t<std::is_same<
                 PendingAssociatedRemote<Interface>,
-                absl::result_of_t<decltype (&PendingAssociatedRemoteConverter<
-                                           T>::template To<Interface>)(T&&)>>::
-                                 value>* = nullptr>
+                std::invoke_result_t<decltype(&PendingAssociatedRemoteConverter<
+                                              T>::template To<Interface>),
+                                     T&&>>::value>* = nullptr>
   PendingAssociatedRemote(T&& other)
       : PendingAssociatedRemote(
             PendingAssociatedRemoteConverter<T>::template To<Interface>(
@@ -96,11 +98,11 @@ class PendingAssociatedRemote {
     scoped_refptr<internal::MultiplexRouter> router0 =
         internal::MultiplexRouter::CreateAndStartReceiving(
             std::move(pipe.handle0), internal::MultiplexRouter::MULTI_INTERFACE,
-            false, base::SequencedTaskRunnerHandle::Get());
+            false, base::SequencedTaskRunner::GetCurrentDefault());
     scoped_refptr<internal::MultiplexRouter> router1 =
         internal::MultiplexRouter::CreateAndStartReceiving(
             std::move(pipe.handle1), internal::MultiplexRouter::MULTI_INTERFACE,
-            true, base::SequencedTaskRunnerHandle::Get());
+            true, base::SequencedTaskRunner::GetCurrentDefault());
 
     InterfaceId id = router1->AssociateInterface(PassHandle());
     set_handle(router0->CreateLocalEndpointHandle(id));

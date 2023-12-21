@@ -105,13 +105,13 @@ class CORE_EXPORT DedicatedWorkerGlobalScope final : public WorkerGlobalScope {
   void Initialize(
       const KURL& response_url,
       network::mojom::ReferrerPolicy response_referrer_policy,
-      network::mojom::IPAddressSpace response_address_space,
       Vector<network::mojom::blink::ContentSecurityPolicyPtr> response_csp,
       const Vector<String>* response_origin_trial_tokens) override;
   void FetchAndRunClassicScript(
       const KURL& script_url,
       std::unique_ptr<WorkerMainScriptLoadParameters>
           worker_main_script_load_params,
+      std::unique_ptr<PolicyContainer> policy_container,
       const FetchClientSettingsObjectSnapshot& outside_settings_object,
       WorkerResourceTimingNotifier& outside_resource_timing_notifier,
       const v8_inspector::V8StackTraceId& stack_id) override;
@@ -119,6 +119,7 @@ class CORE_EXPORT DedicatedWorkerGlobalScope final : public WorkerGlobalScope {
       const KURL& module_url_record,
       std::unique_ptr<WorkerMainScriptLoadParameters>
           worker_main_script_load_params,
+      std::unique_ptr<PolicyContainer> policy_container,
       const FetchClientSettingsObjectSnapshot& outside_settings_object,
       WorkerResourceTimingNotifier& outside_resource_timing_notifier,
       network::mojom::CredentialsMode,
@@ -126,8 +127,12 @@ class CORE_EXPORT DedicatedWorkerGlobalScope final : public WorkerGlobalScope {
   bool IsOffMainThreadScriptFetchDisabled() override;
 
   // Implements scheduler::WorkerScheduler::Delegate.
-  void UpdateBackForwardCacheDisablingFeatures(uint64_t features_mask) override;
-
+  void UpdateBackForwardCacheDisablingFeatures(
+      uint64_t features_mask,
+      const BFCacheBlockingFeatureAndLocations&
+          non_sticky_features_and_js_locations,
+      const BFCacheBlockingFeatureAndLocations&
+          sticky_features_and_js_locations) override;
   // Implements BackForwardCacheLoaderHelperImpl::Delegate.
   void EvictFromBackForwardCache(
       mojom::blink::RendererEvictionReason reason) override;
@@ -160,9 +165,7 @@ class CORE_EXPORT DedicatedWorkerGlobalScope final : public WorkerGlobalScope {
   bool CrossOriginIsolatedCapability() const final {
     return cross_origin_isolated_capability_;
   }
-  bool DirectSocketCapability() const final {
-    return direct_socket_capability_;
-  }
+  bool IsIsolatedContext() const final { return is_isolated_context_; }
   ExecutionContextToken GetExecutionContextToken() const final {
     return token_;
   }
@@ -178,7 +181,6 @@ class CORE_EXPORT DedicatedWorkerGlobalScope final : public WorkerGlobalScope {
   struct ParsedCreationParams {
     std::unique_ptr<GlobalScopeCreationParams> creation_params;
     ExecutionContextToken parent_context_token;
-    bool starter_secure_context = false;
   };
 
   static ParsedCreationParams ParseCreationParams(
@@ -196,7 +198,7 @@ class CORE_EXPORT DedicatedWorkerGlobalScope final : public WorkerGlobalScope {
       std::unique_ptr<Vector<OriginTrialFeature>> inherited_trial_features,
       const BeginFrameProviderParams& begin_frame_provider_params,
       bool parent_cross_origin_isolated_capability,
-      bool direct_socket_capability,
+      bool is_isolated_context,
       mojo::PendingRemote<mojom::blink::DedicatedWorkerHost>
           dedicated_worker_host,
       mojo::PendingRemote<mojom::blink::BackForwardCacheControllerHost>
@@ -214,7 +216,7 @@ class CORE_EXPORT DedicatedWorkerGlobalScope final : public WorkerGlobalScope {
   // The ID of the parent context that owns this worker.
   const ExecutionContextToken parent_token_;
   bool cross_origin_isolated_capability_;
-  bool direct_socket_capability_;
+  bool is_isolated_context_;
   Member<WorkerAnimationFrameProvider> animation_frame_provider_;
   RejectCoepUnsafeNone reject_coep_unsafe_none_ = RejectCoepUnsafeNone(false);
 

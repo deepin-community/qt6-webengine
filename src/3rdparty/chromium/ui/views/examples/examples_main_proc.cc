@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,10 +8,10 @@
 #include <string>
 
 #include "base/base_switches.h"
-#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
+#include "base/functional/bind.h"
 #include "base/i18n/icu_util.h"
 #include "base/lazy_instance.h"
 #include "base/memory/ptr_util.h"
@@ -32,6 +32,7 @@
 #include "ui/base/ime/init/input_method_initializer.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_paths.h"
+#include "ui/color/color_provider_manager.h"
 #include "ui/compositor/compositor_switches.h"
 #include "ui/compositor/test/in_process_context_factory.h"
 #include "ui/compositor/test/test_context_factories.h"
@@ -42,6 +43,7 @@
 #include "ui/gl/init/gl_factory.h"
 #include "ui/views/buildflags.h"
 #include "ui/views/examples/example_base.h"
+#include "ui/views/examples/examples_color_mixer.h"
 #include "ui/views/examples/examples_window.h"
 #include "ui/views/test/desktop_test_views_delegate.h"
 #include "ui/views/widget/any_widget_observer.h"
@@ -65,12 +67,11 @@
 #include "ui/views/examples/examples_skia_gold_pixel_diff.h"
 #endif
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
 #include "ui/ozone/public/ozone_platform.h"
 #endif
 
-namespace views {
-namespace examples {
+namespace views::examples {
 
 base::LazyInstance<base::TestDiscardableMemoryAllocator>::DestructorAtExit
     g_discardable_memory_allocator = LAZY_INSTANCE_INITIALIZER;
@@ -99,13 +100,13 @@ ExamplesExitCode ExamplesMainProc(bool under_test) {
 
   mojo::core::Init();
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
   ui::OzonePlatform::InitParams params;
   params.single_process = true;
   ui::OzonePlatform::InitializeForGPU(params);
 #endif
 
-  gl::init::InitializeGLOneOff(/*system_device_id=*/0);
+  gl::init::InitializeGLOneOff(/*gpu_preference=*/gl::GpuPreference::kDefault);
 
   // Viz depends on the task environment to correctly tear down.
   base::test::TaskEnvironment task_environment(
@@ -136,6 +137,9 @@ ExamplesExitCode ExamplesMainProc(bool under_test) {
       g_discardable_memory_allocator.Pointer());
 
   gfx::InitializeFonts();
+
+  ui::ColorProviderManager::Get().AppendColorProviderInitializer(
+      base::BindRepeating(&AddExamplesColorMixers));
 
 #if defined(USE_AURA)
   std::unique_ptr<aura::Env> env = aura::Env::CreateInstance();
@@ -203,5 +207,4 @@ ExamplesExitCode ExamplesMainProc(bool under_test) {
   return compare_result;
 }
 
-}  // namespace examples
-}  // namespace views
+}  // namespace views::examples

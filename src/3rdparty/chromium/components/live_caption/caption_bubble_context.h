@@ -1,10 +1,14 @@
-// Copyright (c) 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_LIVE_CAPTION_CAPTION_BUBBLE_CONTEXT_H_
 #define COMPONENTS_LIVE_CAPTION_CAPTION_BUBBLE_CONTEXT_H_
 
+#include <memory>
+#include <string>
+
+#include "components/live_caption/caption_bubble_session_observer.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -25,11 +29,20 @@ class CaptionBubbleContext {
   CaptionBubbleContext(const CaptionBubbleContext&) = delete;
   CaptionBubbleContext& operator=(const CaptionBubbleContext&) = delete;
 
-  // Returns the bounds of the context widget. On Chrome browser, this is the
-  // bounds in screen of the top level widget of the browser window. When Live
-  // Caption is implemented in ash, this will be bounds of the top level widget
-  // of the ash window.
-  virtual absl::optional<gfx::Rect> GetBounds() const = 0;
+  using GetBoundsCallback = base::OnceCallback<void(const gfx::Rect&)>;
+
+  // Calls the given callback with the bounds of the context widget. On Chrome
+  // browser, this is the bounds in screen of the top level widget of the
+  // browser window. When Live Caption is implemented in ash, this will be
+  // bounds of the top level widget of the ash window.
+  //
+  // If the context can't provide bounds, the callback is never executed.
+  virtual void GetBounds(GetBoundsCallback callback) const = 0;
+
+  // Returns the unique identifier for a caption bubble session. A caption
+  // bubble session is per-tab and resets when a user navigates away or reloads
+  // the page.
+  virtual const std::string GetSessionId() const = 0;
 
   // Activates the context. In Live Caption on browser, this activates the
   // browser window and tab of the web contents. Called when the Back To Tab
@@ -39,6 +52,18 @@ class CaptionBubbleContext {
   // Whether or not the context is activatable. When Activate() is implemented
   // in child classes, the child classes must set this to be true.
   virtual bool IsActivatable() const = 0;
+
+  // Gets a session observer for the caption bubble context. On Chrome
+  // browser, a caption bubble session is per-tab and resets when a user
+  // navigates away or reloads the page.
+  //
+  // When this method is called, previously-created session observers are
+  // invalidated (i.e. they might not execute their session-end callback) but
+  // not destroyed.
+  //
+  // TODO(launch/4200463): Implement this for Ash if necessary.
+  virtual std::unique_ptr<CaptionBubbleSessionObserver>
+  GetCaptionBubbleSessionObserver() = 0;
 };
 
 }  // namespace captions

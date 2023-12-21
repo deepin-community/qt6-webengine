@@ -1,11 +1,11 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_BROWSER_MEDIA_FLINGING_RENDERER_H_
 #define CONTENT_BROWSER_MEDIA_FLINGING_RENDERER_H_
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "content/common/content_export.h"
 #include "media/base/flinging_controller.h"
@@ -57,6 +57,7 @@ class CONTENT_EXPORT FlingingRenderer : public media::Renderer,
   void SetPlaybackRate(double playback_rate) override;
   void SetVolume(float volume) override;
   base::TimeDelta GetMediaTime() override;
+  media::RendererType GetRendererType() override;
 
   // media::MediaStatusObserver implementation.
   void OnMediaStatusUpdated(const media::MediaStatus& status) override;

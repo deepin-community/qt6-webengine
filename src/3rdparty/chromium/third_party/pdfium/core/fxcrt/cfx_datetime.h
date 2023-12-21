@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,7 +14,7 @@ uint8_t FX_DaysInMonth(int32_t iYear, uint8_t iMonth);
 
 class CFX_DateTime {
  public:
-  static CFX_DateTime Now();
+  static CFX_DateTime Now();  // Accurate to seconds, subject to test overrides.
 
   CFX_DateTime() = default;
   CFX_DateTime(int32_t year,

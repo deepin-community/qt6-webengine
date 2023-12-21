@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
 #include "third_party/blink/renderer/core/editing/selection_template.h"
 #include "third_party/blink/renderer/core/editing/testing/editing_test_base.h"
+#include "third_party/blink/renderer/core/editing/testing/selection_sample.h"
 #include "third_party/blink/renderer/core/editing/visible_position.h"
 #include "third_party/blink/renderer/core/editing/visible_units.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -16,23 +17,6 @@
 namespace blink {
 
 class InsertListCommandTest : public EditingTestBase {};
-
-class ParameterizedInsertListCommandTest
-    : public testing::WithParamInterface<bool>,
-      private ScopedLayoutNGForTest,
-      public InsertListCommandTest {
- public:
-  ParameterizedInsertListCommandTest() : ScopedLayoutNGForTest(GetParam()) {}
-
- protected:
-  bool LayoutNGEnabled() const {
-    return RuntimeEnabledFeatures::LayoutNGEnabled();
-  }
-};
-
-INSTANTIATE_TEST_SUITE_P(All,
-                         ParameterizedInsertListCommandTest,
-                         testing::Bool());
 
 TEST_F(InsertListCommandTest, ShouldCleanlyRemoveSpuriousTextNode) {
   GetDocument().SetCompatibilityMode(Document::kQuirksMode);
@@ -240,7 +224,7 @@ TEST_F(InsertListCommandTest, ListifyInputInTableCell1) {
 }
 
 // Refer https://crbug.com/1295037
-TEST_P(ParameterizedInsertListCommandTest, NonCanonicalVisiblePosition) {
+TEST_F(InsertListCommandTest, NonCanonicalVisiblePosition) {
   Document& document = GetDocument();
   document.setDesignMode("on");
   InsertStyleElement("select { width: 100vw; }");
@@ -268,11 +252,104 @@ TEST_P(ParameterizedInsertListCommandTest, NonCanonicalVisiblePosition) {
   // Crash happens here.
   EXPECT_TRUE(command->Apply());
   EXPECT_EQ(
-      LayoutNGEnabled()
-          ? "<ul><li><textarea></textarea>^<svg></svg><select></select></li>"
-            "<li><input>|</li></ul>"
-          : "<ul><li><textarea></textarea><svg></svg>^<select></select></li>"
-            "<li><input>|</li></ul>",
+      "<ul><li><textarea></textarea>^<svg></svg><select></select></li>"
+      "<li><input>|</li></ul>",
       GetSelectionTextFromBody());
+}
+
+// Refer https://crbug.com/1316041
+TEST_F(InsertListCommandTest, TimeAndMeterInRoot) {
+  Document& document = GetDocument();
+  document.setDesignMode("on");
+
+  Element* root = document.documentElement();
+  Element* time = document.CreateRawElement(html_names::kTimeTag);
+  Element* meter = document.CreateRawElement(html_names::kMeterTag);
+  time->appendChild(meter);
+  root->insertBefore(time, root->firstChild());
+
+  Selection().SetSelection(SelectionInDOMTree::Builder()
+                               .Collapse(Position(time, 0))
+                               .Extend(Position::LastPositionInNode(*time))
+                               .Build(),
+                           SetSelectionOptions());
+
+  auto* command = MakeGarbageCollected<InsertListCommand>(
+      document, InsertListCommand::kUnorderedList);
+
+  // Crash happens here.
+  EXPECT_TRUE(command->Apply());
+  EXPECT_EQ("<ul><li>|<time></time></li></ul><head></head><body></body>",
+            SelectionSample::GetSelectionText(
+                *root, Selection().GetSelectionInDOMTree()));
+}
+
+// Refer https://crbug.com/1312348
+TEST_F(InsertListCommandTest, PreservedNewline) {
+  Document& document = GetDocument();
+  document.setDesignMode("on");
+  Selection().SetSelection(
+      SetSelectionTextToBody("<pre><span></span>\nX^<div></div>|</pre>"),
+      SetSelectionOptions());
+
+  auto* command = MakeGarbageCollected<InsertListCommand>(
+      document, InsertListCommand::kOrderedList);
+
+  // Crash happens here.
+  EXPECT_TRUE(command->Apply());
+  EXPECT_EQ("<pre><span></span>\n<ol><li>|X</li></ol><div></div></pre>",
+            GetSelectionTextFromBody());
+}
+
+// Refer https://crbug.com/1343673
+TEST_F(InsertListCommandTest, EmptyInlineBlock) {
+  Document& document = GetDocument();
+  document.setDesignMode("on");
+  InsertStyleElement("span { display: inline-block; min-height: 1px; }");
+  Selection().SetSelection(
+      SetSelectionTextToBody("<ul><li><span>|</span></li></ul>"),
+      SetSelectionOptions());
+
+  auto* command = MakeGarbageCollected<InsertListCommand>(
+      document, InsertListCommand::kUnorderedList);
+
+  // Crash happens here.
+  EXPECT_TRUE(command->Apply());
+  EXPECT_EQ("<ul><li><span></span></li></ul>|<br>", GetSelectionTextFromBody());
+}
+
+// Refer https://crbug.com/1350571
+TEST_F(InsertListCommandTest, SelectionFromEndOfTableToAfterTable) {
+  Document& document = GetDocument();
+  document.setDesignMode("on");
+  Selection().SetSelection(SetSelectionTextToBody("<table><td>^</td></table>|"),
+                           SetSelectionOptions());
+
+  auto* command = MakeGarbageCollected<InsertListCommand>(
+      document, InsertListCommand::kOrderedList);
+
+  // Crash happens here.
+  EXPECT_TRUE(command->Apply());
+  EXPECT_EQ(
+      "<table><tbody><tr><td><ol><li>|<br></li></ol></td></tr></tbody></table>",
+      GetSelectionTextFromBody());
+}
+
+// Refer https://crbug.com/1366749
+TEST_F(InsertListCommandTest, ListItemWithSpace) {
+  Document& document = GetDocument();
+  document.setDesignMode("on");
+  Selection().SetSelection(
+      SetSelectionTextToBody(
+          "<li>^ <div contenteditable='false'>A</div>B|</li>"),
+      SetSelectionOptions());
+
+  auto* command = MakeGarbageCollected<InsertListCommand>(
+      document, InsertListCommand::kOrderedList);
+
+  // Crash happens here.
+  EXPECT_FALSE(command->Apply());
+  EXPECT_EQ("<ul><li> <div contenteditable=\"false\">A</div>B|</li></ul><br>",
+            GetSelectionTextFromBody());
 }
 }

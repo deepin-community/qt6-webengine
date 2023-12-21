@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 #include <memory>
 #include <set>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "media/base/demuxer_stream.h"
 #include "media/base/media_export.h"
@@ -87,6 +87,10 @@ class MEDIA_EXPORT TextRenderer {
     std::unique_ptr<TextTrack> text_track;
     TextRanges text_ranges_;
   };
+
+  void OnBuffersRead(DemuxerStream* text_stream,
+                     DemuxerStream::Status status,
+                     DemuxerStream::DecoderBufferVector buffers);
 
   // Callback delivered by the demuxer |text_stream| when
   // a read from the stream completes.

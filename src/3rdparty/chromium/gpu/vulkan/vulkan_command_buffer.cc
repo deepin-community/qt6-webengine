@@ -1,4 +1,4 @@
-// Copyright (c) 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -105,12 +105,12 @@ bool VulkanCommandBuffer::Initialize() {
   VkDevice device = device_queue_->GetVulkanDevice();
 
   VkCommandBufferAllocateInfo command_buffer_info = {
-      VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-      nullptr,
-      command_pool_->handle(),
-      primary_ ? VK_COMMAND_BUFFER_LEVEL_PRIMARY
-               : VK_COMMAND_BUFFER_LEVEL_SECONDARY,
-      1,
+      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+      .pNext = nullptr,
+      .commandPool = command_pool_->handle(),
+      .level = primary_ ? VK_COMMAND_BUFFER_LEVEL_PRIMARY
+                        : VK_COMMAND_BUFFER_LEVEL_SECONDARY,
+      .commandBufferCount = 1,
   };
 
   DCHECK_EQ(static_cast<VkCommandBuffer>(VK_NULL_HANDLE), command_buffer_);

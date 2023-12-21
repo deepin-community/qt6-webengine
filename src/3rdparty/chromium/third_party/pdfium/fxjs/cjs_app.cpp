@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,12 @@
 
 #include "fxjs/cjs_app.h"
 
+#include <stdint.h>
+
+#include <algorithm>
 #include <utility>
 
+#include "core/fxcrt/fixed_zeroed_data_vector.h"
 #include "core/fxcrt/stl_util.h"
 #include "fpdfsdk/cpdfsdk_formfillenvironment.h"
 #include "fpdfsdk/cpdfsdk_interactiveform.h"
@@ -399,7 +403,7 @@ void CJS_App::TimerProc(GlobalTimer* pTimer) {
 }
 
 void CJS_App::CancelProc(GlobalTimer* pTimer) {
-  m_Timers.erase(fxcrt::FakeUniquePtr<GlobalTimer>(pTimer));
+  m_Timers.erase(fxcrt::MakeFakeUniquePtr(pTimer));
 }
 
 void CJS_App::RunJsScript(CJS_Runtime* pRuntime, const WideString& wsScript) {
@@ -458,8 +462,8 @@ CJS_Result CJS_App::mailMsg(CJS_Runtime* pRuntime,
     cMsg = pRuntime->ToWideString(newParams[5]);
 
   pRuntime->BeginBlock();
-  pRuntime->GetFormFillEnv()->JS_docmailForm(pdfium::span<uint8_t>(), bUI, cTo,
-                                             cSubject, cCc, cBcc, cMsg);
+  pRuntime->GetFormFillEnv()->JS_docmailForm(pdfium::span<const uint8_t>(), bUI,
+                                             cTo, cSubject, cCc, cBcc, cMsg);
   pRuntime->EndBlock();
   return CJS_Result::Success();
 }
@@ -546,18 +550,20 @@ CJS_Result CJS_App::response(CJS_Runtime* pRuntime,
   if (IsExpandedParamKnown(newParams[4]))
     swLabel = pRuntime->ToWideString(newParams[4]);
 
-  const int MAX_INPUT_BYTES = 2048;
-  std::vector<uint8_t, FxAllocAllocator<uint8_t>> pBuff(MAX_INPUT_BYTES + 2);
-  int nLengthBytes = pRuntime->GetFormFillEnv()->JS_appResponse(
+  constexpr int kMaxWideChars = 1024;
+  constexpr int kMaxBytes = kMaxWideChars * sizeof(uint16_t);
+  FixedZeroedDataVector<uint16_t> buffer(kMaxWideChars);
+  pdfium::span<uint16_t> buffer_span = buffer.writable_span();
+  int byte_length = pRuntime->GetFormFillEnv()->JS_appResponse(
       swQuestion, swTitle, swDefault, swLabel, bPassword,
-      pdfium::make_span(pBuff).first(MAX_INPUT_BYTES));
-
-  if (nLengthBytes < 0 || nLengthBytes > MAX_INPUT_BYTES)
+      pdfium::as_writable_bytes(buffer_span));
+  if (byte_length < 0 || byte_length > kMaxBytes)
     return CJS_Result::Failure(JSMessage::kParamTooLongError);
 
+  buffer_span = buffer_span.first(
+      std::min<size_t>(kMaxWideChars, byte_length / sizeof(uint16_t)));
   return CJS_Result::Success(pRuntime->NewString(
-      WideString::FromUTF16LE(reinterpret_cast<uint16_t*>(pBuff.data()),
-                              nLengthBytes / sizeof(uint16_t))
+      WideString::FromUTF16LE(buffer_span.data(), buffer_span.size())
           .AsStringView()));
 }
 

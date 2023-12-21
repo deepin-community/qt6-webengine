@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,11 +26,12 @@
 #include "net/dns/public/resolve_error_info.h"
 #include "net/http/http_response_info.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
-#include "services/network/public/cpp/resource_request_body.h"
+#include "services/network/public/mojom/web_sandbox_flags.mojom-forward.h"
 #include "third_party/blink/public/common/navigation/impression.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/mojom/loader/referrer.mojom.h"
 #include "third_party/blink/public/mojom/loader/transferrable_url_loader.mojom-forward.h"
+#include "third_party/blink/public/mojom/navigation/navigation_initiator_activation_and_ad_status.mojom.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_value_forward.h"
 #include "ui/base/page_transition_types.h"
 
@@ -115,7 +116,15 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // additional frame trees for prerendering pages in addition to the primary
   // frame tree (holding the page currently shown to the user). The return
   // value remains constant over the navigation lifetime.
+  // See docs/frame_trees.md for more details.
   virtual bool IsInPrimaryMainFrame() const = 0;
+
+  // Whether the navigation is taking place in a main frame which does not have
+  // an outer document. For example, this will return true for the primary main
+  // frame and for a prerendered main frame, but false for a <fencedframe>. See
+  // documentation for `RenderFrameHost::GetParentOrOuterDocument()` for more
+  // details.
+  virtual bool IsInOutermostMainFrame() = 0;
 
   // Prerender2:
   // Whether the navigation is taking place in the main frame of the
@@ -125,17 +134,17 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // returns false for prerender page activation navigations, which should be
   // checked by IsPrerenderedPageActivation(). The return value remains
   // constant over the navigation lifetime.
-  virtual bool IsInPrerenderedMainFrame() = 0;
+  virtual bool IsInPrerenderedMainFrame() const = 0;
 
   // Prerender2:
   // Returns true if this navigation will activate a prerendered page. It is
   // only meaningful to call this after BeginNavigation().
-  virtual bool IsPrerenderedPageActivation() = 0;
+  virtual bool IsPrerenderedPageActivation() const = 0;
 
   // FencedFrame:
   // Returns true if the navigation is taking place in a frame in a fenced frame
   // tree.
-  virtual bool IsInFencedFrameTree() = 0;
+  virtual bool IsInFencedFrameTree() const = 0;
 
   // Returns the type of the frame in which this navigation is taking place.
   virtual FrameType GetNavigatingFrameType() const = 0;
@@ -154,6 +163,13 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   //  * navigations via browser UI: Ctrl-R, refresh/forward/back/home buttons
   //  * any other "explicit" URL navigations, e.g. bookmarks
   virtual bool IsRendererInitiated() = 0;
+
+  // The navigation initiator's user activation and ad status.
+  //
+  // TODO(yaoxia): this will be used for recording a page load UKM
+  // (https://crrev.com/c/4080612).
+  virtual blink::mojom::NavigationInitiatorActivationAndAdStatus
+  GetNavigationInitiatorActivationAndAdStatus() = 0;
 
   // Whether the previous document in this frame was same-origin with the new
   // one created by this navigation.
@@ -271,6 +287,9 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // changes that occur during navigation.) This can only be accessed after a
   // response has been delivered for processing, or after the navigation fails
   // with an error page.
+  //
+  // Note that null will be returned for downloads and/or 204 responses, because
+  // they don't commit a new document into a renderer process.
   virtual RenderFrameHost* GetRenderFrameHost() const = 0;
 
   // Returns the id of the RenderFrameHost this navigation is committing from.
@@ -291,7 +310,7 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // * reference fragment navigations
   // * pushState/replaceState
   // * same page history navigation
-  virtual bool IsSameDocument() = 0;
+  virtual bool IsSameDocument() const = 0;
 
   // Whether the navigation has encountered a server redirect or not.
   virtual bool WasServerRedirect() = 0;
@@ -338,8 +357,9 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   virtual bool ShouldUpdateHistory() = 0;
 
   // The previous main frame URL that the user was on. This may be empty if
-  // there was no last committed entry.
-  virtual const GURL& GetPreviousMainFrameURL() = 0;
+  // there was no last committed entry. It is only valid to call this for
+  // navigations in the primary main frame itself or its subframes.
+  virtual const GURL& GetPreviousPrimaryMainFrameURL() = 0;
 
   // Returns the remote address of the socket which fetched this resource.
   virtual net::IPEndPoint GetSocketAddress() = 0;
@@ -464,6 +484,11 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // IsRendererInitiated() returns true.
   virtual const absl::optional<url::Origin>& GetInitiatorOrigin() = 0;
 
+  // Returns, for renderer-initiated about:blank and about:srcdoc navigations,
+  // the base url of the document that has initiated the navigation for this
+  // NavigationHandle. The same caveats apply here as for GetInitiatorOrigin().
+  virtual const absl::optional<GURL>& GetInitiatorBaseUrl() = 0;
+
   // Retrieves any DNS aliases for the requested URL. Includes all known
   // aliases, e.g. from A, AAAA, or HTTPS, not just from the address used for
   // the connection, in no particular order.
@@ -507,6 +532,20 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // the navigation: no error page will commit.
   virtual void SetSilentlyIgnoreErrors() = 0;
 
+  // The sandbox flags inherited at the beginning of the navigation.
+  //
+  // This is the sandbox flags intersection of:
+  // - The parent document.
+  // - The iframe.sandbox attribute.
+  //
+  // Contrary to `SandboxFlagsToCommit()`, this can be called at the beginning
+  // of the navigation. However, this doesn't include the sandbox flags a
+  // document applies on itself, via the "Content-Security-Policy: sandbox"
+  // response header.
+  //
+  // See also: content/browser/renderer_host/sandbox_flags.md
+  virtual network::mojom::WebSandboxFlags SandboxFlagsInherited() = 0;
+
   // The sandbox flags of the new document created by this navigation. This
   // function can only be called for cross-document navigations after receiving
   // the final response.
@@ -541,6 +580,10 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // `true` if the timeout is being started for the first time. Repeated calls
   // will be ignored (they won't reset the timeout) and will return `false`.
   virtual bool SetNavigationTimeout(base::TimeDelta timeout) = 0;
+
+  // Configures whether a Cookie header added to this request should not be
+  // overwritten by the network service.
+  virtual void SetAllowCookiesFromBrowser(bool allow_cookies_from_browser) = 0;
 
   // Prerender2:
   // Used for metrics.
@@ -577,6 +620,11 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // navigation from committing, or nullptr if the navigation isn't currently
   // blocked on a CommitDeferringCondition.
   virtual CommitDeferringCondition* GetCommitDeferringConditionForTesting() = 0;
+
+  // Returns true if the navigation is a reload due to the existing document
+  // represented by the FrameTreeNode being previously discarded by the browser.
+  // This can be used as soon as the navigation begins.
+  virtual bool ExistingDocumentWasDiscarded() const = 0;
 };
 
 }  // namespace content

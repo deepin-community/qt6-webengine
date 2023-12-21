@@ -8,12 +8,11 @@ include_rules = [
   "+components/sync_preferences",
   "+components/url_formatter",
   "+extensions/buildflags",
-  "+media/base/android",
   "+net/base",
   "+net/cookies",
   "+ppapi/buildflags",
   "+services/preferences/public",
   "+services/tracing/public",
-  "+third_party/blink/public/common/features.h",
+  "+third_party/blink/public/common/features_generated.h",
   "+third_party/perfetto/protos/perfetto/trace/track_event",
 ]

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,7 +14,7 @@
 namespace ui {
 
 // StubWindow is useful for tests, as well as implementations that only care
-// about bounds.
+// about bounds and activation state.
 class STUB_WINDOW_EXPORT StubWindow : public PlatformWindow {
  public:
   explicit StubWindow(PlatformWindowDelegate* delegate,
@@ -33,18 +33,26 @@ class STUB_WINDOW_EXPORT StubWindow : public PlatformWindow {
   PlatformWindowDelegate* delegate() { return delegate_; }
 
  private:
+  enum class ActivationState {
+    kUnknown,
+    kActive,
+    kInactive,
+  };
+
   // PlatformWindow:
   void Show(bool inactive) override;
   void Hide() override;
   void Close() override;
   bool IsVisible() const override;
   void PrepareForShutdown() override;
-  void SetBounds(const gfx::Rect& bounds) override;
-  gfx::Rect GetBounds() const override;
+  void SetBoundsInPixels(const gfx::Rect& bounds) override;
+  gfx::Rect GetBoundsInPixels() const override;
+  void SetBoundsInDIP(const gfx::Rect& bounds) override;
+  gfx::Rect GetBoundsInDIP() const override;
   void SetTitle(const std::u16string& title) override;
   void SetCapture() override;
   void ReleaseCapture() override;
-  void ToggleFullscreen() override;
+  void SetFullscreen(bool fullscreen, int64_t target_display_id) override;
   bool HasCapture() const override;
   void Maximize() override;
   void Minimize() override;
@@ -57,8 +65,8 @@ class STUB_WINDOW_EXPORT StubWindow : public PlatformWindow {
   void SetCursor(scoped_refptr<PlatformCursor> cursor) override;
   void MoveCursorTo(const gfx::Point& location) override;
   void ConfineCursorToBounds(const gfx::Rect& bounds) override;
-  void SetRestoredBoundsInPixels(const gfx::Rect& bounds) override;
-  gfx::Rect GetRestoredBoundsInPixels() const override;
+  void SetRestoredBoundsInDIP(const gfx::Rect& bounds) override;
+  gfx::Rect GetRestoredBoundsInDIP() const override;
   void SetWindowIcons(const gfx::ImageSkia& window_icon,
                       const gfx::ImageSkia& app_icon) override;
   void SizeConstraintsChanged() override;
@@ -66,6 +74,7 @@ class STUB_WINDOW_EXPORT StubWindow : public PlatformWindow {
   raw_ptr<PlatformWindowDelegate> delegate_ = nullptr;
   gfx::Rect bounds_;
   ui::PlatformWindowState window_state_ = ui::PlatformWindowState::kUnknown;
+  ActivationState activation_state_ = ActivationState::kUnknown;
 };
 
 }  // namespace ui

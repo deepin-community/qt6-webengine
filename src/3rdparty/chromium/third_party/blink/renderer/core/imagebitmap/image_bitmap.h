@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -42,7 +42,9 @@ class CORE_EXPORT ImageBitmap final : public ScriptWrappable,
       ImageElementBase*,
       absl::optional<gfx::Rect>,
       ScriptState*,
+      scoped_refptr<base::SequencedTaskRunner> task_runner,
       mojom::blink::PreferredColorScheme,
+      ExceptionState&,
       const ImageBitmapOptions* = ImageBitmapOptions::Create());
   static sk_sp<SkImage> GetSkImageFromDecoder(std::unique_ptr<ImageDecoder>);
 
@@ -71,7 +73,9 @@ class CORE_EXPORT ImageBitmap final : public ScriptWrappable,
   // This constructor may called by structured-cloning an ImageBitmap.
   // isImageBitmapOriginClean indicates whether the original ImageBitmap is
   // origin clean or not.
-  ImageBitmap(const SkPixmap& pixmap, bool is_image_bitmap_origin_clean);
+  ImageBitmap(const SkPixmap& pixmap,
+              bool is_image_bitmap_origin_clean,
+              ImageOrientationEnum);
 
   // Type and helper function required by CallbackPromiseAdapter:
   using WebType = sk_sp<SkImage>;
@@ -93,6 +97,9 @@ class CORE_EXPORT ImageBitmap final : public ScriptWrappable,
   bool IsNeutered() const override { return is_neutered_; }
   bool OriginClean() const { return image_->OriginClean(); }
   bool IsPremultiplied() const { return image_->IsPremultiplied(); }
+  ImageOrientationEnum ImageOrientation() const {
+    return image_->CurrentFrameOrientation().Orientation();
+  }
   scoped_refptr<StaticBitmapImage> Transfer();
   void close();
 
@@ -124,6 +131,7 @@ class CORE_EXPORT ImageBitmap final : public ScriptWrappable,
     bool should_scale_input = false;
     bool has_color_space_conversion = false;
     bool source_is_unpremul = false;
+    bool orientation_from_image = true;
     unsigned resize_width = 0;
     unsigned resize_height = 0;
     gfx::Rect crop_rect;
@@ -139,7 +147,7 @@ class CORE_EXPORT ImageBitmap final : public ScriptWrappable,
                                              sk_sp<SkImage>,
                                              const ImageOrientationEnum);
   static void RasterizeImageOnBackgroundThread(
-      sk_sp<PaintRecord>,
+      PaintRecord,
       const gfx::Rect&,
       scoped_refptr<base::SequencedTaskRunner>,
       WTF::CrossThreadOnceFunction<void(sk_sp<SkImage>,

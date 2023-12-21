@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -247,13 +247,13 @@ void RenderViewContextMenuBase::UpdateMenuItem(int command_id,
                                                bool enabled,
                                                bool hidden,
                                                const std::u16string& label) {
-  int index = menu_model_.GetIndexOfCommandId(command_id);
-  if (index == -1)
+  absl::optional<size_t> index = menu_model_.GetIndexOfCommandId(command_id);
+  if (!index.has_value())
     return;
 
-  menu_model_.SetLabel(index, label);
-  menu_model_.SetEnabledAt(index, enabled);
-  menu_model_.SetVisibleAt(index, !hidden);
+  menu_model_.SetLabel(index.value(), label);
+  menu_model_.SetEnabledAt(index.value(), enabled);
+  menu_model_.SetVisibleAt(index.value(), !hidden);
   if (toolkit_delegate_) {
 #if BUILDFLAG(IS_MAC)
     toolkit_delegate_->UpdateMenuItem(command_id, enabled, hidden, label);
@@ -265,11 +265,11 @@ void RenderViewContextMenuBase::UpdateMenuItem(int command_id,
 
 void RenderViewContextMenuBase::UpdateMenuIcon(int command_id,
                                                const ui::ImageModel& icon) {
-  int index = menu_model_.GetIndexOfCommandId(command_id);
-  if (index == -1)
+  absl::optional<size_t> index = menu_model_.GetIndexOfCommandId(command_id);
+  if (!index.has_value())
     return;
 
-  menu_model_.SetIcon(index, icon);
+  menu_model_.SetIcon(index.value(), icon);
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   if (toolkit_delegate_)
     toolkit_delegate_->RebuildMenu();
@@ -277,11 +277,11 @@ void RenderViewContextMenuBase::UpdateMenuIcon(int command_id,
 }
 
 void RenderViewContextMenuBase::RemoveMenuItem(int command_id) {
-  int index = menu_model_.GetIndexOfCommandId(command_id);
-  if (index == -1)
+  absl::optional<size_t> index = menu_model_.GetIndexOfCommandId(command_id);
+  if (!index.has_value())
     return;
 
-  menu_model_.RemoveItemAt(index);
+  menu_model_.RemoveItemAt(index.value());
   if (toolkit_delegate_)
     toolkit_delegate_->RebuildMenu();
 }
@@ -289,15 +289,15 @@ void RenderViewContextMenuBase::RemoveMenuItem(int command_id) {
 // Removes separators so that if there are two separators next to each other,
 // only one of them remains.
 void RenderViewContextMenuBase::RemoveAdjacentSeparators() {
-  int num_items = menu_model_.GetItemCount();
-  for (int index = num_items - 1; index > 0; --index) {
-    ui::MenuModel::ItemType curr_type = menu_model_.GetTypeAt(index);
-    ui::MenuModel::ItemType prev_type = menu_model_.GetTypeAt(index - 1);
+  size_t num_items = menu_model_.GetItemCount();
+  for (size_t index = num_items; index > 1; --index) {
+    ui::MenuModel::ItemType curr_type = menu_model_.GetTypeAt(index - 1);
+    ui::MenuModel::ItemType prev_type = menu_model_.GetTypeAt(index - 2);
 
     if (curr_type == ui::MenuModel::ItemType::TYPE_SEPARATOR &&
         prev_type == ui::MenuModel::ItemType::TYPE_SEPARATOR) {
       // We found adjacent separators, remove the one at the bottom.
-      menu_model_.RemoveItemAt(index);
+      menu_model_.RemoveItemAt(index - 1);
     }
   }
 
@@ -306,23 +306,27 @@ void RenderViewContextMenuBase::RemoveAdjacentSeparators() {
 }
 
 void RenderViewContextMenuBase::RemoveSeparatorBeforeMenuItem(int command_id) {
-  int index = menu_model_.GetIndexOfCommandId(command_id);
-  // Ignore if command not found (index == -1) or if it's the first menu item.
-  if (index <= 0)
+  absl::optional<size_t> index = menu_model_.GetIndexOfCommandId(command_id);
+  // Ignore if command not found or if it's the first menu item.
+  if (!index.has_value() || index == size_t{0})
     return;
 
-  ui::MenuModel::ItemType prev_type = menu_model_.GetTypeAt(index - 1);
+  ui::MenuModel::ItemType prev_type = menu_model_.GetTypeAt(index.value() - 1);
   if (prev_type != ui::MenuModel::ItemType::TYPE_SEPARATOR)
     return;
 
-  menu_model_.RemoveItemAt(index - 1);
+  menu_model_.RemoveItemAt(index.value() - 1);
 
   if (toolkit_delegate_)
     toolkit_delegate_->RebuildMenu();
 }
 
+// TODO(crbug.com/1393234): This method returns the RenderViewHost associated
+// with the primary main frame. Using this in the presence of out of process
+// iframes is generally incorrect, and the use of RenderViewHost itself is
+// deprecated. Callers should use GetRenderFrameHost() instead.
 RenderViewHost* RenderViewContextMenuBase::GetRenderViewHost() const {
-  return source_web_contents_->GetMainFrame()->GetRenderViewHost();
+  return source_web_contents_->GetPrimaryMainFrame()->GetRenderViewHost();
 }
 
 WebContents* RenderViewContextMenuBase::GetWebContents() const {
@@ -408,7 +412,7 @@ void RenderViewContextMenuBase::ExecuteCommand(int id, int event_flags) {
 }
 
 void RenderViewContextMenuBase::OnMenuWillShow(ui::SimpleMenuModel* source) {
-  for (int i = 0; i < source->GetItemCount(); ++i) {
+  for (size_t i = 0; i < source->GetItemCount(); ++i) {
     if (source->IsVisibleAt(i) &&
         source->GetTypeAt(i) != ui::MenuModel::TYPE_SEPARATOR) {
       RecordShownItem(source->GetCommandIdAt(i),
@@ -449,7 +453,7 @@ void RenderViewContextMenuBase::OpenURL(const GURL& url,
                                         ui::PageTransition transition) {
   OpenURLWithExtraHeaders(url, referring_url, disposition, transition,
                           "" /* extra_headers */,
-                          false /* started_from_context_menu */);
+                          true /* started_from_context_menu */);
 }
 
 void RenderViewContextMenuBase::OpenURLWithExtraHeaders(
@@ -459,18 +463,35 @@ void RenderViewContextMenuBase::OpenURLWithExtraHeaders(
     ui::PageTransition transition,
     const std::string& extra_headers,
     bool started_from_context_menu) {
+  content::OpenURLParams open_url_params = GetOpenURLParamsWithExtraHeaders(
+      url, referring_url, disposition, transition, extra_headers,
+      started_from_context_menu);
+
+  source_web_contents_->OpenURL(open_url_params);
+}
+
+content::OpenURLParams
+RenderViewContextMenuBase::GetOpenURLParamsWithExtraHeaders(
+    const GURL& url,
+    const GURL& referring_url,
+    WindowOpenDisposition disposition,
+    ui::PageTransition transition,
+    const std::string& extra_headers,
+    bool started_from_context_menu) {
   // Do not send the referrer url to OTR windows. We still need the
   // |referring_url| to populate the |initiator_origin| below for browser UI.
   GURL referrer_url;
-  if (disposition != WindowOpenDisposition::OFF_THE_RECORD)
+  if (disposition != WindowOpenDisposition::OFF_THE_RECORD) {
     referrer_url = referring_url.GetAsReferrer();
+  }
 
   content::Referrer referrer = content::Referrer::SanitizeForRequest(
       url, content::Referrer(referrer_url, params_.referrer_policy));
 
   if (params_.link_url == url &&
-      disposition != WindowOpenDisposition::OFF_THE_RECORD)
+      disposition != WindowOpenDisposition::OFF_THE_RECORD) {
     params_.link_followed = url;
+  }
 
   OpenURLParams open_url_params(url, referrer, disposition, transition, false,
                                 started_from_context_menu);
@@ -489,7 +510,7 @@ void RenderViewContextMenuBase::OpenURLWithExtraHeaders(
   if (disposition != WindowOpenDisposition::OFF_THE_RECORD)
     open_url_params.impression = params_.impression;
 
-  source_web_contents_->OpenURL(open_url_params);
+  return open_url_params;
 }
 
 bool RenderViewContextMenuBase::IsCustomItemChecked(int id) const {

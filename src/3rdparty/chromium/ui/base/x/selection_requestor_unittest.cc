@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,11 +7,11 @@
 #include <stddef.h>
 #include <memory>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/x/selection_utils.h"
 #include "ui/base/x/x11_clipboard_helper.h"
@@ -66,13 +66,13 @@ class SelectionRequestorTest : public testing::Test {
     connection_->DestroyWindow({x_window_});
   }
 
-  x11::Connection* connection_;
+  raw_ptr<x11::Connection> connection_;
 
   // |requestor_|'s window.
   x11::Window x_window_ = x11::Window::None;
 
   std::unique_ptr<XClipboardHelper> helper_;
-  SelectionRequestor* requestor_ = nullptr;
+  raw_ptr<SelectionRequestor> requestor_ = nullptr;
 
   base::test::SingleThreadTaskEnvironment task_environment_{
       base::test::SingleThreadTaskEnvironment::MainThreadType::UI};
@@ -109,15 +109,15 @@ TEST_F(SelectionRequestorTest, DISABLED_NestedRequests) {
   x11::Atom target1 = x11::GetAtom("TARGET1");
   x11::Atom target2 = x11::GetAtom("TARGET2");
 
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&PerformBlockingConvertSelection,
                                 base::Unretained(requestor_), selection,
                                 target2, "Data2"));
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(&SelectionRequestorTest::SendSelectionNotify,
                      base::Unretained(this), selection, target1, "Data1"));
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(&SelectionRequestorTest::SendSelectionNotify,
                      base::Unretained(this), selection, target2, "Data2"));

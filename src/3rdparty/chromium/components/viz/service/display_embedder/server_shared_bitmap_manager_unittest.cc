@@ -1,9 +1,10 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/viz/service/display_embedder/server_shared_bitmap_manager.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "base/containers/span.h"

@@ -1,7 +1,8 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/test/gmock_callback_support.h"
 #include "base/test/values_test_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
@@ -20,8 +21,8 @@
 namespace extensions {
 namespace {
 
-using device::mojom::UsbOpenDeviceError;
-using testing::_;
+using ::base::test::RunOnceCallback;
+using ::testing::_;
 
 constexpr char kManifest[] =
     R"(
@@ -46,13 +47,6 @@ constexpr char kPolicySetting[] = R"(
         "urls": ["%s"]
       }
     ])";
-
-// TODO(crbug/1314031): To migrate to base::test::RunCallback.
-ACTION_TEMPLATE(InvokeCallback,
-                HAS_1_TEMPLATE_PARAMS(int, k),
-                AND_1_VALUE_PARAMS(p1)) {
-  std::move(*std::get<k>(args)).Run(p1);
-}
 
 class ChromeUsbApiTest : public ExtensionBrowserTest {
  public:
@@ -117,7 +111,8 @@ IN_PROC_BROWSER_TEST_F(ChromeUsbApiTest, GetDevicesByPolicy) {
   )");
 
   // Launch the test app.
-  ExtensionTestMessageListener ready_listener("ready", true);
+  ExtensionTestMessageListener ready_listener("ready",
+                                              ReplyBehavior::kWillReply);
   extensions::ResultCatcher result_catcher;
   const Extension* extension = LoadExtension(dir.UnpackedPath());
 
@@ -145,7 +140,8 @@ IN_PROC_BROWSER_TEST_F(ChromeUsbApiTest, GetDevicesByPolicyNoPolicySet) {
   )");
 
   // Launch the test app.
-  ExtensionTestMessageListener ready_listener("ready", true);
+  ExtensionTestMessageListener ready_listener("ready",
+                                              ReplyBehavior::kWillReply);
   extensions::ResultCatcher result_catcher;
   LoadExtension(dir.UnpackedPath());
 
@@ -175,12 +171,15 @@ IN_PROC_BROWSER_TEST_F(ChromeUsbApiTest, FindDevicesByPolicy) {
   )");
 
   // Launch the test app.
-  ExtensionTestMessageListener ready_listener("ready", true);
+  ExtensionTestMessageListener ready_listener("ready",
+                                              ReplyBehavior::kWillReply);
   extensions::ResultCatcher result_catcher;
   const Extension* extension = LoadExtension(dir.UnpackedPath());
 
-  EXPECT_CALL(mock_device_, OpenInternal(_))
-      .WillOnce(InvokeCallback<0>(UsbOpenDeviceError::OK));
+  EXPECT_CALL(mock_device_, Open)
+      .WillOnce(
+          RunOnceCallback<0>(device::mojom::UsbOpenDeviceResult::NewSuccess(
+              device::mojom::UsbOpenDeviceSuccess::OK)));
 
   // Run the test.
   SetUpPolicy(extension);
@@ -206,7 +205,8 @@ IN_PROC_BROWSER_TEST_F(ChromeUsbApiTest, FindDevicesByPolicyNoPolicySet) {
   )");
 
   // Launch the test app.
-  ExtensionTestMessageListener ready_listener("ready", true);
+  ExtensionTestMessageListener ready_listener("ready",
+                                              ReplyBehavior::kWillReply);
   extensions::ResultCatcher result_catcher;
   LoadExtension(dir.UnpackedPath());
 

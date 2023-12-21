@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,11 +6,11 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
 #include "components/image_fetcher/core/cache/image_cache.h"
@@ -150,8 +150,9 @@ void CachedImageFetcher::OnImageFetchedFromCache(
     if (!image_callback.is_null() ||
         (cache_result_needs_transcoding &&
          !request.params.allow_needs_transcoding_file())) {
+      auto* data_decoder = request.params.data_decoder();
       GetImageDecoder()->DecodeImage(
-          image_data, gfx::Size(),
+          image_data, gfx::Size(), data_decoder,
           base::BindOnce(&CachedImageFetcher::OnImageDecodedFromCache,
                          weak_ptr_factory_.GetWeakPtr(), std::move(request),
                          ImageDataFetcherCallback(), std::move(image_callback),
@@ -198,7 +199,7 @@ void CachedImageFetcher::EnqueueFetchImageFromNetwork(
     CachedImageFetcherRequest request,
     ImageDataFetcherCallback image_data_callback,
     ImageFetcherCallback image_callback) {
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(&CachedImageFetcher::FetchImageFromNetwork,
                      weak_ptr_factory_.GetWeakPtr(), std::move(request),

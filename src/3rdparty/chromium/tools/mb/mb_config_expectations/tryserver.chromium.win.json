@@ -6,10 +6,9 @@
       "ffmpeg_branding": "Chrome",
       "is_component_build": false,
       "is_debug": false,
-      "is_gpu_fyi_bot": true,
       "proprietary_codecs": true,
       "symbol_level": 1,
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "gpu-fyi-try-win10-intel-exp-64": {
@@ -19,10 +18,9 @@
       "ffmpeg_branding": "Chrome",
       "is_component_build": false,
       "is_debug": false,
-      "is_gpu_fyi_bot": true,
       "proprietary_codecs": true,
       "symbol_level": 1,
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "gpu-fyi-try-win10-intel-rel-64": {
@@ -32,10 +30,9 @@
       "ffmpeg_branding": "Chrome",
       "is_component_build": false,
       "is_debug": false,
-      "is_gpu_fyi_bot": true,
       "proprietary_codecs": true,
       "symbol_level": 1,
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "gpu-fyi-try-win10-nvidia-dbg-64": {
@@ -44,10 +41,9 @@
       "ffmpeg_branding": "Chrome",
       "is_component_build": true,
       "is_debug": true,
-      "is_gpu_fyi_bot": true,
       "proprietary_codecs": true,
       "symbol_level": 1,
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "gpu-fyi-try-win10-nvidia-dx12vk-dbg-64": {
@@ -57,10 +53,9 @@
       "ffmpeg_branding": "Chrome",
       "is_component_build": true,
       "is_debug": true,
-      "is_gpu_fyi_bot": true,
       "proprietary_codecs": true,
       "symbol_level": 1,
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "gpu-fyi-try-win10-nvidia-dx12vk-rel-64": {
@@ -71,10 +66,9 @@
       "ffmpeg_branding": "Chrome",
       "is_component_build": false,
       "is_debug": false,
-      "is_gpu_fyi_bot": true,
       "proprietary_codecs": true,
       "symbol_level": 1,
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "gpu-fyi-try-win10-nvidia-exp-64": {
@@ -84,10 +78,9 @@
       "ffmpeg_branding": "Chrome",
       "is_component_build": false,
       "is_debug": false,
-      "is_gpu_fyi_bot": true,
       "proprietary_codecs": true,
       "symbol_level": 1,
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "gpu-fyi-try-win10-nvidia-rel-32": {
@@ -97,11 +90,10 @@
       "ffmpeg_branding": "Chrome",
       "is_component_build": false,
       "is_debug": false,
-      "is_gpu_fyi_bot": true,
       "proprietary_codecs": true,
       "symbol_level": 1,
       "target_cpu": "x86",
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "gpu-fyi-try-win10-nvidia-rel-64": {
@@ -111,51 +103,9 @@
       "ffmpeg_branding": "Chrome",
       "is_component_build": false,
       "is_debug": false,
-      "is_gpu_fyi_bot": true,
       "proprietary_codecs": true,
       "symbol_level": 1,
-      "use_goma": true
-    }
-  },
-  "gpu-fyi-try-win7-amd-rel-32": {
-    "gn_args": {
-      "dcheck_always_on": true,
-      "enable_nacl": false,
-      "ffmpeg_branding": "Chrome",
-      "is_component_build": false,
-      "is_debug": false,
-      "is_gpu_fyi_bot": true,
-      "proprietary_codecs": true,
-      "symbol_level": 1,
-      "target_cpu": "x86",
-      "use_goma": true
-    }
-  },
-  "gpu-fyi-try-win7-nvidia-rel-32": {
-    "gn_args": {
-      "dcheck_always_on": true,
-      "enable_nacl": false,
-      "ffmpeg_branding": "Chrome",
-      "is_component_build": false,
-      "is_debug": false,
-      "is_gpu_fyi_bot": true,
-      "proprietary_codecs": true,
-      "symbol_level": 1,
-      "target_cpu": "x86",
-      "use_goma": true
-    }
-  },
-  "gpu-fyi-try-win7-nvidia-rel-64": {
-    "gn_args": {
-      "dcheck_always_on": true,
-      "enable_nacl": false,
-      "ffmpeg_branding": "Chrome",
-      "is_component_build": false,
-      "is_debug": false,
-      "is_gpu_fyi_bot": true,
-      "proprietary_codecs": true,
-      "symbol_level": 1,
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "win-annotator-rel": {
@@ -164,7 +114,7 @@
       "is_component_build": false,
       "is_debug": false,
       "symbol_level": 0,
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "win-asan": {
@@ -175,7 +125,7 @@
       "is_component_build": false,
       "is_debug": false,
       "symbol_level": 1,
-      "use_goma": true,
+      "use_remoteexec": true,
       "v8_enable_verify_heap": true
     }
   },
@@ -185,7 +135,16 @@
       "is_component_build": false,
       "is_debug": false,
       "symbol_level": 1,
-      "use_goma": true
+      "use_remoteexec": true
+    }
+  },
+  "win-fieldtrial-rel": {
+    "gn_args": {
+      "dcheck_always_on": false,
+      "is_component_build": false,
+      "is_debug": false,
+      "symbol_level": 1,
+      "use_remoteexec": true
     }
   },
   "win-libfuzzer-asan-rel": {
@@ -201,17 +160,54 @@
       "pdf_enable_xfa": true,
       "proprietary_codecs": true,
       "symbol_level": 0,
-      "use_goma": true,
-      "use_libfuzzer": true
+      "use_libfuzzer": true,
+      "use_remoteexec": true
     }
   },
-  "win10-clang-tidy-rel": {
+  "win-perfetto-rel": {
     "gn_args": {
       "dcheck_always_on": true,
       "is_component_build": false,
       "is_debug": false,
       "symbol_level": 0,
-      "use_goma": true
+      "use_perfetto_client_library": true,
+      "use_remoteexec": true
+    }
+  },
+  "win-rel": {
+    "gn_args": {
+      "coverage_instrumentation_input_file": "//.code-coverage/files_to_instrument.txt",
+      "dcheck_always_on": true,
+      "enable_resource_allowlist_generation": false,
+      "ffmpeg_branding": "Chrome",
+      "is_component_build": false,
+      "is_debug": false,
+      "proprietary_codecs": true,
+      "symbol_level": 0,
+      "use_clang_coverage": true,
+      "use_remoteexec": true
+    }
+  },
+  "win10-code-coverage": {
+    "gn_args": {
+      "dcheck_always_on": false,
+      "ffmpeg_branding": "Chrome",
+      "is_clang": true,
+      "is_component_build": false,
+      "is_debug": false,
+      "proprietary_codecs": true,
+      "symbol_level": 0,
+      "use_clang_coverage": true,
+      "use_remoteexec": true
+    }
+  },
+  "win10-wpt-content-shell-fyi-rel": {
+    "gn_args": {
+      "dcheck_always_on": true,
+      "is_component_build": false,
+      "is_debug": false,
+      "symbol_level": 0,
+      "use_remoteexec": true
     }
   },
   "win10_chromium_inverse_fieldtrials_x64_fyi_rel_ng": {
@@ -224,7 +220,7 @@
       "is_debug": false,
       "proprietary_codecs": true,
       "symbol_level": 0,
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "win10_chromium_x64_dbg_ng": {
@@ -234,21 +230,7 @@
       "is_debug": true,
       "proprietary_codecs": true,
       "symbol_level": 1,
-      "use_goma": true
-    }
-  },
-  "win10_chromium_x64_rel_ng": {
-    "gn_args": {
-      "coverage_instrumentation_input_file": "//.code-coverage/files_to_instrument.txt",
-      "dcheck_always_on": true,
-      "enable_resource_allowlist_generation": false,
-      "ffmpeg_branding": "Chrome",
-      "is_component_build": false,
-      "is_debug": false,
-      "proprietary_codecs": true,
-      "symbol_level": 0,
-      "use_clang_coverage": true,
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "win10_chromium_x64_rel_ng_exp": {
@@ -258,6 +240,15 @@
       "is_debug": false,
       "symbol_level": 0,
       "use_goma": true
+    }
+  },
+  "win11-wpt-content-shell-fyi-rel": {
+    "gn_args": {
+      "dcheck_always_on": true,
+      "is_component_build": false,
+      "is_debug": false,
+      "symbol_level": 0,
+      "use_remoteexec": true
     }
   },
   "win11-x64-fyi-rel": {
@@ -271,20 +262,7 @@
       "proprietary_codecs": true,
       "symbol_level": 0,
       "use_clang_coverage": true,
-      "use_goma": true
-    }
-  },
-  "win7-rel": {
-    "gn_args": {
-      "dcheck_always_on": true,
-      "enable_resource_allowlist_generation": true,
-      "ffmpeg_branding": "Chrome",
-      "is_component_build": false,
-      "is_debug": false,
-      "proprietary_codecs": true,
-      "symbol_level": 0,
-      "target_cpu": "x86",
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "win_archive": {
@@ -294,7 +272,7 @@
       "is_debug": false,
       "symbol_level": 0,
       "target_cpu": "x86",
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "win_chromium_compile_dbg_ng": {
@@ -305,7 +283,7 @@
       "proprietary_codecs": true,
       "symbol_level": 0,
       "target_cpu": "x86",
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "win_chromium_compile_rel_ng": {
@@ -318,18 +296,7 @@
       "proprietary_codecs": true,
       "symbol_level": 0,
       "target_cpu": "x86",
-      "use_goma": true
-    }
-  },
-  "win_chromium_dbg_ng": {
-    "gn_args": {
-      "ffmpeg_branding": "Chrome",
-      "is_component_build": true,
-      "is_debug": true,
-      "proprietary_codecs": true,
-      "symbol_level": 0,
-      "target_cpu": "x86",
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "win_chromium_x64_rel_ng": {
@@ -340,7 +307,7 @@
       "is_debug": false,
       "proprietary_codecs": true,
       "symbol_level": 0,
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "win_optional_gpu_tests_rel": {
@@ -350,10 +317,9 @@
       "ffmpeg_branding": "Chrome",
       "is_component_build": false,
       "is_debug": false,
-      "is_gpu_fyi_bot": true,
       "proprietary_codecs": true,
       "symbol_level": 1,
-      "use_goma": true
+      "use_remoteexec": true
     }
   },
   "win_upload_clang": {
@@ -370,7 +336,7 @@
       "is_component_build": false,
       "is_debug": false,
       "symbol_level": 0,
-      "use_goma": true
+      "use_remoteexec": true
     }
   }
 }

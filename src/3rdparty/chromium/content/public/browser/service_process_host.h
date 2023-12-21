@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/command_line.h"
+#include "base/functional/callback.h"
 #include "base/observer_list_types.h"
 #include "base/process/process_handle.h"
 #include "base/strings/string_piece.h"
@@ -22,11 +23,16 @@
 #include "mojo/public/cpp/bindings/remote.h"
 #include "sandbox/policy/mojom/sandbox.mojom.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
+#include "url/gurl.h"
 
-#if BUILDFLAG(IS_CHROMECAST)
-#include "base/callback.h"
+// TODO(crbug.com/1328879): Remove this when fixing the bug.
+#if BUILDFLAG(IS_CASTOS) || BUILDFLAG(IS_CAST_ANDROID)
 #include "mojo/public/cpp/system/message_pipe.h"
 #endif
+
+namespace base {
+class Process;
+}  // namespace base
 
 namespace content {
 
@@ -76,6 +82,10 @@ class CONTENT_EXPORT ServiceProcessHost {
     Options& WithDisplayName(const std::u16string& name);
     Options& WithDisplayName(int resource_id);
 
+    // Specifies the site associated with the service process, only needed for
+    // per-site service processes.
+    Options& WithSite(const GURL& url);
+
     // Specifies additional flags to configure the launched process. See
     // ChildProcessHost for flag definitions.
     Options& WithChildFlags(int flags);
@@ -83,14 +93,21 @@ class CONTENT_EXPORT ServiceProcessHost {
     // Specifies extra command line switches to append before launch.
     Options& WithExtraCommandLineSwitches(std::vector<std::string> switches);
 
+    // Specifies a callback to be invoked with service process once it's
+    // launched. Will be on UI thread.
+    Options& WithProcessCallback(
+        base::OnceCallback<void(const base::Process&)>);
+
     // Passes the contents of this Options object to a newly returned Options
     // value. This must be called when moving a built Options object into a call
     // to |Launch()|.
     Options Pass();
 
     std::u16string display_name;
+    absl::optional<GURL> site;
     absl::optional<int> child_flags;
     std::vector<std::string> extra_switches;
+    base::OnceCallback<void(const base::Process&)> process_callback;
   };
 
   // An interface which can be implemented and registered/unregistered with
@@ -166,7 +183,8 @@ class CONTENT_EXPORT ServiceProcessHost {
                      sandbox::mojom::Sandbox sandbox);
 };
 
-#if BUILDFLAG(IS_CHROMECAST)
+// TODO(crbug.com/1328879): Remove this method when fixing the bug.
+#if BUILDFLAG(IS_CASTOS) || BUILDFLAG(IS_CAST_ANDROID)
 // DEPRECATED. DO NOT USE THIS. This is a helper for any remaining service
 // launching code which uses an older code path to launch services in a utility
 // process. All new code must use ServiceProcessHost instead of this API.
@@ -176,7 +194,7 @@ void CONTENT_EXPORT LaunchUtilityProcessServiceDeprecated(
     sandbox::mojom::Sandbox sandbox_type,
     mojo::ScopedMessagePipeHandle service_pipe,
     base::OnceCallback<void(base::ProcessId)> callback);
-#endif
+#endif  // BUILDFLAG(IS_CASTOS) || BUILDFLAG(IS_CAST_ANDROID)
 
 }  // namespace content
 

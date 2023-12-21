@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -45,6 +45,7 @@ class HatsHandler : public SettingsPageUIHandler {
     OPENED_PRIVACY_SANDBOX = 2,
     OPENED_PASSWORD_MANAGER = 3,
     COMPLETED_PRIVACY_GUIDE = 4,
+    RAN_PASSWORD_CHECK = 5,
   };
 
   // Requests the appropriate HaTS survey, which may be none, for |interaction|.

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,16 +6,18 @@ import './strings.m.js';
 import './tab.js';
 import './tab_group.js';
 
+import {startColorChangeUpdater} from 'chrome://resources/cr_components/color_change_listener/colors_css_updater.js';
 import {assert} from 'chrome://resources/js/assert_ts.js';
-import {addWebUIListener, removeWebUIListener, WebUIListener} from 'chrome://resources/js/cr.m.js';
-import {FocusOutlineManager} from 'chrome://resources/js/cr/ui/focus_outline_manager.m.js';
+import {addWebUiListener, removeWebUiListener, WebUiListener} from 'chrome://resources/js/cr.js';
+import {FocusOutlineManager} from 'chrome://resources/js/focus_outline_manager.js';
 import {CustomElement} from 'chrome://resources/js/custom_element.js';
-import {EventTracker} from 'chrome://resources/js/event_tracker.m.js';
-import {isRTL} from 'chrome://resources/js/util.m.js';
+import {EventTracker} from 'chrome://resources/js/event_tracker.js';
+import {isRTL} from 'chrome://resources/js/util_ts.js';
 
 import {DragManager, DragManagerDelegate} from './drag_manager.js';
 import {isTabElement, TabElement} from './tab.js';
 import {isDragHandle, isTabGroupElement, TabGroupElement} from './tab_group.js';
+import {getTemplate} from './tab_list.html.js';
 import {Tab, TabGroupVisualData} from './tab_strip.mojom-webui.js';
 import {TabsApiProxy, TabsApiProxyImpl} from './tabs_api_proxy.js';
 
@@ -39,7 +41,7 @@ function getContextMenuPosition(element: Element): {x: number, y: number} {
   const rect = element.getBoundingClientRect();
   return {
     x: rect.left + TOUCH_CONTEXT_MENU_OFFSET_X,
-    y: rect.bottom + TOUCH_CONTEXT_MENU_OFFSET_Y
+    y: rect.bottom + TOUCH_CONTEXT_MENU_OFFSET_Y,
   };
 }
 
@@ -142,13 +144,13 @@ export class TabListElement extends CustomElement implements
   private pinnedTabsElement_: Element;
   private tabsApi_: TabsApiProxy;
   private unpinnedTabsElement_: Element;
-  private webUIListeners_: WebUIListener[];
+  private webUIListeners_: WebUiListener[];
   private windowBlurListener_: () => void;
   private scrollingTimeoutId_: number;
   private scrollListener_: (e: Event) => void;
 
   static override get template() {
-    return `{__html_template__}`;
+    return getTemplate();
   }
 
   constructor() {
@@ -233,7 +235,7 @@ export class TabListElement extends CustomElement implements
 
     const callbackRouter = this.tabsApi_.getCallbackRouter();
     callbackRouter.layoutChanged.addListener(
-        this.applyCSSDictionary_.bind(this));
+        this.applyCssDictionary_.bind(this));
 
     callbackRouter.tabThumbnailUpdated.addListener(
         this.tabThumbnailUpdated_.bind(this));
@@ -247,22 +249,23 @@ export class TabListElement extends CustomElement implements
         () => this.onReceivedKeyboardFocus_());
 
     callbackRouter.themeChanged.addListener(() => {
-      // Refetch theme colors, group color and tab favicons on theme change.
-      this.fetchAndUpdateColors_();
+      // Refetch theme group color and tab favicons on theme change.
       this.fetchAndUpdateGroupData_();
       this.fetchAndUpdateTabs_();
     });
 
     this.eventTracker_.add(
-        document, 'contextmenu', e => this.onContextMenu_(e));
+        document, 'contextmenu', (e: Event) => this.onContextMenu_(e));
     this.eventTracker_.add(
-        document, 'pointerup', e => this.onPointerUp_(e as PointerEvent));
+        document, 'pointerup',
+        (e: Event) => this.onPointerUp_(e as PointerEvent));
     this.eventTracker_.add(
         document, 'visibilitychange', () => this.onDocumentVisibilityChange_());
     this.eventTracker_.add(window, 'blur', () => this.onWindowBlur_());
-    this.eventTracker_.add(this, 'scroll', e => this.onScroll_(e));
+    this.eventTracker_.add(this, 'scroll', (e: Event) => this.onScroll_(e));
     this.eventTracker_.add(
-        document, 'touchstart', e => this.onTouchStart_(e as TouchEvent));
+        document, 'touchstart',
+        (e: Event) => this.onTouchStart_(e as TouchEvent));
     // Touchmove events happen when a user has started a touch gesture sequence
     // and proceeded to move their touch pointer across the screen. Ensure that
     // we clear the `last_targeted_item_` in these cases to ensure the pressed
@@ -272,14 +275,16 @@ export class TabListElement extends CustomElement implements
 
     const dragManager = new DragManager(this);
     dragManager.startObserving();
+
+    startColorChangeUpdater();
   }
 
   private addAnimationPromise_(promise: Promise<void>) {
     this.animationPromises = this.animationPromises.then(() => promise);
   }
 
-  private addWebUIListener_(eventName: string, callback: Function) {
-    this.webUIListeners_.push(addWebUIListener(eventName, callback));
+  private addWebUiListener_(eventName: string, callback: Function) {
+    this.webUIListeners_.push(addWebUiListener(eventName, callback));
   }
 
   private animateScrollPosition_(scrollBy: number) {
@@ -321,7 +326,7 @@ export class TabListElement extends CustomElement implements
     this.currentScrollUpdateFrame_ = requestAnimationFrame(onAnimationFrame);
   }
 
-  private applyCSSDictionary_(dictionary: {[key: string]: string}) {
+  private applyCssDictionary_(dictionary: {[key: string]: string}) {
     for (const [cssVariable, value] of Object.entries(dictionary)) {
       this.style.setProperty(cssVariable, value);
     }
@@ -334,8 +339,7 @@ export class TabListElement extends CustomElement implements
 
   connectedCallback() {
     this.tabsApi_.getLayout().then(
-        ({layout}) => this.applyCSSDictionary_(layout));
-    this.fetchAndUpdateColors_();
+        ({layout}) => this.applyCssDictionary_(layout));
 
     const getTabsStartTimestamp = Date.now();
     this.tabsApi_.getTabs().then(({tabs}) => {
@@ -372,7 +376,7 @@ export class TabListElement extends CustomElement implements
   }
 
   disconnectedCallback() {
-    this.webUIListeners_.forEach(removeWebUIListener);
+    this.webUIListeners_.forEach(removeWebUiListener);
     this.eventTracker_.removeAll();
   }
 
@@ -392,11 +396,6 @@ export class TabListElement extends CustomElement implements
   private findTabGroupElement_(groupId: string): TabGroupElement|null {
     return this.$<TabGroupElement>(
         `tabstrip-tab-group[data-group-id="${groupId}"]`);
-  }
-
-  private fetchAndUpdateColors_() {
-    this.tabsApi_.getColors().then(
-        ({colors}) => this.applyCSSDictionary_(colors));
   }
 
   private fetchAndUpdateGroupData_() {
@@ -507,7 +506,12 @@ export class TabListElement extends CustomElement implements
   }
 
   private onTabActivating_(id: number) {
-    assert(this.activatingTabId_ === undefined);
+    // onTabActivating_() is called when the user clicks on a tab in JavaScript.
+    // We then expect a callback asynchronously from the browser after the tab
+    // we clicked on has finally activated. We may incur multiple calls to
+    // onTabActivating_()  before the active tab actually changes so we only
+    // consider the most recent activating action when recording metrics. (See
+    // crbug.com/1333405)
     const activeTab = this.getActiveTab_();
     if (activeTab && activeTab.tab.id === id) {
       return;
@@ -774,8 +778,17 @@ export class TabListElement extends CustomElement implements
     this.animateScrollPosition_(scrollBy);
   }
 
-  shouldPreventDrag(): boolean {
-    return this.$all('tabstrip-tab').length === 1;
+  shouldPreventDrag(isDraggingTab: boolean): boolean {
+    if (isDraggingTab) {
+      // Do not allow dragging a tab if there's only 1 tab.
+      return this.$all('tabstrip-tab').length === 1;
+    } else {
+      // Do not allow dragging the tab group with no others outside of the tab
+      // group. In this case there is only 1 pinned and unpinned top level
+      // element, which is the dragging tab group itself.
+      return (this.pinnedTabsElement_.childElementCount +
+              this.unpinnedTabsElement_.childElementCount) === 1;
+    }
   }
 
   private tabThumbnailUpdated_(tabId: number, imgData: string) {

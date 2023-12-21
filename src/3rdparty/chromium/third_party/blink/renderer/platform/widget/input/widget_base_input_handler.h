@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -116,7 +116,7 @@ class PLATFORM_EXPORT WidgetBaseInputHandler {
   // latency info, and its metrics, respectively, used in generating new
   // gestures along with their latency info and metrics.
   void HandleInjectedScrollGestures(
-      std::vector<InjectScrollGestureParams> injected_scroll_params,
+      Vector<InjectScrollGestureParams> injected_scroll_params,
       const WebInputEvent& input_event,
       const ui::LatencyInfo& original_latency_info,
       const cc::EventMetrics* original_metrics);

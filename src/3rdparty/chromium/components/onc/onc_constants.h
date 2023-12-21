@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 #ifndef COMPONENTS_ONC_ONC_CONSTANTS_H_
@@ -135,6 +135,8 @@ COMPONENT_EXPORT(ONC) extern const char kEID[];
 COMPONENT_EXPORT(ONC) extern const char kICCID[];
 COMPONENT_EXPORT(ONC) extern const char kIMEI[];
 COMPONENT_EXPORT(ONC) extern const char kIMSI[];
+COMPONENT_EXPORT(ONC) extern const char kLastConnectedAttachApnProperty[];
+COMPONENT_EXPORT(ONC) extern const char kLastConnectedDefaultApnProperty[];
 COMPONENT_EXPORT(ONC) extern const char kLastGoodAPN[];
 COMPONENT_EXPORT(ONC) extern const char kManufacturer[];
 COMPONENT_EXPORT(ONC) extern const char kMDN[];
@@ -165,6 +167,7 @@ COMPONENT_EXPORT(ONC) extern const char kTechnologyLte[];
 COMPONENT_EXPORT(ONC) extern const char kTechnologyLteAdvanced[];
 COMPONENT_EXPORT(ONC) extern const char kTechnologyUmts[];
 COMPONENT_EXPORT(ONC) extern const char kTechnology5gNr[];
+COMPONENT_EXPORT(ONC) extern const char kUserAPNList[];
 }  // namespace cellular
 
 namespace cellular_provider {
@@ -182,6 +185,21 @@ COMPONENT_EXPORT(ONC) extern const char kAuthentication[];
 COMPONENT_EXPORT(ONC) extern const char kLocalizedName[];
 COMPONENT_EXPORT(ONC) extern const char kLanguage[];
 COMPONENT_EXPORT(ONC) extern const char kAttach[];
+COMPONENT_EXPORT(ONC) extern const char kId[];
+COMPONENT_EXPORT(ONC) extern const char kState[];
+COMPONENT_EXPORT(ONC) extern const char kStateEnabled[];
+COMPONENT_EXPORT(ONC) extern const char kStateDisabled[];
+COMPONENT_EXPORT(ONC) extern const char kAuthenticationAutomatic[];
+COMPONENT_EXPORT(ONC) extern const char kAuthenticationPap[];
+COMPONENT_EXPORT(ONC) extern const char kAuthenticationChap[];
+COMPONENT_EXPORT(ONC) extern const char kIpType[];
+COMPONENT_EXPORT(ONC) extern const char kIpTypeAutomatic[];
+COMPONENT_EXPORT(ONC) extern const char kIpTypeIpv4[];
+COMPONENT_EXPORT(ONC) extern const char kIpTypeIpv6[];
+COMPONENT_EXPORT(ONC) extern const char kIpTypeIpv4Ipv6[];
+COMPONENT_EXPORT(ONC) extern const char kApnTypes[];
+COMPONENT_EXPORT(ONC) extern const char kApnTypeDefault[];
+COMPONENT_EXPORT(ONC) extern const char kApnTypeAttach[];
 }  // namespace cellular_apn
 
 namespace cellular_found_network {
@@ -242,6 +260,7 @@ namespace wifi {
 COMPONENT_EXPORT(ONC) extern const char kAllowGatewayARPPolling[];
 COMPONENT_EXPORT(ONC) extern const char kAutoConnect[];
 COMPONENT_EXPORT(ONC) extern const char kBSSID[];
+COMPONENT_EXPORT(ONC) extern const char kBSSIDAllowlist[];
 COMPONENT_EXPORT(ONC) extern const char kEAP[];
 COMPONENT_EXPORT(ONC) extern const char kFrequency[];
 COMPONENT_EXPORT(ONC) extern const char kFrequencyList[];
@@ -252,6 +271,7 @@ COMPONENT_EXPORT(ONC) extern const char kSSID[];
 COMPONENT_EXPORT(ONC) extern const char kSecurity[];
 COMPONENT_EXPORT(ONC) extern const char kSecurityNone[];
 COMPONENT_EXPORT(ONC) extern const char kSignalStrength[];
+COMPONENT_EXPORT(ONC) extern const char kSignalStrengthRssi[];
 COMPONENT_EXPORT(ONC) extern const char kWEP_PSK[];
 COMPONENT_EXPORT(ONC) extern const char kWEP_8021X[];
 COMPONENT_EXPORT(ONC) extern const char kWPA_PSK[];
@@ -441,9 +461,9 @@ COMPONENT_EXPORT(ONC) extern const char kVerifyX509[];
 }  // namespace openvpn
 
 namespace wireguard {
-COMPONENT_EXPORT(ONC) extern const char kAddress[];
 COMPONENT_EXPORT(ONC) extern const char kAllowedIPs[];
 COMPONENT_EXPORT(ONC) extern const char kEndpoint[];
+COMPONENT_EXPORT(ONC) extern const char kIPAddresses[];
 COMPONENT_EXPORT(ONC) extern const char kPeers[];
 COMPONENT_EXPORT(ONC) extern const char kPersistentKeepalive[];
 COMPONENT_EXPORT(ONC) extern const char kPresharedKey[];

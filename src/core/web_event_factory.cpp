@@ -558,6 +558,8 @@ static int windowsKeyCodeForQtKey(int qtKey, bool isKeypad)
         case Qt::Key_QuoteDbl:
             return VK_OEM_7; // case '\'': case '"': return 0xDE;
             // VK_OEM_8 (DF) Used for miscellaneous characters; it can vary by keyboard.
+        case Qt::Key_AltGr:
+            return 0xE1; // (E1) VK_OEM_AX = ui::VKEY_ALTGR see ui/events/keycodes/keyboard_codes_win.h
             // VK_OEM_102 (E2) Windows 2000/XP: Either the angle bracket key or the backslash key on the RT 102-key keyboard
 
         case Qt::Key_AudioRewind:
@@ -1444,6 +1446,7 @@ WebMouseEvent WebEventFactory::toWebMouseEvent(QHoverEvent *ev)
     webKitEvent.SetPositionInWidget(ev->position().x(), ev->position().y());
     webKitEvent.movement_x = ev->position().x() - ev->oldPos().x();
     webKitEvent.movement_y = ev->position().y() - ev->oldPos().y();
+    webKitEvent.is_raw_movement_event = true;
     webKitEvent.pointer_type = WebPointerProperties::PointerType::kMouse;
 
     return webKitEvent;
@@ -1540,8 +1543,9 @@ static QPoint getWheelEventDelta(const blink::WebGestureEvent &webEvent)
 {
     static const float cDefaultQtScrollStep = 20.f;
     static const int wheelScrollLines = QGuiApplication::styleHints()->wheelScrollLines();
-    return QPoint(webEvent.data.scroll_update.delta_x * QWheelEvent::DefaultDeltasPerStep / (wheelScrollLines * cDefaultQtScrollStep),
-                  webEvent.data.scroll_update.delta_y * QWheelEvent::DefaultDeltasPerStep / (wheelScrollLines * cDefaultQtScrollStep));
+    static const float deltasPerStep = static_cast<float>(QWheelEvent::DefaultDeltasPerStep);
+    return QPoint(webEvent.data.scroll_update.delta_x * deltasPerStep / (wheelScrollLines * cDefaultQtScrollStep),
+                  webEvent.data.scroll_update.delta_y * deltasPerStep / (wheelScrollLines * cDefaultQtScrollStep));
 }
 
 blink::WebMouseWheelEvent::Phase toBlinkPhase(QWheelEvent *ev)
@@ -1561,6 +1565,22 @@ blink::WebMouseWheelEvent::Phase toBlinkPhase(QWheelEvent *ev)
     return blink::WebMouseWheelEvent::kPhaseNone;
 }
 
+blink::WebMouseWheelEvent::Phase getMomentumPhase(QWheelEvent *ev)
+{
+    switch (ev->phase()) {
+    case Qt::ScrollMomentum:
+        return blink::WebMouseWheelEvent::kPhaseBegan;
+    case Qt::ScrollEnd:
+        return blink::WebMouseWheelEvent::kPhaseEnded;
+    case Qt::NoScrollPhase:
+    case Qt::ScrollBegin:
+    case Qt::ScrollUpdate:
+        return blink::WebMouseWheelEvent::kPhaseNone;
+    }
+    Q_UNREACHABLE();
+    return blink::WebMouseWheelEvent::kPhaseNone;
+}
+
 blink::WebMouseWheelEvent WebEventFactory::toWebWheelEvent(QWheelEvent *ev)
 {
     WebMouseWheelEvent webEvent;
@@ -1572,11 +1592,12 @@ blink::WebMouseWheelEvent WebEventFactory::toWebWheelEvent(QWheelEvent *ev)
     webEvent.SetPositionInScreen(static_cast<float>(ev->globalPosition().x()),
                                  static_cast<float>(ev->globalPosition().y()));
 
-    webEvent.wheel_ticks_x = static_cast<float>(ev->angleDelta().x()) / QWheelEvent::DefaultDeltasPerStep;
-    webEvent.wheel_ticks_y = static_cast<float>(ev->angleDelta().y()) / QWheelEvent::DefaultDeltasPerStep;
+    webEvent.wheel_ticks_x = ev->angleDelta().x() / static_cast<float>(QWheelEvent::DefaultDeltasPerStep);
+    webEvent.wheel_ticks_y = ev->angleDelta().y() / static_cast<float>(QWheelEvent::DefaultDeltasPerStep);
     webEvent.phase = toBlinkPhase(ev);
 #if defined(Q_OS_DARWIN)
     // PrecisePixel is a macOS term meaning it is a system scroll gesture, see qnsview_mouse.mm
+    webEvent.momentum_phase = getMomentumPhase(ev);
     if (ev->source() == Qt::MouseEventSynthesizedBySystem)
         webEvent.delta_units = ui::ScrollGranularity::kScrollByPrecisePixel;
 #endif
@@ -1595,6 +1616,9 @@ bool WebEventFactory::coalesceWebWheelEvent(blink::WebMouseWheelEvent &webEvent,
     if (toBlinkPhase(ev) != webEvent.phase)
         return false;
 #if defined(Q_OS_DARWIN)
+    if (getMomentumPhase(ev) != webEvent.momentum_phase)
+        return false;
+
     if ((webEvent.delta_units == ui::ScrollGranularity::kScrollByPrecisePixel)
             != (ev->source() == Qt::MouseEventSynthesizedBySystem))
         return false;
@@ -1606,8 +1630,8 @@ bool WebEventFactory::coalesceWebWheelEvent(blink::WebMouseWheelEvent &webEvent,
     webEvent.SetPositionInScreen(static_cast<float>(ev->globalPosition().x()),
                                  static_cast<float>(ev->globalPosition().y()));
 
-    webEvent.wheel_ticks_x += static_cast<float>(ev->angleDelta().x()) / QWheelEvent::DefaultDeltasPerStep;
-    webEvent.wheel_ticks_y += static_cast<float>(ev->angleDelta().y()) / QWheelEvent::DefaultDeltasPerStep;
+    webEvent.wheel_ticks_x = ev->angleDelta().x() / static_cast<float>(QWheelEvent::DefaultDeltasPerStep);
+    webEvent.wheel_ticks_y = ev->angleDelta().y() / static_cast<float>(QWheelEvent::DefaultDeltasPerStep);
     setBlinkWheelEventDelta(webEvent);
 
     return true;
@@ -1676,10 +1700,12 @@ content::NativeWebKeyboardEvent WebEventFactory::toWebKeyboardEvent(QKeyEvent *e
                 ui::DomCodeToUsLayoutKeyboardCode(static_cast<ui::DomCode>(webKitEvent.dom_code));
 
     const ushort* text = qtText.utf16();
-    size_t textSize = std::min(sizeof(webKitEvent.text), size_t(qtText.length() * 2));
-    memcpy(&webKitEvent.text, text, textSize);
-    memcpy(&webKitEvent.unmodified_text, text, textSize);
-
+    size_t size = std::char_traits<char16_t>::length((char16_t *)text);
+    if (size <= blink::WebKeyboardEvent::kTextLengthCap - 1) { // should be null terminated
+        size_t textSize = std::min(sizeof(webKitEvent.text), size * sizeof(char16_t));
+        memcpy(&webKitEvent.text, text, textSize);
+        memcpy(&webKitEvent.unmodified_text, text, textSize);
+    }
     if (webKitEvent.windows_key_code == VK_RETURN) {
         // This is the same behavior as GTK:
         // We need to treat the enter key as a key press of character \r. This

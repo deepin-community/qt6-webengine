@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,8 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -63,9 +63,9 @@ using content::WebUIMessageHandler;
 
 namespace {
 
-content::WebUIDataSource* CreateFlagsUIHTMLSource() {
-  content::WebUIDataSource* source =
-      content::WebUIDataSource::Create(chrome::kChromeUIFlagsHost);
+content::WebUIDataSource* CreateAndAddFlagsUIHTMLSource(Profile* profile) {
+  content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
+      profile, chrome::kChromeUIFlagsHost);
   source->OverrideContentSecurityPolicy(
       network::mojom::CSPDirectiveName::ScriptSrc,
       "script-src chrome://resources 'self' 'unsafe-eval';");
@@ -117,9 +117,9 @@ void FinishInitialization(base::WeakPtr<T> flags_ui,
   if (current_user_is_owner) {
     ash::OwnerSettingsServiceAsh* service =
         ash::OwnerSettingsServiceAshFactory::GetForBrowserContext(profile);
-    dom_handler->Init(new chromeos::about_flags::OwnerFlagsStorage(
-                          profile->GetPrefs(), service),
-                      flags_ui::kOwnerAccessToFlags);
+    dom_handler->Init(
+        new ash::about_flags::OwnerFlagsStorage(profile->GetPrefs(), service),
+        flags_ui::kOwnerAccessToFlags);
   } else {
     dom_handler->Init(
         new flags_ui::PrefServiceFlagsStorage(profile->GetPrefs()),
@@ -262,9 +262,8 @@ FlagsUI::FlagsUI(content::WebUI* web_ui)
   handler->set_deprecated_features_only(false);
 
   // Set up the about:flags source.
-  auto* source = CreateFlagsUIHTMLSource();
+  content::WebUIDataSource* source = CreateAndAddFlagsUIHTMLSource(profile);
   AddStrings(source);
-  content::WebUIDataSource::Add(profile, source);
 }
 
 FlagsUI::~FlagsUI() {}
@@ -284,9 +283,8 @@ FlagsDeprecatedUI::FlagsDeprecatedUI(content::WebUI* web_ui)
   handler->set_deprecated_features_only(true);
 
   // Set up the about:flags/deprecated source.
-  auto* source = CreateFlagsUIHTMLSource();
+  content::WebUIDataSource* source = CreateAndAddFlagsUIHTMLSource(profile);
   AddStrings(source);
-  content::WebUIDataSource::Add(profile, source);
 }
 
 FlagsDeprecatedUI::~FlagsDeprecatedUI() {}

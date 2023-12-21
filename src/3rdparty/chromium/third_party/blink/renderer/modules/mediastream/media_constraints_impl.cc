@@ -50,7 +50,6 @@
 #include "third_party/blink/renderer/core/frame/deprecation/deprecation.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
-#include "third_party/blink/renderer/modules/mediastream/media_error_state.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
@@ -96,74 +95,19 @@ const char kMediaStreamSourceInfoId[] = "sourceId";  // mapped to deviceId
 const char kMediaStreamRenderToAssociatedSink[] =
     "chromeRenderToAssociatedSink";
 // RenderToAssociatedSink will be going away some time.
-const char kMediaStreamAudioHotword[] = "googHotword";
 const char kEchoCancellation[] = "echoCancellation";
 const char kDisableLocalEcho[] = "disableLocalEcho";
 const char kGoogEchoCancellation[] = "googEchoCancellation";
 const char kGoogExperimentalEchoCancellation[] = "googEchoCancellation2";
 const char kGoogAutoGainControl[] = "googAutoGainControl";
-const char kGoogExperimentalAutoGainControl[] = "googAutoGainControl2";
 const char kGoogNoiseSuppression[] = "googNoiseSuppression";
 const char kGoogExperimentalNoiseSuppression[] = "googNoiseSuppression2";
-const char kGoogBeamforming[] = "googBeamforming";
-const char kGoogArrayGeometry[] = "googArrayGeometry";
 const char kGoogHighpassFilter[] = "googHighpassFilter";
-const char kGoogTypingNoiseDetection[] = "googTypingNoiseDetection";
 const char kGoogAudioMirroring[] = "googAudioMirroring";
 // Audio constraints.
 const char kDAEchoCancellation[] = "googDAEchoCancellation";
 // Google-specific constraint keys for a local video source (getUserMedia).
 const char kNoiseReduction[] = "googNoiseReduction";
-
-// Legacy RTCPeerConnection createOffer() and createAnswer() constraints.
-// Legacy versions of the attributes in the spec only used with callback-based
-// versions of the spec APIs.
-// TODO(https://crbug.com/1315572): Remove these as part of removing the
-// callback-based versions.
-const char kOfferToReceiveAudio[] = "OfferToReceiveAudio";
-const char kOfferToReceiveVideo[] = "OfferToReceiveVideo";
-const char kVoiceActivityDetection[] = "VoiceActivityDetection";
-const char kIceRestart[] = "IceRestart";
-
-// Legacy RTCPeerConnection constructor constraints.
-
-// DtlsSrtpKeyAgreement and RtpDataChannels are already ignored, except when
-// building Fuchsia.
-// TODO(crbug.com/804275): Ignore on all platforms when Fuchsia dependency is
-// gone to unblock mediaConstraints removal.
-const char kEnableDtlsSrtp[] = "DtlsSrtpKeyAgreement";
-const char kEnableRtpDataChannels[] = "RtpDataChannels";
-// TODO(https://crbug.com/1315576): Deprecate and ignore.
-const char kEnableIPv6[] = "googIPv6";
-// TODO(https://crbug.com/1315564): Deprecate and ignore.
-const char kEnableVideoSuspendBelowMinBitrate[] = "googSuspendBelowMinBitrate";
-// TODO(https://crbug.com/1315155): Deprecate and ignore.
-const char kScreencastMinBitrate[] = "googScreencastMinBitrate";
-// TODO(https://crbug.com/1315569): Deprecate and ignore.
-const char kCpuOveruseDetection[] = "googCpuOveruseDetection";
-// Legacy goog-constraints that are already ignored.
-const char kNumUnsignalledRecvStreams[] = "googNumUnsignalledRecvStreams";
-const char kCombinedAudioVideoBwe[] = "googCombinedAudioVideoBwe";
-const char kCpuUnderuseThreshold[] = "googCpuUnderuseThreshold";
-const char kCpuOveruseThreshold[] = "googCpuOveruseThreshold";
-const char kCpuUnderuseEncodeRsdThreshold[] =
-    "googCpuUnderuseEncodeRsdThreshold";
-const char kCpuOveruseEncodeRsdThreshold[] = "googCpuOveruseEncodeRsdThreshold";
-const char kCpuOveruseEncodeUsage[] = "googCpuOveruseEncodeUsage";
-const char kHighStartBitrate[] = "googHighStartBitrate";
-const char kPayloadPadding[] = "googPayloadPadding";
-const char kAudioLatency[] = "latencyMs";
-const char kUseRtpMux[] = "googUseRtpMUX";
-const char kEnableDscp[] = "googDscp";
-
-// Names that have been used in the past, but should now be ignored.
-// Kept around for backwards compatibility.
-// https://crbug.com/579729
-const char kGoogLeakyBucket[] = "googLeakyBucket";
-const char kPowerLineFrequency[] = "googPowerLineFrequency";
-// Names used for testing.
-const char kTestConstraint1[] = "valid_and_supported_1";
-const char kTestConstraint2[] = "valid_and_supported_2";
 
 static bool ParseMandatoryConstraintsDictionary(
     const Dictionary& mandatory_constraints_dictionary,
@@ -199,65 +143,6 @@ static bool ParseOptionalConstraintsVectorElement(
   return true;
 }
 
-// Old style parser. Deprecated.
-static bool Parse(const Dictionary& constraints_dictionary,
-                  Vector<NameValueStringConstraint>& optional,
-                  Vector<NameValueStringConstraint>& mandatory) {
-  if (constraints_dictionary.IsUndefinedOrNull())
-    return true;
-
-  DummyExceptionStateForTesting exception_state;
-  const Vector<String>& names =
-      constraints_dictionary.GetPropertyNames(exception_state);
-  if (exception_state.HadException())
-    return false;
-
-  String mandatory_name("mandatory");
-  String optional_name("optional");
-
-  for (const auto& name : names) {
-    if (name != mandatory_name && name != optional_name)
-      return false;
-  }
-
-  if (names.Contains(mandatory_name)) {
-    Dictionary mandatory_constraints_dictionary;
-    bool ok = constraints_dictionary.Get(mandatory_name,
-                                         mandatory_constraints_dictionary);
-    if (!ok || mandatory_constraints_dictionary.IsUndefinedOrNull())
-      return false;
-    ok = ParseMandatoryConstraintsDictionary(mandatory_constraints_dictionary,
-                                             mandatory);
-    if (!ok)
-      return false;
-  }
-
-  if (names.Contains(optional_name)) {
-    ArrayValue optional_constraints;
-    bool ok = DictionaryHelper::Get(constraints_dictionary, optional_name,
-                                    optional_constraints);
-    if (!ok || optional_constraints.IsUndefinedOrNull())
-      return false;
-
-    uint32_t number_of_constraints;
-    ok = optional_constraints.length(number_of_constraints);
-    if (!ok)
-      return false;
-
-    for (uint32_t i = 0; i < number_of_constraints; ++i) {
-      Dictionary constraint;
-      ok = optional_constraints.Get(i, constraint);
-      if (!ok || constraint.IsUndefinedOrNull())
-        return false;
-      ok = ParseOptionalConstraintsVectorElement(constraint, optional);
-      if (!ok)
-        return false;
-    }
-  }
-
-  return true;
-}
-
 static bool Parse(const MediaTrackConstraints* constraints_in,
                   Vector<NameValueStringConstraint>& optional,
                   Vector<NameValueStringConstraint>& mandatory) {
@@ -289,9 +174,7 @@ static bool ToBoolean(const WebString& as_web_string) {
 static void ParseOldStyleNames(
     ExecutionContext* context,
     const Vector<NameValueStringConstraint>& old_names,
-    bool report_unknown_names,
-    MediaTrackConstraintSetPlatform& result,
-    MediaErrorState& error_state) {
+    MediaTrackConstraintSetPlatform& result) {
   if (old_names.size() > 0) {
     UseCounter::Count(context, WebFeature::kOldConstraintsParsed);
   }
@@ -338,9 +221,6 @@ static void ParseOldStyleNames(
           ToBoolean(constraint.value_));
     } else if (constraint.name_.Equals(kGoogAutoGainControl)) {
       result.goog_auto_gain_control.SetExact(ToBoolean(constraint.value_));
-    } else if (constraint.name_.Equals(kGoogExperimentalAutoGainControl)) {
-      result.goog_experimental_auto_gain_control.SetExact(
-          ToBoolean(constraint.value_));
     } else if (constraint.name_.Equals(kGoogNoiseSuppression)) {
       result.goog_noise_suppression.SetExact(ToBoolean(constraint.value_));
     } else if (constraint.name_.Equals(kGoogExperimentalNoiseSuppression)) {
@@ -354,185 +234,30 @@ static void ParseOldStyleNames(
       result.goog_da_echo_cancellation.SetExact(ToBoolean(constraint.value_));
     } else if (constraint.name_.Equals(kNoiseReduction)) {
       result.goog_noise_reduction.SetExact(ToBoolean(constraint.value_));
-    } else if (constraint.name_.Equals(kOfferToReceiveAudio)) {
-      // This constraint has formerly been defined both as a boolean
-      // and as an integer. Allow both forms.
-      if (constraint.value_.Equals("true"))
-        result.offer_to_receive_audio.SetExact(1);
-      else if (constraint.value_.Equals("false"))
-        result.offer_to_receive_audio.SetExact(0);
-      else
-        result.offer_to_receive_audio.SetExact(
-            atoi(constraint.value_.Utf8().c_str()));
-    } else if (constraint.name_.Equals(kOfferToReceiveVideo)) {
-      // This constraint has formerly been defined both as a boolean
-      // and as an integer. Allow both forms.
-      if (constraint.value_.Equals("true"))
-        result.offer_to_receive_video.SetExact(1);
-      else if (constraint.value_.Equals("false"))
-        result.offer_to_receive_video.SetExact(0);
-      else
-        result.offer_to_receive_video.SetExact(
-            atoi(constraint.value_.Utf8().c_str()));
-    } else if (constraint.name_.Equals(kVoiceActivityDetection)) {
-      result.voice_activity_detection.SetExact(ToBoolean(constraint.value_));
-    } else if (constraint.name_.Equals(kIceRestart)) {
-      result.ice_restart.SetExact(ToBoolean(constraint.value_));
-    } else if (constraint.name_.Equals(kEnableDtlsSrtp)) {
-      bool value = ToBoolean(constraint.value_);
-      if (value) {
-        Deprecation::CountDeprecation(
-            context, WebFeature::kRTCConstraintEnableDtlsSrtpTrue);
-      } else {
-        Deprecation::CountDeprecation(
-            context, WebFeature::kRTCConstraintEnableDtlsSrtpFalse);
-      }
-#if BUILDFLAG(IS_FUCHSIA)
-      // Special dispensation for Fuchsia to run SDES in 2022
-      // TODO(crbug.com/804275): Delete when Fuchsia no longer depends on it.
-      result.enable_dtls_srtp.SetExact(ToBoolean(constraint.value_));
-#else
-      UseCounter::Count(context, WebFeature::kOldConstraintIgnored);
-#endif
-    } else if (constraint.name_.Equals(kEnableRtpDataChannels)) {
-      // This constraint does not turn on RTP data channels, but we do not
-      // want it to cause an error, so we parse it and ignore it.
-      bool value = ToBoolean(constraint.value_);
-      if (value) {
-        Deprecation::CountDeprecation(
-            context, WebFeature::kRTCConstraintEnableRtpDataChannelsTrue);
-      } else {
-        Deprecation::CountDeprecation(
-            context, WebFeature::kRTCConstraintEnableRtpDataChannelsFalse);
-      }
-      UseCounter::Count(context, WebFeature::kOldConstraintIgnored);
-    } else if (constraint.name_.Equals(kEnableIPv6)) {
-      result.enable_i_pv6.SetExact(ToBoolean(constraint.value_));
-      // Count deprecated usage of googIPv6, when it is set to false. Setting it
-      // to true is a NO-OP and apps doing this will not be affected when this
-      // constraint is ignored.
-      if (!result.enable_i_pv6.Exact()) {
-        Deprecation::CountDeprecation(context,
-                                      WebFeature::kLegacyConstraintGoogIPv6);
-      }
-    } else if (constraint.name_.Equals(kEnableVideoSuspendBelowMinBitrate)) {
-      result.goog_enable_video_suspend_below_min_bitrate.SetExact(
-          ToBoolean(constraint.value_));
-      // Count deprecated usage of googSuspendBelowMinBitrate, when it is set to
-      // true. Setting it to false is a NO-OP and apps doing this will not be
-      // affected when this constraint is ignored.
-      if (result.goog_enable_video_suspend_below_min_bitrate.Exact()) {
-        Deprecation::CountDeprecation(
-            context, WebFeature::kLegacyConstraintGoogSuspendBelowMinBitrate);
-      }
-    } else if (constraint.name_.Equals(kScreencastMinBitrate)) {
-      result.goog_screencast_min_bitrate.SetExact(
-          atoi(constraint.value_.Utf8().c_str()));
-      // Count deprecated usage of googScreencastMinBitrate, when it is set to
-      // anything other than 100. Setting it to 100 is a NO-OP and apps doing
-      // this will not be affected when this constraint is ignored.
-      if (result.goog_screencast_min_bitrate.Exact() != 100) {
-        Deprecation::CountDeprecation(
-            context, WebFeature::kLegacyConstraintGoogScreencastMinBitrate);
-      }
-    } else if (constraint.name_.Equals(kCpuOveruseDetection)) {
-      result.goog_cpu_overuse_detection.SetExact(ToBoolean(constraint.value_));
-      // Count deprecated usage of googCpuOveruseDetection, when it is set to
-      // false. Setting it to true is a NO-OP and apps doing this will not be
-      // affected when this constraint is ignored.
-      if (!result.goog_cpu_overuse_detection.Exact()) {
-        Deprecation::CountDeprecation(
-            context, WebFeature::kLegacyConstraintGoogCpuOveruseDetection);
-      }
-    } else if (constraint.name_.Equals(kCpuUnderuseThreshold) ||
-               constraint.name_.Equals(kCpuOveruseThreshold) ||
-               constraint.name_.Equals(kCpuUnderuseEncodeRsdThreshold) ||
-               constraint.name_.Equals(kCpuOveruseEncodeRsdThreshold) ||
-               constraint.name_.Equals(kCpuOveruseEncodeUsage) ||
-               constraint.name_.Equals(kGoogLeakyBucket) ||
-               constraint.name_.Equals(kGoogBeamforming) ||
-               constraint.name_.Equals(kGoogArrayGeometry) ||
-               constraint.name_.Equals(kPowerLineFrequency) ||
-               constraint.name_.Equals(kMediaStreamAudioHotword) ||
-               constraint.name_.Equals(kGoogTypingNoiseDetection) ||
-               constraint.name_.Equals(kNumUnsignalledRecvStreams) ||
-               constraint.name_.Equals(kCombinedAudioVideoBwe) ||
-               constraint.name_.Equals(kHighStartBitrate) ||
-               constraint.name_.Equals(kAudioLatency) ||
-               constraint.name_.Equals(kUseRtpMux) ||
-               constraint.name_.Equals(kPayloadPadding) ||
-               constraint.name_.Equals(kEnableDscp)) {
-      // TODO(crbug.com/856176): Remove the kGoogBeamforming and
-      // kGoogArrayGeometry special cases.
-      context->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
-          mojom::ConsoleMessageSource::kDeprecation,
-          mojom::ConsoleMessageLevel::kWarning,
-          "Obsolete constraint named " + String(constraint.name_) +
-              " is ignored. Please stop using it."));
-      UseCounter::Count(context, WebFeature::kOldConstraintIgnored);
-    } else if (constraint.name_.Equals(kTestConstraint1) ||
-               constraint.name_.Equals(kTestConstraint2)) {
-      // These constraints are only for testing parsing.
-      // Values 0 and 1 are legal, all others are a ConstraintError.
-      if (!constraint.value_.Equals("0") && !constraint.value_.Equals("1")) {
-        error_state.ThrowConstraintError("Illegal value for constraint",
-                                         constraint.name_);
-      }
-    } else {
-      if (report_unknown_names) {
-        UseCounter::Count(context, WebFeature::kOldConstraintRejected);
-        context->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
-            mojom::ConsoleMessageSource::kDeprecation,
-            mojom::ConsoleMessageLevel::kWarning,
-            "Unknown constraint named " + String(constraint.name_) +
-                " rejected"));
-        error_state.ThrowConstraintError("Unknown name of constraint detected",
-                                         constraint.name_);
-      } else {
-        UseCounter::Count(context, WebFeature::kOldConstraintNotReported);
-      }
     }
+    // else: Nothing. Unrecognized constraints are simply ignored.
   }
 }
 
 static MediaConstraints CreateFromNamedConstraints(
     ExecutionContext* context,
     Vector<NameValueStringConstraint>& mandatory,
-    const Vector<NameValueStringConstraint>& optional,
-    MediaErrorState& error_state) {
+    const Vector<NameValueStringConstraint>& optional) {
   MediaTrackConstraintSetPlatform basic;
   MediaTrackConstraintSetPlatform advanced;
   MediaConstraints constraints;
-  ParseOldStyleNames(context, mandatory, true, basic, error_state);
-  if (error_state.HadException())
-    return constraints;
-  // We ignore unknow names and syntax errors in optional constraints.
-  MediaErrorState ignored_error_state;
+  ParseOldStyleNames(context, mandatory, basic);
+  // We ignore unknown names and syntax errors in optional constraints.
   Vector<MediaTrackConstraintSetPlatform> advanced_vector;
   for (const auto& optional_constraint : optional) {
     MediaTrackConstraintSetPlatform advanced_element;
     Vector<NameValueStringConstraint> element_as_list(1, optional_constraint);
-    ParseOldStyleNames(context, element_as_list, false, advanced_element,
-                       ignored_error_state);
+    ParseOldStyleNames(context, element_as_list, advanced_element);
     if (!advanced_element.IsUnconstrained())
       advanced_vector.push_back(advanced_element);
   }
   constraints.Initialize(basic, advanced_vector);
   return constraints;
-}
-
-// Deprecated.
-MediaConstraints Create(ExecutionContext* context,
-                        const Dictionary& constraints_dictionary,
-                        MediaErrorState& error_state) {
-  Vector<NameValueStringConstraint> optional;
-  Vector<NameValueStringConstraint> mandatory;
-  if (!Parse(constraints_dictionary, optional, mandatory)) {
-    error_state.ThrowTypeError("Malformed constraints object.");
-    return MediaConstraints();
-  }
-  UseCounter::Count(context, WebFeature::kMediaStreamConstraintsFromDictionary);
-  return CreateFromNamedConstraints(context, mandatory, optional, error_state);
 }
 
 void CopyLongConstraint(const V8ConstrainLong* blink_union_form,
@@ -619,28 +344,22 @@ void CopyBooleanOrDoubleConstraint(
   }
 }
 
-bool ValidateString(const String& str, MediaErrorState& error_state) {
-  DCHECK(!error_state.HadException());
-
+bool ValidateString(const String& str, String& error_message) {
   if (str.length() > kMaxConstraintStringLength) {
-    error_state.ThrowTypeError("Constraint string too long.");
+    error_message = "Constraint string too long.";
     return false;
   }
   return true;
 }
 
-bool ValidateStringSeq(const Vector<String>& strs,
-                       MediaErrorState& error_state) {
-  DCHECK(!error_state.HadException());
-
+bool ValidateStringSeq(const Vector<String>& strs, String& error_message) {
   if (strs.size() > kMaxConstraintStringSeqLength) {
-    error_state.ThrowTypeError("Constraint string sequence too long.");
+    error_message = "Constraint string sequence too long.";
     return false;
   }
 
   for (const String& str : strs) {
-    if (!ValidateString(str, error_state)) {
-      DCHECK(error_state.HadException());
+    if (!ValidateString(str, error_message)) {
       return false;
     }
   }
@@ -650,16 +369,14 @@ bool ValidateStringSeq(const Vector<String>& strs,
 
 bool ValidateStringConstraint(
     V8UnionStringOrStringSequence* string_or_string_seq,
-    MediaErrorState& error_state) {
-  DCHECK(!error_state.HadException());
-
+    String& error_message) {
   switch (string_or_string_seq->GetContentType()) {
     case V8UnionStringOrStringSequence::ContentType::kString: {
-      return ValidateString(string_or_string_seq->GetAsString(), error_state);
+      return ValidateString(string_or_string_seq->GetAsString(), error_message);
     }
     case V8UnionStringOrStringSequence::ContentType::kStringSequence: {
       return ValidateStringSeq(string_or_string_seq->GetAsStringSequence(),
-                               error_state);
+                               error_message);
     }
   }
   NOTREACHED();
@@ -667,28 +384,26 @@ bool ValidateStringConstraint(
 }
 
 bool ValidateStringConstraint(const V8ConstrainDOMString* blink_union_form,
-                              MediaErrorState& error_state) {
-  DCHECK(!error_state.HadException());
-
+                              String& error_message) {
   switch (blink_union_form->GetContentType()) {
     case V8ConstrainDOMString::ContentType::kConstrainDOMStringParameters: {
       const auto* blink_form =
           blink_union_form->GetAsConstrainDOMStringParameters();
       if (blink_form->hasIdeal() &&
-          !ValidateStringConstraint(blink_form->ideal(), error_state)) {
+          !ValidateStringConstraint(blink_form->ideal(), error_message)) {
         return false;
       }
       if (blink_form->hasExact() &&
-          !ValidateStringConstraint(blink_form->exact(), error_state)) {
+          !ValidateStringConstraint(blink_form->exact(), error_message)) {
         return false;
       }
       return true;
     }
     case V8ConstrainDOMString::ContentType::kString:
-      return ValidateString(blink_union_form->GetAsString(), error_state);
+      return ValidateString(blink_union_form->GetAsString(), error_message);
     case V8ConstrainDOMString::ContentType::kStringSequence:
       return ValidateStringSeq(blink_union_form->GetAsStringSequence(),
-                               error_state);
+                               error_message);
   }
   NOTREACHED();
   return false;
@@ -698,10 +413,8 @@ bool ValidateStringConstraint(const V8ConstrainDOMString* blink_union_form,
     const V8ConstrainDOMString* blink_union_form,
     NakedValueDisposition naked_treatment,
     StringConstraint& web_form,
-    MediaErrorState& error_state) {
-  DCHECK(!error_state.HadException());
-
-  if (!ValidateStringConstraint(blink_union_form, error_state)) {
+    String& error_message) {
+  if (!ValidateStringConstraint(blink_union_form, error_message)) {
     return false;
   }
   web_form.SetIsPresent(true);
@@ -790,153 +503,175 @@ bool ValidateAndCopyConstraintSet(
     const MediaTrackConstraintSet* constraints_in,
     NakedValueDisposition naked_treatment,
     MediaTrackConstraintSetPlatform& constraint_buffer,
-    MediaErrorState& error_state) {
-  DCHECK(!error_state.HadException());
-
+    String& error_message) {
   if (constraints_in->hasWidth()) {
     CopyLongConstraint(constraints_in->width(), naked_treatment,
                        constraint_buffer.width);
   }
+
   if (constraints_in->hasHeight()) {
     CopyLongConstraint(constraints_in->height(), naked_treatment,
                        constraint_buffer.height);
   }
+
   if (constraints_in->hasAspectRatio()) {
     CopyDoubleConstraint(constraints_in->aspectRatio(), naked_treatment,
                          constraint_buffer.aspect_ratio);
   }
+
   if (constraints_in->hasFrameRate()) {
     CopyDoubleConstraint(constraints_in->frameRate(), naked_treatment,
                          constraint_buffer.frame_rate);
   }
+
   if (constraints_in->hasFacingMode()) {
     if (!ValidateAndCopyStringConstraint(
             constraints_in->facingMode(), naked_treatment,
-            constraint_buffer.facing_mode, error_state)) {
-      DCHECK(error_state.HadException());
+            constraint_buffer.facing_mode, error_message)) {
       return false;
     }
   }
+
   if (constraints_in->hasResizeMode()) {
     if (!ValidateAndCopyStringConstraint(
             constraints_in->resizeMode(), naked_treatment,
-            constraint_buffer.resize_mode, error_state)) {
-      DCHECK(error_state.HadException());
+            constraint_buffer.resize_mode, error_message)) {
       return false;
     }
   }
+
   if (constraints_in->hasSampleRate()) {
     CopyLongConstraint(constraints_in->sampleRate(), naked_treatment,
                        constraint_buffer.sample_rate);
   }
+
   if (constraints_in->hasSampleSize()) {
     CopyLongConstraint(constraints_in->sampleSize(), naked_treatment,
                        constraint_buffer.sample_size);
   }
+
   if (constraints_in->hasEchoCancellation()) {
     CopyBooleanConstraint(constraints_in->echoCancellation(), naked_treatment,
                           constraint_buffer.echo_cancellation);
   }
+
   if (constraints_in->hasAutoGainControl()) {
     CopyBooleanConstraint(constraints_in->autoGainControl(), naked_treatment,
                           constraint_buffer.goog_auto_gain_control);
   }
+
   if (constraints_in->hasNoiseSuppression()) {
     CopyBooleanConstraint(constraints_in->noiseSuppression(), naked_treatment,
                           constraint_buffer.goog_noise_suppression);
   }
+
   if (constraints_in->hasLatency()) {
     CopyDoubleConstraint(constraints_in->latency(), naked_treatment,
                          constraint_buffer.latency);
   }
+
   if (constraints_in->hasChannelCount()) {
     CopyLongConstraint(constraints_in->channelCount(), naked_treatment,
                        constraint_buffer.channel_count);
   }
+
   if (constraints_in->hasDeviceId()) {
     if (!ValidateAndCopyStringConstraint(
             constraints_in->deviceId(), naked_treatment,
-            constraint_buffer.device_id, error_state)) {
-      DCHECK(error_state.HadException());
+            constraint_buffer.device_id, error_message)) {
       return false;
     }
   }
+
   if (constraints_in->hasGroupId()) {
     if (!ValidateAndCopyStringConstraint(
             constraints_in->groupId(), naked_treatment,
-            constraint_buffer.group_id, error_state)) {
-      DCHECK(error_state.HadException());
+            constraint_buffer.group_id, error_message)) {
       return false;
     }
   }
+
   if (constraints_in->hasPan()) {
     CopyBooleanOrDoubleConstraint(constraints_in->pan(), naked_treatment,
                                   constraint_buffer.pan);
   }
+
   if (constraints_in->hasTilt()) {
     CopyBooleanOrDoubleConstraint(constraints_in->tilt(), naked_treatment,
                                   constraint_buffer.tilt);
   }
+
   if (constraints_in->hasZoom()) {
     CopyBooleanOrDoubleConstraint(constraints_in->zoom(), naked_treatment,
                                   constraint_buffer.zoom);
+  }
+
+  if (constraints_in->hasDisplaySurface()) {
+    if (!ValidateAndCopyStringConstraint(
+            constraints_in->displaySurface(), naked_treatment,
+            constraint_buffer.display_surface, error_message)) {
+      return false;
+    }
+  }
+
+  if (constraints_in->hasSuppressLocalAudioPlayback()) {
+    CopyBooleanConstraint(constraints_in->suppressLocalAudioPlayback(),
+                          naked_treatment,
+                          constraint_buffer.suppress_local_audio_playback);
   }
   return true;
 }
 
 MediaConstraints ConvertTrackConstraintsToMediaConstraints(
     const MediaTrackConstraints* constraints_in,
-    MediaErrorState& error_state) {
-  MediaConstraints constraints;
+    String& error_message) {
   MediaTrackConstraintSetPlatform constraint_buffer;
   Vector<MediaTrackConstraintSetPlatform> advanced_buffer;
   if (!ValidateAndCopyConstraintSet(constraints_in,
                                     NakedValueDisposition::kTreatAsIdeal,
-                                    constraint_buffer, error_state)) {
-    DCHECK(error_state.HadException());
-    return constraints;
+                                    constraint_buffer, error_message)) {
+    return MediaConstraints();
   }
   if (constraints_in->hasAdvanced()) {
     for (const auto& element : constraints_in->advanced()) {
       MediaTrackConstraintSetPlatform advanced_element;
       if (!ValidateAndCopyConstraintSet(element,
                                         NakedValueDisposition::kTreatAsExact,
-                                        advanced_element, error_state)) {
-        DCHECK(error_state.HadException());
-        return constraints;
+                                        advanced_element, error_message)) {
+        return MediaConstraints();
       }
       advanced_buffer.push_back(advanced_element);
     }
   }
+  MediaConstraints constraints;
   constraints.Initialize(constraint_buffer, advanced_buffer);
   return constraints;
 }
 
 MediaConstraints Create(ExecutionContext* context,
                         const MediaTrackConstraints* constraints_in,
-                        MediaErrorState& error_state) {
+                        String& error_message) {
   MediaConstraints standard_form =
-      ConvertTrackConstraintsToMediaConstraints(constraints_in, error_state);
-  if (error_state.HadException()) {
+      ConvertTrackConstraintsToMediaConstraints(constraints_in, error_message);
+  if (standard_form.IsNull()) {
     return standard_form;
   }
   if (constraints_in->hasOptional() || constraints_in->hasMandatory()) {
     if (!standard_form.IsUnconstrained()) {
       UseCounter::Count(context, WebFeature::kMediaStreamConstraintsOldAndNew);
-      error_state.ThrowTypeError(
+      error_message =
           "Malformed constraint: Cannot use both optional/mandatory and "
-          "specific or advanced constraints.");
+          "specific or advanced constraints.";
       return MediaConstraints();
     }
     Vector<NameValueStringConstraint> optional;
     Vector<NameValueStringConstraint> mandatory;
     if (!Parse(constraints_in, optional, mandatory)) {
-      error_state.ThrowTypeError("Malformed constraints object.");
+      error_message = "Malformed constraints object.";
       return MediaConstraints();
     }
     UseCounter::Count(context, WebFeature::kMediaStreamConstraintsNameValue);
-    return CreateFromNamedConstraints(context, mandatory, optional,
-                                      error_state);
+    return CreateFromNamedConstraints(context, mandatory, optional);
   }
   UseCounter::Count(context, WebFeature::kMediaStreamConstraintsConformant);
   return standard_form;
@@ -1154,6 +889,10 @@ void ConvertConstraintSet(const MediaTrackConstraintSetPlatform& input,
     output->setTilt(ConvertBooleanOrDouble(input.tilt, naked_treatment));
   if (!input.zoom.IsUnconstrained())
     output->setZoom(ConvertBooleanOrDouble(input.zoom, naked_treatment));
+  if (!input.suppress_local_audio_playback.IsUnconstrained()) {
+    output->setSuppressLocalAudioPlayback(
+        ConvertBoolean(input.suppress_local_audio_playback, naked_treatment));
+  }
   // TODO(hta): Decide the future of the nonstandard constraints.
   // If they go forward, they need to be added here.
   // https://crbug.com/605673
@@ -1174,7 +913,7 @@ MediaTrackConstraints* ConvertConstraints(const MediaConstraints& input) {
     ConvertConstraintSet(it, NakedValueDisposition::kTreatAsExact, element);
     advanced_vector.push_back(element);
   }
-  if (!advanced_vector.IsEmpty())
+  if (!advanced_vector.empty())
     output->setAdvanced(advanced_vector);
 
   return output;

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "base/android/build_info.h"
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_macros.h"
@@ -16,15 +16,16 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/threading/thread_restrictions.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "components/dom_distiller/core/url_utils.h"
 #include "components/favicon/content/large_favicon_provider_getter.h"
 #include "components/favicon/core/large_favicon_provider.h"
 #include "components/favicon_base/favicon_types.h"
 #include "components/webapps/browser/android/webapps_icon_utils.h"
 #include "components/webapps/browser/android/webapps_utils.h"
+#include "components/webapps/browser/features.h"
 #include "components/webapps/browser/installable/installable_manager.h"
 #include "components/webapps/common/constants.h"
 #include "components/webapps/common/web_page_metadata.mojom.h"
@@ -57,7 +58,6 @@ InstallableParams ParamsToPerformManifestAndIconFetch() {
   params.valid_primary_icon = true;
   params.prefer_maskable_icon =
       WebappsIconUtils::DoesAndroidSupportMaskableIcons();
-  params.wait_for_worker = true;
   return params;
 }
 
@@ -65,11 +65,8 @@ InstallableParams ParamsToPerformInstallableCheck() {
   InstallableParams params;
   params.check_eligibility = true;
   params.valid_manifest = true;
-  params.has_worker = true;
-  params.valid_primary_icon = true;
-  params.prefer_maskable_icon =
-      WebappsIconUtils::DoesAndroidSupportMaskableIcons();
-  params.wait_for_worker = true;
+  params.has_worker = !features::SkipInstallServiceWorkerCheck();
+  params.wait_for_worker = !features::SkipInstallServiceWorkerCheck();
   return params;
 }
 
@@ -132,8 +129,9 @@ AddToHomescreenDataFetcher::AddToHomescreenDataFetcher(
 
   // Send a message to the renderer to retrieve information about the page.
   mojo::AssociatedRemote<mojom::WebPageMetadataAgent> metadata_agent;
-  web_contents->GetMainFrame()->GetRemoteAssociatedInterfaces()->GetInterface(
-      &metadata_agent);
+  web_contents->GetPrimaryMainFrame()
+      ->GetRemoteAssociatedInterfaces()
+      ->GetInterface(&metadata_agent);
   // Bind the InterfacePtr into the callback so that it's kept alive until
   // there's either a connection error or a response.
   auto* web_page_metadata_proxy = metadata_agent.get();
@@ -233,15 +231,15 @@ void AddToHomescreenDataFetcher::OnDidGetManifestAndIcons(
 
   is_waiting_for_manifest_ = false;
 
-  if (!blink::IsEmptyManifest(data.manifest)) {
+  if (!blink::IsEmptyManifest(*data.manifest)) {
     base::RecordAction(base::UserMetricsAction("webapps.AddShortcut.Manifest"));
-    shortcut_info_.UpdateFromManifest(data.manifest);
-    shortcut_info_.manifest_url = data.manifest_url;
+    shortcut_info_.UpdateFromManifest(*data.manifest);
+    shortcut_info_.manifest_url = (*data.manifest_url);
   }
 
   // Do this after updating from the manifest for the case where a site has
   // a manifest with name and standalone specified, but no icons.
-  if (blink::IsEmptyManifest(data.manifest) || !data.primary_icon) {
+  if (blink::IsEmptyManifest(*data.manifest) || !data.primary_icon) {
     DCHECK_GT(data.errors.size(), 0u);
     if (!data.errors.empty())
       installable_status_code_ = data.errors[0];
@@ -255,10 +253,10 @@ void AddToHomescreenDataFetcher::OnDidGetManifestAndIcons(
 
   raw_primary_icon_ = *data.primary_icon;
   has_maskable_primary_icon_ = data.has_maskable_primary_icon;
-  shortcut_info_.best_primary_icon_url = data.primary_icon_url;
+  shortcut_info_.best_primary_icon_url = (*data.primary_icon_url);
 
   // Save the splash screen URL for the later download.
-  shortcut_info_.UpdateBestSplashIcon(data.manifest);
+  shortcut_info_.UpdateBestSplashIcon(*data.manifest);
 
   installable_manager_->GetData(
       ParamsToPerformInstallableCheck(),
@@ -274,8 +272,9 @@ void AddToHomescreenDataFetcher::OnDidPerformInstallableCheck(
     return;
 
   bool webapk_compatible =
-      (data.NoBlockingErrors() && data.valid_manifest && data.has_worker &&
-       WebappsUtils::AreWebManifestUrlsWebApkCompatible(data.manifest));
+      (data.NoBlockingErrors() && data.valid_manifest &&
+       data.worker_check_passed &&
+       WebappsUtils::AreWebManifestUrlsWebApkCompatible(*data.manifest));
   if (!webapk_compatible && !data.errors.empty()) {
     installable_status_code_ = data.errors[0];
   }
@@ -343,7 +342,7 @@ void AddToHomescreenDataFetcher::OnFaviconFetched(
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
       base::BindOnce(&CreateLauncherIconFromFaviconInBackground,
                      shortcut_info_.url, bitmap_result,
-                     base::ThreadTaskRunnerHandle::Get(),
+                     base::SingleThreadTaskRunner::GetCurrentDefault(),
                      base::BindOnce(&AddToHomescreenDataFetcher::OnIconCreated,
                                     weak_ptr_factory_.GetWeakPtr(),
                                     /*use_for_launcher=*/true)));
@@ -362,7 +361,8 @@ void AddToHomescreenDataFetcher::CreateIconForView(const SkBitmap& base_icon,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
       base::BindOnce(
           &CreateLauncherIconInBackground, shortcut_info_.url, base_icon,
-          has_maskable_primary_icon_, base::ThreadTaskRunnerHandle::Get(),
+          has_maskable_primary_icon_,
+          base::SingleThreadTaskRunner::GetCurrentDefault(),
           base::BindOnce(&AddToHomescreenDataFetcher::OnIconCreated,
                          weak_ptr_factory_.GetWeakPtr(), use_for_launcher)));
 }

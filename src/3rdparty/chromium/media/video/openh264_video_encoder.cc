@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,22 +12,24 @@
 #include "base/system/sys_info.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
-#include "media/base/bind_to_current_loop.h"
 #include "media/base/svc_scalability_mode.h"
 #include "media/base/video_frame.h"
 #include "media/base/video_util.h"
+#include "media/video/video_encoder_info.h"
 
 namespace media {
 
 namespace {
 
 void SetUpOpenH264Params(const VideoEncoder::Options& options,
+                         const VideoColorSpace& itu_cs,
                          SEncParamExt* params) {
   params->bEnableFrameSkip = false;
   params->iPaddingFlag = 0;
   params->iComplexityMode = MEDIUM_COMPLEXITY;
   params->iUsageType = CAMERA_VIDEO_REAL_TIME;
   params->bEnableDenoise = false;
+  params->eSpsPpsIdStrategy = SPS_LISTING;
   // Set to 1 due to https://crbug.com/583348
   params->iMultipleThreadIdc = 1;
   if (options.framerate.has_value())
@@ -49,6 +51,9 @@ void SetUpOpenH264Params(const VideoEncoder::Options& options,
   int num_temporal_layers = 1;
   if (options.scalability_mode) {
     switch (options.scalability_mode.value()) {
+      case SVCScalabilityMode::kL1T1:
+        // Nothing to do
+        break;
       case SVCScalabilityMode::kL1T2:
         num_temporal_layers = 2;
         break;
@@ -70,7 +75,35 @@ void SetUpOpenH264Params(const VideoEncoder::Options& options,
   params->sSpatialLayers[0].iVideoHeight = params->iPicHeight;
   params->sSpatialLayers[0].iVideoWidth = params->iPicWidth;
   params->sSpatialLayers[0].sSliceArgument.uiSliceMode = SM_SINGLE_SLICE;
+
+  if (!itu_cs.IsSpecified())
+    return;
+
+  params->sSpatialLayers[0].bVideoSignalTypePresent = true;
+  params->sSpatialLayers[0].bColorDescriptionPresent = true;
+
+  if (itu_cs.primaries != VideoColorSpace::PrimaryID::INVALID &&
+      itu_cs.primaries != VideoColorSpace::PrimaryID::UNSPECIFIED) {
+    params->sSpatialLayers[0].uiColorPrimaries =
+        static_cast<unsigned char>(itu_cs.primaries);
+  }
+  if (itu_cs.transfer != VideoColorSpace::TransferID::INVALID &&
+      itu_cs.transfer != VideoColorSpace::TransferID::UNSPECIFIED) {
+    params->sSpatialLayers[0].uiTransferCharacteristics =
+        static_cast<unsigned char>(itu_cs.transfer);
+  }
+  if (itu_cs.matrix != VideoColorSpace::MatrixID::INVALID &&
+      itu_cs.matrix != VideoColorSpace::MatrixID::UNSPECIFIED) {
+    params->sSpatialLayers[0].uiColorMatrix =
+        static_cast<unsigned char>(itu_cs.matrix);
+  }
+  if (itu_cs.range == gfx::ColorSpace::RangeID::FULL ||
+      itu_cs.range == gfx::ColorSpace::RangeID::LIMITED) {
+    params->sSpatialLayers[0].bFullRange =
+        itu_cs.range == gfx::ColorSpace::RangeID::FULL;
+  }
 }
+
 }  // namespace
 
 OpenH264VideoEncoder::ISVCEncoderDeleter::ISVCEncoderDeleter() = default;
@@ -97,9 +130,10 @@ OpenH264VideoEncoder::~OpenH264VideoEncoder() = default;
 
 void OpenH264VideoEncoder::Initialize(VideoCodecProfile profile,
                                       const Options& options,
+                                      EncoderInfoCB info_cb,
                                       OutputCB output_cb,
                                       EncoderStatusCB done_cb) {
-  done_cb = BindToCurrentLoop(std::move(done_cb));
+  done_cb = BindCallbackToCurrentLoopIfNeeded(std::move(done_cb));
   if (codec_) {
     std::move(done_cb).Run(EncoderStatus::Codes::kEncoderInitializeTwice);
     return;
@@ -132,7 +166,15 @@ void OpenH264VideoEncoder::Initialize(VideoCodecProfile profile,
     return;
   }
 
-  SetUpOpenH264Params(options, &params);
+  if (options.frame_size.height() < 16 || options.frame_size.width() < 16) {
+    std::move(done_cb).Run(
+        EncoderStatus(EncoderStatus::Codes::kEncoderInitializationError,
+                      "Unsupported frame size which is less than 16"));
+    return;
+  }
+  SetUpOpenH264Params(
+      options, VideoColorSpace::FromGfxColorSpace(last_frame_color_space_),
+      &params);
 
   if (int err = codec->InitializeExt(&params)) {
     std::move(done_cb).Run(
@@ -156,8 +198,14 @@ void OpenH264VideoEncoder::Initialize(VideoCodecProfile profile,
     h264_converter_ = std::make_unique<H264AnnexBToAvcBitstreamConverter>();
 
   options_ = options;
-  output_cb_ = BindToCurrentLoop(std::move(output_cb));
+  output_cb_ = BindCallbackToCurrentLoopIfNeeded(std::move(output_cb));
   codec_ = std::move(codec);
+
+  VideoEncoderInfo info;
+  info.implementation_name = "OpenH264VideoEncoder";
+  info.is_hardware_accelerated = false;
+  BindCallbackToCurrentLoopIfNeeded(std::move(info_cb)).Run(info);
+
   std::move(done_cb).Run(EncoderStatus::Codes::kOk);
 }
 
@@ -171,7 +219,7 @@ EncoderStatus OpenH264VideoEncoder::DrainOutputs(const SFrameBSInfo& frame_info,
 
   DCHECK_GT(frame_info.iFrameSizeInBytes, 0);
   size_t total_chunk_size = frame_info.iFrameSizeInBytes;
-  result.data.reset(new uint8_t[total_chunk_size]);
+  result.data = std::make_unique<uint8_t[]>(total_chunk_size);
   auto* gather_buffer = result.data.get();
 
   if (h264_converter_) {
@@ -239,7 +287,7 @@ EncoderStatus OpenH264VideoEncoder::DrainOutputs(const SFrameBSInfo& frame_info,
 void OpenH264VideoEncoder::Encode(scoped_refptr<VideoFrame> frame,
                                   bool key_frame,
                                   EncoderStatusCB done_cb) {
-  done_cb = BindToCurrentLoop(std::move(done_cb));
+  done_cb = BindCallbackToCurrentLoopIfNeeded(std::move(done_cb));
   if (!codec_) {
     std::move(done_cb).Run(
         EncoderStatus::Codes::kEncoderInitializeNeverCompleted);
@@ -303,6 +351,7 @@ void OpenH264VideoEncoder::Encode(scoped_refptr<VideoFrame> frame,
   if (last_frame_color_space_ != frame->ColorSpace()) {
     last_frame_color_space_ = frame->ColorSpace();
     key_frame = true;
+    UpdateEncoderColorSpace();
   }
 
   SSourcePicture picture = {};
@@ -310,9 +359,9 @@ void OpenH264VideoEncoder::Encode(scoped_refptr<VideoFrame> frame,
   picture.iPicHeight = frame->visible_rect().height();
   picture.iColorFormat = EVideoFormatType::videoFormatI420;
   picture.uiTimeStamp = frame->timestamp().InMilliseconds();
-  picture.pData[0] = frame->visible_data(VideoFrame::kYPlane);
-  picture.pData[1] = frame->visible_data(VideoFrame::kUPlane);
-  picture.pData[2] = frame->visible_data(VideoFrame::kVPlane);
+  picture.pData[0] = frame->GetWritableVisibleData(VideoFrame::kYPlane);
+  picture.pData[1] = frame->GetWritableVisibleData(VideoFrame::kUPlane);
+  picture.pData[2] = frame->GetWritableVisibleData(VideoFrame::kVPlane);
   picture.iStride[0] = frame->stride(VideoFrame::kYPlane);
   picture.iStride[1] = frame->stride(VideoFrame::kUPlane);
   picture.iStride[2] = frame->stride(VideoFrame::kVPlane);
@@ -328,7 +377,8 @@ void OpenH264VideoEncoder::Encode(scoped_refptr<VideoFrame> frame,
   }
 
   SFrameBSInfo frame_info = {};
-  TRACE_EVENT0("media", "OpenH264::EncodeFrame");
+  TRACE_EVENT1("media", "OpenH264::EncodeFrame", "timestamp",
+               frame->timestamp());
   if (int err = codec_->EncodeFrame(&picture, &frame_info)) {
     std::move(done_cb).Run(
         EncoderStatus(EncoderStatus::Codes::kEncoderFailedEncode,
@@ -344,7 +394,7 @@ void OpenH264VideoEncoder::Encode(scoped_refptr<VideoFrame> frame,
 void OpenH264VideoEncoder::ChangeOptions(const Options& options,
                                          OutputCB output_cb,
                                          EncoderStatusCB done_cb) {
-  done_cb = BindToCurrentLoop(std::move(done_cb));
+  done_cb = BindCallbackToCurrentLoopIfNeeded(std::move(done_cb));
   if (!codec_) {
     std::move(done_cb).Run(
         EncoderStatus::Codes::kEncoderInitializeNeverCompleted);
@@ -360,7 +410,9 @@ void OpenH264VideoEncoder::ChangeOptions(const Options& options,
     return;
   }
 
-  SetUpOpenH264Params(options, &params);
+  SetUpOpenH264Params(
+      options, VideoColorSpace::FromGfxColorSpace(last_frame_color_space_),
+      &params);
 
   if (int err =
           codec_->SetOption(ENCODER_OPTION_SVC_ENCODE_PARAM_EXT, &params)) {
@@ -379,12 +431,12 @@ void OpenH264VideoEncoder::ChangeOptions(const Options& options,
 
   options_ = options;
   if (!output_cb.is_null())
-    output_cb_ = BindToCurrentLoop(std::move(output_cb));
+    output_cb_ = BindCallbackToCurrentLoopIfNeeded(std::move(output_cb));
   std::move(done_cb).Run(EncoderStatus::Codes::kOk);
 }
 
 void OpenH264VideoEncoder::Flush(EncoderStatusCB done_cb) {
-  done_cb = BindToCurrentLoop(std::move(done_cb));
+  done_cb = BindCallbackToCurrentLoopIfNeeded(std::move(done_cb));
   if (!codec_) {
     std::move(done_cb).Run(
         EncoderStatus::Codes::kEncoderInitializeNeverCompleted);
@@ -393,6 +445,25 @@ void OpenH264VideoEncoder::Flush(EncoderStatusCB done_cb) {
 
   // Nothing to do really.
   std::move(done_cb).Run(EncoderStatus::Codes::kOk);
+}
+
+void OpenH264VideoEncoder::UpdateEncoderColorSpace() {
+  auto itu_cs = VideoColorSpace::FromGfxColorSpace(last_frame_color_space_);
+  if (!itu_cs.IsSpecified())
+    return;
+
+  SEncParamExt params = {};
+  if (int err = codec_->GetDefaultParams(&params)) {
+    DLOG(ERROR) << "Failed to GetDefaultParams to set color space: " << err;
+    return;
+  }
+
+  SetUpOpenH264Params(options_, itu_cs, &params);
+
+  // It'd be nice if SetOption(ENCODER_OPTION_SVC_ENCODE_PARAM_EXT) worked, but
+  // alas it doesn't seem to, so we must reinitialize.
+  if (int err = codec_->InitializeExt(&params))
+    DLOG(ERROR) << "Failed to reinitialize codec to set color space: " << err;
 }
 
 }  // namespace media

@@ -32,6 +32,7 @@
  * Loop restoration
  *
  * The following features are also disabled with CONFIG_REALTIME_ONLY:
+ * AV1E_SET_QUANT_B_ADAPT
  * CNN
  * 4X rectangular blocks
  * 4X rectangular transform in intra prediction
@@ -190,12 +191,12 @@ enum aome_enc_control_id {
 
   /* NOTE: enum 10 unused */
 
-  /*!\brief Codec control function to set encoder scaling mode,
-   * aom_scaling_mode_t* parameter.
+  /*!\brief Codec control function to set encoder scaling mode for the next
+   * frame to be coded, aom_scaling_mode_t* parameter.
    */
   AOME_SET_SCALEMODE = 11,
 
-  /*!\brief Codec control function to set encoder spatial layer id, unsigned int
+  /*!\brief Codec control function to set encoder spatial layer id, int
    * parameter.
    */
   AOME_SET_SPATIAL_LAYER_ID = 12,
@@ -431,7 +432,7 @@ enum aome_enc_control_id {
 
   /*!\brief Codec control function to enable error_resilient_mode, int parameter
    *
-   * AV1 has a bitstream feature to guarantee parseability of a frame
+   * AV1 has a bitstream feature to guarantee parsability of a frame
    * by turning on the error_resilient_decoding mode, even though the
    * reference buffers are unreliable or not received.
    *
@@ -612,21 +613,22 @@ enum aome_enc_control_id {
   AV1E_SET_RENDER_SIZE = 53,
 
   /*!\brief Control to set target sequence level index for a certain operating
-   * point(OP), int parameter
-   * Possible values are in the form of "ABxy"(pad leading zeros if less than
-   * 4 digits).
+   * point (OP), int parameter
+   * Possible values are in the form of "ABxy".
    *  - AB: OP index.
-   *  - xy: Target level index for the OP. Can be values 0~23(corresponding to
-   *    level 2.0 ~ 7.3) or 24(keep level stats only for level monitoring) or
-   *    31(maximum level parameter, no level-based constraints).
+   *  - xy: Target level index for the OP. Can be values 0~27 (corresponding to
+   *    level 2.0 ~ 8.3, note levels 2.2, 2.3, 3.2, 3.3, 4.2 & 4.3 are
+   *    undefined, and that levels 7.x and 8.x are in draft status), 31
+   *    (maximum parameters level, no level-based constraints) or 32 (keep
+   *    level stats only for level monitoring).
    *
    * E.g.:
-   * - "0" means target level index 0 for the 0th OP;
-   * - "111" means target level index 11 for the 1st OP;
-   * - "1021" means target level index 21 for the 10th OP.
+   * - "0" means target level index 0 (2.0) for the 0th OP;
+   * - "109" means target level index 9 (4.1) for the 1st OP;
+   * - "1019" means target level index 19 (6.3) for the 10th OP.
    *
-   * If the target level is not specified for an OP, the maximum level parameter
-   * of 31 is used as default.
+   * If the target level is not specified for an OP, the maximum parameters
+   * level of 31 is used as default.
    */
   AV1E_SET_TARGET_SEQ_LEVEL_IDX = 54,
 
@@ -1270,7 +1272,7 @@ enum aome_enc_control_id {
    */
   AV1E_SET_SVC_LAYER_ID = 131,
 
-  /*!\brief Codec control function to set SVC paramaeters, aom_svc_params_t*
+  /*!\brief Codec control function to set SVC parameters, aom_svc_params_t*
    * parameter
    */
   AV1E_SET_SVC_PARAMS = 132,
@@ -1372,6 +1374,9 @@ enum aome_enc_control_id {
   AV1E_SET_ENABLE_DIRECTIONAL_INTRA = 145,
 
   /*!\brief Control to turn on / off transform size search.
+   * Note: it can not work with non RD pick mode in real-time encoding,
+   * where the max transform size is only 16x16.
+   * It will be ignored if non RD pick mode is set.
    *
    * - 0 = disable, transforms always have the largest possible size
    * - 1 = enable, search for the best transform size for each block (default)
@@ -1403,7 +1408,8 @@ enum aome_enc_control_id {
    */
   AOME_GET_LOOPFILTER_LEVEL = 150,
 
-  /*!\brief Codec control to automatically turn off several intra coding tools
+  /*!\brief Codec control to automatically turn off several intra coding tools,
+   * unsigned int parameter
    * - 0 = do not use the feature
    * - 1 = enable the automatic decision to turn off several intra tools
    */
@@ -1445,6 +1451,51 @@ enum aome_enc_control_id {
    */
   AV1E_GET_TARGET_SEQ_LEVEL_IDX = 155,
 
+  /*!\brief Codec control function to get the number of operating points. int*
+   * parameter.
+   */
+  AV1E_GET_NUM_OPERATING_POINTS = 156,
+
+  /*!\brief Codec control function to skip the application of post-processing
+   * filters on reconstructed frame, unsigned int parameter
+   *
+   * - 0 = disable (default)
+   * - 1 = enable
+   *
+   * \attention For this value to be used aom_codec_enc_cfg_t::g_usage
+   *            must be set to AOM_USAGE_ALL_INTRA.
+   */
+  AV1E_SET_SKIP_POSTPROC_FILTERING = 157,
+
+  /*!\brief Codec control function to enable the superblock level
+   * qp sweep in AV1 to ensure that end-to-end test runs well,
+   * unsigned int parameter.
+   *
+   * - 0 = disable (default)
+   * - 1 = enable
+   *
+   * \note This is only used in sb_qp_sweep unit test.
+   */
+  AV1E_ENABLE_SB_QP_SWEEP = 158,
+
+  /*!\brief Codec control to set quantizer for the next frame.
+   *
+   * This will turn off cyclic refresh. Only applicable to 1-pass.
+   */
+  AV1E_SET_QUANTIZER_ONE_PASS = 159,
+
+  /*!\brief Codec control to enable the rate distribution guided delta
+   * quantization in all intra mode. It requires --deltaq-mode=3, also
+   * an input file which contains rate distribution for each 16x16 block,
+   * passed in by --rate-distribution-info=rate_distribution.csv.
+   */
+  AV1E_ENABLE_RATE_GUIDE_DELTAQ = 160,
+
+  /*!\brief Codec control to set the input file for rate distribution used
+   * in all intra mode. It requires --enable-rate-guide-deltaq=1.
+   */
+  AV1E_SET_RATE_DISTRIBUTION_INFO = 161,
+
   // Any new encoder control IDs should be added above.
   // Maximum allowed encoder control ID is 229.
   // No encoder control ID should be added below.
@@ -1461,7 +1512,9 @@ typedef enum aom_scaling_mode_1d {
   AOME_THREEFOUR = 3,
   AOME_ONEFOUR = 4,
   AOME_ONEEIGHT = 5,
-  AOME_ONETWO = 6
+  AOME_ONETWO = 6,
+  AOME_TWOTHREE = 7,
+  AOME_ONETHREE = 8
 } AOM_SCALING_MODE;
 
 /*!\brief Max number of segments
@@ -1627,7 +1680,7 @@ AOM_CTRL_USE_TYPE(AOME_SET_ACTIVEMAP, aom_active_map_t *)
 AOM_CTRL_USE_TYPE(AOME_SET_SCALEMODE, aom_scaling_mode_t *)
 #define AOM_CTRL_AOME_SET_SCALEMODE
 
-AOM_CTRL_USE_TYPE(AOME_SET_SPATIAL_LAYER_ID, unsigned int)
+AOM_CTRL_USE_TYPE(AOME_SET_SPATIAL_LAYER_ID, int)
 #define AOM_CTRL_AOME_SET_SPATIAL_LAYER_ID
 
 AOM_CTRL_USE_TYPE(AOME_SET_CPUUSED, int)
@@ -2019,6 +2072,12 @@ AOM_CTRL_USE_TYPE(AV1E_SET_DV_COST_UPD_FREQ, unsigned int)
 AOM_CTRL_USE_TYPE(AV1E_SET_PARTITION_INFO_PATH, const char *)
 #define AOM_CTRL_AV1E_SET_PARTITION_INFO_PATH
 
+AOM_CTRL_USE_TYPE(AV1E_ENABLE_RATE_GUIDE_DELTAQ, unsigned int)
+#define AOM_CTRL_AV1E_ENABLE_RATE_GUIDE_DELTAQ
+
+AOM_CTRL_USE_TYPE(AV1E_SET_RATE_DISTRIBUTION_INFO, const char *)
+#define AOM_CTRL_AV1E_SET_RATE_DISTRIBUTION_INFO
+
 AOM_CTRL_USE_TYPE(AV1E_SET_EXTERNAL_PARTITION, aom_ext_part_funcs_t *)
 #define AOM_CTRL_AV1E_SET_EXTERNAL_PARTITION
 
@@ -2057,6 +2116,18 @@ AOM_CTRL_USE_TYPE(AV1E_SET_FP_MT_UNIT_TEST, unsigned int)
 
 AOM_CTRL_USE_TYPE(AV1E_GET_TARGET_SEQ_LEVEL_IDX, int *)
 #define AOM_CTRL_AV1E_GET_TARGET_SEQ_LEVEL_IDX
+
+AOM_CTRL_USE_TYPE(AV1E_GET_NUM_OPERATING_POINTS, int *)
+#define AOM_CTRL_AV1E_GET_NUM_OPERATING_POINTS
+
+AOM_CTRL_USE_TYPE(AV1E_SET_SKIP_POSTPROC_FILTERING, unsigned int)
+#define AOM_CTRL_AV1E_SET_SKIP_POSTPROC_FILTERING
+
+AOM_CTRL_USE_TYPE(AV1E_ENABLE_SB_QP_SWEEP, unsigned int)
+#define AOM_CTRL_AV1E_ENABLE_SB_QP_SWEEP
+
+AOM_CTRL_USE_TYPE(AV1E_SET_QUANTIZER_ONE_PASS, int)
+#define AOM_CTRL_AV1E_SET_QUANTIZER_ONE_PASS
 
 /*!\endcond */
 /*! @} - end defgroup aom_encoder */

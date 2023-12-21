@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -25,6 +25,16 @@
 namespace media {
 
 class MediaTracks;
+
+enum class DemuxerType {
+  kMockDemuxer,
+  kFFmpegDemuxer,
+  kChunkDemuxer,
+  kMediaUrlDemuxer,
+  kFrameInjectingDemuxer,
+  kStreamProviderDemuxer,
+  kHlsDemuxer,
+};
 
 class MEDIA_EXPORT DemuxerHost {
  public:
@@ -88,6 +98,9 @@ class MEDIA_EXPORT Demuxer : public MediaResource {
   // Returns the name of the demuxer for logging purpose.
   virtual std::string GetDisplayName() const = 0;
 
+  // Get the demuxer type for identification purposes.
+  virtual DemuxerType GetDemuxerType() const = 0;
+
   // Completes initialization of the demuxer.
   //
   // The demuxer does not own |host| as it is guaranteed to outlive the
@@ -130,6 +143,11 @@ class MEDIA_EXPORT Demuxer : public MediaResource {
   // Carry out any actions required to seek to the given time, executing the
   // callback upon completion.
   virtual void Seek(base::TimeDelta time, PipelineStatusCallback status_cb) = 0;
+
+  // Returns whether this demuxer supports seeking and has a timeline. If false,
+  // Seek(), CancelPendingSeek(), StartWaitingForSeek(), and GetTimelineOffset()
+  // should be noops.
+  virtual bool IsSeekable() const = 0;
 
   // Stops this demuxer.
   //

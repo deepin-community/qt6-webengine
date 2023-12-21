@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,6 +16,7 @@
 #include "gpu/ipc/common/gpu_surface_tracker.h"
 #include "media/mojo/mojom/android_overlay.mojom.h"
 #include "mojo/public/cpp/bindings/sync_call_restrictions.h"
+#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "ui/android/view_android_observer.h"
 #include "ui/android/window_android.h"
 
@@ -32,9 +33,14 @@ static jlong JNI_DialogOverlayImpl_Init(JNIEnv* env,
                                         jboolean power_efficient) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
+  absl::optional<base::UnguessableToken> token =
+      base::UnguessableToken::Deserialize(high, low);
+  if (!token.has_value()) {
+    return 0;
+  }
+
   RenderFrameHostImpl* rfhi =
-      content::RenderFrameHostImpl::FromOverlayRoutingToken(
-          base::UnguessableToken::Deserialize(high, low));
+      content::RenderFrameHostImpl::FromOverlayRoutingToken(token.value());
 
   if (!rfhi)
     return 0;
@@ -43,13 +49,6 @@ static jlong JNI_DialogOverlayImpl_Init(JNIEnv* env,
   // out: not only is there nothing to do, the `RenderFrameDeleted()`
   // notification to clean up the overlay would never be called.
   if (!rfhi->IsRenderFrameLive())
-    return 0;
-
-  // TODO(http://crbug.com/673886): Support overlay surfaces in VR using GVR
-  // reprojection video surface.
-  RenderWidgetHostViewBase* rwhvb =
-      static_cast<RenderWidgetHostViewBase*>(rfhi->GetView());
-  if (!rwhvb || rwhvb->IsInVR())
     return 0;
 
   WebContentsImpl* web_contents_impl = static_cast<WebContentsImpl*>(
@@ -99,7 +98,7 @@ DialogOverlayImpl::DialogOverlayImpl(const JavaParamRef<jobject>& obj,
 
   // Make sure RenderFrameDeleted will be called on RFH and thus we will clean
   // up.
-  CHECK(rfhi_->IsRenderFrameCreated());
+  CHECK(rfhi_->IsRenderFrameLive());
   web_contents->GetNativeView()->AddObserver(this);
 
   // Note that we're not allowed to call back into |obj| before it calls
@@ -124,12 +123,14 @@ void DialogOverlayImpl::CompleteInit(JNIEnv* env,
   // ever AndroidOverlayProviderImpl.MAX_OVERLAYS > 1.
   delegate->SetOverlayMode(true);
 
+  Java_DialogOverlayImpl_onWebContents(env, obj,
+                                       web_contents()->GetJavaWebContents());
+
   // Send the initial token, if there is one.  The observer will notify us about
   // changes only.
   if (auto* window = web_contents()->GetNativeView()->GetWindowAndroid()) {
     RegisterWindowObserverIfNeeded(window);
-    ScopedJavaLocalRef<jobject> token = window->GetWindowToken();
-    Java_DialogOverlayImpl_onWindowToken(env, obj, token);
+    Java_DialogOverlayImpl_onWindowAndroid(env, obj, window->GetJavaObject());
   }
 
   // Pass up a reference to the container view so we can observe its location.
@@ -243,15 +244,13 @@ void DialogOverlayImpl::OnAttachedToWindow() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   JNIEnv* env = AttachCurrentThread();
 
-  ScopedJavaLocalRef<jobject> token;
-
-  if (auto* window = web_contents()->GetNativeView()->GetWindowAndroid()) {
+  auto* window = web_contents()->GetNativeView()->GetWindowAndroid();
+  if (window)
     RegisterWindowObserverIfNeeded(window);
-    token = window->GetWindowToken();
-  }
+
   ScopedJavaLocalRef<jobject> obj = obj_.get(env);
   if (!obj.is_null())
-    Java_DialogOverlayImpl_onWindowToken(env, obj, token);
+    Java_DialogOverlayImpl_onWindowAndroid(env, obj, window->GetJavaObject());
 
   StartObservingContainerView();
 }
@@ -260,7 +259,7 @@ void DialogOverlayImpl::OnDetachedFromWindow() {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = obj_.get(env);
   if (!obj.is_null())
-    Java_DialogOverlayImpl_onWindowToken(env, obj, nullptr);
+    Java_DialogOverlayImpl_onWindowAndroid(env, obj, nullptr);
   Stop();
 }
 
@@ -327,8 +326,8 @@ static jint JNI_DialogOverlayImpl_RegisterSurface(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   return gpu::GpuSurfaceTracker::Get()->AddSurfaceForNativeWidget(
       gpu::GpuSurfaceTracker::SurfaceRecord(
-          gfx::kNullAcceleratedWidget, surface,
-          false /* can_be_used_with_surface_control */));
+          gl::ScopedJavaSurface(surface, /*auto_release=*/false),
+          /*can_be_used_with_surface_control=*/false));
 }
 
 static void JNI_DialogOverlayImpl_UnregisterSurface(
@@ -343,10 +342,13 @@ JNI_DialogOverlayImpl_LookupSurfaceForTesting(
     JNIEnv* env,
     jint surfaceId) {
   bool can_be_used_with_surface_control = false;
-  gl::ScopedJavaSurface surface =
-      gpu::GpuSurfaceTracker::Get()->AcquireJavaSurface(
-          surfaceId, &can_be_used_with_surface_control);
-  return ScopedJavaLocalRef<jobject>(surface.j_surface());
+  auto surface_variant = gpu::GpuSurfaceTracker::Get()->AcquireJavaSurface(
+      surfaceId, &can_be_used_with_surface_control);
+  if (!absl::holds_alternative<gl::ScopedJavaSurface>(surface_variant)) {
+    return nullptr;
+  }
+  return ScopedJavaLocalRef<jobject>(
+      absl::get<gl::ScopedJavaSurface>(surface_variant).j_surface());
 }
 
 }  // namespace content

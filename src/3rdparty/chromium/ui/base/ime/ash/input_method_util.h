@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -181,13 +181,5 @@ class COMPONENT_EXPORT(UI_BASE_IME_ASH) InputMethodUtil {
 
 }  // namespace input_method
 }  // namespace ash
-
-// TODO(https://crbug.com/1164001): remove when the migration is finished.
-namespace chromeos {
-namespace input_method {
-using ::ash::input_method::InputMethodUtil;
-using ::ash::input_method::kKeyboardLayoutsOnly;
-}  // namespace input_method
-}  // namespace chromeos
 
 #endif  // UI_BASE_IME_ASH_INPUT_METHOD_UTIL_H_

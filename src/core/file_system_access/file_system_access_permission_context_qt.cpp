@@ -204,8 +204,6 @@ FileSystemAccessPermissionContextQt::GetReadPermissionGrant(const url::Origin &o
                                                             HandleType handle_type,
                                                             UserAction user_action)
 {
-    Q_UNUSED(user_action);
-
     auto &origin_state = m_origins[origin];
     auto *&existing_grant = origin_state.read_grants[path];
     scoped_refptr<FileSystemAccessPermissionGrantQt> new_grant;
@@ -214,7 +212,7 @@ FileSystemAccessPermissionContextQt::GetReadPermissionGrant(const url::Origin &o
         // |path| changed from being a directory to being a file or vice versa,
         // don't just re-use the existing grant but revoke the old grant before
         // creating a new grant.
-        existing_grant->SetStatus(PermissionStatus::DENIED);
+        existing_grant->SetStatus(blink::mojom::PermissionStatus::DENIED);
         existing_grant = nullptr;
     }
 
@@ -222,6 +220,29 @@ FileSystemAccessPermissionContextQt::GetReadPermissionGrant(const url::Origin &o
         new_grant = base::MakeRefCounted<FileSystemAccessPermissionGrantQt>(
                 m_weakFactory.GetWeakPtr(), origin, path, handle_type, GrantType::kRead);
         existing_grant = new_grant.get();
+    }
+
+    // If a parent directory is already readable this new grant should also be readable.
+    if (new_grant && AncestorHasActivePermission(origin, path, GrantType::kRead)) {
+        existing_grant->SetStatus(blink::mojom::PermissionStatus::GRANTED);
+        return existing_grant;
+    }
+
+    switch (user_action) {
+    case UserAction::kOpen:
+    case UserAction::kSave:
+        // Open and Save dialog only grant read access for individual files.
+        if (handle_type == HandleType::kDirectory)
+            break;
+        Q_FALLTHROUGH();
+    case UserAction::kDragAndDrop:
+        // Drag&drop grants read access for all handles.
+        existing_grant->SetStatus(blink::mojom::PermissionStatus::GRANTED);
+        break;
+    case UserAction::kLoadFromStorage:
+        break;
+    case UserAction::kNone:
+        Q_UNREACHABLE();
     }
 
     return existing_grant;
@@ -233,8 +254,6 @@ FileSystemAccessPermissionContextQt::GetWritePermissionGrant(const url::Origin &
                                                              HandleType handle_type,
                                                              UserAction user_action)
 {
-    Q_UNUSED(user_action);
-
     auto &origin_state = m_origins[origin];
     auto *&existing_grant = origin_state.write_grants[path];
     scoped_refptr<FileSystemAccessPermissionGrantQt> new_grant;
@@ -243,7 +262,7 @@ FileSystemAccessPermissionContextQt::GetWritePermissionGrant(const url::Origin &
         // |path| changed from being a directory to being a file or vice versa,
         // don't just re-use the existing grant but revoke the old grant before
         // creating a new grant.
-        existing_grant->SetStatus(PermissionStatus::DENIED);
+        existing_grant->SetStatus(blink::mojom::PermissionStatus::DENIED);
         existing_grant = nullptr;
     }
 
@@ -253,16 +272,36 @@ FileSystemAccessPermissionContextQt::GetWritePermissionGrant(const url::Origin &
         existing_grant = new_grant.get();
     }
 
+    // If a parent directory is already writable this new grant should also be writable.
+    if (new_grant && AncestorHasActivePermission(origin, path, GrantType::kWrite)) {
+        existing_grant->SetStatus(blink::mojom::PermissionStatus::GRANTED);
+        return existing_grant;
+    }
+
+    switch (user_action) {
+    case UserAction::kSave:
+        // Only automatically grant write access for save dialogs.
+        existing_grant->SetStatus(blink::mojom::PermissionStatus::GRANTED);
+        break;
+    case UserAction::kOpen:
+    case UserAction::kDragAndDrop:
+    case UserAction::kLoadFromStorage:
+        break;
+    case UserAction::kNone:
+        Q_UNREACHABLE();
+    }
+
     return existing_grant;
 }
 
-void FileSystemAccessPermissionContextQt::ConfirmSensitiveDirectoryAccess(
+void FileSystemAccessPermissionContextQt::ConfirmSensitiveEntryAccess(
         const url::Origin &origin, PathType path_type, const base::FilePath &path,
-        HandleType handle_type, content::GlobalRenderFrameHostId frame_id,
-        base::OnceCallback<void(SensitiveDirectoryResult)> callback)
+        HandleType handle_type, UserAction user_action,
+        content::GlobalRenderFrameHostId frame_id,
+        base::OnceCallback<void(SensitiveEntryResult)> callback)
 {
     if (path_type == PathType::kExternal) {
-        std::move(callback).Run(SensitiveDirectoryResult::kAllowed);
+        std::move(callback).Run(SensitiveEntryResult::kAllowed);
         return;
     }
 
@@ -270,7 +309,7 @@ void FileSystemAccessPermissionContextQt::ConfirmSensitiveDirectoryAccess(
             FROM_HERE, { base::MayBlock(), base::TaskPriority::USER_VISIBLE },
             base::BindOnce(&ShouldBlockAccessToPath, path, handle_type),
             base::BindOnce(&FileSystemAccessPermissionContextQt::DidConfirmSensitiveDirectoryAccess,
-                           m_weakFactory.GetWeakPtr(), origin, path, handle_type, frame_id,
+                           m_weakFactory.GetWeakPtr(), origin, path, handle_type, user_action, frame_id,
                            std::move(callback)));
 }
 
@@ -321,7 +360,7 @@ FileSystemAccessPermissionContextQt::GetLastPickedDirectory(const url::Origin &o
 }
 
 base::FilePath FileSystemAccessPermissionContextQt::GetWellKnownDirectoryPath(
-        blink::mojom::WellKnownDirectory directory)
+        blink::mojom::WellKnownDirectory directory, const url::Origin &origin)
 {
     QStandardPaths::StandardLocation location = QStandardPaths::DocumentsLocation;
     switch (directory) {
@@ -371,25 +410,73 @@ void FileSystemAccessPermissionContextQt::NavigatedAwayFromOrigin(const url::Ori
 
     OriginState &origin_state = it->second;
     for (auto &grant : origin_state.read_grants)
-        grant.second->SetStatus(PermissionStatus::ASK);
+        grant.second->SetStatus(blink::mojom::PermissionStatus::ASK);
     for (auto &grant : origin_state.write_grants)
-        grant.second->SetStatus(PermissionStatus::ASK);
+        grant.second->SetStatus(blink::mojom::PermissionStatus::ASK);
 }
 
 void FileSystemAccessPermissionContextQt::DidConfirmSensitiveDirectoryAccess(
-        const url::Origin &origin, const base::FilePath &path, HandleType handle_type,
+        const url::Origin &origin, const base::FilePath &path, HandleType handle_type, UserAction user_action,
         content::GlobalRenderFrameHostId frame_id,
-        base::OnceCallback<void(SensitiveDirectoryResult)> callback, bool should_block)
+        base::OnceCallback<void(SensitiveEntryResult)> callback, bool should_block)
 {
     Q_UNUSED(origin);
     Q_UNUSED(path);
     Q_UNUSED(handle_type);
+    Q_UNUSED(user_action);
     Q_UNUSED(frame_id);
 
     if (should_block)
-        std::move(callback).Run(SensitiveDirectoryResult::kAbort);
+        std::move(callback).Run(SensitiveEntryResult::kAbort);
     else
-        std::move(callback).Run(SensitiveDirectoryResult::kAllowed);
+        std::move(callback).Run(SensitiveEntryResult::kAllowed);
+}
+
+bool FileSystemAccessPermissionContextQt::AncestorHasActivePermission(
+    const url::Origin &origin, const base::FilePath &path, GrantType grant_type) const
+{
+    auto it = m_origins.find(origin);
+    if (it == m_origins.end())
+        return false;
+
+    const auto &relevant_grants = grant_type == GrantType::kWrite ? it->second.write_grants : it->second.read_grants;
+    if (relevant_grants.empty())
+        return false;
+
+    // Permissions are inherited from the closest ancestor.
+    for (base::FilePath parent = path.DirName(); parent != parent.DirName(); parent = parent.DirName()) {
+        auto i = relevant_grants.find(parent);
+        if (i != relevant_grants.end() && i->second && i->second->GetStatus() == blink::mojom::PermissionStatus::GRANTED)
+            return true;
+    }
+    return false;
+}
+
+std::u16string FileSystemAccessPermissionContextQt::GetPickerTitle(const blink::mojom::FilePickerOptionsPtr &)
+{
+    return {};
+}
+
+void FileSystemAccessPermissionContextQt::PermissionGrantDestroyed(
+        FileSystemAccessPermissionGrantQt *grant)
+{
+    auto it = m_origins.find(grant->origin());
+    if (it == m_origins.end())
+        return;
+
+    auto &grants =
+            grant->type() == GrantType::kRead ? it->second.read_grants : it->second.write_grants;
+    auto grant_it = grants.find(grant->path());
+
+    if (grant_it == grants.end()) {
+        return;
+    }
+    if (grant_it->second == grant)
+        grants.erase(grant_it);
+}
+
+void FileSystemAccessPermissionContextQt::NotifyEntryMoved(const url::Origin &, const base::FilePath &, const base::FilePath &)
+{
 }
 
 } // namespace QtWebEngineCore

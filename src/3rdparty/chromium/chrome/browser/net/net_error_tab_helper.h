@@ -1,13 +1,14 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CHROME_BROWSER_NET_NET_ERROR_TAB_HELPER_H_
 #define CHROME_BROWSER_NET_NET_ERROR_TAB_HELPER_H_
 
+#include <memory>
 #include <string>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/net/dns_probe_service.h"
 #include "chrome/common/net/net_error_page_support.mojom.h"
@@ -20,6 +21,12 @@
 #include "content/public/browser/render_frame_host_receiver_set.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+namespace ash {
+class NetworkPortalSigninController;
+}
+#endif
 
 namespace user_prefs {
 class PrefRegistrySyncable;
@@ -92,6 +99,9 @@ class NetErrorTabHelper
   void SetIsShowingDownloadButtonInErrorPage(
       bool showing_download_button) override;
 #endif  // BUILDFLAG(ENABLE_OFFLINE_PAGES)
+#if BUILDFLAG(IS_CHROMEOS)
+  void ShowPortalSignin() override;
+#endif
 
  protected:
   // |contents| is the WebContents of the tab this NetErrorTabHelper is
@@ -172,6 +182,10 @@ class NetErrorTabHelper
 
   // Preference storing the user's current easter egg game high score.
   IntegerPrefMember easter_egg_high_score_;
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  std::unique_ptr<ash::NetworkPortalSigninController> portal_signin_controller_;
+#endif
 
   base::WeakPtrFactory<NetErrorTabHelper> weak_factory_{this};
 

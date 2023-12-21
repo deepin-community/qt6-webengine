@@ -1,15 +1,19 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "extensions/renderer/api_activity_logger.h"
 
+#include <string>
+
 #include "base/run_loop.h"
+#include "base/values.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/extension_messages.h"
 #include "extensions/common/features/feature.h"
 #include "extensions/renderer/bindings/api_binding_test.h"
 #include "extensions/renderer/bindings/api_binding_test_util.h"
+#include "extensions/renderer/ipc_message_sender.h"
 #include "extensions/renderer/native_extension_bindings_system_test_base.h"
 #include "extensions/renderer/script_context.h"
 #include "extensions/renderer/script_context_set.h"
@@ -63,13 +67,13 @@ TEST_F(ActivityLoggerTest, DontCrashOnUnconvertedValues) {
       std::make_unique<testing::StrictMock<TestIPCMessageSender>>();
   EXPECT_CALL(*ipc_sender,
               SendActivityLogIPC(extension->id(), ActivityLogCallType::APICALL,
-                                 testing::_))
-      .WillOnce([&](const ExtensionId& extension_id, const ActivityLogCallType,
-                    const ExtensionHostMsg_APIActionOrEvent_Params& params) {
-        EXPECT_EQ("someApiMethod", params.api_call);
-        ASSERT_EQ(1u, params.arguments.GetListDeprecated().size());
-        EXPECT_EQ(base::Value::Type::NONE,
-                  params.arguments.GetListDeprecated()[0].type());
+                                 testing::_, testing::_, testing::_))
+      .WillOnce([&](const ExtensionId& extension_id,
+                    ActivityLogCallType call_type, const std::string& call_name,
+                    base::Value::List args, const std::string& extra) {
+        EXPECT_EQ("someApiMethod", call_name);
+        ASSERT_EQ(1u, args.size());
+        EXPECT_EQ(base::Value::Type::NONE, args[0].type());
       });
 
   APIActivityLogger::LogAPICall(ipc_sender.get(), context, "someApiMethod",

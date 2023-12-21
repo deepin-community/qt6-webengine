@@ -1,11 +1,11 @@
-# Copyright 2022 The Chromium Authors. All rights reserved.
+# Copyright 2022 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 """Utility library for working with lucicfg graph nodes."""
 
 load("@stdlib//internal/graph.star", "graph")
-load("@stdlib//internal/luci/common.star", "keys", "kinds")
+load("@stdlib//internal/luci/common.star", "builder_ref", "keys", "kinds")
 
 _CHROMIUM_NS_KIND = "@chromium"
 
@@ -203,6 +203,16 @@ def _create_node_type_with_builder_ref(kind):
         follow_ref = follow_ref,
     )
 
+# A node-type for access to lucicfg standard builder nodes. It doesn't provide
+# full access because it doesn't allow for the creation of new nodes, but it can
+# be used as a node type when creating link node types.
+_BUILDER = struct(
+    kind = kinds.BUILDER,
+    ref_kind = kinds.BUILDER_REF,
+    add_ref = lambda key, ref: graph.add_edge(key, keys.builder_ref(ref)),
+    follow_ref = builder_ref.follow,
+)
+
 def _create_link_node_type(kind, parent_node_type, child_node_type):
     """Create a link node type.
 
@@ -309,6 +319,7 @@ def _create_link_node_type(kind, parent_node_type, child_node_type):
     )
 
 nodes = struct(
+    BUILDER = _BUILDER,
     create_unscoped_node_type = _create_unscoped_node_type,
     create_bucket_scoped_node_type = _create_bucket_scoped_node_type,
     create_node_type_with_builder_ref = _create_node_type_with_builder_ref,

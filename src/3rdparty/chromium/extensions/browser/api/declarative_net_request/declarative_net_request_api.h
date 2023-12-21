@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,6 +14,10 @@ namespace extensions {
 namespace declarative_net_request {
 struct ReadJSONRulesResult;
 }  // namespace declarative_net_request
+
+namespace api::declarative_net_request::GetDynamicRules {
+struct Params;
+}
 
 class DeclarativeNetRequestUpdateDynamicRulesFunction
     : public ExtensionFunction {
@@ -46,6 +50,7 @@ class DeclarativeNetRequestGetDynamicRulesFunction : public ExtensionFunction {
 
  private:
   void OnDynamicRulesFetched(
+      std::unique_ptr<api::declarative_net_request::GetDynamicRules::Params>,
       declarative_net_request::ReadJSONRulesResult read_json_result);
 };
 
@@ -111,6 +116,40 @@ class DeclarativeNetRequestGetEnabledRulesetsFunction
   ExtensionFunction::ResponseAction Run() override;
 };
 
+class DeclarativeNetRequestUpdateStaticRulesFunction
+    : public ExtensionFunction {
+ public:
+  DeclarativeNetRequestUpdateStaticRulesFunction();
+  DECLARE_EXTENSION_FUNCTION("declarativeNetRequest.updateStaticRules",
+                             DECLARATIVENETREQUEST_UPDATESTATICRULES)
+
+ protected:
+  ~DeclarativeNetRequestUpdateStaticRulesFunction() override;
+
+ private:
+  void OnStaticRulesUpdated(absl::optional<std::string> error);
+
+  // ExtensionFunction override:
+  ExtensionFunction::ResponseAction Run() override;
+};
+
+class DeclarativeNetRequestGetDisabledRuleIdsFunction
+    : public ExtensionFunction {
+ public:
+  DeclarativeNetRequestGetDisabledRuleIdsFunction();
+  DECLARE_EXTENSION_FUNCTION("declarativeNetRequest.getDisabledRuleIds",
+                             DECLARATIVENETREQUEST_GETDISABLEDRULEIDS)
+
+ protected:
+  ~DeclarativeNetRequestGetDisabledRuleIdsFunction() override;
+
+ private:
+  void OnDisabledRuleIdsRead(std::vector<int> disabled_rule_ids);
+
+  // ExtensionFunction override:
+  ExtensionFunction::ResponseAction Run() override;
+};
+
 class DeclarativeNetRequestGetMatchedRulesFunction : public ExtensionFunction {
  public:
   DeclarativeNetRequestGetMatchedRulesFunction();
@@ -170,6 +209,19 @@ class DeclarativeNetRequestGetAvailableStaticRuleCountFunction
 
  protected:
   ~DeclarativeNetRequestGetAvailableStaticRuleCountFunction() override;
+
+  // ExtensionFunction override:
+  ExtensionFunction::ResponseAction Run() override;
+};
+
+class DeclarativeNetRequestTestMatchOutcomeFunction : public ExtensionFunction {
+ public:
+  DeclarativeNetRequestTestMatchOutcomeFunction();
+  DECLARE_EXTENSION_FUNCTION("declarativeNetRequest.testMatchOutcome",
+                             DECLARATIVENETREQUEST_TESTMATCHOUTCOME)
+
+ protected:
+  ~DeclarativeNetRequestTestMatchOutcomeFunction() override;
 
   // ExtensionFunction override:
   ExtensionFunction::ResponseAction Run() override;

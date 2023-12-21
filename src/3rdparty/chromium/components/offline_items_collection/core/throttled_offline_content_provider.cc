@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,8 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/functional/bind.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "components/offline_items_collection/core/offline_item.h"
 
@@ -111,12 +111,6 @@ void ThrottledOfflineContentProvider::RenameItem(const ContentId& id,
   wrapped_provider_->RenameItem(id, name, std::move(callback));
 }
 
-void ThrottledOfflineContentProvider::ChangeSchedule(
-    const ContentId& id,
-    absl::optional<OfflineItemSchedule> schedule) {
-  wrapped_provider_->ChangeSchedule(id, std::move(schedule));
-}
-
 void ThrottledOfflineContentProvider::OnItemsAdded(
     const OfflineItemList& items) {
   NotifyItemsAdded(items);
@@ -151,7 +145,7 @@ void ThrottledOfflineContentProvider::OnItemUpdated(
   // Queue the update so we wait for the proper amount of time before notifying
   // observers.
   update_queued_ = true;
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE,
       base::BindOnce(&ThrottledOfflineContentProvider::FlushUpdates,
                      weak_ptr_factory_.GetWeakPtr()),

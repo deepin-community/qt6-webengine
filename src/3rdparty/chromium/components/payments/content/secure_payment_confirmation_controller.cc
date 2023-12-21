@@ -1,15 +1,15 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/payments/content/secure_payment_confirmation_controller.h"
 
-#include "base/bind.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "components/payments/content/content_payment_request_delegate.h"
 #include "components/payments/content/payment_request.h"
@@ -140,6 +140,21 @@ void SecurePaymentConfirmationController::
                                       request_->state()->GetApplicationLocale())
                         .Format(total->amount->value)}));
 
+  model_.set_opt_out_visible(request_->spec()
+                                 ->method_data()
+                                 .front()
+                                 ->secure_payment_confirmation->show_opt_out);
+  model_.set_opt_out_label(
+      l10n_util::GetStringUTF16(IDS_SECURE_PAYMENT_CONFIRMATION_OPT_OUT_LABEL));
+  model_.set_opt_out_link_label(l10n_util::GetStringUTF16(
+      IDS_SECURE_PAYMENT_CONFIRMATION_OPT_OUT_LINK_LABEL));
+
+  model_.set_relying_party_id(
+      base::UTF8ToUTF16(request_->spec()
+                            ->method_data()
+                            .front()
+                            ->secure_payment_confirmation->rp_id));
+
   view_ = SecurePaymentConfirmationView::Create(
       request_->state()->GetPaymentRequestDelegate()->GetPaymentUIObserver());
   view_->ShowDialog(
@@ -147,6 +162,8 @@ void SecurePaymentConfirmationController::
       base::BindOnce(&SecurePaymentConfirmationController::OnConfirm,
                      weak_ptr_factory_.GetWeakPtr()),
       base::BindOnce(&SecurePaymentConfirmationController::OnCancel,
+                     weak_ptr_factory_.GetWeakPtr()),
+      base::BindOnce(&SecurePaymentConfirmationController::OnOptOut,
                      weak_ptr_factory_.GetWeakPtr()));
 
   // For automated testing, SPC can be placed in an 'autoaccept' or
@@ -157,6 +174,9 @@ void SecurePaymentConfirmationController::
   if (request_->spc_transaction_mode() != SPCTransactionMode::NONE) {
     if (request_->spc_transaction_mode() == SPCTransactionMode::AUTOACCEPT) {
       OnConfirm();
+    } else if (request_->spc_transaction_mode() ==
+               SPCTransactionMode::AUTOOPTOUT) {
+      OnOptOut();
     } else {
       OnCancel();
     }
@@ -192,15 +212,6 @@ bool SecurePaymentConfirmationController::IsInteractive() const {
   return view_ && !model_.progress_bar_visible();
 }
 
-void SecurePaymentConfirmationController::ShowCvcUnmaskPrompt(
-    const autofill::CreditCard& credit_card,
-    base::WeakPtr<autofill::payments::FullCardRequest::ResultDelegate>
-        result_delegate,
-    content::RenderFrameHost* render_frame_host) {
-  // CVC unmasking is nut supported.
-  NOTREACHED();
-}
-
 void SecurePaymentConfirmationController::ShowPaymentHandlerScreen(
     const GURL& url,
     PaymentHandlerOpenWindowCallback callback) {
@@ -212,14 +223,16 @@ void SecurePaymentConfirmationController::ConfirmPaymentForTesting() {
   OnConfirm();
 }
 
+bool SecurePaymentConfirmationController::ClickOptOutForTesting() {
+  // This should only be called when the view is showing.
+  DCHECK(view_);
+  return view_->ClickOptOutForTesting();
+}
+
 void SecurePaymentConfirmationController::OnInitialized(
     InitializationTask* initialization_task) {
   if (--number_of_initialization_tasks_ == 0)
     SetupModelAndShowDialogIfApplicable();
-}
-
-void SecurePaymentConfirmationController::OnDismiss() {
-  OnCancel();
 }
 
 void SecurePaymentConfirmationController::OnCancel() {
@@ -228,8 +241,21 @@ void SecurePaymentConfirmationController::OnCancel() {
   if (!request_)
     return;
 
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&PaymentRequest::OnUserCancelled, request_));
+}
+
+void SecurePaymentConfirmationController::OnOptOut() {
+  // Set the opt out clicked state on the model so that the view knows not to
+  // call back to OnCancel when the dialog is closed.
+  model_.set_opt_out_clicked(true);
+  CloseDialog();
+
+  if (!request_)
+    return;
+
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(&PaymentRequest::OnUserOptedOut, request_));
 }
 
 void SecurePaymentConfirmationController::OnConfirm() {
@@ -242,7 +268,7 @@ void SecurePaymentConfirmationController::OnConfirm() {
   // with its animated processing spinner. For example, on Linux, there's no
   // OS-level UI, while on MacOS, there's an OS-level prompt for the Touch ID
   // that shows on top of Chrome.
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&PaymentRequest::Pay, request_));
 }
 

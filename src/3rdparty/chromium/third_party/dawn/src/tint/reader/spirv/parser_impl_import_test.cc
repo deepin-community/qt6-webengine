@@ -28,44 +28,51 @@ using ::testing::UnorderedElementsAre;
 using SpvParserImportTest = SpvParserTest;
 
 TEST_F(SpvParserImportTest, Import_NoImport) {
-  auto p = parser(test::Assemble("%1 = OpTypeVoid"));
-  EXPECT_TRUE(p->BuildAndParseInternalModule());
-  EXPECT_TRUE(p->error().empty());
-  const auto program_ast = test::ToString(p->program());
-  EXPECT_THAT(program_ast, Not(HasSubstr("Import")));
+    auto p = parser(test::Assemble("%1 = OpTypeVoid"));
+    EXPECT_TRUE(p->BuildAndParseInternalModule());
+    EXPECT_TRUE(p->error().empty());
+    const auto program_ast = test::ToString(p->program());
+    EXPECT_THAT(program_ast, Not(HasSubstr("Import")));
 
-  p->DeliberatelyInvalidSpirv();
+    p->DeliberatelyInvalidSpirv();
 }
 
 TEST_F(SpvParserImportTest, Import_ImportGlslStd450) {
-  auto p = parser(test::Assemble(R"(%1 = OpExtInstImport "GLSL.std.450")"));
-  EXPECT_TRUE(p->BuildAndParseInternalModule());
-  EXPECT_TRUE(p->error().empty());
-  EXPECT_THAT(p->glsl_std_450_imports(), ElementsAre(1));
+    auto p = parser(test::Assemble(R"(%1 = OpExtInstImport "GLSL.std.450")"));
+    EXPECT_TRUE(p->BuildAndParseInternalModule());
+    EXPECT_TRUE(p->error().empty());
+    EXPECT_THAT(p->glsl_std_450_imports(), ElementsAre(1));
 
-  p->DeliberatelyInvalidSpirv();
+    p->DeliberatelyInvalidSpirv();
 }
 
 TEST_F(SpvParserImportTest, Import_NonSemantic_IgnoredImport) {
-  auto p = parser(test::Assemble(
-      R"(%40 = OpExtInstImport "NonSemantic.ClspvReflection.1")"));
-  EXPECT_TRUE(p->BuildAndParseInternalModule());
-  EXPECT_TRUE(p->error().empty());
+    auto p = parser(test::Assemble(R"(%40 = OpExtInstImport "NonSemantic.ClspvReflection.1")"));
+    EXPECT_TRUE(p->BuildAndParseInternalModule());
+    EXPECT_TRUE(p->error().empty());
 
-  p->DeliberatelyInvalidSpirv();
+    p->DeliberatelyInvalidSpirv();
 }
 
-TEST_F(SpvParserImportTest, Import_NonSemantic_IgnoredExtInsts) {
-  // This is the clspv-compiled output of this OpenCL C:
-  //    kernel void foo(global int*A) { A=A; }
-  // It emits NonSemantic.ClspvReflection.1 extended instructions.
-  // But *tweaked*:
-  //    - to remove gl_WorkgroupSize
-  //    - to add LocalSize execution mode
-  //    - to move one of the ExtInsts into the globals-and-constants
-  //      section
-  //    - to move one of the ExtInsts into the function body.
-  auto p = parser(test::Assemble(R"(
+TEST_F(SpvParserImportTest, DISABLED_Import_NonSemantic_IgnoredExtInsts) {
+    // TODO(crbug.com/tint/1789): The NonSemantic.ClspvReflection.1 instruction
+    // set grammar has changed
+    // but the corresponding feature in Clspv has not yet landed.
+    // See:
+    //   https://github.com/KhronosGroup/SPIRV-Headers/pull/308
+    //   https://github.com/google/clspv/pull/925
+    // Disable this test until upstream has settled.
+
+    // This is the clspv-compiled output of this OpenCL C:
+    //    kernel void foo(global int*A) { A=A; }
+    // It emits NonSemantic.ClspvReflection.1 extended instructions.
+    // But *tweaked*:
+    //    - to remove gl_WorkgroupSize
+    //    - to add LocalSize execution mode
+    //    - to move one of the ExtInsts into the globals-and-constants
+    //      section
+    //    - to move one of the ExtInsts into the function body.
+    auto p = parser(test::Assemble(R"(
                OpCapability Shader
                OpExtension "SPV_KHR_storage_buffer_storage_class"
                OpExtension "SPV_KHR_non_semantic_info"
@@ -110,11 +117,10 @@ TEST_F(SpvParserImportTest, Import_NonSemantic_IgnoredExtInsts) {
          %25 = OpExtInst %void %20 ArgumentStorageBuffer %22 %uint_0 %uint_0 %uint_0 %24
          %28 = OpExtInst %void %20 SpecConstantWorkgroupSize %uint_0 %uint_1 %uint_2
 )"));
-  EXPECT_TRUE(p->BuildAndParseInternalModule());
-  EXPECT_TRUE(p->error().empty());
+    EXPECT_TRUE(p->BuildAndParseInternalModule());
+    EXPECT_TRUE(p->error().empty());
 
-  p->SkipDumpingPending(
-      "crbug.com/tint/1041 track access mode in spirv-reader parser type");
+    p->SkipDumpingPending("crbug.com/tint/1041 track access mode in spirv-reader parser type");
 }
 
 // TODO(dneto): We don't currently support other kinds of extended instruction

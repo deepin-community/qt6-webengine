@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -47,7 +47,7 @@ struct UnguessableTokenHash;
 
 class BASE_EXPORT UnguessableToken {
  public:
-  // Create a unique UnguessableToken.
+  // Create a unique UnguessableToken. It's guaranteed to be nonempty.
   static UnguessableToken Create();
 
   // Returns a reference to a global null UnguessableToken. This should only be
@@ -56,12 +56,14 @@ class BASE_EXPORT UnguessableToken {
   // default constructor.
   static const UnguessableToken& Null();
 
-  // Return a UnguessableToken built from the high/low bytes provided.
+  // Return an UnguessableToken built from the high/low bytes provided.
   // It should only be used in deserialization scenarios.
   //
-  // NOTE: If the deserialized token is empty, it means that it was never
+  // NOTE: If the returned `absl::optional` does not have a value, it means that
+  // `high` and `low` correspond to an `UnguesssableToken` that was never
   // initialized via Create(). This is a security issue, and should be handled.
-  static UnguessableToken Deserialize(uint64_t high, uint64_t low);
+  static absl::optional<UnguessableToken> Deserialize(uint64_t high,
+                                                      uint64_t low);
 
   // Creates an empty UnguessableToken.
   // Assign to it with Create() before using it.
@@ -105,7 +107,9 @@ class BASE_EXPORT UnguessableToken {
 
 #if defined(UNIT_TEST)
   static UnguessableToken CreateForTesting(uint64_t high, uint64_t low) {
-    return Deserialize(high, low);
+    absl::optional<UnguessableToken> token = Deserialize(high, low);
+    DCHECK(token.has_value());
+    return token.value();
   }
 #endif
 

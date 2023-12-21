@@ -311,7 +311,7 @@ static void configure_static_seg_features(AV1_COMP *cpi) {
   struct segmentation *const seg = &cm->seg;
 
   double avg_q;
-#if CONFIG_FRAME_PARALLEL_ENCODE && CONFIG_FPMT_TEST
+#if CONFIG_FPMT_TEST
   avg_q = ((cpi->ppi->gf_group.frame_parallel_level[cpi->gf_frame_index] > 0) &&
            (cpi->ppi->fpmt_unit_test_cfg == PARALLEL_SIMULATION_ENCODE))
               ? cpi->ppi->p_rc.temp_avg_q
@@ -432,9 +432,9 @@ void av1_apply_active_map(AV1_COMP *cpi) {
 
   if (cpi->active_map.update) {
     if (cpi->active_map.enabled) {
-      for (i = 0;
-           i < cpi->common.mi_params.mi_rows * cpi->common.mi_params.mi_cols;
-           ++i)
+      const int num_mis =
+          cpi->common.mi_params.mi_rows * cpi->common.mi_params.mi_cols;
+      for (i = 0; i < num_mis; ++i)
         if (seg_map[i] == AM_SEGMENT_ID_ACTIVE) seg_map[i] = active_map[i];
       av1_enable_segmentation(seg);
       av1_enable_segfeature(seg, AM_SEGMENT_ID_INACTIVE, SEG_LVL_SKIP);
@@ -636,7 +636,6 @@ void av1_update_film_grain_parameters_seq(struct AV1_PRIMARY *ppi,
 void av1_update_film_grain_parameters(struct AV1_COMP *cpi,
                                       const AV1EncoderConfig *oxcf) {
   AV1_COMMON *const cm = &cpi->common;
-  cpi->oxcf = *oxcf;
   const TuneCfg *const tune_cfg = &oxcf->tune_cfg;
 
   if (cpi->film_grain_table) {
@@ -658,8 +657,8 @@ void av1_update_film_grain_parameters(struct AV1_COMP *cpi,
       }
     }
   } else if (tune_cfg->film_grain_table_filename) {
-    cpi->film_grain_table = aom_malloc(sizeof(*cpi->film_grain_table));
-    memset(cpi->film_grain_table, 0, sizeof(aom_film_grain_table_t));
+    CHECK_MEM_ERROR(cm, cpi->film_grain_table,
+                    aom_calloc(1, sizeof(*cpi->film_grain_table)));
 
     aom_film_grain_table_read(cpi->film_grain_table,
                               tune_cfg->film_grain_table_filename, cm->error);
@@ -702,7 +701,8 @@ void av1_scale_references(AV1_COMP *cpi, const InterpFilter filter,
           RefCntBuffer *ref_fb = get_ref_frame_buf(cm, ref_frame);
           if (aom_yv12_realloc_with_new_border(
                   &ref_fb->buf, AOM_BORDER_IN_PIXELS,
-                  cm->features.byte_alignment, num_planes) != 0) {
+                  cm->features.byte_alignment, cpi->image_pyramid_levels,
+                  num_planes) != 0) {
             aom_internal_error(cm->error, AOM_CODEC_MEM_ERROR,
                                "Failed to allocate frame buffer");
           }
@@ -725,7 +725,7 @@ void av1_scale_references(AV1_COMP *cpi, const InterpFilter filter,
                   &new_fb->buf, cm->width, cm->height,
                   cm->seq_params->subsampling_x, cm->seq_params->subsampling_y,
                   cm->seq_params->use_highbitdepth, AOM_BORDER_IN_PIXELS,
-                  cm->features.byte_alignment, NULL, NULL, NULL, 0)) {
+                  cm->features.byte_alignment, NULL, NULL, NULL, 0, 0)) {
             if (force_scaling) {
               // Release the reference acquired in the get_free_fb() call above.
               --new_fb->ref_count;
@@ -733,9 +733,16 @@ void av1_scale_references(AV1_COMP *cpi, const InterpFilter filter,
             aom_internal_error(cm->error, AOM_CODEC_MEM_ERROR,
                                "Failed to allocate frame buffer");
           }
-          const bool has_optimized_scaler = av1_has_optimized_scaler(
-              cm->width, cm->height, new_fb->buf.y_crop_width,
+          bool has_optimized_scaler = av1_has_optimized_scaler(
+              ref->y_crop_width, ref->y_crop_height, new_fb->buf.y_crop_width,
               new_fb->buf.y_crop_height);
+          if (num_planes > 1) {
+            has_optimized_scaler =
+                has_optimized_scaler &&
+                av1_has_optimized_scaler(
+                    ref->uv_crop_width, ref->uv_crop_height,
+                    new_fb->buf.uv_crop_width, new_fb->buf.uv_crop_height);
+          }
 #if CONFIG_AV1_HIGHBITDEPTH
           if (use_optimized_scaler && has_optimized_scaler &&
               cm->seq_params->bit_depth == AOM_BITS_8)
@@ -792,9 +799,25 @@ BLOCK_SIZE av1_select_sb_size(const AV1EncoderConfig *const oxcf, int width,
       oxcf->resize_cfg.resize_mode != RESIZE_NONE) {
     // Use the configured size (top resolution) for spatial layers or
     // on resize.
-    return AOMMIN(oxcf->frm_dim_cfg.width, oxcf->frm_dim_cfg.height) > 480
+    return AOMMIN(oxcf->frm_dim_cfg.width, oxcf->frm_dim_cfg.height) > 720
                ? BLOCK_128X128
                : BLOCK_64X64;
+  } else if (oxcf->mode == REALTIME) {
+    if (oxcf->tune_cfg.content == AOM_CONTENT_SCREEN) {
+      const TileConfig *const tile_cfg = &oxcf->tile_cfg;
+      const int num_tiles =
+          (1 << tile_cfg->tile_columns) * (1 << tile_cfg->tile_rows);
+      // For multi-thread encode: if the number of (128x128) superbllocks
+      // per tile is low use 64X64 superblock.
+      if (oxcf->row_mt == 1 && oxcf->max_threads >= 4 &&
+          oxcf->max_threads >= num_tiles && AOMMIN(width, height) > 720 &&
+          (width * height) / (128 * 128 * num_tiles) <= 38)
+        return BLOCK_64X64;
+      else
+        return AOMMIN(width, height) >= 720 ? BLOCK_128X128 : BLOCK_64X64;
+    } else {
+      return AOMMIN(width, height) > 720 ? BLOCK_128X128 : BLOCK_64X64;
+    }
   }
 
   // TODO(any): Possibly could improve this with a heuristic.
@@ -806,14 +829,23 @@ BLOCK_SIZE av1_select_sb_size(const AV1EncoderConfig *const oxcf, int width,
   if (oxcf->superres_cfg.superres_mode == AOM_SUPERRES_NONE &&
       oxcf->resize_cfg.resize_mode == RESIZE_NONE) {
     int is_480p_or_lesser = AOMMIN(width, height) <= 480;
-    if ((oxcf->speed >= 1 || oxcf->mode == REALTIME) && is_480p_or_lesser)
-      return BLOCK_64X64;
+    if (oxcf->speed >= 1 && is_480p_or_lesser) return BLOCK_64X64;
 
     // For 1080p and lower resolutions, choose SB size adaptively based on
     // resolution and speed level for multi-thread encode.
     int is_1080p_or_lesser = AOMMIN(width, height) <= 1080;
     if (!is_480p_or_lesser && is_1080p_or_lesser && oxcf->mode == GOOD &&
         oxcf->row_mt == 1 && oxcf->max_threads > 1 && oxcf->speed >= 5)
+      return BLOCK_64X64;
+
+    // For allintra encode, since the maximum partition size is set to 32X32 for
+    // speed>=6, superblock size is set to 64X64 instead of 128X128. This
+    // improves the multithread performance due to reduction in top right delay
+    // and thread sync wastage. Currently, this setting is selectively enabled
+    // only for speed>=9 and resolutions less than 4k since cost update
+    // frequency is set to INTERNAL_COST_UPD_OFF in these cases.
+    const int is_4k_or_larger = AOMMIN(width, height) >= 2160;
+    if (oxcf->mode == ALLINTRA && oxcf->speed >= 9 && !is_4k_or_larger)
       return BLOCK_64X64;
   }
   return BLOCK_128X128;
@@ -917,7 +949,7 @@ static void screen_content_tools_determination(
   AV1_COMMON *const cm = &cpi->common;
   FeatureFlags *const features = &cm->features;
 
-#if CONFIG_FRAME_PARALLEL_ENCODE && CONFIG_FPMT_TEST
+#if CONFIG_FPMT_TEST
   projected_size_pass[pass] =
       ((cpi->ppi->gf_group.frame_parallel_level[cpi->gf_frame_index] > 0) &&
        (cpi->ppi->fpmt_unit_test_cfg == PARALLEL_SIMULATION_ENCODE))
@@ -1019,13 +1051,12 @@ void av1_determine_sc_tools_with_encoding(AV1_COMP *cpi, const int q_orig) {
 
   cpi->source = av1_realloc_and_scale_if_required(
       cm, cpi->unscaled_source, &cpi->scaled_source, cm->features.interp_filter,
-      0, false, false, cpi->oxcf.border_in_pixels,
-      cpi->oxcf.tool_cfg.enable_global_motion);
+      0, false, false, cpi->oxcf.border_in_pixels, cpi->image_pyramid_levels);
   if (cpi->unscaled_last_source != NULL) {
     cpi->last_source = av1_realloc_and_scale_if_required(
         cm, cpi->unscaled_last_source, &cpi->scaled_last_source,
         cm->features.interp_filter, 0, false, false, cpi->oxcf.border_in_pixels,
-        cpi->oxcf.tool_cfg.enable_global_motion);
+        cpi->image_pyramid_levels);
   }
 
   av1_setup_frame(cpi);
@@ -1051,9 +1082,8 @@ void av1_determine_sc_tools_with_encoding(AV1_COMP *cpi, const int q_orig) {
                       q_for_screen_content_quick_run,
                       q_cfg->enable_chroma_deltaq, q_cfg->enable_hdr_deltaq);
     av1_set_speed_features_qindex_dependent(cpi, oxcf->speed);
-    if (q_cfg->deltaq_mode != NO_DELTA_Q || q_cfg->enable_chroma_deltaq)
-      av1_init_quantizer(&cpi->enc_quant_dequant_params, &cm->quant_params,
-                         cm->seq_params->bit_depth);
+    av1_init_quantizer(&cpi->enc_quant_dequant_params, &cm->quant_params,
+                       cm->seq_params->bit_depth);
 
     av1_set_variance_partition_thresholds(cpi, q_for_screen_content_quick_run,
                                           0);
@@ -1091,7 +1121,7 @@ static void fix_interp_filter(InterpFilter *const interp_filter,
       // Only one filter is used. So set the filter at frame level
       for (int i = 0; i < SWITCHABLE_FILTERS; ++i) {
         if (count[i]) {
-          if (i == EIGHTTAP_REGULAR) *interp_filter = i;
+          *interp_filter = i;
           break;
         }
       }
@@ -1141,7 +1171,8 @@ void av1_finalize_encoded_frame(AV1_COMP *const cpi) {
     }
   }
 
-  fix_interp_filter(&cm->features.interp_filter, cpi->td.counts);
+  if (!frame_is_intra_only(cm))
+    fix_interp_filter(&cm->features.interp_filter, cpi->td.counts);
 }
 
 int av1_is_integer_mv(const YV12_BUFFER_CONFIG *cur_picture,
@@ -1256,9 +1287,7 @@ int av1_is_integer_mv(const YV12_BUFFER_CONFIG *cur_picture,
 
 void av1_set_mb_ssim_rdmult_scaling(AV1_COMP *cpi) {
   const CommonModeInfoParams *const mi_params = &cpi->common.mi_params;
-  ThreadData *td = &cpi->td;
-  MACROBLOCK *x = &td->mb;
-  MACROBLOCKD *xd = &x->e_mbd;
+  const MACROBLOCKD *const xd = &cpi->td.mb.e_mbd;
   uint8_t *y_buffer = cpi->source->y_buffer;
   const int y_stride = cpi->source->y_stride;
   const int block_size = BLOCK_16X16;
@@ -1268,7 +1297,6 @@ void av1_set_mb_ssim_rdmult_scaling(AV1_COMP *cpi) {
   const int num_cols = (mi_params->mi_cols + num_mi_w - 1) / num_mi_w;
   const int num_rows = (mi_params->mi_rows + num_mi_h - 1) / num_mi_h;
   double log_sum = 0.0;
-  const int use_hbd = cpi->source->flags & YV12_FLAG_HIGHBITDEPTH;
 
   // Loop through each 16x16 block.
   for (int row = 0; row < num_rows; ++row) {
@@ -1290,13 +1318,8 @@ void av1_set_mb_ssim_rdmult_scaling(AV1_COMP *cpi) {
           buf.buf = y_buffer + row_offset_y * y_stride + col_offset_y;
           buf.stride = y_stride;
 
-          if (use_hbd) {
-            var += av1_high_get_sby_perpixel_variance(cpi, &buf, BLOCK_8X8,
-                                                      xd->bd);
-          } else {
-            var += av1_get_sby_perpixel_variance(cpi, &buf, BLOCK_8X8);
-          }
-
+          var += av1_get_perpixel_variance_facade(cpi, xd, &buf, BLOCK_8X8,
+                                                  AOM_PLANE_Y);
           num_of_var += 1.0;
         }
       }
@@ -1305,10 +1328,22 @@ void av1_set_mb_ssim_rdmult_scaling(AV1_COMP *cpi) {
       // Curve fitting with an exponential model on all 16x16 blocks from the
       // midres dataset.
       var = 67.035434 * (1 - exp(-0.0021489 * var)) + 17.492222;
+
+      // As per the above computation, var will be in the range of
+      // [17.492222, 84.527656], assuming the data type is of infinite
+      // precision. The following assert conservatively checks if var is in the
+      // range of [17.0, 85.0] to avoid any issues due to the precision of the
+      // relevant data type.
+      assert(var > 17.0 && var < 85.0);
       cpi->ssim_rdmult_scaling_factors[index] = var;
       log_sum += log(var);
     }
   }
+
+  // As log_sum holds the geometric mean, it will be in the range
+  // [17.492222, 84.527656]. Hence, in the below loop, the value of
+  // cpi->ssim_rdmult_scaling_factors[index] would be in the range
+  // [0.2069, 4.8323].
   log_sum = exp(log_sum / (double)(num_rows * num_cols));
 
   for (int row = 0; row < num_rows; ++row) {

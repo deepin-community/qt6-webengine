@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,9 @@
 
 #include "base/at_exit.h"
 #include "base/command_line.h"
+#include "base/containers/contains.h"
 #include "base/logging.h"
+#include "base/ranges/algorithm.h"
 #include "build/build_config.h"
 #include "content/public/browser/ax_inspect_factory.h"
 #include "tools/accessibility/inspect/ax_tree_server.h"
@@ -36,8 +38,8 @@ std::vector<ui::AXApiType::Type> SupportedApis() {
   std::vector<ui::AXApiType::Type> apis =
       content::AXInspectFactory::SupportedApis();
   std::vector<ui::AXApiType::Type> filter_apis;
-  std::copy_if(
-      begin(apis), end(apis), std::back_inserter(filter_apis),
+  base::ranges::copy_if(
+      apis, std::back_inserter(filter_apis),
       [](ui::AXApiType::Type t) { return t != ui::AXApiType::kBlink; });
   return filter_apis;
 }
@@ -79,12 +81,6 @@ int main(int argc, char** argv) {
     return 0;
   }
 
-  absl::optional<ui::AXInspectScenario> scenario =
-      tools::ScenarioFromCommandLine(*command_line);
-  if (!scenario) {
-    return 1;
-  }
-
   absl::optional<ui::AXTreeSelector> selector =
       tools::TreeSelectorFromCommandLine(*command_line);
 
@@ -96,18 +92,27 @@ int main(int argc, char** argv) {
 
   std::string api_str = command_line->GetSwitchValueASCII(kApiSwitch);
   ui::AXApiType::Type api = ui::AXApiType::kNone;
+  std::vector<ui::AXApiType::Type> apis = SupportedApis();
   if (!api_str.empty()) {
     api = ui::AXApiType::From(api_str);
     if (api == ui::AXApiType::kNone) {
       LOG(ERROR) << "Unknown API type: " << api_str;
       return 1;
     }
-    auto apis = SupportedApis();
-    if (std::find(apis.begin(), apis.end(), api) == apis.end()) {
+    if (!base::Contains(apis, api)) {
       LOG(ERROR) << "Unsupported API for this platform: "
                  << static_cast<std::string>(api);
       return 1;
     }
+  }
+  // Choose the default API if one is not specified.
+  if (api == ui::AXApiType::kNone && !apis.empty())
+    api = apis[0];
+
+  absl::optional<ui::AXInspectScenario> scenario =
+      tools::ScenarioFromCommandLine(*command_line, api);
+  if (!scenario) {
+    return 1;
   }
 
   auto server =

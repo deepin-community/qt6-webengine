@@ -20,16 +20,6 @@ README.md
 =========
 This file.
 
-wpt.config.json
-===============
-The configuration file used when running WPTServe. Note that this file loads
-after wpt/config.default.json and this configuration gets merged onto it. When
-changing the ports (HTTP/S, WS/S), make sure to also:
-
-- update `WPT_HOST_AND_PORTS` in
-  `//third_party/blink/tools/blinkpy/web_tests/port/driver.py`
-- update WebTestContentBrowserClient::GetOriginsRequiringDedicatedProcess()
-
 checkout.sh
 ===========
 Running this script without arguments will remove the existing checkout
@@ -74,8 +64,12 @@ If there are new files that need to be rolled in, add the intended files to
 the WPTIncludeList. Ensure these files are in the correct order by running
 "LC_ALL=C sort WPTIncludeList".
 
-When rolling in new versions of WPT support, modify WPT_HEAD in checkout.sh to
-the desired HEAD position. You can then call "./checkout.sh clone" which will
+The easiest way to roll is to just call "./roll_wpt.py" which does everything
+listed below and uploads a CL to Gerrit. See instructions below for more
+manually rolling in WPT.
+
+When rolling in new versions of WPT support, make note of the revision you want
+to roll to.  You can then call "./checkout.sh REVISION clone" which will
 pull in all the code.
 
 It is also important to update the hashes in the 'Version:' fields of
@@ -90,8 +84,8 @@ required to run the updated version.
 Once you've cloned the repositories you can call "./checkout.sh reduce" to
 remove everything that is not listed in WPTIncludeList.
 
-Note that calling "./checkout.sh" without arguments is equivalent of calling
-"./checkout.sh clone reduce".
+Note that calling "./checkout.sh" with only a revision argument is equivalent
+of calling "./checkout.sh clone reduce".
 
 Configuration
 =============
@@ -100,7 +94,7 @@ Read instructions in WPT README:
 https://github.com/web-platform-tests/wpt/blob/master/README.md
 
 Also, check out the WPTServe Documentation
-(https://wptserve.readthedocs.org/en/latest/).
+(https://web-platform-tests.org/tools/wptserve/docs/).
 
 Note that editing /etc/hosts is not required for run_web_tests.py since
 content_shell is invoked with flags to map all \*.test domains to 127.0.0.1.

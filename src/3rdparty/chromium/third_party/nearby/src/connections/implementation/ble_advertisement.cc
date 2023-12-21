@@ -21,7 +21,6 @@
 #include "internal/platform/base_input_stream.h"
 #include "internal/platform/logging.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 
@@ -132,12 +131,12 @@ BleAdvertisement::BleAdvertisement(bool fast_advertisement,
       break;
     default:
       NEARBY_LOG(INFO,
-                 "Cannot deserialize BleAdvertisement: uunsupported V1 PCP %d",
+                 "Cannot deserialize BleAdvertisement: unsupported V1 PCP %d",
                  pcp_);
   }
 
   // The next 3 bytes are supposed to be the service_id_hash if not fast
-  // advertisment.
+  // advertisement.
   if (!fast_advertisement_)
     service_id_hash_ = base_input_stream.ReadBytes(kServiceIdHashLength);
 
@@ -161,12 +160,12 @@ BleAdvertisement::BleAdvertisement(bool fast_advertisement,
                fast_advertisement_, expected_endpoint_info_length,
                endpoint_info_.size());
 
-    // Clear enpoint_id for validity.
+    // Clear endpoint_id for validity.
     endpoint_id_.clear();
     return;
   }
 
-  // The next 6 bytes are the bluetooth mac address if not fast advertisment.
+  // The next 6 bytes are the bluetooth mac address if not fast advertisement.
   if (!fast_advertisement_) {
     auto bluetooth_mac_address_bytes =
         base_input_stream.ReadBytes(BluetoothUtils::kBluetoothMacAddressLength);
@@ -189,7 +188,7 @@ BleAdvertisement::BleAdvertisement(bool fast_advertisement,
                    "expected uwbAddress size to be %d bytes, got %" PRIu64,
                    expected_uwb_address_length, uwb_address_.size());
 
-        // Clear enpoint_id for validity.
+        // Clear endpoint_id for validity.
         endpoint_id_.clear();
         return;
       }
@@ -275,4 +274,3 @@ BleAdvertisement::operator ByteArray() const {
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location

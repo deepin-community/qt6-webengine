@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -98,13 +98,8 @@ CookieSameSite StringToCookieSameSite(const std::string& same_site,
   return samesite;
 }
 
-void RecordCookieSameSiteAttributeValueHistogram(CookieSameSiteString value,
-                                                 bool is_cookie_same_party) {
+void RecordCookieSameSiteAttributeValueHistogram(CookieSameSiteString value) {
   UMA_HISTOGRAM_ENUMERATION("Cookie.SameSiteAttributeValue", value);
-  if (is_cookie_same_party) {
-    base::UmaHistogramEnumeration(
-        "Cookie.SamePartyCookieSameSiteAttributeValue", value);
-  }
 }
 
 CookiePort ReducePortRangeForCookieHistogram(const int port) {

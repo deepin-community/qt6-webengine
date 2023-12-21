@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,8 +16,9 @@ class CounterStyleTest : public PageTestBase {
  protected:
   const CounterStyle& GetCounterStyle(const AtomicString& name) {
     if (const CounterStyleMap* document_map =
-            CounterStyleMap::GetAuthorCounterStyleMap(GetDocument()))
+            CounterStyleMap::GetAuthorCounterStyleMap(GetDocument())) {
       return *document_map->FindCounterStyleAcrossScopes(name);
+    }
     return *CounterStyleMap::GetUACounterStyleMap()
                 ->FindCounterStyleAcrossScopes(name);
   }

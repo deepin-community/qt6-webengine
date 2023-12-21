@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,6 @@
 #include <limits>
 #include <tuple>
 
-#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/debug/alias.h"
 #include "base/debug/stack_trace.h"
@@ -18,6 +17,7 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/path_service.h"
 #include "base/posix/eintr_wrapper.h"
@@ -216,7 +216,12 @@ TEST_F(ProcessUtilTest, KillSlowChild) {
 }
 
 // Times out on Linux and Win, flakes on other platforms, http://crbug.com/95058
-TEST_F(ProcessUtilTest, DISABLED_GetTerminationStatusExit) {
+#if BUILDFLAG(IS_FUCHSIA)
+#define MAYBE_GetTerminationStatusExit GetTerminationStatusExit
+#else
+#define MAYBE_GetTerminationStatusExit DISABLED_GetTerminationStatusExit
+#endif
+TEST_F(ProcessUtilTest, MAYBE_GetTerminationStatusExit) {
   const std::string signal_file = GetSignalFilePath(kSignalFileSlow);
   remove(signal_file.c_str());
   Process process = SpawnChild("SlowChildProcess");
@@ -632,9 +637,7 @@ MULTIPROCESS_TEST_MAIN(CrashingChildProcess) {
 
 // This test intentionally crashes, so we don't need to run it under
 // AddressSanitizer.
-#if defined(ADDRESS_SANITIZER) || BUILDFLAG(IS_FUCHSIA)
-// TODO(crbug.com/753490): Access to the process termination reason is not
-// implemented in Fuchsia.
+#if defined(ADDRESS_SANITIZER)
 #define MAYBE_GetTerminationStatusCrash DISABLED_GetTerminationStatusCrash
 #else
 #define MAYBE_GetTerminationStatusCrash GetTerminationStatusCrash
@@ -695,14 +698,7 @@ MULTIPROCESS_TEST_MAIN(TerminatedChildProcess) {
 }
 #endif  // BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
 
-#if BUILDFLAG(IS_FUCHSIA)
-// TODO(crbug.com/753490): Access to the process termination reason is not
-// implemented in Fuchsia.
-#define MAYBE_GetTerminationStatusSigKill DISABLED_GetTerminationStatusSigKill
-#else
-#define MAYBE_GetTerminationStatusSigKill GetTerminationStatusSigKill
-#endif
-TEST_F(ProcessUtilTest, MAYBE_GetTerminationStatusSigKill) {
+TEST_F(ProcessUtilTest, GetTerminationStatusSigKill) {
   const std::string signal_file = GetSignalFilePath(kSignalFileKill);
   remove(signal_file.c_str());
   Process process = SpawnChild("KilledChildProcess");
@@ -828,19 +824,11 @@ TEST_F(ProcessUtilTest, LaunchAsUser) {
 }
 
 MULTIPROCESS_TEST_MAIN(ChildVerifiesCetDisabled) {
-  auto get_process_mitigation_policy =
-      reinterpret_cast<decltype(&GetProcessMitigationPolicy)>(::GetProcAddress(
-          ::GetModuleHandleW(L"kernel32.dll"), "GetProcessMitigationPolicy"));
-
-  // Not available for Win7 but this process should still work.
-  if (!get_process_mitigation_policy)
-    return kSuccess;
-
-  // Policy not defined for Win < Win10 20H1 but that's also ok.
+  // Policy not defined for Win < Win10 20H1 but that's ok.
   PROCESS_MITIGATION_USER_SHADOW_STACK_POLICY policy = {};
-  if (get_process_mitigation_policy(GetCurrentProcess(),
-                                    ProcessUserShadowStackPolicy, &policy,
-                                    sizeof(policy))) {
+  if (GetProcessMitigationPolicy(GetCurrentProcess(),
+                                 ProcessUserShadowStackPolicy, &policy,
+                                 sizeof(policy))) {
     if (policy.EnableUserShadowStack)
       return 1;
   }
@@ -977,34 +965,21 @@ const int kChildPipe = 20;  // FD # for write end of pipe in child process.
 
 #if BUILDFLAG(IS_APPLE)
 
-// <http://opensource.apple.com/source/xnu/xnu-2422.1.72/bsd/sys/guarded.h>
-#if !defined(_GUARDID_T)
-#define _GUARDID_T
-typedef __uint64_t guardid_t;
-#endif  // _GUARDID_T
+// Declarations from 12.3 xnu-8020.101.4/bsd/sys/guarded.h (not in the SDK).
+extern "C" {
 
-// From .../MacOSX10.9.sdk/usr/include/sys/syscall.h
-#if !defined(SYS_change_fdguard_np)
-#define SYS_change_fdguard_np 444
-#endif
+using guardid_t = uint64_t;
 
-// <http://opensource.apple.com/source/xnu/xnu-2422.1.72/bsd/sys/guarded.h>
-#if !defined(GUARD_DUP)
 #define GUARD_DUP (1u << 1)
-#endif
 
-// <http://opensource.apple.com/source/xnu/xnu-2422.1.72/bsd/kern/kern_guarded.c?txt>
-//
-// Atomically replaces |guard|/|guardflags| with |nguard|/|nguardflags| on |fd|.
 int change_fdguard_np(int fd,
                       const guardid_t* guard,
-                      u_int guardflags,
+                      unsigned int guardflags,
                       const guardid_t* nguard,
-                      u_int nguardflags,
-                      int* fdflagsp) {
-  return syscall(SYS_change_fdguard_np, fd, guard, guardflags, nguard,
-                 nguardflags, fdflagsp);
-}
+                      unsigned int nguardflags,
+                      int* fdflagsp);
+
+}  // extern "C"
 
 // Attempt to set a file-descriptor guard on |fd|.  In case of success, remove
 // it and return |true| to indicate that it can be guarded.  Returning |false|
@@ -1105,15 +1080,7 @@ int ProcessUtilTest::CountOpenFDsInChild() {
   return num_open_files;
 }
 
-#if defined(ADDRESS_SANITIZER) || defined(THREAD_SANITIZER)
-// ProcessUtilTest.FDRemapping is flaky when ran under xvfb-run on Precise.
-// The problem is 100% reproducible with both ASan and TSan.
-// See http://crbug.com/136720.
-#define MAYBE_FDRemapping DISABLED_FDRemapping
-#else
-#define MAYBE_FDRemapping FDRemapping
-#endif  // defined(ADDRESS_SANITIZER) || defined(THREAD_SANITIZER)
-TEST_F(ProcessUtilTest, MAYBE_FDRemapping) {
+TEST_F(ProcessUtilTest, FDRemapping) {
   int fds_before = CountOpenFDsInChild();
 
   // Open some dummy fds to make sure they don't propagate over to the

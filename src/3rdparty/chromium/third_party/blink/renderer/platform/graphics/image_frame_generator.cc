@@ -32,6 +32,7 @@
 #include "third_party/blink/renderer/platform/graphics/image_decoder_wrapper.h"
 #include "third_party/blink/renderer/platform/graphics/image_decoding_store.h"
 #include "third_party/blink/renderer/platform/image-decoders/image_decoder.h"
+#include "third_party/blink/renderer/platform/instrumentation/histogram.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/skia/include/core/SkData.h"
 
@@ -103,15 +104,13 @@ bool ImageFrameGenerator::DecodeAndScale(
     SegmentReader* data,
     bool all_data_received,
     wtf_size_t index,
-    const SkImageInfo& info,
-    void* pixels,
-    size_t row_bytes,
-    ImageDecoder::AlphaOption alpha_option,
+    const SkPixmap& pixmap,
     cc::PaintImage::GeneratorClientId client_id) {
   {
     base::AutoLock lock(generator_lock_);
     if (decode_failed_)
       return false;
+    RecordWhetherMultiDecoded(client_id);
   }
 
   TRACE_EVENT1("blink", "ImageFrameGenerator::decodeAndScale", "generator",
@@ -119,14 +118,8 @@ bool ImageFrameGenerator::DecodeAndScale(
 
   // This implementation does not support arbitrary scaling so check the
   // requested size.
-  SkISize scaled_size = SkISize::Make(info.width(), info.height());
+  const SkISize scaled_size = pixmap.dimensions();
   CHECK(GetSupportedDecodeSize(scaled_size) == scaled_size);
-
-  ImageDecoder::HighBitDepthDecodingOption high_bit_depth_decoding_option =
-      ImageDecoder::kDefaultBitDepth;
-  if (info.colorType() == kRGBA_F16_SkColorType) {
-    high_bit_depth_decoding_option = ImageDecoder::kHighBitDepthToHalfFloat;
-  }
 
   wtf_size_t frame_count = 0u;
   bool has_alpha = true;
@@ -140,10 +133,9 @@ bool ImageFrameGenerator::DecodeAndScale(
   {
     // Lock the mutex, so only one thread can use the decoder at once.
     ClientAutoLock lock(this, client_id);
-    ImageDecoderWrapper decoder_wrapper(
-        this, data, scaled_size, alpha_option, decoder_color_behavior_,
-        high_bit_depth_decoding_option, index, info, pixels, row_bytes,
-        all_data_received, client_id);
+    ImageDecoderWrapper decoder_wrapper(this, data, pixmap,
+                                        decoder_color_behavior_, index,
+                                        all_data_received, client_id);
     current_decode_succeeded = decoder_wrapper.Decode(
         image_decoder_factory_.get(), &frame_count, &has_alpha);
     decode_failed = decoder_wrapper.decode_failed();
@@ -172,9 +164,12 @@ bool ImageFrameGenerator::DecodeToYUV(
     SkColorType color_type,
     const SkISize component_sizes[cc::kNumYUVPlanes],
     void* planes[cc::kNumYUVPlanes],
-    const wtf_size_t row_bytes[cc::kNumYUVPlanes]) {
+    const wtf_size_t row_bytes[cc::kNumYUVPlanes],
+    cc::PaintImage::GeneratorClientId client_id) {
   base::AutoLock lock(generator_lock_);
   DCHECK_EQ(index, 0u);
+
+  RecordWhetherMultiDecoded(client_id);
 
   // TODO (scroggo): The only interesting thing this uses from the
   // ImageFrameGenerator is |decode_failed_|. Move this into
@@ -235,6 +230,27 @@ void ImageFrameGenerator::SetHasAlpha(wtf_size_t index, bool has_alpha) {
       has_alpha_[i] = true;
   }
   has_alpha_[index] = has_alpha;
+}
+
+void ImageFrameGenerator::RecordWhetherMultiDecoded(
+    cc::PaintImage::GeneratorClientId client_id) {
+  generator_lock_.AssertAcquired();
+
+  if (client_id == cc::PaintImage::kDefaultGeneratorClientId)
+    return;
+
+  if (last_client_id_ == cc::PaintImage::kDefaultGeneratorClientId) {
+    DCHECK(!has_logged_multi_clients_);
+    last_client_id_ = client_id;
+    UMA_HISTOGRAM_ENUMERATION(
+        "Blink.ImageDecoders.ImageHasMultipleGeneratorClientIds",
+        DecodeTimesType::kRequestByAtLeastOneClient);
+  } else if (last_client_id_ != client_id && !has_logged_multi_clients_) {
+    has_logged_multi_clients_ = true;
+    UMA_HISTOGRAM_ENUMERATION(
+        "Blink.ImageDecoders.ImageHasMultipleGeneratorClientIds",
+        DecodeTimesType::kRequestByMoreThanOneClient);
+  }
 }
 
 bool ImageFrameGenerator::HasAlpha(wtf_size_t index) {

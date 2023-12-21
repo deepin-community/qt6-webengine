@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <string>
 #include <utility>
 
+#include "third_party/blink/renderer/bindings/core/v8/capture_source_location.h"
 #include "third_party/blink/renderer/bindings/core/v8/native_value_traits_impl.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
@@ -197,8 +198,8 @@ ScriptPromise WebSocketStream::UnderlyingSink::write(
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise result = resolver->Promise();
   base::OnceClosure callback =
-      WTF::Bind(&UnderlyingSink::FinishWriteCallback, WrapWeakPersistent(this),
-                WrapPersistent(resolver));
+      WTF::BindOnce(&UnderlyingSink::FinishWriteCallback,
+                    WrapWeakPersistent(this), WrapPersistent(resolver));
   v8::Local<v8::Value> v8chunk = chunk.V8Value();
   SendAny(script_state, v8chunk, resolver, std::move(callback),
           exception_state);
@@ -422,7 +423,7 @@ WebSocketStream* WebSocketStream::CreateInternal(
     stream->channel_ = channel;
   } else {
     stream->channel_ = WebSocketChannelImpl::Create(
-        execution_context, stream, SourceLocation::Capture(execution_context));
+        execution_context, stream, CaptureSourceLocation(execution_context));
   }
   stream->Connect(script_state, url, options, exception_state);
   if (exception_state.HadException())
@@ -462,7 +463,7 @@ void WebSocketStream::close(WebSocketCloseInfo* info,
   String reason = info->reason();
   if (info->hasCode()) {
     code = info->code();
-  } else if (!reason.IsNull() && !reason.IsEmpty()) {
+  } else if (!reason.IsNull() && !reason.empty()) {
     code = WebSocketChannel::kCloseEventCodeNormalClosure;
   }
   CloseInternal(code, info->reason(), exception_state);
@@ -494,6 +495,7 @@ void WebSocketStream::DidConnect(const String& subprotocol,
   connection->setReadable(readable);
   connection->setWritable(writable);
   connection_resolver_->Resolve(connection);
+  abort_handle_.Clear();
 }
 
 void WebSocketStream::DidReceiveTextMessage(const String& string) {
@@ -561,6 +563,7 @@ void WebSocketStream::DidClose(
 
   channel_->Disconnect();
   channel_ = nullptr;
+  abort_handle_.Clear();
   if (source_)
     source_->DidClose(was_clean, code, reason);
   if (sink_)
@@ -580,6 +583,7 @@ void WebSocketStream::ContextDestroyed() {
   if (common_.GetState() != WebSocketCommon::kClosed) {
     common_.SetState(WebSocketCommon::kClosed);
   }
+  abort_handle_.Clear();
 }
 
 bool WebSocketStream::HasPendingActivity() const {
@@ -595,6 +599,7 @@ void WebSocketStream::Trace(Visitor* visitor) const {
   visitor->Trace(channel_);
   visitor->Trace(source_);
   visitor->Trace(sink_);
+  visitor->Trace(abort_handle_);
   ScriptWrappable::Trace(visitor);
   ExecutionContextLifecycleObserver::Trace(visitor);
   WebSocketChannelClient::Trace(visitor);
@@ -621,8 +626,8 @@ void WebSocketStream::Connect(ScriptState* script_state,
       return;
     }
 
-    signal->AddAlgorithm(
-        WTF::Bind(&WebSocketStream::OnAbort, WrapWeakPersistent(this)));
+    abort_handle_ = signal->AddAlgorithm(
+        WTF::BindOnce(&WebSocketStream::OnAbort, WrapWeakPersistent(this)));
   }
 
   auto result = common_.Connect(
@@ -719,6 +724,7 @@ void WebSocketStream::OnAbort() {
       "WebSocket handshake was aborted");
   connection_resolver_->Reject(exception);
   closed_resolver_->Reject(exception);
+  abort_handle_.Clear();
 }
 
 WebSocketCloseInfo* WebSocketStream::MakeCloseInfo(uint16_t code,

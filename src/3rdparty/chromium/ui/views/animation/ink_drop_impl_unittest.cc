@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,10 +6,10 @@
 
 #include "ui/views/animation/ink_drop_impl.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/gtest_util.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
@@ -69,8 +69,10 @@ class InkDropImplTest : public testing::Test {
       base::MakeRefCounted<base::TestSimpleTaskRunner>();
 
   // Required by base::Timer's.
-  std::unique_ptr<base::ThreadTaskRunnerHandle> thread_task_runner_handle_ =
-      std::make_unique<base::ThreadTaskRunnerHandle>(task_runner_);
+  std::unique_ptr<base::SingleThreadTaskRunner::CurrentDefaultHandle>
+      thread_task_runner_handle_ =
+          std::make_unique<base::SingleThreadTaskRunner::CurrentDefaultHandle>(
+              task_runner_);
 
  private:
   TestInkDropHost ink_drop_host_;

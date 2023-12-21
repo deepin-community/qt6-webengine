@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -50,4 +50,7 @@ interface ITabClient {
 
   // Added in M101.
   void onVerticalOverscroll(float accumulatedOverscrollY) = 14;
+
+  // Added in M111.
+  void onPostMessage(in String message, in String origin) = 15;
 }

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,6 +17,7 @@ WorkQueueSets::WorkQueueSets(const char* name,
                              Observer* observer,
                              const SequenceManager::Settings& settings)
     : name_(name),
+      work_queue_heaps_(settings.priority_settings.priority_count()),
 #if DCHECK_IS_ON()
       last_rand_(settings.random_task_selection_seed),
 #endif
@@ -166,8 +167,8 @@ WorkQueueSets::GetRandomQueueAndTaskOrderInSet(size_t set_index) const {
   if (work_queue_heaps_[set_index].empty())
     return absl::nullopt;
   const OldestTaskOrder& chosen =
-      work_queue_heaps_[set_index]
-          .begin()[Random() % work_queue_heaps_[set_index].size()];
+      work_queue_heaps_[set_index].begin()[static_cast<long>(
+          Random() % work_queue_heaps_[set_index].size())];
 #if DCHECK_IS_ON()
   absl::optional<TaskOrder> key = chosen.value->GetFrontTaskOrder();
   DCHECK(key && chosen.key == *key);
@@ -214,7 +215,7 @@ void WorkQueueSets::CollectSkippedOverLowerPriorityTasks(
       selected_work_queue->GetFrontTaskOrder();
   CHECK(task_order);
   for (size_t priority = selected_work_queue->work_queue_set_index() + 1;
-       priority < TaskQueue::kQueuePriorityCount; priority++) {
+       priority < work_queue_heaps_.size(); priority++) {
     for (const OldestTaskOrder& pair : work_queue_heaps_[priority]) {
       pair.value->CollectTasksOlderThan(*task_order, result);
     }

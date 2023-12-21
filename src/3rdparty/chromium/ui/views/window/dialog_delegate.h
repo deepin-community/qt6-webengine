@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -178,6 +178,13 @@ class VIEWS_EXPORT DialogDelegate : public WidgetDelegate {
   // will only be created when use_custom_frame() is true.
   BubbleFrameView* GetBubbleFrameView() const;
 
+  // A helper for accessing the DialogClientView object contained by this
+  // delegate's Window. This function can return nullptr if the |client_view| is
+  // a DialogClientView subclass which also has metadata or overrides
+  // GetClassName().
+  const DialogClientView* GetDialogClientView() const;
+  DialogClientView* GetDialogClientView();
+
   // Helpers for accessing parts of the DialogClientView without needing to know
   // about DialogClientView. Do not call these before OnWidgetInitialized().
   views::LabelButton* GetOkButton() const;
@@ -198,6 +205,16 @@ class VIEWS_EXPORT DialogDelegate : public WidgetDelegate {
   // IsDialogButtonEnabled() or manually manipulating the dialog buttons.
   // TODO(https://crbug.com/1011446): Make this private.
   void DialogModelChanged();
+
+  // Input protection is triggered upon prompt creation and updated on
+  // visibility changes. Other situations such as top window changes in certain
+  // situations should trigger the input protection manually by calling this
+  // method. Input protection protects against certain kinds of clickjacking.
+  // Essentially it prevents clicks that happen within a user's double click
+  // interval from when the protection is started as well as any following
+  // clicks that happen in shorter succession than the user's double click
+  // interval. Refer to InputEventActivationProtector for more information.
+  void TriggerInputProtection();
 
   void set_use_round_corners(bool round) { params_.round_corners = round; }
   void set_corner_radius(int corner_radius) {
@@ -316,11 +333,6 @@ class VIEWS_EXPORT DialogDelegate : public WidgetDelegate {
   std::unique_ptr<View> DisownFootnoteView();
 
  private:
-  // A helper for accessing the DialogClientView object contained by this
-  // delegate's Window.
-  const DialogClientView* GetDialogClientView() const;
-  DialogClientView* GetDialogClientView();
-
   // Runs a close callback, ensuring that at most one close callback is ever
   // run.
   void RunCloseCallback(base::OnceClosure callback);
@@ -333,9 +345,6 @@ class VIEWS_EXPORT DialogDelegate : public WidgetDelegate {
 
   // Use a fixed dialog width for dialog. Used by DialogClientView.
   int fixed_width_ = 0;
-
-  // The time the dialog is created.
-  base::TimeTicks creation_time_;
 
   // Dialog parameters for this dialog.
   Params params_;
@@ -389,7 +398,7 @@ template View* DialogDelegate::SetExtraView<View>(std::unique_ptr<View>);
 template View* DialogDelegate::SetFootnoteView<View>(std::unique_ptr<View>);
 
 BEGIN_VIEW_BUILDER(VIEWS_EXPORT, DialogDelegateView, View)
-VIEW_BUILDER_PROPERTY(ax::mojom::Role, AccessibleRole)
+VIEW_BUILDER_PROPERTY(ax::mojom::Role, AccessibleWindowRole)
 VIEW_BUILDER_PROPERTY(std::u16string, AccessibleTitle)
 VIEW_BUILDER_PROPERTY(bool, CanMaximize)
 VIEW_BUILDER_PROPERTY(bool, CanMinimize)
@@ -398,8 +407,8 @@ VIEW_BUILDER_VIEW_TYPE_PROPERTY(views::View, ExtraView)
 VIEW_BUILDER_VIEW_TYPE_PROPERTY(views::View, FootnoteView)
 VIEW_BUILDER_PROPERTY(bool, FocusTraversesOut)
 VIEW_BUILDER_PROPERTY(bool, EnableArrowKeyTraversal)
-VIEW_BUILDER_PROPERTY(gfx::ImageSkia, Icon)
-VIEW_BUILDER_PROPERTY(gfx::ImageSkia, AppIcon)
+VIEW_BUILDER_PROPERTY(ui::ImageModel, Icon)
+VIEW_BUILDER_PROPERTY(ui::ImageModel, AppIcon)
 VIEW_BUILDER_PROPERTY(ui::ModalType, ModalType)
 VIEW_BUILDER_PROPERTY(bool, OwnedByWidget)
 VIEW_BUILDER_PROPERTY(bool, ShowCloseButton)

@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,8 @@
 
 #include <cstring>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
 #include "base/test/bind.h"
 #include "media/audio/simple_sources.h"
@@ -70,7 +70,7 @@ class ProcessingAudioFifoTest : public testing::Test {
  public:
   ProcessingAudioFifoTest()
       : params_(media::AudioParameters::Format::AUDIO_PCM_LINEAR,
-                media::CHANNEL_LAYOUT_STEREO,
+                media::ChannelLayoutConfig::Stereo(),
                 kSampleRate,
                 kFramesPerBuffer),
         audio_source_(params_.channels(),
@@ -122,7 +122,7 @@ class ProcessingAudioFifoTest : public testing::Test {
   std::unique_ptr<media::AudioBus> CreateAudioData(
       base::TimeTicks timestamp = base::TimeTicks::Now()) {
     auto data = media::AudioBus::Create(params_);
-    audio_source_.OnMoreData(base::TimeDelta(), timestamp, 0, data.get());
+    audio_source_.OnMoreData(base::TimeDelta(), timestamp, {}, data.get());
     return data;
   }
 

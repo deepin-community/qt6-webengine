@@ -117,8 +117,10 @@ void LayoutFlowThread::RemoveColumnSetFromThread(
 void LayoutFlowThread::ValidateColumnSets() {
   NOT_DESTROYED();
   column_sets_invalidated_ = false;
-  // Called to get the maximum logical width for the columnSet.
-  UpdateLogicalWidth();
+  if (!RuntimeEnabledFeatures::LayoutNGNoCopyBackEnabled()) {
+    // Called to get the maximum logical width for the columnSet.
+    UpdateLogicalWidth();
+  }
   GenerateColumnSetIntervalTree();
 }
 
@@ -224,12 +226,12 @@ void LayoutFlowThread::AddOutlineRects(
 bool LayoutFlowThread::NodeAtPoint(HitTestResult& result,
                                    const HitTestLocation& hit_test_location,
                                    const PhysicalOffset& accumulated_offset,
-                                   HitTestAction hit_test_action) {
+                                   HitTestPhase phase) {
   NOT_DESTROYED();
-  if (hit_test_action == kHitTestBlockBackground)
+  if (phase == HitTestPhase::kSelfBlockBackground)
     return false;
   return LayoutBlockFlow::NodeAtPoint(result, hit_test_location,
-                                      accumulated_offset, hit_test_action);
+                                      accumulated_offset, phase);
 }
 
 LayoutUnit LayoutFlowThread::PageLogicalHeightForOffset(

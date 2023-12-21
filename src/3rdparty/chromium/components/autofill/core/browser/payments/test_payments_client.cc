@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,8 @@
 #include "components/autofill/core/browser/autofill_client.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace autofill::payments {
 
@@ -58,7 +60,7 @@ void TestPaymentsClient::GetUploadDetails(
     const std::string& app_locale,
     base::OnceCallback<void(AutofillClient::PaymentsRpcResult,
                             const std::u16string&,
-                            std::unique_ptr<base::Value>,
+                            std::unique_ptr<base::Value::Dict>,
                             std::vector<std::pair<int, int>>)> callback,
     const int billable_service_number,
     const int64_t billing_customer_number,
@@ -147,8 +149,7 @@ void TestPaymentsClient::AddFidoEligibleCard(std::string server_id,
   unmask_details_.offer_fido_opt_in = false;
   unmask_details_.unmask_auth_method = AutofillClient::UnmaskAuthMethod::kFido;
   unmask_details_.fido_eligible_card_ids.insert(server_id);
-  unmask_details_.fido_request_options =
-      base::Value(base::Value::Type::DICTIONARY);
+  unmask_details_.fido_request_options = base::Value::Dict();
 
   // Building the following JSON structure--
   // fido_request_options = {
@@ -159,25 +160,22 @@ void TestPaymentsClient::AddFidoEligibleCard(std::string server_id,
   //       "credential_id": credential_id,
   //       "authenticator_transport_support": ["INTERNAL"]
   // }]}
-  unmask_details_.fido_request_options->SetKey("challenge",
-                                               base::Value(kTestChallenge));
-  unmask_details_.fido_request_options->SetKey(
-      "timeout_millis", base::Value(kTestTimeoutSeconds));
-  unmask_details_.fido_request_options->SetKey("relying_party_id",
-                                               base::Value(relying_party_id));
+  unmask_details_.fido_request_options->Set("challenge",
+                                            base::Value(kTestChallenge));
+  unmask_details_.fido_request_options->Set("timeout_millis",
+                                            base::Value(kTestTimeoutSeconds));
+  unmask_details_.fido_request_options->Set("relying_party_id",
+                                            base::Value(relying_party_id));
 
-  base::Value key_info(base::Value::Type::DICTIONARY);
+  base::Value::Dict key_info;
   if (!credential_id.empty())
-    key_info.SetKey("credential_id", base::Value(credential_id));
-  key_info.SetKey("authenticator_transport_support",
-                  base::Value(base::Value::Type::LIST));
-  key_info
-      .FindKeyOfType("authenticator_transport_support", base::Value::Type::LIST)
-      ->Append("INTERNAL");
-  unmask_details_.fido_request_options->SetKey(
+    key_info.Set("credential_id", base::Value(credential_id));
+  key_info.Set("authenticator_transport_support",
+               base::Value(base::Value::Type::LIST));
+  key_info.FindList("authenticator_transport_support")->Append("INTERNAL");
+  unmask_details_.fido_request_options->Set(
       "key_info", base::Value(base::Value::Type::LIST));
-  unmask_details_.fido_request_options
-      ->FindKeyOfType("key_info", base::Value::Type::LIST)
+  unmask_details_.fido_request_options->FindList("key_info")
       ->Append(std::move(key_info));
 }
 
@@ -208,20 +206,22 @@ void TestPaymentsClient::SetUseLegalMessageWithMultipleLinesInGetUploadDetails(
       use_legal_message_with_multiple_lines;
 }
 
-std::unique_ptr<base::Value> TestPaymentsClient::LegalMessage() {
+std::unique_ptr<base::Value::Dict> TestPaymentsClient::LegalMessage() {
+  absl::optional<base::Value> parsed_json;
   if (use_invalid_legal_message_) {
     // Legal message is invalid because it's missing the url.
-    return std::unique_ptr<base::Value>(
-        base::JSONReader::ReadDeprecated("{"
-                                         "  \"line\" : [ {"
-                                         "     \"template\": \"Panda {0}.\","
-                                         "     \"template_parameter\": [ {"
-                                         "        \"display_text\": \"bear\""
-                                         "     } ]"
-                                         "  } ]"
-                                         "}"));
+    parsed_json = base::JSONReader::Read(
+        "{"
+        "  \"line\" : [ {"
+        "     \"template\": \"Panda {0}.\","
+        "     \"template_parameter\": [ {"
+        "        \"display_text\": \"bear\""
+        "     } ]"
+        "  } ]"
+        "}");
+    DCHECK(parsed_json);
   } else if (use_legal_message_with_multiple_lines_) {
-    return std::unique_ptr<base::Value>(base::JSONReader::ReadDeprecated(
+    parsed_json = base::JSONReader::Read(
         "{"
         "  \"line\": ["
         "    {"
@@ -251,9 +251,10 @@ std::unique_ptr<base::Value> TestPaymentsClient::LegalMessage() {
         "      ]"
         "    }"
         "  ]"
-        "}"));
+        "}");
+    DCHECK(parsed_json);
   } else {
-    return std::unique_ptr<base::Value>(base::JSONReader::ReadDeprecated(
+    parsed_json = base::JSONReader::Read(
         "{"
         "  \"line\" : [ {"
         "     \"template\": \"The legal documents are: {0} and {1}.\","
@@ -265,8 +266,12 @@ std::unique_ptr<base::Value> TestPaymentsClient::LegalMessage() {
         "        \"url\": \"http://www.example.com/pp\""
         "     } ]"
         "  } ]"
-        "}"));
+        "}");
+    DCHECK(parsed_json);
   }
+  // TODO(crbug/1303949): Refactor when `base::JSONReader::Read` is updated to
+  // return a Dict.
+  return std::make_unique<base::Value::Dict>(std::move(parsed_json->GetDict()));
 }
 
 }  // namespace autofill::payments

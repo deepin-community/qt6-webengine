@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,6 +15,7 @@
 #include "base/containers/span.h"
 #include "crypto/sha2.h"
 #include "device/fido/cable/cable_discovery_data.h"
+#include "device/fido/device_public_key_extension.h"
 #include "device/fido/fido_constants.h"
 #include "device/fido/large_blob.h"
 #include "device/fido/pin.h"
@@ -27,6 +28,20 @@ class Value;
 
 namespace device {
 
+// PRFInput contains salts for the hmac-secret or prf extension, potentially
+// specific to a given credential ID.
+struct COMPONENT_EXPORT(DEVICE_FIDO) PRFInput {
+  PRFInput();
+  PRFInput(const PRFInput&);
+  PRFInput(PRFInput&&);
+  PRFInput& operator=(const PRFInput&);
+  ~PRFInput();
+
+  absl::optional<std::vector<uint8_t>> credential_id;
+  std::array<uint8_t, 32> salt1;
+  absl::optional<std::array<uint8_t, 32>> salt2;
+};
+
 // CtapGetAssertionOptions contains values that are pertinent to a
 // |GetAssertionTask|, but are not specific to an individual
 // authenticatorGetAssertion command, i.e. would not be directly serialised into
@@ -37,25 +52,27 @@ struct COMPONENT_EXPORT(DEVICE_FIDO) CtapGetAssertionOptions {
   CtapGetAssertionOptions(CtapGetAssertionOptions&&);
   ~CtapGetAssertionOptions();
 
-  // PRFInput contains salts for the hmac_secret extension, potentially specific
-  // to a given credential ID.
-  struct COMPONENT_EXPORT(DEVICE_FIDO) PRFInput {
-    PRFInput();
-    PRFInput(const PRFInput&);
-    PRFInput(PRFInput&&);
-    ~PRFInput();
+  // The PUAT used for the request. The caller is expected to set this if needed
+  // with the correct permissions. Obtain from |FidoAuthenticator::GetPINToken|.
+  absl::optional<pin::TokenResponse> pin_uv_auth_token;
 
-    absl::optional<std::vector<uint8_t>> credential_id;
-    std::array<uint8_t, 32> salt1;
-    absl::optional<std::array<uint8_t, 32>> salt2;
-  };
-
+  // The ephemeral key use to encrypt PIN material.
   absl::optional<pin::KeyAgreementResponse> pin_key_agreement;
 
   // prf_inputs may contain a default PRFInput without a |credential_id|. If so,
   // it will be the first element and all others will have |credential_id|s.
   // Elements are sorted by |credential_id|s, where present.
   std::vector<PRFInput> prf_inputs;
+
+  // If true, attempt to read a large blob.
+  bool large_blob_read = false;
+
+  // If set, attempt to write a large blob.
+  absl::optional<std::vector<uint8_t>> large_blob_write;
+
+  // Indicates whether the request was created in an off-the-record
+  // BrowserContext (e.g. Chrome Incognito mode).
+  bool is_off_the_record_context = false;
 };
 
 // Object that encapsulates request parameters for AuthenticatorGetAssertion as
@@ -121,16 +138,27 @@ struct COMPONENT_EXPORT(DEVICE_FIDO) CtapGetAssertionRequest {
       alternative_application_parameter;
   absl::optional<HMACSecret> hmac_secret;
   bool large_blob_key = false;
-  bool large_blob_read = false;
-  absl::optional<std::vector<uint8_t>> large_blob_write;
   bool get_cred_blob = false;
 
-  // Instructs the request handler only to dispatch this request via U2F.
-  bool is_u2f_only = false;
+  // prf_inputs is non-empty if the `prf` extension is contained in the request.
+  // The WebAuthn-level `prf` extension is implemented at the CTAP level by
+  // either the `hmac-secret` extension or the `prf` extension. Security keys
+  // generally only implement `hmac-secret` and, in this case, values are
+  // set in the `CtapGetAssertionOptions` so that the `GetAssertionTask` can
+  // send the multiple requests needed to process them. "Large" authenticators,
+  // e.g. phones, want all the inputs at once and thus process the CTAP-level
+  // `prf` extension.
+  std::vector<PRFInput> prf_inputs;
 
-  // Indicates whether the request was created in an off-the-record
-  // BrowserContext (e.g. Incognito or Guest mode in Chrome).
-  bool is_off_the_record_context = false;
+  // These fields indicate that a large-blob operation should be performed
+  // using the largeBlob extension that includes largeBlob data directly
+  // in getAssertion requests.
+  bool large_blob_extension_read = false;
+  absl::optional<LargeBlob> large_blob_extension_write;
+
+  // device_public_key contains parameters for the devicePubKey extension
+  // https://github.com/w3c/webauthn/pull/1663
+  absl::optional<DevicePublicKeyRequest> device_public_key;
 };
 
 struct CtapGetNextAssertionRequest {};

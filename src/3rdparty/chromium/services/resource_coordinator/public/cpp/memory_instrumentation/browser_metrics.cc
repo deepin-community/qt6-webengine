@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -58,9 +58,10 @@ base::TimeDelta GetDelayForNextMemoryLog() {
 #else
   base::TimeDelta mean_time = base::Minutes(30);
 #endif
-  // Compute the actual delay before sampling using a Poisson process.
+  // Compute the actual delay before sampling using a Poisson process. Use
+  // `1-RandDouble()` to avoid log(0).
   double uniform = base::RandDouble();
-  return -std::log(uniform) * mean_time;
+  return -std::log(1 - uniform) * mean_time;
 }
 
 }  // namespace memory_instrumentation

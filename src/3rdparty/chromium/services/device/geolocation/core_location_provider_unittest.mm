@@ -1,10 +1,11 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "services/device/geolocation/core_location_provider.h"
 
 #include "base/run_loop.h"
+#import "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
@@ -24,7 +25,8 @@ class CoreLocationProviderTest : public testing::Test {
   void InitializeProvider() {
     fake_geolocation_manager_ = std::make_unique<FakeGeolocationManager>();
     provider_ = std::make_unique<CoreLocationProvider>(
-        base::ThreadTaskRunnerHandle::Get(), fake_geolocation_manager_.get());
+        base::SingleThreadTaskRunner::GetCurrentDefault(),
+        fake_geolocation_manager_.get());
   }
 
   bool IsUpdating() { return fake_geolocation_manager_->watching_position(); }

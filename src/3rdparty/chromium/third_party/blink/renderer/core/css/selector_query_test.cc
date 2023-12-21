@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,6 +16,7 @@
 #include "third_party/blink/renderer/core/dom/static_node_list.h"
 #include "third_party/blink/renderer/core/html/html_document.h"
 #include "third_party/blink/renderer/core/html/html_html_element.h"
+#include "third_party/blink/renderer/core/testing/null_execution_context.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 // Uncomment to run the SelectorQueryTests for stats in a release build.
@@ -64,34 +65,41 @@ void RunTests(ContainerNode& scope, const QueryTest (&test_cases)[length]) {
 }  // namespace
 
 TEST(SelectorQueryTest, NotMatchingPseudoElement) {
-  auto* document = Document::CreateForTest();
+  ScopedNullExecutionContext execution_context;
+  auto* document =
+      Document::CreateForTest(execution_context.GetExecutionContext());
   auto* html = MakeGarbageCollected<HTMLHtmlElement>(*document);
   document->AppendChild(html);
   document->documentElement()->setInnerHTML(
       "<body><style>span::before { content: 'X' }</style><span></span></body>");
 
-  CSSSelectorList selector_list = CSSParser::ParseSelector(
+  HeapVector<CSSSelector> arena;
+  base::span<CSSSelector> selector_vector = CSSParser::ParseSelector(
       MakeGarbageCollected<CSSParserContext>(
           *document, NullURL(), true /* origin_clean */, Referrer(),
           WTF::TextEncoding(), CSSParserContext::kSnapshotProfile),
-      nullptr, "span::before");
-  std::unique_ptr<SelectorQuery> query =
-      SelectorQuery::Adopt(std::move(selector_list));
+      /*parent_rule_for_nesting=*/nullptr, nullptr, "span::before", arena);
+  CSSSelectorList* selector_list =
+      CSSSelectorList::AdoptSelectorVector(selector_vector);
+  std::unique_ptr<SelectorQuery> query = SelectorQuery::Adopt(selector_list);
   Element* elm = query->QueryFirst(*document);
   EXPECT_EQ(nullptr, elm);
 
-  selector_list = CSSParser::ParseSelector(
+  selector_vector = CSSParser::ParseSelector(
       MakeGarbageCollected<CSSParserContext>(
           *document, NullURL(), true /* origin_clean */, Referrer(),
           WTF::TextEncoding(), CSSParserContext::kSnapshotProfile),
-      nullptr, "span");
-  query = SelectorQuery::Adopt(std::move(selector_list));
+      /*parent_rule_for_nesting=*/nullptr, nullptr, "span", arena);
+  selector_list = CSSSelectorList::AdoptSelectorVector(selector_vector);
+  query = SelectorQuery::Adopt(selector_list);
   elm = query->QueryFirst(*document);
   EXPECT_NE(nullptr, elm);
 }
 
 TEST(SelectorQueryTest, LastOfTypeNotFinishedParsing) {
-  auto* document = HTMLDocument::CreateForTest();
+  ScopedNullExecutionContext execution_context;
+  auto* document =
+      HTMLDocument::CreateForTest(execution_context.GetExecutionContext());
   auto* html = MakeGarbageCollected<HTMLHtmlElement>(*document);
   document->AppendChild(html);
   document->documentElement()->setInnerHTML(
@@ -99,20 +107,24 @@ TEST(SelectorQueryTest, LastOfTypeNotFinishedParsing) {
 
   document->body()->BeginParsingChildren();
 
-  CSSSelectorList selector_list = CSSParser::ParseSelector(
+  HeapVector<CSSSelector> arena;
+  base::span<CSSSelector> selector_vector = CSSParser::ParseSelector(
       MakeGarbageCollected<CSSParserContext>(
           *document, NullURL(), true /* origin_clean */, Referrer(),
           WTF::TextEncoding(), CSSParserContext::kSnapshotProfile),
-      nullptr, "p:last-of-type");
-  std::unique_ptr<SelectorQuery> query =
-      SelectorQuery::Adopt(std::move(selector_list));
+      /*parent_rule_for_nesting=*/nullptr, nullptr, "p:last-of-type", arena);
+  CSSSelectorList* selector_list =
+      CSSSelectorList::AdoptSelectorVector(selector_vector);
+  std::unique_ptr<SelectorQuery> query = SelectorQuery::Adopt(selector_list);
   Element* elm = query->QueryFirst(*document);
   ASSERT_TRUE(elm);
   EXPECT_EQ("last", elm->IdForStyleResolution());
 }
 
 TEST(SelectorQueryTest, StandardsModeFastPaths) {
-  auto* document = HTMLDocument::CreateForTest();
+  ScopedNullExecutionContext execution_context;
+  auto* document =
+      HTMLDocument::CreateForTest(execution_context.GetExecutionContext());
   document->write(R"HTML(
     <!DOCTYPE html>
     <html>
@@ -216,7 +228,9 @@ TEST(SelectorQueryTest, StandardsModeFastPaths) {
 }
 
 TEST(SelectorQueryTest, FastPathScoped) {
-  auto* document = HTMLDocument::CreateForTest();
+  ScopedNullExecutionContext execution_context;
+  auto* document =
+      HTMLDocument::CreateForTest(execution_context.GetExecutionContext());
   document->write(R"HTML(
     <!DOCTYPE html>
     <html id=root-id class=root-class>
@@ -283,7 +297,9 @@ TEST(SelectorQueryTest, FastPathScoped) {
 }
 
 TEST(SelectorQueryTest, QuirksModeSlowPath) {
-  auto* document = HTMLDocument::CreateForTest();
+  ScopedNullExecutionContext execution_context;
+  auto* document =
+      HTMLDocument::CreateForTest(execution_context.GetExecutionContext());
   document->write(R"HTML(
     <html>
       <head></head>
@@ -319,7 +335,9 @@ TEST(SelectorQueryTest, QuirksModeSlowPath) {
 }
 
 TEST(SelectorQueryTest, DisconnectedSubtree) {
-  auto* document = HTMLDocument::CreateForTest();
+  ScopedNullExecutionContext execution_context;
+  auto* document =
+      HTMLDocument::CreateForTest(execution_context.GetExecutionContext());
   Element* scope = document->CreateRawElement(html_names::kDivTag);
   scope->setInnerHTML(R"HTML(
     <section>
@@ -346,7 +364,9 @@ TEST(SelectorQueryTest, DisconnectedSubtree) {
 }
 
 TEST(SelectorQueryTest, DisconnectedTreeScope) {
-  auto* document = HTMLDocument::CreateForTest();
+  ScopedNullExecutionContext execution_context;
+  auto* document =
+      HTMLDocument::CreateForTest(execution_context.GetExecutionContext());
   Element* host = document->CreateRawElement(html_names::kDivTag);
   ShadowRoot& shadowRoot =
       host->AttachShadowRootInternal(ShadowRootType::kOpen);
@@ -375,7 +395,9 @@ TEST(SelectorQueryTest, DisconnectedTreeScope) {
 }
 
 TEST(SelectorQueryTest, QueryHasPseudoClass) {
-  auto* document = HTMLDocument::CreateForTest();
+  ScopedNullExecutionContext execution_context;
+  auto* document =
+      HTMLDocument::CreateForTest(execution_context.GetExecutionContext());
   document->write(R"HTML(
     <!DOCTYPE html>
     <main id=main>

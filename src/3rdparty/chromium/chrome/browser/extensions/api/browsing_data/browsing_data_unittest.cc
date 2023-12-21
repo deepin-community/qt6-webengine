@@ -1,8 +1,8 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
@@ -82,11 +82,12 @@ class BrowsingDataApiTest : public ExtensionServiceTestBase {
     return remover_->GetLastUsedOriginTypeMaskForTesting();
   }
 
-  uint64_t GetAsMask(const base::Value* dict,
+  uint64_t GetAsMask(const base::Value::Dict* dict,
                      std::string path,
                      uint64_t mask_value) {
-    EXPECT_TRUE(dict->FindBoolKey(path));
-    return *dict->FindBoolKey(path) ? mask_value : 0;
+    absl::optional<bool> value = dict->FindBool(path);
+    DCHECK(value.has_value());
+    return *value ? mask_value : 0;
   }
 
   void RunBrowsingDataRemoveFunctionAndCompareRemovalMask(
@@ -135,8 +136,11 @@ class BrowsingDataApiTest : public ExtensionServiceTestBase {
 
   void SetSinceAndVerify(browsing_data::TimePeriod since_pref) {
     PrefService* prefs = browser()->profile()->GetPrefs();
-    prefs->SetInteger(browsing_data::prefs::kDeleteTimePeriod,
-                      static_cast<int>(since_pref));
+    browsing_data::ClearBrowsingDataTab tab =
+        static_cast<browsing_data::ClearBrowsingDataTab>(
+            prefs->GetInteger(browsing_data::prefs::kLastClearBrowsingDataTab));
+    auto* time_period_pref = browsing_data::GetTimePeriodPreferenceName(tab);
+    prefs->SetInteger(time_period_pref, static_cast<int>(since_pref));
 
     scoped_refptr<BrowsingDataSettingsFunction> function =
         new BrowsingDataSettingsFunction();
@@ -160,7 +164,7 @@ class BrowsingDataApiTest : public ExtensionServiceTestBase {
     EXPECT_LE(expected_since, since + 10.0 * 1000.0);
   }
 
-  void SetPrefsAndVerifySettings(int data_type_flags,
+  void SetPrefsAndVerifySettings(uint64_t data_type_flags,
                                  uint64_t expected_origin_type_mask,
                                  uint64_t expected_removal_mask) {
     PrefService* prefs = browser()->profile()->GetPrefs();
@@ -189,14 +193,11 @@ class BrowsingDataApiTest : public ExtensionServiceTestBase {
     prefs->SetBoolean(browsing_data::prefs::kDeletePasswords,
                       !!(data_type_flags &
                          chrome_browsing_data_remover::DATA_TYPE_PASSWORDS));
-    prefs->SetBoolean(prefs::kClearPluginLSODataEnabled,
-                      !!(data_type_flags &
-                         chrome_browsing_data_remover::DATA_TYPE_PLUGIN_DATA));
 
     VerifyRemovalMask(expected_origin_type_mask, expected_removal_mask);
   }
 
-  void SetBasicPrefsAndVerifySettings(int data_type_flags,
+  void SetBasicPrefsAndVerifySettings(uint64_t data_type_flags,
                                       uint64_t expected_origin_type_mask,
                                       uint64_t expected_removal_mask) {
     PrefService* prefs = browser()->profile()->GetPrefs();
@@ -212,9 +213,6 @@ class BrowsingDataApiTest : public ExtensionServiceTestBase {
     prefs->SetBoolean(
         browsing_data::prefs::kDeleteBrowsingHistoryBasic,
         !!(data_type_flags & chrome_browsing_data_remover::DATA_TYPE_HISTORY));
-    prefs->SetBoolean(prefs::kClearPluginLSODataEnabled,
-                      !!(data_type_flags &
-                         chrome_browsing_data_remover::DATA_TYPE_PLUGIN_DATA));
 
     VerifyRemovalMask(expected_origin_type_mask, expected_removal_mask);
   }
@@ -227,18 +225,21 @@ class BrowsingDataApiTest : public ExtensionServiceTestBase {
     std::unique_ptr<base::Value> result(RunFunctionAndReturnSingleResult(
         function.get(), std::string("[]"), browser()));
 
-    EXPECT_TRUE(result->is_dict());
+    ASSERT_TRUE(result->is_dict());
+    const base::Value::Dict& result_dict = result->GetDict();
+    const base::Value::Dict* origin_types =
+        result_dict.FindDictByDottedPath("options.originTypes");
 
-    base::Value* origin_types = result->FindDictPath("options.originTypes");
-    EXPECT_TRUE(origin_types);
+    ASSERT_TRUE(origin_types);
     uint64_t origin_type_mask =
         GetAsMask(origin_types, "unprotectedWeb", UNPROTECTED_WEB) |
         GetAsMask(origin_types, "protectedWeb", PROTECTED_WEB) |
         GetAsMask(origin_types, "extension", EXTENSION);
     EXPECT_EQ(expected_origin_type_mask, origin_type_mask);
 
-    base::Value* data_to_remove = result->FindDictKey("dataToRemove");
-    EXPECT_TRUE(data_to_remove);
+    const base::Value::Dict* data_to_remove =
+        result_dict.FindDict("dataToRemove");
+    ASSERT_TRUE(data_to_remove);
     uint64_t removal_mask =
         GetAsMask(data_to_remove, "cache",
                   content::BrowsingDataRemover::DATA_TYPE_CACHE) |
@@ -453,7 +454,6 @@ TEST_F(BrowsingDataApiTest, BrowsingDataRemovalInputFromSettings) {
   prefs->SetBoolean(browsing_data::prefs::kDeleteFormData, false);
   prefs->SetBoolean(browsing_data::prefs::kDeleteHostedAppsData, false);
   prefs->SetBoolean(browsing_data::prefs::kDeletePasswords, false);
-  prefs->SetBoolean(prefs::kClearPluginLSODataEnabled, false);
   uint64_t expected_mask = content::BrowsingDataRemover::DATA_TYPE_CACHE |
                            content::BrowsingDataRemover::DATA_TYPE_DOWNLOADS |
                            chrome_browsing_data_remover::DATA_TYPE_HISTORY;
@@ -515,6 +515,7 @@ TEST_F(BrowsingDataApiTest, ShortcutFunctionRemovalMask) {
 // Test the processing of the 'delete since' preference.
 TEST_F(BrowsingDataApiTest, SettingsFunctionSince) {
   SetSinceAndVerify(browsing_data::TimePeriod::ALL_TIME);
+  SetSinceAndVerify(browsing_data::TimePeriod::LAST_15_MINUTES);
   SetSinceAndVerify(browsing_data::TimePeriod::LAST_HOUR);
   SetSinceAndVerify(browsing_data::TimePeriod::LAST_DAY);
   SetSinceAndVerify(browsing_data::TimePeriod::LAST_WEEK);
@@ -550,7 +551,7 @@ TEST_F(BrowsingDataApiTest, SettingsFunctionSimple) {
 
 // Test cookie and app data settings.
 TEST_F(BrowsingDataApiTest, SettingsFunctionSiteData) {
-  int supported_site_data =
+  uint64_t supported_site_data =
       (content::BrowsingDataRemover::DATA_TYPE_COOKIES |
        content::BrowsingDataRemover::DATA_TYPE_DOM_STORAGE) &
       ~content::BrowsingDataRemover::DATA_TYPE_BACKGROUND_FETCH &
@@ -571,7 +572,7 @@ TEST_F(BrowsingDataApiTest, SettingsFunctionSiteData) {
 
 // Test an arbitrary assortment of settings.
 TEST_F(BrowsingDataApiTest, SettingsFunctionAssorted) {
-  int supported_site_data =
+  uint64_t supported_site_data =
       (content::BrowsingDataRemover::DATA_TYPE_COOKIES |
        content::BrowsingDataRemover::DATA_TYPE_DOM_STORAGE) &
       ~content::BrowsingDataRemover::DATA_TYPE_BACKGROUND_FETCH &

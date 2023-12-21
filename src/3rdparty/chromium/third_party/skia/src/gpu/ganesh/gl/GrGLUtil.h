@@ -9,8 +9,8 @@
 #define GrGLUtil_DEFINED
 
 #include "include/gpu/gl/GrGLInterface.h"
-#include "include/private/SkImageInfoPriv.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
+#include "src/core/SkImageInfoPriv.h"
 #include "src/gpu/ganesh/GrDataUtils.h"
 #include "src/gpu/ganesh/GrStencilSettings.h"
 #include "src/gpu/ganesh/gl/GrGLDefines_impl.h"
@@ -164,8 +164,6 @@ enum class GrGLRenderer {
     kAdreno640,  // Pixel4
     kAdreno6xx_other,
 
-    kGoogleSwiftShader,
-
     /** Intel GPU families, ordered by generation **/
     // 6th gen
     kIntelSandyBridge,
@@ -196,8 +194,6 @@ enum class GrGLRenderer {
 
     kGalliumLLVM,
 
-    kVirgl,
-
     kMali4xx,
     /** G-3x, G-5x, or G-7x */
     kMaliG,
@@ -210,6 +206,8 @@ enum class GrGLRenderer {
     kAMDRadeonPro5xxx,    // AMD Radeon Pro 5000 Series
     kAMDRadeonProVegaxx,  // AMD Radeon Pro Vega
 
+    kWebGL,
+
     kOther
 };
 
@@ -217,7 +215,6 @@ enum class GrGLDriver {
     kMesa,
     kNVIDIA,
     kIntel,
-    kSwiftShader,
     kQualcomm,
     kFreedreno,
     kAndroidEmulator,
@@ -230,6 +227,7 @@ enum class GrGLANGLEBackend {
     kUnknown,
     kD3D9,
     kD3D11,
+    kMetal,
     kOpenGL
 };
 
@@ -310,8 +308,14 @@ struct GrGLDriverInfo {
     GrGLDriver        fANGLEDriver        = GrGLDriver::kUnknown;
     GrGLDriverVersion fANGLEDriverVersion = GR_GL_DRIVER_UNKNOWN_VER;
 
+    GrGLVendor        fWebGLVendor        = GrGLVendor::kOther;
+    GrGLRenderer      fWebGLRenderer      = GrGLRenderer::kOther;
+
     // Are we running over the Chrome interprocess command buffer?
     bool fIsOverCommandBuffer = false;
+
+    // Running over virgl guest driver.
+    bool fIsRunningOverVirgl = false;
 };
 
 GrGLDriverInfo GrGLGetDriverInfo(const GrGLInterface*);
@@ -325,6 +329,18 @@ void GrGLCheckErr(const GrGLInterface* gl,
                   const char* call);
 
 ////////////////////////////////////////////////////////////////////////////////
+
+/**
+ *  GR_STRING makes a string of X where X is expanded before conversion to a string
+ *  if X itself contains macros.
+ */
+#define GR_STRING(X) GR_STRING_IMPL(X)
+#define GR_STRING_IMPL(X) #X
+
+/**
+ *  Creates a string of the form "<filename>(<linenumber>) : "
+ */
+#define GR_FILE_AND_LINE_STR __FILE__ "(" GR_STRING(__LINE__) ") : "
 
 /**
  * Macros for using GrGLInterface to make GL calls

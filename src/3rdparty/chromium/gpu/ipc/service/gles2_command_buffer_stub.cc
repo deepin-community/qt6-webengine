@@ -1,4 +1,4 @@
-// Copyright (c) 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/hash/hash.h"
 #include "base/json/json_writer.h"
 #include "base/memory/memory_pressure_listener.h"
@@ -26,7 +26,6 @@
 #include "gpu/command_buffer/service/gl_context_virtual.h"
 #include "gpu/command_buffer/service/gl_state_restorer_impl.h"
 #include "gpu/command_buffer/service/gpu_fence_manager.h"
-#include "gpu/command_buffer/service/image_manager.h"
 #include "gpu/command_buffer/service/logger.h"
 #include "gpu/command_buffer/service/mailbox_manager.h"
 #include "gpu/command_buffer/service/memory_tracking.h"
@@ -44,11 +43,13 @@
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/gpu_fence.h"
 #include "ui/gfx/gpu_fence_handle.h"
+#include "ui/gfx/switches.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
-#include "ui/gl/gl_image.h"
 #include "ui/gl/gl_implementation.h"
+#include "ui/gl/gl_surface_egl.h"
 #include "ui/gl/gl_switches.h"
+#include "ui/gl/gl_utils.h"
 #include "ui/gl/gl_workarounds.h"
 #include "ui/gl/init/gl_factory.h"
 
@@ -103,15 +104,12 @@ gpu::ContextResult GLES2CommandBufferStub::Initialize(
   } else {
     scoped_refptr<gles2::FeatureInfo> feature_info = new gles2::FeatureInfo(
         manager->gpu_driver_bug_workarounds(), manager->gpu_feature_info());
-    gpu::GpuMemoryBufferFactory* gmb_factory =
-        manager->gpu_memory_buffer_factory();
     context_group_ = new gles2::ContextGroup(
         manager->gpu_preferences(), gles2::PassthroughCommandDecoderSupported(),
         manager->mailbox_manager(), CreateMemoryTracker(),
         manager->shader_translator_cache(),
         manager->framebuffer_completeness_cache(), feature_info,
-        init_params.attribs.bind_generates_resource, channel_->image_manager(),
-        gmb_factory ? gmb_factory->AsImageFactory() : nullptr,
+        init_params.attribs.bind_generates_resource,
         manager->watchdog() /* progress_reporter */,
         manager->gpu_feature_info(), manager->discardable_manager(),
         manager->passthrough_discardable_manager(),
@@ -147,8 +145,9 @@ gpu::ContextResult GLES2CommandBufferStub::Initialize(
     // We hit this code path when creating the onscreen render context
     // used for compositing on low-end Android devices.
     //
-    // TODO(klausw): explicitly copy rgba sizes? Currently the formats
-    // supported are only RGB565 and default (RGBA8888).
+    // Currently the only formats supported are RGB565 and default (RGBA8888).
+    // See also comments in ui/gl/gl_surface_format.h in case there's
+    // a use case requiring more fine-grained control.
     surface_format.SetRGB565();
     DVLOG(1) << __FUNCTION__ << ": Choosing RGB565 mode.";
   }
@@ -171,6 +170,50 @@ gpu::ContextResult GLES2CommandBufferStub::Initialize(
       channel_->sync_point_manager()->CreateSyncPointClientState(
           CommandBufferNamespace::GPU_IO, command_buffer_id_, sequence_id_);
 
+  // TODO(crbug.com/1251724): Remove this after testing.
+  // Only enable multiple displays on ANGLE/Metal and only behind a feature.
+  bool force_default_display = true;
+  if (gl::GetGLImplementation() == gl::kGLImplementationEGLANGLE &&
+      gl::GetANGLEImplementation() == gl::ANGLEImplementation::kMetal &&
+      features::SupportsEGLDualGPURendering()) {
+    force_default_display = false;
+  }
+  gl::GpuPreference gpu_preference = init_params.attribs.gpu_preference;
+  // If the user queries a low-power context, it's better to use whatever the
+  // default GPU used by Chrome is, which may be different than the low-power
+  // GPU determined by GLDisplayManager.
+  if (gpu_preference == gl::GpuPreference::kLowPower ||
+      gpu_preference == gl::GpuPreference::kNone || force_default_display) {
+    gpu_preference = gl::GpuPreference::kDefault;
+  }
+
+  // Query and initialize the default display for this GPU preference,
+  // ignoring any queried display key for now. For simplicity we need
+  // to initialize the default display per-GPU first.
+  // We may be requesting a new GPU/display, so get or initialize the display.
+  gl::GLDisplay* display =
+      gl::init::GetOrInitializeGLOneOffPlatformImplementation(
+          /*fallback_to_software_gl=*/false, /*disable_gl_drawing=*/false,
+          /*init_extensions=*/true,
+          /*gpu_preference=*/gpu_preference);
+
+  // If the user queries a key to create a distinct display on this GPU,
+  // check if this display already exists, and if not, initialize it from
+  // the default display on this GPU.
+  gl::DisplayKey display_key = gl::DisplayKey::kDefault;
+  if (manager->gpu_preferences().force_separate_egl_display_for_webgl_testing &&
+      features::SupportsEGLDualGPURendering()) {
+    display_key = gl::DisplayKey::kSeparateEGLDisplayForWebGLTesting;
+  }
+
+  if (display_key != gl::DisplayKey::kDefault) {
+    gl::GLDisplay* keyed_display = gl::GetDisplay(gpu_preference, display_key);
+    if (!keyed_display->IsInitialized()) {
+      keyed_display->InitializeFromDisplay(display);
+    }
+    display = keyed_display;
+  }
+
   if (offscreen) {
     // Do we want to create an offscreen rendering context suitable
     // for directly drawing to a separately supplied surface? In that
@@ -191,22 +234,27 @@ gpu::ContextResult GLES2CommandBufferStub::Initialize(
       }
       // Currently, we can't separately control alpha channel for surfaces,
       // it's generally enabled by default except for RGB565 and (on desktop)
-      // smaller-than-32bit formats.
-      //
-      // TODO(klausw): use init_params.attribs.alpha_size here if possible.
+      // smaller-than-32bit formats. If there's a future use case that
+      // requires this, it should use init_params.attribs.alpha_size here.
     }
     if (!surface_format.IsCompatible(default_surface->GetFormat())) {
       DVLOG(1) << __FUNCTION__ << ": Hit the OwnOffscreenSurface path";
       use_virtualized_gl_context_ = false;
-      surface_ = gl::init::CreateOffscreenGLSurfaceWithFormat(gfx::Size(),
-                                                              surface_format);
+      surface_ = gl::init::CreateOffscreenGLSurfaceWithFormat(
+          display, gfx::Size(), surface_format);
       if (!surface_) {
         LOG(ERROR)
             << "ContextResult::kSurfaceFailure: Failed to create surface.";
         return gpu::ContextResult::kSurfaceFailure;
       }
     } else {
-      surface_ = default_surface;
+      if (default_surface->GetGLDisplay() == display) {
+        surface_ = default_surface;
+      } else {
+        // The default surface was created on a different display, create a
+        // new surface on the requested display.
+        surface_ = gl::init::CreateOffscreenGLSurface(display, gfx::Size());
+      }
     }
   } else {
     switch (init_params.attribs.color_space) {
@@ -222,8 +270,9 @@ gpu::ContextResult GLES2CommandBufferStub::Initialize(
             gl::GLSurfaceFormat::COLOR_SPACE_DISPLAY_P3);
         break;
     }
-    surface_ = ImageTransportSurface::CreateNativeSurface(
-        weak_ptr_factory_.GetWeakPtr(), surface_handle_, surface_format);
+    surface_ = ImageTransportSurface::CreateNativeGLSurface(
+        display, weak_ptr_factory_.GetWeakPtr(), surface_handle_,
+        surface_format);
     if (!surface_ || !surface_->Initialize(surface_format)) {
       surface_ = nullptr;
       LOG(ERROR) << "ContextResult::kSurfaceFailure: Failed to create surface.";
@@ -388,23 +437,11 @@ gpu::ContextResult GLES2CommandBufferStub::Initialize(
 }
 
 #if BUILDFLAG(IS_WIN)
-void GLES2CommandBufferStub::DidCreateAcceleratedSurfaceChildWindow(
-    SurfaceHandle parent_window,
-    SurfaceHandle child_window) {
-  GpuChannelManager* gpu_channel_manager = channel_->gpu_channel_manager();
-  gpu_channel_manager->delegate()->SendCreatedChildWindow(parent_window,
-                                                          child_window);
+void GLES2CommandBufferStub::AddChildWindowToBrowser(
+    gpu::SurfaceHandle child_window) {
+  NOTREACHED();
 }
 #endif
-
-void GLES2CommandBufferStub::DidSwapBuffersComplete(
-    SwapBuffersCompleteParams params,
-    gfx::GpuFenceHandle release_fence) {
-  DCHECK(release_fence.is_null());
-  params.swap_response.swap_id = pending_swap_completed_params_.front().swap_id;
-  pending_swap_completed_params_.pop_front();
-  client().OnSwapBuffersCompleted(params);
-}
 
 const gles2::FeatureInfo* GLES2CommandBufferStub::GetFeatureInfo() const {
   return context_group_->feature_info();
@@ -412,13 +449,6 @@ const gles2::FeatureInfo* GLES2CommandBufferStub::GetFeatureInfo() const {
 
 const GpuPreferences& GLES2CommandBufferStub::GetGpuPreferences() const {
   return context_group_->gpu_preferences();
-}
-
-void GLES2CommandBufferStub::BufferPresented(
-    const gfx::PresentationFeedback& feedback) {
-  SwapBufferParams params = pending_presented_params_.front();
-  pending_presented_params_.pop_front();
-  client().OnBufferPresented(params.swap_id, feedback);
 }
 
 viz::GpuVSyncCallback GLES2CommandBufferStub::GetGpuVSyncCallback() {
@@ -448,6 +478,16 @@ void GLES2CommandBufferStub::OnReturnFrontBuffer(const Mailbox& mailbox,
                                                  bool is_lost) {
   // No need to pull texture updates.
   gles2_decoder_->ReturnFrontBuffer(mailbox, is_lost);
+}
+
+void GLES2CommandBufferStub::OnSetDefaultFramebufferSharedImage(
+    const Mailbox& mailbox,
+    int samples_count,
+    bool preserve,
+    bool needs_depth,
+    bool needs_stencil) {
+  gles2_decoder_->SetDefaultFramebufferSharedImage(
+      mailbox, samples_count, preserve, needs_depth, needs_stencil);
 }
 
 void GLES2CommandBufferStub::CreateGpuFenceFromHandle(
@@ -503,71 +543,6 @@ void GLES2CommandBufferStub::GetGpuFenceHandle(
   std::move(callback).Run(std::move(handle));
 }
 
-void GLES2CommandBufferStub::CreateImage(mojom::CreateImageParamsPtr params) {
-  TRACE_EVENT0("gpu", "GLES2CommandBufferStub::OnCreateImage");
-  const int32_t id = params->id;
-  const gfx::Size& size = params->size;
-  const gfx::BufferFormat& format = params->format;
-  const gfx::BufferPlane& plane = params->plane;
-  const uint64_t image_release_count = params->image_release_count;
-  ScopedContextOperation operation(*this);
-  if (!operation.is_context_current())
-    return;
-
-  gles2::ImageManager* image_manager = channel_->image_manager();
-  DCHECK(image_manager);
-  if (image_manager->LookupImage(id)) {
-    LOG(ERROR) << "Image already exists with same ID.";
-    return;
-  }
-
-  if (!gpu::IsImageFromGpuMemoryBufferFormatSupported(
-          format, gles2_decoder_->GetCapabilities())) {
-    LOG(ERROR) << "Format is not supported.";
-    return;
-  }
-
-  if (!gpu::IsImageSizeValidForGpuMemoryBufferFormat(size, format)) {
-    LOG(ERROR) << "Invalid image size for format.";
-    return;
-  }
-
-  if (!gpu::IsPlaneValidForGpuMemoryBufferFormat(plane, format)) {
-    LOG(ERROR) << "Invalid plane " << gfx::BufferPlaneToString(plane) << " for "
-               << gfx::BufferFormatToString(format);
-    return;
-  }
-
-  scoped_refptr<gl::GLImage> image = channel()->CreateImageForGpuMemoryBuffer(
-      std::move(params->gpu_memory_buffer), size, format, plane,
-      surface_handle_);
-  if (!image.get())
-    return;
-
-  image_manager->AddImage(image.get(), id);
-  if (image_release_count)
-    sync_point_client_state_->ReleaseFenceSync(image_release_count);
-}
-
-void GLES2CommandBufferStub::DestroyImage(int32_t id) {
-  TRACE_EVENT0("gpu", "GLES2CommandBufferStub::OnDestroyImage");
-  ScopedContextOperation operation(*this);
-  if (!operation.is_context_current())
-    return;
-
-  gles2::ImageManager* image_manager = channel_->image_manager();
-  DCHECK(image_manager);
-  if (!image_manager->LookupImage(id)) {
-    LOG(ERROR) << "Image with ID doesn't exist.";
-    return;
-  }
-
-  image_manager->RemoveImage(id);
-}
-
-void GLES2CommandBufferStub::OnSwapBuffers(uint64_t swap_id, uint32_t flags) {
-  pending_swap_completed_params_.push_back({swap_id, flags});
-  pending_presented_params_.push_back({swap_id, flags});
-}
+void GLES2CommandBufferStub::OnSwapBuffers(uint64_t swap_id, uint32_t flags) {}
 
 }  // namespace gpu

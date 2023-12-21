@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "base/task/single_thread_task_runner.h"
-#include "mojo/public/cpp/bindings/self_owned_associated_receiver.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom-blink.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_key_range.h"
 #include "third_party/blink/renderer/modules/indexeddb/indexed_db_dispatcher.h"
@@ -20,12 +19,7 @@ WebIDBCursor::WebIDBCursor(
     mojo::PendingAssociatedRemote<mojom::blink::IDBCursor> cursor_info,
     int64_t transaction_id,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner)
-    : transaction_id_(transaction_id),
-      continue_count_(0),
-      used_prefetches_(0),
-      pending_onsuccess_callbacks_(0),
-      prefetch_amount_(kMinPrefetchAmount),
-      task_runner_(task_runner) {
+    : transaction_id_(transaction_id) {
   cursor_.Bind(std::move(cursor_info), std::move(task_runner));
   IndexedDBDispatcher::RegisterCursor(this);
 }
@@ -50,9 +44,9 @@ void WebIDBCursor::Advance(uint32_t count,
   IndexedDBDispatcher::ResetCursorPrefetchCaches(transaction_id_, this);
 
   callbacks->SetState(weak_factory_.GetWeakPtr(), transaction_id_);
-  cursor_->Advance(
-      count, WTF::Bind(&WebIDBCursor::AdvanceCallback, WTF::Unretained(this),
-                       std::move(callbacks)));
+  cursor_->Advance(count,
+                   WTF::BindOnce(&WebIDBCursor::AdvanceCallback,
+                                 WTF::Unretained(this), std::move(callbacks)));
 }
 
 void WebIDBCursor::AdvanceCallback(std::unique_ptr<WebIDBCallbacks> callbacks,
@@ -101,7 +95,7 @@ void WebIDBCursor::CursorContinue(const IDBKey* key,
     // No key(s), so this would qualify for a prefetch.
     ++continue_count_;
 
-    if (!prefetch_keys_.IsEmpty()) {
+    if (!prefetch_keys_.empty()) {
       // We have a prefetch cache, so serve the result from that.
       CachedContinue(callbacks.get());
       return;
@@ -112,9 +106,10 @@ void WebIDBCursor::CursorContinue(const IDBKey* key,
       ++pending_onsuccess_callbacks_;
 
       callbacks->SetState(weak_factory_.GetWeakPtr(), transaction_id_);
-      cursor_->Prefetch(prefetch_amount_,
-                        WTF::Bind(&WebIDBCursor::PrefetchCallback,
-                                  WTF::Unretained(this), std::move(callbacks)));
+      cursor_->Prefetch(
+          prefetch_amount_,
+          WTF::BindOnce(&WebIDBCursor::PrefetchCallback, WTF::Unretained(this),
+                        std::move(callbacks)));
 
       // Increase prefetch_amount_ exponentially.
       prefetch_amount_ *= 2;
@@ -133,8 +128,8 @@ void WebIDBCursor::CursorContinue(const IDBKey* key,
   callbacks->SetState(weak_factory_.GetWeakPtr(), transaction_id_);
   cursor_->CursorContinue(
       IDBKey::Clone(key), IDBKey::Clone(primary_key),
-      WTF::Bind(&WebIDBCursor::CursorContinueCallback, WTF::Unretained(this),
-                std::move(callbacks)));
+      WTF::BindOnce(&WebIDBCursor::CursorContinueCallback,
+                    WTF::Unretained(this), std::move(callbacks)));
 }
 
 void WebIDBCursor::CursorContinueCallback(
@@ -292,7 +287,7 @@ void WebIDBCursor::ResetPrefetchCache() {
   continue_count_ = 0;
   prefetch_amount_ = kMinPrefetchAmount;
 
-  if (prefetch_keys_.IsEmpty()) {
+  if (prefetch_keys_.empty()) {
     // No prefetch cache, so no need to reset the cursor in the back-end.
     return;
   }
@@ -306,16 +301,6 @@ void WebIDBCursor::ResetPrefetchCache() {
   prefetch_values_.clear();
 
   pending_onsuccess_callbacks_ = 0;
-}
-
-mojo::PendingAssociatedRemote<mojom::blink::IDBCallbacks>
-WebIDBCursor::GetCallbacksProxy(
-    std::unique_ptr<WebIDBCallbacks> callbacks_impl) {
-  mojo::PendingAssociatedRemote<mojom::blink::IDBCallbacks> pending_callbacks;
-  mojo::MakeSelfOwnedAssociatedReceiver(
-      std::move(callbacks_impl),
-      pending_callbacks.InitWithNewEndpointAndPassReceiver(), task_runner_);
-  return pending_callbacks;
 }
 
 }  // namespace blink

@@ -162,8 +162,8 @@ class ABSL_MUST_USE_RESULT StatusOr;
 // A `absl::StatusOr<T*>` can be constructed from a null pointer like any other
 // pointer value, and the result will be that `ok()` returns `true` and
 // `value()` returns `nullptr`. Checking the value of pointer in an
-// `absl::StatusOr<T>` generally requires a bit more care, to ensure both that a
-// value is present and that value is not null:
+// `absl::StatusOr<T*>` generally requires a bit more care, to ensure both that
+// a value is present and that value is not null:
 //
 //  StatusOr<std::unique_ptr<Foo>> result = FooFactory::MakeNewFoo(arg);
 //  if (!result.ok()) {
@@ -477,7 +477,7 @@ class StatusOr : private internal_statusor::StatusOrData<T>,
   // StatusOr<T>::ok()
   //
   // Returns whether or not this `absl::StatusOr<T>` holds a `T` value. This
-  // member function is analagous to `absl::Status::ok()` and should be used
+  // member function is analogous to `absl::Status::ok()` and should be used
   // similarly to check the status of return values.
   //
   // Example:
@@ -584,7 +584,7 @@ class StatusOr : private internal_statusor::StatusOrData<T>,
   // Reconstructs the inner value T in-place using the provided args, using the
   // T(args...) constructor. Returns reference to the reconstructed `T`.
   template <typename... Args>
-  T& emplace(Args&&... args) {
+  T& emplace(Args&&... args) ABSL_ATTRIBUTE_LIFETIME_BOUND {
     if (ok()) {
       this->Clear();
       this->MakeValue(std::forward<Args>(args)...);
@@ -600,7 +600,8 @@ class StatusOr : private internal_statusor::StatusOrData<T>,
       absl::enable_if_t<
           std::is_constructible<T, std::initializer_list<U>&, Args&&...>::value,
           int> = 0>
-  T& emplace(std::initializer_list<U> ilist, Args&&... args) {
+  T& emplace(std::initializer_list<U> ilist,
+             Args&&... args) ABSL_ATTRIBUTE_LIFETIME_BOUND {
     if (ok()) {
       this->Clear();
       this->MakeValue(ilist, std::forward<Args>(args)...);

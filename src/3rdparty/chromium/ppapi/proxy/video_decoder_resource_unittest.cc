@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -96,7 +96,7 @@ class VideoDecoderResourceTest : public PluginProxyTest {
     HostResource host_resource;
     host_resource.SetHostResource(pp_instance(), kGraphics3D);
     scoped_refptr<ppapi::proxy::Graphics3D> graphics_3d(
-        new ppapi::proxy::Graphics3D(host_resource, gfx::Size(640, 480),
+        new ppapi::proxy::Graphics3D(host_resource, gfx::Size(640, 480), false,
                                      false));
 
     return graphics_3d->GetReference();

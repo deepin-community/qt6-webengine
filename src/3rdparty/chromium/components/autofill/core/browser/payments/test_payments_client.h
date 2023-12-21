@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -51,7 +51,7 @@ class TestPaymentsClient : public payments::PaymentsClient {
       const std::string& app_locale,
       base::OnceCallback<void(AutofillClient::PaymentsRpcResult,
                               const std::u16string&,
-                              std::unique_ptr<base::Value>,
+                              std::unique_ptr<base::Value::Dict>,
                               std::vector<std::pair<int, int>>)> callback,
       const int billable_service_number,
       const int64_t billing_customer_number,
@@ -184,7 +184,7 @@ class TestPaymentsClient : public payments::PaymentsClient {
   std::unique_ptr<std::unordered_map<std::string, std::string>> save_result_;
   bool use_invalid_legal_message_ = false;
   bool use_legal_message_with_multiple_lines_ = false;
-  std::unique_ptr<base::Value> LegalMessage();
+  std::unique_ptr<base::Value::Dict> LegalMessage();
   absl::optional<AutofillClient::PaymentsRpcResult>
       select_challenge_option_result_;
   absl::optional<AutofillClient::PaymentsRpcResult>

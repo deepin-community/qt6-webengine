@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -147,17 +147,6 @@ class DownloadDatabase {
   // Query the download slices for all the records in `download_row_map`.
   using DownloadRowMap = std::map<DownloadId, DownloadRow*>;
   void QueryDownloadSlices(DownloadRowMap* download_row_map);
-
-  // Creates a new reroute info if it doesn't exist, or updates an existing
-  // one. Returns true on success, or false otherwise.
-  bool CreateOrUpdateDownloadRerouteInfo(
-      DownloadId id,
-      const std::string& reroute_info_serialized);
-
-  // Delete the download reroute info associated with one DownloadRow.
-  void RemoveDownloadRerouteInfo(DownloadId id);
-  // Query the download reroute infos for all the records in `download_row_map`.
-  void QueryDownloadRerouteInfos(DownloadRowMap* download_row_map);
 
   bool owning_thread_set_;
   base::PlatformThreadId owning_thread_;

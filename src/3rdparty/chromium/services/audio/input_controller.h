@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,6 +14,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_piece.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -30,6 +31,7 @@
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace media {
+class AecdumpRecordingManager;
 class AudioBus;
 class AudioInputStream;
 class AudioManager;
@@ -39,11 +41,9 @@ class UserInputMonitor;
 
 namespace audio {
 class AudioProcessorHandler;
-class AecdumpRecordingManager;
 class AudioCallback;
 class OutputTapper;
 class DeviceOutputListener;
-class InputStreamActivityMonitor;
 class ProcessingAudioFifo;
 
 // Only do power monitoring for non-mobile platforms to save resources.
@@ -163,10 +163,9 @@ class InputController final : public StreamMonitor {
 
   // enum used for determining what UMA stats to report.
   enum StreamType {
-    VIRTUAL = 0,
-    HIGH_LATENCY = 1,
-    LOW_LATENCY = 2,
-    FAKE = 3,
+    HIGH_LATENCY = 0,
+    LOW_LATENCY = 1,
+    FAKE = 2,
   };
 
   InputController(const InputController&) = delete;
@@ -182,9 +181,8 @@ class InputController final : public StreamMonitor {
       EventHandler* event_handler,
       SyncWriter* sync_writer,
       media::UserInputMonitor* user_input_monitor,
-      InputStreamActivityMonitor* activity_monitor,
       DeviceOutputListener* device_output_listener,
-      AecdumpRecordingManager* aecdump_recording_manager,
+      media::AecdumpRecordingManager* aecdump_recording_manager,
       media::mojom::AudioProcessingConfigPtr processing_config,
       const media::AudioParameters& params,
       const std::string& device_id,
@@ -235,9 +233,8 @@ class InputController final : public StreamMonitor {
   InputController(EventHandler* event_handler,
                   SyncWriter* sync_writer,
                   media::UserInputMonitor* user_input_monitor,
-                  InputStreamActivityMonitor* activity_monitor,
                   DeviceOutputListener* device_output_listener,
-                  AecdumpRecordingManager* aecdump_recording_manager,
+                  media::AecdumpRecordingManager* aecdump_recording_manager,
                   media::mojom::AudioProcessingConfigPtr processing_config,
                   const media::AudioParameters& output_params,
                   const media::AudioParameters& device_params,
@@ -254,9 +251,6 @@ class InputController final : public StreamMonitor {
   // Updates the silence state, see enum SilenceState above for state
   // transitions.
   void UpdateSilenceState(bool silence);
-
-  // Logs the silence state as UMA stat.
-  void LogSilenceState(SilenceState value);
 #endif
 
   // Logs the result of creating an InputController.
@@ -301,7 +295,7 @@ class InputController final : public StreamMonitor {
       const media::AudioParameters& processing_output_params,
       const media::AudioParameters& device_params,
       DeviceOutputListener* device_output_listener,
-      AecdumpRecordingManager* aecdump_recording_manager);
+      media::AecdumpRecordingManager* aecdump_recording_manager);
 
   // Used as a callback for |audio_processor_handler_|.
   void DeliverProcessedAudio(const media::AudioBus& audio_bus,
@@ -321,7 +315,7 @@ class InputController final : public StreamMonitor {
 
   // Pointer to the audio input stream object.
   // Only used on the audio thread.
-  raw_ptr<media::AudioInputStream> stream_ = nullptr;
+  raw_ptr<media::AudioInputStream, DanglingUntriaged> stream_ = nullptr;
 
   // SyncWriter is used only in low-latency mode for synchronous writing.
   const raw_ptr<SyncWriter> sync_writer_;
@@ -343,10 +337,7 @@ class InputController final : public StreamMonitor {
   std::unique_ptr<OutputTapper> output_tapper_;
 #endif
 
-  const raw_ptr<media::UserInputMonitor> user_input_monitor_;
-
-  // Notified when the stream starts/stops recording.
-  const raw_ptr<InputStreamActivityMonitor> activity_monitor_;
+  const raw_ptr<media::UserInputMonitor, DanglingUntriaged> user_input_monitor_;
 
 #if defined(AUDIO_POWER_MONITORING)
   // Whether the silence state and microphone levels should be checked and sent

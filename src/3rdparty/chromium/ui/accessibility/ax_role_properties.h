@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -39,6 +39,11 @@ AX_BASE_EXPORT bool IsButton(const ax::mojom::Role role);
 
 // Returns true if the provided role belongs to a cell or a table header.
 AX_BASE_EXPORT bool IsCellOrTableHeader(const ax::mojom::Role role);
+
+// Returns true if the role is expected to be the parent of a child tree.
+// Can return false for a child tree owner if an ARIA role was used, e.g.
+// <iframe role="region">.
+AX_BASE_EXPORT bool IsChildTreeOwner(const ax::mojom::Role role);
 
 // Returns true if the provided role belongs to an object on which a click
 // handler is commonly attached, or to an object that carries out an action when
@@ -92,11 +97,12 @@ AX_BASE_EXPORT bool IsForm(const ax::mojom::Role role);
 // crossing a format boundary.
 AX_BASE_EXPORT bool IsFormatBoundary(const ax::mojom::Role role);
 
+// Returns true if the provided role belongs to a grid, treegrid, listgrid
+// or tree. Returns false for table.
+AX_BASE_EXPORT bool IsGridLike(const ax::mojom::Role role);
+
 // Returns true if the provided role belongs to a heading.
 AX_BASE_EXPORT bool IsHeading(const ax::mojom::Role role);
-
-// Returns true if the provided role belongs to a heading or a table header.
-AX_BASE_EXPORT bool IsHeadingOrTableHeader(const ax::mojom::Role role);
 
 // Returns true if the provided role belongs to an iframe.
 AX_BASE_EXPORT bool IsIframe(const ax::mojom::Role role);
@@ -110,6 +116,9 @@ AX_BASE_EXPORT bool IsImageOrVideo(const ax::mojom::Role role);
 // Returns true if the provided role is item-like, specifically if it can hold
 // pos_in_set and set_size values. Roles that are item-like are not set-like.
 AX_BASE_EXPORT bool IsItemLike(const ax::mojom::Role role);
+
+// Returns true if the provided role is likely to be an active descendant.
+AX_BASE_EXPORT bool IsLikelyActiveDescendantRole(const ax::mojom::Role role);
 
 // Returns true if the role is a subclass of the ARIA Landmark abstract role.
 AX_BASE_EXPORT bool IsLandmark(const ax::mojom::Role role);
@@ -224,6 +233,13 @@ AX_BASE_EXPORT bool IsTextField(ax::mojom::Role role);
 // Returns true if the provided role fits the description of a UIA embedded
 // objects. See the method definition for more details.
 AX_BASE_EXPORT bool IsUIAEmbeddedObject(ax::mojom::Role role);
+
+// Returns false if |role| is a layout table, or whatever `IsTableLike` returns.
+AX_BASE_EXPORT bool IsUIATableLike(ax::mojom::Role role);
+
+// Returns false if |role| is a layout table cell, or whatever
+// `IsCellOrTableHeader` returns.
+AX_BASE_EXPORT bool IsUIACellOrTableHeader(ax::mojom::Role role);
 
 // Returns true if the provided role represents a window.
 AX_BASE_EXPORT bool IsWindow(const ax::mojom::Role role);

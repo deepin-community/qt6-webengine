@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,7 +22,7 @@ bool IsUrlAllowedForRenderUrls(const KURL& url) {
   if (!url.IsValid() || !url.ProtocolIs(url::kHttpsScheme))
     return false;
 
-  return url.User().IsEmpty() && url.Pass().IsEmpty();
+  return url.User().empty() && url.Pass().empty();
 }
 
 // Check if `url` can be used with the specified interest group for any of
@@ -36,6 +36,14 @@ bool IsUrlAllowed(const KURL& url, const mojom::blink::InterestGroup& group) {
   return IsUrlAllowedForRenderUrls(url) && !url.HasFragmentIdentifier();
 }
 
+size_t EstimateHashMapSize(const HashMap<String, double>& hash_map) {
+  size_t result = 0;
+  for (const auto& pair : hash_map) {
+    result += pair.key.length() + sizeof(pair.value);
+  }
+  return result;
+}
+
 }  // namespace
 
 // The logic in this method must be kept in sync with
@@ -46,7 +54,23 @@ size_t EstimateBlinkInterestGroupSize(
   size += group.owner->ToString().length();
   size += group.name.length();
   size += sizeof(group.priority);
+  size += sizeof(group.execution_mode);
+  size += sizeof(group.enable_bidding_signals_prioritization);
 
+  if (group.priority_vector)
+    size += EstimateHashMapSize(*group.priority_vector);
+  if (group.priority_signals_overrides)
+    size += EstimateHashMapSize(*group.priority_signals_overrides);
+  // Tests ensure this matches the blink::InterestGroup size, which is computed
+  // from the underlying number of enum bytes (the actual size on disk will
+  // vary, but we need a rough estimate for size enforcement).
+  constexpr size_t kCapabilitiesFlagsSize = 4;
+  if (group.seller_capabilities) {
+    for (const auto& [seller_origin, flags] : *group.seller_capabilities) {
+      size += seller_origin->ToString().length() + kCapabilitiesFlagsSize;
+    }
+  }
+  size += kCapabilitiesFlagsSize;  // For all_sellers_capabilities.
   if (group.bidding_url)
     size += group.bidding_url->GetString().length();
 
@@ -79,6 +103,25 @@ size_t EstimateBlinkInterestGroupSize(
     }
   }
 
+  if (group.ad_sizes) {
+    for (const auto& [size_name, size_obj] : group.ad_sizes.value()) {
+      size += size_name.length();
+      size += sizeof(size_obj->width);
+      size += sizeof(size_obj->height);
+      size += sizeof(size_obj->width_units);
+      size += sizeof(size_obj->height_units);
+    }
+  }
+
+  if (group.size_groups) {
+    for (const auto& [group_name, size_list] : group.size_groups.value()) {
+      size += group_name.length();
+      for (const auto& size_name : size_list) {
+        size += size_name.length();
+      }
+    }
+  }
+
   return size;
 }
 
@@ -100,6 +143,30 @@ bool ValidateBlinkInterestGroup(const mojom::blink::InterestGroup& group,
     error_field_value = String::NumberToStringECMAScript(group.priority);
     error = "priority must be finite.";
     return false;
+  }
+
+  // This check is here to keep it in sync with InterestGroup::IsValid(), but
+  // checks in navigator_auction.cc should ensure the execution mode is always
+  // valid.
+  if (group.execution_mode !=
+          mojom::blink::InterestGroup::ExecutionMode::kCompatibilityMode &&
+      group.execution_mode !=
+          mojom::blink::InterestGroup::ExecutionMode::kGroupedByOriginMode) {
+    error_field_name = "executionMode";
+    error_field_value = String::Number(static_cast<int>(group.execution_mode));
+    error = "execution mode is not valid.";
+    return false;
+  }
+
+  if (group.seller_capabilities) {
+    for (const auto& [seller_origin, flags] : *group.seller_capabilities) {
+      if (seller_origin->Protocol() != url::kHttpsScheme) {
+        error_field_name = "sellerCapabilities";
+        error_field_value = seller_origin->ToString();
+        error = "sellerCapabilities origins must all be HTTPS.";
+        return false;
+      }
+    }
   }
 
   if (group.bidding_url) {
@@ -140,7 +207,7 @@ bool ValidateBlinkInterestGroup(const mojom::blink::InterestGroup& group,
     // `trusted_bidding_signals_url` must not have a query string, since the
     // query parameter needs to be set as part of running an auction.
     if (!IsUrlAllowed(*group.trusted_bidding_signals_url, group) ||
-        !group.trusted_bidding_signals_url->Query().IsEmpty()) {
+        !group.trusted_bidding_signals_url->Query().empty()) {
       error_field_name = "trustedBiddingSignalsUrl";
       error_field_value = group.trusted_bidding_signals_url->GetString();
       error =
@@ -171,6 +238,68 @@ bool ValidateBlinkInterestGroup(const mojom::blink::InterestGroup& group,
         error_field_value = render_url.GetString();
         error = "renderUrls must be HTTPS and have no embedded credentials.";
         return false;
+      }
+    }
+  }
+  if (group.ad_sizes) {
+    for (auto const& it : group.ad_sizes.value()) {
+      if (it.key == "") {
+        error_field_name = "adSizes";
+        error_field_value = it.key;
+        error = "Ad sizes cannot map from an empty event name.";
+        return false;
+      }
+      if (it.value->width_units ==
+              mojom::blink::InterestGroupSize::LengthUnit::kInvalid ||
+          it.value->height_units ==
+              mojom::blink::InterestGroupSize::LengthUnit::kInvalid) {
+        error_field_name = "adSizes";
+        error_field_value = "";
+        error =
+            "Ad size dimensions must be a valid number either in pixels (px) "
+            "or screen width (sw).";
+        return false;
+      }
+      if (it.value->width <= 0 || it.value->height <= 0 ||
+          !std::isfinite(it.value->width) || !std::isfinite(it.value->height)) {
+        error_field_name = "adSizes";
+        error_field_value =
+            String::Format("%f x %f", it.value->width, it.value->height);
+        error =
+            "Ad sizes must have a valid (non-zero/non-infinite) width and "
+            "height.";
+        return false;
+      }
+    }
+  }
+
+  if (group.size_groups) {
+    if (!group.ad_sizes) {
+      error_field_name = "sizeGroups";
+      error_field_value = "";
+      error = "An adSizes map must exist for sizeGroups to work.";
+      return false;
+    }
+    for (auto const& [group_name, sizes] : group.size_groups.value()) {
+      if (group_name == "") {
+        error_field_name = "sizeGroups";
+        error_field_value = group_name;
+        error = "Size groups cannot map from an empty group name.";
+        return false;
+      }
+      for (auto const& size : sizes) {
+        if (size == "") {
+          error_field_name = "sizeGroups";
+          error_field_value = size;
+          error = "Size groups cannot map to an empty ad size name.";
+          return false;
+        }
+        if (!group.ad_sizes->Contains(size)) {
+          error_field_name = "sizeGroups";
+          error_field_value = size;
+          error = "Size does not exist in adSizes map.";
+          return false;
+        }
       }
     }
   }

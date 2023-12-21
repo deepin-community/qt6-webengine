@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,12 +7,12 @@
 #include <map>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
 #include "base/memory/ref_counted_delete_on_sequence.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "content/browser/quota/quota_manager_host.h"
 #include "content/public/common/content_switches.h"
 #include "mojo/public/cpp/bindings/receiver.h"
@@ -63,7 +63,7 @@ void QuotaChangeDispatcher::MaybeDispatchEvents() {
   for (auto& kvp : listeners_by_storage_key_) {
     const blink::StorageKey& storage_key = kvp.first;
     DelayedStorageKeyListener& storage_key_listener = kvp.second;
-    base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE,
         base::BindOnce(&QuotaChangeDispatcher::DispatchEventsForStorageKey,
                        weak_ptr_factory_.GetWeakPtr(), storage_key),

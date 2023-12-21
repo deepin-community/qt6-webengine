@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,8 +18,6 @@
 #include "components/autofill/core/browser/field_types.h"
 
 namespace autofill {
-
-namespace structured_address {
 
 std::u16string ReduceToInitials(const std::u16string& value) {
   if (value.empty())
@@ -284,7 +282,5 @@ void NameFullWithPrefix::MigrateLegacyStructure(bool is_verified_profile) {
     FormatValueFromSubcomponents();
   }
 }
-
-}  // namespace structured_address
 
 }  // namespace autofill

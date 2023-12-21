@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -36,7 +36,6 @@ namespace content {
 
 class BackgroundSyncScheduler;
 class BrowserContextImpl;
-class BrowsingDataRemover;
 class BrowsingDataRemoverImpl;
 class DownloadManager;
 class PermissionController;
@@ -69,7 +68,7 @@ class BrowserContextImpl {
     return shared_cors_origin_access_list_.get();
   }
 
-  BrowsingDataRemover* GetBrowsingDataRemover();
+  BrowsingDataRemoverImpl* GetBrowsingDataRemover();
 
   media::learning::LearningSession* GetLearningSession();
 

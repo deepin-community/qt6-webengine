@@ -1,11 +1,11 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <memory>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -14,7 +14,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "net/base/address_family.h"
@@ -88,9 +87,9 @@ class Rules {
   }
 
   const Rule& GetRuleByUrl(const GURL& url) const {
-    for (auto it = rules_.begin(); it != rules_.end(); ++it) {
-      if (it->url == url)
-        return *it;
+    for (const auto& rule : rules_) {
+      if (rule.url == url)
+        return rule;
     }
     LOG(FATAL) << "Rule not found for " << url;
     return rules_[0];
@@ -103,8 +102,7 @@ class Rules {
 
 class RuleBasedPacFileFetcher : public PacFileFetcher {
  public:
-  explicit RuleBasedPacFileFetcher(const Rules* rules)
-      : rules_(rules), request_context_(nullptr) {}
+  explicit RuleBasedPacFileFetcher(const Rules* rules) : rules_(rules) {}
 
   virtual void SetRequestContext(URLRequestContext* context) {
     request_context_ = context;
@@ -133,7 +131,7 @@ class RuleBasedPacFileFetcher : public PacFileFetcher {
 
  private:
   raw_ptr<const Rules> rules_;
-  raw_ptr<URLRequestContext> request_context_;
+  raw_ptr<URLRequestContext> request_context_ = nullptr;
 };
 
 // A mock retriever, returns asynchronously when CompleteRequests() is called.
@@ -396,12 +394,12 @@ TEST_F(PacFileDeciderQuickCheckTest, AsyncSuccess) {
   EXPECT_THAT(StartDecider(), IsError(ERR_IO_PENDING));
   ASSERT_TRUE(host_resolver().has_pending_requests());
 
-  // The DNS lookup should be pending, and be using the same NetworkIsolationKey
-  // as the PacFileFetcher, so wpad fetches can reuse the DNS lookup result from
-  // the wpad quick check, if it succeeds.
+  // The DNS lookup should be pending, and be using the same
+  // NetworkAnonymizationKey as the PacFileFetcher, so wpad fetches can reuse
+  // the DNS lookup result from the wpad quick check, if it succeeds.
   ASSERT_EQ(1u, host_resolver().last_id());
-  EXPECT_EQ(fetcher_.isolation_info().network_isolation_key(),
-            host_resolver().request_network_isolation_key(1));
+  EXPECT_EQ(fetcher_.isolation_info().network_anonymization_key(),
+            host_resolver().request_network_anonymization_key(1));
 
   host_resolver().ResolveAllPending();
   callback_.WaitForResult();
@@ -420,12 +418,12 @@ TEST_F(PacFileDeciderQuickCheckTest, AsyncFail) {
   EXPECT_THAT(StartDecider(), IsError(ERR_IO_PENDING));
   ASSERT_TRUE(host_resolver().has_pending_requests());
 
-  // The DNS lookup should be pending, and be using the same NetworkIsolationKey
-  // as the PacFileFetcher, so wpad fetches can reuse the DNS lookup result from
-  // the wpad quick check, if it succeeds.
+  // The DNS lookup should be pending, and be using the same
+  // NetworkAnonymizationKey as the PacFileFetcher, so wpad fetches can reuse
+  // the DNS lookup result from the wpad quick check, if it succeeds.
   ASSERT_EQ(1u, host_resolver().last_id());
-  EXPECT_EQ(fetcher_.isolation_info().network_isolation_key(),
-            host_resolver().request_network_isolation_key(1));
+  EXPECT_EQ(fetcher_.isolation_info().network_anonymization_key(),
+            host_resolver().request_network_anonymization_key(1));
 
   host_resolver().ResolveAllPending();
   callback_.WaitForResult();
@@ -821,7 +819,7 @@ class AsyncFailDhcpFetcher
             const NetLogWithSource& net_log,
             const NetworkTrafficAnnotationTag traffic_annotation) override {
     callback_ = std::move(callback);
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&AsyncFailDhcpFetcher::CallbackWithFailure,
                                   AsWeakPtr()));
     return ERR_IO_PENDING;
@@ -853,8 +851,7 @@ TEST(PacFileDeciderTest, DhcpCancelledByDestructor) {
   Rules rules;
   RuleBasedPacFileFetcher fetcher(&rules);
 
-  std::unique_ptr<AsyncFailDhcpFetcher> dhcp_fetcher(
-      new AsyncFailDhcpFetcher());
+  auto dhcp_fetcher = std::make_unique<AsyncFailDhcpFetcher>();
 
   ProxyConfig config;
   config.set_auto_detect(true);

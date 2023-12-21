@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,10 +12,11 @@
 #include <memory>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 #include "base/component_export.h"
 #include "base/containers/span.h"
+#include "base/functional/callback.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/string_piece.h"
@@ -246,11 +247,12 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS_BASE) Message {
   // Takes the unserialized message context from this Message if its tag matches
   // |tag|.
   std::unique_ptr<internal::UnserializedMessageContext> TakeUnserializedContext(
-      const internal::UnserializedMessageContext::Tag* tag);
+      uintptr_t tag);
 
   template <typename MessageType>
   std::unique_ptr<MessageType> TakeUnserializedContext() {
-    auto generic_context = TakeUnserializedContext(&MessageType::kMessageTag);
+    auto generic_context = TakeUnserializedContext(
+        reinterpret_cast<uintptr_t>(&MessageType::kMessageTag));
     if (!generic_context)
       return nullptr;
     return base::WrapUnique(
@@ -296,7 +298,8 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS_BASE) Message {
 
   std::vector<ScopedHandle> handles_;
   std::vector<ScopedInterfaceEndpointHandle> associated_endpoint_handles_;
-  raw_ptr<const ConnectionGroup::Ref> receiver_connection_group_ = nullptr;
+  raw_ptr<const ConnectionGroup::Ref, DanglingUntriaged>
+      receiver_connection_group_ = nullptr;
 
   // Indicates whether this Message object is transferable, i.e. can be sent
   // elsewhere. In general this is true unless |handle_| is invalid or
@@ -410,7 +413,7 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS_BASE) PassThroughFilter
 // a message, use GetBadMessageCallback() and retain its result until you're
 // ready to invoke or discard it.
 COMPONENT_EXPORT(MOJO_CPP_BINDINGS_BASE)
-void ReportBadMessage(base::StringPiece error);
+NOT_TAIL_CALLED void ReportBadMessage(base::StringPiece error);
 
 // Acquires a callback which may be run to report the currently dispatching
 // Message as bad. Note that this is only legal to call from directly within the

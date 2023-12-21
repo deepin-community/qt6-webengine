@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -96,6 +96,15 @@ bool UnpickleDebugStreamData(base::PickleIterator iterator,
          iterator.ReadString(&value.load_stream_status);
 }
 
+std::vector<uint32_t> GetExpandedHashes(
+    const std::vector<feedstore::StreamContentHashList>& hashes_list) {
+  std::vector<uint32_t> expanded_hashes;
+  for (const feedstore::StreamContentHashList& hash_list : hashes_list)
+    for (const auto& hash : hash_list.hashes())
+      expanded_hashes.push_back(hash);
+  return expanded_hashes;
+}
+
 }  // namespace
 
 RequestMetadata::RequestMetadata() = default;
@@ -155,28 +164,49 @@ DebugStreamData::~DebugStreamData() = default;
 DebugStreamData::DebugStreamData(const DebugStreamData&) = default;
 DebugStreamData& DebugStreamData::operator=(const DebugStreamData&) = default;
 
-base::Value PersistentMetricsDataToValue(const PersistentMetricsData& data) {
-  base::Value dict(base::Value::Type::DICTIONARY);
-  dict.SetKey("day_start", base::TimeToValue(data.current_day_start));
-  dict.SetKey("time_spent_in_feed",
-              base::TimeDeltaToValue(data.accumulated_time_spent_in_feed));
+base::Value::Dict PersistentMetricsDataToDict(
+    const PersistentMetricsData& data) {
+  base::Value::Dict dict;
+  dict.Set("day_start", base::TimeToValue(data.current_day_start));
+  dict.Set("time_spent_in_feed",
+           base::TimeDeltaToValue(data.accumulated_time_spent_in_feed));
+  dict.Set("visit_start", base::TimeToValue(data.visit_start));
+  dict.Set("visit_end", base::TimeToValue(data.visit_end));
+  dict.Set("did_report_good_visit", base::Value(data.did_report_good_visit));
+  dict.Set("time_in_feed_for_good_visit",
+           base::TimeDeltaToValue(data.time_in_feed_for_good_visit));
+  dict.Set("did_scroll_in_visit", base::Value(data.did_scroll_in_visit));
   return dict;
 }
 
-PersistentMetricsData PersistentMetricsDataFromValue(const base::Value& value) {
+PersistentMetricsData PersistentMetricsDataFromDict(
+    const base::Value::Dict& dict) {
   PersistentMetricsData result;
-  if (!value.is_dict())
-    return result;
   absl::optional<base::Time> day_start =
-      base::ValueToTime(value.FindKey("day_start"));
+      base::ValueToTime(dict.Find("day_start"));
   if (!day_start)
     return result;
   result.current_day_start = *day_start;
   absl::optional<base::TimeDelta> time_spent_in_feed =
-      base::ValueToTimeDelta(value.FindKey("time_spent_in_feed"));
+      base::ValueToTimeDelta(dict.Find("time_spent_in_feed"));
   if (time_spent_in_feed) {
     result.accumulated_time_spent_in_feed = *time_spent_in_feed;
   }
+
+  result.visit_start =
+      base::ValueToTime(dict.Find("visit_start")).value_or(base::Time());
+  result.visit_end =
+      base::ValueToTime(dict.Find("visit_end")).value_or(base::Time());
+
+  if (const base::Value* value = dict.Find("did_report_good_visit"))
+    result.did_report_good_visit = value->GetIfBool().value_or(false);
+
+  result.time_in_feed_for_good_visit =
+      base::ValueToTimeDelta(dict.Find("time_in_feed_for_good_visit"))
+          .value_or(base::Seconds(0));
+
+  if (const base::Value* value = dict.Find("did_scroll_in_visit"))
+    result.did_scroll_in_visit = value->GetIfBool().value_or(false);
 
   return result;
 }
@@ -189,31 +219,44 @@ void LoadLatencyTimes::StepComplete(StepKind kind) {
   last_time_ = now;
 }
 
-ContentIdSet::ContentIdSet() = default;
-ContentIdSet::~ContentIdSet() = default;
-ContentIdSet::ContentIdSet(base::flat_set<int64_t> content_ids)
-    : content_ids_(std::move(content_ids)) {}
-ContentIdSet::ContentIdSet(const ContentIdSet&) = default;
-ContentIdSet::ContentIdSet(ContentIdSet&&) = default;
-ContentIdSet& ContentIdSet::operator=(const ContentIdSet&) = default;
-ContentIdSet& ContentIdSet::operator=(ContentIdSet&&) = default;
-bool ContentIdSet::ContainsAllOf(const ContentIdSet& items) const {
-  for (int64_t id : items.content_ids_) {
-    if (!content_ids_.contains(id))
+ContentHashSet::ContentHashSet() = default;
+ContentHashSet::~ContentHashSet() = default;
+ContentHashSet::ContentHashSet(
+    std::vector<feedstore::StreamContentHashList> hashes)
+    : original_hashes_(std::move(hashes)),
+      sorted_hashes_(GetExpandedHashes(original_hashes_)) {}
+ContentHashSet::ContentHashSet(const ContentHashSet&) = default;
+ContentHashSet::ContentHashSet(ContentHashSet&&) = default;
+ContentHashSet& ContentHashSet::operator=(const ContentHashSet&) = default;
+ContentHashSet& ContentHashSet::operator=(ContentHashSet&&) = default;
+bool ContentHashSet::ContainsAllOf(const ContentHashSet& items) const {
+  for (uint32_t hash : items.sorted_hashes_) {
+    if (!sorted_hashes_.contains(hash))
       return false;
   }
   return true;
 }
-bool ContentIdSet::IsEmpty() const {
-  return content_ids_.empty();
+bool ContentHashSet::Contains(uint32_t hash) const {
+  return sorted_hashes_.contains(hash);
 }
-bool ContentIdSet::operator==(const ContentIdSet& rhs) const {
-  return content_ids_ == rhs.content_ids_;
+bool ContentHashSet::IsEmpty() const {
+  return sorted_hashes_.empty();
 }
-std::ostream& operator<<(std::ostream& s, const ContentIdSet& id_set) {
+bool ContentHashSet::operator==(const ContentHashSet& rhs) const {
+  return sorted_hashes_ == rhs.sorted_hashes_;
+}
+std::ostream& operator<<(std::ostream& s, const ContentHashSet& hash_set) {
   s << "{";
-  for (int64_t id : id_set.values()) {
-    s << id << ", ";
+  for (const auto& hash_list : hash_set.original_hashes()) {
+    s << "(";
+    for (const auto hash : hash_list.hashes()) {
+      s << hash << ", ";
+    }
+    s << ")";
+  }
+  s << "} {";
+  for (const auto& hash : hash_set.sorted_hashes()) {
+    s << hash << ", ";
   }
   s << "}";
   return s;

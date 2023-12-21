@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include "ash/wm/desks/desks_util.h"
 #include "components/exo/wayland/server_util.h"
 #include "components/exo/wayland/zcr_remote_shell_impl.h"
-#include "components/exo/wm_helper_chromeos.h"
+#include "components/exo/wm_helper.h"
 
 namespace exo {
 namespace wayland {
@@ -60,6 +60,7 @@ const WaylandRemoteShellEventMapping wayland_remote_shell_event_mapping_v2 = {
     1,
     1,
     1,
+    /*has_bounds_change_reason_float=*/true,
 };
 
 const struct zcr_remote_surface_v2_interface remote_surface_implementation_v2 =
@@ -105,6 +106,7 @@ const struct zcr_remote_surface_v2_interface remote_surface_implementation_v2 =
         zcr_remote_shell::remote_surface_unset_resize_lock,
         zcr_remote_shell::remote_surface_set_bounds_in_output,
         zcr_remote_shell::remote_surface_set_resize_lock_type,
+        zcr_remote_shell::remote_surface_set_float,
 };
 
 const struct zcr_notification_surface_v2_interface
@@ -162,6 +164,8 @@ void remote_shell_get_remote_surface_v2(wl_client* client,
   wl_resource* remote_surface_resource =
       wl_resource_create(client, &zcr_remote_surface_v2_interface,
                          wl_resource_get_version(resource), id);
+
+  shell_surface->SetSecurityDelegate(GetSecurityDelegate(client));
 
   shell_surface->set_delegate(
       shell->CreateShellSurfaceDelegate(remote_surface_resource));
@@ -271,8 +275,7 @@ void remote_shell_get_remote_output_v2(wl_client* client,
                          wl_resource_get_version(resource), id);
 
   auto remote_output = std::make_unique<WaylandRemoteOutput>(
-      remote_output_resource, remote_output_event_mapping_v2);
-  display_handler->AddObserver(remote_output.get());
+      remote_output_resource, remote_output_event_mapping_v2, display_handler);
 
   SetImplementation(remote_output_resource, &remote_output_implementation_v2,
                     std::move(remote_output));

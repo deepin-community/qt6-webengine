@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,6 +12,7 @@
 #include "components/autofill/core/browser/autofill_client.h"
 #include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
+#include "url/origin.h"
 
 namespace autofill {
 
@@ -24,7 +25,7 @@ enum class AutofillProfileImportType {
   // Type is unspecified.
   kImportTypeUnspecified,
   // The observed profile corresponds to a new profile because there are no
-  // mergeable or updateable profiles.
+  // mergeable or updatable profiles.
   kNewProfile,
   // The imported profile is a subset of an already existing profile.
   kDuplicateImport,
@@ -35,7 +36,7 @@ enum class AutofillProfileImportType {
   // after explicit user confirmation.
   kConfirmableMerge,
   // The observed profile corresponds to a new profile because there are no
-  // mergeable or updateable profiles but imports are suppressed for this
+  // mergeable or updatable profiles but imports are suppressed for this
   // domain.
   kSuppressedNewProfile,
   // The observed profile resulted both in a confirmable merge and in a silent
@@ -56,19 +57,40 @@ enum class AutofillProfileImportType {
   kMaxValue = kUnusableIncompleteProfile
 };
 
+// Specifies the status of the imported phone number.
+enum class PhoneImportStatus {
+  // Phone number is not present. Default.
+  kNone,
+  // User imported the phone number as it was.
+  kValid,
+  // The phone number was removed from the profile import as it was invalid.
+  kInvalid,
+  kMaxValue = kInvalid
+};
+
 // Metadata about the import, which is passed through from FormDataImporter to
 // ProfileImportProcess. This is required to do metric collection, depending on
 // the user's decision to (not) import, based on how we construct the candidate
 // profile in FormDataImporter.
 struct ProfileImportMetadata {
   // Whether the profile's country was complemented automatically.
-  // TODO(crbug.com/1297032): Cleanup when launched.
   bool did_complement_country = false;
-  // Whether the profile originally contained an invalid phone number, that was:
-  // - removed due to |kAutofillRemoveInvalidPhoneNumberOnImport|
-  // - the only requirement preventing an import.
-  // TODO(crbug.com/1298424): Cleanup when launched.
-  bool did_remove_invalid_phone_number = false;
+  // Whether the form original contained an invalid country that was ignored
+  // due to AutofillOverwriteInvalidCountryOnImport.
+  // TODO(crbug.com/1362472): Cleanup when launched.
+  bool did_ignore_invalid_country = false;
+  // Whether the form originally contained a phone number and if that phone
+  // number is considered valid by libphonenumber.
+  PhoneImportStatus phone_import_status = PhoneImportStatus::kNone;
+  // Whether the profile import from any field that contained an unrecognized
+  // autocomplete attribute.
+  bool did_import_from_unrecognized_autocomplete_field = false;
+  // The origin that the form was submitted on.
+  url::Origin origin;
+  // The number of fields with unrecognized autocomplete attribute that used to
+  // construct the observed profile.
+  // TODO(crbug.com/1301721): Remove.
+  int num_autocomplete_unrecognized_fields = 0;
 };
 
 // This class holds the state associated with the import of an AutofillProfile
@@ -108,6 +130,10 @@ class ProfileImportProcess {
     return import_candidate_;
   }
 
+  const absl::optional<AutofillProfile>& confirmed_import_candidate() const {
+    return confirmed_import_candidate_;
+  }
+
   const absl::optional<AutofillProfile>& merge_candidate() const {
     return merge_candidate_;
   }
@@ -121,6 +147,10 @@ class ProfileImportProcess {
   const AutofillProfile& observed_profile() const { return observed_profile_; }
 
   AutofillProfileImportType import_type() const { return import_type_; }
+
+  const ProfileImportMetadata& import_metadata() const {
+    return import_metadata_;
+  }
 
   AutofillClient::SaveAddressProfileOfferUserDecision user_decision() const {
     return user_decision_;
@@ -173,9 +203,10 @@ class ProfileImportProcess {
       AutofillClient::SaveAddressProfileOfferUserDecision decision,
       absl::optional<AutofillProfile> edited_profile = absl::nullopt);
 
-  // Records UMA metrics. Should only be called after a user decision was
-  // supplied.
-  void CollectMetrics() const;
+  // Records UMA and UKM metrics. Should only be called after a user decision
+  // was supplied or a silent update happens.
+//  void CollectMetrics(ukm::UkmRecorder* ukm_recorder,
+//                      ukm::SourceId source_id) const;
 
  private:
   // Determines the import type of |observed_profile_| with respect to
@@ -192,7 +223,7 @@ class ProfileImportProcess {
   // The profile as it has been observed on form submission.
   AutofillProfile observed_profile_;
 
-  // Profiles that are silently updateable with the observed profile.
+  // Profiles that are silently updatable with the observed profile.
   std::vector<AutofillProfile> updated_profiles_;
 
   // A profile in its original state that can be merged with the observed
@@ -217,7 +248,7 @@ class ProfileImportProcess {
   AutofillClient::SaveAddressProfileOfferUserDecision user_decision_{
       AutofillClient::SaveAddressProfileOfferUserDecision::kUndefined};
 
-  // The appplication locale used for this import process.
+  // The application locale used for this import process.
   std::string app_locale_;
 
   // The url of the form.

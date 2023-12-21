@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -33,7 +33,7 @@ class CFX_DIBitmap final : public CFX_DIBBase {
   bool Copy(const RetainPtr<CFX_DIBBase>& pSrc);
 
   // CFX_DIBBase
-  uint8_t* GetBuffer() const override;
+  pdfium::span<uint8_t> GetBuffer() const override;
   pdfium::span<const uint8_t> GetScanline(int line) const override;
   size_t GetEstimatedImageMemoryBurden() const override;
 
@@ -41,7 +41,7 @@ class CFX_DIBitmap final : public CFX_DIBBase {
   bool ConvertFormat(FXDIB_Format format);
   void Clear(uint32_t color);
 
-#if defined(_SKIA_SUPPORT_) || defined(_SKIA_SUPPORT_PATHS_)
+#ifdef _SKIA_SUPPORT_
   uint32_t GetPixel(int x, int y) const;
 #endif
 #if defined(_SKIA_SUPPORT_)
@@ -86,6 +86,14 @@ class CFX_DIBitmap final : public CFX_DIBBase {
                      const CFX_ClipRgn* pClipRgn,
                      bool bRgbByteOrder);
 
+  void CompositeOneBPPMask(int dest_left,
+                           int dest_top,
+                           int width,
+                           int height,
+                           const RetainPtr<CFX_DIBBase>& pSrcBitmap,
+                           int src_left,
+                           int src_top);
+
   bool CompositeRect(int dest_left,
                      int dest_top,
                      int width,
@@ -106,18 +114,15 @@ class CFX_DIBitmap final : public CFX_DIBBase {
                                                             FXDIB_Format format,
                                                             uint32_t pitch);
 
-#if defined(_SKIA_SUPPORT_) || defined(_SKIA_SUPPORT_PATHS_)
+#ifdef _SKIA_SUPPORT_
   void PreMultiply();
-  void DebugVerifyBitmapIsPreMultiplied() const;
-#endif
-#if defined(_SKIA_SUPPORT_PATHS_)
   void UnPreMultiply();
 #endif
 
  private:
   enum class Channel : uint8_t { kRed, kAlpha };
 
-#if defined(_SKIA_SUPPORT_PATHS_)
+#ifdef _SKIA_SUPPORT_
   enum class Format { kCleared, kPreMultiplied, kUnPreMultiplied };
 #endif
 
@@ -152,7 +157,7 @@ class CFX_DIBitmap final : public CFX_DIBBase {
                                   int src_top);
 
   MaybeOwned<uint8_t, FxFreeDeleter> m_pBuffer;
-#if defined(_SKIA_SUPPORT_PATHS_)
+#ifdef _SKIA_SUPPORT_
   Format m_nFormat = Format::kCleared;
 #endif
 };

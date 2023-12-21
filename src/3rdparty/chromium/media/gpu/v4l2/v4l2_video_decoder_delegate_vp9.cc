@@ -1,10 +1,13 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "media/gpu/v4l2/v4l2_video_decoder_delegate_vp9.h"
 
+// ChromeOS specific header; does not exist upstream
+#if BUILDFLAG(IS_CHROMEOS)
 #include <linux/media/vp9-ctrls-upstream.h>
+#endif
 
 #include "base/logging.h"
 #include "base/numerics/safe_math.h"
@@ -149,9 +152,11 @@ V4L2VideoDecoderDelegateVP9::V4L2VideoDecoderDelegateVP9(
   DCHECK(surface_handler_);
   DCHECK(device_);
 
-  // This control was landed in v5.17 and is pretty much a marker that the
+  // This control, originally landed in v5.17, is pretty much a marker that the
   // driver supports the stable API.
-  DCHECK(device_->IsCtrlExposed(V4L2_CID_STATELESS_VP9_FRAME));
+  const bool supports_stable_api =
+      device_->IsCtrlExposed(V4L2_CID_STATELESS_VP9_FRAME);
+  DCHECK(supports_stable_api);
 }
 
 V4L2VideoDecoderDelegateVP9::~V4L2VideoDecoderDelegateVP9() = default;

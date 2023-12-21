@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,7 +15,7 @@ class WebURL;
 // Interface that allows observing request events and optionally replacing
 // the peer. Note that if it doesn't replace the peer it must return the
 // current peer so that the ownership is continued to be held by
-// WebResourceRequestSender.
+// ResourceRequestSender.
 class BLINK_PLATFORM_EXPORT WebResourceRequestSenderDelegate {
  public:
   virtual ~WebResourceRequestSenderDelegate() = default;

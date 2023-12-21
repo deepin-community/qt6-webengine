@@ -1,5 +1,5 @@
 <!--
-Copyright 2021 The Chromium Authors. All rights reserved.
+Copyright 2021 The Chromium Authors
 Use of this source code is governed by a BSD-style license that can be
 found in the LICENSE file.
 -->
@@ -30,7 +30,7 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
-<histogram name="VRSessionTime" units="ms" expires_after="2022-09-12">
+<histogram name="VRSessionTime" units="ms" expires_after="2023-08-13">
   <owner>alcooper@chromium.org</owner>
   <owner>xr-dev@chromium.org</owner>
   <summary>
@@ -39,33 +39,14 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
-<histogram name="VRSessionVideoCount" units="units" expires_after="2022-09-12">
-  <owner>alcooper@chromium.org</owner>
-  <owner>xr-dev@chromium.org</owner>
-  <summary>
-    Number of videos watched in a VR session. Logged when a new disjoint session
-    has begun, or when the session has ended in a non-continuable way.
-  </summary>
-</histogram>
-
-<histogram name="VRSessionVideoTime" units="ms" expires_after="2022-09-12">
-  <owner>alcooper@chromium.org</owner>
-  <owner>xr-dev@chromium.org</owner>
-  <summary>
-    The duration of a single session spent watching video in VR. Logged when a
-    new disjoint session has begun, or when the session has ended in a
-    non-continuable way.
-  </summary>
-</histogram>
-
-<histogram name="VRViewerType" enum="VRViewerType" expires_after="2022-10-09">
+<histogram name="VRViewerType" enum="VRViewerType" expires_after="2023-08-20">
   <owner>alcooper@chromium.org</owner>
   <owner>xr-dev@chromium.org</owner>
   <summary>The type of headset being used for VR.</summary>
 </histogram>
 
 <histogram name="XR.ARCore.DepthBufferSizeInPixels" units="pixels"
-    expires_after="2022-07-02">
+    expires_after="2023-12-10">
   <owner>bialpio@chromium.org</owner>
   <owner>xr-dev@chromium.org</owner>
   <summary>
@@ -75,22 +56,12 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
-<histogram name="XR.RuntimeUsed" enum="XRDeviceId" expires_after="2023-01-07">
+<histogram name="XR.RuntimeUsed" enum="XRDeviceId" expires_after="2024-01-07">
   <owner>alcooper@chromium.org</owner>
   <owner>xr-dev@chromium.org</owner>
   <summary>
     Indicates which XR runtime was used for a session. Recorded when the session
     was successfully created.
-  </summary>
-</histogram>
-
-<histogram name="XR.WebXR.ReferenceSpace.Succeeded" enum="XRReferenceSpaceType"
-    expires_after="2022-10-09">
-  <owner>alcooper@chromium.org</owner>
-  <owner>xr-dev@chromium.org</owner>
-  <summary>
-    Records which reference spaces are successfully created when the promise
-    returned by XRSession.requestReferenceSpace() is resolved.
   </summary>
 </histogram>
 

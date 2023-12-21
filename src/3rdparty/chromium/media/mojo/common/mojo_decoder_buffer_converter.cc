@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,11 +7,11 @@
 #include <memory>
 #include <tuple>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "media/base/audio_buffer.h"
 #include "media/base/cdm_context.h"
 #include "media/base/decoder_buffer.h"
@@ -88,7 +88,7 @@ MojoDecoderBufferReader::MojoDecoderBufferReader(
     : consumer_handle_(std::move(consumer_handle)),
       pipe_watcher_(FROM_HERE,
                     mojo::SimpleWatcher::ArmingPolicy::MANUAL,
-                    base::SequencedTaskRunnerHandle::Get()),
+                    base::SequencedTaskRunner::GetCurrentDefault()),
       armed_(false),
       bytes_read_(0) {
   DVLOG(1) << __func__;
@@ -320,7 +320,7 @@ MojoDecoderBufferWriter::MojoDecoderBufferWriter(
     : producer_handle_(std::move(producer_handle)),
       pipe_watcher_(FROM_HERE,
                     mojo::SimpleWatcher::ArmingPolicy::MANUAL,
-                    base::SequencedTaskRunnerHandle::Get()),
+                    base::SequencedTaskRunner::GetCurrentDefault()),
       armed_(false),
       bytes_written_(0) {
   DVLOG(1) << __func__;

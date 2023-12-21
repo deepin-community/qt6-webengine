@@ -1,13 +1,13 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "weblayer/browser/persistent_download.h"
 
-#include "base/bind.h"
 #include "base/files/file_path.h"
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "components/download/public/common/download_item.h"
 
 namespace weblayer {
@@ -60,7 +60,7 @@ void PersistentDownload::Pause() {
   // nested calls.
   resume_pending_ = false;
   pause_pending_ = true;
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&PersistentDownload::PauseInternal,
                                 weak_ptr_factory_.GetWeakPtr()));
 }
@@ -68,14 +68,14 @@ void PersistentDownload::Pause() {
 void PersistentDownload::Resume() {
   pause_pending_ = false;
   resume_pending_ = true;
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&PersistentDownload::ResumeInternal,
                                 weak_ptr_factory_.GetWeakPtr()));
 }
 
 void PersistentDownload::Cancel() {
   cancel_pending_ = true;
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&PersistentDownload::CancelInternal,
                                 weak_ptr_factory_.GetWeakPtr()));
 }

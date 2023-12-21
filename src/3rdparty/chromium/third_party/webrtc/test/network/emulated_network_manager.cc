@@ -85,8 +85,7 @@ void EmulatedNetworkManager::StopUpdating() {
 }
 
 void EmulatedNetworkManager::GetStats(
-    std::function<void(std::unique_ptr<EmulatedNetworkStats>)> stats_callback)
-    const {
+    std::function<void(EmulatedNetworkStats)> stats_callback) const {
   task_queue_->PostTask([stats_callback, this]() {
     stats_callback(endpoints_container_->GetStats());
   });
@@ -95,15 +94,15 @@ void EmulatedNetworkManager::GetStats(
 void EmulatedNetworkManager::UpdateNetworksOnce() {
   RTC_DCHECK_RUN_ON(network_thread_.get());
 
-  std::vector<rtc::Network*> networks;
+  std::vector<std::unique_ptr<rtc::Network>> networks;
   for (std::unique_ptr<rtc::Network>& net :
        endpoints_container_->GetEnabledNetworks()) {
     net->set_default_local_address_provider(this);
-    networks.push_back(net.release());
+    networks.push_back(std::move(net));
   }
 
   bool changed;
-  MergeNetworkList(networks, &changed);
+  MergeNetworkList(std::move(networks), &changed);
   if (changed || !sent_first_update_) {
     MaybeSignalNetworksChanged();
     sent_first_update_ = true;

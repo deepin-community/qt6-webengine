@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,12 +10,12 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/containers/contains.h"
 #include "base/containers/flat_set.h"
 #include "base/files/platform_file.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "ui/gfx/gpu_fence.h"
 #include "ui/gfx/gpu_fence_handle.h"
 #include "ui/ozone/platform/drm/common/drm_util.h"
@@ -75,16 +75,20 @@ bool HardwareDisplayPlaneManagerAtomic::SetCrtcProps(
     drmModeAtomicReq* atomic_request,
     uint32_t crtc_id,
     bool set_active,
-    uint32_t mode_id) {
+    uint32_t mode_id,
+    bool enable_vrr) {
   // Only making a copy here to retrieve the the props IDs. The state will be
   // updated only after a successful modeset.
   CrtcProperties modeset_props = GetCrtcStateForCrtcId(crtc_id).properties;
   modeset_props.active.value = static_cast<uint64_t>(set_active);
   modeset_props.mode_id.value = mode_id;
+  modeset_props.vrr_enabled.value = enable_vrr;
 
   bool status =
       AddPropertyIfValid(atomic_request, crtc_id, modeset_props.active);
   status &= AddPropertyIfValid(atomic_request, crtc_id, modeset_props.mode_id);
+  status &=
+      AddPropertyIfValid(atomic_request, crtc_id, modeset_props.vrr_enabled);
   return status;
 }
 
@@ -129,7 +133,7 @@ bool HardwareDisplayPlaneManagerAtomic::Commit(CommitRequest commit_request,
       all_planes_lists.insert(crtc_request.plane_list());
 
     uint32_t mode_id = 0;
-    if (crtc_request.should_enable()) {
+    if (crtc_request.should_enable_crtc()) {
       auto mode_blob = drm_->CreatePropertyBlob(&crtc_request.mode(),
                                                 sizeof(crtc_request.mode()));
       status &= (mode_blob != nullptr);
@@ -142,12 +146,13 @@ bool HardwareDisplayPlaneManagerAtomic::Commit(CommitRequest commit_request,
     uint32_t crtc_id = crtc_request.crtc_id();
 
     status &= SetCrtcProps(atomic_request.get(), crtc_id,
-                           crtc_request.should_enable(), mode_id);
+                           crtc_request.should_enable_crtc(), mode_id,
+                           crtc_request.enable_vrr());
     status &=
         SetConnectorProps(atomic_request.get(), crtc_request.connector_id(),
-                          crtc_request.should_enable() * crtc_id);
+                          crtc_request.should_enable_crtc() * crtc_id);
 
-    if (crtc_request.should_enable()) {
+    if (crtc_request.should_enable_crtc()) {
       DCHECK(crtc_request.plane_list());
       if (!AssignOverlayPlanes(crtc_request.plane_list(),
                                crtc_request.overlays(), crtc_id)) {
@@ -186,8 +191,11 @@ bool HardwareDisplayPlaneManagerAtomic::Commit(CommitRequest commit_request,
   if (!is_testing)
     UpdateCrtcAndPlaneStatesAfterModeset(commit_request);
 
-  for (HardwareDisplayPlaneList* list : enable_planes_lists)
+  for (HardwareDisplayPlaneList* list : enable_planes_lists) {
+    if (!is_testing)
+      list->plane_list.swap(list->old_plane_list);
     list->plane_list.clear();
+  }
 
   return true;
 }
@@ -204,21 +212,24 @@ void HardwareDisplayPlaneManagerAtomic::SetAtomicPropsForCommit(
   }
 
   for (HardwareDisplayPlane* plane : plane_list->old_plane_list) {
-    if (!base::Contains(plane_list->plane_list, plane)) {
-      // |plane| is shared state between |old_plane_list| and |plane_list|.
-      // When we call BeginFrame(), we reset in_use since we need to be able to
-      // allocate the planes as needed. The current frame might not need to use
-      // |plane|, thus |plane->in_use()| would be false even though the previous
-      // frame used it. It's existence in |old_plane_list| is sufficient to
-      // signal that |plane| was in use previously.
-      plane->set_in_use(false);
-      HardwareDisplayPlaneAtomic* atomic_plane =
-          static_cast<HardwareDisplayPlaneAtomic*>(plane);
-      atomic_plane->AssignPlaneProps(
-          0, 0, gfx::Rect(), gfx::Rect(), gfx::OVERLAY_TRANSFORM_NONE,
-          base::kInvalidPlatformFile, DRM_FORMAT_INVALID);
-      atomic_plane->SetPlaneProps(atomic_request);
+    if (base::Contains(plane_list->plane_list, plane)) {
+      continue;
     }
+
+    // |plane| is shared state between |old_plane_list| and |plane_list|.
+    // When we call BeginFrame(), we reset in_use since we need to be able to
+    // allocate the planes as needed. The current frame might not need to use
+    // |plane|, thus |plane->in_use()| would be false even though the previous
+    // frame used it. It's existence in |old_plane_list| is sufficient to
+    // signal that |plane| was in use previously.
+    plane->set_in_use(false);
+    plane->set_owning_crtc(0);
+    HardwareDisplayPlaneAtomic* atomic_plane =
+        static_cast<HardwareDisplayPlaneAtomic*>(plane);
+    atomic_plane->AssignPlaneProps(
+        0, 0, gfx::Rect(), gfx::Rect(), gfx::OVERLAY_TRANSFORM_NONE,
+        base::kInvalidPlatformFile, DRM_FORMAT_INVALID, false);
+    atomic_plane->SetPlaneProps(atomic_request);
   }
 
   for (uint32_t crtc : crtcs) {
@@ -253,8 +264,6 @@ void HardwareDisplayPlaneManagerAtomic::SetAtomicPropsForCommit(
     for (auto* plane : plane_list->old_plane_list) {
       plane->set_in_use(true);
     }
-  } else {
-    plane_list->plane_list.swap(plane_list->old_plane_list);
   }
 }
 
@@ -307,6 +316,9 @@ bool HardwareDisplayPlaneManagerAtomic::Commit(
   if (release_fence)
     *release_fence = CreateMergedGpuFenceFromFDs(std::move(out_fence_fds));
 
+  if (!test_only)
+    plane_list->plane_list.swap(plane_list->old_plane_list);
+
   plane_list->plane_list.clear();
   plane_list->atomic_property_set.reset(drmModeAtomicAlloc());
   return true;
@@ -325,7 +337,7 @@ bool HardwareDisplayPlaneManagerAtomic::DisableOverlayPlanes(
           static_cast<HardwareDisplayPlaneAtomic*>(plane);
       atomic_plane->AssignPlaneProps(
           0, 0, gfx::Rect(), gfx::Rect(), gfx::OVERLAY_TRANSFORM_NONE,
-          base::kInvalidPlatformFile, DRM_FORMAT_INVALID);
+          base::kInvalidPlatformFile, DRM_FORMAT_INVALID, false);
       atomic_plane->SetPlaneProps(plane_list->atomic_property_set.get());
     }
     ret = drm_->CommitProperties(plane_list->atomic_property_set.get(),
@@ -373,7 +385,7 @@ bool HardwareDisplayPlaneManagerAtomic::ValidatePrimarySize(
 void HardwareDisplayPlaneManagerAtomic::RequestPlanesReadyCallback(
     DrmOverlayPlaneList planes,
     base::OnceCallback<void(DrmOverlayPlaneList planes)> callback) {
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(std::move(callback), std::move(planes)));
 }
 
@@ -398,7 +410,8 @@ bool HardwareDisplayPlaneManagerAtomic::SetPlaneData(
   if (!atomic_plane->AssignPlaneProps(
           crtc_id, framebuffer_id, overlay.display_bounds, src_rect,
           overlay.plane_transform, fence_fd,
-          overlay.buffer->framebuffer_pixel_format())) {
+          overlay.buffer->framebuffer_pixel_format(),
+          overlay.buffer->is_original_buffer())) {
     return false;
   }
   return true;

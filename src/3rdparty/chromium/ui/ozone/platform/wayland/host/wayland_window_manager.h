@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,21 +8,24 @@
 #include <memory>
 
 #include "base/containers/flat_map.h"
+#include "base/memory/raw_ptr.h"
 #include "base/observer_list.h"
 #include "ui/gfx/geometry/size_f.h"
 #include "ui/gfx/native_widget_types.h"
+#include "ui/ozone/platform/wayland/host/wayland_subsurface.h"
 #include "ui/ozone/platform/wayland/host/wayland_window_observer.h"
 
 namespace ui {
 
 class WaylandWindow;
 class WaylandSubsurface;
+class WaylandConnection;
 
 // Stores and returns WaylandWindows. Clients that are interested in knowing
 // when a new window is added or removed, but set self as an observer.
 class WaylandWindowManager {
  public:
-  WaylandWindowManager();
+  explicit WaylandWindowManager(WaylandConnection* connection);
   WaylandWindowManager(const WaylandWindowManager&) = delete;
   WaylandWindowManager& operator=(const WaylandWindowManager&) = delete;
   ~WaylandWindowManager();
@@ -33,6 +36,9 @@ class WaylandWindowManager {
   // Notifies observers that the Window has been ack configured and
   // WaylandBufferManagerHost can start attaching buffers to the |surface_|.
   void NotifyWindowConfigured(WaylandWindow* window);
+
+  // Notifies observers that the window's wayland role has been assigned.
+  void NotifyWindowRoleAssigned(WaylandWindow* window);
 
   // Stores the window that should grab the located events.
   void GrabLocatedEvents(WaylandWindow* event_grabber);
@@ -90,12 +96,11 @@ class WaylandWindowManager {
   // The given |window| must be managed by this manager.
   void SetKeyboardFocusedWindow(WaylandWindow* window);
 
-  // TODO(crbug.com/971525): remove this in favor of targeted subscription of
-  // windows to their outputs.
-  std::vector<WaylandWindow*> GetWindowsOnOutput(uint32_t output_id);
-
   // Returns all stored windows.
   std::vector<WaylandWindow*> GetAllWindows() const;
+
+  // Returns true if the |window| still exists.
+  bool IsWindowValid(const WaylandWindow* window) const;
 
   void AddWindow(gfx::AcceleratedWidget widget, WaylandWindow* window);
   void RemoveWindow(gfx::AcceleratedWidget widget);
@@ -104,15 +109,27 @@ class WaylandWindowManager {
   void RemoveSubsurface(gfx::AcceleratedWidget widget,
                         WaylandSubsurface* subsurface);
 
+  void RecycleSubsurface(std::unique_ptr<WaylandSubsurface> subsurface);
+
   // Creates a new unique gfx::AcceleratedWidget.
   gfx::AcceleratedWidget AllocateAcceleratedWidget();
 
  private:
+  raw_ptr<WaylandWindow> pointer_focused_window_ = nullptr;
+  raw_ptr<WaylandWindow> keyboard_focused_window_ = nullptr;
+
+  const raw_ptr<WaylandConnection> connection_;
+
   base::ObserverList<WaylandWindowObserver> observers_;
 
   base::flat_map<gfx::AcceleratedWidget, WaylandWindow*> window_map_;
 
-  WaylandWindow* located_events_grabber_ = nullptr;
+  // The cache of |primary_subsurface_| of the last closed WaylandWindow. This
+  // will be destroyed lazily to make sure the window closing animation works
+  // well. See crbug.com/1324548.
+  std::unique_ptr<WaylandSubsurface> subsurface_recycle_cache_;
+
+  raw_ptr<WaylandWindow> located_events_grabber_ = nullptr;
 
   // Stores strictly monotonically increasing counter for allocating unique
   // AccelerateWidgets.

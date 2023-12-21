@@ -11,10 +11,10 @@
 #include <memory>
 #include <vector>
 
-#include "absl/types/span.h"
 #include "platform/api/time.h"
 #include "platform/api/udp_socket.h"
 #include "platform/base/ip_address.h"
+#include "platform/base/span.h"
 
 namespace openscreen {
 namespace cast {
@@ -61,15 +61,18 @@ class Environment : public UdpSocket::Client {
 
     // Event that occurs when the environment has experienced a fatal error.
     virtual void OnSocketInvalid(Error error) = 0;
+
+   protected:
+    virtual ~SocketSubscriber();
   };
 
   // Construct with the given clock source and TaskRunner. Creates and
   // internally-owns a UdpSocket, and immediately binds it to the given
-  // |local_endpoint|. If embedders do not care what interface/address the UDP
-  // socket is bound on, they may omit that argument.
+  // |local_endpoint|. Default behavior if |local_endpoint| is omitted is to
+  // bind to all available interfaces using IPv4.
   Environment(ClockNowFunctionPtr now_function,
               TaskRunner* task_runner,
-              const IPEndpoint& local_endpoint = IPEndpoint::kAnyV6());
+              const IPEndpoint& local_endpoint = IPEndpoint::kAnyV4());
 
   ~Environment() override;
 
@@ -117,7 +120,7 @@ class Environment : public UdpSocket::Client {
   //
   // Note: This method is virtual to allow unit tests to intercept packets
   // before they actually head-out through the socket.
-  virtual void SendPacket(absl::Span<const uint8_t> packet);
+  virtual void SendPacket(ByteView packet);
 
  protected:
   Environment() : now_function_(nullptr), task_runner_(nullptr) {}

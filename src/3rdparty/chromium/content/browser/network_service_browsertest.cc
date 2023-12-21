@@ -1,12 +1,12 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/json/values_util.h"
@@ -56,6 +56,7 @@
 #include "services/network/public/cpp/network_switches.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/mojom/network_service.mojom.h"
 #include "services/network/public/mojom/network_service_test.mojom.h"
 #include "services/network/test/udp_socket_test_util.h"
 #include "sql/database.h"
@@ -108,15 +109,11 @@ class TestWebUIDataSource : public URLDataSource {
   void StartDataRequest(const GURL& url,
                         const WebContents::Getter& wc_getter,
                         URLDataSource::GotDataCallback callback) override {
-    std::string dummy_html = "<html><body>Foo</body></html>";
-    scoped_refptr<base::RefCountedString> response =
-        base::RefCountedString::TakeString(&dummy_html);
-    std::move(callback).Run(response.get());
+    std::move(callback).Run(base::MakeRefCounted<base::RefCountedString>(
+        std::string("<html><body>Foo</body></html>")));
   }
 
-  std::string GetMimeType(const std::string& path) override {
-    return "text/html";
-  }
+  std::string GetMimeType(const GURL& url) override { return "text/html"; }
 };
 
 class NetworkServiceBrowserTest : public ContentBrowserTest {
@@ -182,7 +179,9 @@ class NetworkServiceBrowserTest : public ContentBrowserTest {
   base::FilePath GetCacheDirectory() { return temp_dir_.GetPath(); }
 
   base::FilePath GetCacheIndexDirectory() {
-    return GetCacheDirectory().AppendASCII("index-dir");
+    return GetCacheDirectory()
+        .AppendASCII("Cache_Data")
+        .AppendASCII("index-dir");
   }
 
   void LoadURL(const GURL& url,
@@ -218,7 +217,7 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest, WebUIBindingsNoHttp) {
   GURL test_url(GetWebUIURL("webui/"));
   EXPECT_TRUE(NavigateToURL(shell(), test_url));
   RenderProcessHostBadIpcMessageWaiter kill_waiter(
-      shell()->web_contents()->GetMainFrame()->GetProcess());
+      shell()->web_contents()->GetPrimaryMainFrame()->GetProcess());
   ASSERT_FALSE(CheckCanLoadHttp());
   EXPECT_EQ(bad_message::RPH_MOJO_PROCESS_ERROR, kill_waiter.Wait());
 }
@@ -284,7 +283,7 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest,
   context_params->cert_verifier_params = GetCertVerifierParams(
       cert_verifier::mojom::CertVerifierCreationParams::New());
   context_params->http_cache_directory = GetCacheDirectory();
-  GetNetworkService()->CreateNetworkContext(
+  CreateNetworkContextInNetworkService(
       network_context.BindNewPipeAndPassReceiver(), std::move(context_params));
 
   network::mojom::URLLoaderFactoryParamsPtr params =
@@ -379,7 +378,7 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest,
     return;
 
   mojo::Remote<network::mojom::NetworkServiceTest> network_service_test;
-  GetNetworkService()->BindTestInterface(
+  GetNetworkService()->BindTestInterfaceForTesting(
       network_service_test.BindNewPipeAndPassReceiver());
   // TODO(crbug.com/901026): Make sure the network process is started to avoid a
   // deadlock on Android.
@@ -432,7 +431,7 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest, SyncCookieGetOnCrash) {
     return;
 
   mojo::Remote<network::mojom::NetworkServiceTest> network_service_test;
-  GetNetworkService()->BindTestInterface(
+  GetNetworkService()->BindTestInterfaceForTesting(
       network_service_test.BindNewPipeAndPassReceiver());
   network_service_test->CrashOnGetCookieList();
 
@@ -470,7 +469,8 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest, FactoryOverride) {
                                      "https://www2.example.com");
         response->headers->SetHeader("access-control-allow-methods", "*");
         client->OnReceiveResponse(std::move(response),
-                                  mojo::ScopedDataPipeConsumerHandle());
+                                  mojo::ScopedDataPipeConsumerHandle(),
+                                  absl::nullopt);
       } else if (resource_request.method == "custom-method") {
         has_received_request_ = true;
         auto response = network::mojom::URLResponseHead::New();
@@ -479,7 +479,8 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest, FactoryOverride) {
         response->headers->SetHeader("access-control-allow-origin",
                                      "https://www2.example.com");
         client->OnReceiveResponse(std::move(response),
-                                  mojo::ScopedDataPipeConsumerHandle());
+                                  mojo::ScopedDataPipeConsumerHandle(),
+                                  absl::nullopt);
         client->OnComplete(network::URLLoaderCompletionStatus(net::OK));
       } else {
         client->OnComplete(
@@ -702,6 +703,24 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserCacheResetTest, CacheResetTest) {
                                            /*load_only_from_cache=*/true, url),
               net::test::IsError(net::ERR_CACHE_MISS));
 }
+
+#if BUILDFLAG(IS_POSIX)
+IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserCacheResetTest, CacheResetFailure) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  const base::FilePath path = GetNetworkContextCachePath();
+
+  GURL url = embedded_test_server()->GetURL("/echoheadercache");
+
+  ASSERT_TRUE(base::CreateDirectory(path));
+  // Make the directory inaccessible, to see what happens when resetting the
+  // cache fails.
+  ASSERT_TRUE(base::SetPosixFilePermissions(path, /*mode=*/0));
+
+  EXPECT_THAT(MakeNetworkContentAndLoadUrl(/*reset_cache=*/true,
+                                           /*load_only_from_cache=*/true, url),
+              net::test::IsError(net::ERR_CACHE_MISS));
+}
+#endif  // BUILDFLAG(IS_POSIX)
 #endif  // BUILDFLAG(IS_ANDROID)
 
 // Cache data migration is not used for Fuchsia.
@@ -730,9 +749,9 @@ void SetCookie(
   base::Time t = base::Time::Now();
   auto cookie = net::CanonicalCookie::CreateUnsafeCookieForTesting(
       kCookieName, kCookieValue, "example.test", "/", t, t + base::Days(1),
-      base::Time(), true /* secure */, false /* http-only*/,
+      base::Time(), base::Time(), /*secure=*/true, /*http-only=*/false,
       net::CookieSameSite::NO_RESTRICTION, net::COOKIE_PRIORITY_DEFAULT,
-      false /* same_party */);
+      /*=same_party=*/false);
   base::RunLoop run_loop;
   cookie_manager->SetCanonicalCookie(
       *cookie, net::cookie_util::SimulatedCookieSource(*cookie, "https"),
@@ -843,9 +862,6 @@ class MAYBE_NetworkServiceDataMigrationBrowserTest : public ContentBrowserTest {
         sandbox::policy::features::kNetworkServiceSandbox);
 #endif
   }
-
- protected:
-  bool in_process_network_service_ = false;
 
 #if BUILDFLAG(IS_WIN)
  private:
@@ -1069,9 +1085,6 @@ void MigrationTestInternal(const base::FilePath& tempdir_one,
       EXPECT_FALSE(base::PathExists(
           tempdir_two.Append(kNetworkSubpath).Append(kCheckpointFileName)));
       histogram_tester.ExpectUniqueSample(
-          "NetworkService.GrantSandboxToCacheResult", /*sample=kSuccess=*/0,
-          /*expected_bucket_count=*/1);
-      histogram_tester.ExpectUniqueSample(
           "NetworkService.GrantSandboxResult",
           /*sample=kFailedToCreateDataDirectory=*/2,
           /*expected_bucket_count=*/1);
@@ -1121,10 +1134,6 @@ void MigrationTestInternal(const base::FilePath& tempdir_one,
       break;
 #endif  // BUILDFLAG(IS_WIN)
     case FailureType::kCacheDirIsAFile:
-      histogram_tester.ExpectUniqueSample(
-          "NetworkService.GrantSandboxToCacheResult",
-          /*sample=kFailedToCreateCacheDirectory=*/1,
-          /*expected_bucket_count=*/1);
       histogram_tester.ExpectUniqueSample("NetworkService.GrantSandboxResult",
                                           /*sample=kSuccess=*/0,
                                           /*expected_bucket_count=*/1);
@@ -1478,10 +1487,10 @@ INSTANTIATE_TEST_SUITE_P(
 class NetworkServiceInProcessBrowserTest : public ContentBrowserTest {
  public:
   NetworkServiceInProcessBrowserTest() {
-    std::vector<base::Feature> features;
+    std::vector<base::test::FeatureRef> features;
     features.push_back(features::kNetworkServiceInProcess);
-    scoped_feature_list_.InitWithFeatures(features,
-                                          std::vector<base::Feature>());
+    scoped_feature_list_.InitWithFeatures(
+        features, std::vector<base::test::FeatureRef>());
   }
 
   NetworkServiceInProcessBrowserTest(
@@ -1586,7 +1595,7 @@ class NetworkServiceWithUDPSocketLimit : public NetworkServiceBrowserTest {
         network::mojom::NetworkContextParams::New();
     context_params->cert_verifier_params = GetCertVerifierParams(
         cert_verifier::mojom::CertVerifierCreationParams::New());
-    GetNetworkService()->CreateNetworkContext(
+    CreateNetworkContextInNetworkService(
         network_context.BindNewPipeAndPassReceiver(),
         std::move(context_params));
     return network_context;

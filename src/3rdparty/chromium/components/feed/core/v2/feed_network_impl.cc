@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,15 +9,15 @@
 
 #include "base/base64.h"
 #include "base/base64url.h"
-#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/containers/flat_set.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "components/feed/core/common/pref_names.h"
 #include "components/feed/core/proto/v2/wire/feed_query.pb.h"
@@ -27,12 +27,15 @@
 #include "components/feed/core/proto/v2/wire/upload_actions_response.pb.h"
 #include "components/feed/core/v2/metrics_reporter.h"
 #include "components/feed/core/v2/proto_util.h"
+#include "components/feed/feed_feature_list.h"
 #include "components/prefs/pref_service.h"
+#include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/access_token_info.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/primary_account_access_token_fetcher.h"
 #include "components/signin/public/identity_manager/scope_set.h"
 #include "components/variations/net/variations_http_headers.h"
+#include "google_apis/gaia/gaia_constants.h"
 #include "net/base/isolation_info.h"
 #include "net/base/load_flags.h"
 #include "net/base/url_util.h"
@@ -47,9 +50,6 @@
 #include "third_party/protobuf/src/google/protobuf/io/coded_stream.h"
 #include "third_party/zlib/google/compression_utils.h"
 
-// Token override for Feedv2NewTabPageCardInstrumentationTest.java:
-// #define TOKEN_OVERRIDE_FOR_TESTING  "put-test-token-here"
-
 namespace feed {
 namespace {
 constexpr char kApplicationXProtobuf[] = "application/x-protobuf";
@@ -57,7 +57,7 @@ constexpr base::TimeDelta kNetworkTimeout = base::Seconds(30);
 constexpr char kDiscoverHost[] = "https://discover-pa.googleapis.com/";
 
 signin::ScopeSet GetAuthScopes() {
-  return {"https://www.googleapis.com/auth/googlenow"};
+  return {GaiaConstants::kFeedOAuth2Scope};
 }
 
 GURL GetFeedQueryURL(feedwire::FeedQuery::RequestReason reason) {
@@ -65,6 +65,7 @@ GURL GetFeedQueryURL(feedwire::FeedQuery::RequestReason reason) {
   switch (reason) {
     case feedwire::FeedQuery::SCHEDULED_REFRESH:
     case feedwire::FeedQuery::PREFETCHED_WEB_FEED:
+    case feedwire::FeedQuery::APP_CLOSE_REFRESH:
       return GURL(
           "https://www.google.com/httpservice/noretry/TrellisClankService/"
           "FeedQuery");
@@ -77,7 +78,7 @@ GURL GetFeedQueryURL(feedwire::FeedQuery::RequestReason reason) {
       return GURL(
           "https://www.google.com/httpservice/retry/TrellisClankService/"
           "FeedQuery");
-    default:
+    case feedwire::FeedQuery::UNKNOWN_REQUEST_REASON:
       return GURL();
   }
 }
@@ -213,12 +214,14 @@ class FeedNetworkImpl::NetworkFetch {
 
  private:
   void StartAccessTokenFetch() {
+    DVLOG(1) << "Feed access token fetch started.";
     token_fetcher_ = std::make_unique<signin::PrimaryAccountAccessTokenFetcher>(
         "feed", identity_manager_, GetAuthScopes(),
         base::BindOnce(&NetworkFetch::AccessTokenFetchFinished, GetWeakPtr(),
                        base::TimeTicks::Now()),
-        signin::PrimaryAccountAccessTokenFetcher::Mode::kWaitUntilAvailable);
-    base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
+        signin::PrimaryAccountAccessTokenFetcher::Mode::kWaitUntilAvailable,
+        GetConsentLevelNeededForPersonalizedFeed());
+    base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE,
         base::BindOnce(&NetworkFetch::AccessTokenTimeout, GetWeakPtr()),
         kAccessTokenFetchTimeout);
@@ -238,6 +241,7 @@ class FeedNetworkImpl::NetworkFetch {
   void AccessTokenTimeout() {
     if (access_token_fetch_complete_)
       return;
+    DVLOG(1) << "Feed access token fetch timed out.";
     access_token_fetch_complete_ = true;
     std::move(done_callback_)
         .Run(MakeFailureResponse(net::ERR_TIMED_OUT,
@@ -250,6 +254,7 @@ class FeedNetworkImpl::NetworkFetch {
     DCHECK(!account_info_.IsEmpty());
     if (access_token_fetch_complete_)
       return;
+    DVLOG(1) << "Feed access token fetch complete.";
     access_token_fetch_complete_ = true;
     UMA_HISTOGRAM_ENUMERATION(
         "ContentSuggestions.Feed.Network.TokenFetchStatus", error.state(),
@@ -263,6 +268,7 @@ class FeedNetworkImpl::NetworkFetch {
 
     // Abort if the signed-in user doesn't match.
     if (delegate_->GetAccountInfo() != account_info_) {
+      DVLOG(1) << "Feed fetch failed due to account mismatch.";
       std::move(done_callback_)
           .Run(
               MakeFailureResponse(net::ERR_INVALID_ARGUMENT,
@@ -274,6 +280,7 @@ class FeedNetworkImpl::NetworkFetch {
   }
 
   void StartLoader() {
+    DVLOG(1) << "Feed fetch started.";
     loader_only_start_ticks_ = base::TimeTicks::Now();
     simple_loader_ = MakeLoader();
     simple_loader_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
@@ -369,9 +376,12 @@ class FeedNetworkImpl::NetworkFetch {
     variations::SignedIn signed_in_status = variations::SignedIn::kNo;
     if (!access_token_.empty()) {
       base::StringPiece token = access_token_;
-#ifdef TOKEN_OVERRIDE_FOR_TESTING
-      token = TOKEN_OVERRIDE_FOR_TESTING;
-#endif
+      std::string token_override =
+          base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+              "feed-token-override");
+      if (!token_override.empty()) {
+        token = token_override;
+      }
       request.headers.SetHeader(net::HttpRequestHeaders::kAuthorization,
                                 base::StrCat({"Bearer ", token}));
       signed_in_status = variations::SignedIn::kYes;
@@ -594,7 +604,12 @@ void FeedNetworkImpl::SendDiscoverApiRequest(
   GURL url(base::StrCat({kDiscoverHost, request_path}));
   // Override url if requested.
   std::string host_override =
-      pref_service_->GetString(feed::prefs::kDiscoverAPIEndpointOverride);
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+          "feedv2-discover-host-override");
+  if (host_override.empty()) {
+    host_override =
+        pref_service_->GetString(feed::prefs::kDiscoverAPIEndpointOverride);
+  }
   if (!host_override.empty()) {
     GURL override_url(host_override);
     if (override_url.is_valid()) {
@@ -605,6 +620,9 @@ void FeedNetworkImpl::SendDiscoverApiRequest(
   net::HttpRequestHeaders headers =
       request_metadata ? CreateApiRequestHeaders(*request_metadata)
                        : net::HttpRequestHeaders();
+
+  // Set the x-response-encoding header to enable compression for DiscoFeed.
+  headers.SetHeader("x-response-encoding", "gzip");
 
   Send(url, method, std::move(request_body),
        /*allow_bless_auth=*/false, account_info, std::move(headers),

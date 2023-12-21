@@ -8,7 +8,8 @@
 #ifndef skgpu_graphite_Resource_DEFINED
 #define skgpu_graphite_Resource_DEFINED
 
-#include "include/private/SkMutex.h"
+#include "include/gpu/GpuTypes.h"
+#include "include/private/base/SkMutex.h"
 #include "src/gpu/graphite/GraphiteResourceKey.h"
 #include "src/gpu/graphite/ResourceTypes.h"
 
@@ -18,8 +19,8 @@ class SkMutex;
 
 namespace skgpu::graphite {
 
-class Gpu;
 class ResourceCache;
+class SharedContext;
 
 /**
  * Base class for objects that can be kept in the ResourceCache.
@@ -81,6 +82,8 @@ public:
 
     Ownership ownership() const { return fOwnership; }
 
+    skgpu::Budgeted budgeted() const { return fBudgeted; }
+
     // Tests whether a object has been abandoned or released. All objects will be in this state
     // after their creating Context is destroyed or abandoned.
     //
@@ -90,18 +93,29 @@ public:
     // deleting this object. However, I want to implement all the purging logic first to make sure
     // we don't have a use case for calling internalDispose but not wanting to delete the actual
     // object yet.
-    bool wasDestroyed() const { return fGpu == nullptr; }
+    bool wasDestroyed() const { return fSharedContext == nullptr; }
 
     const GraphiteResourceKey& key() const { return fKey; }
     // This should only ever be called by the ResourceProvider
-    void setKey(const GraphiteResourceKey& key) { fKey = key; }
+    void setKey(const GraphiteResourceKey& key) {
+        SkASSERT(key.shareable() == Shareable::kNo || this->budgeted() == skgpu::Budgeted::kYes);
+        fKey = key;
+    }
 
 protected:
-    Resource(const Gpu*, Ownership);
+    Resource(const SharedContext*, Ownership, skgpu::Budgeted);
     virtual ~Resource();
+
+    const SharedContext* sharedContext() const { return fSharedContext; }
 
     // Overridden to free GPU resources in the backend API.
     virtual void freeGpuData() = 0;
+
+#ifdef SK_DEBUG
+    bool debugHasCommandBufferRef() const {
+        return hasCommandBufferRef();
+    }
+#endif
 
 private:
     ////////////////////////////////////////////////////////////////////////////
@@ -109,6 +123,9 @@ private:
     // want them public general users of a Resource, but they also aren't purely internal calls.
     ////////////////////////////////////////////////////////////////////////////
     friend ResourceCache;
+
+    void makeBudgeted() { fBudgeted = skgpu::Budgeted::kYes; }
+    void makeUnbudgeted() { fBudgeted = skgpu::Budgeted::kNo; }
 
     // This version of ref allows adding a ref when the usage count is 0. This should only be called
     // from the ResourceCache.
@@ -211,7 +228,7 @@ private:
 
     // This is not ref'ed but internalDispose() will be called before the Gpu object is destroyed.
     // That call will set this to nullptr.
-    const Gpu* fGpu;
+    const SharedContext* fSharedContext;
 
     mutable std::atomic<int32_t> fUsageRefCnt;
     mutable std::atomic<int32_t> fCommandBufferRefCnt;
@@ -225,6 +242,12 @@ private:
     mutable int fReturnIndex = -1;
 
     Ownership fOwnership;
+
+    // All resource created internally by Graphite and held in the ResourceCache as a shared
+    // shared resource or available scratch resource are considered budgeted. Resources that back
+    // client owned objects (e.g. SkSurface or SkImage) are not budgeted and do not count against
+    // cache limits.
+    skgpu::Budgeted fBudgeted;
 
     // An index into a heap when this resource is purgeable or an array when not. This is maintained
     // by the cache.

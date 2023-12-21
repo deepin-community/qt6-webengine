@@ -1,12 +1,10 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "services/network/public/cpp/network_switches.h"
 
-namespace network {
-
-namespace switches {
+namespace network::switches {
 
 // Forces Network Quality Estimator (NQE) to return a specific effective
 // connection type.
@@ -19,6 +17,8 @@ const char kHostResolverRules[] = "host-resolver-rules";
 // causing them to attempt an unauthenticated SSL/TLS session. This is intended
 // for use when testing various service URLs (eg: kPromoServerURL, kSbURLPrefix,
 // kSyncServiceURL, etc).
+// TODO(crbug.com/1417189): Remove this flag if the alternative solution
+// implemented for crbug.com/1221565 covers all needs.
 const char kIgnoreUrlFetcherCertRequests[] = "ignore-urlfetcher-cert-requests";
 
 // A set of public key hashes for which to ignore certificate-related errors.
@@ -112,6 +112,4 @@ const char kUseFirstPartySet[] = "use-first-party-set";
 // https://github.com/web-platform-tests/rfcs/blob/master/rfcs/address_space_overrides.md
 const char kIpAddressSpaceOverrides[] = "ip-address-space-overrides";
 
-}  // namespace switches
-
-}  // namespace network
+}  // namespace network::switches

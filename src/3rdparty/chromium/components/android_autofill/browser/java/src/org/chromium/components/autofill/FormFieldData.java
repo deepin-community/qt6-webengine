@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -76,7 +76,8 @@ public class FormFieldData {
             String[] optionValues, String[] optionContents, boolean isCheckField, boolean isChecked,
             int maxLength, String heuristicType, String serverType, String computedType,
             String[] serverPredictions, float left, float top, float right, float bottom,
-            String[] datalistValues, String[] datalistLabels, boolean visible) {
+            String[] datalistValues, String[] datalistLabels, boolean visible,
+            boolean isAutofilled) {
         mName = name;
         mLabel = label;
         mValue = value;
@@ -106,6 +107,7 @@ public class FormFieldData {
         mComputedType = computedType;
         mBounds = new RectF(left, top, right, bottom);
         mVisible = visible;
+        mAutofilled = isAutofilled;
     }
 
     public @ControlType int getControlType() {
@@ -181,6 +183,11 @@ public class FormFieldData {
         return mPreviouslyAutofilled;
     }
 
+    @CalledByNative
+    public boolean isAutofilled() {
+        return mAutofilled;
+    }
+
     private void updateAutofillState(boolean autofilled) {
         if (mAutofilled && !autofilled) mPreviouslyAutofilled = true;
         mAutofilled = autofilled;
@@ -201,10 +208,11 @@ public class FormFieldData {
             String id, String[] optionValues, String[] optionContents, boolean isCheckField,
             boolean isChecked, int maxLength, String heuristicType, String serverType,
             String computedType, String[] serverPredictions, float left, float top, float right,
-            float bottom, String[] datalistValues, String[] datalistLabels, boolean visible) {
+            float bottom, String[] datalistValues, String[] datalistLabels, boolean visible,
+            boolean isAutofilled) {
         return new FormFieldData(name, label, value, autocompleteAttr, shouldAutocomplete,
                 placeholder, type, id, optionValues, optionContents, isCheckField, isChecked,
                 maxLength, heuristicType, serverType, computedType, serverPredictions, left, top,
-                right, bottom, datalistValues, datalistLabels, visible);
+                right, bottom, datalistValues, datalistLabels, visible, isAutofilled);
     }
 }

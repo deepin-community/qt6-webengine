@@ -45,8 +45,6 @@ class SVGStyleElement final : public SVGElement, public StyleElement {
   const AtomicString& media() const override;
   void setMedia(const AtomicString&);
 
-  BlockingAttribute* blocking() const override { return nullptr; }
-
   String title() const override;
   void setTitle(const AtomicString&);
 
@@ -61,7 +59,7 @@ class SVGStyleElement final : public SVGElement, public StyleElement {
   void ChildrenChanged(const ChildrenChange&) override;
 
   void FinishParsingChildren() override;
-  bool LayoutObjectIsNeeded(const ComputedStyle&) const override {
+  bool LayoutObjectIsNeeded(const DisplayStyle&) const override {
     return false;
   }
 

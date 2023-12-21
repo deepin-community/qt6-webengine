@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -80,8 +80,7 @@ void CXFA_Pattern::Draw(CFGAS_GEGraphics* pGS,
   }
 
   CFGAS_GEPattern pattern(iHatch, crEnd, crStart);
-  pGS->SaveGraphState();
+  CFGAS_GEGraphics::StateRestorer restorer(pGS);
   pGS->SetFillColor(CFGAS_GEColor(&pattern, 0x0));
   pGS->FillPath(fillPath, CFX_FillRenderOptions::FillType::kWinding, matrix);
-  pGS->RestoreGraphState();
 }

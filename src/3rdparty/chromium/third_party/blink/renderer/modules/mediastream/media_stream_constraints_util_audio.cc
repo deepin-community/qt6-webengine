@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,9 +22,9 @@
 #include "third_party/blink/public/common/mediastream/media_stream_controls.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/web/modules/mediastream/media_stream_video_source.h"
+#include "third_party/blink/renderer/modules/mediastream/media_constraints.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream_constraints_util_sets.h"
 #include "third_party/blink/renderer/modules/mediastream/processed_local_audio_source.h"
-#include "third_party/blink/renderer/platform/mediastream/media_constraints.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_audio_processor_options.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_audio_source.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
@@ -62,6 +62,18 @@ int32_t GetSampleSize() {
   return media::SampleFormatToBitsPerChannel(media::kSampleFormatS16);
 }
 
+bool IsProcessingAllowedForSampleRatesNotDivisibleBy100(
+    mojom::blink::MediaStreamType stream_type) {
+#if BUILDFLAG(CHROME_WIDE_ECHO_CANCELLATION)
+  if (media::IsChromeWideEchoCancellationEnabled() &&
+      stream_type == mojom::blink::MediaStreamType::DEVICE_AUDIO_CAPTURE) {
+    // When audio processing is performed in the audio process, an experiment
+    // parameter determines which sample rates are supported.
+    return media::kChromeWideEchoCancellationAllowAllSampleRates.Get();
+  }
+#endif
+  return true;
+}
 // This class encapsulates two values that together build up the score of each
 // processed candidate.
 // - Fitness, similarly defined by the W3C specification
@@ -360,7 +372,7 @@ class NumericDiscreteSetContainer {
     return std::make_tuple(0.0, absl::nullopt);
   }
 
-  bool IsEmpty() const { return allowed_values_.IsEmpty(); }
+  bool IsEmpty() const { return allowed_values_.empty(); }
 
  private:
   T SelectClosestValueTo(T target) const {
@@ -467,8 +479,6 @@ class EchoCancellationContainer {
         GetDefaultValueForAudioProperties(echo_cancellation_constraint);
 
     properties->goog_auto_gain_control &= default_audio_processing_value;
-    properties->goog_experimental_auto_gain_control &=
-        default_audio_processing_value;
 
     properties->goog_experimental_echo_cancellation &=
         default_audio_processing_value;
@@ -634,43 +644,26 @@ class AutoGainControlContainer {
   const char* ApplyConstraintSet(const ConstraintSet& constraint_set) {
     BoolSet agc_set = blink::media_constraints::BoolSetFromConstraint(
         constraint_set.goog_auto_gain_control);
-    BoolSet experimentaL_agc_set =
-        blink::media_constraints::BoolSetFromConstraint(
-            constraint_set.goog_experimental_auto_gain_control);
-
     // Apply autoGainControl/googAutoGainControl constraint.
     allowed_values_ = allowed_values_.Intersection(agc_set);
-    if (IsEmpty())
-      return constraint_set.goog_auto_gain_control.GetName();
-    // Apply also googExperimentalAutoGainControl constraint.
-    allowed_values_ = allowed_values_.Intersection(experimentaL_agc_set);
-
-    return IsEmpty()
-               ? constraint_set.goog_experimental_auto_gain_control.GetName()
-               : nullptr;
+    return IsEmpty() ? constraint_set.goog_auto_gain_control.GetName()
+                     : nullptr;
   }
 
   std::tuple<double, bool> SelectSettingsAndScore(
       const ConstraintSet& constraint_set,
       bool default_setting) const {
     BooleanConstraint agc_constraint = constraint_set.goog_auto_gain_control;
-    BooleanConstraint experimental_agc_constraint =
-        constraint_set.goog_experimental_auto_gain_control;
 
-    if (agc_constraint.HasIdeal() || experimental_agc_constraint.HasIdeal()) {
-      bool agc_ideal =
-          agc_constraint.HasIdeal() ? agc_constraint.Ideal() : false;
-      bool experimentaL_agc_ideal = experimental_agc_constraint.HasIdeal()
-                                        ? experimental_agc_constraint.Ideal()
-                                        : false;
-
-      bool combined_ideal = agc_ideal || experimentaL_agc_ideal;
-      if (allowed_values_.Contains(combined_ideal))
-        return std::make_tuple(1.0, combined_ideal);
+    if (agc_constraint.HasIdeal()) {
+      bool agc_ideal = agc_constraint.Ideal();
+      if (allowed_values_.Contains(agc_ideal))
+        return std::make_tuple(1.0, agc_ideal);
     }
 
-    if (allowed_values_.is_universal())
+    if (allowed_values_.is_universal()) {
       return std::make_tuple(0.0, default_setting);
+    }
 
     return std::make_tuple(0.0, allowed_values_.FirstElement());
   }
@@ -706,14 +699,17 @@ class ProcessingBasedContainer {
   // properties settings.
   static ProcessingBasedContainer CreateApmProcessedContainer(
       const SourceInfo& source_info,
+      mojom::blink::MediaStreamType stream_type,
       bool is_device_capture,
       const media::AudioParameters& device_parameters,
       bool is_reconfiguration_allowed) {
     int sample_rate_hz = media::kAudioProcessingSampleRateHz;
-    if (!ProcessedLocalAudioSource::OutputAudioAtProcessingSampleRate()) {
+    if (stream_type == mojom::blink::MediaStreamType::DEVICE_AUDIO_CAPTURE &&
+        !ProcessedLocalAudioSource::OutputAudioAtProcessingSampleRate()) {
       // If audio processing runs in the audio service without any mitigations
       // for unnecessary resmapling, ProcessedLocalAudioSource will output audio
       // at the device sample rate.
+      // This is only enabled for mic input sources: https://crbug.com/1328012
       sample_rate_hz = device_parameters.sample_rate();
     }
     return ProcessingBasedContainer(
@@ -894,13 +890,6 @@ class ProcessingBasedContainer {
         auto_gain_control_container_.SelectSettingsAndScore(
             constraint_set, properties.goog_auto_gain_control);
     score += sub_score;
-    // Let goog_experimental_auto_gain_control match the value decided for
-    // goog_auto_gain_control.
-    // TODO(crbug.com/924485): entirely remove
-    // goog_experimental_auto_gain_control in the AudioProcessingProperties
-    // object since no longer needed.
-    properties.goog_experimental_auto_gain_control =
-        properties.goog_auto_gain_control;
 
     for (size_t i = 0; i < kNumBooleanContainerIds; ++i) {
       auto& info = kBooleanPropertyContainerInfoMap[i];
@@ -1114,15 +1103,16 @@ constexpr ProcessingBasedContainer::BooleanPropertyContainerInfo
 class DeviceContainer {
  public:
   DeviceContainer(const AudioDeviceCaptureCapability& capability,
+                  mojom::blink::MediaStreamType stream_type,
                   bool is_device_capture,
                   bool is_reconfiguration_allowed)
       : device_parameters_(capability.Parameters()) {
-    if (!capability.DeviceID().IsEmpty()) {
+    if (!capability.DeviceID().empty()) {
       device_id_container_ =
           StringContainer(StringSet({capability.DeviceID().Utf8()}));
     }
 
-    if (!capability.GroupID().IsEmpty()) {
+    if (!capability.GroupID().empty()) {
       group_id_container_ =
           StringContainer(StringSet({capability.GroupID().Utf8()}));
     }
@@ -1145,12 +1135,21 @@ class DeviceContainer {
         ProcessingBasedContainer::CreateNoApmProcessedContainer(
             source_info, is_device_capture, device_parameters_,
             is_reconfiguration_allowed));
-    processing_based_containers_.push_back(
-        ProcessingBasedContainer::CreateApmProcessedContainer(
-            source_info, is_device_capture, device_parameters_,
-            is_reconfiguration_allowed));
-
-    DCHECK_EQ(processing_based_containers_.size(), 3u);
+    // TODO(https://crbug.com/1332484): Sample rates not divisible by 100 are
+    // not reliably supported due to the common assumption that sample_rate/100
+    // corresponds to 10 ms of audio. When that is addressed, this
+    // ApmProcessedContainer can be added to |processing_based_containers_|
+    // unconditionally.
+    if ((device_parameters_.sample_rate() % 100 == 0) ||
+        IsProcessingAllowedForSampleRatesNotDivisibleBy100(stream_type)) {
+      processing_based_containers_.push_back(
+          ProcessingBasedContainer::CreateApmProcessedContainer(
+              source_info, stream_type, is_device_capture, device_parameters_,
+              is_reconfiguration_allowed));
+      DCHECK_EQ(processing_based_containers_.size(), 3u);
+    } else {
+      DCHECK_EQ(processing_based_containers_.size(), 2u);
+    }
 
     if (source_info.type() == SourceType::kNone)
       return;
@@ -1201,7 +1200,7 @@ class DeviceContainer {
       else
         ++it;
     }
-    if (processing_based_containers_.IsEmpty()) {
+    if (processing_based_containers_.empty()) {
       DCHECK_NE(failed_constraint_name, nullptr);
       return failed_constraint_name;
     }
@@ -1383,12 +1382,14 @@ constexpr DeviceContainer::BooleanPropertyContainerInfo
 class CandidatesContainer {
  public:
   CandidatesContainer(const AudioDeviceCaptureCapabilities& capabilities,
+                      mojom::blink::MediaStreamType stream_type,
                       std::string& media_stream_source,
                       std::string& default_device_id,
                       bool is_reconfiguration_allowed)
       : default_device_id_(default_device_id) {
+    const bool is_device_capture = media_stream_source.empty();
     for (const auto& capability : capabilities) {
-      devices_.emplace_back(capability, media_stream_source.empty(),
+      devices_.emplace_back(capability, stream_type, is_device_capture,
                             is_reconfiguration_allowed);
       DCHECK(!devices_.back().IsEmpty());
     }
@@ -1432,7 +1433,7 @@ class CandidatesContainer {
     return std::make_tuple(best_score, best_settings);
   }
 
-  bool IsEmpty() const { return devices_.IsEmpty(); }
+  bool IsEmpty() const { return devices_.empty(); }
 
  private:
   std::string default_device_id_;
@@ -1469,7 +1470,7 @@ AudioDeviceCaptureCapability::AudioDeviceCaptureCapability(
     : device_id_(std::move(device_id)),
       group_id_(std::move(group_id)),
       parameters_(parameters) {
-  DCHECK(!device_id_.IsEmpty());
+  DCHECK(!device_id_.empty());
 }
 
 AudioDeviceCaptureCapability::AudioDeviceCaptureCapability(
@@ -1495,9 +1496,10 @@ const media::AudioParameters& AudioDeviceCaptureCapability::Parameters() const {
 AudioCaptureSettings SelectSettingsAudioCapture(
     const AudioDeviceCaptureCapabilities& capabilities,
     const MediaConstraints& constraints,
+    mojom::blink::MediaStreamType stream_type,
     bool should_disable_hardware_noise_suppression,
     bool is_reconfiguration_allowed) {
-  if (capabilities.IsEmpty())
+  if (capabilities.empty())
     return AudioCaptureSettings();
 
   std::string media_stream_source = GetMediaStreamSource(constraints);
@@ -1506,7 +1508,7 @@ AudioCaptureSettings SelectSettingsAudioCapture(
   if (is_device_capture)
     default_device_id = capabilities.begin()->DeviceID().Utf8();
 
-  CandidatesContainer candidates(capabilities, media_stream_source,
+  CandidatesContainer candidates(capabilities, stream_type, media_stream_source,
                                  default_device_id, is_reconfiguration_allowed);
   DCHECK(!candidates.IsEmpty());
 
@@ -1529,9 +1531,6 @@ AudioCaptureSettings SelectSettingsAudioCapture(
       constraints.Basic(),
       media_stream_source == blink::kMediaStreamSourceDesktop,
       should_disable_hardware_noise_suppression);
-  DCHECK_EQ(settings.audio_processing_properties().goog_auto_gain_control,
-            settings.audio_processing_properties()
-                .goog_experimental_auto_gain_control);
 
   return settings;
 }
@@ -1580,6 +1579,7 @@ AudioCaptureSettings SelectSettingsAudioCapture(
         media::AudioParameters::NOISE_SUPPRESSION);
 
   return SelectSettingsAudioCapture(capabilities, constraints,
+                                    source->device().type,
                                     should_disable_hardware_noise_suppression);
 }
 

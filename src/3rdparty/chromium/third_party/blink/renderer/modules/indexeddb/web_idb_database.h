@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -121,6 +121,7 @@ class MODULES_EXPORT WebIDBDatabase final {
                    int64_t index_id,
                    const String& new_name);
   void Abort(int64_t transaction_id);
+  void DidBecomeInactive();
 
  private:
   mojo::PendingAssociatedRemote<mojom::blink::IDBCallbacks> GetCallbacksProxy(

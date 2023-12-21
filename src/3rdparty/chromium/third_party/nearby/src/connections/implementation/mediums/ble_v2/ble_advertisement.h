@@ -20,7 +20,6 @@
 #include "connections/implementation/mediums/ble_v2/ble_advertisement_header.h"
 #include "internal/platform/byte_array.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 namespace mediums {
@@ -98,8 +97,33 @@ class BleAdvertisement {
   const ByteArray &&GetData() const && { return std::move(data_); }
   ByteArray GetDeviceToken() const { return device_token_; }
   int GetPsm() const { return psm_; }
+  void SetPsm(int psm) { psm_ = psm; }
 
  private:
+  // Represents the extra fields of the `BleAdvertisement` used in Advertising +
+  // Discovery. The maximum number of extra fields is 8. The format of the field
+  // can be different, but the order of the fields should be fixed.
+  //
+  // e.g. [BIT_MASK][X_FIELD(2 Bytes)][LENGTH(2 Bytes) + Y_FIELD(n Bytes)]
+  //
+  // Below is the current fields
+  // [BIT_MASK][PSM_VALUE(2 Bytes)]
+  //
+  // The PSM (protocol service multiplexer) value is used for create data
+  // connection on L2CAP socket. It only exists when remote device supports
+  // L2CAP socket feature.
+  class BleExtraFields {
+   public:
+    explicit BleExtraFields(int psm);
+    explicit BleExtraFields(const ByteArray &ble_extra_fields_bytes);
+    explicit operator ByteArray() const;
+
+    int GetPsm() const { return psm_; }
+
+   private:
+    int psm_ = BleAdvertisementHeader::kDefaultPsmValue;
+  };
+
   void DoInitialize(bool fast_advertisement, Version version,
                     SocketVersion socket_version,
                     const ByteArray &service_id_hash, const ByteArray &data,
@@ -137,6 +161,7 @@ class BleAdvertisement {
   // required header that comes before the service data, this leaves the
   // advertiser with 27 leftover bytes.
   static constexpr int kMaxFastAdvertisementLength = 27;
+  static constexpr int kExtraFieldsMaskLength = 1;
 
   Version version_{Version::kUndefined};
   SocketVersion socket_version_{SocketVersion::kUndefined};
@@ -150,6 +175,5 @@ class BleAdvertisement {
 }  // namespace mediums
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location
 
 #endif  // CORE_INTERNAL_MEDIUMS_BLE_V2_BLE_ADVERTISEMENT_H_

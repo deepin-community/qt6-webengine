@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,9 +10,8 @@
 #include <sstream>
 #include <string>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
-#include "base/metrics/histogram_macros.h"
 #include "base/trace_event/trace_event.h"
 #include "media/base/demuxer_memory_limit.h"
 #include "media/base/media_switches.h"
@@ -1657,6 +1656,16 @@ void SourceBufferStream::WarnIfTrackBufferExhaustionSkipsForward(
   }
 }
 
+bool SourceBufferStream::IsNextBufferConfigChanged() {
+  if (!track_buffer_.empty())
+    return track_buffer_.front()->GetConfigId() != current_config_index_;
+
+  if (!selected_range_ || !selected_range_->HasNextBuffer())
+    return false;
+
+  return selected_range_->GetNextConfigId() != current_config_index_;
+}
+
 base::TimeDelta SourceBufferStream::GetNextBufferTimestamp() {
   if (!track_buffer_.empty())
     return track_buffer_.front()->timestamp();
@@ -1712,6 +1721,14 @@ Ranges<base::TimeDelta> SourceBufferStream::GetBufferedTime() const {
     ranges.Add((*itr)->GetStartTimestamp(), (*itr)->GetBufferedEndTimestamp());
   }
   return ranges;
+}
+
+base::TimeDelta SourceBufferStream::GetLowestPresentationTimestamp() const {
+  if (ranges_.empty()) {
+    return base::TimeDelta();
+  }
+
+  return ranges_.front()->GetStartTimestamp();
 }
 
 base::TimeDelta SourceBufferStream::GetHighestPresentationTimestamp() const {

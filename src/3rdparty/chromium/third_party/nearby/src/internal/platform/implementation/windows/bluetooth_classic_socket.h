@@ -15,13 +15,14 @@
 #ifndef PLATFORM_IMPL_WINDOWS_BLUETOOTH_CLASSIC_SOCKET_H_
 #define PLATFORM_IMPL_WINDOWS_BLUETOOTH_CLASSIC_SOCKET_H_
 
+#include <memory>
+
 #include "internal/platform/implementation/bluetooth_classic.h"
 #include "internal/platform/implementation/windows/bluetooth_classic_device.h"
-#include "internal/platform/implementation/windows/generated/winrt/Windows.Foundation.h"
-#include "internal/platform/implementation/windows/generated/winrt/Windows.Networking.Sockets.h"
-#include "internal/platform/implementation/windows/generated/winrt/Windows.Storage.Streams.h"
+#include "winrt/Windows.Foundation.h"
+#include "winrt/Windows.Networking.Sockets.h"
+#include "winrt/Windows.Storage.Streams.h"
 
-namespace location {
 namespace nearby {
 namespace windows {
 
@@ -66,7 +67,7 @@ class BluetoothSocket : public api::BluetoothSocket {
  public:
   BluetoothSocket();
 
-  BluetoothSocket(StreamSocket streamSocket);
+  explicit BluetoothSocket(StreamSocket streamSocket);
 
   ~BluetoothSocket() override;
 
@@ -93,27 +94,31 @@ class BluetoothSocket : public api::BluetoothSocket {
   api::BluetoothDevice* GetRemoteDevice() override;
 
   // Connect asynchronously to the target remote device
-  void Connect(HostName connectionHostName,
-                            winrt::hstring connectionServiceName);
+  // Returns true if successful, false otherwise
+  bool Connect(HostName connectionHostName,
+               winrt::hstring connectionServiceName);
 
   IAsyncAction CancelIOAsync();
 
  private:
+  static constexpr int kMaxTransmitPacketSize = 4096;
+
   class BluetoothInputStream : public InputStream {
    public:
-    BluetoothInputStream(IInputStream stream);
+    explicit BluetoothInputStream(IInputStream stream);
     ~BluetoothInputStream() override = default;
 
     ExceptionOr<ByteArray> Read(std::int64_t size) override;
     Exception Close() override;
 
    private:
-    IInputStream winrt_stream_;
+    IInputStream winrt_input_stream_{nullptr};
+    Buffer read_buffer_{kMaxTransmitPacketSize};
   };
 
   class BluetoothOutputStream : public OutputStream {
    public:
-    BluetoothOutputStream(IOutputStream stream);
+    explicit BluetoothOutputStream(IOutputStream stream);
     ~BluetoothOutputStream() override = default;
 
     Exception Write(const ByteArray& data) override;
@@ -122,18 +127,25 @@ class BluetoothSocket : public api::BluetoothSocket {
     Exception Close() override;
 
    private:
-    IOutputStream winrt_stream_;
+    IOutputStream winrt_output_stream_{nullptr};
+    Buffer write_buffer_{kMaxTransmitPacketSize};
   };
 
-  std::unique_ptr<BluetoothInputStream> input_stream_;
-  std::unique_ptr<BluetoothOutputStream> output_stream_;
+  winrt::fire_and_forget Listener_ConnectionStatusChanged(
+      winrt::Windows::Devices::Bluetooth::BluetoothDevice device,
+      winrt::Windows::Foundation::IInspectable const& args);
 
-  StreamSocket windows_socket_;
-  std::unique_ptr<BluetoothDevice> bluetooth_device_;
+  StreamSocket windows_socket_{nullptr};
+  bool is_bluetooth_socket_closed_ = false;
+  BluetoothInputStream input_stream_{nullptr};
+  BluetoothOutputStream output_stream_{nullptr};
+  std::unique_ptr<BluetoothDevice> bluetooth_device_ = nullptr;
+  winrt::Windows::Devices::Bluetooth::BluetoothDevice native_bluetooth_device_{
+      nullptr};
+  winrt::event_token connection_status_changed_token_{};
 };
 
 }  // namespace windows
 }  // namespace nearby
-}  // namespace location
 
 #endif  // PLATFORM_IMPL_WINDOWS_BLUETOOTH_CLASSIC_SOCKET_H_

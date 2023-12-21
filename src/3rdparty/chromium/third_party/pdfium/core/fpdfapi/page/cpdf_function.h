@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,7 @@
 #include <set>
 #include <vector>
 
+#include "core/fxcrt/retain_ptr.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/base/span.h"
 
@@ -30,7 +31,8 @@ class CPDF_Function {
     kType4PostScript = 4,
   };
 
-  static std::unique_ptr<CPDF_Function> Load(const CPDF_Object* pFuncObj);
+  static std::unique_ptr<CPDF_Function> Load(
+      RetainPtr<const CPDF_Object> pFuncObj);
 
   virtual ~CPDF_Function();
 
@@ -46,27 +48,27 @@ class CPDF_Function {
                     float ymin,
                     float ymax) const;
 
-#if defined(_SKIA_SUPPORT_) || defined(_SKIA_SUPPORT_PATHS_)
+#ifdef _SKIA_SUPPORT_
   const CPDF_SampledFunc* ToSampledFunc() const;
   const CPDF_ExpIntFunc* ToExpIntFunc() const;
   const CPDF_StitchFunc* ToStitchFunc() const;
-#endif  // defined(_SKIA_SUPPORT_) || defined(_SKIA_SUPPORT_PATHS_)
+#endif  // _SKIA_SUPPORT_
 
  protected:
   explicit CPDF_Function(Type type);
 
+  using VisitedSet = std::set<RetainPtr<const CPDF_Object>>;
   static std::unique_ptr<CPDF_Function> Load(
-      const CPDF_Object* pFuncObj,
-      std::set<const CPDF_Object*>* pVisited);
-  bool Init(const CPDF_Object* pObj, std::set<const CPDF_Object*>* pVisited);
-  virtual bool v_Init(const CPDF_Object* pObj,
-                      std::set<const CPDF_Object*>* pVisited) = 0;
+      RetainPtr<const CPDF_Object> pFuncObj,
+      VisitedSet* pVisited);
+  bool Init(const CPDF_Object* pObj, VisitedSet* pVisited);
+  virtual bool v_Init(const CPDF_Object* pObj, VisitedSet* pVisited) = 0;
   virtual bool v_Call(pdfium::span<const float> inputs,
                       pdfium::span<float> results) const = 0;
 
   const Type m_Type;
-  uint32_t m_nInputs;
-  uint32_t m_nOutputs;
+  uint32_t m_nInputs = 0;
+  uint32_t m_nOutputs = 0;
   std::vector<float> m_Domains;
   std::vector<float> m_Ranges;
 };

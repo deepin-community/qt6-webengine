@@ -111,7 +111,8 @@ static const float kMaxMaskBufferSize =
 sk_sp<PaintFilter> BuildBoxReflectFilter(const BoxReflection& reflection,
                                          sk_sp<PaintFilter> input) {
   sk_sp<PaintFilter> masked_input;
-  if (sk_sp<PaintRecord> mask_record = reflection.Mask()) {
+  PaintRecord mask_record = reflection.Mask();
+  if (!mask_record.empty()) {
     // Since PaintRecords can't be serialized to the browser process, first
     // raster the mask to a bitmap, then encode it in an SkImageSource, which
     // can be serialized.
@@ -126,9 +127,9 @@ sk_sp<PaintFilter> BuildBoxReflectFilter(const BoxReflection& reflection,
       bitmap.allocPixels(SkImageInfo::MakeN32Premul(
           mask_bounds_rounded.width(), mask_bounds_rounded.height()));
       SkiaPaintCanvas canvas(bitmap);
-      canvas.clear(SK_ColorTRANSPARENT);
+      canvas.clear(SkColors::kTransparent);
       canvas.translate(-mask_record_bounds.x(), -mask_record_bounds.y());
-      canvas.drawPicture(mask_record);
+      canvas.drawPicture(std::move(mask_record));
       PaintImage image = PaintImageBuilder::WithDefault()
                              .set_id(PaintImage::GetNextId())
                              .set_image(SkImage::MakeFromBitmap(bitmap),

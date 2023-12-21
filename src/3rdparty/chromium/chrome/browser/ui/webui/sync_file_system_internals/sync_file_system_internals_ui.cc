@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,19 +17,21 @@
 #include "chrome/grit/sync_file_system_internals_resources_map.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
+#include "services/network/public/mojom/content_security_policy.mojom.h"
 
 namespace {
 
-content::WebUIDataSource* CreateSyncFileSystemInternalsHTMLSource() {
-  content::WebUIDataSource* source =
-      content::WebUIDataSource::Create(
-          chrome::kChromeUISyncFileSystemInternalsHost);
+void CreateAndAddSyncFileSystemInternalsHTMLSource(Profile* profile) {
+  content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
+      profile, chrome::kChromeUISyncFileSystemInternalsHost);
   source->UseStringsJs();
   source->AddResourcePaths(
       base::make_span(kSyncFileSystemInternalsResources,
                       kSyncFileSystemInternalsResourcesSize));
   source->SetDefaultResource(IDR_SYNC_FILE_SYSTEM_INTERNALS_MAIN_HTML);
-  return source;
+  source->OverrideContentSecurityPolicy(
+      network::mojom::CSPDirectiveName::TrustedTypes,
+      "trusted-types static-types;");
 }
 
 }  // namespace
@@ -46,8 +48,7 @@ SyncFileSystemInternalsUI::SyncFileSystemInternalsUI(content::WebUI* web_ui)
       std::make_unique<syncfs_internals::FileMetadataHandler>(profile));
   web_ui->AddMessageHandler(
       std::make_unique<syncfs_internals::DumpDatabaseHandler>(profile));
-  content::WebUIDataSource::Add(profile,
-                                CreateSyncFileSystemInternalsHTMLSource());
+  CreateAndAddSyncFileSystemInternalsHTMLSource(profile);
 }
 
 SyncFileSystemInternalsUI::~SyncFileSystemInternalsUI() {}

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,12 +9,11 @@
 #include <string>
 #include <utility>
 
-#include "base/callback.h"
 #include "base/check.h"
+#include "base/functional/callback.h"
 #include "base/location.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/task/task_runner_util.h"
 #include "content/common/content_export.h"
 
 #if defined(UNIT_TEST)
@@ -30,10 +29,10 @@ class BrowserTaskTraits;
 
 // Use DCHECK_CURRENTLY_ON(BrowserThread::ID) to assert that a function can only
 // be called on the named BrowserThread.
-#define DCHECK_CURRENTLY_ON(thread_identifier)                      \
-  (DCHECK(::content::BrowserThread::CurrentlyOn(thread_identifier)) \
-   << ::content::BrowserThread::GetDCheckCurrentlyOnErrorMessage(   \
-          thread_identifier))
+#define DCHECK_CURRENTLY_ON(thread_identifier)                       \
+  DCHECK(::content::BrowserThread::CurrentlyOn(thread_identifier))   \
+      << ::content::BrowserThread::GetDCheckCurrentlyOnErrorMessage( \
+             thread_identifier)
 
 // The main entry point to post tasks to the UI thread. Tasks posted with the
 // same |traits| will run in posting order (i.e. according to the

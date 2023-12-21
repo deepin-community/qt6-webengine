@@ -1,4 +1,4 @@
-// Copyright 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,7 +19,6 @@
 #include "cc/trees/layer_tree_impl.h"
 #include "cc/trees/occlusion.h"
 #include "cc/trees/transform_node.h"
-#include "components/viz/common/display/de_jelly.h"
 #include "components/viz/common/quads/compositor_render_pass.h"
 #include "components/viz/common/quads/compositor_render_pass_draw_quad.h"
 #include "components/viz/common/quads/content_draw_quad_base.h"
@@ -29,6 +28,7 @@
 #include "components/viz/common/quads/tile_draw_quad.h"
 #include "third_party/skia/include/core/SkImageFilter.h"
 #include "ui/gfx/geometry/rect_conversions.h"
+#include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/gfx/geometry/transform.h"
 
 namespace cc {
@@ -86,7 +86,8 @@ gfx::RectF RenderSurfaceImpl::DrawableContentRect() const {
   const FilterOperations& filters = Filters();
   if (!filters.IsEmpty()) {
     surface_content_rect =
-        filters.MapRect(surface_content_rect, SurfaceScale().matrix().asM33());
+        filters.MapRect(surface_content_rect,
+                        gfx::TransformToFlattenedSkMatrix(SurfaceScale()));
   }
   gfx::RectF drawable_content_rect = MathUtil::MapClippedRect(
       draw_transform(), gfx::RectF(surface_content_rect));
@@ -110,7 +111,7 @@ SkBlendMode RenderSurfaceImpl::BlendMode() const {
   return OwningEffectNode()->blend_mode;
 }
 
-SkColor RenderSurfaceImpl::GetDebugBorderColor() const {
+SkColor4f RenderSurfaceImpl::GetDebugBorderColor() const {
   return DebugColors::SurfaceBorderColor();
 }
 
@@ -172,7 +173,7 @@ bool RenderSurfaceImpl::ShouldCacheRenderSurface() const {
 bool RenderSurfaceImpl::CopyOfOutputRequired() const {
   return HasCopyRequest() || ShouldCacheRenderSurface() ||
          SubtreeCaptureId().is_valid() ||
-         OwningEffectNode()->shared_element_resource_id.IsValid();
+         OwningEffectNode()->view_transition_element_resource_id.IsValid();
 }
 
 int RenderSurfaceImpl::TransformTreeIndex() const {
@@ -192,9 +193,9 @@ const EffectNode* RenderSurfaceImpl::OwningEffectNode() const {
       EffectTreeIndex());
 }
 
-const DocumentTransitionSharedElementId&
-RenderSurfaceImpl::GetDocumentTransitionSharedElementId() const {
-  return OwningEffectNode()->document_transition_shared_element_id;
+const ViewTransitionElementId& RenderSurfaceImpl::GetViewTransitionElementId()
+    const {
+  return OwningEffectNode()->view_transition_shared_element_id;
 }
 
 void RenderSurfaceImpl::SetClipRect(const gfx::Rect& clip_rect) {
@@ -221,8 +222,8 @@ gfx::Rect RenderSurfaceImpl::CalculateExpandedClipForFilters(
     const gfx::Transform& target_to_surface) {
   gfx::Rect clip_in_surface_space =
       MathUtil::ProjectEnclosingClippedRect(target_to_surface, clip_rect());
-  gfx::Rect expanded_clip_in_surface_space =
-      Filters().MapRect(clip_in_surface_space, SurfaceScale().matrix().asM33());
+  gfx::Rect expanded_clip_in_surface_space = Filters().MapRect(
+      clip_in_surface_space, gfx::TransformToFlattenedSkMatrix(SurfaceScale()));
   gfx::Rect expanded_clip_in_target_space = MathUtil::MapEnclosingClippedRect(
       draw_transform(), expanded_clip_in_surface_space);
   return expanded_clip_in_target_space;
@@ -238,7 +239,7 @@ gfx::Rect RenderSurfaceImpl::CalculateClippedAccumulatedContentRect() {
   // Calculate projection from the target surface rect to local
   // space. Non-invertible draw transforms means no able to bring clipped rect
   // in target space back to local space, early out without clip.
-  gfx::Transform target_to_surface(gfx::Transform::kSkipInitialization);
+  gfx::Transform target_to_surface;
   if (!draw_transform().GetInverse(&target_to_surface))
     return accumulated_content_rect();
 
@@ -258,10 +259,6 @@ gfx::Rect RenderSurfaceImpl::CalculateClippedAccumulatedContentRect() {
         CalculateExpandedClipForFilters(target_to_surface);
   } else {
     clipped_accumulated_rect_in_target_space = clip_rect();
-  }
-  if (layer_tree_impl_->settings().allow_de_jelly_effect) {
-    clipped_accumulated_rect_in_target_space.Inset(
-        gfx::Insets::VH(-viz::MaxDeJellyHeight(), 0));
   }
   clipped_accumulated_rect_in_target_space.Intersect(
       accumulated_rect_in_target_space);
@@ -335,7 +332,7 @@ void RenderSurfaceImpl::AccumulateContentRectFromContributingRenderSurface(
   // If this surface is a shared element id then it is being used to generate an
   // independent snapshot and won't contribute to its target surface.
   if (contributing_surface->OwningEffectNode()
-          ->shared_element_resource_id.IsValid())
+          ->view_transition_element_resource_id.IsValid())
     return;
 
   // The content rect of contributing surface is in its own space. Instead, we
@@ -423,8 +420,8 @@ RenderSurfaceImpl::CreateRenderPass() {
   pass->cache_render_pass = ShouldCacheRenderSurface();
   pass->has_damage_from_contributing_content =
       HasDamageFromeContributingContent();
-  pass->shared_element_resource_id =
-      OwningEffectNode()->shared_element_resource_id;
+  pass->view_transition_element_resource_id =
+      OwningEffectNode()->view_transition_element_resource_id;
   return pass;
 }
 
@@ -436,10 +433,10 @@ void RenderSurfaceImpl::AppendQuads(DrawMode draw_mode,
   if (unoccluded_content_rect.IsEmpty())
     return;
 
-  // If this render surface has a valid |shared_element_resource_id| then its
-  // being used to produce live content. Its content will be drawn to its
-  // actual position in the Viz process.
-  if (OwningEffectNode()->shared_element_resource_id.IsValid())
+  // If this render surface has a valid |view_transition_element_resource_id|
+  // then its being used to produce live content. Its content will be drawn to
+  // its actual position in the Viz process.
+  if (OwningEffectNode()->view_transition_element_resource_id.IsValid())
     return;
 
   const PropertyTrees* property_trees = layer_tree_impl_->property_trees();

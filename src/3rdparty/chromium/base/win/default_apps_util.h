@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,10 +9,6 @@
 #include "base/strings/string_piece.h"
 
 namespace base::win {
-
-// Returns true if the OS has a default apps settings dialog. This method
-// returns false on Win7.
-BASE_EXPORT bool CanLaunchDefaultAppsSettingsModernDialog();
 
 // Launches the Windows 'settings' modern app with the 'default apps' view
 // focused. If `protocol` is not empty, it also highlights the `protocol` in

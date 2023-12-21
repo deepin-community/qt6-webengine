@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 #include "third_party/blink/renderer/core/css/style_rule_keyframe.h"
 #include "third_party/blink/renderer/core/css/style_sheet_contents.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/execution_context/security_context.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/core/frame/deprecation/deprecation.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
@@ -220,21 +221,25 @@ bool CSSParserContext::IsSecureContext() const {
 }
 
 KURL CSSParserContext::CompleteURL(const String& url) const {
-  if (url.IsNull())
+  if (url.IsNull()) {
     return KURL();
-  if (!Charset().IsValid())
+  }
+  if (!Charset().IsValid()) {
     return KURL(BaseURL(), url);
+  }
   return KURL(BaseURL(), url, Charset());
 }
 
 void CSSParserContext::Count(WebFeature feature) const {
-  if (IsUseCounterRecordingEnabled())
+  if (IsUseCounterRecordingEnabled()) {
     document_->CountUse(feature);
+  }
 }
 
 void CSSParserContext::CountDeprecation(WebFeature feature) const {
-  if (IsUseCounterRecordingEnabled() && document_)
+  if (IsUseCounterRecordingEnabled() && document_) {
     Deprecation::CountDeprecation(document_->GetExecutionContext(), feature);
+  }
 }
 
 void CSSParserContext::Count(CSSParserMode mode, CSSPropertyID property) const {
@@ -259,15 +264,18 @@ const ExecutionContext* CSSParserContext::GetExecutionContext() const {
 
 void CSSParserContext::ReportLayoutAnimationsViolationIfNeeded(
     const StyleRuleKeyframe& rule) const {
-  if (!document_ || !document_->GetExecutionContext())
+  if (!document_ || !document_->GetExecutionContext()) {
     return;
+  }
   for (unsigned i = 0; i < rule.Properties().PropertyCount(); ++i) {
     CSSPropertyID id = rule.Properties().PropertyAt(i).Id();
-    if (id == CSSPropertyID::kVariable)
+    if (id == CSSPropertyID::kVariable) {
       continue;
+    }
     const CSSProperty& property = CSSProperty::Get(id);
-    if (!LayoutAnimationsPolicy::AffectedCSSProperties().Contains(&property))
+    if (!LayoutAnimationsPolicy::AffectedCSSProperties().Contains(&property)) {
       continue;
+    }
     LayoutAnimationsPolicy::ReportViolation(property,
                                             *document_->GetExecutionContext());
   }

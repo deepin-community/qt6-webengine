@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,6 +16,33 @@ namespace browsing_topics {
 using HashedHost = base::StrongAlias<class HashedHostTag, int64_t>;
 using HashedDomain = base::StrongAlias<class HashedHostTag, int64_t>;
 using Topic = base::StrongAlias<class TopicTag, int>;
+
+// Represents the source of the caller.
+enum class ApiCallerSource {
+  // The API usage is from document.browsingTopics().
+  kJavaScript,
+
+  // The API usage is from fetch-like APIs. That is,
+  // fetch(<url>, {browsingTopics: true}), or XMLHttpRequest.send() with the
+  // `deprecatedBrowsingTopics` property set to true.
+  kFetch,
+};
+
+// Represents the different reasons why the topics API access is denied. These
+// values are persisted to logs. Entries should not be renumbered and numeric
+// values should never be reused.
+enum class ApiAccessFailureReason {
+  // The requesting context doesn't allow the API (e.g. permissions policy).
+  kInvalidRequestingContext = 0,
+
+  // The topics state hasn't finished loading.
+  kStateNotReady = 1,
+
+  // Access is disallowed by user settings.
+  kAccessDisallowedBySettings = 2,
+
+  kMaxValue = kAccessDisallowedBySettings,
+};
 
 struct COMPONENT_EXPORT(BROWSING_TOPICS_COMMON) ApiUsageContext {
   HashedDomain hashed_context_domain;

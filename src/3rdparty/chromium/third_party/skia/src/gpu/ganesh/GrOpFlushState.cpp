@@ -22,7 +22,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 GrOpFlushState::GrOpFlushState(GrGpu* gpu, GrResourceProvider* resourceProvider,
-                               GrTokenTracker* tokenTracker,
+                               skgpu::TokenTracker* tokenTracker,
                                sk_sp<GrBufferAllocPool::CpuBufferCache> cpuBufferCache)
         : fVertexPool(gpu, cpuBufferCache)
         , fIndexPool(gpu, cpuBufferCache)
@@ -45,7 +45,7 @@ void GrOpFlushState::executeDrawsAndUploadsForMeshDrawOp(
     SkASSERT(this->opsRenderPass());
 
     while (fCurrDraw != fDraws.end() && fCurrDraw->fOp == op) {
-        GrDeferredUploadToken drawToken = fTokenTracker->nextTokenToFlush();
+        skgpu::AtlasToken drawToken = fTokenTracker->nextFlushToken();
         while (fCurrUpload != fInlineUploads.end() &&
                fCurrUpload->fUploadBeforeToken == drawToken) {
             this->opsRenderPass()->inlineUpload(this, fCurrUpload->fUpload);
@@ -59,7 +59,6 @@ void GrOpFlushState::executeDrawsAndUploadsForMeshDrawOp(
                                   userStencilSettings,
                                   fCurrDraw->fGeometryProcessor,
                                   fCurrDraw->fPrimitiveType,
-                                  0,
                                   this->renderPassBarriers(),
                                   this->colorLoadOp());
 
@@ -70,7 +69,7 @@ void GrOpFlushState::executeDrawsAndUploadsForMeshDrawOp(
             this->drawMesh(fCurrDraw->fMeshes[i]);
         }
 
-        fTokenTracker->flushToken();
+        fTokenTracker->issueFlushToken();
         ++fCurrDraw;
     }
 }
@@ -85,6 +84,7 @@ void GrOpFlushState::preExecuteDraws() {
     // Setup execution iterators.
     fCurrDraw = fDraws.begin();
     fCurrUpload = fInlineUploads.begin();
+    fGpu->willExecute();
 }
 
 void GrOpFlushState::reset() {
@@ -97,7 +97,7 @@ void GrOpFlushState::reset() {
     fASAPUploads.reset();
     fInlineUploads.reset();
     fDraws.reset();
-    fBaseDrawToken = GrDeferredUploadToken::AlreadyFlushedToken();
+    fBaseDrawToken = skgpu::AtlasToken::InvalidToken();
 }
 
 void GrOpFlushState::doUpload(GrDeferredTextureUploadFn& upload,
@@ -142,14 +142,14 @@ void GrOpFlushState::doUpload(GrDeferredTextureUploadFn& upload,
     upload(wp);
 }
 
-GrDeferredUploadToken GrOpFlushState::addInlineUpload(GrDeferredTextureUploadFn&& upload) {
+skgpu::AtlasToken GrOpFlushState::addInlineUpload(GrDeferredTextureUploadFn&& upload) {
     return fInlineUploads.append(&fArena, std::move(upload), fTokenTracker->nextDrawToken())
             .fUploadBeforeToken;
 }
 
-GrDeferredUploadToken GrOpFlushState::addASAPUpload(GrDeferredTextureUploadFn&& upload) {
+skgpu::AtlasToken GrOpFlushState::addASAPUpload(GrDeferredTextureUploadFn&& upload) {
     fASAPUploads.append(&fArena, std::move(upload));
-    return fTokenTracker->nextTokenToFlush();
+    return fTokenTracker->nextFlushToken();
 }
 
 void GrOpFlushState::recordDraw(
@@ -162,7 +162,7 @@ void GrOpFlushState::recordDraw(
     SkDEBUGCODE(fOpArgs->validate());
     bool firstDraw = fDraws.begin() == fDraws.end();
     auto& draw = fDraws.append(&fArena);
-    GrDeferredUploadToken token = fTokenTracker->issueDrawToken();
+    skgpu::AtlasToken token = fTokenTracker->issueDrawToken();
     for (int i = 0; i < geomProc->numTextureSamplers(); ++i) {
         SkASSERT(geomProcProxies && geomProcProxies[i]);
         geomProcProxies[i]->ref();
@@ -214,17 +214,19 @@ GrAppliedClip GrOpFlushState::detachAppliedClip() {
     return fOpArgs->appliedClip() ? std::move(*fOpArgs->appliedClip()) : GrAppliedClip::Disabled();
 }
 
-GrStrikeCache* GrOpFlushState::strikeCache() const {
-    return fGpu->getContext()->priv().getGrStrikeCache();
+sktext::gpu::StrikeCache* GrOpFlushState::strikeCache() const {
+    return fGpu->getContext()->priv().getStrikeCache();
 }
 
 GrAtlasManager* GrOpFlushState::atlasManager() const {
     return fGpu->getContext()->priv().getAtlasManager();
 }
 
+#if !defined(SK_ENABLE_OPTIMIZE_SIZE)
 skgpu::v1::SmallPathAtlasMgr* GrOpFlushState::smallPathAtlasManager() const {
     return fGpu->getContext()->priv().getSmallPathAtlasMgr();
 }
+#endif
 
 void GrOpFlushState::drawMesh(const GrSimpleMesh& mesh) {
     SkASSERT(mesh.fIsInitialized);

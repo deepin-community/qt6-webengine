@@ -1,9 +1,13 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/platform/heap/thread_state.h"
 
+#include <fstream>
+#include <iostream>
+
+#include "base/functional/callback.h"
 #include "gin/public/v8_platform.h"
 #include "third_party/blink/renderer/platform/bindings/dom_wrapper_world.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
@@ -15,9 +19,9 @@
 #include "v8/include/cppgc/heap-consistency.h"
 #include "v8/include/v8-cppgc.h"
 #include "v8/include/v8-embedder-heap.h"
-#include "v8/include/v8-initialization.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-object.h"
+#include "v8/include/v8-profiler.h"
 #include "v8/include/v8-traced-handle.h"
 
 namespace blink {
@@ -53,12 +57,8 @@ class BlinkRootsHandler final : public v8::EmbedderRootsHandler {
   // invoked for references where IsRoot() returned false during young
   // generation garbage collections.
   void ResetRoot(const v8::TracedReference<v8::Value>& handle) final {
-    const uint16_t class_id = handle.WrapperClassId();
-    // Only consider handles that have not been treated as roots, see IsRoot().
-    if (class_id != WrapperTypeInfo::kNodeClassId &&
-        class_id != WrapperTypeInfo::kObjectClassId)
-      return;
-
+    DCHECK(handle.WrapperClassId() == WrapperTypeInfo::kNodeClassId ||
+           handle.WrapperClassId() == WrapperTypeInfo::kObjectClassId);
     // Clearing the wrapper below adjusts the DOM wrapper store which may
     // re-allocate its backing. NoGarbageCollectionScope is required to avoid
     // triggering a GC from such re-allocating calls as ResetRoot() is itself
@@ -251,13 +251,6 @@ void ThreadState::CollectNodeAndCssStatistics(
 
 void ThreadState::EnableDetachedGarbageCollectionsForTesting() {
   cpp_heap().EnableDetachedGarbageCollectionsForTesting();
-  // Detached GCs cannot rely on the V8 platform being initialized which is
-  // needed by cppgc to perform a garbage collection.
-  static bool v8_platform_initialized = false;
-  if (!v8_platform_initialized) {
-    v8::V8::InitializePlatform(gin::V8Platform::Get());
-    v8_platform_initialized = true;
-  }
 }
 
 bool ThreadState::IsIncrementalMarking() {
@@ -266,4 +259,46 @@ bool ThreadState::IsIncrementalMarking() {
          !cppgc::subtle::HeapState::IsInAtomicPause(
              ThreadState::Current()->heap_handle());
 }
+
+namespace {
+
+class BufferedStream final : public v8::OutputStream {
+ public:
+  explicit BufferedStream(std::streambuf* stream_buffer)
+      : out_stream_(stream_buffer) {}
+
+  WriteResult WriteAsciiChunk(char* data, int size) override {
+    out_stream_.write(data, size);
+    return kContinue;
+  }
+
+  void EndOfStream() override {}
+
+ private:
+  std::ostream out_stream_;
+};
+
+}  // namespace
+
+void ThreadState::TakeHeapSnapshotForTesting(const char* filename) const {
+  CHECK(IsAttachedToIsolate());
+  v8::HeapProfiler* profiler = isolate_->GetHeapProfiler();
+  CHECK(profiler);
+
+  v8::HeapProfiler::HeapSnapshotOptions options;
+  options.snapshot_mode = v8::HeapProfiler::HeapSnapshotMode::kExposeInternals;
+  const v8::HeapSnapshot* snapshot = profiler->TakeHeapSnapshot(options);
+
+  {
+    std::ofstream file_stream;
+    if (filename) {
+      file_stream.open(filename, std::ios_base::out | std::ios_base::trunc);
+    }
+    BufferedStream stream(filename ? file_stream.rdbuf() : std::cout.rdbuf());
+    snapshot->Serialize(&stream);
+  }
+
+  const_cast<v8::HeapSnapshot*>(snapshot)->Delete();
+}
+
 }  // namespace blink

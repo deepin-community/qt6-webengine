@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <iosfwd>
 
+#include "base/check_op.h"
 #include "base/dcheck_is_on.h"
 #include "base/memory/scoped_refptr.h"
 #include "cc/trees/property_tree.h"
@@ -46,10 +47,16 @@ enum class PaintPropertyChangeType : unsigned char {
   // the value changes are 'simple' in that they don't cause cascading changes.
   // For example, they do not cause a new render surface to be created, which
   // may otherwise cause tree changes elsewhere. An example of this is opacity
-  // changing in the [0, 1) range.
+  // changing in the [0, 1) range. PaintPropertyTreeBuilder may try to directly
+  // update the associated compositor node through PaintArtifactCompositor::
+  // DirectlyUpdate*(), and if that's successful, the change will be downgraded
+  // to kChangeOnlyCompositedValues.
   kChangedOnlySimpleValues,
   // We only changed values and not the hierarchy of the tree, but nothing is
-  // known about the kind of value change.
+  // known about the kind of value change. The difference between
+  // kChangedOnlySimpleValues and kChangedOnlyValues is only meaningful in
+  // PaintPropertyTreeBuilder for eligibility of direct update of compositor
+  // node. Otherwise we should never distinguish between them.
   kChangedOnlyValues,
   // We have directly modified the tree topology by adding or removing a node.
   kNodeAddedOrRemoved,
@@ -109,6 +116,18 @@ class PaintPropertyNode
     for (auto* n = this; n && n->changed_sequence_number_ != sequence_number;
          n = n->Parent())
       n->ClearChanged(sequence_number);
+  }
+
+  PaintPropertyChangeType SetParent(const NodeTypeOrAlias& parent) {
+    DCHECK(!IsRoot());
+    DCHECK_NE(&parent, this);
+    if (&parent == parent_) {
+      return PaintPropertyChangeType::kUnchanged;
+    }
+    parent_ = &parent;
+    static_cast<NodeTypeOrAlias*>(this)->AddChanged(
+        PaintPropertyChangeType::kChangedOnlyValues);
+    return PaintPropertyChangeType::kChangedOnlyValues;
   }
 
   // Returns true if this node is an alias for its parent. A parent alias is a
@@ -202,23 +221,6 @@ class PaintPropertyNode
         changed_(PaintPropertyChangeType::kNodeAddedOrRemoved),
         parent_(&parent) {}
 
-  PaintPropertyChangeType SetParent(const NodeTypeOrAlias& parent) {
-    DCHECK(!IsRoot());
-    DCHECK_NE(&parent, this);
-    if (&parent == parent_)
-      return PaintPropertyChangeType::kUnchanged;
-
-    parent_ = &parent;
-    if (IsParentAlias()) {
-      static_cast<NodeTypeOrAlias*>(this)->AddChanged(
-          PaintPropertyChangeType::kChangedOnlyValues);
-    } else {
-      static_cast<NodeType*>(this)->AddChanged(
-          PaintPropertyChangeType::kChangedOnlyValues);
-    }
-    return PaintPropertyChangeType::kChangedOnlyValues;
-  }
-
   void AddChanged(PaintPropertyChangeType changed) {
     DCHECK(!IsRoot());
     changed_ = std::max(changed_, changed);
@@ -282,6 +284,8 @@ class PaintPropertyNode
 
 template <typename NodeType>
 class PropertyTreePrinter {
+  STACK_ALLOCATED();
+
  public:
   void AddNode(const NodeType* node) {
     if (node)
@@ -289,7 +293,7 @@ class PropertyTreePrinter {
   }
 
   String NodesAsTreeString() {
-    if (nodes_.IsEmpty())
+    if (nodes_.empty())
       return "";
     StringBuilder string_builder;
     BuildTreeString(string_builder, RootNode(), 0);
@@ -321,7 +325,7 @@ class PropertyTreePrinter {
     const auto* node = nodes_.back();
     while (!node->IsRoot())
       node = node->Parent();
-    if (node->DebugName().IsEmpty())
+    if (node->DebugName().empty())
       const_cast<NodeType*>(node)->SetDebugName("root");
     nodes_.insert(node);
     return *node;

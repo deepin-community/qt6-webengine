@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,6 @@
 #include "third_party/blink/renderer/platform/graphics/paint/display_item.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_record.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
-#include "third_party/skia/include/core/SkRefCnt.h"
 
 namespace cc {
 class ScrollbarLayerBase;
@@ -51,7 +50,7 @@ class PLATFORM_EXPORT ScrollbarDisplayItem final : public DisplayItem {
 
   // Paints the scrollbar into the internal paint record, for non-composited
   // scrollbar.
-  sk_sp<const PaintRecord> Paint() const;
+  PaintRecord Paint() const;
 
   // Create or reuse the cc scrollbar layer, for composited scrollbar.
   scoped_refptr<cc::ScrollbarLayerBase> CreateOrReuseLayer(
@@ -68,6 +67,8 @@ class PLATFORM_EXPORT ScrollbarDisplayItem final : public DisplayItem {
                      const TransformPaintPropertyNode* scroll_translation,
                      CompositorElementId element_id);
 
+  bool IsOpaque() const;
+
  private:
   friend class DisplayItem;
   bool EqualsForUnderInvalidationImpl(const ScrollbarDisplayItem&) const;
@@ -80,7 +81,9 @@ class PLATFORM_EXPORT ScrollbarDisplayItem final : public DisplayItem {
     const TransformPaintPropertyNode* scroll_translation_;
     CompositorElementId element_id_;
     // This is lazily created for non-composited scrollbar.
-    mutable sk_sp<const PaintRecord> record_;
+    mutable PaintRecord record_;
+
+    USING_FAST_MALLOC(Data);
   };
   // This is to make ScrollbarDisplayItem not bigger than other DisplayItems,
   // so that we can store different types of DisplayItems in DisplayItemList

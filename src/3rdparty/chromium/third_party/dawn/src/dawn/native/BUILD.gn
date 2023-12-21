@@ -19,15 +19,6 @@ import("${dawn_root}/generator/dawn_generator.gni")
 import("${dawn_root}/scripts/dawn_component.gni")
 import("${dawn_root}/scripts/dawn_features.gni")
 
-# Import mac_deployment_target
-if (is_mac) {
-  if (dawn_has_build) {
-    import("//build/config/mac/mac_sdk.gni")
-  } else {
-    mac_deployment_target = "10.11.0"
-  }
-}
-
 # The VVLs are an optional dependency, only use it if the path has been set.
 enable_vulkan_validation_layers = dawn_enable_vulkan_validation_layers &&
                                   dawn_vulkan_validation_layers_dir != ""
@@ -60,26 +51,18 @@ group("abseil") {
   if (build_with_chromium) {
     public_deps = [ "$dawn_abseil_dir:absl" ]
   } else {
-    public_deps = [ "${dawn_root}/third_party/gn/abseil-cpp:str_format" ]
+    public_deps = [
+      "${dawn_root}/third_party/gn/abseil-cpp:str_format",
+      "${dawn_root}/third_party/gn/abseil-cpp:strings",
+    ]
   }
 }
 
 config("internal") {
-  configs = [ "${dawn_root}/src/dawn/common:internal_config" ]
-
-  # Suppress warnings that Metal isn't in the deployment target of Chrome:
-  # initialization of the Metal backend is behind a IsMetalSupported check so
-  # Dawn won't call Metal functions on macOS 10.10.
-  # At the time this is written Chromium supports 10.10.0 and above, so if we
-  # aren't on 10.11 it means we are on 10.11 and above, and Metal is available.
-  # Skipping this check on 10.11 and above is important as it allows getting
-  # proper compilation warning when using 10.12 and above feature for example.
-  # TODO(crbug.com/1004024): Consider using API_AVAILABLE annotations on all
-  # metal code in dawn once crbug.com/1004024 is sorted out if Chromium still
-  # supports 10.10 then.
-  if (is_mac && mac_deployment_target == "10.10.0") {
-    cflags_objcc = [ "-Wno-unguarded-availability" ]
-  }
+  configs = [
+    "${dawn_root}/src/dawn/common:internal_config",
+    "${dawn_root}/src/tint:tint_public_config",
+  ]
 }
 
 config("weak_framework") {
@@ -117,9 +100,9 @@ dawn_json_generator("utils_gen") {
     "src/dawn/native/ValidationUtils_autogen.cpp",
     "src/dawn/native/webgpu_absl_format_autogen.h",
     "src/dawn/native/webgpu_absl_format_autogen.cpp",
+    "src/dawn/native/webgpu_StreamImpl_autogen.cpp",
     "src/dawn/native/ObjectType_autogen.h",
     "src/dawn/native/ObjectType_autogen.cpp",
-    "src/dawn/native/CacheKey_autogen.cpp",
   ]
 }
 
@@ -168,6 +151,9 @@ source_set("sources") {
     ":utils_gen",
     "${dawn_root}/src/dawn/common",
     "${dawn_root}/src/tint:libtint",
+
+    # TODO(dawn:286): These should only be necessary if SPIR-V validation is
+    # enabled with dawn_enable_spirv_validation
     "${dawn_spirv_tools_dir}:spvtools_opt",
     "${dawn_spirv_tools_dir}:spvtools_val",
   ]
@@ -175,7 +161,16 @@ source_set("sources") {
   libs = []
   data_deps = []
 
-  configs += [ ":internal" ]
+  configs += [
+    ":internal",
+    "${dawn_root}/src/tint:tint_public_config",
+  ]
+
+  # Enable -Wglobal-constructors here only, instead of in internal_config,
+  # because gtest and some other targets don't build with it.
+  if (is_clang) {
+    cflags = [ "-Wglobal-constructors" ]
+  }
 
   # Dependencies that are needed to compile dawn native entry points in
   # FooBackend.cpp need to be public deps so they are propagated to the
@@ -189,6 +184,8 @@ source_set("sources") {
   sources += [
     "Adapter.cpp",
     "Adapter.h",
+    "ApplyClearColorValueWithDrawHelper.cpp",
+    "ApplyClearColorValueWithDrawHelper.h",
     "AsyncTask.cpp",
     "AsyncTask.h",
     "AttachmentState.cpp",
@@ -202,6 +199,14 @@ source_set("sources") {
     "BindGroupTracker.h",
     "BindingInfo.cpp",
     "BindingInfo.h",
+    "BlitBufferToDepthStencil.cpp",
+    "BlitBufferToDepthStencil.h",
+    "BlitDepthToDepth.cpp",
+    "BlitDepthToDepth.h",
+    "Blob.cpp",
+    "Blob.h",
+    "BlobCache.cpp",
+    "BlobCache.h",
     "BuddyAllocator.cpp",
     "BuddyAllocator.h",
     "BuddyMemoryAllocator.cpp",
@@ -210,6 +215,9 @@ source_set("sources") {
     "Buffer.h",
     "CacheKey.cpp",
     "CacheKey.h",
+    "CacheRequest.cpp",
+    "CacheRequest.h",
+    "CacheResult.h",
     "CachedObject.cpp",
     "CachedObject.h",
     "CallbackTaskManager.cpp",
@@ -274,15 +282,16 @@ source_set("sources") {
     "ObjectBase.h",
     "ObjectContentHasher.cpp",
     "ObjectContentHasher.h",
+    "PassResourceUsage.cpp",
     "PassResourceUsage.h",
     "PassResourceUsageTracker.cpp",
     "PassResourceUsageTracker.h",
     "PerStage.cpp",
     "PerStage.h",
-    "PersistentCache.cpp",
-    "PersistentCache.h",
     "Pipeline.cpp",
     "Pipeline.h",
+    "PipelineCache.cpp",
+    "PipelineCache.h",
     "PipelineLayout.cpp",
     "PipelineLayout.h",
     "PooledResourceMemoryAllocator.cpp",
@@ -295,6 +304,8 @@ source_set("sources") {
     "QuerySet.h",
     "Queue.cpp",
     "Queue.h",
+    "RefCountedWithExternalCount.cpp",
+    "RefCountedWithExternalCount.h",
     "RenderBundle.cpp",
     "RenderBundle.h",
     "RenderBundleEncoder.cpp",
@@ -315,10 +326,10 @@ source_set("sources") {
     "Sampler.h",
     "ScratchBuffer.cpp",
     "ScratchBuffer.h",
+    "Serializable.h",
     "ShaderModule.cpp",
     "ShaderModule.h",
-    "StagingBuffer.cpp",
-    "StagingBuffer.h",
+    "StreamImplTint.cpp",
     "Subresource.cpp",
     "Subresource.h",
     "SubresourceStorage.h",
@@ -333,9 +344,19 @@ source_set("sources") {
     "ToBackend.h",
     "Toggles.cpp",
     "Toggles.h",
+    "UsageValidationMode.h",
     "VertexFormat.cpp",
     "VertexFormat.h",
+    "VisitableMembers.h",
     "dawn_platform.h",
+    "stream/BlobSource.cpp",
+    "stream/BlobSource.h",
+    "stream/ByteVectorSink.cpp",
+    "stream/ByteVectorSink.h",
+    "stream/Sink.h",
+    "stream/Source.h",
+    "stream/Stream.cpp",
+    "stream/Stream.h",
     "utils/WGPUHelpers.cpp",
     "utils/WGPUHelpers.h",
     "webgpu_absl_format.cpp",
@@ -383,6 +404,8 @@ source_set("sources") {
       "d3d12/BindGroupD3D12.h",
       "d3d12/BindGroupLayoutD3D12.cpp",
       "d3d12/BindGroupLayoutD3D12.h",
+      "d3d12/BlobD3D12.cpp",
+      "d3d12/BlobD3D12.h",
       "d3d12/BufferD3D12.cpp",
       "d3d12/BufferD3D12.h",
       "d3d12/CPUDescriptorHeapAllocationD3D12.cpp",
@@ -405,6 +428,8 @@ source_set("sources") {
       "d3d12/DeviceD3D12.h",
       "d3d12/ExternalImageDXGIImpl.cpp",
       "d3d12/ExternalImageDXGIImpl.h",
+      "d3d12/FenceD3D12.cpp",
+      "d3d12/FenceD3D12.h",
       "d3d12/Forward.h",
       "d3d12/GPUDescriptorHeapAllocationD3D12.cpp",
       "d3d12/GPUDescriptorHeapAllocationD3D12.h",
@@ -443,10 +468,9 @@ source_set("sources") {
       "d3d12/ShaderModuleD3D12.h",
       "d3d12/ShaderVisibleDescriptorAllocatorD3D12.cpp",
       "d3d12/ShaderVisibleDescriptorAllocatorD3D12.h",
-      "d3d12/StagingBufferD3D12.cpp",
-      "d3d12/StagingBufferD3D12.h",
       "d3d12/StagingDescriptorAllocatorD3D12.cpp",
       "d3d12/StagingDescriptorAllocatorD3D12.h",
+      "d3d12/StreamImplD3D12.cpp",
       "d3d12/SwapChainD3D12.cpp",
       "d3d12/SwapChainD3D12.h",
       "d3d12/TextureCopySplitter.cpp",
@@ -497,8 +521,6 @@ source_set("sources") {
       "metal/SamplerMTL.mm",
       "metal/ShaderModuleMTL.h",
       "metal/ShaderModuleMTL.mm",
-      "metal/StagingBufferMTL.h",
-      "metal/StagingBufferMTL.mm",
       "metal/SwapChainMTL.h",
       "metal/SwapChainMTL.mm",
       "metal/TextureMTL.h",
@@ -515,7 +537,8 @@ source_set("sources") {
     ]
   }
 
-  if (dawn_enable_opengl || dawn_enable_vulkan) {
+  if ((dawn_enable_opengl || dawn_enable_vulkan) &&
+      dawn_enable_spirv_validation) {
     sources += [
       "SpirvValidation.cpp",
       "SpirvValidation.h",
@@ -529,6 +552,8 @@ source_set("sources") {
     ]
     sources += get_target_outputs(":opengl_loader_gen")
     sources += [
+      "opengl/AdapterGL.cpp",
+      "opengl/AdapterGL.h",
       "opengl/BackendGL.cpp",
       "opengl/BackendGL.h",
       "opengl/BindGroupGL.cpp",
@@ -541,8 +566,12 @@ source_set("sources") {
       "opengl/CommandBufferGL.h",
       "opengl/ComputePipelineGL.cpp",
       "opengl/ComputePipelineGL.h",
+      "opengl/ContextEGL.cpp",
+      "opengl/ContextEGL.h",
       "opengl/DeviceGL.cpp",
       "opengl/DeviceGL.h",
+      "opengl/EGLFunctions.cpp",
+      "opengl/EGLFunctions.h",
       "opengl/Forward.h",
       "opengl/GLFormat.cpp",
       "opengl/GLFormat.h",
@@ -572,10 +601,13 @@ source_set("sources") {
       "opengl/SwapChainGL.h",
       "opengl/TextureGL.cpp",
       "opengl/TextureGL.h",
+      "opengl/UtilsEGL.cpp",
+      "opengl/UtilsEGL.h",
       "opengl/UtilsGL.cpp",
       "opengl/UtilsGL.h",
       "opengl/opengl_platform.h",
     ]
+    include_dirs = [ "//third_party/khronos" ]
   }
 
   if (dawn_enable_vulkan) {
@@ -593,8 +625,6 @@ source_set("sources") {
       "vulkan/BindGroupVk.h",
       "vulkan/BufferVk.cpp",
       "vulkan/BufferVk.h",
-      "vulkan/CacheKeyVk.cpp",
-      "vulkan/CacheKeyVk.h",
       "vulkan/CommandBufferVk.cpp",
       "vulkan/CommandBufferVk.h",
       "vulkan/CommandRecordingContext.h",
@@ -611,6 +641,8 @@ source_set("sources") {
       "vulkan/Forward.h",
       "vulkan/NativeSwapChainImplVk.cpp",
       "vulkan/NativeSwapChainImplVk.h",
+      "vulkan/PipelineCacheVk.cpp",
+      "vulkan/PipelineCacheVk.h",
       "vulkan/PipelineLayoutVk.cpp",
       "vulkan/PipelineLayoutVk.h",
       "vulkan/QuerySetVk.cpp",
@@ -629,8 +661,7 @@ source_set("sources") {
       "vulkan/SamplerVk.h",
       "vulkan/ShaderModuleVk.cpp",
       "vulkan/ShaderModuleVk.h",
-      "vulkan/StagingBufferVk.cpp",
-      "vulkan/StagingBufferVk.h",
+      "vulkan/StreamImplVk.cpp",
       "vulkan/SwapChainVk.cpp",
       "vulkan/SwapChainVk.h",
       "vulkan/TextureVk.cpp",
@@ -645,31 +676,36 @@ source_set("sources") {
       "vulkan/VulkanFunctions.h",
       "vulkan/VulkanInfo.cpp",
       "vulkan/VulkanInfo.h",
+      "vulkan/external_memory/MemoryService.cpp",
       "vulkan/external_memory/MemoryService.h",
+      "vulkan/external_semaphore/SemaphoreService.cpp",
       "vulkan/external_semaphore/SemaphoreService.h",
+      "vulkan/external_semaphore/ServiceImplementation.cpp",
+      "vulkan/external_semaphore/ServiceImplementation.h",
     ]
 
-    if (is_chromeos) {
+    if (is_android || is_linux || is_chromeos) {
       sources += [
-        "vulkan/external_memory/MemoryServiceDmaBuf.cpp",
-        "vulkan/external_semaphore/SemaphoreServiceFD.cpp",
-      ]
-      defines += [ "DAWN_USE_SYNC_FDS" ]
-    } else if (is_linux) {
-      sources += [
-        "vulkan/external_memory/MemoryServiceOpaqueFD.cpp",
-        "vulkan/external_semaphore/SemaphoreServiceFD.cpp",
+        "vulkan/external_semaphore/ServiceImplementationFD.cpp",
+        "vulkan/external_semaphore/ServiceImplementationFD.h",
       ]
     } else if (is_fuchsia) {
       sources += [
-        "vulkan/external_memory/MemoryServiceZirconHandle.cpp",
-        "vulkan/external_semaphore/SemaphoreServiceZirconHandle.cpp",
+        "vulkan/external_semaphore/ServiceImplementationZirconHandle.cpp",
+        "vulkan/external_semaphore/ServiceImplementationZirconHandle.h",
       ]
+    }
+
+    if (is_chromeos) {
+      sources += [ "vulkan/external_memory/MemoryServiceDmaBuf.cpp" ]
+    } else if (is_linux) {
+      sources += [ "vulkan/external_memory/MemoryServiceOpaqueFD.cpp" ]
+    } else if (is_fuchsia) {
+      sources += [ "vulkan/external_memory/MemoryServiceZirconHandle.cpp" ]
+    } else if (is_android) {
+      sources += [ "vulkan/external_memory/MemoryServiceAHardwareBuffer.cpp" ]
     } else {
-      sources += [
-        "vulkan/external_memory/MemoryServiceNull.cpp",
-        "vulkan/external_semaphore/SemaphoreServiceNull.cpp",
-      ]
+      sources += [ "vulkan/external_memory/MemoryServiceNull.cpp" ]
     }
     if (build_with_chromium && is_fuchsia) {
       # Necessary to ensure that the Vulkan libraries will be in the
@@ -698,6 +734,9 @@ source_set("sources") {
       data_deps +=
           [ "${dawn_swiftshader_dir}/src/Vulkan:swiftshader_libvulkan" ]
       defines += [ "DAWN_ENABLE_SWIFTSHADER" ]
+    }
+    if (dawn_enable_spirv_validation) {
+      defines += [ "DAWN_ENABLE_SPIRV_VALIDATION" ]
     }
   }
 

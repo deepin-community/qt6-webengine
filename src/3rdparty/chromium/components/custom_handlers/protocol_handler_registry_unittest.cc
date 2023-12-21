@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,10 +14,10 @@
 #include "base/run_loop.h"
 #include "base/scoped_observation.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/values.h"
 #include "build/build_config.h"
 #include "components/custom_handlers/pref_names.h"
 #include "components/custom_handlers/protocol_handler.h"
-#include "components/custom_handlers/protocol_handler_registry.h"
 #include "components/custom_handlers/test_protocol_handler_registry_delegate.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/sync_preferences/pref_service_syncable.h"
@@ -34,19 +34,20 @@ using content::BrowserThread;
 
 namespace custom_handlers {
 
-base::Value GetProtocolHandlerValue(const std::string& protocol,
-                                    const std::string& url) {
+base::Value::Dict GetProtocolHandlerValue(const std::string& protocol,
+                                          const std::string& url) {
   base::Value::Dict value;
   value.Set("protocol", protocol);
   value.Set("url", url);
-  return base::Value(std::move(value));
+  return value;
 }
 
-base::Value GetProtocolHandlerValueWithDefault(const std::string& protocol,
-                                               const std::string& url,
-                                               bool is_default) {
-  base::Value value = GetProtocolHandlerValue(protocol, url);
-  value.GetDict().Set("default", is_default);
+base::Value::Dict GetProtocolHandlerValueWithDefault(
+    const std::string& protocol,
+    const std::string& url,
+    bool is_default) {
+  base::Value::Dict value = GetProtocolHandlerValue(protocol, url);
+  value.Set("default", is_default);
   return value;
 }
 
@@ -157,9 +158,9 @@ class ProtocolHandlerRegistryTest : public testing::Test {
   }
 
   int InPrefHandlerCount() {
-    const base::Value* in_pref_handlers = GetPrefs()->GetList(
+    const base::Value::List& in_pref_handlers = GetPrefs()->GetList(
         custom_handlers::prefs::kRegisteredProtocolHandlers);
-    return static_cast<int>(in_pref_handlers->GetListDeprecated().size());
+    return static_cast<int>(in_pref_handlers.size());
   }
 
   int InMemoryHandlerCount() {
@@ -171,10 +172,9 @@ class ProtocolHandlerRegistryTest : public testing::Test {
   }
 
   int InPrefIgnoredHandlerCount() {
-    const base::Value* in_pref_ignored_handlers =
+    const base::Value::List& in_pref_ignored_handlers =
         GetPrefs()->GetList(custom_handlers::prefs::kIgnoredProtocolHandlers);
-    return static_cast<int>(
-        in_pref_ignored_handlers->GetListDeprecated().size());
+    return static_cast<int>(in_pref_ignored_handlers.size());
   }
 
   int InMemoryIgnoredHandlerCount() {
@@ -805,8 +805,8 @@ TEST_F(ProtocolHandlerRegistryTest, TestInstallDefaultHandler) {
 #define URL_p3u1 "https://p3u1.com/%s"
 
 TEST_F(ProtocolHandlerRegistryTest, TestPrefPolicyOverlapRegister) {
-  base::ListValue handlers_registered_by_pref;
-  base::ListValue handlers_registered_by_policy;
+  base::Value::List handlers_registered_by_pref;
+  base::Value::List handlers_registered_by_policy;
 
   handlers_registered_by_pref.Append(
       GetProtocolHandlerValueWithDefault("news", URL_p1u2, true));
@@ -820,10 +820,10 @@ TEST_F(ProtocolHandlerRegistryTest, TestPrefPolicyOverlapRegister) {
   handlers_registered_by_policy.Append(
       GetProtocolHandlerValueWithDefault("mailto", URL_p3u1, true));
 
-  GetPrefs()->Set(custom_handlers::prefs::kRegisteredProtocolHandlers,
-                  handlers_registered_by_pref);
-  GetPrefs()->Set(custom_handlers::prefs::kPolicyRegisteredProtocolHandlers,
-                  handlers_registered_by_policy);
+  GetPrefs()->SetList(custom_handlers::prefs::kRegisteredProtocolHandlers,
+                      std::move(handlers_registered_by_pref));
+  GetPrefs()->SetList(custom_handlers::prefs::kPolicyRegisteredProtocolHandlers,
+                      std::move(handlers_registered_by_policy));
   registry()->InitProtocolSettings();
 
   // Duplicate p1u2 eliminated in memory but not yet saved in pref
@@ -885,8 +885,8 @@ TEST_F(ProtocolHandlerRegistryTest, TestPrefPolicyOverlapRegister) {
 }
 
 TEST_F(ProtocolHandlerRegistryTest, TestPrefPolicyOverlapIgnore) {
-  base::ListValue handlers_ignored_by_pref;
-  base::ListValue handlers_ignored_by_policy;
+  base::Value::List handlers_ignored_by_pref;
+  base::Value::List handlers_ignored_by_policy;
 
   handlers_ignored_by_pref.Append(GetProtocolHandlerValue("news", URL_p1u1));
   handlers_ignored_by_pref.Append(GetProtocolHandlerValue("news", URL_p1u2));
@@ -897,10 +897,10 @@ TEST_F(ProtocolHandlerRegistryTest, TestPrefPolicyOverlapIgnore) {
   handlers_ignored_by_policy.Append(GetProtocolHandlerValue("news", URL_p1u3));
   handlers_ignored_by_policy.Append(GetProtocolHandlerValue("im", URL_p2u1));
 
-  GetPrefs()->Set(custom_handlers::prefs::kIgnoredProtocolHandlers,
-                  handlers_ignored_by_pref);
-  GetPrefs()->Set(custom_handlers::prefs::kPolicyIgnoredProtocolHandlers,
-                  handlers_ignored_by_policy);
+  GetPrefs()->SetList(custom_handlers::prefs::kIgnoredProtocolHandlers,
+                      std::move(handlers_ignored_by_pref));
+  GetPrefs()->SetList(custom_handlers::prefs::kPolicyIgnoredProtocolHandlers,
+                      std::move(handlers_ignored_by_policy));
   registry()->InitProtocolSettings();
 
   // Duplicate p1u2 eliminated in memory but not yet saved in pref

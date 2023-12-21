@@ -1,4 +1,4 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -43,6 +43,9 @@ def blink_class_name(idl_definition):
         # cases.  Plus, we prefer a simple naming rule conformant to the
         # Chromium coding style.  So, we go with this way.
         return "V8Union{}".format("Or".join(idl_definition.member_tokens))
+    elif isinstance(idl_definition, web_idl.SyncIterator):
+        return "SyncIterator<{}>".format(
+            blink_class_name(idl_definition.interface))
     else:
         return idl_definition.identifier
 
@@ -51,13 +54,15 @@ def v8_bridge_class_name(idl_definition):
     """
     Returns the name of V8-from/to-Blink bridge class.
     """
-    assert isinstance(
-        idl_definition,
-        (web_idl.CallbackInterface, web_idl.Interface, web_idl.Namespace))
+    assert isinstance(idl_definition,
+                      (web_idl.CallbackInterface, web_idl.Interface,
+                       web_idl.Namespace, web_idl.SyncIterator))
 
     assert idl_definition.identifier[0].isupper()
     # Do not apply |name_style.class_| due to the same reason as
     # |blink_class_name|.
+    if isinstance(idl_definition, web_idl.SyncIterator):
+        return "V8SyncIterator{}".format(idl_definition.interface.identifier)
     return "V8{}".format(idl_definition.identifier)
 
 
@@ -409,11 +414,8 @@ def _native_value_tag_impl(idl_type):
     """Returns the tag type of NativeValueTraits."""
     assert isinstance(idl_type, web_idl.IdlType)
 
-    if idl_type.is_typedef:
-        if idl_type.identifier in ("EventHandler",
-                                   "OnBeforeUnloadEventHandler",
-                                   "OnErrorEventHandler"):
-            return "IDL{}".format(idl_type.identifier)
+    if idl_type.is_event_handler:
+        return "IDL{}".format(idl_type.identifier)
 
     real_type = idl_type.unwrap(typedef=True)
 
@@ -423,9 +425,15 @@ def _native_value_tag_impl(idl_type):
             idl_type.type_name_with_extended_attribute_key_values)
 
     if real_type.is_array_buffer:
+        if "BufferSourceTypeNoSizeLimit" in real_type.effective_annotations:
+            return "IDLBufferSourceTypeNoSizeLimit<{}>".format(
+                blink_type_info(real_type).typename)
         return blink_type_info(real_type).typename
 
     if real_type.is_buffer_source_type:
+        if "BufferSourceTypeNoSizeLimit" in real_type.effective_annotations:
+            return "IDLBufferSourceTypeNoSizeLimit<{}>".format(
+                blink_type_info(real_type).value_t)
         return blink_type_info(real_type).value_t
 
     if real_type.is_symbol:

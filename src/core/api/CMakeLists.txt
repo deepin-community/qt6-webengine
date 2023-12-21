@@ -1,3 +1,6 @@
+# Copyright (C) 2022 The Qt Company Ltd.
+# SPDX-License-Identifier: BSD-3-Clause
+
 find_package(Qt6 ${PROJECT_VERSION} REQUIRED COMPONENTS Gui Network Quick)
 find_package(Qt6 ${PROJECT_VERSION} QUIET OPTIONAL_COMPONENTS WebChannel Positioning)
 
@@ -30,18 +33,19 @@ qt_internal_add_module(WebEngineCore
         qwebenginescriptcollection.cpp qwebenginescriptcollection.h qwebenginescriptcollection_p.h
         qwebenginesettings.cpp qwebenginesettings.h
         qwebengineurlrequestinfo.cpp qwebengineurlrequestinfo.h qwebengineurlrequestinfo_p.h
-        qwebengineurlrequestinterceptor.h
+        qwebengineurlrequestinterceptor.h qwebengineurlrequestinterceptor.cpp
         qwebengineurlrequestjob.cpp qwebengineurlrequestjob.h
         qwebengineurlscheme.cpp qwebengineurlscheme.h
         qwebengineurlschemehandler.cpp qwebengineurlschemehandler.h
+        qwebengineglobalsettings.cpp qwebengineglobalsettings.h qwebengineglobalsettings_p.h
     DEFINES
         BUILDING_CHROMIUM
-        NOMINMAX
     INCLUDE_DIRECTORIES
         ../
         ../../3rdparty/chromium
         ../../3rdparty/chromium/third_party/abseil-cpp
         ../../3rdparty/chromium/third_party/perfetto/include
+        ../../3rdparty/chromium/third_party/boringssl/src/include
     LIBRARIES
         Qt::CorePrivate
         Qt::GuiPrivate
@@ -59,7 +63,16 @@ set_target_properties(WebEngineCore PROPERTIES QTWEBENGINEPROCESS_NAME ${qtWebEn
 qt_skip_warnings_are_errors(WebEngineCore)
 
 if(CLANG OR GCC)
-    target_compile_options(WebEngineCore PRIVATE "-Wno-unused-parameter")
+    target_compile_options(WebEngineCore PRIVATE
+        "-Wno-unused-parameter"
+        "-Wno-expansion-to-defined"
+    )
+endif()
+
+if(GCC)
+    target_compile_options(WebEngineCore PRIVATE
+        "-Wno-packed-not-aligned"
+    )
 endif()
 
 qt_internal_extend_target(WebEngineCore CONDITION QT_FEATURE_webengine_webchannel
@@ -71,6 +84,11 @@ qt_internal_extend_target(WebEngineCore CONDITION QT_FEATURE_webengine_geolocati
         Qt::Positioning
 )
 
+get_install_config(config)
+get_architectures(archs)
+get_configs(configs)
+list(GET archs 0 arch)
+
 ##
 #  DOCS
 ##
@@ -79,18 +97,16 @@ qt_internal_add_docs(WebEngineCore
     ../doc/qtwebengine.qdocconf
 )
 
-add_custom_command(
-    OUTPUT chromium_attributions.qdoc
-    COMMAND ${Python3_EXECUTABLE} chromium/tools/licenses.py
-        --file-template ../core/doc/about_credits.tmpl
-        --entry-template ../core/doc/about_credits_entry.tmpl
-        credits ${CMAKE_CURRENT_BINARY_DIR}/chromium_attributions.qdoc
-    DEPENDS ../doc/about_credits.tmpl ../doc/about_credits_entry.tmpl
-    WORKING_DIRECTORY ${WEBENGINE_ROOT_SOURCE_DIR}/src/3rdparty
-    USES_TERMINAL
+add_code_attributions_target(
+    TARGET generate_chromium_attributions
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/chromium_attributions.qdoc
+    GN_TARGET :QtWebEngineCore
+    FILE_TEMPLATE ../doc/about_credits.tmpl
+    ENTRY_TEMPLATE ../doc/about_credits_entry.tmpl
+    BUILDDIR ${buildDir}/${config}/${arch}
 )
-add_custom_target(generate_chromium_attributions DEPENDS chromium_attributions.qdoc)
-add_dependencies(generate_docs_WebEngineCore generate_chromium_attributions)
+add_dependencies(generate_chromium_attributions run_core_GnDone)
+add_dependencies(prepare_docs_WebEngineCore generate_chromium_attributions)
 
 ##
 #  WEBENGINECORE RESOURCES
@@ -106,22 +122,45 @@ set(resourceList qtwebengine_resources.pak
     qtwebengine_resources_200p.pak
     qtwebengine_devtools_resources.pak)
 
-get_install_config(config)
-get_architectures(archs)
-list(GET archs 0 arch)
+set(stamps ${buildDir}/${config}/${arch}/QtWebEngineCore.stamp)
+
+qt_internal_get_filename_path_mode(path_mode)
+
+if(QT_FEATURE_webengine_v8_context_snapshot)
+    foreach(arch ${archs})
+       foreach(config ${configs})
+           if(MACOS)
+               set(ext_arch ".${arch}")
+           else()
+               unset(ext_arch)
+           endif()
+           if("${config}" STREQUAL "Debug")
+               set(ext_debug ".debug")
+           else()
+               unset(ext_debug)
+           endif()
+           get_filename_component(resSourcePath ${buildDir}/${config}/${arch}/v8_context_snapshot${ext_arch}${ext_debug}.bin ${path_mode})
+           list(APPEND resourceFiles ${resSourcePath})
+           if(MACOS)
+               set(stamps ${stamps} ${buildDir}/${config}/${arch}/obj/tools/v8_context_snapshot/v8_context_snapshot.stamp)
+           endif()
+       endforeach()
+    endforeach()
+endif()
 
 foreach(loc ${localeList})
-    get_filename_component(locSourcePath ${buildDir}/${config}/${arch}/qtwebengine_locales/${loc}.pak REALPATH)
+    get_filename_component(locSourcePath ${buildDir}/${config}/${arch}/qtwebengine_locales/${loc}.pak ${path_mode})
     list(APPEND localeFiles ${locSourcePath})
 endforeach()
 
 foreach(res ${resourceList})
-    get_filename_component(resSourcePath ${buildDir}/${config}/${arch}/${res} REALPATH)
+    get_filename_component(resSourcePath ${buildDir}/${config}/${arch}/${res} ${path_mode})
     list(APPEND resourceFiles ${resSourcePath})
 endforeach()
 
-if (NOT QT_FEATURE_webengine_system_icu)
-    get_filename_component(icuFile ${buildDir}/${config}/${arch}/icudtl.dat REALPATH)
+
+if(NOT QT_FEATURE_webengine_system_icu)
+    get_filename_component(icuFile ${buildDir}/${config}/${arch}/icudtl.dat ${path_mode})
     list(APPEND resourceFiles ${icuFile})
     set_target_properties(WebEngineCore PROPERTIES ICUDTL_FILE ${icuFile})
 endif()
@@ -141,7 +180,7 @@ if(QT_FEATURE_framework)
         GENERATED TRUE
     )
 
-    add_custom_command(OUTPUT ${allResourceFiles} DEPENDS ${buildDir}/${config}/${arch}/QtWebEngineCore.stamp)
+    add_custom_command(OUTPUT ${allResourceFiles} DEPENDS "${stamps}")
     add_custom_target(generate_resources_${config} DEPENDS ${allResourceFiles})
 
     addCopyCommand(WebEngineCore "${localeFiles}"

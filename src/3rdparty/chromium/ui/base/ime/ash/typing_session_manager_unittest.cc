@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,7 +27,7 @@ class TypingSessionManagerTest : public testing::Test {
   TypingSessionManagerTest() : typing_session_manager_(&test_clock_) {}
 
   base::SimpleTestClock test_clock_;
-  ui::TypingSessionManager typing_session_manager_;
+  TypingSessionManager typing_session_manager_;
 };
 
 TEST_F(TypingSessionManagerTest, RecordMetricsForSimpleTypingSession) {

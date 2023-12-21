@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,14 +7,17 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
 #include "base/synchronization/condition_variable.h"
-#include "base/test/test_simple_task_runner.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/thread_pool.h"
+#include "base/threading/simple_thread.h"
 #include "base/threading/thread_checker_impl.h"
+#include "base/threading/thread_restrictions.h"
 #include "cc/paint/paint_image_builder.h"
+#include "cc/test/cc_test_suite.h"
 #include "cc/test/skia_common.h"
 #include "cc/test/stub_decode_cache.h"
 #include "cc/test/test_paint_worklet_input.h"
@@ -25,84 +28,13 @@
 namespace cc {
 namespace {
 
-class TestWorkerThread : public base::SimpleThread {
- public:
-  TestWorkerThread()
-      : base::SimpleThread("test_worker_thread"), condition_(&lock_) {}
-
-  void Run() override {
-    for (;;) {
-      base::OnceClosure task;
-      {
-        base::AutoLock hold(lock_);
-        if (shutdown_)
-          break;
-
-        if (queue_.empty()) {
-          condition_.Wait();
-          continue;
-        }
-
-        task = std::move(queue_.front());
-        queue_.erase(queue_.begin());
-      }
-      std::move(task).Run();
-    }
-  }
-
-  void Shutdown() {
-    base::AutoLock hold(lock_);
-    shutdown_ = true;
-    condition_.Signal();
-  }
-
-  void PostTask(base::OnceClosure task) {
-    base::AutoLock hold(lock_);
-    queue_.push_back(std::move(task));
-    condition_.Signal();
-  }
-
- private:
-  base::Lock lock_;
-  base::ConditionVariable condition_;
-  std::vector<base::OnceClosure> queue_;
-  bool shutdown_ = false;
-};
-
-class WorkerTaskRunner : public base::SequencedTaskRunner {
- public:
-  WorkerTaskRunner() { thread_.Start(); }
-
-  bool PostNonNestableDelayedTask(const base::Location& from_here,
-                                  base::OnceClosure task,
-                                  base::TimeDelta delay) override {
-    return PostDelayedTask(from_here, std::move(task), delay);
-  }
-
-  bool PostDelayedTask(const base::Location& from_here,
-                       base::OnceClosure task,
-                       base::TimeDelta delay) override {
-    thread_.PostTask(std::move(task));
-    return true;
-  }
-
-  bool RunsTasksInCurrentSequence() const override { return false; }
-
- protected:
-  ~WorkerTaskRunner() override {
-    thread_.Shutdown();
-    thread_.Join();
-  }
-
-  TestWorkerThread thread_;
-};
-
 // Image decode cache with introspection!
 class TestableCache : public StubDecodeCache {
  public:
   ~TestableCache() override { EXPECT_EQ(number_of_refs_, 0); }
 
-  TaskResult GetTaskForImageAndRef(const DrawImage& image,
+  TaskResult GetTaskForImageAndRef(uint32_t client_id,
+                                   const DrawImage& image,
                                    const TracingInfo& tracing_info) override {
     // Return false for large images to mimic "won't fit in memory"
     // behavior.
@@ -121,8 +53,9 @@ class TestableCache : public StubDecodeCache {
                       /*can_do_hardware_accelerated_decode=*/false);
   }
   TaskResult GetOutOfRasterDecodeTaskForImageAndRef(
+      uint32_t client_id,
       const DrawImage& image) override {
-    return GetTaskForImageAndRef(image, TracingInfo());
+    return GetTaskForImageAndRef(client_id, image, TracingInfo());
   }
 
   void UnrefImage(const DrawImage& image) override {
@@ -208,6 +141,7 @@ class BlockingTask : public TileTask {
     EXPECT_FALSE(HasCompleted());
     EXPECT_FALSE(thread_checker_.CalledOnValidThread());
     base::AutoLock hold(lock_);
+    base::ScopedAllowBaseSyncPrimitivesForTesting allow_base_sync_primitives;
     while (!can_run_)
       run_cv_.Wait();
     has_run_ = true;
@@ -256,22 +190,22 @@ DrawImage CreateBitmapDrawImage(gfx::Size size) {
 
 class ImageControllerTest : public testing::Test {
  public:
-  ImageControllerTest() : task_runner_(base::SequencedTaskRunnerHandle::Get()) {
+  ImageControllerTest()
+      : task_runner_(base::SequencedTaskRunner::GetCurrentDefault()) {
     image_ = CreateDiscardableDrawImage(gfx::Size(1, 1));
   }
   ~ImageControllerTest() override = default;
 
   void SetUp() override {
-    worker_task_runner_ = base::MakeRefCounted<WorkerTaskRunner>();
-    controller_ = std::make_unique<ImageController>(task_runner_.get(),
-                                                    worker_task_runner_);
-    cache_ = TestableCache();
+    controller_ = std::make_unique<ImageController>(
+        task_runner_,
+        base::ThreadPool::CreateSequencedTaskRunner(base::TaskTraits()));
     controller_->SetImageDecodeCache(&cache_);
   }
 
   void TearDown() override {
     controller_.reset();
-    worker_task_runner_ = nullptr;
+    CCTestSuite::RunUntilIdle();
     weak_ptr_factory_.InvalidateWeakPtrs();
   }
 
@@ -318,7 +252,6 @@ class ImageControllerTest : public testing::Test {
 
  private:
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
-  scoped_refptr<WorkerTaskRunner> worker_task_runner_;
   TestableCache cache_;
   std::unique_ptr<ImageController> controller_;
   DrawImage image_;
@@ -474,7 +407,9 @@ TEST_F(ImageControllerTest, QueueImageDecodeMultipleImagesSameTask) {
   EXPECT_TRUE(task->HasCompleted());
 }
 
-TEST_F(ImageControllerTest, QueueImageDecodeChangeControllerWithTaskQueued) {
+// TODO(crbug.com/1336053): Re-enable this test
+TEST_F(ImageControllerTest,
+       DISABLED_QueueImageDecodeChangeControllerWithTaskQueued) {
   scoped_refptr<BlockingTask> task_one(new BlockingTask);
   cache()->SetTaskToUse(task_one);
 

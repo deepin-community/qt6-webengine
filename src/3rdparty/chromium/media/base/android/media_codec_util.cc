@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,13 +6,13 @@
 
 #include <stddef.h>
 
-#include <algorithm>
 #include <vector>
 
 #include "base/android/build_info.h"
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "base/containers/contains.h"
 #include "base/logging.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
@@ -48,6 +48,7 @@ const char kVp8MimeType[] = "video/x-vnd.on2.vp8";
 const char kVp9MimeType[] = "video/x-vnd.on2.vp9";
 const char kAv1MimeType[] = "video/av01";
 const char kDtsMimeType[] = "audio/vnd.dts";
+const char kDtseMimeType[] = "audio/vnd.dts;profile=lbr";
 const char kDtsxP2MimeType[] = "audio/vnd.dts.uhd;profile=p2";
 }  // namespace
 
@@ -68,19 +69,7 @@ static bool IsSupportedAndroidMimeType(const std::string& mime_type) {
       kMp3MimeType, kAacMimeType,         kOpusMimeType, kVorbisMimeType,
       kAvcMimeType, kDolbyVisionMimeType, kHevcMimeType, kVp8MimeType,
       kVp9MimeType, kAv1MimeType};
-  return std::find(supported.begin(), supported.end(), mime_type) !=
-         supported.end();
-}
-
-static std::string GetDefaultCodecName(const std::string& mime_type,
-                                       MediaCodecDirection direction,
-                                       bool requires_software_codec) {
-  JNIEnv* env = AttachCurrentThread();
-  ScopedJavaLocalRef<jstring> j_mime = ConvertUTF8ToJavaString(env, mime_type);
-  ScopedJavaLocalRef<jstring> j_codec_name =
-      Java_MediaCodecUtil_getDefaultCodecName(
-          env, j_mime, static_cast<int>(direction), requires_software_codec);
-  return ConvertJavaStringToUTF8(env, j_codec_name.obj());
+  return base::Contains(supported, mime_type);
 }
 
 static bool IsDecoderSupportedByDevice(const std::string& android_mime_type) {
@@ -151,6 +140,8 @@ std::string MediaCodecUtil::CodecToAndroidMimeType(AudioCodec codec,
       return kEac3MimeType;
     case AudioCodec::kDTS:
       return kDtsMimeType;
+    case AudioCodec::kDTSE:
+      return kDtseMimeType;
     case AudioCodec::kDTSXP2:
       return kDtsxP2MimeType;
     default:
@@ -202,13 +193,6 @@ std::set<int> MediaCodecUtil::GetEncoderColorFormats(
 
   return color_formats;
 }
-
-#if BUILDFLAG(ENABLE_PLATFORM_DOLBY_VISION)
-// static
-bool MediaCodecUtil::IsDolbyVisionDecoderAvailable() {
-  return IsDecoderSupportedByDevice(kDolbyVisionMimeType);
-}
-#endif
 
 // static
 bool MediaCodecUtil::IsVp8DecoderAvailable() {
@@ -291,6 +275,8 @@ bool MediaCodecUtil::IsPassthroughAudioFormat(AudioCodec codec) {
   switch (codec) {
     case AudioCodec::kAC3:
     case AudioCodec::kEAC3:
+    case AudioCodec::kDTS:
+    case AudioCodec::kDTSXP2:
     case AudioCodec::kMpegHAudio:
       return true;
     default:
@@ -309,12 +295,8 @@ bool MediaCodecUtil::CanDecode(AudioCodec codec) {
 }
 
 // static
-bool MediaCodecUtil::IsH264EncoderAvailable(bool use_codec_list) {
-  if (use_codec_list)
-    return IsEncoderSupportedByDevice(kAvcMimeType);
-
-  // Assume support since Chrome only supports Marshmallow+.
-  return true;
+bool MediaCodecUtil::IsH264EncoderAvailable() {
+  return IsEncoderSupportedByDevice(kAvcMimeType);
 }
 
 // static
@@ -334,33 +316,28 @@ void MediaCodecUtil::AddSupportedCodecProfileLevels(
 // static
 bool MediaCodecUtil::IsKnownUnaccelerated(VideoCodec codec,
                                           MediaCodecDirection direction) {
-  std::string codec_name =
-      GetDefaultCodecName(CodecToAndroidMimeType(codec), direction, false);
-  DVLOG(1) << __func__ << "Default codec for " << GetCodecName(codec) << " : "
-           << codec_name << ", direction: " << static_cast<int>(direction);
+  auto* env = AttachCurrentThread();
+  auto j_mime = ConvertUTF8ToJavaString(env, CodecToAndroidMimeType(codec));
+  auto j_codec_name = Java_MediaCodecUtil_getDefaultCodecName(
+      env, j_mime, static_cast<int>(direction), /*requireSoftwareCodec=*/false,
+      /*requireHardwareCodec=*/true);
+
+  auto codec_name = ConvertJavaStringToUTF8(env, j_codec_name.obj());
+  DVLOG(1) << __func__ << "Default hardware codec for " << GetCodecName(codec)
+           << " : " << codec_name
+           << ", direction: " << static_cast<int>(direction);
   if (codec_name.empty())
     return true;
 
   // MediaTek hardware vp8 is known slower than the software implementation.
-  if (base::StartsWith(codec_name, "OMX.MTK.", base::CompareCase::SENSITIVE)) {
-    if (codec == VideoCodec::kVP8) {
-      // We may still reject VP8 hardware decoding later on certain chipsets,
-      // see isDecoderSupportedForDevice(). We don't have the the chipset ID
-      // here to check now though.
-      return base::android::BuildInfo::GetInstance()->sdk_int() < SDK_VERSION_P;
-    }
-
-    return false;
+  if (base::StartsWith(codec_name, "OMX.MTK.") && codec == VideoCodec::kVP8) {
+    // We may still reject VP8 hardware decoding later on certain chipsets,
+    // see isDecoderSupportedForDevice(). We don't have the the chipset ID
+    // here to check now though.
+    return base::android::BuildInfo::GetInstance()->sdk_int() < SDK_VERSION_P;
   }
 
-  // It would be nice if MediaCodecInfo externalized some notion of
-  // HW-acceleration but it doesn't. Android Media guidance is that the
-  // "OMX.google" prefix is always used for SW decoders, so that's what we
-  // use. "OMX.SEC.*" codec is Samsung software implementation - report it
-  // as unaccelerated as well.
-  return base::StartsWith(codec_name, "OMX.google.",
-                          base::CompareCase::SENSITIVE) ||
-         base::StartsWith(codec_name, "OMX.SEC.", base::CompareCase::SENSITIVE);
+  return false;
 }
 
 }  // namespace media

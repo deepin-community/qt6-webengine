@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -64,7 +64,7 @@ class FAKE_DISPLAY_EXPORT FakeDisplaySnapshot : public DisplaySnapshot {
     Builder& SetType(DisplayConnectionType type);
     Builder& SetBaseConnectorId(uint64_t base_connector_id);
     Builder& SetPathTopology(const std::vector<uint64_t>& path_topology);
-    Builder& SetIsAspectPerservingScaling(bool is_aspect_preserving_scaling);
+    Builder& SetIsAspectPreservingScaling(bool is_aspect_preserving_scaling);
     Builder& SetHasOverscan(bool has_overscan);
     Builder& SetHasColorCorrectionMatrix(bool val);
     Builder& SetColorCorrectionInLinearSpace(bool val);
@@ -79,10 +79,15 @@ class FAKE_DISPLAY_EXPORT FakeDisplaySnapshot : public DisplaySnapshot {
     // Sets physical_size for high DPI display.
     Builder& SetHighDPI();
     Builder& SetPrivacyScreen(PrivacyScreenState state);
+    Builder& SetHasContentProtectionKey(bool has_content_protection_key);
     Builder& SetColorSpace(const gfx::ColorSpace& color_space);
     Builder& SetBitsPerChannel(uint32_t bits_per_channel);
     Builder& SetHDRStaticMetadata(
         const gfx::HDRStaticMetadata& hdr_static_metadata);
+    Builder& SetVariableRefreshRateState(
+        VariableRefreshRateState variable_refresh_rate_state);
+    Builder& SetVerticalDisplayRangeLimits(
+        const absl::optional<gfx::Range>& vertical_display_range_limits);
 
    private:
     // Returns a display mode with |size|. If there is no existing mode, insert
@@ -104,6 +109,7 @@ class FAKE_DISPLAY_EXPORT FakeDisplaySnapshot : public DisplaySnapshot {
     bool is_aspect_preserving_scaling_ = false;
     bool has_overscan_ = false;
     PrivacyScreenState privacy_screen_state_ = kNotSupported;
+    bool has_content_protection_key_ = false;
     bool has_color_correction_matrix_ = false;
     bool color_correction_in_linear_space_ = false;
     std::string name_;
@@ -115,31 +121,38 @@ class FAKE_DISPLAY_EXPORT FakeDisplaySnapshot : public DisplaySnapshot {
     gfx::ColorSpace color_space_;
     uint32_t bits_per_channel_ = 8u;
     gfx::HDRStaticMetadata hdr_static_metadata_;
+    VariableRefreshRateState variable_refresh_rate_state_ = kVrrNotCapable;
+    absl::optional<gfx::Range> vertical_display_range_limits_ = absl::nullopt;
   };
 
-  FakeDisplaySnapshot(int64_t display_id,
-                      int64_t port_display_id,
-                      int64_t edid_display_id,
-                      uint16_t connector_index,
-                      const gfx::Point& origin,
-                      const gfx::Size& physical_size,
-                      DisplayConnectionType type,
-                      uint64_t base_connector_id,
-                      const std::vector<uint64_t>& path_topology,
-                      bool is_aspect_preserving_scaling,
-                      bool has_overscan,
-                      PrivacyScreenState privacy_screen_state,
-                      bool has_color_correction_matrix,
-                      bool color_correction_in_linear_space,
-                      std::string display_name,
-                      DisplayModeList modes,
-                      const DisplayMode* current_mode,
-                      const DisplayMode* native_mode,
-                      int64_t product_code,
-                      const gfx::Size& maximum_cursor_size,
-                      const gfx::ColorSpace& color_space,
-                      uint32_t bits_per_channel,
-                      const gfx::HDRStaticMetadata& hdr_static_metadata);
+  FakeDisplaySnapshot(
+      int64_t display_id,
+      int64_t port_display_id,
+      int64_t edid_display_id,
+      uint16_t connector_index,
+      const gfx::Point& origin,
+      const gfx::Size& physical_size,
+      DisplayConnectionType type,
+      uint64_t base_connector_id,
+      const std::vector<uint64_t>& path_topology,
+      bool is_aspect_preserving_scaling,
+      bool has_overscan,
+      PrivacyScreenState privacy_screen_state,
+      bool has_content_protection_key_,
+      bool has_color_correction_matrix,
+      bool color_correction_in_linear_space,
+      std::string display_name,
+      DisplayModeList modes,
+      const DisplayMode* current_mode,
+      const DisplayMode* native_mode,
+      int64_t product_code,
+      const gfx::Size& maximum_cursor_size,
+      const gfx::ColorSpace& color_space,
+      uint32_t bits_per_channel,
+      const gfx::HDRStaticMetadata& hdr_static_metadata,
+      VariableRefreshRateState variable_refresh_rate_state,
+      const absl::optional<gfx::Range>& vertical_display_range_limits,
+      const DrmFormatsAndModifiers& drm_formats_and_modifiers);
 
   FakeDisplaySnapshot(const FakeDisplaySnapshot&) = delete;
   FakeDisplaySnapshot& operator=(const FakeDisplaySnapshot&) = delete;

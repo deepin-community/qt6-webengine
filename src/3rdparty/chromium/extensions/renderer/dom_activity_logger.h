@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,13 +8,12 @@
 #include <memory>
 #include <string>
 
+#include "base/values.h"
 #include "extensions/common/dom_action_types.h"
+#include "extensions/common/mojom/renderer_host.mojom.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
 #include "third_party/blink/public/web/web_dom_activity_logger.h"
 #include "v8/include/v8-forward.h"
-
-namespace base {
-class ListValue;
-}
 
 namespace blink {
 class WebString;
@@ -70,15 +69,12 @@ class DOMActivityLogger: public blink::WebDOMActivityLogger {
                 const blink::WebURL& url,
                 const blink::WebString& title) override;
 
-  // Helper function to actually send the message across IPC.
-  void SendDomActionMessage(const std::string& api_call,
-                            const GURL& url,
-                            const std::u16string& url_title,
-                            DomActionType::Type call_type,
-                            std::unique_ptr<base::ListValue> args);
+  mojom::RendererHost* GetRendererHost();
 
   // The id of the extension with which this logger is associated.
   std::string extension_id_;
+
+  mojo::AssociatedRemote<mojom::RendererHost> renderer_host_;
 };
 
 }  // namespace extensions

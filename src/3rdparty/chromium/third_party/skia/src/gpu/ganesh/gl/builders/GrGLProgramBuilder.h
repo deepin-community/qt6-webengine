@@ -73,11 +73,9 @@ private:
                                  bool bindAttribLocations);
     void storeShaderInCache(const SkSL::Program::Inputs& inputs, GrGLuint programID,
                             const std::string shaders[], bool isSkSL,
-                            SkSL::Program::Settings* settings);
+                            SkSL::ProgramSettings* settings);
     sk_sp<GrGLProgram> finalize(const GrGLPrecompiledProgram*);
     void bindProgramResourceLocations(GrGLuint programID);
-    bool checkLinkStatus(GrGLuint programID, GrContextOptions::ShaderErrorHandler* errorHandler,
-                         std::string* sksl[], const std::string glsl[]);
     void resolveProgramResourceLocations(GrGLuint programID, bool force);
 
     // Subclasses create different programs

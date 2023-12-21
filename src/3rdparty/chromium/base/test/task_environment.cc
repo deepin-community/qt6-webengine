@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,14 +8,16 @@
 #include <memory>
 #include <ostream>
 
-#include "base/callback_helpers.h"
 #include "base/check.h"
 #include "base/debug/stack_trace.h"
+#include "base/functional/callback_forward.h"
+#include "base/functional/callback_helpers.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/message_loop/message_pump.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/no_destructor.h"
@@ -23,9 +25,12 @@
 #include "base/run_loop.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
+#include "base/task/common/lazy_now.h"
+#include "base/task/sequence_manager/sequence_manager.h"
 #include "base/task/sequence_manager/sequence_manager_impl.h"
 #include "base/task/sequence_manager/time_domain.h"
 #include "base/task/simple_task_executor.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool/thread_pool_impl.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/test/bind.h"
@@ -37,7 +42,6 @@
 #include "base/threading/thread_checker_impl.h"
 #include "base/threading/thread_local.h"
 #include "base/threading/thread_restrictions.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/clock.h"
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
@@ -85,12 +89,14 @@ base::MessagePumpType GetMessagePumpTypeForMainThreadType(
 
 std::unique_ptr<sequence_manager::SequenceManager>
 CreateSequenceManagerForMainThreadType(
-    TaskEnvironment::MainThreadType main_thread_type) {
+    TaskEnvironment::MainThreadType main_thread_type,
+    sequence_manager::SequenceManager::PrioritySettings priority_settings) {
   auto type = GetMessagePumpTypeForMainThreadType(main_thread_type);
   return sequence_manager::CreateSequenceManagerOnCurrentThreadWithPump(
       MessagePump::Create(type),
       base::sequence_manager::SequenceManager::Settings::Builder()
           .SetMessagePumpType(type)
+          .SetPrioritySettings(std::move(priority_settings))
           .Build());
 }
 
@@ -98,15 +104,15 @@ class TickClockBasedClock : public Clock {
  public:
   explicit TickClockBasedClock(const TickClock* tick_clock)
       : tick_clock_(*tick_clock),
-        start_ticks_(tick_clock_.NowTicks()),
+        start_ticks_(tick_clock_->NowTicks()),
         start_time_(Time::UnixEpoch()) {}
 
   Time Now() const override {
-    return start_time_ + (tick_clock_.NowTicks() - start_ticks_);
+    return start_time_ + (tick_clock_->NowTicks() - start_ticks_);
   }
 
  private:
-  const TickClock& tick_clock_;
+  const raw_ref<const TickClock> tick_clock_;
   const TimeTicks start_ticks_;
   const Time start_time_;
 };
@@ -210,8 +216,9 @@ class TaskEnvironment::MockTimeDomain : public sequence_manager::TimeDomain {
       AutoLock lock(now_ticks_lock_);
       now_ticks_ += delta;
     }
-    if (thread_pool_)
+    if (thread_pool_) {
       thread_pool_->ProcessRipeDelayedTasksForTesting();
+    }
   }
 
   void SetThreadPool(internal::ThreadPoolImpl* thread_pool,
@@ -230,8 +237,9 @@ class TaskEnvironment::MockTimeDomain : public sequence_manager::TimeDomain {
   bool MaybeFastForwardToWakeUp(
       absl::optional<sequence_manager::WakeUp> next_wake_up,
       bool quit_when_idle_requested) override {
-    if (quit_when_idle_requested)
+    if (quit_when_idle_requested) {
       return false;
+    }
 
     return FastForwardToNextTaskOrCap(next_wake_up, TimeTicks::Max()) ==
            NextTaskSource::kMainThreadHasWork;
@@ -307,8 +315,9 @@ class TaskEnvironment::MockTimeDomain : public sequence_manager::TimeDomain {
         now_ticks_ = std::max(now_ticks_, *next_task_time);
       }
 
-      if (next_task_time == next_thread_pool_task_time)
+      if (next_task_time == next_thread_pool_task_time) {
         thread_pool_->ProcessRipeDelayedTasksForTesting();
+      }
 
       if (next_main_thread_wake_up &&
           next_task_time == next_main_thread_wake_up->time) {
@@ -342,10 +351,12 @@ class TaskEnvironment::MockTimeDomain : public sequence_manager::TimeDomain {
  private:
   SEQUENCE_CHECKER(sequence_checker_);
 
-  raw_ptr<internal::ThreadPoolImpl> thread_pool_ = nullptr;
-  raw_ptr<const TestTaskTracker> thread_pool_task_tracker_ = nullptr;
+  raw_ptr<internal::ThreadPoolImpl, DanglingUntriaged> thread_pool_ = nullptr;
+  raw_ptr<const TestTaskTracker, DanglingUntriaged> thread_pool_task_tracker_ =
+      nullptr;
 
-  const raw_ptr<sequence_manager::internal::SequenceManagerImpl>
+  const raw_ptr<sequence_manager::internal::SequenceManagerImpl,
+                DanglingUntriaged>
       sequence_manager_;
 
   // Protects |now_ticks_|
@@ -354,13 +365,15 @@ class TaskEnvironment::MockTimeDomain : public sequence_manager::TimeDomain {
   // Only ever written to from the main sequence. Start from real Now() instead
   // of zero to give a more realistic view to tests.
   TimeTicks now_ticks_ GUARDED_BY(now_ticks_lock_){
-      base::subtle::TimeTicksNowIgnoringOverride()};
+      base::subtle::TimeTicksNowIgnoringOverride()
+          .SnappedToNextTick(TimeTicks(), Milliseconds(1))};
 };
 
 TaskEnvironment::MockTimeDomain*
     TaskEnvironment::MockTimeDomain::current_mock_time_domain_ = nullptr;
 
 TaskEnvironment::TaskEnvironment(
+    sequence_manager::SequenceManager::PrioritySettings priority_settings,
     TimeSource time_source,
     MainThreadType main_thread_type,
     ThreadPoolExecutionMode thread_pool_execution_mode,
@@ -374,7 +387,8 @@ TaskEnvironment::TaskEnvironment(
       thread_pool_com_environment_(thread_pool_com_environment),
       subclass_creates_default_taskrunner_(subclass_creates_default_taskrunner),
       sequence_manager_(
-          CreateSequenceManagerForMainThreadType(main_thread_type)),
+          CreateSequenceManagerForMainThreadType(main_thread_type,
+                                                 std::move(priority_settings))),
       mock_time_domain_(
           time_source != TimeSource::SYSTEM_TIME
               ? std::make_unique<TaskEnvironment::MockTimeDomain>(
@@ -404,24 +418,28 @@ TaskEnvironment::TaskEnvironment(
                     BindRepeating(&sequence_manager::SequenceManager::
                                       DescribeAllPendingTasks,
                                   Unretained(sequence_manager_.get())))) {
-  CHECK(!base::ThreadTaskRunnerHandle::IsSet());
+  CHECK(!base::SingleThreadTaskRunner::HasCurrentDefault());
   // If |subclass_creates_default_taskrunner| is true then initialization is
   // deferred until DeferredInitFromSubclass().
   if (!subclass_creates_default_taskrunner) {
-    task_queue_ = sequence_manager_->CreateTaskQueue(
-        sequence_manager::TaskQueue::Spec("task_environment_default"));
+    task_queue_ =
+        sequence_manager_->CreateTaskQueue(sequence_manager::TaskQueue::Spec(
+            sequence_manager::QueueName::TASK_ENVIRONMENT_DEFAULT_TQ));
     task_runner_ = task_queue_->task_runner();
     sequence_manager_->SetDefaultTaskRunner(task_runner_);
-    if (mock_time_domain_)
+    if (mock_time_domain_) {
       sequence_manager_->SetTimeDomain(mock_time_domain_.get());
+    }
     simple_task_executor_ = std::make_unique<SimpleTaskExecutor>(task_runner_);
-    CHECK(base::ThreadTaskRunnerHandle::IsSet())
-        << "ThreadTaskRunnerHandle should've been set now.";
+    CHECK(base::SingleThreadTaskRunner::HasCurrentDefault())
+        << "SingleThreadTaskRunner::CurrentDefaultHandle should've been set "
+           "now.";
     CompleteInitialization();
   }
 
-  if (threading_mode_ != ThreadingMode::MAIN_THREAD_ONLY)
+  if (threading_mode_ != ThreadingMode::MAIN_THREAD_ONLY) {
     InitializeThreadPool();
+  }
 
   if (thread_pool_execution_mode_ == ThreadPoolExecutionMode::QUEUED &&
       task_tracker_) {
@@ -440,8 +458,10 @@ TaskEnvironment::TestTaskTracker* TaskEnvironment::CreateThreadPool() {
 
   auto task_tracker = std::make_unique<TestTaskTracker>();
   TestTaskTracker* raw_task_tracker = task_tracker.get();
+  // Disable background threads to avoid hangs when flushing background tasks.
   auto thread_pool = std::make_unique<internal::ThreadPoolImpl>(
-      std::string(), std::move(task_tracker));
+      std::string(), std::move(task_tracker),
+      /*use_background_threads=*/false);
   ThreadPoolInstance::Set(std::move(thread_pool));
   DCHECK(!g_task_tracker);
   g_task_tracker = raw_task_tracker;
@@ -496,26 +516,33 @@ void TaskEnvironment::DestroyTaskEnvironment() {
 
   // If we've been moved or already destroyed (i.e. subclass invoked
   // DestroyTaskEnvironment() before ~TaskEnvironment()) then bail out.
-  if (!owns_instance_)
+  if (!owns_instance_) {
     return;
+  }
   owns_instance_.reset();
 
-  for (auto& observer : GetDestructionObservers())
+  for (auto& observer : GetDestructionObservers()) {
     observer.WillDestroyCurrentTaskEnvironment();
+  }
 
-  DestroyThreadPool();
+  ShutdownAndJoinThreadPool();
   task_queue_ = nullptr;
-  // SequenceManagerImpl must outlive ThreadPoolInstance() (DestroyThreadPool()
-  // above) as TaskEnvironment::MockTimeDomain can invoke its
-  // SequenceManagerImpl* from worker threads.
+  // SequenceManagerImpl must outlive the threads in the ThreadPoolInstance()
+  // (ShutdownAndJoinThreadPool() above) as TaskEnvironment::MockTimeDomain can
+  // invoke its SequenceManagerImpl* from worker threads.
+  // Additionally, Tasks owned by `sequence_manager_` can have referencees to
+  // PooledTaskRunnerDelegates. These are owned by the thread pool, so destroy
+  // `sequence_manager` before the thread pool itself.
   sequence_manager_.reset();
+  DestroyThreadPool();
 }
 
-void TaskEnvironment::DestroyThreadPool() {
+void TaskEnvironment::ShutdownAndJoinThreadPool() {
   DCHECK_CALLED_ON_VALID_THREAD(main_thread_checker_);
 
-  if (threading_mode_ == ThreadingMode::MAIN_THREAD_ONLY)
+  if (threading_mode_ == ThreadingMode::MAIN_THREAD_ONLY) {
     return;
+  }
   DCHECK(ThreadPoolInstance::Get());
 
   // Ideally this would RunLoop().RunUntilIdle() here to catch any errors or
@@ -531,6 +558,19 @@ void TaskEnvironment::DestroyThreadPool() {
   ThreadPoolInstance::Get()->JoinForTesting();
   DCHECK_EQ(g_task_tracker, task_tracker_);
   g_task_tracker = nullptr;
+}
+
+void TaskEnvironment::DestroyThreadPool() {
+  DCHECK_CALLED_ON_VALID_THREAD(main_thread_checker_);
+
+  if (threading_mode_ == ThreadingMode::MAIN_THREAD_ONLY) {
+    return;
+  }
+  DCHECK(ThreadPoolInstance::Get());
+
+  // Task runner lists will be destroyed when resetting thread pool instance.
+  scoped_lazy_task_runner_list_for_testing_.reset();
+
   // Destroying ThreadPoolInstance state can result in waiting on worker
   // threads. Make sure this is allowed to avoid flaking tests that have
   // disallowed waits on their main thread.
@@ -571,6 +611,38 @@ bool TaskEnvironment::MainThreadIsIdle() const {
   // ReclaimMemory sweeps canceled delayed tasks.
   sequence_manager_impl->ReclaimMemory();
   return sequence_manager_impl->IsIdleForTesting();
+}
+
+RepeatingClosure TaskEnvironment::QuitClosure() {
+  DCHECK_CALLED_ON_VALID_THREAD(main_thread_checker_);
+
+  if (!run_until_quit_loop_) {
+    run_until_quit_loop_ =
+        std::make_unique<RunLoop>(RunLoop::Type::kNestableTasksAllowed);
+  }
+
+  return run_until_quit_loop_->QuitClosure();
+}
+
+void TaskEnvironment::RunUntilQuit() {
+  DCHECK_CALLED_ON_VALID_THREAD(main_thread_checker_);
+  DCHECK(run_until_quit_loop_)
+      << "QuitClosure() not called before RunUntilQuit()";
+
+  const bool could_run_tasks = task_tracker_->AllowRunTasks();
+
+  run_until_quit_loop_->Run();
+  // Make the next call to RunUntilQuit() use a new RunLoop. This also
+  // invalidates all existing quit closures.
+  run_until_quit_loop_.reset();
+
+  if (!could_run_tasks) {
+    EXPECT_TRUE(
+        task_tracker_->DisallowRunTasks(TestTimeouts::action_max_timeout()))
+        << "Could not bring ThreadPool back to ThreadPoolExecutionMode::QUEUED "
+           "after Quit() because some tasks were long running:\n"
+        << task_tracker_->DescribeRunningTasks();
+  }
 }
 
 void TaskEnvironment::RunUntilIdle() {
@@ -626,8 +698,9 @@ void TaskEnvironment::RunUntilIdle() {
     // were ThreadPool tasks currently running. In that case, try again from
     // top when DisallowRunTasks() yields control back to this thread as they
     // may have posted main thread tasks.
-    if (!task_tracker_->DisallowRunTasks())
+    if (!task_tracker_->DisallowRunTasks()) {
       continue;
+    }
 
     // Once ThreadPool is halted. Run any remaining main thread tasks (which
     // may have been posted by ThreadPool tasks that completed between the
@@ -653,15 +726,17 @@ void TaskEnvironment::RunUntilIdle() {
     // verified which could result in HasIncompleteUndelayedTasksForTesting()
     // returning false and the loop erroneously exiting with a pending task on
     // the main thread.
-    if (!task_tracker_->HasIncompleteTaskSourcesForTesting())
+    if (!task_tracker_->HasIncompleteTaskSourcesForTesting()) {
       break;
+    }
   }
 
   // The above loop always ends with running tasks being disallowed. Re-enable
   // parallel execution before returning if it was allowed at the beginning of
   // this call.
-  if (could_run_tasks)
+  if (could_run_tasks) {
     task_tracker_->AllowRunTasks();
+  }
 }
 
 void TaskEnvironment::FastForwardBy(TimeDelta delta) {
@@ -681,8 +756,9 @@ void TaskEnvironment::FastForwardBy(TimeDelta delta) {
                sequence_manager_->GetNextDelayedWakeUp(), fast_forward_until) !=
            MockTimeDomain::NextTaskSource::kNone);
 
-  if (task_tracker_ && !could_run_tasks)
+  if (task_tracker_ && !could_run_tasks) {
     task_tracker_->DisallowRunTasks();
+  }
 }
 
 void TaskEnvironment::FastForwardUntilNoTasksRemain() {
@@ -727,9 +803,10 @@ TimeDelta TaskEnvironment::NextMainThreadPendingTaskDelay() const {
   // ReclaimMemory sweeps canceled delayed tasks.
   sequence_manager_->ReclaimMemory();
   DCHECK(mock_time_domain_);
-  sequence_manager::LazyNow lazy_now(mock_time_domain_->NowTicks());
-  if (!sequence_manager_->IsIdleForTesting())
+  LazyNow lazy_now(mock_time_domain_->NowTicks());
+  if (!sequence_manager_->IsIdleForTesting()) {
     return TimeDelta();
+  }
   absl::optional<sequence_manager::WakeUp> wake_up =
       sequence_manager_->GetNextDelayedWakeUp();
   return wake_up ? wake_up->time - lazy_now.Now() : TimeDelta::Max();
@@ -750,8 +827,9 @@ void TaskEnvironment::DescribeCurrentTasks() const {
 
 void TaskEnvironment::DetachFromThread() {
   DETACH_FROM_THREAD(main_thread_checker_);
-  if (task_tracker_)
+  if (task_tracker_) {
     task_tracker_->controller_thread_checker_.DetachFromThread();
+  }
 }
 
 // static
@@ -806,8 +884,9 @@ TaskEnvironment::ParallelExecutionFence::ParallelExecutionFence(
 }
 
 TaskEnvironment::ParallelExecutionFence::~ParallelExecutionFence() {
-  if (previously_allowed_to_run_)
+  if (previously_allowed_to_run_) {
     g_task_tracker->AllowRunTasks();
+  }
 }
 
 TaskEnvironment::TestTaskTracker::TestTaskTracker()
@@ -861,35 +940,34 @@ bool TaskEnvironment::TestTaskTracker::DisallowRunTasks(TimeDelta timeout) {
 void TaskEnvironment::TestTaskTracker::RunTask(internal::Task task,
                                                internal::TaskSource* sequence,
                                                const TaskTraits& traits) {
+  const Location posted_from = task.posted_from;
   int task_number;
   {
     AutoLock auto_lock(lock_);
 
-    while (!can_run_tasks_)
+    while (!can_run_tasks_) {
       can_run_tasks_cv_.Wait();
+    }
 
     task_number = next_task_number_++;
-    auto pair = running_tasks_.emplace(task_number, task.posted_from);
+    auto pair = running_tasks_.emplace(task_number, posted_from);
     CHECK(pair.second);  // If false, the |task_number| was already present.
   }
 
-  {
-    // Using TimeTicksNowIgnoringOverride() because in tests that mock time,
-    // Now() can advance very far very fast, and that's not a problem. This is
-    // watching for tests that have actually long running tasks which cause our
-    // test suites to run slowly.
-    base::TimeTicks before = base::subtle::TimeTicksNowIgnoringOverride();
-    const Location posted_from = task.posted_from;
-    internal::ThreadPoolImpl::TaskTrackerImpl::RunTask(std::move(task),
-                                                       sequence, traits);
-    base::TimeTicks after = base::subtle::TimeTicksNowIgnoringOverride();
+  // Using TimeTicksNowIgnoringOverride() because in tests that mock time,
+  // Now() can advance very far very fast, and that's not a problem. This is
+  // watching for tests that have actually long running tasks which cause our
+  // test suites to run slowly.
+  base::TimeTicks before = base::subtle::TimeTicksNowIgnoringOverride();
+  internal::ThreadPoolImpl::TaskTrackerImpl::RunTask(std::move(task), sequence,
+                                                     traits);
+  base::TimeTicks after = base::subtle::TimeTicksNowIgnoringOverride();
 
-    const TimeDelta kTimeout = TestTimeouts::action_max_timeout();
-    if ((after - before) > kTimeout) {
-      ADD_FAILURE() << "TaskEnvironment: RunTask took more than "
-                    << kTimeout.InSeconds() << " seconds. Posted from "
-                    << posted_from.ToString();
-    }
+  const TimeDelta kTimeout = TestTimeouts::action_max_timeout();
+  if ((after - before) > kTimeout) {
+    ADD_FAILURE() << "TaskEnvironment: RunTask took more than "
+                  << kTimeout.InSeconds() << " seconds. Posted from "
+                  << posted_from.ToString();
   }
 
   {
@@ -912,8 +990,9 @@ std::string TaskEnvironment::TestTaskTracker::DescribeRunningTasks() const {
   if (running_tasks_copy.empty()) {
     running_tasks_str += " none.";
   } else {
-    for (auto& pair : running_tasks_copy)
+    for (auto& pair : running_tasks_copy) {
       running_tasks_str += "\n  Task posted from: " + pair.second.ToString();
+    }
   }
   return running_tasks_str;
 }
@@ -921,8 +1000,9 @@ std::string TaskEnvironment::TestTaskTracker::DescribeRunningTasks() const {
 void TaskEnvironment::TestTaskTracker::BeginCompleteShutdown(
     base::WaitableEvent& shutdown_event) {
   const TimeDelta kTimeout = TestTimeouts::action_max_timeout();
-  if (shutdown_event.TimedWait(kTimeout))
+  if (shutdown_event.TimedWait(kTimeout)) {
     return;  // All tasks completed in time, yay! Yield back to shutdown.
+  }
 
   // If we had to wait too long for the shutdown tasks to complete, then we
   // should fail the test and report which tasks are currently running.

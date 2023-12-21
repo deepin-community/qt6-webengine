@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,10 +8,10 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
@@ -83,13 +83,13 @@ class VideoCaptureOverlayTest : public testing::Test {
     // Test colors have been chosen to exercise different opacities,
     // intensities, and color channels; to confirm all aspects of the "SrcOver"
     // image blending algorithms are working properly.
-    constexpr SkColor kTestImageBackground =
-        SkColorSetARGB(0xff, 0xff, 0xff, 0xff);
-    constexpr SkColor kTestImageColors[4] = {
-        SkColorSetARGB(0xaa, 0xff, 0x00, 0x00),
-        SkColorSetARGB(0xbb, 0x00, 0xee, 0x00),
-        SkColorSetARGB(0xcc, 0x00, 0x00, 0x77),
-        SkColorSetARGB(0xdd, 0x66, 0x66, 0x00),
+    constexpr SkColor4f kTestImageBackground =
+        SkColor4f{1.0f, 1.0f, 1.0f, 1.0f};
+    constexpr SkColor4f kTestImageColors[4] = {
+        SkColor4f{1.0f, 0.0f, 0.0f, 0.667f},
+        SkColor4f{0.0f, 0.933f, 0.0f, 0.733f},
+        SkColor4f{0.0f, 0.0f, 0.467f, 0.8f},
+        SkColor4f{0.4f, 0.4f, 0.0f, 0.867f},
     };
     constexpr SkIRect kTestImageColorRects[4] = {
         SkIRect::MakeXYWH(4, 2, 4, 4), SkIRect::MakeXYWH(16, 2, 4, 4),
@@ -107,8 +107,7 @@ class VideoCaptureOverlayTest : public testing::Test {
       const size_t idx = (i + cycle) % std::size(kTestImageColors);
       SkPaint paint;
       paint.setBlendMode(SkBlendMode::kSrc);
-      paint.setColor(SkColor4f::FromColor(kTestImageColors[idx]),
-                     info.colorSpace());
+      paint.setColor(kTestImageColors[idx], info.colorSpace());
       canvas.drawIRect(kTestImageColorRects[i], paint);
     }
 
@@ -331,7 +330,7 @@ class VideoCaptureOverlayRenderTest
     // as those of the YUV tests, and so only one set of golden files needs to
     // be used.
     if (is_argb_test()) {
-      uint8_t* dst = frame->visible_data(VideoFrame::kARGBPlane);
+      uint8_t* dst = frame->GetWritableVisibleData(VideoFrame::kARGBPlane);
       const int stride = frame->stride(VideoFrame::kARGBPlane);
       for (int row = 0; row < size.height(); ++row, dst += stride) {
         uint32_t* const begin = reinterpret_cast<uint32_t*>(dst);
@@ -449,9 +448,10 @@ class VideoCaptureOverlayRenderTest
     // (16/255 for YUV tests). The YUV tests allow for more error due to the
     // expected errors introduced by both color space (dynamic range) and format
     // (chroma subsampling) conversion.
-    cc::FuzzyPixelComparator comparator(false, 100.0f, 0.0f,
-                                        is_argb_test() ? 1.0f : 16.0f,
-                                        is_argb_test() ? 1 : 64, 0);
+    auto comparator = cc::FuzzyPixelComparator()
+                          .SetErrorPixelsPercentageLimit(100.0f)
+                          .SetAvgAbsErrorLimit(is_argb_test() ? 1.0f : 16.0f)
+                          .SetAbsErrorLimit(is_argb_test() ? 1 : 64);
     const bool matches_golden_file =
         cc::MatchesPNGFile(canonical_bitmap, golden_file_path, comparator);
     // If MatchesPNGFile() returned false, it will have LOG(ERROR)'ed the

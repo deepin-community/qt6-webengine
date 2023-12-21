@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,9 +10,9 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/task/single_thread_task_runner.h"
 #include "ui/events/devices/device_data_manager.h"
 #include "ui/events/devices/stylus_state.h"
 #include "ui/events/ozone/evdev/input_device_factory_evdev_proxy.h"
@@ -106,6 +106,18 @@ void InputControllerEvdev::SetAutoRepeatRate(const base::TimeDelta& delay,
 void InputControllerEvdev::GetAutoRepeatRate(base::TimeDelta* delay,
                                              base::TimeDelta* interval) {
   keyboard_->GetAutoRepeatRate(delay, interval);
+}
+
+void InputControllerEvdev::SetKeyboardKeyBitsMapping(
+    base::flat_map<int, std::vector<uint64_t>> key_bits_mapping) {
+  keyboard_key_bits_mapping_ = std::move(key_bits_mapping);
+}
+
+std::vector<uint64_t> InputControllerEvdev::GetKeyboardKeyBits(int id) {
+  auto key_bits_mapping_iter = keyboard_key_bits_mapping_.find(id);
+  return key_bits_mapping_iter == keyboard_key_bits_mapping_.end()
+             ? std::vector<uint64_t>()
+             : key_bits_mapping_iter->second;
 }
 
 void InputControllerEvdev::SetCurrentLayoutByName(
@@ -205,6 +217,18 @@ void InputControllerEvdev::SetPointingStickAcceleration(bool enabled) {
   ScheduleUpdateDeviceSettings();
 }
 
+void InputControllerEvdev::SetGamepadKeyBitsMapping(
+    base::flat_map<int, std::vector<uint64_t>> key_bits_mapping) {
+  gamepad_key_bits_mapping_ = std::move(key_bits_mapping);
+}
+
+std::vector<uint64_t> InputControllerEvdev::GetGamepadKeyBits(int id) {
+  auto gamepad_key_bits_iter = gamepad_key_bits_mapping_.find(id);
+  return gamepad_key_bits_iter == gamepad_key_bits_mapping_.end()
+             ? std::vector<uint64_t>()
+             : gamepad_key_bits_iter->second;
+}
+
 void InputControllerEvdev::SetPrimaryButtonRight(bool right) {
   mouse_button_map_->SetPrimaryButtonRight(right);
 }
@@ -300,7 +324,7 @@ void InputControllerEvdev::GetGesturePropertiesService(
 void InputControllerEvdev::ScheduleUpdateDeviceSettings() {
   if (!input_device_factory_ || settings_update_pending_)
     return;
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&InputControllerEvdev::UpdateDeviceSettings,
                                 weak_ptr_factory_.GetWeakPtr()));
   settings_update_pending_ = true;

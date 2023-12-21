@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,6 @@
 
 #include <vector>
 
-#include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
 #include "net/base/net_export.h"
 #include "net/ssl/ssl_config.h"
@@ -29,8 +28,8 @@ struct NET_EXPORT SSLContextConfig {
   uint16_t version_min = kDefaultSSLVersionMin;
   uint16_t version_max = kDefaultSSLVersionMax;
 
-  // Presorted list of cipher suites which should be explicitly prevented from
-  // being used in addition to those disabled by the net built-in policy.
+  // A list of cipher suites which should be explicitly prevented from being
+  // used in addition to those disabled by the net built-in policy.
   //
   // Though cipher suites are sent in TLS as "uint8_t CipherSuite[2]", in
   // big-endian form, they should be declared in host byte order, with the
@@ -41,6 +40,10 @@ struct NET_EXPORT SSLContextConfig {
 
   // If false, disables post-quantum key agreement in TLS connections.
   bool cecpq2_enabled = true;
+
+  // If false, disables TLS Encrypted ClientHello (ECH). If true, the feature
+  // may be enabled or disabled, depending on feature flags.
+  bool ech_enabled = true;
 
   // ADDING MORE HERE? Don't forget to update |SSLContextConfigsAreEqual|.
 };
@@ -58,7 +61,7 @@ class NET_EXPORT SSLConfigService {
     virtual void OnSSLContextConfigChanged() = 0;
 
    protected:
-    virtual ~Observer() {}
+    virtual ~Observer() = default;
   };
 
   SSLConfigService();

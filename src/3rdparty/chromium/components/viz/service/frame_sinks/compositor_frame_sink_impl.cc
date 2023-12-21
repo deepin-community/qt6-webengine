@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,10 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/flat_set.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
+#include "base/memory/raw_ref.h"
 #include "base/threading/platform_thread.h"
 #include "build/build_config.h"
 #include "components/viz/service/frame_sinks/frame_sink_bundle_impl.h"
@@ -48,10 +49,13 @@ class BundleClientProxy : public mojom::CompositorFrameSinkClient {
   }
 
   void OnBeginFrame(const BeginFrameArgs& args,
-                    const FrameTimingDetailsMap& timing_details) override {
+                    const FrameTimingDetailsMap& timing_details,
+                    bool frame_ack,
+                    std::vector<ReturnedResource> resources) override {
     if (auto* bundle = GetBundle()) {
       bundle->EnqueueOnBeginFrame(frame_sink_id_.sink_id(), args,
-                                  timing_details);
+                                  timing_details, frame_ack,
+                                  std::move(resources));
     }
   }
 
@@ -78,10 +82,10 @@ class BundleClientProxy : public mojom::CompositorFrameSinkClient {
 
  private:
   FrameSinkBundleImpl* GetBundle() {
-    return manager_.GetFrameSinkBundle(bundle_id_);
+    return manager_->GetFrameSinkBundle(bundle_id_);
   }
 
-  FrameSinkManagerImpl& manager_;
+  const raw_ref<FrameSinkManagerImpl> manager_;
   const FrameSinkId frame_sink_id_;
   const FrameSinkBundleId bundle_id_;
 };

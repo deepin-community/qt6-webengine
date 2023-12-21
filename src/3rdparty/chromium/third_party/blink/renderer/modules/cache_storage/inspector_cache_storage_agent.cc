@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,12 +9,14 @@
 #include <utility>
 
 #include "base/memory/scoped_refptr.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
 #include "services/network/public/mojom/fetch_api.mojom-blink.h"
 #include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/common/cache_storage/cache_storage_utils.h"
+#include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/mojom/cache_storage/cache_storage.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
@@ -35,6 +37,7 @@
 #include "third_party/blink/renderer/platform/wtf/ref_counted.h"
 #include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_utf8_adaptor.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 using blink::protocol::Array;
@@ -63,32 +66,46 @@ namespace blink {
 
 namespace {
 
-String BuildCacheId(const String& security_origin, const String& cache_name) {
+String BuildCacheId(const String& storage_key, const String& cache_name) {
+  DCHECK(storage_key.find('|') == WTF::kNotFound);
   StringBuilder id;
-  id.Append(security_origin);
+  id.Append(storage_key);
   id.Append('|');
   id.Append(cache_name);
   return id.ToString();
 }
 
 ProtocolResponse ParseCacheId(const String& id,
-                              String* security_origin,
+                              String* storage_key,
                               String* cache_name) {
   wtf_size_t pipe = id.find('|');
   if (pipe == WTF::kNotFound)
-    return ProtocolResponse::ServerError("Invalid cache id.");
-  *security_origin = id.Substring(0, pipe);
+    return ProtocolResponse::ServerError("Invalid cache id");
+  *storage_key = id.Substring(0, pipe);
   *cache_name = id.Substring(pipe + 1);
+
+  absl::optional<StorageKey> key =
+      StorageKey::Deserialize(StringUTF8Adaptor(*storage_key).AsStringPiece());
+  if (!key.has_value()) {
+    return ProtocolResponse::ServerError("Not able to deserialize storage key");
+  }
+  scoped_refptr<SecurityOrigin> origin =
+      SecurityOrigin::CreateFromUrlOrigin(key->origin());
+
+  if (!origin->IsPotentiallyTrustworthy()) {
+    return ProtocolResponse::ServerError(
+        origin->IsPotentiallyTrustworthyErrorMessage().Utf8());
+  }
   return ProtocolResponse::Success();
 }
 
 ProtocolResponse GetExecutionContext(InspectedFrames* frames,
-                                     const String& security_origin,
+                                     const String& storage_key,
                                      ExecutionContext** context) {
-  LocalFrame* frame = frames->FrameWithSecurityOrigin(security_origin);
+  LocalFrame* frame = frames->FrameWithStorageKey(storage_key);
   if (!frame) {
-    String msg = "No frame with origin " + security_origin;
-    return ProtocolResponse::ServerError(msg.Utf8());
+    return ProtocolResponse::InvalidParams(
+        "No frame found for given storage key");
   }
 
   *context = frame->DomWindow();
@@ -97,33 +114,25 @@ ProtocolResponse GetExecutionContext(InspectedFrames* frames,
 }
 
 ProtocolResponse AssertCacheStorage(
-    const String& security_origin,
+    const String& storage_key,
     InspectedFrames* frames,
     InspectorCacheStorageAgent::CachesMap* caches,
     mojom::blink::CacheStorage** result) {
-  scoped_refptr<const SecurityOrigin> sec_origin =
-      SecurityOrigin::CreateFromString(security_origin);
-
-  // Cache Storage API is restricted to trustworthy origins.
-  if (!sec_origin->IsPotentiallyTrustworthy()) {
-    return ProtocolResponse::ServerError(
-        sec_origin->IsPotentiallyTrustworthyErrorMessage().Utf8());
-  }
-
   ExecutionContext* context = nullptr;
   ProtocolResponse response =
-      GetExecutionContext(frames, security_origin, &context);
+      GetExecutionContext(frames, storage_key, &context);
   if (!response.IsSuccess())
     return response;
 
-  auto it = caches->find(security_origin);
+  auto it = caches->find(storage_key);
 
   if (it == caches->end()) {
     mojo::Remote<mojom::blink::CacheStorage> cache_storage_remote;
     context->GetBrowserInterfaceBroker().GetInterface(
-        cache_storage_remote.BindNewPipeAndPassReceiver());
+        cache_storage_remote.BindNewPipeAndPassReceiver(
+            frames->Root()->GetTaskRunner(TaskType::kFileReading)));
     *result = cache_storage_remote.get();
-    caches->Set(security_origin, std::move(cache_storage_remote));
+    caches->Set(storage_key, std::move(cache_storage_remote));
   } else {
     *result = it->value.get();
   }
@@ -137,12 +146,12 @@ ProtocolResponse AssertCacheStorageAndNameForId(
     String* cache_name,
     InspectorCacheStorageAgent::CachesMap* caches,
     mojom::blink::CacheStorage** result) {
-  String security_origin;
-  ProtocolResponse response =
-      ParseCacheId(cache_id, &security_origin, cache_name);
+  String storage_key;
+  ProtocolResponse response = ParseCacheId(cache_id, &storage_key, cache_name);
+
   if (!response.IsSuccess())
     return response;
-  return AssertCacheStorage(security_origin, frames, caches, result);
+  return AssertCacheStorage(storage_key, frames, caches, result);
 }
 
 const char* CacheStorageErrorString(mojom::blink::CacheStorageError error) {
@@ -236,7 +245,7 @@ class ResponsesAccumulator : public RefCounted<ResponsesAccumulator> {
                            TRACE_EVENT_FLAG_FLOW_OUT);
 
     Vector<mojom::blink::FetchAPIRequestPtr> requests;
-    if (params_.path_filter.IsEmpty()) {
+    if (params_.path_filter.empty()) {
       requests = std::move(old_requests);
     } else {
       for (auto& request : old_requests) {
@@ -267,12 +276,13 @@ class ResponsesAccumulator : public RefCounted<ResponsesAccumulator> {
           request->credentials_mode, request->cache_mode,
           request->redirect_mode, request->integrity, request->priority,
           request->fetch_window_id, request->keepalive, request->is_reload,
-          request->is_history_navigation, request->devtools_stack_id);
+          request->is_history_navigation, request->devtools_stack_id,
+          request->trust_token_params.Clone(), request->target_address_space);
       cache_remote_->Match(
           std::move(request), mojom::blink::CacheQueryOptions::New(),
           /*in_related_fetch_event=*/false, /*in_range_fetch_event=*/false,
           trace_id,
-          WTF::Bind(
+          WTF::BindOnce(
               [](scoped_refptr<ResponsesAccumulator> accumulator,
                  mojom::blink::FetchAPIRequestPtr request,
                  mojom::blink::MatchResultPtr result) {
@@ -401,7 +411,7 @@ class GetCacheKeysForRequestData {
         TRACE_ID_GLOBAL(trace_id), TRACE_EVENT_FLAG_FLOW_OUT);
     cache_remote_->Keys(
         nullptr /* request */, mojom::blink::CacheQueryOptions::New(), trace_id,
-        WTF::Bind(
+        WTF::BindOnce(
             [](DataRequestParams params,
                std::unique_ptr<GetCacheKeysForRequestData> self,
                mojom::blink::CacheKeysResultPtr result) {
@@ -413,7 +423,7 @@ class GetCacheKeysForRequestData {
                         CacheStorageErrorString(result->get_status()))
                         .Utf8()));
               } else {
-                if (result->get_keys().IsEmpty()) {
+                if (result->get_keys().empty()) {
                   auto array = std::make_unique<protocol::Array<DataEntry>>();
                   self->callback_->sendSuccess(std::move(array), 0);
                   return;
@@ -438,10 +448,11 @@ class GetCacheKeysForRequestData {
 class CachedResponseFileReaderLoaderClient final
     : private FileReaderLoaderClient {
  public:
-  static void Load(scoped_refptr<BlobDataHandle> blob,
+  static void Load(scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+                   scoped_refptr<BlobDataHandle> blob,
                    std::unique_ptr<RequestCachedResponseCallback> callback) {
-    new CachedResponseFileReaderLoaderClient(std::move(blob),
-                                             std::move(callback));
+    new CachedResponseFileReaderLoaderClient(
+        std::move(task_runner), std::move(blob), std::move(callback));
   }
 
   CachedResponseFileReaderLoaderClient(
@@ -475,14 +486,13 @@ class CachedResponseFileReaderLoaderClient final
 
  private:
   CachedResponseFileReaderLoaderClient(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
       scoped_refptr<BlobDataHandle>&& blob,
       std::unique_ptr<RequestCachedResponseCallback>&& callback)
-      // TODO(hajimehoshi): Use a per-ExecutionContext task runner of
-      // TaskType::kFileReading
       : loader_(std::make_unique<FileReaderLoader>(
             FileReaderLoader::kReadByClient,
             static_cast<FileReaderLoaderClient*>(this),
-            ThreadScheduler::Current()->DeprecatedDefaultTaskRunner())),
+            std::move(task_runner))),
         callback_(std::move(callback)),
         data_(SharedBuffer::Create()) {
     loader_->Start(std::move(blob));
@@ -510,51 +520,85 @@ void InspectorCacheStorageAgent::Trace(Visitor* visitor) const {
 }
 
 void InspectorCacheStorageAgent::requestCacheNames(
-    const String& security_origin,
+    protocol::Maybe<String> maybe_security_origin,
+    protocol::Maybe<String> maybe_storage_key,
     std::unique_ptr<RequestCacheNamesCallback> callback) {
   int64_t trace_id = blink::cache_storage::CreateTraceId();
   TRACE_EVENT_WITH_FLOW0("CacheStorage",
                          "InspectorCacheStorageAgent::requestCacheNames",
                          TRACE_ID_GLOBAL(trace_id), TRACE_EVENT_FLAG_FLOW_OUT);
-
-  scoped_refptr<const SecurityOrigin> sec_origin =
-      SecurityOrigin::CreateFromString(security_origin);
-
-  // Cache Storage API is restricted to trustworthy origins.
-  if (!sec_origin->IsPotentiallyTrustworthy()) {
-    // Don't treat this as an error, just don't attempt to open and enumerate
-    // the caches.
-    callback->sendSuccess(std::make_unique<protocol::Array<ProtocolCache>>());
+  if (maybe_security_origin.isJust() == maybe_storage_key.isJust()) {
+    callback->sendFailure(ProtocolResponse::InvalidParams(
+        "At least and at most one of security_origin, "
+        "storage_key must be specified"));
     return;
+  }
+  String storage_key, security_origin;
+  if (maybe_storage_key.isJust()) {
+    storage_key = maybe_storage_key.fromJust();
+    absl::optional<StorageKey> key =
+        StorageKey::Deserialize(StringUTF8Adaptor(storage_key).AsStringPiece());
+    if (!key.has_value()) {
+      callback->sendFailure(ProtocolResponse::InvalidParams(
+          "Not able to deserialize storage key"));
+      return;
+    }
+    security_origin =
+        SecurityOrigin::CreateFromUrlOrigin(key->origin())->ToString();
+
+    if (!security_origin.StartsWith("http")) {
+      callback->sendFailure(ProtocolResponse::InvalidParams(
+          "Storage key corresponds to invalid origin"));
+      return;
+    }
+  } else {
+    security_origin = maybe_security_origin.fromJust();
+    if (!security_origin.StartsWith("http")) {
+      callback->sendFailure(
+          ProtocolResponse::InvalidParams("Invalid security origin"));
+      return;
+    }
+    scoped_refptr<SecurityOrigin> sec_origin =
+        SecurityOrigin::CreateFromString(security_origin);
+    // Cache Storage API is restricted to trustworthy origins.
+    if (!sec_origin->IsPotentiallyTrustworthy()) {
+      // Don't treat this as an error, just don't attempt to open and enumerate
+      // the caches.
+      callback->sendSuccess(std::make_unique<protocol::Array<ProtocolCache>>());
+      return;
+    }
+    storage_key = WTF::String(
+        StorageKey::CreateFirstParty(sec_origin->ToUrlOrigin()).Serialize());
   }
 
   mojom::blink::CacheStorage* cache_storage = nullptr;
 
   ProtocolResponse response =
-      AssertCacheStorage(security_origin, frames_, &caches_, &cache_storage);
+      AssertCacheStorage(storage_key, frames_, &caches_, &cache_storage);
   if (!response.IsSuccess()) {
     callback->sendFailure(response);
     return;
   }
 
   cache_storage->Keys(
-      trace_id,
-      WTF::Bind(
-          [](String security_origin,
-             std::unique_ptr<RequestCacheNamesCallback> callback,
-             const Vector<String>& caches) {
-            auto array = std::make_unique<protocol::Array<ProtocolCache>>();
-            for (auto& cache : caches) {
-              array->emplace_back(
-                  ProtocolCache::create()
-                      .setSecurityOrigin(security_origin)
-                      .setCacheName(cache)
-                      .setCacheId(BuildCacheId(security_origin, cache))
-                      .build());
-            }
-            callback->sendSuccess(std::move(array));
-          },
-          security_origin, std::move(callback)));
+      trace_id, WTF::BindOnce(
+                    [](String security_origin, String storage_key,
+                       std::unique_ptr<RequestCacheNamesCallback> callback,
+                       const Vector<String>& caches) {
+                      auto array =
+                          std::make_unique<protocol::Array<ProtocolCache>>();
+                      for (auto& cache : caches) {
+                        array->emplace_back(
+                            ProtocolCache::create()
+                                .setSecurityOrigin(security_origin)
+                                .setStorageKey(storage_key)
+                                .setCacheName(cache)
+                                .setCacheId(BuildCacheId(storage_key, cache))
+                                .build());
+                      }
+                      callback->sendSuccess(std::move(array));
+                    },
+                    security_origin, storage_key, std::move(callback)));
 }
 
 void InspectorCacheStorageAgent::requestEntries(
@@ -584,7 +628,7 @@ void InspectorCacheStorageAgent::requestEntries(
 
   cache_storage->Open(
       cache_name, trace_id,
-      WTF::Bind(
+      WTF::BindOnce(
           [](DataRequestParams params,
              std::unique_ptr<RequestEntriesCallback> callback,
              mojom::blink::OpenResultPtr result) {
@@ -622,7 +666,7 @@ void InspectorCacheStorageAgent::deleteCache(
   }
   cache_storage->Delete(
       cache_name, trace_id,
-      WTF::Bind(
+      WTF::BindOnce(
           [](std::unique_ptr<DeleteCacheCallback> callback,
              mojom::blink::CacheStorageError error) {
             if (error == mojom::blink::CacheStorageError::kSuccess) {
@@ -656,7 +700,7 @@ void InspectorCacheStorageAgent::deleteEntry(
   }
   cache_storage->Open(
       cache_name, trace_id,
-      WTF::Bind(
+      WTF::BindOnce(
           [](String cache_name, String request, int64_t trace_id,
              std::unique_ptr<DeleteEntryCallback> callback,
              mojom::blink::OpenResultPtr result) {
@@ -681,7 +725,7 @@ void InspectorCacheStorageAgent::deleteEntry(
               auto* cache = cache_remote.get();
               cache->Batch(
                   std::move(batch_operations), trace_id,
-                  WTF::Bind(
+                  WTF::BindOnce(
                       [](mojo::AssociatedRemote<mojom::blink::CacheStorageCache>
                              cache_remote,
                          std::unique_ptr<DeleteEntryCallback> callback,
@@ -730,6 +774,7 @@ void InspectorCacheStorageAgent::requestCachedResponse(
     request->headers.insert(header->getName(), header->getValue());
   }
 
+  auto task_runner = frames_->Root()->GetTaskRunner(TaskType::kFileReading);
   auto multi_query_options = mojom::blink::MultiCacheQueryOptions::New();
   multi_query_options->query_options = mojom::blink::CacheQueryOptions::New();
   multi_query_options->cache_name = cache_name;
@@ -738,8 +783,9 @@ void InspectorCacheStorageAgent::requestCachedResponse(
       std::move(request), std::move(multi_query_options),
       /*in_related_fetch_event=*/false, /*in_range_fetch_event=*/false,
       trace_id,
-      WTF::Bind(
+      WTF::BindOnce(
           [](std::unique_ptr<RequestCachedResponseCallback> callback,
+             scoped_refptr<base::SingleThreadTaskRunner> task_runner,
              mojom::blink::MatchResultPtr result) {
             if (result->is_status()) {
               callback->sendFailure(ProtocolResponse::ServerError(
@@ -756,9 +802,10 @@ void InspectorCacheStorageAgent::requestCachedResponse(
                 return;
               }
               CachedResponseFileReaderLoaderClient::Load(
+                  std::move(task_runner),
                   std::move(result->get_response()->blob), std::move(callback));
             }
           },
-          std::move(callback)));
+          std::move(callback), std::move(task_runner)));
 }
 }  // namespace blink

@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,9 @@
 #include <memory>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/component_export.h"
-#include "base/memory/ref_counted.h"
+#include "base/functional/callback.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/native_library.h"
 #include "gpu/vulkan/buildflags.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
@@ -29,6 +29,10 @@
 
 namespace gfx {
 class NativePixmap;
+}
+
+namespace gpu {
+class VulkanDeviceQueue;
 }
 
 namespace ui {
@@ -77,6 +81,10 @@ class COMPONENT_EXPORT(OZONE_BASE) SurfaceFactoryOzone {
   // Returns the GLOzone to use for the specified GL implementation, or null if
   // GL implementation doesn't exist.
   virtual GLOzone* GetGLOzone(const gl::GLImplementationParts& implementation);
+
+  // Returns the current GLOzone based on the OzonePlatform and
+  // GLImplementationParts currently in use.
+  GLOzone* GetCurrentGLOzone();
 
 #if BUILDFLAG(ENABLE_VULKAN)
   // Creates the vulkan implementation. This object should be capable of
@@ -136,17 +144,19 @@ class COMPONENT_EXPORT(OZONE_BASE) SurfaceFactoryOzone {
   // This method can be called on any thread.
   virtual scoped_refptr<gfx::NativePixmap> CreateNativePixmap(
       gfx::AcceleratedWidget widget,
-      VkDevice vk_device,
+      gpu::VulkanDeviceQueue* device_queue,
       gfx::Size size,
       gfx::BufferFormat format,
       gfx::BufferUsage usage,
       absl::optional<gfx::Size> framebuffer_size = absl::nullopt);
 
+  virtual bool CanCreateNativePixmapForFormat(gfx::BufferFormat format);
+
   // Similar to CreateNativePixmap, but returns the result asynchronously.
   using NativePixmapCallback =
       base::OnceCallback<void(scoped_refptr<gfx::NativePixmap>)>;
   virtual void CreateNativePixmapAsync(gfx::AcceleratedWidget widget,
-                                       VkDevice vk_device,
+                                       gpu::VulkanDeviceQueue* device_queue,
                                        gfx::Size size,
                                        gfx::BufferFormat format,
                                        gfx::BufferUsage usage,
@@ -196,6 +206,10 @@ class COMPONENT_EXPORT(OZONE_BASE) SurfaceFactoryOzone {
   // retrieved or the platform doesn't know in advance.
   // Enumeration should not be assumed to take a trivial amount of time.
   virtual std::vector<gfx::BufferFormat> GetSupportedFormatsForTexturing()
+      const;
+
+  // This returns a preferred format for solid color image on Wayland.
+  virtual absl::optional<gfx::BufferFormat> GetPreferredFormatForSolidColor()
       const;
 
  protected:

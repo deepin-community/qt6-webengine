@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,12 +9,14 @@
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/files/file_path.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequence_checker.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/timer/timer.h"
+#include "base/values.h"
 #include "build/build_config.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/signin/public/identity_manager/account_info.h"
@@ -28,10 +30,6 @@
 class AccountCapabilities;
 class PrefRegistrySimple;
 class PrefService;
-
-namespace base {
-class DictionaryValue;
-}
 
 namespace gfx {
 class Image;
@@ -60,6 +58,7 @@ class AccountTrackerService {
   typedef base::RepeatingCallback<void(const AccountInfo& info)>
       AccountInfoCallback;
 
+#if BUILDFLAG(IS_CHROMEOS_ASH)
   // Possible values for the kAccountIdMigrationState preference.
   // Keep in sync with OAuth2LoginAccountRevokedMigrationState histogram enum.
   // These values are persisted to logs. Entries should not be renumbered and
@@ -70,6 +69,7 @@ class AccountTrackerService {
     MIGRATION_DONE = 2,
     NUM_MIGRATION_STATES
   };
+#endif
 
   AccountTrackerService();
 
@@ -97,9 +97,6 @@ class AccountTrackerService {
   // migration state.
   CoreAccountId PickAccountIdForAccount(const std::string& gaia,
                                         const std::string& email) const;
-  static CoreAccountId PickAccountIdForAccount(const PrefService* pref_service,
-                                               const std::string& gaia,
-                                               const std::string& email);
 
   // Seeds the account whose account_id is given by PickAccountIdForAccount()
   // with its corresponding gaia id and email address.  Returns the same
@@ -122,18 +119,19 @@ class AccountTrackerService {
 
   void RemoveAccount(const CoreAccountId& account_id);
 
+#if BUILDFLAG(IS_CHROMEOS_ASH)
   AccountIdMigrationState GetMigrationState() const;
   void SetMigrationDone();
+#endif
 
 #if BUILDFLAG(IS_ANDROID)
   // Returns a reference to the corresponding Java AccountTrackerService object.
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject();
 
-  // Seeds the accounts with |gaiaIds| and |accountNames|.
+  // Seeds the accounts with |core_account_infos|.
   void SeedAccountsInfo(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobjectArray>& gaiaIds,
-      const base::android::JavaParamRef<jobjectArray>& accountNames);
+      const base::android::JavaParamRef<jobjectArray>& core_account_infos);
 #endif
 
   // If set, this callback will be invoked whenever the details of a tracked
@@ -155,7 +153,7 @@ class AccountTrackerService {
  protected:
   // Available to be called in tests.
   void SetAccountInfoFromUserInfo(const CoreAccountId& account_id,
-                                  const base::DictionaryValue* user_info);
+                                  const base::Value::Dict& user_info);
 
   // Updates the account image. Does nothing if |account_id| does not exist in
   // |accounts_|.
@@ -208,13 +206,14 @@ class AccountTrackerService {
                              bool success);
   void RemoveAccountImageFromDisk(const CoreAccountId& account_id);
 
-  // Migrate accounts to be keyed by gaia id instead of normalized email.
-  // Requires that the migration state is set to MIGRATION_IN_PROGRESS.
-  void MigrateToGaiaId();
-
   // Returns whether the accounts are all keyed by gaia id. This should
   // be the case when the migration state is set to MIGRATION_DONE.
   bool AreAllAccountsMigrated() const;
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  // Migrate accounts to be keyed by gaia id instead of normalized email.
+  // Requires that the migration state is set to MIGRATION_IN_PROGRESS.
+  void MigrateToGaiaId();
 
   // Computes the new migration state. The state is saved to preference
   // before performing the migration in order to support resuming the
@@ -227,6 +226,7 @@ class AccountTrackerService {
   // Returns the saved migration state in the preferences.
   static AccountIdMigrationState GetMigrationState(
       const PrefService* pref_service);
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
   raw_ptr<PrefService> pref_service_ = nullptr;  // Not owned.
   std::map<CoreAccountId, AccountInfo> accounts_;

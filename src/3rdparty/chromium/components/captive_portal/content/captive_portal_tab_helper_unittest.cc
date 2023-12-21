@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,8 @@
 
 #include <memory>
 
-#include "base/callback.h"
-#include "base/callback_helpers.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "components/captive_portal/content/captive_portal_service.h"
 #include "components/captive_portal/content/captive_portal_tab_reloader.h"
@@ -124,8 +124,8 @@ class CaptivePortalTabHelperTest : public content::RenderViewHostTestHarness {
         .Times(1);
     auto navigation = content::NavigationSimulator::CreateBrowserInitiated(
         url, web_contents());
-    navigation->SetResolveErrorInfo({net::ERR_CERT_COMMON_NAME_INVALID,
-                                     true /* is_secure_network_error */});
+    navigation->SetResolveErrorInfo(net::ResolveErrorInfo(
+        net::ERR_CERT_COMMON_NAME_INVALID, true /* is_secure_network_error */));
     navigation->Fail(net::ERR_NAME_NOT_RESOLVED);
     EXPECT_CALL(mock_reloader(),
                 OnLoadCommitted(net::ERR_NAME_NOT_RESOLVED,

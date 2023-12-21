@@ -1,15 +1,19 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "weblayer/browser/autofill_client_impl.h"
 
+#include <utility>
+
 #include "build/build_config.h"
+#include "components/autofill/core/browser/autofill_download_manager.h"
 #include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/ui/suggestion.h"
-#include "components/ukm/content/source_url_recorder.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/ssl_status.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
 #include "weblayer/browser/translate_client_impl.h"
@@ -17,6 +21,27 @@
 namespace weblayer {
 
 AutofillClientImpl::~AutofillClientImpl() = default;
+
+bool AutofillClientImpl::IsOffTheRecord() {
+  return web_contents()->GetBrowserContext()->IsOffTheRecord();
+}
+
+scoped_refptr<network::SharedURLLoaderFactory>
+AutofillClientImpl::GetURLLoaderFactory() {
+  return web_contents()
+      ->GetBrowserContext()
+      ->GetDefaultStoragePartition()
+      ->GetURLLoaderFactoryForBrowserProcess();
+}
+
+autofill::AutofillDownloadManager* AutofillClientImpl::GetDownloadManager() {
+  if (!download_manager_) {
+    // Lazy initialization to avoid virtual function calls in the constructor.
+    download_manager_ = std::make_unique<autofill::AutofillDownloadManager>(
+        this, GetChannel(), GetLogManager());
+  }
+  return download_manager_.get();
+}
 
 autofill::PersonalDataManager* AutofillClientImpl::GetPersonalDataManager() {
   NOTREACHED();
@@ -30,7 +55,7 @@ AutofillClientImpl::GetAutocompleteHistoryManager() {
 }
 
 PrefService* AutofillClientImpl::GetPrefs() {
-  return const_cast<PrefService*>(base::as_const(*this).GetPrefs());
+  return const_cast<PrefService*>(std::as_const(*this).GetPrefs());
 }
 
 const PrefService* AutofillClientImpl::GetPrefs() const {
@@ -78,9 +103,14 @@ autofill::AddressNormalizer* AutofillClientImpl::GetAddressNormalizer() {
   return nullptr;
 }
 
-const GURL& AutofillClientImpl::GetLastCommittedURL() const {
+const GURL& AutofillClientImpl::GetLastCommittedPrimaryMainFrameURL() const {
   NOTREACHED();
   return GURL::EmptyGURL();
+}
+
+url::Origin AutofillClientImpl::GetLastCommittedPrimaryMainFrameOrigin() const {
+  NOTREACHED();
+  return url::Origin();
 }
 
 security_state::SecurityLevel
@@ -102,13 +132,13 @@ translate::TranslateDriver* AutofillClientImpl::GetTranslateDriver() {
   return nullptr;
 }
 
-void AutofillClientImpl::ShowAutofillSettings(bool show_credit_card_settings) {
+void AutofillClientImpl::ShowAutofillSettings(autofill::PopupType popup_type) {
   NOTREACHED();
 }
 
 void AutofillClientImpl::ShowUnmaskPrompt(
     const autofill::CreditCard& card,
-    UnmaskCardReason reason,
+    const autofill::CardUnmaskPromptOptions& card_unmask_prompt_options,
     base::WeakPtr<autofill::CardUnmaskDelegate> delegate) {
   NOTREACHED();
 }
@@ -238,6 +268,38 @@ void AutofillClientImpl::ScanCreditCard(CreditCardScanCallback callback) {
   NOTREACHED();
 }
 
+bool AutofillClientImpl::IsFastCheckoutSupported() {
+  return false;
+}
+
+bool AutofillClientImpl::TryToShowFastCheckout(
+    const autofill::FormData& form,
+    const autofill::FormFieldData& field,
+    base::WeakPtr<autofill::AutofillManager> autofill_manager) {
+  return false;
+}
+
+void AutofillClientImpl::HideFastCheckout(bool allow_further_runs) {}
+
+bool AutofillClientImpl::IsShowingFastCheckoutUI() {
+  return false;
+}
+
+bool AutofillClientImpl::IsTouchToFillCreditCardSupported() {
+  return false;
+}
+
+bool AutofillClientImpl::ShowTouchToFillCreditCard(
+    base::WeakPtr<autofill::TouchToFillDelegate> delegate,
+    base::span<const autofill::CreditCard> cards_to_suggest) {
+  NOTREACHED();
+  return false;
+}
+
+void AutofillClientImpl::HideTouchToFillCreditCard() {
+  NOTREACHED();
+}
+
 void AutofillClientImpl::ShowAutofillPopup(
     const autofill::AutofillClient::PopupOpenArgs& open_args,
     base::WeakPtr<autofill::AutofillPopupDelegate> delegate) {
@@ -257,10 +319,10 @@ void AutofillClientImpl::HideAutofillPopup(autofill::PopupHidingReason reason) {
   // take.
 }
 
-base::span<const autofill::Suggestion> AutofillClientImpl::GetPopupSuggestions()
+std::vector<autofill::Suggestion> AutofillClientImpl::GetPopupSuggestions()
     const {
   NOTIMPLEMENTED();
-  return base::span<const autofill::Suggestion>();
+  return {};
 }
 
 void AutofillClientImpl::PinPopupView() {
@@ -279,7 +341,7 @@ void AutofillClientImpl::UpdatePopup(
   NOTREACHED();
 }
 
-bool AutofillClientImpl::IsAutocompleteEnabled() {
+bool AutofillClientImpl::IsAutocompleteEnabled() const {
   NOTREACHED();
   return false;
 }
@@ -292,7 +354,7 @@ bool AutofillClientImpl::IsPasswordManagerEnabled() {
 }
 
 void AutofillClientImpl::PropagateAutofillPredictions(
-    content::RenderFrameHost* rfh,
+    autofill::AutofillDriver* driver,
     const std::vector<autofill::FormStructure*>& forms) {
   NOTREACHED();
 }
@@ -308,18 +370,19 @@ bool AutofillClientImpl::IsContextSecure() const {
   return false;
 }
 
-bool AutofillClientImpl::ShouldShowSigninPromo() {
-  NOTREACHED();
-  return false;
-}
-
-bool AutofillClientImpl::AreServerCardsSupported() const {
-  NOTREACHED();
-  return false;
-}
-
 void AutofillClientImpl::ExecuteCommand(int id) {
   NOTREACHED();
+}
+
+void AutofillClientImpl::OpenPromoCodeOfferDetailsURL(const GURL& url) {
+  NOTREACHED();
+}
+
+autofill::FormInteractionsFlowId
+AutofillClientImpl::GetCurrentFormInteractionsFlowId() {
+  // Currently not in use here. See `ChromeAutofillClient` for a proper
+  // implementation.
+  return {};
 }
 
 void AutofillClientImpl::LoadRiskData(

@@ -5,6 +5,7 @@
 #ifndef QUICHE_QUIC_CORE_QUIC_CONNECTION_ID_H_
 #define QUICHE_QUIC_CORE_QUIC_CONNECTION_ID_H_
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -12,11 +13,6 @@
 #include "quiche/quic/platform/api/quic_export.h"
 
 namespace quic {
-
-enum QuicConnectionIdLength {
-  PACKET_0BYTE_CONNECTION_ID = 0,
-  PACKET_8BYTE_CONNECTION_ID = 8,
-};
 
 // This is a property of QUIC headers, it indicates whether the connection ID
 // should actually be sent over the wire (or was sent on received packets).

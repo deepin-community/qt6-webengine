@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,16 +11,6 @@
 #include "ui/native_theme/native_theme.h"
 
 namespace blink {
-
-namespace {
-const int kVersionLollipop = 5;
-
-int getMajorVersion() {
-  int major, minor, bugfix;
-  base::SysInfo::OperatingSystemVersionNumbers(&major, &minor, &bugfix);
-  return major;
-}
-}  // namespace
 
 static void GetNativeThemeExtraParams(
     WebThemeEngine::Part part,
@@ -60,6 +50,8 @@ static void GetNativeThemeExtraParams(
           extra_params->text_field.background_color;
       native_theme_extra_params->text_field.has_border =
           extra_params->text_field.has_border;
+      native_theme_extra_params->text_field.auto_complete_active =
+          extra_params->text_field.auto_complete_active;
       native_theme_extra_params->text_field.zoom =
           extra_params->text_field.zoom;
       break;
@@ -111,6 +103,8 @@ static void GetNativeThemeExtraParams(
           extra_params->progress_bar.value_rect_height;
       native_theme_extra_params->progress_bar.zoom =
           extra_params->progress_bar.zoom;
+      native_theme_extra_params->progress_bar.is_horizontal =
+          extra_params->progress_bar.is_horizontal;
       break;
     default:
       break;  // Parts that have no extra params get here.
@@ -144,15 +138,9 @@ void WebThemeEngineAndroid::GetOverlayScrollbarStyle(ScrollbarStyle* style) {
   // Android as well.
   style->fade_out_delay = base::TimeDelta();
   style->fade_out_duration = base::TimeDelta();
-  if (getMajorVersion() >= kVersionLollipop) {
-    style->thumb_thickness = 4;
-    style->scrollbar_margin = 0;
-    style->color = SkColorSetARGB(128, 64, 64, 64);
-  } else {
-    style->thumb_thickness = 3;
-    style->scrollbar_margin = 3;
-    style->color = SkColorSetARGB(128, 128, 128, 128);
-  }
+  style->thumb_thickness = 4;
+  style->scrollbar_margin = 0;
+  style->color = SkColorSetARGB(128, 64, 64, 64);
 }
 
 void WebThemeEngineAndroid::Paint(

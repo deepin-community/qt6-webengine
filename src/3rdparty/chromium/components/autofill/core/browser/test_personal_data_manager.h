@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,15 +12,18 @@
 
 #include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/data_model/iban.h"
 #include "components/autofill/core/browser/payments/payments_customer_data.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
-#include "components/autofill/core/browser/test_inmemory_strike_database.h"
+#include "components/autofill/core/browser/strike_databases/autofill_profile_migration_strike_database.h"
+#include "components/autofill/core/browser/strike_databases/test_inmemory_strike_database.h"
 #include "components/signin/public/identity_manager/account_info.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace autofill {
 
-// A simplistic PersonalDataManager used for testing.
+// A simplistic PersonalDataManager used for testing. It doesn't load profiles
+// from AutofillTable or update them there.
 class TestPersonalDataManager : public PersonalDataManager {
  public:
   TestPersonalDataManager();
@@ -50,17 +53,20 @@ class TestPersonalDataManager : public PersonalDataManager {
   void UpdateProfile(const AutofillProfile& profile) override;
   void RemoveByGUID(const std::string& guid) override;
   void AddCreditCard(const CreditCard& credit_card) override;
+  std::string AddIBAN(const IBAN& iban) override;
   void DeleteLocalCreditCards(const std::vector<CreditCard>& cards) override;
   void UpdateCreditCard(const CreditCard& credit_card) override;
   void AddFullServerCreditCard(const CreditCard& credit_card) override;
-  std::vector<AutofillProfile*> GetProfiles() const override;
   const std::string& GetDefaultCountryCodeForNewAddress() const override;
-  void SetProfiles(std::vector<AutofillProfile>* profiles) override;
+  void SetProfilesForAllSources(
+      std::vector<AutofillProfile>* profiles) override;
+  bool SetProfilesForSource(base::span<const AutofillProfile> new_profiles,
+                            AutofillProfile::Source source) override;
   void LoadProfiles() override;
   void LoadCreditCards() override;
   void LoadCreditCardCloudTokenData() override;
+  void LoadIBANs() override;
   void LoadUpiIds() override;
-  bool IsAutofillEnabled() const override;
   bool IsAutofillProfileEnabled() const override;
   bool IsAutofillCreditCardEnabled() const override;
   bool IsAutofillWalletImportEnabled() const override;
@@ -71,6 +77,8 @@ class TestPersonalDataManager : public PersonalDataManager {
   bool IsDataLoaded() const override;
   bool IsSyncFeatureEnabled() const override;
   CoreAccountInfo GetAccountInfoForPaymentsServer() const override;
+  const AutofillProfileMigrationStrikeDatabase*
+  GetProfileMigrationStrikeDatabase() const override;
   const AutofillProfileSaveStrikeDatabase* GetProfileSaveStrikeDatabase()
       const override;
   const AutofillProfileUpdateStrikeDatabase* GetProfileUpdateStrikeDatabase()
@@ -78,7 +86,7 @@ class TestPersonalDataManager : public PersonalDataManager {
 
   // Unique to TestPersonalDataManager:
 
-  // Clears |web_profiles_|.
+  // Clears `web_profiles_` and `account_profiles_`.
   void ClearProfiles();
 
   // Clears |local_credit_cards_| and |server_credit_cards_|.
@@ -90,12 +98,6 @@ class TestPersonalDataManager : public PersonalDataManager {
   // Clears |autofill_offer_data_|.
   void ClearCreditCardOfferData();
 
-  // Gets a profile based on the provided |guid|.
-  AutofillProfile* GetProfileWithGUID(const char* guid);
-
-  // Gets a credit card based on the provided |guid| (local or server).
-  CreditCard* GetCreditCardWithGUID(const char* guid);
-
   // Adds a card to |server_credit_cards_|.  Functionally identical to
   // AddFullServerCreditCard().
   void AddServerCreditCard(const CreditCard& credit_card);
@@ -105,6 +107,10 @@ class TestPersonalDataManager : public PersonalDataManager {
 
   // Adds offer data to |autofill_offer_data_|.
   void AddAutofillOfferData(const AutofillOfferData& offer_data);
+
+  // Adds a `url` to `image` mapping to the local `credit_card_art_images_`
+  // cache.
+  void AddCardArtImage(const GURL& url, const gfx::Image& image);
 
   // Sets a local/server card's nickname based on the provided |guid|.
   void SetNicknameForCardWithGUID(const char* guid,
@@ -176,6 +182,8 @@ class TestPersonalDataManager : public PersonalDataManager {
   CoreAccountInfo account_info_;
 
   TestInMemoryStrikeDatabase inmemory_strike_database_;
+  AutofillProfileMigrationStrikeDatabase
+      inmemory_profile_migration_strike_database_{&inmemory_strike_database_};
   AutofillProfileSaveStrikeDatabase inmemory_profile_save_strike_database_{
       &inmemory_strike_database_};
   AutofillProfileUpdateStrikeDatabase inmemory_profile_update_strike_database_{

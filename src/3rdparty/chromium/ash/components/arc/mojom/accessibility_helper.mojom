@@ -1,8 +1,8 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Next MinVersion: 24
+// Next MinVersion: 26
 
 module arc.mojom;
 
@@ -169,10 +169,11 @@ enum AccessibilityIntProperty {
 [Extensible]
 enum AccessibilityIntListProperty {
   CHILD_NODE_IDS,
-  CUSTOM_ACTION_IDS,
-  STANDARD_ACTION_IDS
+  CUSTOM_ACTION_IDS_DEPRECATED,
+  STANDARD_ACTION_IDS_DEPRECATED
 };
 
+// Deprecated
 // These fields are taken from List<String> instance members of
 // AccessibilityNodeInfo.
 [Extensible]
@@ -287,6 +288,14 @@ enum AccessibilityWindowType {
   TYPE_SYSTEM,
 };
 
+// AccessibilityActionInAndroid is a struct to send information of
+// available AccessibilityAction in Android to Chrome.
+// https://developer.android.com/reference/android/view/accessibility/AccessibilityNodeInfo.AccessibilityAction.html
+struct AccessibilityActionInAndroid {
+  int32 id;
+  string? label;
+};
+
 // AccessibilityNodeInfoData is a struct to contain info of
 // AccessibilityNodeInfo in Android.
 struct AccessibilityNodeInfoData {
@@ -298,7 +307,7 @@ struct AccessibilityNodeInfoData {
   [MinVersion=1]
       map<AccessibilityIntListProperty, array<int32>>? int_list_properties;
   [MinVersion=3] map<AccessibilityStringListProperty, array<string>>?
-      string_list_properties;
+      string_list_properties; // Deprecated
   [MinVersion=5] map<AccessibilityStringProperty, array<SpanEntry>>?
       spannable_string_properties;
   [MinVersion=5] AccessibilityCollectionInfoData? collection_info;
@@ -306,6 +315,8 @@ struct AccessibilityNodeInfoData {
   [MinVersion=5] AccessibilityRangeInfoData? range_info;
   [MinVersion=12] int32 window_id;
   [MinVersion=20] bool is_virtual_node;
+  [MinVersion=24] array<AccessibilityActionInAndroid>? standard_actions;
+  [MinVersion=24] array<AccessibilityActionInAndroid>? custom_actions;
 };
 
 // AccessibilityWindowInfoData is a struct to contain info about
@@ -418,9 +429,44 @@ struct AccessibilityEventData {
       map<AccessibilityEventIntListProperty, array<int32>>? int_list_properties;
 };
 
-// AccessibilityActionData is a struct to contain info of AccessibilityAction in
-// Android.
-// https://developer.android.com/reference/android/view/accessibility/AccessibilityNodeInfo.AccessibilityAction.html
+// This enum is used to represent the argument
+// string constants for accessibility action float parameters.
+// https://developer.android.com/reference/android/view/accessibility/AccessibilityNodeInfo#constants_1
+enum ActionFloatArgumentType {
+  PROGRESS_VALUE
+};
+
+// This enum is used to represent the argument
+// string constants for accessibility action integer parameters.
+// https://developer.android.com/reference/android/view/accessibility/AccessibilityNodeInfo#constants_1
+enum ActionIntArgumentType {
+  MOVEMENT_GRANULARITY_INT,
+  SELECTION_START_INT,
+  SELECTION_END_INT,
+  ROW_INT,
+  COLUMN_INT,
+  MOVE_WINDOW_X,
+  MOVE_WINDOW_Y,
+  PRESS_AND_HOLD_DURATION_MILLIS_INT
+};
+
+// This enum is used to represent the argument
+// string constants for accessibility action string parameters.
+// https://developer.android.com/reference/android/view/accessibility/AccessibilityNodeInfo#constants_1
+enum ActionStringArgumentType {
+  HTML_ELEMENT_STRING,
+  SET_TEXT_CHARSEQUENCE
+};
+
+// This enum is used to represent the argument string constants
+// for accessibility action parameters that have complex types.
+// https://developer.android.com/reference/android/view/accessibility/AccessibilityNodeInfo#constants_1
+enum ActionComplexArgumentType {
+  ACCESSIBLE_CLICKABLE_SPAN
+};
+
+// AccessibilityActionData is a struct to send action information when Chrome
+// invokes an action.
 struct AccessibilityActionData {
   int32 node_id;
 
@@ -436,6 +482,12 @@ struct AccessibilityActionData {
   // in Android.
   [MinVersion=13] int32 start_index;
   [MinVersion=13] int32 end_index;
+
+  // Parameters for action functions.
+  // Ex: SCROLL_TO_POSITION would have a row and column int parameter.
+  [MinVersion=25] map<ActionIntArgumentType,int32>? int_parameters;
+  [MinVersion=25] map<ActionStringArgumentType,string>? string_parameters;
+  [MinVersion=25] map<ActionFloatArgumentType,float>? float_parameters;
 };
 
 // The type of shadow used for Chrome captions.
@@ -500,6 +552,10 @@ enum SetNativeChromeVoxResponse {
   WINDOW_NOT_FOUND,
   TALKBACK_NOT_INSTALLED,
   FAILURE,
+
+  // Need to notify users that TalkBack is installed but
+  // it no longer support ARC++ customization.
+  NEED_DEPRECATION_CONFIRMATION,
 };
 
 // Interface for communicating to Android.

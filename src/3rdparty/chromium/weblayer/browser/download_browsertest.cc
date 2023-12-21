@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/test/bind.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
@@ -196,7 +197,7 @@ IN_PROC_BROWSER_TEST_F(DownloadBrowserTest, InterceptNoDownload) {
   EXPECT_EQ(download_dropped_count(), 1);
 }
 
-IN_PROC_BROWSER_TEST_F(DownloadBrowserTest, Basic) {
+IN_PROC_BROWSER_TEST_F(DownloadBrowserTest, DISABLED_Basic) {
   GURL url(embedded_test_server()->GetURL("/content-disposition.html"));
 
   shell()->tab()->GetNavigationController()->Navigate(url);
@@ -286,13 +287,7 @@ IN_PROC_BROWSER_TEST_F(DownloadBrowserTest, Cancel) {
   EXPECT_EQ(download_state(), DownloadError::kCancelled);
 }
 
-// TODO(crbug.com/1314060): Flaky on Windows and Linux.
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
-#define MAYBE_PauseResume DISABLED_PauseResume
-#else
-#define MAYBE_PauseResume PauseResume
-#endif
-IN_PROC_BROWSER_TEST_F(DownloadBrowserTest, MAYBE_PauseResume) {
+IN_PROC_BROWSER_TEST_F(DownloadBrowserTest, DISABLED_PauseResume) {
   // Add an initial navigation to avoid the tab being deleted if the first
   // navigation is a download, since we use the tab for convenience in the
   // lambda.
@@ -304,7 +299,7 @@ IN_PROC_BROWSER_TEST_F(DownloadBrowserTest, MAYBE_PauseResume) {
     download->Pause();
     GURL url = embedded_test_server()->GetURL(
         content::SlowDownloadHttpResponse::kFinishSlowResponseUrl);
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(
                        [](Download* download, Shell* shell, const GURL& url) {
                          CHECK_EQ(download->GetState(), DownloadState::kPaused);
@@ -327,7 +322,7 @@ IN_PROC_BROWSER_TEST_F(DownloadBrowserTest, MAYBE_PauseResume) {
   EXPECT_EQ(download_dropped_count(), 0);
 }
 
-IN_PROC_BROWSER_TEST_F(DownloadBrowserTest, NetworkError) {
+IN_PROC_BROWSER_TEST_F(DownloadBrowserTest, DISABLED_NetworkError) {
   set_failed_callback(base::BindLambdaForTesting([](Download* download) {
     CHECK_EQ(download->GetState(), DownloadState::kFailed);
   }));

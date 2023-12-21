@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -29,8 +29,7 @@ namespace password_manager {
 template <class Context, class Store>
 scoped_refptr<RefcountedKeyedService> BuildPasswordStore(Context* context) {
   scoped_refptr<password_manager::PasswordStore> store(new Store);
-  if (!store->Init(/*prefs=*/nullptr, /*affiliated_match_helper=*/nullptr))
-    return nullptr;
+  store->Init(/*prefs=*/nullptr, /*affiliated_match_helper=*/nullptr);
   return store;
 }
 
@@ -51,8 +50,7 @@ scoped_refptr<RefcountedKeyedService> BuildPasswordStoreWithArgs(
     Context* context) {
   scoped_refptr<password_manager::PasswordStore> store(
       new Store(std::forward<Args>(args)...));
-  if (!store->Init(/*prefs=*/nullptr, /*affiliated_match_helper=*/nullptr))
-    return nullptr;
+  store->Init(/*prefs=*/nullptr, /*affiliated_match_helper=*/nullptr);
   return store;
 }
 
@@ -156,7 +154,9 @@ class MockPasswordReuseDetectorConsumer : public PasswordReuseDetectorConsumer {
                size_t,
                absl::optional<PasswordHashData>,
                const std::vector<MatchingReusedCredential>&,
-               int),
+               int,
+               const std::string&,
+               uint64_t),
               (override));
 };
 
@@ -169,7 +169,7 @@ class PasswordHashDataMatcher
   PasswordHashDataMatcher(const PasswordHashDataMatcher&) = delete;
   PasswordHashDataMatcher& operator=(const PasswordHashDataMatcher&) = delete;
 
-  ~PasswordHashDataMatcher() override = default;
+  ~PasswordHashDataMatcher() override;
 
   // ::testing::MatcherInterface overrides
   bool MatchAndExplain(absl::optional<PasswordHashData> hash_data,

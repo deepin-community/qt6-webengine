@@ -1,11 +1,11 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/cache_storage/cache_storage_cache.h"
 
 #include <stddef.h>
-#include <algorithm>
+
 #include <functional>
 #include <limits>
 #include <memory>
@@ -13,19 +13,21 @@
 #include <utility>
 
 #include "base/barrier_closure.h"
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/stack_container.h"
 #include "base/files/file_path.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/guid.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/checked_math.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
@@ -47,6 +49,7 @@
 #include "net/base/completion_repeating_callback.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
+#include "net/base/url_util.h"
 #include "net/disk_cache/disk_cache.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
@@ -204,6 +207,23 @@ static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_DRAFT_25 == 35,
               "ConnectionInfo enum is stable");
 static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_DRAFT_27 == 36,
               "ConnectionInfo enum is stable");
+static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_DRAFT_28 == 37,
+              "ConnectionInfo enum is stable");
+static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_DRAFT_29 == 38,
+              "ConnectionInfo enum is stable");
+static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_T051 == 39,
+              "ConnectionInfo enum is stable");
+static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_RFC_V1 == 40,
+              "ConnectionInfo enum is stable");
+static_assert(
+    net::HttpResponseInfo::CONNECTION_INFO_DEPRECATED_QUIC_2_DRAFT_1 == 41,
+    "ConnectionInfo enum is stable");
+static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_2_DRAFT_8 == 42,
+              "ConnectionInfo enum is stable");
+// The following assert needs to be changed every time a new value is added.
+// It exists to prevent us from forgetting to add new values above.
+static_assert(net::HttpResponseInfo::NUM_OF_CONNECTION_INFOS == 43,
+              "Please add new values above and update this assert");
 
 // Copy headers out of a cache entry and into a protobuf. The callback is
 // guaranteed to be run.
@@ -213,6 +233,16 @@ void ReadMetadataDidReadMetadata(disk_cache::Entry* entry,
                                  scoped_refptr<net::IOBufferWithSize> buffer,
                                  int rv);
 
+// This method will return a normalized Cache URL. In this case, the only
+// normalization being done is to remove the fragment (ref is a synonym
+// for fragment).
+GURL NormalizeCacheUrl(const GURL& url) {
+  if (url.has_ref())
+    return url.GetWithoutRef();
+
+  return url;
+}
+
 bool VaryMatches(const blink::FetchAPIRequestHeadersMap& request,
                  const blink::FetchAPIRequestHeadersMap& cached_request,
                  network::mojom::FetchResponseType response_type,
@@ -220,9 +250,8 @@ bool VaryMatches(const blink::FetchAPIRequestHeadersMap& request,
   if (response_type == network::mojom::FetchResponseType::kOpaque)
     return true;
 
-  auto vary_iter = std::find_if(
-      response.begin(), response.end(),
-      [](const ResponseHeaderMap::value_type& pair) -> bool {
+  auto vary_iter = base::ranges::find_if(
+      response, [](const ResponseHeaderMap::value_type& pair) {
         return base::CompareCaseInsensitiveASCII(pair.first, "vary") == 0;
       });
   if (vary_iter == response.end())
@@ -389,7 +418,10 @@ blink::mojom::FetchAPIRequestPtr CreateRequest(
     const proto::CacheMetadata& metadata,
     const GURL& request_url) {
   auto request = blink::mojom::FetchAPIRequest::New();
-  request->url = request_url;
+  request->url =
+      metadata.request().has_fragment()
+          ? net::AppendOrReplaceRef(request_url, metadata.request().fragment())
+          : request_url;
   request->method = metadata.request().method();
   request->is_reload = false;
   request->referrer = blink::mojom::Referrer::New();
@@ -479,7 +511,7 @@ blink::mojom::FetchAPIResponsePtr CreateResponse(
 }
 
 int64_t CalculateSideDataPadding(
-    const blink::StorageKey& storage_key,
+    const storage::BucketLocator& bucket_locator,
     const ::content::proto::CacheResponse* response,
     int side_data_size) {
   DCHECK(ShouldPadResourceSize(response));
@@ -498,8 +530,8 @@ int64_t CalculateSideDataPadding(
       base::Time::FromInternalValue(response->response_time());
 
   return storage::ComputeStableResponsePadding(
-      storage_key.origin(), url, response_time, response->request_method(),
-      side_data_size);
+      bucket_locator.storage_key, url, response_time,
+      response->request_method(), side_data_size);
 }
 
 net::RequestPriority GetDiskCachePriority(
@@ -565,7 +597,7 @@ struct CacheStorageCache::BatchInfo {
 
 // static
 std::unique_ptr<CacheStorageCache> CacheStorageCache::CreateMemoryCache(
-    const blink::StorageKey& storage_key,
+    const storage::BucketLocator& bucket_locator,
     storage::mojom::CacheStorageOwner owner,
     const std::string& cache_name,
     CacheStorage* cache_storage,
@@ -573,7 +605,7 @@ std::unique_ptr<CacheStorageCache> CacheStorageCache::CreateMemoryCache(
     scoped_refptr<storage::QuotaManagerProxy> quota_manager_proxy,
     scoped_refptr<BlobStorageContextWrapper> blob_storage_context) {
   CacheStorageCache* cache = new CacheStorageCache(
-      storage_key, owner, cache_name, base::FilePath(), cache_storage,
+      bucket_locator, owner, cache_name, base::FilePath(), cache_storage,
       std::move(scheduler_task_runner), std::move(quota_manager_proxy),
       std::move(blob_storage_context), /*cache_size=*/0,
       /*cache_padding=*/0);
@@ -584,7 +616,7 @@ std::unique_ptr<CacheStorageCache> CacheStorageCache::CreateMemoryCache(
 
 // static
 std::unique_ptr<CacheStorageCache> CacheStorageCache::CreatePersistentCache(
-    const blink::StorageKey& storage_key,
+    const storage::BucketLocator& bucket_locator,
     storage::mojom::CacheStorageOwner owner,
     const std::string& cache_name,
     CacheStorage* cache_storage,
@@ -595,7 +627,7 @@ std::unique_ptr<CacheStorageCache> CacheStorageCache::CreatePersistentCache(
     int64_t cache_size,
     int64_t cache_padding) {
   CacheStorageCache* cache = new CacheStorageCache(
-      storage_key, owner, cache_name, path, cache_storage,
+      bucket_locator, owner, cache_name, path, cache_storage,
       std::move(scheduler_task_runner), std::move(quota_manager_proxy),
       std::move(blob_storage_context), cache_size, cache_padding);
   cache->SetObserver(cache_storage);
@@ -702,7 +734,7 @@ void CacheStorageCache::WriteSideData(ErrorCallback callback,
   // GetUsageAndQuota is called before entering a scheduled operation since it
   // can call Size, another scheduled operation.
   quota_manager_proxy_->GetUsageAndQuota(
-      storage_key_, blink::mojom::StorageType::kTemporary,
+      bucket_locator_.storage_key, blink::mojom::StorageType::kTemporary,
       scheduler_task_runner_,
       base::BindOnce(&CacheStorageCache::WriteSideDataDidGetQuota,
                      weak_ptr_factory_.GetWeakPtr(), std::move(callback), url,
@@ -790,7 +822,7 @@ void CacheStorageCache::BatchOperation(
     // Put runs, the cache might already be full and the usage will be larger
     // than it's supposed to be.
     quota_manager_proxy_->GetUsageAndQuota(
-        storage_key_, blink::mojom::StorageType::kTemporary,
+        bucket_locator_.storage_key, blink::mojom::StorageType::kTemporary,
         scheduler_task_runner_,
         base::BindOnce(&CacheStorageCache::BatchDidGetUsageAndQuota,
                        weak_ptr_factory_.GetWeakPtr(), std::move(operations),
@@ -1014,7 +1046,7 @@ void CacheStorageCache::SetSchedulerForTesting(
 }
 
 CacheStorageCache::CacheStorageCache(
-    const blink::StorageKey& storage_key,
+    const storage::BucketLocator& bucket_locator,
     storage::mojom::CacheStorageOwner owner,
     const std::string& cache_name,
     const base::FilePath& path,
@@ -1024,7 +1056,7 @@ CacheStorageCache::CacheStorageCache(
     scoped_refptr<BlobStorageContextWrapper> blob_storage_context,
     int64_t cache_size,
     int64_t cache_padding)
-    : storage_key_(storage_key),
+    : bucket_locator_(bucket_locator),
       owner_(owner),
       cache_name_(cache_name),
       path_(path),
@@ -1042,7 +1074,7 @@ CacheStorageCache::CacheStorageCache(
               owner,
               std::move(blob_storage_context))),
       memory_only_(path.empty()) {
-  DCHECK(!storage_key_.origin().opaque());
+  DCHECK(!bucket_locator_.storage_key.origin().opaque());
   DCHECK(quota_manager_proxy_.get());
 
   if (cache_size_ != CacheStorage::kSizeUnknown &&
@@ -1077,7 +1109,7 @@ void CacheStorageCache::QueryCache(blink::mojom::FetchAPIRequestPtr request,
 
   std::string request_url;
   if (request)
-    request_url = request->url.spec();
+    request_url = NormalizeCacheUrl(request->url).spec();
 
   std::unique_ptr<QueryCacheContext> query_cache_context(
       new QueryCacheContext(std::move(request), std::move(options),
@@ -1197,7 +1229,7 @@ void CacheStorageCache::QueryCacheFilterEntry(
 
   if (query_cache_context->request &&
       !query_cache_context->request->url.is_empty()) {
-    GURL requestURL = query_cache_context->request->url;
+    GURL requestURL = NormalizeCacheUrl(query_cache_context->request->url);
     GURL cachedURL = GURL(entry->GetKey());
 
     if (query_cache_context->options &&
@@ -1340,7 +1372,7 @@ void CacheStorageCache::QueryCacheUpgradePadding(
   auto* response = metadata->mutable_response();
   response->set_padding(storage::ComputeRandomResponsePadding());
   response->set_side_data_padding(CalculateSideDataPadding(
-      storage_key_, response, entry->GetDataSize(INDEX_SIDE_DATA)));
+      bucket_locator_, response, entry->GetDataSize(INDEX_SIDE_DATA)));
 
   // Get a temporary copy of the entry and metadata pointers before moving them
   // into base::BindOnce.
@@ -1581,8 +1613,9 @@ void CacheStorageCache::WriteSideDataImpl(ErrorCallback callback,
   // Note, the simple disk_cache priority is not important here because we
   // only allow one write operation at a time.  Therefore there will be no
   // competing operations in the disk_cache queue.
-  disk_cache::EntryResult result = backend_->OpenEntry(
-      url.spec(), net::MEDIUM, std::move(split_callback.first));
+  disk_cache::EntryResult result =
+      backend_->OpenEntry(NormalizeCacheUrl(url).spec(), net::MEDIUM,
+                          std::move(split_callback.first));
   if (result.net_error() != net::ERR_IO_PENDING)
     std::move(split_callback.second).Run(std::move(result));
 }
@@ -1679,7 +1712,7 @@ void CacheStorageCache::WriteSideDataDidWrite(
     cache_padding_ -= response->side_data_padding();
 
     response->set_side_data_padding(
-        CalculateSideDataPadding(storage_key_, response, rv));
+        CalculateSideDataPadding(bucket_locator_, response, rv));
     cache_padding_ += response->side_data_padding();
 
     // Get a temporary copy of the entry pointer before passing it in
@@ -1756,9 +1789,6 @@ void CacheStorageCache::Put(blink::mojom::FetchAPIRequestPtr request,
                             int64_t trace_id,
                             ErrorCallback callback) {
   DCHECK(BACKEND_OPEN == backend_state_ || initializing_);
-
-  UMA_HISTOGRAM_ENUMERATION("ServiceWorkerCache.Cache.AllWritesResponseType",
-                            response->response_type);
 
   auto put_context = cache_entry_handler_->CreatePutContext(
       std::move(request), std::move(response), trace_id);
@@ -1842,7 +1872,8 @@ void CacheStorageCache::PutDidDeleteEntry(
 
   DCHECK(scheduler_->IsRunningExclusiveOperation());
   disk_cache::EntryResult result = backend_ptr->OpenOrCreateEntry(
-      request_.url.spec(), net::MEDIUM, std::move(split_callback.first));
+      NormalizeCacheUrl(request_.url).spec(), net::MEDIUM,
+      std::move(split_callback.first));
 
   if (result.net_error() != net::ERR_IO_PENDING)
     std::move(split_callback.second).Run(std::move(result));
@@ -1863,7 +1894,7 @@ void CacheStorageCache::PutDidCreateEntry(
   put_context->cache_entry.reset(result.ReleaseEntry());
 
   if (rv != net::OK) {
-    quota_manager_proxy_->NotifyWriteFailed(storage_key_);
+    quota_manager_proxy_->NotifyWriteFailed(bucket_locator_.storage_key);
     PutComplete(std::move(put_context), CacheStorageError::kErrorExists);
     return;
   }
@@ -1872,6 +1903,9 @@ void CacheStorageCache::PutDidCreateEntry(
   metadata.set_entry_time(base::Time::Now().ToInternalValue());
   proto::CacheRequest* request_metadata = metadata.mutable_request();
   request_metadata->set_method(put_context->request->method);
+  if (put_context->request->url.has_ref())
+    request_metadata->set_fragment(put_context->request->url.ref());
+
   for (const auto& header : put_context->request->headers) {
     DCHECK_EQ(std::string::npos, header.first.find('\0'));
     DCHECK_EQ(std::string::npos, header.second.find('\0'));
@@ -1928,7 +1962,7 @@ void CacheStorageCache::PutDidCreateEntry(
   if (ShouldPadResourceSize(*put_context->response) &&
       put_context->side_data_blob) {
     side_data_padding = CalculateSideDataPadding(
-        storage_key_, response_metadata, put_context->side_data_blob_size);
+        bucket_locator_, response_metadata, put_context->side_data_blob_size);
   }
   response_metadata->set_side_data_padding(side_data_padding);
   response_metadata->set_request_include_credentials(
@@ -1957,7 +1991,7 @@ void CacheStorageCache::PutDidWriteHeaders(
                          TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
 
   if (rv != expected_bytes) {
-    quota_manager_proxy_->NotifyWriteFailed(storage_key_);
+    quota_manager_proxy_->NotifyWriteFailed(bucket_locator_.storage_key);
     PutComplete(
         std::move(put_context),
         MakeErrorStorage(ErrorStorageType::kPutDidWriteHeadersWrongBytes));
@@ -2039,7 +2073,7 @@ void CacheStorageCache::PutWriteBlobToCache(
   // We have real data, so stream it into the entry.  This will overwrite
   // any existing data.
   auto blob_to_cache = std::make_unique<CacheStorageBlobToDiskCache>(
-      quota_manager_proxy_, storage_key_);
+      quota_manager_proxy_, bucket_locator_.storage_key);
   CacheStorageBlobToDiskCache* blob_to_cache_raw = blob_to_cache.get();
   BlobToDiskCacheIDMap::KeyType blob_to_cache_key =
       active_blob_to_disk_cache_writers_.Add(std::move(blob_to_cache));
@@ -2190,10 +2224,9 @@ void CacheStorageCache::UpdateCacheSizeGotSize(
   int64_t size_delta = PaddedCacheSize() - last_reported_size_;
   last_reported_size_ = PaddedCacheSize();
 
-  quota_manager_proxy_->NotifyStorageModified(
-      CacheStorageQuotaClient::GetClientTypeFromOwner(owner_), storage_key_,
-      blink::mojom::StorageType::kTemporary, size_delta, base::Time::Now(),
-      scheduler_task_runner_,
+  quota_manager_proxy_->NotifyBucketModified(
+      CacheStorageQuotaClient::GetClientTypeFromOwner(owner_), bucket_locator_,
+      size_delta, base::Time::Now(), scheduler_task_runner_,
       base::BindOnce(&CacheStorageCache::UpdateCacheSizeNotifiedStorageModified,
                      weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
 }
@@ -2471,38 +2504,31 @@ void CacheStorageCache::CreateBackend(ErrorCallback callback) {
   int64_t max_bytes = memory_only_ ? std::numeric_limits<int>::max()
                                    : std::numeric_limits<int64_t>::max();
 
-  std::unique_ptr<ScopedBackendPtr> backend_ptr(new ScopedBackendPtr());
-
-  // Temporary pointer so that backend_ptr can be Pass()'d in Bind below.
-  ScopedBackendPtr* backend = backend_ptr.get();
-
   auto split_callback = base::SplitOnceCallback(
       base::BindOnce(&CacheStorageCache::CreateBackendDidCreate,
-                     weak_ptr_factory_.GetWeakPtr(), std::move(callback),
-                     std::move(backend_ptr)));
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
 
   DCHECK(scheduler_->IsRunningExclusiveOperation());
-  int rv = disk_cache::CreateCacheBackend(
+  disk_cache::BackendResult result = disk_cache::CreateCacheBackend(
       cache_type, net::CACHE_BACKEND_SIMPLE, /*file_operations=*/nullptr, path_,
-      max_bytes, disk_cache::ResetHandling::kNeverReset, nullptr, backend,
+      max_bytes, disk_cache::ResetHandling::kNeverReset, /*net_log=*/nullptr,
       base::BindOnce(&CacheStorageCache::DeleteBackendCompletedIO,
                      weak_ptr_factory_.GetWeakPtr()),
       std::move(split_callback.first));
-  if (rv != net::ERR_IO_PENDING)
-    std::move(split_callback.second).Run(rv);
+  if (result.net_error != net::ERR_IO_PENDING)
+    std::move(split_callback.second).Run(std::move(result));
 }
 
 void CacheStorageCache::CreateBackendDidCreate(
     CacheStorageCache::ErrorCallback callback,
-    std::unique_ptr<ScopedBackendPtr> backend_ptr,
-    int rv) {
-  if (rv != net::OK) {
+    disk_cache::BackendResult result) {
+  if (result.net_error != net::OK) {
     std::move(callback).Run(
         MakeErrorStorage(ErrorStorageType::kCreateBackendDidCreateFailed));
     return;
   }
 
-  backend_ = std::move(*backend_ptr);
+  backend_ = std::move(result.backend);
   std::move(callback).Run(CacheStorageError::kSuccess);
 }
 
@@ -2599,9 +2625,6 @@ void CacheStorageCache::InitGotCacheSizeAndPadding(
                     backend_ && backend_state_ == BACKEND_UNINITIALIZED)
                        ? BACKEND_OPEN
                        : BACKEND_CLOSED;
-
-  UMA_HISTOGRAM_ENUMERATION("ServiceWorkerCache.InitBackendResult",
-                            cache_create_error);
 
   if (cache_observer_)
     cache_observer_->CacheSizeUpdated(this);

@@ -1,16 +1,16 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_SERVICES_APP_SERVICE_PUBLIC_CPP_RUN_ON_OS_LOGIN_TYPES_H_
 #define COMPONENTS_SERVICES_APP_SERVICE_PUBLIC_CPP_RUN_ON_OS_LOGIN_TYPES_H_
 
+#include <memory>
 #include <utility>
 #include <vector>
 
 #include "base/component_export.h"
 #include "components/services/app_service/public/cpp/macros.h"
-#include "components/services/app_service/public/mojom/types.mojom.h"
 
 namespace apps {
 
@@ -47,22 +47,6 @@ struct COMPONENT_EXPORT(LOGIN_MODE) RunOnOsLogin {
 };
 
 using RunOnOsLoginPtr = std::unique_ptr<RunOnOsLogin>;
-
-COMPONENT_EXPORT(LOGIN_MODE)
-apps::mojom::RunOnOsLoginPtr ConvertRunOnOsLoginToMojomRunOnOsLogin(
-    const RunOnOsLogin& run_on_os_login);
-
-COMPONENT_EXPORT(LOGIN_MODE)
-RunOnOsLoginPtr ConvertMojomRunOnOsLoginToRunOnOsLogin(
-    const apps::mojom::RunOnOsLoginPtr& run_on_os_login);
-
-COMPONENT_EXPORT(LOGIN_MODE)
-apps::mojom::RunOnOsLoginMode ConvertRunOnOsLoginModeToMojomRunOnOsLoginMode(
-    RunOnOsLoginMode login_mode);
-
-COMPONENT_EXPORT(LOGIN_MODE)
-RunOnOsLoginMode ConvertMojomRunOnOsLoginModeToRunOnOsLoginMode(
-    apps::mojom::RunOnOsLoginMode login_mode);
 
 }  // namespace apps
 

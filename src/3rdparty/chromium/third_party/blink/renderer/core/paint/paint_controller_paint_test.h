@@ -1,10 +1,13 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_PAINT_CONTROLLER_PAINT_TEST_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_PAINT_CONTROLLER_PAINT_TEST_H_
 
+#include "base/check_op.h"
+#include "cc/paint/paint_op.h"
+#include "cc/paint/paint_op_buffer_iterator.h"
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
@@ -16,6 +19,7 @@
 #include "third_party/blink/renderer/platform/graphics/paint/cull_rect.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_chunk_subset.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_controller_test.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/testing/paint_test_configurations.h"
 
 namespace blink {
@@ -42,11 +46,19 @@ class PaintControllerPaintTestBase : public RenderingTest {
         ->GetScrollingBackgroundDisplayItemClient();
   }
 
-  void UpdateAllLifecyclePhasesExceptPaint() {
+  void UpdateAllLifecyclePhasesExceptPaint(bool update_cull_rects = true) {
     GetDocument().View()->UpdateAllLifecyclePhasesExceptPaint(
         DocumentUpdateReason::kTest);
-    // Run CullRectUpdater to ease testing of cull rects and repaint flags of
-    // PaintLayers on cull rect change.
+    if (update_cull_rects) {
+      // Run CullRectUpdater to ease testing of cull rects and repaint flags of
+      // PaintLayers on cull rect change.
+      UpdateCullRects();
+    }
+  }
+
+  void UpdateCullRects() {
+    DCHECK_EQ(GetDocument().Lifecycle().GetState(),
+              DocumentLifecycle::kPrePaintClean);
     CullRectUpdater(*GetLayoutView().Layer()).Update();
   }
 
@@ -108,10 +120,15 @@ class PaintControllerPaintTestBase : public RenderingTest {
       begin_index++;
     }
     while (end_index > begin_index &&
-           IsNotContentType(chunks[end_index - 1].id.type))
+           IsNotContentType(chunks[end_index - 1].id.type)) {
       end_index--;
-    return PaintChunkSubset(RootPaintController().GetPaintArtifactShared(),
-                            begin_index, end_index);
+    }
+    auto artifact = RootPaintController().GetPaintArtifactShared();
+    PaintChunkSubset subset(artifact, chunks[begin_index]);
+    for (wtf_size_t i = begin_index + 1; i < end_index; i++) {
+      subset.Merge(PaintChunkSubset(artifact, chunks[i]));
+    }
+    return subset;
   }
 };
 

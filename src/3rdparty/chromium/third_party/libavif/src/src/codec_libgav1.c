@@ -1,4 +1,4 @@
-// Copyright 2020 Google LLC. All rights reserved.
+// Copyright 2020 Google LLC
 // SPDX-License-Identifier: BSD-2-Clause
 
 #include "avif/internal.h"
@@ -27,6 +27,7 @@ static avifBool gav1CodecGetNextImage(struct avifCodec * codec,
                                       struct avifDecoder * decoder,
                                       const avifDecodeSample * sample,
                                       avifBool alpha,
+                                      avifBool * isLimitedRangeAlpha,
                                       avifImage * image)
 {
     if (codec->internal->gav1Decoder == NULL) {
@@ -116,9 +117,6 @@ static avifBool gav1CodecGetNextImage(struct avifCodec * codec,
         image->transferCharacteristics = (avifTransferCharacteristics)gav1Image->transfer_characteristics;
         image->matrixCoefficients = (avifMatrixCoefficients)gav1Image->matrix_coefficients;
 
-        avifPixelFormatInfo formatInfo;
-        avifGetPixelFormatInfo(yuvFormat, &formatInfo);
-
         // Steal the pointers from the decoder's image directly
         avifImageFreePlanes(image, AVIF_PLANES_YUV);
         int yuvPlaneCount = (yuvFormat == AVIF_PIXEL_FORMAT_YUV400) ? 1 : 3;
@@ -144,7 +142,7 @@ static avifBool gav1CodecGetNextImage(struct avifCodec * codec,
         avifImageFreePlanes(image, AVIF_PLANES_A);
         image->alphaPlane = gav1Image->plane[0];
         image->alphaRowBytes = gav1Image->stride[0];
-        image->alphaRange = codec->internal->colorRange;
+        *isLimitedRangeAlpha = (codec->internal->colorRange == AVIF_RANGE_LIMITED);
         image->imageOwnsAlphaPlane = AVIF_FALSE;
     }
 

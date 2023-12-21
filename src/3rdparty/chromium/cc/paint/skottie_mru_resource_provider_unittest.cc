@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,9 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/containers/flat_map.h"
 #include "base/files/file_path.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/string_piece.h"
 #include "cc/paint/paint_image.h"
@@ -270,6 +270,21 @@ TEST_F(SkottieMRUResourceProviderTest, HandlesInvalidDimensions) {
                                        "test-resource-path/test-resource-name"))
                         .NormalizePathSeparators(),
                     Eq(absl::nullopt)))));
+}
+
+TEST_F(SkottieMRUResourceProviderTest, GracefullyHandlesInvalidJson) {
+  // No expectations needed. Just make sure the code doesn't crash.
+  Init("invalid-json");
+  // Lottie animation json is expected to be a dictionary.
+  Init(R"(["valid", "json", "list"])");
+  // Assets are expected to be a list.
+  Init(R"({"assets": "invalid-asset-set"})");
+  // Each asset is expected to be a dictionary.
+  Init(R"({
+      "assets": [
+        "invalid-asset-value"
+      ]
+    })");
 }
 
 }  // namespace

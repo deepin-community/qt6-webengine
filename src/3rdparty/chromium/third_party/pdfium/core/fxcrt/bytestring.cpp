@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -183,7 +183,7 @@ ByteString::ByteString(const std::initializer_list<ByteStringView>& list) {
 
 ByteString::ByteString(const fxcrt::ostringstream& outStream) {
   auto str = outStream.str();
-  if (str.size() > 0)
+  if (!str.empty())
     m_pData.Reset(StringData::Create(str.c_str(), str.size()));
 }
 

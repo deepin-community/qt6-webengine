@@ -48,6 +48,7 @@
 #include "content/public/common/url_constants.h"
 #include "net/base/data_url.h"
 #include "net/base/url_util.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
 
 #include <QDesktopServices>
 #include <QTimer>
@@ -204,11 +205,11 @@ QUrl WebContentsDelegateQt::url(content::WebContents *source) const
     m_pendingUrlUpdate = false;
     return newUrl;
 }
-void WebContentsDelegateQt::AddNewContents(content::WebContents* source, std::unique_ptr<content::WebContents> new_contents, const GURL &target_url,
-                                           WindowOpenDisposition disposition, const gfx::Rect& initial_pos, bool user_gesture, bool* was_blocked)
+void WebContentsDelegateQt::AddNewContents(content::WebContents *source, std::unique_ptr<content::WebContents> new_contents, const GURL &target_url,
+                                           WindowOpenDisposition disposition, const blink::mojom::WindowFeatures &window_features, bool user_gesture, bool *was_blocked)
 {
     Q_UNUSED(source)
-    QSharedPointer<WebContentsAdapter> newAdapter = createWindow(std::move(new_contents), disposition, initial_pos, toQt(target_url), user_gesture);
+    QSharedPointer<WebContentsAdapter> newAdapter = createWindow(std::move(new_contents), disposition, window_features.bounds, toQt(target_url), user_gesture);
     // Chromium can forget to pass user-agent override settings to new windows (see QTBUG-61774 and QTBUG-76249),
     // so set it here. Note the actual value doesn't really matter here. Only the second value does, but we try
     // to give the correct user-agent anyway.
@@ -254,6 +255,10 @@ void WebContentsDelegateQt::RenderFrameCreated(content::RenderFrameHost *render_
 {
     content::FrameTreeNode *node = static_cast<content::RenderFrameHostImpl *>(render_frame_host)->frame_tree_node();
     m_frameFocusedObserver.addNode(node);
+
+    // If it's a child frame (render_widget_host_view_child_frame) install an InputEventObserver on
+    // it. Note that it is only needed for WheelEventAck.
+    RenderWidgetHostViewQt::registerInputEventObserver(web_contents(), render_frame_host);
 }
 
 void WebContentsDelegateQt::PrimaryMainFrameRenderProcessGone(base::TerminationStatus status)
@@ -271,6 +276,7 @@ void WebContentsDelegateQt::PrimaryMainFrameRenderProcessGone(base::TerminationS
         || status == base::TERMINATION_STATUS_STILL_RUNNING) {
         return;
     }
+    LOG(INFO) << "ProcessGone: " << int(status) << " (" << web_contents()->GetCrashedErrorCode() << ")";
 
     setLoadingState(LoadingState::Unloaded);
 }
@@ -377,7 +383,8 @@ void WebContentsDelegateQt::emitLoadFinished(bool isErrorPage)
                 ? QWebEngineLoadingInfo::LoadStoppedStatus : QWebEngineLoadingInfo::LoadFailedStatus);
     QWebEngineLoadingInfo info(m_loadingInfo.url, loadStatus, m_loadingInfo.isErrorPage,
                                m_loadingInfo.errorDescription, m_loadingInfo.errorCode,
-                               QWebEngineLoadingInfo::ErrorDomain(m_loadingInfo.errorDomain));
+                               QWebEngineLoadingInfo::ErrorDomain(m_loadingInfo.errorDomain),
+                               m_loadingInfo.responseHeaders);
     m_viewClient->loadFinished(std::move(info));
     m_viewClient->updateNavigationActions();
 }
@@ -403,6 +410,20 @@ void WebContentsDelegateQt::DidFinishNavigation(content::NavigationHandle *navig
         }
 
         emitLoadCommitted();
+    }
+
+    const net::HttpResponseHeaders * const responseHeaders = navigation_handle->GetResponseHeaders();
+    if (responseHeaders != nullptr) {
+        m_loadingInfo.responseHeaders.clear();
+        std::size_t iter = 0;
+        std::string headerName;
+        std::string headerValue;
+        while (responseHeaders->EnumerateHeaderLines(&iter, &headerName, &headerValue)) {
+            m_loadingInfo.responseHeaders.insert(
+                        QByteArray::fromStdString(headerName),
+                        QByteArray::fromStdString(headerValue)
+            );
+        }
     }
 
     // Success is reported by DidFinishLoad, but DidFailLoad is now dead code and needs to be handled below
@@ -471,7 +492,7 @@ void WebContentsDelegateQt::DidFailLoad(content::RenderFrameHost* render_frame_h
 {
     setLoadingState(LoadingState::Loaded);
 
-    if (render_frame_host != web_contents()->GetMainFrame())
+    if (render_frame_host != web_contents()->GetPrimaryMainFrame())
         return;
 
     if (validated_url.spec() == content::kUnreachableWebDataURL) {
@@ -619,12 +640,6 @@ void WebContentsDelegateQt::UpdateTargetURL(content::WebContents* source, const 
     m_viewClient->didUpdateTargetURL(toQt(url));
 }
 
-void WebContentsDelegateQt::OnVisibilityChanged(content::Visibility visibility)
-{
-    if (visibility != content::Visibility::HIDDEN)
-        web_cache::WebCacheManager::GetInstance()->ObserveActivity(web_contents()->GetMainFrame()->GetProcess()->GetID());
-}
-
 void WebContentsDelegateQt::ActivateContents(content::WebContents* contents)
 {
     QWebEngineSettings *settings = m_viewClient->webEngineSettings();
@@ -729,12 +744,6 @@ void WebContentsDelegateQt::BeforeUnloadFired(content::WebContents *tab, bool pr
         m_viewClient->windowCloseRejected();
 }
 
-void WebContentsDelegateQt::BeforeUnloadFired(bool proceed, const base::TimeTicks &proceed_time)
-{
-    Q_UNUSED(proceed);
-    Q_UNUSED(proceed_time);
-}
-
 bool WebContentsDelegateQt::CheckMediaAccessPermission(content::RenderFrameHost *, const GURL& security_origin, blink::mojom::MediaStreamType type)
 {
     switch (type) {
@@ -744,7 +753,7 @@ bool WebContentsDelegateQt::CheckMediaAccessPermission(content::RenderFrameHost 
         return m_viewClient->profileAdapter()->checkPermission(toQt(security_origin), ProfileAdapter::VideoCapturePermission);
     default:
         LOG(INFO) << "WebContentsDelegateQt::CheckMediaAccessPermission: "
-                  << "Unsupported media stream type checked" << type;
+                  << "Unsupported media stream type checked " << type;
         return false;
     }
 }
@@ -803,6 +812,15 @@ void WebContentsDelegateQt::ResourceLoadComplete(content::RenderFrameHost* rende
     if (resource_load_info.request_destination == network::mojom::RequestDestination::kDocument) {
         m_isDocumentEmpty = (resource_load_info.raw_body_bytes == 0);
     }
+}
+
+void WebContentsDelegateQt::InnerWebContentsAttached(content::WebContents *inner_web_contents,
+                                        content::RenderFrameHost *render_frame_host,
+                                        bool is_full_page)
+{
+    blink::web_pref::WebPreferences guestPrefs = inner_web_contents->GetOrCreateWebPreferences();
+    webEngineSettings()->overrideWebPreferences(inner_web_contents, &guestPrefs);
+    inner_web_contents->SetWebPreferences(guestPrefs);
 }
 
 FindTextHelper *WebContentsDelegateQt::findTextHelper()
@@ -868,6 +886,7 @@ int &WebContentsDelegateQt::streamCount(blink::mojom::MediaStreamType type)
     case blink::mojom::MediaStreamType::DISPLAY_VIDEO_CAPTURE:
     case blink::mojom::MediaStreamType::DISPLAY_AUDIO_CAPTURE:
     case blink::mojom::MediaStreamType::DISPLAY_VIDEO_CAPTURE_THIS_TAB:
+    case blink::mojom::MediaStreamType::DISPLAY_VIDEO_CAPTURE_SET:
         return m_desktopStreamCount;
 
     case blink::mojom::MediaStreamType::NO_SERVICE:
@@ -879,20 +898,34 @@ int &WebContentsDelegateQt::streamCount(blink::mojom::MediaStreamType type)
     return m_videoStreamCount;
 }
 
-void WebContentsDelegateQt::addDevices(const blink::MediaStreamDevices &devices)
+void WebContentsDelegateQt::addDevices(const blink::mojom::StreamDevices &devices)
 {
-    for (const auto &device : devices)
-        ++streamCount(device.type);
+    if (devices.audio_device.has_value())
+        addDevice(devices.audio_device.value());
+    if (devices.video_device.has_value())
+        addDevice(devices.video_device.value());
 
     webContentsAdapter()->updateRecommendedState();
 }
 
-void WebContentsDelegateQt::removeDevices(const blink::MediaStreamDevices &devices)
+void WebContentsDelegateQt::removeDevices(const blink::mojom::StreamDevices &devices)
 {
-    for (const auto &device : devices)
-        ++streamCount(device.type);
+    if (devices.audio_device.has_value())
+        removeDevice(devices.audio_device.value());
+    if (devices.video_device.has_value())
+        removeDevice(devices.video_device.value());
 
     webContentsAdapter()->updateRecommendedState();
+}
+
+void WebContentsDelegateQt::addDevice(const blink::MediaStreamDevice &device)
+{
+    ++streamCount(device.type);
+}
+
+void WebContentsDelegateQt::removeDevice(const blink::MediaStreamDevice &device)
+{
+    --streamCount(device.type);
 }
 
 FrameFocusedObserver::FrameFocusedObserver(WebContentsAdapterClient *adapterClient)

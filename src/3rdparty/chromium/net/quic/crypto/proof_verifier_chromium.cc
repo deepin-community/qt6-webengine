@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,9 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
@@ -18,7 +18,7 @@
 #include "crypto/signature_verifier.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
-#include "net/base/network_isolation_key.h"
+#include "net/base/network_anonymization_key.h"
 #include "net/cert/cert_status_flags.h"
 #include "net/cert/cert_verifier.h"
 #include "net/cert/ct_policy_enforcer.h"
@@ -34,10 +34,9 @@ using std::string;
 
 namespace net {
 
-ProofVerifyDetailsChromium::ProofVerifyDetailsChromium()
-    : pkp_bypassed(false), is_fatal_cert_error(false) {}
+ProofVerifyDetailsChromium::ProofVerifyDetailsChromium() = default;
 
-ProofVerifyDetailsChromium::~ProofVerifyDetailsChromium() {}
+ProofVerifyDetailsChromium::~ProofVerifyDetailsChromium() = default;
 
 ProofVerifyDetailsChromium::ProofVerifyDetailsChromium(
     const ProofVerifyDetailsChromium&) = default;
@@ -165,7 +164,7 @@ class ProofVerifierChromium::Job {
   // passed to CertVerifier::Verify.
   int cert_verify_flags_;
 
-  State next_state_;
+  State next_state_ = STATE_NONE;
 
   base::TimeTicks start_time_;
 
@@ -186,7 +185,6 @@ ProofVerifierChromium::Job::Job(
       transport_security_state_(transport_security_state),
       sct_auditing_delegate_(sct_auditing_delegate),
       cert_verify_flags_(cert_verify_flags),
-      next_state_(STATE_NONE),
       start_time_(base::TimeTicks::Now()),
       net_log_(net_log) {
   CHECK(proof_verifier_);
@@ -414,7 +412,7 @@ int ProofVerifierChromium::Job::DoVerifyCertComplete(int result) {
             cert_verify_result.public_key_hashes, cert_.get(),
             cert_verify_result.verified_cert.get(),
             TransportSecurityState::ENABLE_PIN_REPORTS,
-            proof_verifier_->network_isolation_key_,
+            proof_verifier_->network_anonymization_key_,
             &verify_details_->pinning_failure_log);
     switch (pin_validity) {
       case TransportSecurityState::PKPStatus::VIOLATED:
@@ -494,7 +492,7 @@ bool ProofVerifierChromium::Job::VerifySignature(
   verifier.VerifyUpdate(
       base::as_bytes(base::make_span(quic::kProofSignatureLabel)));
   uint32_t len = chlo_hash.length();
-  verifier.VerifyUpdate(base::as_bytes(base::make_span(&len, 1)));
+  verifier.VerifyUpdate(base::as_bytes(base::make_span(&len, 1u)));
   verifier.VerifyUpdate(base::as_bytes(base::make_span(chlo_hash)));
   verifier.VerifyUpdate(base::as_bytes(base::make_span(signed_data)));
 
@@ -536,10 +534,7 @@ int ProofVerifierChromium::Job::CheckCTCompliance() {
           cert_verify_result.is_issued_by_known_root,
           cert_verify_result.public_key_hashes,
           cert_verify_result.verified_cert.get(), cert_.get(),
-          cert_verify_result.scts,
-          TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-          cert_verify_result.policy_compliance,
-          proof_verifier_->network_isolation_key_);
+          cert_verify_result.scts, cert_verify_result.policy_compliance);
 
   if (sct_auditing_delegate_) {
     sct_auditing_delegate_->MaybeEnqueueReport(
@@ -564,19 +559,19 @@ ProofVerifierChromium::ProofVerifierChromium(
     TransportSecurityState* transport_security_state,
     SCTAuditingDelegate* sct_auditing_delegate,
     std::set<std::string> hostnames_to_allow_unknown_roots,
-    const NetworkIsolationKey& network_isolation_key)
+    const NetworkAnonymizationKey& network_anonymization_key)
     : cert_verifier_(cert_verifier),
       ct_policy_enforcer_(ct_policy_enforcer),
       transport_security_state_(transport_security_state),
       sct_auditing_delegate_(sct_auditing_delegate),
       hostnames_to_allow_unknown_roots_(hostnames_to_allow_unknown_roots),
-      network_isolation_key_(network_isolation_key) {
+      network_anonymization_key_(network_anonymization_key) {
   DCHECK(cert_verifier_);
   DCHECK(ct_policy_enforcer_);
   DCHECK(transport_security_state_);
 }
 
-ProofVerifierChromium::~ProofVerifierChromium() {}
+ProofVerifierChromium::~ProofVerifierChromium() = default;
 
 quic::QuicAsyncStatus ProofVerifierChromium::VerifyProof(
     const std::string& hostname,

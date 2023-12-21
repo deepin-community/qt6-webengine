@@ -1,11 +1,12 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_NEW_SCRIPT_FETCHER_H_
 #define CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_NEW_SCRIPT_FETCHER_H_
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
+#include "base/memory/raw_ref.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "content/browser/service_worker/service_worker_version.h"
@@ -60,28 +61,23 @@ class CONTENT_EXPORT ServiceWorkerNewScriptFetcher
   void OnReceiveEarlyHints(network::mojom::EarlyHintsPtr early_hints) override;
   void OnReceiveResponse(
       network::mojom::URLResponseHeadPtr response_head,
-      mojo::ScopedDataPipeConsumerHandle response_body) override;
+      mojo::ScopedDataPipeConsumerHandle response_body,
+      absl::optional<mojo_base::BigBuffer> cached_metadata) override;
   void OnReceiveRedirect(
       const net::RedirectInfo& redirect_info,
       network::mojom::URLResponseHeadPtr response_head) override;
   void OnUploadProgress(int64_t current_position,
                         int64_t total_size,
                         OnUploadProgressCallback callback) override;
-  void OnReceiveCachedMetadata(mojo_base::BigBuffer data) override;
   void OnTransferSizeUpdated(int32_t transfer_size_diff) override;
-  void OnStartLoadingResponseBody(
-      mojo::ScopedDataPipeConsumerHandle response_body) override;
   void OnComplete(const network::URLLoaderCompletionStatus& status) override;
 
-  ServiceWorkerContextCore& context_;
+  const raw_ref<ServiceWorkerContextCore> context_;
   scoped_refptr<ServiceWorkerVersion> version_;
   scoped_refptr<network::SharedURLLoaderFactory> loader_factory_;
   blink::mojom::FetchClientSettingsObjectPtr fetch_client_settings_object_;
   // Request ID for a browser-initiated request.
   const int request_id_;
-
-  // Stores the response header until the data pipe for the body is received.
-  network::mojom::URLResponseHeadPtr response_head_;
 
   // Called when the header and the data pipe for the body are ready.
   StartCallback callback_;

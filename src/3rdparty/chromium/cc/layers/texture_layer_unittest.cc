@@ -1,4 +1,4 @@
-// Copyright 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,8 +12,8 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
@@ -23,7 +23,6 @@
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "cc/animation/animation_host.h"
@@ -56,11 +55,21 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-using ::testing::Mock;
 using ::testing::_;
-using ::testing::AtLeast;
 using ::testing::AnyNumber;
+using ::testing::AtLeast;
 using ::testing::InvokeWithoutArgs;
+using ::testing::Mock;
+
+// TODO(https://crbug.com/1400943): settings new expecations after
+// VerifyAndClearExpectations is undefined behavior. See
+// http://google.github.io/googletest/gmock_cook_book.html#forcing-a-verification
+#define EXPECT_SET_NEEDS_COMMIT(expect, code_to_test)                 \
+  do {                                                                \
+    EXPECT_CALL(*layer_tree_host_, SetNeedsCommit()).Times((expect)); \
+    code_to_test;                                                     \
+    Mock::VerifyAndClearExpectations(layer_tree_host_.get());         \
+  } while (false)
 
 namespace cc {
 namespace {
@@ -99,7 +108,7 @@ class MockLayerTreeHost : public LayerTreeHost {
   explicit MockLayerTreeHost(LayerTreeHost::InitParams params)
       : LayerTreeHost(std::move(params), CompositorMode::SINGLE_THREADED) {
     InitializeSingleThreaded(&single_thread_client_,
-                             base::ThreadTaskRunnerHandle::Get());
+                             base::SingleThreadTaskRunner::GetCurrentDefault());
   }
 
   StubLayerTreeHostSingleThreadClient single_thread_client_;
@@ -136,12 +145,12 @@ struct CommonResourceObjects {
     const uint32_t arbitrary_target1 = GL_TEXTURE_2D;
     const uint32_t arbitrary_target2 = GL_TEXTURE_EXTERNAL_OES;
     gfx::Size size(128, 128);
-    resource1_ = viz::TransferableResource::MakeGL(
+    resource1_ = viz::TransferableResource::MakeGpu(
         mailbox_name1_, GL_LINEAR, arbitrary_target1, sync_token1_, size,
-        false /* is_overlay_candidate */);
-    resource2_ = viz::TransferableResource::MakeGL(
+        viz::RGBA_8888, false /* is_overlay_candidate */);
+    resource2_ = viz::TransferableResource::MakeGpu(
         mailbox_name2_, GL_LINEAR, arbitrary_target2, sync_token2_, size,
-        false /* is_overlay_candidate */);
+        viz::RGBA_8888, false /* is_overlay_candidate */);
     shared_bitmap_id_ = viz::SharedBitmap::GenerateId();
     sw_release_callback_ = base::BindRepeating(
         &MockReleaseCallback::Release2, base::Unretained(&mock_callback_),
@@ -216,10 +225,14 @@ TEST_F(TextureLayerTest, CheckPropertyChangeCausesCorrectBehavior) {
   // be set to new values in order for SetNeedsCommit to be called.
   EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetFlipped(false));
   EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetNearestNeighbor(true));
-  EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetUV(
-      gfx::PointF(0.25f, 0.25f), gfx::PointF(0.75f, 0.75f)));
+  EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetUV(gfx::PointF(0.25f, 0.25f),
+                                               gfx::PointF(0.75f, 0.75f)));
   EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetPremultipliedAlpha(false));
   EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetBlendBackgroundColor(true));
+  EXPECT_SET_NEEDS_COMMIT(0, test_layer->SetHDRConfiguration(
+                                 gfx::HDRMode::kDefault, absl::nullopt));
+  EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetHDRConfiguration(
+                                 gfx::HDRMode::kDefault, gfx::HDRMetadata()));
 }
 
 class RunOnCommitLayerTreeHostClient : public FakeLayerTreeHostClient {
@@ -252,7 +265,7 @@ TEST_F(TextureLayerTest, ShutdownWithResource) {
     params.mutator_host = animation_host_.get();
     LayerTreeSettings settings;
     params.settings = &settings;
-    params.main_task_runner = base::ThreadTaskRunnerHandle::Get();
+    params.main_task_runner = base::SingleThreadTaskRunner::GetCurrentDefault();
     auto host = LayerTreeHost::CreateSingleThreaded(&single_thread_client,
                                                     std::move(params));
 
@@ -384,8 +397,7 @@ TEST_F(TextureLayerWithResourceTest, ReplaceMailboxOnMainThreadBeforeCommit) {
 
 class TextureLayerMailboxHolderTest : public TextureLayerTest {
  public:
-  TextureLayerMailboxHolderTest()
-      : main_thread_("MAIN") {
+  TextureLayerMailboxHolderTest() : main_thread_("MAIN") {
     main_thread_.Start();
   }
 
@@ -697,10 +709,10 @@ class TextureLayerImplWithMailboxThreadedCallback : public LayerTreeTest {
         base::Unretained(this), mailbox_char);
 
     const gfx::Size size(64, 64);
-    auto resource = viz::TransferableResource::MakeGL(
+    auto resource = viz::TransferableResource::MakeGpu(
         MailboxFromChar(mailbox_char), GL_LINEAR, GL_TEXTURE_2D,
         SyncTokenFromUInt(static_cast<uint32_t>(mailbox_char)), size,
-        false /* is_overlay_candidate */);
+        viz::RGBA_8888, false /* is_overlay_candidate */);
     layer_->SetTransferableResource(resource, std::move(callback));
     // Damage the layer so we send a new frame with the new resource to the
     // Display compositor.
@@ -765,8 +777,8 @@ class TextureLayerImplWithResourceTest : public TextureLayerTest {
   }
 
   bool WillDraw(TextureLayerImpl* layer, DrawMode mode) {
-    bool will_draw = layer->WillDraw(
-        mode, host_impl_.active_tree()->resource_provider());
+    bool will_draw =
+        layer->WillDraw(mode, host_impl_.active_tree()->resource_provider());
     if (will_draw)
       layer->DidDraw(host_impl_.active_tree()->resource_provider());
     return will_draw;
@@ -912,9 +924,8 @@ TEST_F(TextureLayerImplWithResourceTest,
 
 // Checks that TextureLayer::Update does not cause an extra commit when setting
 // the texture mailbox.
-class TextureLayerNoExtraCommitForMailboxTest
-    : public LayerTreeTest,
-      public TextureLayerClient {
+class TextureLayerNoExtraCommitForMailboxTest : public LayerTreeTest,
+                                                public TextureLayerClient {
  public:
   // TextureLayerClient implementation.
   bool PrepareTransferableResource(
@@ -928,9 +939,10 @@ class TextureLayerNoExtraCommitForMailboxTest
     }
 
     constexpr gfx::Size size(64, 64);
-    *resource = viz::TransferableResource::MakeGL(
+    *resource = viz::TransferableResource::MakeGpu(
         MailboxFromChar('1'), GL_LINEAR, GL_TEXTURE_2D,
-        SyncTokenFromUInt(0x123), size, false /* is_overlay_candidate */);
+        SyncTokenFromUInt(0x123), size, viz::RGBA_8888,
+        false /* is_overlay_candidate */);
     *release_callback = base::BindOnce(
         &TextureLayerNoExtraCommitForMailboxTest::ResourceReleased,
         base::Unretained(this));
@@ -983,16 +995,10 @@ SINGLE_AND_MULTI_THREAD_TEST_F(TextureLayerNoExtraCommitForMailboxTest);
 // Checks that changing a mailbox in the client for a TextureLayer that's
 // invisible correctly works and uses the new mailbox as soon as the layer
 // becomes visible (and returns the old one).
-class TextureLayerChangeInvisibleMailboxTest
-    : public LayerTreeTest,
-      public TextureLayerClient {
+class TextureLayerChangeInvisibleMailboxTest : public LayerTreeTest,
+                                               public TextureLayerClient {
  public:
-  TextureLayerChangeInvisibleMailboxTest()
-      : resource_changed_(true),
-        resource_(MakeResource('1')),
-        resource_returned_(0),
-        prepare_called_(0),
-        commit_count_(0) {}
+  TextureLayerChangeInvisibleMailboxTest() : resource_(MakeResource('1')) {}
 
   // TextureLayerClient implementation.
   bool PrepareTransferableResource(
@@ -1012,15 +1018,26 @@ class TextureLayerChangeInvisibleMailboxTest
 
   viz::TransferableResource MakeResource(char name) {
     constexpr gfx::Size size(64, 64);
-    return viz::TransferableResource::MakeGL(
+    return viz::TransferableResource::MakeGpu(
         MailboxFromChar(name), GL_LINEAR, GL_TEXTURE_2D,
-        SyncTokenFromUInt(static_cast<uint32_t>(name)), size,
+        SyncTokenFromUInt(static_cast<uint32_t>(name)), size, viz::RGBA_8888,
         false /* is_overlay_candidate */);
   }
 
   void ResourceReleased(const gpu::SyncToken& sync_token, bool lost_resource) {
     EXPECT_TRUE(sync_token.HasData());
     ++resource_returned_;
+
+    // The actual releasing of resources by
+    // TextureLayer::TransferableResourceHolder::dtor can be done as a PostTask.
+    // The test signal being used, DidReceiveCompositorFrameAck itself is also
+    // posted back from the Compositor-thread to the Main-thread. Due to this
+    // there's a teardown race which tsan builds can encounter. So if
+    // `close_on_resource_returned_` is set we actually end the test here.
+    if (close_on_resource_returned_) {
+      EXPECT_EQ(2, resource_returned_);
+      EndTest();
+    }
   }
 
   void SetupTree() override {
@@ -1031,7 +1048,7 @@ class TextureLayerChangeInvisibleMailboxTest
     solid_layer_ = SolidColorLayer::Create();
     solid_layer_->SetBounds(gfx::Size(10, 10));
     solid_layer_->SetIsDrawable(true);
-    solid_layer_->SetBackgroundColor(SK_ColorWHITE);
+    solid_layer_->SetBackgroundColor(SkColors::kWhite);
     root->AddChild(solid_layer_);
 
     parent_layer_ = Layer::Create();
@@ -1051,8 +1068,28 @@ class TextureLayerChangeInvisibleMailboxTest
   void BeginTest() override { PostSetNeedsCommitToMainThread(); }
 
   void DidReceiveCompositorFrameAck() override {
-    ++commit_count_;
-    switch (commit_count_) {
+    ++ack_count_;
+    // The fifth frame to be Acked will be returning resources. Due to PostTasks
+    // the ResourcesReleased callback may not yet have been called. So we can
+    // only end the test here if we have received the updated
+    // `resource_returned_`. Otherwise set `close_on_resources_returned_` to
+    // have the callback do the teardown.
+    if (ack_count_ == 5) {
+      if (resource_returned_ < 2) {
+        close_on_resource_returned_ = true;
+      } else {
+        EXPECT_EQ(2, resource_returned_);
+        EndTest();
+      }
+    }
+  }
+
+  void DidCommitAndDrawFrame() override {
+    ++commit_and_draw_count_;
+    // The timing of DidReceiveCompositorFrameAck is not guaranteed. Each of
+    // these checks are actually valid immediately after frame submission, as
+    // the are a part of Commit.
+    switch (commit_and_draw_count_) {
       case 1:
         // We should have updated the layer, committing the texture.
         EXPECT_EQ(1, prepare_called_);
@@ -1067,7 +1104,7 @@ class TextureLayerChangeInvisibleMailboxTest
         resource_changed_ = true;
         texture_layer_->SetNeedsDisplay();
         // Force a change to make sure we draw a frame.
-        solid_layer_->SetBackgroundColor(SK_ColorGRAY);
+        solid_layer_->SetBackgroundColor(SkColors::kGray);
         break;
       case 3:
         // Layer shouldn't have been updated.
@@ -1083,16 +1120,13 @@ class TextureLayerChangeInvisibleMailboxTest
         // for BeginMainFrame and hence PrepareTransferableResource to run twice
         // before DidReceiveCompositorFrameAck due to pipelining.
         EXPECT_GE(prepare_called_, 2);
-        // So the old resource should have been returned already.
+        // So the old resource should have been returned already. This resource
+        // is returned during paint, and so does not need the same PostTask
+        // syncing as for frame 5.
         EXPECT_EQ(1, resource_returned_);
         texture_layer_->ClearClient();
         break;
-      case 5:
-        EXPECT_EQ(2, resource_returned_);
-        EndTest();
-        break;
       default:
-        NOTREACHED();
         break;
     }
   }
@@ -1103,11 +1137,13 @@ class TextureLayerChangeInvisibleMailboxTest
   scoped_refptr<TextureLayer> texture_layer_;
 
   // Used on the main thread.
-  bool resource_changed_;
+  bool resource_changed_ = true;
   viz::TransferableResource resource_;
-  int resource_returned_;
-  int prepare_called_;
-  int commit_count_;
+  int resource_returned_ = 0;
+  int prepare_called_ = 0;
+  int ack_count_ = 0;
+  int commit_and_draw_count_ = 0;
+  bool close_on_resource_returned_ = false;
 };
 
 // TODO(crbug.com/1197350): Test fails on chromeos-amd64-generic-rel.
@@ -1121,9 +1157,8 @@ MAYBE_SINGLE_AND_MULTI_THREAD_TEST_F(TextureLayerChangeInvisibleMailboxTest);
 
 // Test that TextureLayerImpl::ReleaseResources can be called which releases
 // the resource back to TextureLayerClient.
-class TextureLayerReleaseResourcesBase
-    : public LayerTreeTest,
-      public TextureLayerClient {
+class TextureLayerReleaseResourcesBase : public LayerTreeTest,
+                                         public TextureLayerClient {
  public:
   // TextureLayerClient implementation.
   bool PrepareTransferableResource(
@@ -1131,9 +1166,9 @@ class TextureLayerReleaseResourcesBase
       viz::TransferableResource* resource,
       viz::ReleaseCallback* release_callback) override {
     constexpr gfx::Size size(64, 64);
-    *resource = viz::TransferableResource::MakeGL(
+    *resource = viz::TransferableResource::MakeGpu(
         MailboxFromChar('1'), GL_LINEAR, GL_TEXTURE_2D, SyncTokenFromUInt(1),
-        size, false /* is_overlay_candidate */);
+        size, viz::RGBA_8888, false /* is_overlay_candidate */);
     *release_callback =
         base::BindOnce(&TextureLayerReleaseResourcesBase::ResourceReleased,
                        base::Unretained(this));
@@ -1209,10 +1244,10 @@ class TextureLayerWithResourceMainThreadDeleted : public LayerTreeTest {
         &TextureLayerWithResourceMainThreadDeleted::ReleaseCallback,
         base::Unretained(this));
     constexpr gfx::Size size(64, 64);
-    auto resource = viz::TransferableResource::MakeGL(
+    auto resource = viz::TransferableResource::MakeGpu(
         MailboxFromChar(mailbox_char), GL_LINEAR, GL_TEXTURE_2D,
         SyncTokenFromUInt(static_cast<uint32_t>(mailbox_char)), size,
-        false /* is_overlay_candidate */);
+        viz::RGBA_8888, false /* is_overlay_candidate */);
     layer_->SetTransferableResource(resource, std::move(callback));
   }
 
@@ -1280,10 +1315,10 @@ class TextureLayerWithResourceImplThreadDeleted : public LayerTreeTest {
         &TextureLayerWithResourceImplThreadDeleted::ReleaseCallback,
         base::Unretained(this));
     constexpr gfx::Size size(64, 64);
-    auto resource = viz::TransferableResource::MakeGL(
+    auto resource = viz::TransferableResource::MakeGpu(
         MailboxFromChar(mailbox_char), GL_LINEAR, GL_TEXTURE_2D,
         SyncTokenFromUInt(static_cast<uint32_t>(mailbox_char)), size,
-        false /* is_overlay_candidate */);
+        viz::RGBA_8888, false /* is_overlay_candidate */);
     layer_->SetTransferableResource(resource, std::move(callback));
   }
 
@@ -1383,7 +1418,7 @@ class SoftwareTextureLayerTest : public LayerTreeTest {
     // A drawable layer so that frames always get drawn.
     solid_color_layer_ = SolidColorLayer::Create();
     solid_color_layer_->SetIsDrawable(true);
-    solid_color_layer_->SetBackgroundColor(SK_ColorRED);
+    solid_color_layer_->SetBackgroundColor(SkColors::kRed);
     solid_color_layer_->SetBounds(gfx::Size(10, 10));
     root_->AddChild(solid_color_layer_);
 

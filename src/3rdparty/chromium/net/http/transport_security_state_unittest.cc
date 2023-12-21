@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,8 +13,8 @@
 #include <vector>
 
 #include "base/base64.h"
-#include "base/callback_helpers.h"
 #include "base/files/file_path.h"
+#include "base/functional/callback_helpers.h"
 #include "base/json/json_reader.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/field_trial.h"
@@ -35,7 +35,7 @@
 #include "net/base/hash_value.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
-#include "net/base/network_isolation_key.h"
+#include "net/base/network_anonymization_key.h"
 #include "net/base/schemeful_site.h"
 #include "net/base/test_completion_callback.h"
 #include "net/cert/asn1_util.h"
@@ -79,9 +79,6 @@ namespace test3 {
 const char kHost[] = "example.test";
 const uint16_t kPort = 443;
 const char kReportUri[] = "http://report-example.test/test";
-const char kExpectCTStaticHostname[] = "expect-ct.preloaded.test";
-const char kExpectCTStaticReportURI[] =
-    "http://report-uri.preloaded.test/expect-ct";
 
 const char* const kGoodPath[] = {
     "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
@@ -98,26 +95,6 @@ const char* const kBadPath[] = {
     nullptr,
 };
 
-// Constructs a SignedCertificateTimestampAndStatus with the given information
-// and appends it to |sct_list|.
-void MakeTestSCTAndStatus(ct::SignedCertificateTimestamp::Origin origin,
-                          const std::string& log_id,
-                          const std::string& extensions,
-                          const std::string& signature_data,
-                          const base::Time& timestamp,
-                          ct::SCTVerifyStatus status,
-                          SignedCertificateTimestampAndStatusList* sct_list) {
-  scoped_refptr<net::ct::SignedCertificateTimestamp> sct(
-      new net::ct::SignedCertificateTimestamp());
-  sct->version = net::ct::SignedCertificateTimestamp::V1;
-  sct->log_id = log_id;
-  sct->extensions = extensions;
-  sct->timestamp = timestamp;
-  sct->signature.signature_data = signature_data;
-  sct->origin = origin;
-  sct_list->push_back(net::SignedCertificateTimestampAndStatus(sct, status));
-}
-
 // A mock ReportSenderInterface that just remembers the latest report
 // URI and report to be sent.
 class MockCertificateReportSender
@@ -130,41 +107,41 @@ class MockCertificateReportSender
       const GURL& report_uri,
       base::StringPiece content_type,
       base::StringPiece report,
-      const NetworkIsolationKey& network_isolation_key,
+      const NetworkAnonymizationKey& network_anonymization_key,
       base::OnceCallback<void()> success_callback,
       base::OnceCallback<void(const GURL&, int, int)> error_callback) override {
     latest_report_uri_ = report_uri;
     latest_report_.assign(report.data(), report.size());
     latest_content_type_.assign(content_type.data(), content_type.size());
-    latest_network_isolation_key_ = network_isolation_key;
+    latest_network_anonymization_key_ = network_anonymization_key;
   }
 
   void Clear() {
     latest_report_uri_ = GURL();
     latest_report_ = std::string();
     latest_content_type_ = std::string();
-    latest_network_isolation_key_ = NetworkIsolationKey();
+    latest_network_anonymization_key_ = NetworkAnonymizationKey();
   }
 
   const GURL& latest_report_uri() { return latest_report_uri_; }
   const std::string& latest_report() { return latest_report_; }
   const std::string& latest_content_type() { return latest_content_type_; }
-  const NetworkIsolationKey& latest_network_isolation_key() {
-    return latest_network_isolation_key_;
+  const NetworkAnonymizationKey& latest_network_anonymization_key() {
+    return latest_network_anonymization_key_;
   }
 
  private:
   GURL latest_report_uri_;
   std::string latest_report_;
   std::string latest_content_type_;
-  NetworkIsolationKey latest_network_isolation_key_;
+  NetworkAnonymizationKey latest_network_anonymization_key_;
 };
 
 // A mock ReportSenderInterface that simulates a net error on every report sent.
 class MockFailingCertificateReportSender
     : public TransportSecurityState::ReportSenderInterface {
  public:
-  MockFailingCertificateReportSender() : net_error_(ERR_CONNECTION_FAILED) {}
+  MockFailingCertificateReportSender() = default;
   ~MockFailingCertificateReportSender() override = default;
 
   int net_error() { return net_error_; }
@@ -174,7 +151,7 @@ class MockFailingCertificateReportSender
       const GURL& report_uri,
       base::StringPiece content_type,
       base::StringPiece report,
-      const NetworkIsolationKey& network_isolation_key,
+      const NetworkAnonymizationKey& network_anonymization_key,
       base::OnceCallback<void()> success_callback,
       base::OnceCallback<void(const GURL&, int, int)> error_callback) override {
     ASSERT_FALSE(error_callback.is_null());
@@ -182,62 +159,7 @@ class MockFailingCertificateReportSender
   }
 
  private:
-  const int net_error_;
-};
-
-// A mock ExpectCTReporter that remembers the latest violation that was
-// reported and the number of violations reported.
-class MockExpectCTReporter : public TransportSecurityState::ExpectCTReporter {
- public:
-  MockExpectCTReporter() : num_failures_(0) {}
-  ~MockExpectCTReporter() override = default;
-
-  void OnExpectCTFailed(
-      const HostPortPair& host_port_pair,
-      const GURL& report_uri,
-      base::Time expiration,
-      const X509Certificate* validated_certificate_chain,
-      const X509Certificate* served_certificate_chain,
-      const SignedCertificateTimestampAndStatusList&
-          signed_certificate_timestamps,
-      const NetworkIsolationKey& network_isolation_key) override {
-    num_failures_++;
-    host_port_pair_ = host_port_pair;
-    report_uri_ = report_uri;
-    expiration_ = expiration;
-    served_certificate_chain_ = served_certificate_chain;
-    validated_certificate_chain_ = validated_certificate_chain;
-    signed_certificate_timestamps_ = signed_certificate_timestamps;
-    network_isolation_key_ = network_isolation_key;
-  }
-
-  const HostPortPair& host_port_pair() const { return host_port_pair_; }
-  const GURL& report_uri() const { return report_uri_; }
-  const base::Time& expiration() const { return expiration_; }
-  uint32_t num_failures() const { return num_failures_; }
-  const X509Certificate* served_certificate_chain() const {
-    return served_certificate_chain_;
-  }
-  const X509Certificate* validated_certificate_chain() const {
-    return validated_certificate_chain_;
-  }
-  const SignedCertificateTimestampAndStatusList& signed_certificate_timestamps()
-      const {
-    return signed_certificate_timestamps_;
-  }
-  const NetworkIsolationKey& network_isolation_key() const {
-    return network_isolation_key_;
-  }
-
- private:
-  HostPortPair host_port_pair_;
-  GURL report_uri_;
-  base::Time expiration_;
-  uint32_t num_failures_;
-  raw_ptr<const X509Certificate> served_certificate_chain_;
-  raw_ptr<const X509Certificate> validated_certificate_chain_;
-  SignedCertificateTimestampAndStatusList signed_certificate_timestamps_;
-  NetworkIsolationKey network_isolation_key_;
+  const int net_error_ = ERR_CONNECTION_FAILED;
 };
 
 class MockRequireCTDelegate : public TransportSecurityState::RequireCTDelegate {
@@ -255,11 +177,10 @@ void CompareCertificateChainWithList(
   ASSERT_TRUE(cert_list->is_list());
   std::vector<std::string> pem_encoded_chain;
   cert_chain->GetPEMEncodedChain(&pem_encoded_chain);
-  ASSERT_EQ(pem_encoded_chain.size(), cert_list->GetListDeprecated().size());
+  ASSERT_EQ(pem_encoded_chain.size(), cert_list->GetList().size());
 
   for (size_t i = 0; i < pem_encoded_chain.size(); i++) {
-    const std::string& list_cert =
-        cert_list->GetListDeprecated()[i].GetString();
+    const std::string& list_cert = cert_list->GetList()[i].GetString();
     EXPECT_EQ(pem_encoded_chain[i], list_cert);
   }
 }
@@ -274,46 +195,46 @@ void CheckHPKPReport(
     const HashValueVector& known_pins) {
   absl::optional<base::Value> value = base::JSONReader::Read(report);
   ASSERT_TRUE(value.has_value());
-  const base::Value& report_dict = value.value();
-  ASSERT_TRUE(report_dict.is_dict());
+  const base::Value::Dict* report_dict = value.value().GetIfDict();
+  ASSERT_TRUE(report_dict);
 
-  const std::string* report_hostname = report_dict.FindStringKey("hostname");
+  const std::string* report_hostname = report_dict->FindString("hostname");
   ASSERT_TRUE(report_hostname);
   EXPECT_EQ(host_port_pair.host(), *report_hostname);
 
-  absl::optional<int> report_port = report_dict.FindIntKey("port");
+  absl::optional<int> report_port = report_dict->FindInt("port");
   ASSERT_TRUE(report_port.has_value());
   EXPECT_EQ(host_port_pair.port(), report_port.value());
 
   absl::optional<bool> report_include_subdomains =
-      report_dict.FindBoolKey("include-subdomains");
+      report_dict->FindBool("include-subdomains");
   ASSERT_TRUE(report_include_subdomains.has_value());
   EXPECT_EQ(include_subdomains, report_include_subdomains.value());
 
   const std::string* report_noted_hostname =
-      report_dict.FindStringKey("noted-hostname");
+      report_dict->FindString("noted-hostname");
   ASSERT_TRUE(report_noted_hostname);
   EXPECT_EQ(noted_hostname, *report_noted_hostname);
 
   // TODO(estark): check times in RFC3339 format.
 
   const std::string* report_expiration =
-      report_dict.FindStringKey("effective-expiration-date");
+      report_dict->FindString("effective-expiration-date");
   ASSERT_TRUE(report_expiration);
   EXPECT_FALSE(report_expiration->empty());
 
-  const std::string* report_date = report_dict.FindStringKey("date-time");
+  const std::string* report_date = report_dict->FindString("date-time");
   ASSERT_TRUE(report_date);
   EXPECT_FALSE(report_date->empty());
 
   const base::Value* report_served_certificate_chain =
-      report_dict.FindKey("served-certificate-chain");
+      report_dict->Find("served-certificate-chain");
   ASSERT_TRUE(report_served_certificate_chain);
   ASSERT_NO_FATAL_FAILURE(CompareCertificateChainWithList(
       served_certificate_chain, report_served_certificate_chain));
 
   const base::Value* report_validated_certificate_chain =
-      report_dict.FindKey("validated-certificate-chain");
+      report_dict->Find("validated-certificate-chain");
   ASSERT_TRUE(report_validated_certificate_chain);
   ASSERT_NO_FATAL_FAILURE(CompareCertificateChainWithList(
       validated_certificate_chain, report_validated_certificate_chain));
@@ -334,25 +255,6 @@ bool operator==(const TransportSecurityState::PKPState& lhs,
          lhs.bad_spki_hashes == rhs.bad_spki_hashes &&
          lhs.include_subdomains == rhs.include_subdomains &&
          lhs.domain == rhs.domain && lhs.report_uri == rhs.report_uri;
-}
-
-// Creates a unique new host name every time it's called. Tests should not
-// depend on the exact domain names, as they may vary depending on what other
-// tests have been run by the same process. Intended for Expect-CT pruning
-// tests, which add a lot of domains.
-std::string CreateUniqueHostName() {
-  static int count = 0;
-  return base::StringPrintf("%i.test", ++count);
-}
-
-// As with CreateUniqueHostName(), returns a unique NetworkIsolationKey for use
-// with Expect-CT pruning tests.
-NetworkIsolationKey CreateUniqueNetworkIsolationKey(bool is_transient) {
-  if (is_transient)
-    return NetworkIsolationKey::CreateTransient();
-  SchemefulSite site = SchemefulSite(url::Origin::CreateFromNormalizedTuple(
-      "https", CreateUniqueHostName(), 443));
-  return NetworkIsolationKey(site /* top_frame_site */, site /* frame_site */);
 }
 
 }  // namespace
@@ -381,10 +283,7 @@ class TransportSecurityStateTest : public ::testing::Test,
 
   static void EnableStaticPins(TransportSecurityState* state) {
     state->enable_static_pins_ = true;
-  }
-
-  static void EnableStaticExpectCT(TransportSecurityState* state) {
-    state->enable_static_expect_ct_ = true;
+    state->SetPinningListAlwaysTimelyForTesting(true);
   }
 
   static HashValueVector GetSampleSPKIHashes() {
@@ -412,11 +311,8 @@ class TransportSecurityStateTest : public ::testing::Test,
     return ret;
   }
 
-  bool GetExpectCTState(TransportSecurityState* state,
-                        const std::string& host,
-                        TransportSecurityState::ExpectCTState* result) {
-    return state->GetStaticExpectCTState(host, result);
-  }
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 TEST_F(TransportSecurityStateTest, DomainNameOddities) {
@@ -786,11 +682,6 @@ TEST_F(TransportSecurityStateTest, NewPinsOverride) {
 }
 
 TEST_F(TransportSecurityStateTest, DeleteAllDynamicDataBetween) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      TransportSecurityState::kDynamicExpectCTFeature);
-  TransportSecurityState::ExpectCTState expect_ct_state;
-
   TransportSecurityState state;
   const base::Time current_time(base::Time::Now());
   const base::Time expiry = current_time + base::Seconds(1000);
@@ -798,92 +689,58 @@ TEST_F(TransportSecurityStateTest, DeleteAllDynamicDataBetween) {
 
   EXPECT_FALSE(state.ShouldUpgradeToSSL("example.com"));
   EXPECT_FALSE(state.HasPublicKeyPins("example.com"));
-  EXPECT_FALSE(state.GetDynamicExpectCTState(
-      "example.com", NetworkIsolationKey(), &expect_ct_state));
   bool include_subdomains = false;
   state.AddHSTS("example.com", expiry, include_subdomains);
   state.AddHPKP("example.com", expiry, include_subdomains,
                 GetSampleSPKIHashes(), GURL());
-  state.AddExpectCT("example.com", expiry, true, GURL(), NetworkIsolationKey());
 
   state.DeleteAllDynamicDataBetween(expiry, base::Time::Max(),
                                     base::DoNothing());
   EXPECT_TRUE(state.ShouldUpgradeToSSL("example.com"));
   EXPECT_TRUE(state.HasPublicKeyPins("example.com"));
-  EXPECT_TRUE(state.GetDynamicExpectCTState(
-      "example.com", NetworkIsolationKey(), &expect_ct_state));
+
   state.DeleteAllDynamicDataBetween(older, current_time, base::DoNothing());
   EXPECT_TRUE(state.ShouldUpgradeToSSL("example.com"));
   EXPECT_TRUE(state.HasPublicKeyPins("example.com"));
-  EXPECT_TRUE(state.GetDynamicExpectCTState(
-      "example.com", NetworkIsolationKey(), &expect_ct_state));
+
   state.DeleteAllDynamicDataBetween(base::Time(), current_time,
                                     base::DoNothing());
   EXPECT_TRUE(state.ShouldUpgradeToSSL("example.com"));
   EXPECT_TRUE(state.HasPublicKeyPins("example.com"));
-  EXPECT_TRUE(state.GetDynamicExpectCTState(
-      "example.com", NetworkIsolationKey(), &expect_ct_state));
+
   state.DeleteAllDynamicDataBetween(older, base::Time::Max(),
                                     base::DoNothing());
   EXPECT_FALSE(state.ShouldUpgradeToSSL("example.com"));
   EXPECT_FALSE(state.HasPublicKeyPins("example.com"));
-  EXPECT_FALSE(state.GetDynamicExpectCTState(
-      "example.com", NetworkIsolationKey(), &expect_ct_state));
 
   // Dynamic data in |state| should be empty now.
   EXPECT_FALSE(TransportSecurityState::STSStateIterator(state).HasNext());
   EXPECT_FALSE(state.has_dynamic_pkp_state());
-  EXPECT_FALSE(TransportSecurityState::ExpectCTStateIterator(state).HasNext());
 }
 
 TEST_F(TransportSecurityStateTest, DeleteDynamicDataForHost) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeatures(
-      /* enabled_features */
-      {TransportSecurityState::kDynamicExpectCTFeature,
-       features::kPartitionExpectCTStateByNetworkIsolationKey},
-      /* disabled_features */
-      {});
   TransportSecurityState state;
   const base::Time current_time(base::Time::Now());
   const base::Time expiry = current_time + base::Seconds(1000);
   bool include_subdomains = false;
 
-  NetworkIsolationKey network_isolation_key =
-      NetworkIsolationKey::CreateTransient();
   state.AddHSTS("example1.test", expiry, include_subdomains);
   state.AddHPKP("example1.test", expiry, include_subdomains,
                 GetSampleSPKIHashes(), GURL());
-  state.AddExpectCT("example1.test", expiry, true, GURL(),
-                    NetworkIsolationKey());
 
   EXPECT_TRUE(state.ShouldUpgradeToSSL("example1.test"));
   EXPECT_FALSE(state.ShouldUpgradeToSSL("example2.test"));
   EXPECT_TRUE(state.HasPublicKeyPins("example1.test"));
   EXPECT_FALSE(state.HasPublicKeyPins("example2.test"));
-  TransportSecurityState::ExpectCTState expect_ct_state;
-  EXPECT_TRUE(state.GetDynamicExpectCTState(
-      "example1.test", NetworkIsolationKey(), &expect_ct_state));
-  EXPECT_FALSE(state.GetDynamicExpectCTState(
-      "example2.test", NetworkIsolationKey(), &expect_ct_state));
-  EXPECT_FALSE(state.GetDynamicExpectCTState(
-      "example1.test", network_isolation_key, &expect_ct_state));
-  state.AddExpectCT("example1.test", expiry, true, GURL(),
-                    network_isolation_key);
-  EXPECT_TRUE(state.GetDynamicExpectCTState(
-      "example1.test", network_isolation_key, &expect_ct_state));
 
   EXPECT_TRUE(state.DeleteDynamicDataForHost("example1.test"));
   EXPECT_FALSE(state.ShouldUpgradeToSSL("example1.test"));
   EXPECT_FALSE(state.HasPublicKeyPins("example1.test"));
-  EXPECT_FALSE(state.GetDynamicExpectCTState(
-      "example1.test", NetworkIsolationKey(), &expect_ct_state));
-  EXPECT_FALSE(state.GetDynamicExpectCTState(
-      "example1.test", network_isolation_key, &expect_ct_state));
 }
 
 TEST_F(TransportSecurityStateTest, LongNames) {
   TransportSecurityState state;
+  state.SetPinningListAlwaysTimelyForTesting(true);
   const char kLongName[] =
       "lookupByWaveIdHashAndWaveIdIdAndWaveIdDomainAndWaveletIdIdAnd"
       "WaveletIdDomainAndBlipBlipid";
@@ -906,6 +763,9 @@ static bool AddHash(const std::string& type_and_base64, HashValueVector* out) {
 }
 
 TEST_F(TransportSecurityStateTest, PinValidationWithoutRejectedCerts) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      net::features::kStaticKeyPinningEnforcement);
   HashValueVector good_hashes, bad_hashes;
 
   for (size_t i = 0; kGoodPath[i]; i++) {
@@ -916,6 +776,7 @@ TEST_F(TransportSecurityStateTest, PinValidationWithoutRejectedCerts) {
   }
 
   TransportSecurityState state;
+  state.SetPinningListAlwaysTimelyForTesting(true);
   EnableStaticPins(&state);
 
   TransportSecurityState::PKPState pkp_state;
@@ -931,12 +792,16 @@ TEST_F(TransportSecurityStateTest, PinValidationWithoutRejectedCerts) {
 // Tests that pinning violations on preloaded pins trigger reports when
 // the preloaded pin contains a report URI.
 TEST_F(TransportSecurityStateTest, PreloadedPKPReportUri) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      net::features::kStaticKeyPinningEnforcement);
   const char kPreloadedPinDomain[] = "with-report-uri-pkp.preloaded.test";
   HostPortPair host_port_pair(kPreloadedPinDomain, kPort);
-  net::NetworkIsolationKey network_isolation_key =
-      NetworkIsolationKey::CreateTransient();
+  net::NetworkAnonymizationKey network_anonymization_key =
+      NetworkAnonymizationKey::CreateTransient();
 
   TransportSecurityState state;
+  state.SetPinningListAlwaysTimelyForTesting(true);
   MockCertificateReportSender mock_report_sender;
   state.SetReportSender(&mock_report_sender);
 
@@ -970,7 +835,7 @@ TEST_F(TransportSecurityStateTest, PreloadedPKPReportUri) {
             state.CheckPublicKeyPins(host_port_pair, true, bad_hashes,
                                      cert1.get(), cert2.get(),
                                      TransportSecurityState::ENABLE_PIN_REPORTS,
-                                     network_isolation_key, &failure_log));
+                                     network_anonymization_key, &failure_log));
 
   EXPECT_EQ(report_uri, mock_report_sender.latest_report_uri());
 
@@ -981,8 +846,8 @@ TEST_F(TransportSecurityStateTest, PreloadedPKPReportUri) {
   ASSERT_NO_FATAL_FAILURE(CheckHPKPReport(
       report, host_port_pair, pkp_state.include_subdomains, pkp_state.domain,
       cert1.get(), cert2.get(), pkp_state.spki_hashes));
-  EXPECT_EQ(network_isolation_key,
-            mock_report_sender.latest_network_isolation_key());
+  EXPECT_EQ(network_anonymization_key,
+            mock_report_sender.latest_network_anonymization_key());
 }
 
 // Tests that report URIs are thrown out if they point to the same host,
@@ -991,8 +856,8 @@ TEST_F(TransportSecurityStateTest, HPKPReportUriToSameHost) {
   HostPortPair host_port_pair(kHost, kPort);
   GURL https_report_uri("https://example.test/report");
   GURL http_report_uri("http://example.test/report");
-  NetworkIsolationKey network_isolation_key =
-      NetworkIsolationKey::CreateTransient();
+  NetworkAnonymizationKey network_anonymization_key =
+      NetworkAnonymizationKey::CreateTransient();
   TransportSecurityState state;
   MockCertificateReportSender mock_report_sender;
   state.SetReportSender(&mock_report_sender);
@@ -1025,7 +890,7 @@ TEST_F(TransportSecurityStateTest, HPKPReportUriToSameHost) {
             state.CheckPublicKeyPins(host_port_pair, true, bad_hashes,
                                      cert1.get(), cert2.get(),
                                      TransportSecurityState::ENABLE_PIN_REPORTS,
-                                     network_isolation_key, &failure_log));
+                                     network_anonymization_key, &failure_log));
 
   EXPECT_TRUE(mock_report_sender.latest_report_uri().is_empty());
 
@@ -1035,348 +900,25 @@ TEST_F(TransportSecurityStateTest, HPKPReportUriToSameHost) {
             state.CheckPublicKeyPins(host_port_pair, true, bad_hashes,
                                      cert1.get(), cert2.get(),
                                      TransportSecurityState::ENABLE_PIN_REPORTS,
-                                     network_isolation_key, &failure_log));
+                                     network_anonymization_key, &failure_log));
 
   EXPECT_EQ(http_report_uri, mock_report_sender.latest_report_uri());
-  EXPECT_EQ(network_isolation_key,
-            mock_report_sender.latest_network_isolation_key());
-}
-
-// Tests that static (preloaded) expect CT state is read correctly.
-TEST_F(TransportSecurityStateTest, PreloadedExpectCT) {
-  TransportSecurityState state;
-  TransportSecurityStateTest::EnableStaticExpectCT(&state);
-  TransportSecurityState::ExpectCTState expect_ct_state;
-  EXPECT_TRUE(
-      GetExpectCTState(&state, kExpectCTStaticHostname, &expect_ct_state));
-  EXPECT_EQ(GURL(kExpectCTStaticReportURI), expect_ct_state.report_uri);
-  EXPECT_FALSE(
-      GetExpectCTState(&state, "hsts-preloaded.test", &expect_ct_state));
-}
-
-// Tests that the Expect CT reporter is not notified for invalid or absent
-// header values.
-TEST_F(TransportSecurityStateTest, InvalidExpectCTHeader) {
-  HostPortPair host_port(kExpectCTStaticHostname, 443);
-  SSLInfo ssl_info;
-  ssl_info.ct_policy_compliance =
-      ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS;
-  ssl_info.is_issued_by_known_root = true;
-  scoped_refptr<X509Certificate> cert1 =
-      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
-  ASSERT_TRUE(cert1);
-  scoped_refptr<X509Certificate> cert2 =
-      ImportCertFromFile(GetTestCertsDirectory(), "expired_cert.pem");
-  ASSERT_TRUE(cert2);
-  ssl_info.unverified_cert = cert1;
-  ssl_info.cert = cert2;
-
-  TransportSecurityState state;
-  TransportSecurityStateTest::EnableStaticExpectCT(&state);
-  MockExpectCTReporter reporter;
-  state.SetExpectCTReporter(&reporter);
-  state.ProcessExpectCTHeader("", host_port, ssl_info, NetworkIsolationKey());
-  EXPECT_EQ(0u, reporter.num_failures());
-
-  state.ProcessExpectCTHeader("blah blah", host_port, ssl_info,
-                              NetworkIsolationKey());
-  EXPECT_EQ(0u, reporter.num_failures());
-
-  state.ProcessExpectCTHeader("preload", host_port, ssl_info,
-                              NetworkIsolationKey());
-  EXPECT_EQ(1u, reporter.num_failures());
-}
-
-// Tests that the Expect CT reporter is only notified about certificates
-// chaining to public roots.
-TEST_F(TransportSecurityStateTest, ExpectCTNonPublicRoot) {
-  HostPortPair host_port(kExpectCTStaticHostname, 443);
-  SSLInfo ssl_info;
-  ssl_info.ct_policy_compliance =
-      ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS;
-  ssl_info.is_issued_by_known_root = false;
-  scoped_refptr<X509Certificate> cert1 =
-      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
-  ASSERT_TRUE(cert1);
-  scoped_refptr<X509Certificate> cert2 =
-      ImportCertFromFile(GetTestCertsDirectory(), "expired_cert.pem");
-  ASSERT_TRUE(cert2);
-  ssl_info.unverified_cert = cert1;
-  ssl_info.cert = cert2;
-
-  TransportSecurityState state;
-  TransportSecurityStateTest::EnableStaticExpectCT(&state);
-  MockExpectCTReporter reporter;
-  state.SetExpectCTReporter(&reporter);
-  state.ProcessExpectCTHeader("preload", host_port, ssl_info,
-                              NetworkIsolationKey());
-  EXPECT_EQ(0u, reporter.num_failures());
-
-  ssl_info.is_issued_by_known_root = true;
-  state.ProcessExpectCTHeader("preload", host_port, ssl_info,
-                              NetworkIsolationKey());
-  EXPECT_EQ(1u, reporter.num_failures());
-}
-
-// Tests that the Expect CT reporter is not notified when compliance
-// details aren't available.
-TEST_F(TransportSecurityStateTest, ExpectCTComplianceNotAvailable) {
-  HostPortPair host_port(kExpectCTStaticHostname, 443);
-  SSLInfo ssl_info;
-  ssl_info.ct_policy_compliance =
-      ct::CTPolicyCompliance::CT_POLICY_COMPLIANCE_DETAILS_NOT_AVAILABLE;
-  ssl_info.is_issued_by_known_root = true;
-  scoped_refptr<X509Certificate> cert1 =
-      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
-  ASSERT_TRUE(cert1);
-  scoped_refptr<X509Certificate> cert2 =
-      ImportCertFromFile(GetTestCertsDirectory(), "expired_cert.pem");
-  ASSERT_TRUE(cert2);
-  ssl_info.unverified_cert = cert1;
-  ssl_info.cert = cert2;
-
-  TransportSecurityState state;
-  TransportSecurityStateTest::EnableStaticExpectCT(&state);
-  MockExpectCTReporter reporter;
-  state.SetExpectCTReporter(&reporter);
-  state.ProcessExpectCTHeader("preload", host_port, ssl_info,
-                              NetworkIsolationKey());
-  EXPECT_EQ(0u, reporter.num_failures());
-
-  ssl_info.ct_policy_compliance =
-      ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS;
-  state.ProcessExpectCTHeader("preload", host_port, ssl_info,
-                              NetworkIsolationKey());
-  EXPECT_EQ(1u, reporter.num_failures());
-}
-
-// Tests that the Expect CT reporter is not notified about compliant
-// connections.
-TEST_F(TransportSecurityStateTest, ExpectCTCompliantCert) {
-  HostPortPair host_port(kExpectCTStaticHostname, 443);
-  SSLInfo ssl_info;
-  ssl_info.ct_policy_compliance =
-      ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS;
-  ssl_info.is_issued_by_known_root = true;
-  scoped_refptr<X509Certificate> cert1 =
-      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
-  ASSERT_TRUE(cert1);
-  scoped_refptr<X509Certificate> cert2 =
-      ImportCertFromFile(GetTestCertsDirectory(), "expired_cert.pem");
-  ASSERT_TRUE(cert2);
-  ssl_info.unverified_cert = cert1;
-  ssl_info.cert = cert2;
-
-  TransportSecurityState state;
-  TransportSecurityStateTest::EnableStaticExpectCT(&state);
-  MockExpectCTReporter reporter;
-  state.SetExpectCTReporter(&reporter);
-  state.ProcessExpectCTHeader("preload", host_port, ssl_info,
-                              NetworkIsolationKey());
-  EXPECT_EQ(0u, reporter.num_failures());
-
-  ssl_info.ct_policy_compliance =
-      ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS;
-  state.ProcessExpectCTHeader("preload", host_port, ssl_info,
-                              NetworkIsolationKey());
-  EXPECT_EQ(1u, reporter.num_failures());
-}
-
-// Tests that the Expect CT reporter is not notified for preloaded Expect-CT
-// when the build is not timely.
-TEST_F(TransportSecurityStateTest, PreloadedExpectCTBuildNotTimely) {
-  HostPortPair host_port(kExpectCTStaticHostname, 443);
-  SSLInfo ssl_info;
-  ssl_info.ct_policy_compliance =
-      ct::CTPolicyCompliance::CT_POLICY_BUILD_NOT_TIMELY;
-  ssl_info.is_issued_by_known_root = true;
-  scoped_refptr<X509Certificate> cert1 =
-      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
-  ASSERT_TRUE(cert1);
-  scoped_refptr<X509Certificate> cert2 =
-      ImportCertFromFile(GetTestCertsDirectory(), "expired_cert.pem");
-  ASSERT_TRUE(cert2);
-  ssl_info.unverified_cert = cert1;
-  ssl_info.cert = cert2;
-
-  TransportSecurityState state;
-  TransportSecurityStateTest::EnableStaticExpectCT(&state);
-  MockExpectCTReporter reporter;
-  state.SetExpectCTReporter(&reporter);
-  state.ProcessExpectCTHeader("preload", host_port, ssl_info,
-                              NetworkIsolationKey());
-  EXPECT_EQ(0u, reporter.num_failures());
-
-  // Sanity-check that the reporter is notified if the build is timely and the
-  // connection is not compliant.
-  ssl_info.ct_policy_compliance =
-      ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS;
-  state.ProcessExpectCTHeader("preload", host_port, ssl_info,
-                              NetworkIsolationKey());
-  EXPECT_EQ(1u, reporter.num_failures());
-}
-
-// Tests that the Expect CT reporter is not notified for dynamic Expect-CT when
-// the build is not timely.
-TEST_F(TransportSecurityStateTest, DynamicExpectCTBuildNotTimely) {
-  HostPortPair host_port("example.test", 443);
-  SSLInfo ssl_info;
-  ssl_info.ct_policy_compliance =
-      ct::CTPolicyCompliance::CT_POLICY_BUILD_NOT_TIMELY;
-  ssl_info.is_issued_by_known_root = true;
-  scoped_refptr<X509Certificate> cert1 =
-      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
-  ASSERT_TRUE(cert1);
-  scoped_refptr<X509Certificate> cert2 =
-      ImportCertFromFile(GetTestCertsDirectory(), "expired_cert.pem");
-  ASSERT_TRUE(cert2);
-  ssl_info.unverified_cert = cert1;
-  ssl_info.cert = cert2;
-
-  TransportSecurityState state;
-  MockExpectCTReporter reporter;
-  state.SetExpectCTReporter(&reporter);
-  const char kHeader[] = "max-age=10, report-uri=http://report.test";
-  state.ProcessExpectCTHeader(kHeader, host_port, ssl_info,
-                              NetworkIsolationKey());
-
-  // No report should have been sent and the state should not have been saved.
-  EXPECT_EQ(0u, reporter.num_failures());
-  TransportSecurityState::ExpectCTState expect_ct_state;
-  EXPECT_FALSE(state.GetDynamicExpectCTState(
-      "example.test", NetworkIsolationKey(), &expect_ct_state));
-
-  // Sanity-check that the reporter is notified if the build is timely and the
-  // connection is not compliant.
-  ssl_info.ct_policy_compliance =
-      ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS;
-  state.ProcessExpectCTHeader(kHeader, host_port, ssl_info,
-                              NetworkIsolationKey());
-  EXPECT_EQ(1u, reporter.num_failures());
-}
-
-// Tests that the Expect CT reporter is not notified for a site that
-// isn't preloaded.
-TEST_F(TransportSecurityStateTest, ExpectCTNotPreloaded) {
-  HostPortPair host_port("not-expect-ct-preloaded.test", 443);
-  SSLInfo ssl_info;
-  ssl_info.ct_policy_compliance =
-      ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS;
-  ssl_info.is_issued_by_known_root = true;
-  scoped_refptr<X509Certificate> cert1 =
-      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
-  ASSERT_TRUE(cert1);
-  scoped_refptr<X509Certificate> cert2 =
-      ImportCertFromFile(GetTestCertsDirectory(), "expired_cert.pem");
-  ASSERT_TRUE(cert2);
-  ssl_info.unverified_cert = cert1;
-  ssl_info.cert = cert2;
-
-  TransportSecurityState state;
-  TransportSecurityStateTest::EnableStaticExpectCT(&state);
-  MockExpectCTReporter reporter;
-  state.SetExpectCTReporter(&reporter);
-  state.ProcessExpectCTHeader("preload", host_port, ssl_info,
-                              NetworkIsolationKey());
-  EXPECT_EQ(0u, reporter.num_failures());
-
-  host_port.set_host(kExpectCTStaticHostname);
-  state.ProcessExpectCTHeader("preload", host_port, ssl_info,
-                              NetworkIsolationKey());
-  EXPECT_EQ(1u, reporter.num_failures());
-}
-
-// Tests that the Expect CT reporter is notified for noncompliant
-// connections.
-TEST_F(TransportSecurityStateTest, ExpectCTReporter) {
-  HostPortPair host_port(kExpectCTStaticHostname, 443);
-  SSLInfo ssl_info;
-  ssl_info.ct_policy_compliance =
-      ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS;
-  ssl_info.is_issued_by_known_root = true;
-  scoped_refptr<X509Certificate> cert1 =
-      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
-  scoped_refptr<X509Certificate> cert2 =
-      ImportCertFromFile(GetTestCertsDirectory(), "expired_cert.pem");
-  ASSERT_TRUE(cert1);
-  ASSERT_TRUE(cert2);
-  ssl_info.unverified_cert = cert1;
-  ssl_info.cert = cert2;
-  MakeTestSCTAndStatus(ct::SignedCertificateTimestamp::SCT_EMBEDDED, "test_log",
-                       std::string(), std::string(), base::Time::Now(),
-                       ct::SCT_STATUS_INVALID_SIGNATURE,
-                       &ssl_info.signed_certificate_timestamps);
-  NetworkIsolationKey network_isolation_key =
-      NetworkIsolationKey::CreateTransient();
-
-  TransportSecurityState state;
-  TransportSecurityStateTest::EnableStaticExpectCT(&state);
-  MockExpectCTReporter reporter;
-  state.SetExpectCTReporter(&reporter);
-  state.ProcessExpectCTHeader("preload", host_port, ssl_info,
-                              network_isolation_key);
-  EXPECT_EQ(1u, reporter.num_failures());
-  EXPECT_EQ(host_port.host(), reporter.host_port_pair().host());
-  EXPECT_EQ(host_port.port(), reporter.host_port_pair().port());
-  EXPECT_TRUE(reporter.expiration().is_null());
-  EXPECT_EQ(GURL(kExpectCTStaticReportURI), reporter.report_uri());
-  EXPECT_EQ(cert1.get(), reporter.served_certificate_chain());
-  EXPECT_EQ(cert2.get(), reporter.validated_certificate_chain());
-  ASSERT_EQ(1u, ssl_info.signed_certificate_timestamps.size());
-  ASSERT_EQ(ssl_info.signed_certificate_timestamps.size(),
-            reporter.signed_certificate_timestamps().size());
-  EXPECT_EQ(ssl_info.signed_certificate_timestamps[0].status,
-            reporter.signed_certificate_timestamps()[0].status);
-  EXPECT_EQ(ssl_info.signed_certificate_timestamps[0].sct,
-            reporter.signed_certificate_timestamps()[0].sct);
-  EXPECT_EQ(network_isolation_key, reporter.network_isolation_key());
-}
-
-// Tests that the Expect CT reporter is not notified for repeated noncompliant
-// connections to the same preloaded host.
-TEST_F(TransportSecurityStateTest, RepeatedExpectCTReportsForStaticExpectCT) {
-  HostPortPair host_port(kExpectCTStaticHostname, 443);
-  SSLInfo ssl_info;
-  ssl_info.ct_policy_compliance =
-      ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS;
-  ssl_info.is_issued_by_known_root = true;
-  scoped_refptr<X509Certificate> cert1 =
-      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
-  ASSERT_TRUE(cert1);
-  scoped_refptr<X509Certificate> cert2 =
-      ImportCertFromFile(GetTestCertsDirectory(), "expired_cert.pem");
-  ASSERT_TRUE(cert2);
-  ssl_info.unverified_cert = cert1;
-  ssl_info.cert = cert2;
-  MakeTestSCTAndStatus(ct::SignedCertificateTimestamp::SCT_EMBEDDED, "test_log",
-                       std::string(), std::string(), base::Time::Now(),
-                       ct::SCT_STATUS_INVALID_SIGNATURE,
-                       &ssl_info.signed_certificate_timestamps);
-
-  TransportSecurityState state;
-  TransportSecurityStateTest::EnableStaticExpectCT(&state);
-  MockExpectCTReporter reporter;
-  state.SetExpectCTReporter(&reporter);
-  state.ProcessExpectCTHeader("preload", host_port, ssl_info,
-                              NetworkIsolationKey());
-  EXPECT_EQ(1u, reporter.num_failures());
-
-  // After processing a second header, the report should not be sent again.
-  state.ProcessExpectCTHeader("preload", host_port, ssl_info,
-                              NetworkIsolationKey());
-  EXPECT_EQ(1u, reporter.num_failures());
+  EXPECT_EQ(network_anonymization_key,
+            mock_report_sender.latest_network_anonymization_key());
 }
 
 // Simple test for the HSTS preload process. The trie (generated from
 // transport_security_state_static_unittest1.json) contains 1 entry. Test that
 // the lookup methods can find the entry and correctly decode the different
-// preloaded states (HSTS, HPKP, and Expect-CT).
+// preloaded states (HSTS and HPKP).
 TEST_F(TransportSecurityStateTest, DecodePreloadedSingle) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      net::features::kStaticKeyPinningEnforcement);
   SetTransportSecurityStateSourceForTesting(&test1::kHSTSSource);
 
   TransportSecurityState state;
   TransportSecurityStateTest::EnableStaticPins(&state);
-  TransportSecurityStateTest::EnableStaticExpectCT(&state);
 
   TransportSecurityState::STSState sts_state;
   TransportSecurityState::PKPState pkp_state;
@@ -1391,26 +933,24 @@ TEST_F(TransportSecurityStateTest, DecodePreloadedSingle) {
   EXPECT_EQ(pkp_state.spki_hashes[0], GetSampleSPKIHash(0x1));
   ASSERT_EQ(1u, pkp_state.bad_spki_hashes.size());
   EXPECT_EQ(pkp_state.bad_spki_hashes[0], GetSampleSPKIHash(0x2));
-
-  TransportSecurityState::ExpectCTState ct_state;
-  EXPECT_FALSE(GetExpectCTState(&state, "hsts.example.com", &ct_state));
 }
 
 // More advanced test for the HSTS preload process where the trie (generated
 // from transport_security_state_static_unittest2.json) contains multiple
 // entries with a common prefix. Test that the lookup methods can find all
-// entries and correctly decode the different preloaded states (HSTS, HPKP,
-// and Expect-CT) for each entry.
+// entries and correctly decode the different preloaded states (HSTS and HPKP)
+// for each entry.
 TEST_F(TransportSecurityStateTest, DecodePreloadedMultiplePrefix) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      net::features::kStaticKeyPinningEnforcement);
   SetTransportSecurityStateSourceForTesting(&test2::kHSTSSource);
 
   TransportSecurityState state;
   TransportSecurityStateTest::EnableStaticPins(&state);
-  TransportSecurityStateTest::EnableStaticExpectCT(&state);
 
   TransportSecurityState::STSState sts_state;
   TransportSecurityState::PKPState pkp_state;
-  TransportSecurityState::ExpectCTState ct_state;
 
   EXPECT_TRUE(
       GetStaticDomainState(&state, "hsts.example.com", &sts_state, &pkp_state));
@@ -1418,11 +958,9 @@ TEST_F(TransportSecurityStateTest, DecodePreloadedMultiplePrefix) {
   EXPECT_EQ(TransportSecurityState::STSState::MODE_FORCE_HTTPS,
             sts_state.upgrade_mode);
   EXPECT_TRUE(pkp_state == TransportSecurityState::PKPState());
-  EXPECT_FALSE(GetExpectCTState(&state, "hsts.example.com", &ct_state));
 
   sts_state = TransportSecurityState::STSState();
   pkp_state = TransportSecurityState::PKPState();
-  ct_state = TransportSecurityState::ExpectCTState();
   EXPECT_TRUE(
       GetStaticDomainState(&state, "hpkp.example.com", &sts_state, &pkp_state));
   EXPECT_TRUE(sts_state == TransportSecurityState::STSState());
@@ -1432,21 +970,9 @@ TEST_F(TransportSecurityStateTest, DecodePreloadedMultiplePrefix) {
   EXPECT_EQ(1U, pkp_state.spki_hashes.size());
   EXPECT_EQ(pkp_state.spki_hashes[0], GetSampleSPKIHash(0x1));
   EXPECT_EQ(0U, pkp_state.bad_spki_hashes.size());
-  EXPECT_FALSE(GetExpectCTState(&state, "hpkp.example.com", &ct_state));
 
   sts_state = TransportSecurityState::STSState();
   pkp_state = TransportSecurityState::PKPState();
-  ct_state = TransportSecurityState::ExpectCTState();
-  EXPECT_FALSE(GetStaticDomainState(&state, "expect-ct.example.com", &sts_state,
-                                    &pkp_state));
-  EXPECT_TRUE(sts_state == TransportSecurityState::STSState());
-  EXPECT_TRUE(pkp_state == TransportSecurityState::PKPState());
-  EXPECT_TRUE(GetExpectCTState(&state, "expect-ct.example.com", &ct_state));
-  EXPECT_EQ(GURL("https://report.example.com/ct-upload"), ct_state.report_uri);
-
-  sts_state = TransportSecurityState::STSState();
-  pkp_state = TransportSecurityState::PKPState();
-  ct_state = TransportSecurityState::ExpectCTState();
   EXPECT_TRUE(
       GetStaticDomainState(&state, "mix.example.com", &sts_state, &pkp_state));
   EXPECT_FALSE(sts_state.include_subdomains);
@@ -1458,9 +984,6 @@ TEST_F(TransportSecurityStateTest, DecodePreloadedMultiplePrefix) {
   EXPECT_EQ(pkp_state.spki_hashes[0], GetSampleSPKIHash(0x2));
   EXPECT_EQ(1U, pkp_state.bad_spki_hashes.size());
   EXPECT_EQ(pkp_state.bad_spki_hashes[0], GetSampleSPKIHash(0x1));
-  EXPECT_TRUE(GetExpectCTState(&state, "mix.example.com", &ct_state));
-  EXPECT_EQ(GURL("https://report.example.com/ct-upload-alt"),
-            ct_state.report_uri);
 }
 
 // More advanced test for the HSTS preload process where the trie (generated
@@ -1468,18 +991,19 @@ TEST_F(TransportSecurityStateTest, DecodePreloadedMultiplePrefix) {
 // entries. Some entries share a prefix with the prefix also having its own
 // preloaded state while others share no prefix. This results in a trie with
 // several different internal structures. Test that the lookup methods can find
-// all entries and correctly decode the different preloaded states (HSTS, HPKP,
-// and Expect-CT) for each entry.
+// all entries and correctly decode the different preloaded states (HSTS and
+// HPKP) for each entry.
 TEST_F(TransportSecurityStateTest, DecodePreloadedMultipleMix) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      net::features::kStaticKeyPinningEnforcement);
   SetTransportSecurityStateSourceForTesting(&test3::kHSTSSource);
 
   TransportSecurityState state;
   TransportSecurityStateTest::EnableStaticPins(&state);
-  TransportSecurityStateTest::EnableStaticExpectCT(&state);
 
   TransportSecurityState::STSState sts_state;
   TransportSecurityState::PKPState pkp_state;
-  TransportSecurityState::ExpectCTState ct_state;
 
   EXPECT_TRUE(
       GetStaticDomainState(&state, "example.com", &sts_state, &pkp_state));
@@ -1487,12 +1011,9 @@ TEST_F(TransportSecurityStateTest, DecodePreloadedMultipleMix) {
   EXPECT_EQ(TransportSecurityState::STSState::MODE_FORCE_HTTPS,
             sts_state.upgrade_mode);
   EXPECT_TRUE(pkp_state == TransportSecurityState::PKPState());
-  EXPECT_FALSE(GetExpectCTState(&state, "example.com", &ct_state));
-  EXPECT_EQ(GURL(), ct_state.report_uri);
 
   sts_state = TransportSecurityState::STSState();
   pkp_state = TransportSecurityState::PKPState();
-  ct_state = TransportSecurityState::ExpectCTState();
   EXPECT_TRUE(
       GetStaticDomainState(&state, "hpkp.example.com", &sts_state, &pkp_state));
   EXPECT_TRUE(sts_state == TransportSecurityState::STSState());
@@ -1502,24 +1023,18 @@ TEST_F(TransportSecurityStateTest, DecodePreloadedMultipleMix) {
   EXPECT_EQ(1U, pkp_state.spki_hashes.size());
   EXPECT_EQ(pkp_state.spki_hashes[0], GetSampleSPKIHash(0x1));
   EXPECT_EQ(0U, pkp_state.bad_spki_hashes.size());
-  EXPECT_FALSE(GetExpectCTState(&state, "hpkp.example.com", &ct_state));
-  EXPECT_EQ(GURL(), ct_state.report_uri);
 
   sts_state = TransportSecurityState::STSState();
   pkp_state = TransportSecurityState::PKPState();
-  ct_state = TransportSecurityState::ExpectCTState();
   EXPECT_TRUE(
       GetStaticDomainState(&state, "example.org", &sts_state, &pkp_state));
   EXPECT_FALSE(sts_state.include_subdomains);
   EXPECT_EQ(TransportSecurityState::STSState::MODE_FORCE_HTTPS,
             sts_state.upgrade_mode);
   EXPECT_TRUE(pkp_state == TransportSecurityState::PKPState());
-  EXPECT_TRUE(GetExpectCTState(&state, "example.org", &ct_state));
-  EXPECT_EQ(GURL("https://report.example.org/ct-upload"), ct_state.report_uri);
 
   sts_state = TransportSecurityState::STSState();
   pkp_state = TransportSecurityState::PKPState();
-  ct_state = TransportSecurityState::ExpectCTState();
   EXPECT_TRUE(
       GetStaticDomainState(&state, "badssl.com", &sts_state, &pkp_state));
   EXPECT_TRUE(sts_state == TransportSecurityState::STSState());
@@ -1529,12 +1044,9 @@ TEST_F(TransportSecurityStateTest, DecodePreloadedMultipleMix) {
   EXPECT_EQ(1U, pkp_state.spki_hashes.size());
   EXPECT_EQ(pkp_state.spki_hashes[0], GetSampleSPKIHash(0x1));
   EXPECT_EQ(0U, pkp_state.bad_spki_hashes.size());
-  EXPECT_FALSE(GetExpectCTState(&state, "badssl.com", &ct_state));
-  EXPECT_EQ(GURL(), ct_state.report_uri);
 
   sts_state = TransportSecurityState::STSState();
   pkp_state = TransportSecurityState::PKPState();
-  ct_state = TransportSecurityState::ExpectCTState();
   EXPECT_TRUE(
       GetStaticDomainState(&state, "mix.badssl.com", &sts_state, &pkp_state));
   EXPECT_FALSE(sts_state.include_subdomains);
@@ -1546,12 +1058,9 @@ TEST_F(TransportSecurityStateTest, DecodePreloadedMultipleMix) {
   EXPECT_EQ(pkp_state.spki_hashes[0], GetSampleSPKIHash(0x2));
   EXPECT_EQ(1U, pkp_state.bad_spki_hashes.size());
   EXPECT_EQ(pkp_state.bad_spki_hashes[0], GetSampleSPKIHash(0x1));
-  EXPECT_TRUE(GetExpectCTState(&state, "mix.badssl.com", &ct_state));
-  EXPECT_EQ(GURL("https://report.example.com/ct-upload"), ct_state.report_uri);
 
   sts_state = TransportSecurityState::STSState();
   pkp_state = TransportSecurityState::PKPState();
-  ct_state = TransportSecurityState::ExpectCTState();
 
   // This should be a simple entry in the context of
   // TrieWriter::IsSimpleEntry().
@@ -1561,7 +1070,6 @@ TEST_F(TransportSecurityStateTest, DecodePreloadedMultipleMix) {
   EXPECT_EQ(TransportSecurityState::STSState::MODE_FORCE_HTTPS,
             sts_state.upgrade_mode);
   EXPECT_TRUE(pkp_state == TransportSecurityState::PKPState());
-  EXPECT_FALSE(GetExpectCTState(&state, "simple-entry.example.com", &ct_state));
 }
 
 TEST_F(TransportSecurityStateTest, HstsHostBypassList) {
@@ -1615,9 +1123,7 @@ TEST_F(TransportSecurityStateTest, RequireCTConsultsDelegate) {
         state.CheckCTRequirements(
             HostPortPair("www.example.com", 443), true, hashes, cert.get(),
             cert.get(), SignedCertificateTimestampAndStatusList(),
-            TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-            ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-            NetworkIsolationKey());
+            ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS);
 
     MockRequireCTDelegate always_require_delegate;
     EXPECT_CALL(always_require_delegate, IsCTRequiredForHost(_, _, _))
@@ -1628,33 +1134,25 @@ TEST_F(TransportSecurityStateTest, RequireCTConsultsDelegate) {
         state.CheckCTRequirements(
             HostPortPair("www.example.com", 443), true, hashes, cert.get(),
             cert.get(), SignedCertificateTimestampAndStatusList(),
-            TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-            ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-            NetworkIsolationKey()));
+            ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS));
     EXPECT_EQ(
         TransportSecurityState::CT_REQUIREMENTS_NOT_MET,
         state.CheckCTRequirements(
             HostPortPair("www.example.com", 443), true, hashes, cert.get(),
             cert.get(), SignedCertificateTimestampAndStatusList(),
-            TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-            ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS,
-            NetworkIsolationKey()));
+            ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS));
     EXPECT_EQ(
         TransportSecurityState::CT_REQUIREMENTS_MET,
         state.CheckCTRequirements(
             HostPortPair("www.example.com", 443), true, hashes, cert.get(),
             cert.get(), SignedCertificateTimestampAndStatusList(),
-            TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-            ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS,
-            NetworkIsolationKey()));
+            ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS));
     EXPECT_EQ(
         TransportSecurityState::CT_REQUIREMENTS_MET,
         state.CheckCTRequirements(
             HostPortPair("www.example.com", 443), true, hashes, cert.get(),
             cert.get(), SignedCertificateTimestampAndStatusList(),
-            TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-            ct::CTPolicyCompliance::CT_POLICY_BUILD_NOT_TIMELY,
-            NetworkIsolationKey()));
+            ct::CTPolicyCompliance::CT_POLICY_BUILD_NOT_TIMELY));
 
     state.SetRequireCTDelegate(nullptr);
     EXPECT_EQ(
@@ -1662,9 +1160,7 @@ TEST_F(TransportSecurityStateTest, RequireCTConsultsDelegate) {
         state.CheckCTRequirements(
             HostPortPair("www.example.com", 443), true, hashes, cert.get(),
             cert.get(), SignedCertificateTimestampAndStatusList(),
-            TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-            ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-            NetworkIsolationKey()));
+            ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS));
   }
 
   // If CT is not required, then regardless of the CT state for the host,
@@ -1675,9 +1171,7 @@ TEST_F(TransportSecurityStateTest, RequireCTConsultsDelegate) {
         state.CheckCTRequirements(
             HostPortPair("www.example.com", 443), true, hashes, cert.get(),
             cert.get(), SignedCertificateTimestampAndStatusList(),
-            TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-            ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-            NetworkIsolationKey());
+            ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS);
 
     MockRequireCTDelegate never_require_delegate;
     EXPECT_CALL(never_require_delegate, IsCTRequiredForHost(_, _, _))
@@ -1688,17 +1182,13 @@ TEST_F(TransportSecurityStateTest, RequireCTConsultsDelegate) {
         state.CheckCTRequirements(
             HostPortPair("www.example.com", 443), true, hashes, cert.get(),
             cert.get(), SignedCertificateTimestampAndStatusList(),
-            TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-            ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-            NetworkIsolationKey()));
+            ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS));
     EXPECT_EQ(
         TransportSecurityState::CT_NOT_REQUIRED,
         state.CheckCTRequirements(
             HostPortPair("www.example.com", 443), true, hashes, cert.get(),
             cert.get(), SignedCertificateTimestampAndStatusList(),
-            TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-            ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS,
-            NetworkIsolationKey()));
+            ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS));
 
     state.SetRequireCTDelegate(nullptr);
     EXPECT_EQ(
@@ -1706,9 +1196,7 @@ TEST_F(TransportSecurityStateTest, RequireCTConsultsDelegate) {
         state.CheckCTRequirements(
             HostPortPair("www.example.com", 443), true, hashes, cert.get(),
             cert.get(), SignedCertificateTimestampAndStatusList(),
-            TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-            ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-            NetworkIsolationKey()));
+            ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS));
   }
 
   // If the Delegate is in the default state, then it should return the same
@@ -1719,9 +1207,7 @@ TEST_F(TransportSecurityStateTest, RequireCTConsultsDelegate) {
         state.CheckCTRequirements(
             HostPortPair("www.example.com", 443), true, hashes, cert.get(),
             cert.get(), SignedCertificateTimestampAndStatusList(),
-            TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-            ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-            NetworkIsolationKey());
+            ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS);
 
     MockRequireCTDelegate default_require_ct_delegate;
     EXPECT_CALL(default_require_ct_delegate, IsCTRequiredForHost(_, _, _))
@@ -1732,9 +1218,7 @@ TEST_F(TransportSecurityStateTest, RequireCTConsultsDelegate) {
         state.CheckCTRequirements(
             HostPortPair("www.example.com", 443), true, hashes, cert.get(),
             cert.get(), SignedCertificateTimestampAndStatusList(),
-            TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-            ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-            NetworkIsolationKey()));
+            ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS));
 
     state.SetRequireCTDelegate(nullptr);
     EXPECT_EQ(
@@ -1742,9 +1226,7 @@ TEST_F(TransportSecurityStateTest, RequireCTConsultsDelegate) {
         state.CheckCTRequirements(
             HostPortPair("www.example.com", 443), true, hashes, cert.get(),
             cert.get(), SignedCertificateTimestampAndStatusList(),
-            TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-            ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-            NetworkIsolationKey()));
+            ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS));
   }
 }
 
@@ -1757,15 +1239,21 @@ class CTEmergencyDisableTest
     : public TransportSecurityStateTest,
       public testing::WithParamInterface<CTEmergencyDisableSwitchKind> {
  public:
+  CTEmergencyDisableTest() {
+    if (GetParam() ==
+        CTEmergencyDisableSwitchKind::kComponentUpdaterDrivenSwitch) {
+      scoped_feature_list_.Init();
+    } else {
+      scoped_feature_list_.InitAndDisableFeature(
+          kCertificateTransparencyEnforcement);
+    }
+  }
   void SetUp() override {
     if (GetParam() ==
         CTEmergencyDisableSwitchKind::kComponentUpdaterDrivenSwitch) {
       state_.SetCTEmergencyDisabled(true);
-      scoped_feature_list_.Init();
     } else {
       ASSERT_EQ(GetParam(), CTEmergencyDisableSwitchKind::kFinchDrivenFeature);
-      scoped_feature_list_.InitAndDisableFeature(
-          TransportSecurityState::kCertificateTransparencyEnforcement);
     }
   }
 
@@ -1799,39 +1287,29 @@ TEST_P(CTEmergencyDisableTest, CTEmergencyDisable) {
             state_.CheckCTRequirements(
                 HostPortPair("www.example.com", 443), true, hashes, cert.get(),
                 cert.get(), SignedCertificateTimestampAndStatusList(),
-                TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-                NetworkIsolationKey()));
+                ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS));
   EXPECT_EQ(TransportSecurityState::CT_NOT_REQUIRED,
             state_.CheckCTRequirements(
                 HostPortPair("www.example.com", 443), true, hashes, cert.get(),
                 cert.get(), SignedCertificateTimestampAndStatusList(),
-                TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS,
-                NetworkIsolationKey()));
+                ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS));
   EXPECT_EQ(TransportSecurityState::CT_NOT_REQUIRED,
             state_.CheckCTRequirements(
                 HostPortPair("www.example.com", 443), true, hashes, cert.get(),
                 cert.get(), SignedCertificateTimestampAndStatusList(),
-                TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS,
-                NetworkIsolationKey()));
+                ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS));
   EXPECT_EQ(TransportSecurityState::CT_NOT_REQUIRED,
             state_.CheckCTRequirements(
                 HostPortPair("www.example.com", 443), true, hashes, cert.get(),
                 cert.get(), SignedCertificateTimestampAndStatusList(),
-                TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                ct::CTPolicyCompliance::CT_POLICY_BUILD_NOT_TIMELY,
-                NetworkIsolationKey()));
+                ct::CTPolicyCompliance::CT_POLICY_BUILD_NOT_TIMELY));
 
   state_.SetRequireCTDelegate(nullptr);
   EXPECT_EQ(TransportSecurityState::CT_NOT_REQUIRED,
             state_.CheckCTRequirements(
                 HostPortPair("www.example.com", 443), true, hashes, cert.get(),
                 cert.get(), SignedCertificateTimestampAndStatusList(),
-                TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-                NetworkIsolationKey()));
+                ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS));
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -1839,32 +1317,6 @@ INSTANTIATE_TEST_SUITE_P(
     CTEmergencyDisableTest,
     testing::Values(CTEmergencyDisableSwitchKind::kComponentUpdaterDrivenSwitch,
                     CTEmergencyDisableSwitchKind::kFinchDrivenFeature));
-
-// Tests that the if the CT log list last update time is set, it is used for
-// enforcement decisions.
-TEST_F(TransportSecurityStateTest, CTTimestampUpdate) {
-  TransportSecurityState state;
-  TransportSecurityStateTest::EnableStaticExpectCT(&state);
-  TransportSecurityState::ExpectCTState expect_ct_state;
-  // Initially the preloaded host should require CT.
-  EXPECT_TRUE(
-      GetExpectCTState(&state, kExpectCTStaticHostname, &expect_ct_state));
-
-  // Change the last updated time to a value greater than 10 weeks.
-  // We use a close value (70 days + 1 hour ago) to ensure rounding behavior is
-  // working properly.
-  state.SetCTLogListUpdateTime(base::Time::Now() -
-                               (base::Days(70) + base::Hours(1)));
-  // CT should no longer be required.
-  EXPECT_FALSE(
-      GetExpectCTState(&state, kExpectCTStaticHostname, &expect_ct_state));
-
-  // CT should once again be required after the log list is newer than 70 days.
-  state.SetCTLogListUpdateTime(base::Time::Now() -
-                               (base::Days(70) - base::Hours(1)));
-  EXPECT_TRUE(
-      GetExpectCTState(&state, kExpectCTStaticHostname, &expect_ct_state));
-}
 
 // Tests that Certificate Transparency is required for Symantec-issued
 // certificates, unless the certificate was issued prior to 1 June 2016
@@ -1899,9 +1351,7 @@ TEST_F(TransportSecurityStateTest, RequireCTForSymantec) {
       state.CheckCTRequirements(
           HostPortPair("www.example.com", 443), true, hashes, before_cert.get(),
           before_cert.get(), SignedCertificateTimestampAndStatusList(),
-          TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-          ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-          NetworkIsolationKey()));
+          ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS));
 
   // ... but certificates issued after 1 June 2016 are required to be...
   EXPECT_EQ(
@@ -1909,33 +1359,25 @@ TEST_F(TransportSecurityStateTest, RequireCTForSymantec) {
       state.CheckCTRequirements(
           HostPortPair("www.example.com", 443), true, hashes, after_cert.get(),
           after_cert.get(), SignedCertificateTimestampAndStatusList(),
-          TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-          ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-          NetworkIsolationKey()));
+          ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS));
   EXPECT_EQ(
       TransportSecurityState::CT_REQUIREMENTS_NOT_MET,
       state.CheckCTRequirements(
           HostPortPair("www.example.com", 443), true, hashes, after_cert.get(),
           after_cert.get(), SignedCertificateTimestampAndStatusList(),
-          TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-          ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS,
-          NetworkIsolationKey()));
+          ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS));
   EXPECT_EQ(
       TransportSecurityState::CT_REQUIREMENTS_MET,
       state.CheckCTRequirements(
           HostPortPair("www.example.com", 443), true, hashes, after_cert.get(),
           after_cert.get(), SignedCertificateTimestampAndStatusList(),
-          TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-          ct::CTPolicyCompliance::CT_POLICY_BUILD_NOT_TIMELY,
-          NetworkIsolationKey()));
+          ct::CTPolicyCompliance::CT_POLICY_BUILD_NOT_TIMELY));
   EXPECT_EQ(
       TransportSecurityState::CT_REQUIREMENTS_MET,
       state.CheckCTRequirements(
           HostPortPair("www.example.com", 443), true, hashes, after_cert.get(),
           after_cert.get(), SignedCertificateTimestampAndStatusList(),
-          TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-          ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS,
-          NetworkIsolationKey()));
+          ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS));
 
   // ... unless they were issued by an excluded intermediate.
   hashes.push_back(HashValue(google_hash_value));
@@ -1944,17 +1386,13 @@ TEST_F(TransportSecurityStateTest, RequireCTForSymantec) {
       state.CheckCTRequirements(
           HostPortPair("www.example.com", 443), true, hashes, before_cert.get(),
           before_cert.get(), SignedCertificateTimestampAndStatusList(),
-          TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-          ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-          NetworkIsolationKey()));
+          ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS));
   EXPECT_EQ(
       TransportSecurityState::CT_NOT_REQUIRED,
       state.CheckCTRequirements(
           HostPortPair("www.example.com", 443), true, hashes, after_cert.get(),
           after_cert.get(), SignedCertificateTimestampAndStatusList(),
-          TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-          ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-          NetworkIsolationKey()));
+          ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS));
 
   // And other certificates should remain unaffected.
   SHA256HashValue unrelated_hash_value = {{0x01, 0x02}};
@@ -1966,17 +1404,13 @@ TEST_F(TransportSecurityStateTest, RequireCTForSymantec) {
                 HostPortPair("www.example.com", 443), true, unrelated_hashes,
                 before_cert.get(), before_cert.get(),
                 SignedCertificateTimestampAndStatusList(),
-                TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-                NetworkIsolationKey()));
+                ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS));
   EXPECT_EQ(TransportSecurityState::CT_NOT_REQUIRED,
             state.CheckCTRequirements(
                 HostPortPair("www.example.com", 443), true, unrelated_hashes,
                 after_cert.get(), after_cert.get(),
                 SignedCertificateTimestampAndStatusList(),
-                TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-                NetworkIsolationKey()));
+                ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS));
 }
 
 // Tests that Certificate Transparency is required for all of the Symantec
@@ -2008,33 +1442,25 @@ TEST_F(TransportSecurityStateTest, RequireCTForSymantecManagedCAs) {
       state.CheckCTRequirements(
           HostPortPair("www.example.com", 443), true, hashes, before_cert.get(),
           before_cert.get(), SignedCertificateTimestampAndStatusList(),
-          TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-          ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-          NetworkIsolationKey()));
+          ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS));
   EXPECT_EQ(
       TransportSecurityState::CT_REQUIREMENTS_NOT_MET,
       state.CheckCTRequirements(
           HostPortPair("www.example.com", 443), true, hashes, before_cert.get(),
           before_cert.get(), SignedCertificateTimestampAndStatusList(),
-          TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-          ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS,
-          NetworkIsolationKey()));
+          ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS));
   EXPECT_EQ(
       TransportSecurityState::CT_REQUIREMENTS_MET,
       state.CheckCTRequirements(
           HostPortPair("www.example.com", 443), true, hashes, before_cert.get(),
           before_cert.get(), SignedCertificateTimestampAndStatusList(),
-          TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-          ct::CTPolicyCompliance::CT_POLICY_BUILD_NOT_TIMELY,
-          NetworkIsolationKey()));
+          ct::CTPolicyCompliance::CT_POLICY_BUILD_NOT_TIMELY));
   EXPECT_EQ(
       TransportSecurityState::CT_REQUIREMENTS_MET,
       state.CheckCTRequirements(
           HostPortPair("www.example.com", 443), true, hashes, before_cert.get(),
           before_cert.get(), SignedCertificateTimestampAndStatusList(),
-          TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-          ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS,
-          NetworkIsolationKey()));
+          ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS));
 
   scoped_refptr<X509Certificate> after_cert =
       ImportCertFromFile(GetTestCertsDirectory(), "post_june_2016.pem");
@@ -2045,643 +1471,25 @@ TEST_F(TransportSecurityStateTest, RequireCTForSymantecManagedCAs) {
       state.CheckCTRequirements(
           HostPortPair("www.example.com", 443), true, hashes, after_cert.get(),
           after_cert.get(), SignedCertificateTimestampAndStatusList(),
-          TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-          ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-          NetworkIsolationKey()));
+          ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS));
   EXPECT_EQ(
       TransportSecurityState::CT_REQUIREMENTS_NOT_MET,
       state.CheckCTRequirements(
           HostPortPair("www.example.com", 443), true, hashes, after_cert.get(),
           after_cert.get(), SignedCertificateTimestampAndStatusList(),
-          TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-          ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS,
-          NetworkIsolationKey()));
+          ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS));
   EXPECT_EQ(
       TransportSecurityState::CT_REQUIREMENTS_MET,
       state.CheckCTRequirements(
           HostPortPair("www.example.com", 443), true, hashes, after_cert.get(),
           after_cert.get(), SignedCertificateTimestampAndStatusList(),
-          TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-          ct::CTPolicyCompliance::CT_POLICY_BUILD_NOT_TIMELY,
-          NetworkIsolationKey()));
+          ct::CTPolicyCompliance::CT_POLICY_BUILD_NOT_TIMELY));
   EXPECT_EQ(
       TransportSecurityState::CT_REQUIREMENTS_MET,
       state.CheckCTRequirements(
           HostPortPair("www.example.com", 443), true, hashes, after_cert.get(),
           after_cert.get(), SignedCertificateTimestampAndStatusList(),
-          TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-          ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS,
-          NetworkIsolationKey()));
-}
-
-// Tests that dynamic Expect-CT state is cleared from ClearDynamicData().
-TEST_F(TransportSecurityStateTest, DynamicExpectCTStateCleared) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      TransportSecurityState::kDynamicExpectCTFeature);
-  const std::string host("example.test");
-  TransportSecurityState state;
-  TransportSecurityState::ExpectCTState expect_ct_state;
-  const base::Time current_time = base::Time::Now();
-  const base::Time expiry = current_time + base::Seconds(1000);
-
-  state.AddExpectCT(host, expiry, true, GURL(), NetworkIsolationKey());
-  EXPECT_TRUE(state.GetDynamicExpectCTState(host, NetworkIsolationKey(),
-                                            &expect_ct_state));
-  EXPECT_TRUE(expect_ct_state.enforce);
-  EXPECT_TRUE(expect_ct_state.report_uri.is_empty());
-  EXPECT_EQ(expiry, expect_ct_state.expiry);
-
-  state.ClearDynamicData();
-  EXPECT_FALSE(state.GetDynamicExpectCTState(host, NetworkIsolationKey(),
-                                             &expect_ct_state));
-}
-
-// Tests that dynamic Expect-CT state can be added and retrieved.
-TEST_F(TransportSecurityStateTest, DynamicExpectCTState) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      TransportSecurityState::kDynamicExpectCTFeature);
-  const std::string host("example.test");
-  TransportSecurityState state;
-  TransportSecurityState::ExpectCTState expect_ct_state;
-  const base::Time current_time = base::Time::Now();
-  const base::Time expiry = current_time + base::Seconds(1000);
-
-  // Test that Expect-CT state can be added and retrieved.
-  state.AddExpectCT(host, expiry, true, GURL(), NetworkIsolationKey());
-  EXPECT_TRUE(state.GetDynamicExpectCTState(host, NetworkIsolationKey(),
-                                            &expect_ct_state));
-  EXPECT_TRUE(expect_ct_state.enforce);
-  EXPECT_TRUE(expect_ct_state.report_uri.is_empty());
-  EXPECT_EQ(expiry, expect_ct_state.expiry);
-
-  // Test that Expect-CT can be updated (e.g. by changing |enforce| to false and
-  // adding a report-uri).
-  const GURL report_uri("https://example-report.test");
-  state.AddExpectCT(host, expiry, false, report_uri, NetworkIsolationKey());
-  EXPECT_TRUE(state.GetDynamicExpectCTState(host, NetworkIsolationKey(),
-                                            &expect_ct_state));
-  EXPECT_FALSE(expect_ct_state.enforce);
-  EXPECT_EQ(report_uri, expect_ct_state.report_uri);
-  EXPECT_EQ(expiry, expect_ct_state.expiry);
-
-  // Test that Expect-CT state is discarded when expired.
-  state.AddExpectCT(host, current_time - base::Seconds(1000), true, report_uri,
-                    NetworkIsolationKey());
-  EXPECT_FALSE(state.GetDynamicExpectCTState(host, NetworkIsolationKey(),
-                                             &expect_ct_state));
-}
-
-// Tests that the Expect-CT reporter is not notified for repeated dynamic
-// Expect-CT violations for the same host/port.
-TEST_F(TransportSecurityStateTest, DynamicExpectCTDeduping) {
-  const char kHeader[] = "max-age=123,enforce,report-uri=\"http://foo.test\"";
-  SSLInfo ssl;
-  ssl.is_issued_by_known_root = true;
-  ssl.ct_policy_compliance =
-      ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS;
-
-  scoped_refptr<X509Certificate> cert1 =
-      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
-  ASSERT_TRUE(cert1);
-  scoped_refptr<X509Certificate> cert2 =
-      ImportCertFromFile(GetTestCertsDirectory(), "expired_cert.pem");
-  ASSERT_TRUE(cert2);
-
-  SignedCertificateTimestampAndStatusList sct_list;
-
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      TransportSecurityState::kDynamicExpectCTFeature);
-  base::Time now = base::Time::Now();
-  TransportSecurityState state;
-  MockExpectCTReporter reporter;
-  state.SetExpectCTReporter(&reporter);
-  state.ProcessExpectCTHeader(kHeader, HostPortPair("example.test", 443), ssl,
-                              NetworkIsolationKey());
-  TransportSecurityState::ExpectCTState expect_ct_state;
-  EXPECT_TRUE(state.GetDynamicExpectCTState(
-      "example.test", NetworkIsolationKey(), &expect_ct_state));
-  EXPECT_EQ(GURL("http://foo.test"), expect_ct_state.report_uri);
-  EXPECT_TRUE(expect_ct_state.enforce);
-  EXPECT_LT(now, expect_ct_state.expiry);
-  // No report should be sent when the header was processed over a connection
-  // that complied with CT policy.
-  EXPECT_EQ(0u, reporter.num_failures());
-
-  // The first time the host fails to meet CT requirements, a report should be
-  // sent.
-  EXPECT_EQ(TransportSecurityState::CT_REQUIREMENTS_NOT_MET,
-            state.CheckCTRequirements(
-                HostPortPair("example.test", 443), true, HashValueVector(),
-                cert1.get(), cert2.get(), sct_list,
-                TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-                NetworkIsolationKey()));
-  EXPECT_EQ(1u, reporter.num_failures());
-
-  // The second time it fails to meet CT requirements, a report should not be
-  // sent.
-  EXPECT_EQ(TransportSecurityState::CT_REQUIREMENTS_NOT_MET,
-            state.CheckCTRequirements(
-                HostPortPair("example.test", 443), true, HashValueVector(),
-                cert1.get(), cert2.get(), sct_list,
-                TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-                NetworkIsolationKey()));
-  EXPECT_EQ(1u, reporter.num_failures());
-}
-
-// Tests that the Expect-CT reporter is not notified for CT-compliant
-// connections.
-TEST_F(TransportSecurityStateTest, DynamicExpectCTCompliantConnection) {
-  const char kHeader[] = "max-age=123,report-uri=\"http://foo.test\"";
-  SSLInfo ssl;
-  ssl.is_issued_by_known_root = true;
-  ssl.ct_policy_compliance =
-      ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS;
-
-  scoped_refptr<X509Certificate> cert1 =
-      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
-  ASSERT_TRUE(cert1);
-  scoped_refptr<X509Certificate> cert2 =
-      ImportCertFromFile(GetTestCertsDirectory(), "expired_cert.pem");
-  ASSERT_TRUE(cert2);
-
-  SignedCertificateTimestampAndStatusList sct_list;
-
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      TransportSecurityState::kDynamicExpectCTFeature);
-
-  TransportSecurityState state;
-  MockExpectCTReporter reporter;
-  state.SetExpectCTReporter(&reporter);
-  state.ProcessExpectCTHeader(kHeader, HostPortPair("example.test", 443), ssl,
-                              NetworkIsolationKey());
-
-  // No report should be sent when the header was processed over a connection
-  // that complied with CT policy.
-  EXPECT_EQ(TransportSecurityState::CT_NOT_REQUIRED,
-            state.CheckCTRequirements(
-                HostPortPair("example.test", 443), true, HashValueVector(),
-                cert1.get(), cert2.get(), sct_list,
-                TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS,
-                NetworkIsolationKey()));
-  EXPECT_EQ(0u, reporter.num_failures());
-}
-
-// Tests that the Expect-CT reporter is not notified when the Expect-CT header
-// is received repeatedly over non-compliant connections.
-TEST_F(TransportSecurityStateTest, DynamicExpectCTHeaderProcessingDeduping) {
-  const char kHeader[] = "max-age=123,enforce,report-uri=\"http://foo.test\"";
-  SSLInfo ssl;
-  ssl.is_issued_by_known_root = true;
-  ssl.ct_policy_compliance = ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS;
-
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      TransportSecurityState::kDynamicExpectCTFeature);
-  TransportSecurityState state;
-  MockExpectCTReporter reporter;
-  state.SetExpectCTReporter(&reporter);
-  state.ProcessExpectCTHeader(kHeader, HostPortPair("example.test", 443), ssl,
-                              NetworkIsolationKey());
-  TransportSecurityState::ExpectCTState expect_ct_state;
-  EXPECT_FALSE(state.GetDynamicExpectCTState(
-      "example.test", NetworkIsolationKey(), &expect_ct_state));
-  // The first time the header was received over a connection that failed to
-  // meet CT requirements, a report should be sent.
-  EXPECT_EQ(1u, reporter.num_failures());
-
-  // The second time the header was received, no report should be sent.
-  state.ProcessExpectCTHeader(kHeader, HostPortPair("example.test", 443), ssl,
-                              NetworkIsolationKey());
-  EXPECT_EQ(1u, reporter.num_failures());
-}
-
-// Tests that dynamic Expect-CT state cannot be added when the feature is not
-// enabled.
-TEST_F(TransportSecurityStateTest, DynamicExpectCTStateDisabled) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndDisableFeature(
-      TransportSecurityState::kDynamicExpectCTFeature);
-  const std::string host("example.test");
-  TransportSecurityState state;
-  TransportSecurityState::ExpectCTState expect_ct_state;
-  const base::Time current_time = base::Time::Now();
-  const base::Time expiry = current_time + base::Seconds(1000);
-
-  state.AddExpectCT(host, expiry, true, GURL(), NetworkIsolationKey());
-  EXPECT_FALSE(state.GetDynamicExpectCTState(host, NetworkIsolationKey(),
-                                             &expect_ct_state));
-}
-
-// Tests that dynamic Expect-CT opt-ins are processed correctly (when the
-// feature is enabled).
-TEST_F(TransportSecurityStateTest, DynamicExpectCT) {
-  const char kHeader[] = "max-age=123,enforce,report-uri=\"http://foo.test\"";
-  SSLInfo ssl;
-  ssl.is_issued_by_known_root = true;
-  ssl.ct_policy_compliance =
-      ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS;
-
-  // First test that the header is not processed when the feature is disabled.
-  {
-    base::test::ScopedFeatureList feature_list;
-    feature_list.InitAndDisableFeature(
-        TransportSecurityState::kDynamicExpectCTFeature);
-    TransportSecurityState state;
-    state.ProcessExpectCTHeader(kHeader, HostPortPair("example.test", 443), ssl,
-                                NetworkIsolationKey());
-    TransportSecurityState::ExpectCTState expect_ct_state;
-    EXPECT_FALSE(state.GetDynamicExpectCTState(
-        "example.test", NetworkIsolationKey(), &expect_ct_state));
-  }
-
-  // Now test that the header is processed when the feature is enabled.
-  {
-    base::test::ScopedFeatureList feature_list;
-    feature_list.InitAndEnableFeature(
-        TransportSecurityState::kDynamicExpectCTFeature);
-    base::Time now = base::Time::Now();
-    TransportSecurityState state;
-    MockExpectCTReporter reporter;
-    state.SetExpectCTReporter(&reporter);
-    state.ProcessExpectCTHeader(kHeader, HostPortPair("example.test", 443), ssl,
-                                NetworkIsolationKey());
-    TransportSecurityState::ExpectCTState expect_ct_state;
-    EXPECT_TRUE(state.GetDynamicExpectCTState(
-        "example.test", NetworkIsolationKey(), &expect_ct_state));
-    EXPECT_EQ(GURL("http://foo.test"), expect_ct_state.report_uri);
-    EXPECT_TRUE(expect_ct_state.enforce);
-    EXPECT_LT(now, expect_ct_state.expiry);
-    // No report should be sent when the header was processed over a connection
-    // that complied with CT policy.
-    EXPECT_EQ(0u, reporter.num_failures());
-  }
-}
-
-// Tests that dynamic Expect-CT is not processed for private roots.
-TEST_F(TransportSecurityStateTest, DynamicExpectCTPrivateRoot) {
-  const char kHeader[] = "max-age=123,enforce,report-uri=\"http://foo.test\"";
-  SSLInfo ssl;
-  ssl.is_issued_by_known_root = false;
-  ssl.ct_policy_compliance = ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS;
-
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      TransportSecurityState::kDynamicExpectCTFeature);
-  TransportSecurityState state;
-  MockExpectCTReporter reporter;
-  state.SetExpectCTReporter(&reporter);
-  state.ProcessExpectCTHeader(kHeader, HostPortPair("example.test", 443), ssl,
-                              NetworkIsolationKey());
-  TransportSecurityState::ExpectCTState expect_ct_state;
-  EXPECT_FALSE(state.GetDynamicExpectCTState(
-      "example.test", NetworkIsolationKey(), &expect_ct_state));
-  EXPECT_EQ(0u, reporter.num_failures());
-}
-
-// Tests that dynamic Expect-CT is not processed when CT compliance status
-// wasn't computed.
-TEST_F(TransportSecurityStateTest, DynamicExpectCTNoComplianceDetails) {
-  const char kHeader[] = "max-age=123,enforce,report-uri=\"http://foo.test\"";
-  SSLInfo ssl;
-  ssl.is_issued_by_known_root = true;
-  ssl.ct_policy_compliance =
-      ct::CTPolicyCompliance::CT_POLICY_COMPLIANCE_DETAILS_NOT_AVAILABLE;
-
-  scoped_refptr<X509Certificate> cert1 =
-      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
-  ASSERT_TRUE(cert1);
-  scoped_refptr<X509Certificate> cert2 =
-      ImportCertFromFile(GetTestCertsDirectory(), "expired_cert.pem");
-  ASSERT_TRUE(cert2);
-  ssl.unverified_cert = cert1;
-  ssl.cert = cert2;
-
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      TransportSecurityState::kDynamicExpectCTFeature);
-  TransportSecurityState state;
-  MockExpectCTReporter reporter;
-  state.SetExpectCTReporter(&reporter);
-  state.ProcessExpectCTHeader(kHeader, HostPortPair("example.test", 443), ssl,
-                              NetworkIsolationKey());
-  TransportSecurityState::ExpectCTState expect_ct_state;
-  EXPECT_FALSE(state.GetDynamicExpectCTState(
-      "example.test", NetworkIsolationKey(), &expect_ct_state));
-  EXPECT_EQ(0u, reporter.num_failures());
-}
-
-// Tests that Expect-CT reports are sent when an Expect-CT header is received
-// over a non-compliant connection.
-TEST_F(TransportSecurityStateTest,
-       DynamicExpectCTHeaderProcessingNonCompliant) {
-  const char kHeader[] = "max-age=123,enforce,report-uri=\"http://foo.test\"";
-  SSLInfo ssl;
-  ssl.is_issued_by_known_root = true;
-  ssl.ct_policy_compliance = ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS;
-
-  scoped_refptr<X509Certificate> cert1 =
-      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
-  ASSERT_TRUE(cert1);
-  scoped_refptr<X509Certificate> cert2 =
-      ImportCertFromFile(GetTestCertsDirectory(), "expired_cert.pem");
-  ASSERT_TRUE(cert2);
-  ssl.unverified_cert = cert1;
-  ssl.cert = cert2;
-
-  MakeTestSCTAndStatus(ct::SignedCertificateTimestamp::SCT_EMBEDDED, "test_log",
-                       std::string(), std::string(), base::Time::Now(),
-                       ct::SCT_STATUS_INVALID_SIGNATURE,
-                       &ssl.signed_certificate_timestamps);
-
-  NetworkIsolationKey network_isolation_key =
-      NetworkIsolationKey::CreateTransient();
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      TransportSecurityState::kDynamicExpectCTFeature);
-  TransportSecurityState state;
-  MockExpectCTReporter reporter;
-  state.SetExpectCTReporter(&reporter);
-  state.ProcessExpectCTHeader(kHeader, HostPortPair("example.test", 443), ssl,
-                              network_isolation_key);
-  TransportSecurityState::ExpectCTState expect_ct_state;
-  EXPECT_FALSE(state.GetDynamicExpectCTState(
-      "example.test", NetworkIsolationKey(), &expect_ct_state));
-  EXPECT_EQ(1u, reporter.num_failures());
-  EXPECT_EQ("example.test", reporter.host_port_pair().host());
-  EXPECT_TRUE(reporter.expiration().is_null());
-  EXPECT_EQ(cert1.get(), reporter.served_certificate_chain());
-  EXPECT_EQ(cert2.get(), reporter.validated_certificate_chain());
-  EXPECT_EQ(ssl.signed_certificate_timestamps.size(),
-            reporter.signed_certificate_timestamps().size());
-  EXPECT_EQ(ssl.signed_certificate_timestamps[0].status,
-            reporter.signed_certificate_timestamps()[0].status);
-  EXPECT_EQ(ssl.signed_certificate_timestamps[0].sct,
-            reporter.signed_certificate_timestamps()[0].sct);
-  EXPECT_EQ(network_isolation_key, reporter.network_isolation_key());
-}
-
-// Tests that CheckCTRequirements() returns the correct response if a connection
-// to a host violates an Expect-CT header, and that it reports violations.
-TEST_F(TransportSecurityStateTest, CheckCTRequirementsWithExpectCT) {
-  const base::Time current_time(base::Time::Now());
-  const base::Time expiry = current_time + base::Seconds(1000);
-  scoped_refptr<X509Certificate> cert1 =
-      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
-  ASSERT_TRUE(cert1);
-  scoped_refptr<X509Certificate> cert2 =
-      ImportCertFromFile(GetTestCertsDirectory(), "expired_cert.pem");
-  ASSERT_TRUE(cert2);
-  SignedCertificateTimestampAndStatusList sct_list;
-  MakeTestSCTAndStatus(ct::SignedCertificateTimestamp::SCT_EMBEDDED, "test_log",
-                       std::string(), std::string(), base::Time::Now(),
-                       ct::SCT_STATUS_INVALID_SIGNATURE, &sct_list);
-
-  NetworkIsolationKey network_isolation_key =
-      NetworkIsolationKey::CreateTransient();
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      TransportSecurityState::kDynamicExpectCTFeature);
-
-  TransportSecurityState state;
-  MockExpectCTReporter reporter;
-  state.SetExpectCTReporter(&reporter);
-  state.AddExpectCT("example.test", expiry, true /* enforce */,
-                    GURL("https://example-report.test"), network_isolation_key);
-  state.AddExpectCT("example-report-only.test", expiry, false /* enforce */,
-                    GURL("https://example-report.test"), network_isolation_key);
-  state.AddExpectCT("example-enforce-only.test", expiry, true /* enforce */,
-                    GURL(), network_isolation_key);
-
-  // Test that a connection to an unrelated host is not affected.
-  EXPECT_EQ(TransportSecurityState::CT_NOT_REQUIRED,
-            state.CheckCTRequirements(
-                HostPortPair("example2.test", 443), true, HashValueVector(),
-                cert1.get(), cert2.get(), sct_list,
-                TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-                network_isolation_key));
-  EXPECT_EQ(TransportSecurityState::CT_NOT_REQUIRED,
-            state.CheckCTRequirements(
-                HostPortPair("example2.test", 443), true, HashValueVector(),
-                cert1.get(), cert2.get(), sct_list,
-                TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS,
-                network_isolation_key));
-  EXPECT_EQ(0u, reporter.num_failures());
-
-  // A connection to an Expect-CT host should be closed and reported.
-  EXPECT_EQ(TransportSecurityState::CT_REQUIREMENTS_NOT_MET,
-            state.CheckCTRequirements(
-                HostPortPair("example.test", 443), true, HashValueVector(),
-                cert1.get(), cert2.get(), sct_list,
-                TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-                network_isolation_key));
-  EXPECT_EQ(1u, reporter.num_failures());
-  EXPECT_EQ("example.test", reporter.host_port_pair().host());
-  EXPECT_EQ(443, reporter.host_port_pair().port());
-  EXPECT_EQ(expiry, reporter.expiration());
-  EXPECT_EQ(cert1.get(), reporter.validated_certificate_chain());
-  EXPECT_EQ(cert2.get(), reporter.served_certificate_chain());
-  EXPECT_EQ(sct_list.size(), reporter.signed_certificate_timestamps().size());
-  EXPECT_EQ(sct_list[0].status,
-            reporter.signed_certificate_timestamps()[0].status);
-  EXPECT_EQ(sct_list[0].sct, reporter.signed_certificate_timestamps()[0].sct);
-  EXPECT_EQ(network_isolation_key, reporter.network_isolation_key());
-
-  // A compliant connection to an Expect-CT host should not be closed or
-  // reported.
-  EXPECT_EQ(TransportSecurityState::CT_REQUIREMENTS_MET,
-            state.CheckCTRequirements(
-                HostPortPair("example.test", 443), true, HashValueVector(),
-                cert1.get(), cert2.get(), sct_list,
-                TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS,
-                network_isolation_key));
-  EXPECT_EQ(1u, reporter.num_failures());
-  EXPECT_EQ(TransportSecurityState::CT_REQUIREMENTS_MET,
-            state.CheckCTRequirements(
-                HostPortPair("example.test", 443), true, HashValueVector(),
-                cert1.get(), cert2.get(), sct_list,
-                TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                ct::CTPolicyCompliance::CT_POLICY_BUILD_NOT_TIMELY,
-                network_isolation_key));
-  EXPECT_EQ(1u, reporter.num_failures());
-
-  // A connection to a report-only host should be reported only.
-  EXPECT_EQ(TransportSecurityState::CT_NOT_REQUIRED,
-            state.CheckCTRequirements(
-                HostPortPair("example-report-only.test", 443), true,
-                HashValueVector(), cert1.get(), cert2.get(), sct_list,
-                TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS,
-                network_isolation_key));
-  EXPECT_EQ(2u, reporter.num_failures());
-  EXPECT_EQ("example-report-only.test", reporter.host_port_pair().host());
-  EXPECT_EQ(443, reporter.host_port_pair().port());
-  EXPECT_EQ(cert1.get(), reporter.validated_certificate_chain());
-  EXPECT_EQ(cert2.get(), reporter.served_certificate_chain());
-  EXPECT_EQ(sct_list.size(), reporter.signed_certificate_timestamps().size());
-  EXPECT_EQ(sct_list[0].status,
-            reporter.signed_certificate_timestamps()[0].status);
-  EXPECT_EQ(sct_list[0].sct, reporter.signed_certificate_timestamps()[0].sct);
-  EXPECT_EQ(network_isolation_key, reporter.network_isolation_key());
-
-  // A connection to an enforce-only host should be closed but not reported.
-  EXPECT_EQ(TransportSecurityState::CT_REQUIREMENTS_NOT_MET,
-            state.CheckCTRequirements(
-                HostPortPair("example-enforce-only.test", 443), true,
-                HashValueVector(), cert1.get(), cert2.get(), sct_list,
-                TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS,
-                network_isolation_key));
-  EXPECT_EQ(2u, reporter.num_failures());
-
-  // A connection with a private root should be neither enforced nor reported.
-  EXPECT_EQ(TransportSecurityState::CT_NOT_REQUIRED,
-            state.CheckCTRequirements(
-                HostPortPair("example.test", 443), false, HashValueVector(),
-                cert1.get(), cert2.get(), sct_list,
-                TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-                network_isolation_key));
-  EXPECT_EQ(2u, reporter.num_failures());
-
-  // A connection with DISABLE_EXPECT_CT_REPORTS should not send a report.
-  EXPECT_EQ(TransportSecurityState::CT_REQUIREMENTS_NOT_MET,
-            state.CheckCTRequirements(
-                HostPortPair("example.test", 443), true, HashValueVector(),
-                cert1.get(), cert2.get(), sct_list,
-                TransportSecurityState::DISABLE_EXPECT_CT_REPORTS,
-                ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-                network_isolation_key));
-  EXPECT_EQ(2u, reporter.num_failures());
-}
-
-// Tests that for a host that requires CT by delegate and is also
-// Expect-CT-enabled, CheckCTRequirements() sends reports.
-TEST_F(TransportSecurityStateTest, CheckCTRequirementsWithExpectCTAndDelegate) {
-  using ::testing::_;
-  using ::testing::Return;
-  using CTRequirementLevel =
-      TransportSecurityState::RequireCTDelegate::CTRequirementLevel;
-
-  const base::Time current_time(base::Time::Now());
-  const base::Time expiry = current_time + base::Seconds(1000);
-  scoped_refptr<X509Certificate> cert1 =
-      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
-  ASSERT_TRUE(cert1);
-  scoped_refptr<X509Certificate> cert2 =
-      ImportCertFromFile(GetTestCertsDirectory(), "expired_cert.pem");
-  ASSERT_TRUE(cert2);
-  SignedCertificateTimestampAndStatusList sct_list;
-  MakeTestSCTAndStatus(ct::SignedCertificateTimestamp::SCT_EMBEDDED, "test_log",
-                       std::string(), std::string(), base::Time::Now(),
-                       ct::SCT_STATUS_INVALID_SIGNATURE, &sct_list);
-  NetworkIsolationKey network_isolation_key =
-      NetworkIsolationKey::CreateTransient();
-
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      TransportSecurityState::kDynamicExpectCTFeature);
-
-  TransportSecurityState state;
-  MockExpectCTReporter reporter;
-  state.SetExpectCTReporter(&reporter);
-  state.AddExpectCT("example.test", expiry, false /* enforce */,
-                    GURL("https://example-report.test"), network_isolation_key);
-
-  // A connection to an Expect-CT host, which also requires CT by the delegate,
-  // should be closed and reported.
-  MockRequireCTDelegate always_require_delegate;
-  EXPECT_CALL(always_require_delegate, IsCTRequiredForHost(_, _, _))
-      .WillRepeatedly(Return(CTRequirementLevel::REQUIRED));
-  state.SetRequireCTDelegate(&always_require_delegate);
-  EXPECT_EQ(TransportSecurityState::CT_REQUIREMENTS_NOT_MET,
-            state.CheckCTRequirements(
-                HostPortPair("example.test", 443), true, HashValueVector(),
-                cert1.get(), cert2.get(), sct_list,
-                TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-                network_isolation_key));
-  EXPECT_EQ(1u, reporter.num_failures());
-  EXPECT_EQ("example.test", reporter.host_port_pair().host());
-  EXPECT_EQ(443, reporter.host_port_pair().port());
-  EXPECT_EQ(expiry, reporter.expiration());
-  EXPECT_EQ(cert1.get(), reporter.validated_certificate_chain());
-  EXPECT_EQ(cert2.get(), reporter.served_certificate_chain());
-  EXPECT_EQ(sct_list.size(), reporter.signed_certificate_timestamps().size());
-  EXPECT_EQ(sct_list[0].status,
-            reporter.signed_certificate_timestamps()[0].status);
-  EXPECT_EQ(sct_list[0].sct, reporter.signed_certificate_timestamps()[0].sct);
-  EXPECT_EQ(network_isolation_key, reporter.network_isolation_key());
-}
-
-// Tests that for a host that explicitly disabled CT by delegate and is also
-// Expect-CT-enabled, CheckCTRequirements() sends reports.
-TEST_F(TransportSecurityStateTest,
-       CheckCTRequirementsWithExpectCTAndDelegateDisables) {
-  using ::testing::_;
-  using ::testing::Return;
-  using CTRequirementLevel =
-      TransportSecurityState::RequireCTDelegate::CTRequirementLevel;
-
-  const base::Time current_time(base::Time::Now());
-  const base::Time expiry = current_time + base::Seconds(1000);
-  scoped_refptr<X509Certificate> cert1 =
-      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
-  ASSERT_TRUE(cert1);
-  scoped_refptr<X509Certificate> cert2 =
-      ImportCertFromFile(GetTestCertsDirectory(), "expired_cert.pem");
-  ASSERT_TRUE(cert2);
-  SignedCertificateTimestampAndStatusList sct_list;
-  MakeTestSCTAndStatus(ct::SignedCertificateTimestamp::SCT_EMBEDDED, "test_log",
-                       std::string(), std::string(), base::Time::Now(),
-                       ct::SCT_STATUS_INVALID_SIGNATURE, &sct_list);
-  NetworkIsolationKey network_isolation_key =
-      NetworkIsolationKey::CreateTransient();
-
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      TransportSecurityState::kDynamicExpectCTFeature);
-
-  TransportSecurityState state;
-  MockExpectCTReporter reporter;
-  state.SetExpectCTReporter(&reporter);
-  state.AddExpectCT("example.test", expiry, false /* enforce */,
-                    GURL("https://example-report.test"), network_isolation_key);
-
-  // A connection to an Expect-CT host, which is exempted from the CT
-  // requirements by the delegate, should be reported but not closed.
-  MockRequireCTDelegate never_require_delegate;
-  EXPECT_CALL(never_require_delegate, IsCTRequiredForHost(_, _, _))
-      .WillRepeatedly(Return(CTRequirementLevel::NOT_REQUIRED));
-  state.SetRequireCTDelegate(&never_require_delegate);
-  EXPECT_EQ(TransportSecurityState::CT_NOT_REQUIRED,
-            state.CheckCTRequirements(
-                HostPortPair("example.test", 443), true, HashValueVector(),
-                cert1.get(), cert2.get(), sct_list,
-                TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-                network_isolation_key));
-  EXPECT_EQ(1u, reporter.num_failures());
-  EXPECT_EQ("example.test", reporter.host_port_pair().host());
-  EXPECT_EQ(443, reporter.host_port_pair().port());
-  EXPECT_EQ(expiry, reporter.expiration());
-  EXPECT_EQ(cert1.get(), reporter.validated_certificate_chain());
-  EXPECT_EQ(cert2.get(), reporter.served_certificate_chain());
-  EXPECT_EQ(sct_list.size(), reporter.signed_certificate_timestamps().size());
-  EXPECT_EQ(sct_list[0].status,
-            reporter.signed_certificate_timestamps()[0].status);
-  EXPECT_EQ(sct_list[0].sct, reporter.signed_certificate_timestamps()[0].sct);
-  EXPECT_EQ(network_isolation_key, reporter.network_isolation_key());
+          ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS));
 }
 
 #if BUILDFLAG(INCLUDE_TRANSPORT_SECURITY_STATE_PRELOAD_LIST)
@@ -2703,6 +1511,7 @@ static bool StaticShouldRedirect(const char* hostname) {
 
 static bool HasStaticState(const char* hostname) {
   TransportSecurityState state;
+  state.SetPinningListAlwaysTimelyForTesting(true);
   TransportSecurityState::STSState sts_state;
   TransportSecurityState::PKPState pkp_state;
   return state.GetStaticSTSState(hostname, &sts_state) ||
@@ -2711,6 +1520,7 @@ static bool HasStaticState(const char* hostname) {
 
 static bool HasStaticPublicKeyPins(const char* hostname) {
   TransportSecurityState state;
+  state.SetPinningListAlwaysTimelyForTesting(true);
   TransportSecurityStateTest::EnableStaticPins(&state);
   TransportSecurityState::PKPState pkp_state;
   if (!state.GetStaticPKPState(hostname, &pkp_state))
@@ -2728,7 +1538,11 @@ static bool OnlyPinningInStaticState(const char* hostname) {
 }
 
 TEST_F(TransportSecurityStateStaticTest, EnableStaticPins) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      net::features::kStaticKeyPinningEnforcement);
   TransportSecurityState state;
+  state.SetPinningListAlwaysTimelyForTesting(true);
   TransportSecurityState::PKPState pkp_state;
 
   EnableStaticPins(&state);
@@ -2739,6 +1553,7 @@ TEST_F(TransportSecurityStateStaticTest, EnableStaticPins) {
 
 TEST_F(TransportSecurityStateStaticTest, DisableStaticPins) {
   TransportSecurityState state;
+  state.SetPinningListAlwaysTimelyForTesting(true);
   TransportSecurityState::PKPState pkp_state;
 
   DisableStaticPins(&state);
@@ -2783,6 +1598,9 @@ TEST_F(TransportSecurityStateStaticTest, IsPreloaded) {
 }
 
 TEST_F(TransportSecurityStateStaticTest, PreloadedDomainSet) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      net::features::kStaticKeyPinningEnforcement);
   TransportSecurityState state;
   EnableStaticPins(&state);
   TransportSecurityState::STSState sts_state;
@@ -2801,6 +1619,9 @@ TEST_F(TransportSecurityStateStaticTest, PreloadedDomainSet) {
 }
 
 TEST_F(TransportSecurityStateStaticTest, Preloaded) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      net::features::kStaticKeyPinningEnforcement);
   TransportSecurityState state;
   EnableStaticPins(&state);
   TransportSecurityState::STSState sts_state;
@@ -3017,6 +1838,9 @@ TEST_F(TransportSecurityStateStaticTest, Preloaded) {
 }
 
 TEST_F(TransportSecurityStateStaticTest, PreloadedPins) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      net::features::kStaticKeyPinningEnforcement);
   TransportSecurityState state;
   EnableStaticPins(&state);
   TransportSecurityState::STSState sts_state;
@@ -3083,6 +1907,9 @@ TEST_F(TransportSecurityStateStaticTest, PreloadedPins) {
 }
 
 TEST_F(TransportSecurityStateStaticTest, BuiltinCertPins) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      net::features::kStaticKeyPinningEnforcement);
   TransportSecurityState state;
   EnableStaticPins(&state);
   TransportSecurityState::PKPState pkp_state;
@@ -3139,6 +1966,9 @@ TEST_F(TransportSecurityStateStaticTest, BuiltinCertPins) {
 }
 
 TEST_F(TransportSecurityStateStaticTest, OptionalHSTSCertPins) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      net::features::kStaticKeyPinningEnforcement);
   TransportSecurityState state;
   EnableStaticPins(&state);
 
@@ -3162,11 +1992,16 @@ TEST_F(TransportSecurityStateStaticTest, OptionalHSTSCertPins) {
 }
 
 TEST_F(TransportSecurityStateStaticTest, OverrideBuiltins) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      net::features::kStaticKeyPinningEnforcement);
   EXPECT_TRUE(HasStaticPublicKeyPins("google.com"));
   EXPECT_FALSE(StaticShouldRedirect("google.com"));
   EXPECT_FALSE(StaticShouldRedirect("www.google.com"));
 
   TransportSecurityState state;
+  state.SetPinningListAlwaysTimelyForTesting(true);
+
   const base::Time current_time(base::Time::Now());
   const base::Time expiry = current_time + base::Seconds(1000);
   state.AddHSTS("www.google.com", expiry, true);
@@ -3176,11 +2011,14 @@ TEST_F(TransportSecurityStateStaticTest, OverrideBuiltins) {
 
 // Tests that redundant reports are rate-limited.
 TEST_F(TransportSecurityStateStaticTest, HPKPReportRateLimiting) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      net::features::kStaticKeyPinningEnforcement);
   HostPortPair host_port_pair(kHost, kPort);
   HostPortPair subdomain_host_port_pair(kSubdomain, kPort);
   GURL report_uri(kReportUri);
-  NetworkIsolationKey network_isolation_key =
-      NetworkIsolationKey::CreateTransient();
+  NetworkAnonymizationKey network_anonymization_key =
+      NetworkAnonymizationKey::CreateTransient();
   // Two dummy certs to use as the server-sent and validated chains. The
   // contents don't matter.
   scoped_refptr<X509Certificate> cert1 =
@@ -3210,7 +2048,7 @@ TEST_F(TransportSecurityStateStaticTest, HPKPReportRateLimiting) {
             state.CheckPublicKeyPins(host_port_pair, true, bad_hashes,
                                      cert1.get(), cert2.get(),
                                      TransportSecurityState::ENABLE_PIN_REPORTS,
-                                     network_isolation_key, &failure_log));
+                                     network_anonymization_key, &failure_log));
 
   // A report should have been sent. Check that it contains the
   // right information.
@@ -3220,8 +2058,8 @@ TEST_F(TransportSecurityStateStaticTest, HPKPReportRateLimiting) {
   ASSERT_NO_FATAL_FAILURE(CheckHPKPReport(report, host_port_pair, true, kHost,
                                           cert1.get(), cert2.get(),
                                           good_hashes));
-  EXPECT_EQ(network_isolation_key,
-            mock_report_sender.latest_network_isolation_key());
+  EXPECT_EQ(network_anonymization_key,
+            mock_report_sender.latest_network_anonymization_key());
   mock_report_sender.Clear();
 
   // Now trigger the same violation; a duplicative report should not be
@@ -3230,19 +2068,22 @@ TEST_F(TransportSecurityStateStaticTest, HPKPReportRateLimiting) {
             state.CheckPublicKeyPins(host_port_pair, true, bad_hashes,
                                      cert1.get(), cert2.get(),
                                      TransportSecurityState::ENABLE_PIN_REPORTS,
-                                     network_isolation_key, &failure_log));
+                                     network_anonymization_key, &failure_log));
   EXPECT_EQ(GURL(), mock_report_sender.latest_report_uri());
   EXPECT_EQ(std::string(), mock_report_sender.latest_report());
-  EXPECT_EQ(NetworkIsolationKey(),
-            mock_report_sender.latest_network_isolation_key());
+  EXPECT_EQ(NetworkAnonymizationKey(),
+            mock_report_sender.latest_network_anonymization_key());
 }
 
 TEST_F(TransportSecurityStateStaticTest, HPKPReporting) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      net::features::kStaticKeyPinningEnforcement);
   HostPortPair host_port_pair(kHost, kPort);
   HostPortPair subdomain_host_port_pair(kSubdomain, kPort);
   GURL report_uri(kReportUri);
-  NetworkIsolationKey network_isolation_key =
-      NetworkIsolationKey::CreateTransient();
+  NetworkAnonymizationKey network_anonymization_key =
+      NetworkAnonymizationKey::CreateTransient();
   // Two dummy certs to use as the server-sent and validated chains. The
   // contents don't matter.
   scoped_refptr<X509Certificate> cert1 =
@@ -3272,7 +2113,7 @@ TEST_F(TransportSecurityStateStaticTest, HPKPReporting) {
             state.CheckPublicKeyPins(
                 host_port_pair, true, bad_hashes, cert1.get(), cert2.get(),
                 TransportSecurityState::DISABLE_PIN_REPORTS,
-                network_isolation_key, &failure_log));
+                network_anonymization_key, &failure_log));
 
   // No report should have been sent because of the DISABLE_PIN_REPORTS
   // argument.
@@ -3283,7 +2124,7 @@ TEST_F(TransportSecurityStateStaticTest, HPKPReporting) {
             state.CheckPublicKeyPins(host_port_pair, true, good_hashes,
                                      cert1.get(), cert2.get(),
                                      TransportSecurityState::ENABLE_PIN_REPORTS,
-                                     network_isolation_key, &failure_log));
+                                     network_anonymization_key, &failure_log));
 
   // No report should have been sent because there was no violation.
   EXPECT_EQ(GURL(), mock_report_sender.latest_report_uri());
@@ -3293,7 +2134,7 @@ TEST_F(TransportSecurityStateStaticTest, HPKPReporting) {
             state.CheckPublicKeyPins(host_port_pair, false, bad_hashes,
                                      cert1.get(), cert2.get(),
                                      TransportSecurityState::ENABLE_PIN_REPORTS,
-                                     network_isolation_key, &failure_log));
+                                     network_anonymization_key, &failure_log));
 
   // No report should have been sent because the certificate chained to a
   // non-public root.
@@ -3304,7 +2145,7 @@ TEST_F(TransportSecurityStateStaticTest, HPKPReporting) {
             state.CheckPublicKeyPins(host_port_pair, false, good_hashes,
                                      cert1.get(), cert2.get(),
                                      TransportSecurityState::ENABLE_PIN_REPORTS,
-                                     network_isolation_key, &failure_log));
+                                     network_anonymization_key, &failure_log));
 
   // No report should have been sent because there was no violation, even though
   // the certificate chained to a local trust anchor.
@@ -3315,7 +2156,7 @@ TEST_F(TransportSecurityStateStaticTest, HPKPReporting) {
             state.CheckPublicKeyPins(host_port_pair, true, bad_hashes,
                                      cert1.get(), cert2.get(),
                                      TransportSecurityState::ENABLE_PIN_REPORTS,
-                                     network_isolation_key, &failure_log));
+                                     network_anonymization_key, &failure_log));
 
   // Now a report should have been sent. Check that it contains the
   // right information.
@@ -3332,7 +2173,7 @@ TEST_F(TransportSecurityStateStaticTest, HPKPReporting) {
             state.CheckPublicKeyPins(subdomain_host_port_pair, true, bad_hashes,
                                      cert1.get(), cert2.get(),
                                      TransportSecurityState::ENABLE_PIN_REPORTS,
-                                     network_isolation_key, &failure_log));
+                                     network_anonymization_key, &failure_log));
 
   // Now a report should have been sent for the subdomain. Check that it
   // contains the right information.
@@ -3344,8 +2185,8 @@ TEST_F(TransportSecurityStateStaticTest, HPKPReporting) {
   ASSERT_NO_FATAL_FAILURE(CheckHPKPReport(report, subdomain_host_port_pair,
                                           true, kHost, cert1.get(), cert2.get(),
                                           good_hashes));
-  EXPECT_EQ(network_isolation_key,
-            mock_report_sender.latest_network_isolation_key());
+  EXPECT_EQ(network_anonymization_key,
+            mock_report_sender.latest_network_anonymization_key());
 }
 
 TEST_F(TransportSecurityStateTest, WriteSizeDecodeSize) {
@@ -3388,504 +2229,14 @@ TEST_F(TransportSecurityStateTest, DecodeSizeFour) {
 
 #endif  // BUILDFLAG(INCLUDE_TRANSPORT_SECURITY_STATE_PRELOAD_LIST)
 
-TEST_F(TransportSecurityStateTest,
-       PartitionExpectCTStateByNetworkIsolationKey) {
-  const char kDomain[] = "example.test";
-  HostPortPair host_port_pair(kDomain, 443);
-
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      TransportSecurityState::kDynamicExpectCTFeature);
-
-  const base::Time expiry = base::Time::Now() + base::Seconds(1000);
-
-  // Dummy cert to use as the validation chain. The contents do not matter.
-  scoped_refptr<X509Certificate> cert =
-      ImportCertFromFile(GetTestCertsDirectory(), "expired_cert.pem");
-  ASSERT_TRUE(cert);
-  HashValueVector hashes;
-  hashes.push_back(
-      HashValue(X509Certificate::CalculateFingerprint256(cert->cert_buffer())));
-
-  // An ExpectCT entry is set using network_isolation_key1, and then accessed
-  // using both keys. It should only be accessible using the other key when
-  // kPartitionExpectCTStateByNetworkIsolationKey is disabled.
-  NetworkIsolationKey network_isolation_key1 =
-      NetworkIsolationKey::CreateTransient();
-  NetworkIsolationKey network_isolation_key2 =
-      NetworkIsolationKey::CreateTransient();
-
-  for (bool partition_expect_ct_state : {false, true}) {
-    base::test::ScopedFeatureList feature_list2;
-    if (partition_expect_ct_state) {
-      feature_list2.InitAndEnableFeature(
-          features::kPartitionExpectCTStateByNetworkIsolationKey);
-    } else {
-      feature_list2.InitAndDisableFeature(
-          features::kPartitionExpectCTStateByNetworkIsolationKey);
-    }
-
-    // Add Expect-CT entry.
-    TransportSecurityState state;
-    state.AddExpectCT(kDomain, expiry, true, GURL(), network_isolation_key1);
-    TransportSecurityState::ExpectCTState expect_ct_state;
-    EXPECT_TRUE(state.GetDynamicExpectCTState(kDomain, network_isolation_key1,
-                                              &expect_ct_state));
-
-    // The Expect-CT entry should only be respected with
-    // |network_isolation_key2| when
-    // kPartitionExpectCTStateByNetworkIsolationKey is disabled.
-    EXPECT_EQ(!partition_expect_ct_state,
-              state.GetDynamicExpectCTState(kDomain, network_isolation_key2,
-                                            &expect_ct_state));
-    EXPECT_EQ(TransportSecurityState::CT_REQUIREMENTS_NOT_MET,
-              state.CheckCTRequirements(
-                  host_port_pair, true, hashes, cert.get(), cert.get(),
-                  SignedCertificateTimestampAndStatusList(),
-                  TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                  ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-                  network_isolation_key1));
-    EXPECT_EQ(!partition_expect_ct_state,
-              TransportSecurityState::CT_REQUIREMENTS_NOT_MET ==
-                  state.CheckCTRequirements(
-                      host_port_pair, true, hashes, cert.get(), cert.get(),
-                      SignedCertificateTimestampAndStatusList(),
-                      TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-                      ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS,
-                      network_isolation_key2));
-
-    // An Expect-CT header with |network_isolation_key2| should only overwrite
-    // the entry when |partition_expect_ct_state| is false.
-    SSLInfo ssl_info;
-    ssl_info.ct_policy_compliance =
-        ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS;
-    ssl_info.is_issued_by_known_root = true;
-    MockExpectCTReporter reporter;
-    state.SetExpectCTReporter(&reporter);
-    const char kHeader[] = "max-age=0";
-    state.ProcessExpectCTHeader(kHeader, host_port_pair, ssl_info,
-                                network_isolation_key2);
-    EXPECT_EQ(partition_expect_ct_state,
-              state.GetDynamicExpectCTState(kDomain, network_isolation_key1,
-                                            &expect_ct_state));
-
-    // An Expect-CT header with |network_isolation_key1| should always overwrite
-    // the added entry.
-    state.ProcessExpectCTHeader(kHeader, host_port_pair, ssl_info,
-                                network_isolation_key1);
-    EXPECT_FALSE(state.GetDynamicExpectCTState(kDomain, network_isolation_key1,
-                                               &expect_ct_state));
-  }
-}
-
-// Tests the eviction logic and priority of pruning resources, before applying
-// the per-NetworkIsolationKey limit.
-TEST_F(TransportSecurityStateTest, PruneExpectCTPriority) {
-  const GURL report_uri(kReportUri);
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeatures(
-      // enabled_features
-      {TransportSecurityState::kDynamicExpectCTFeature,
-       features::kPartitionExpectCTStateByNetworkIsolationKey},
-      // disabled_features
-      {});
-
-  // Each iteration adds two groups of |kGroupSize| entries, with specified
-  // parameters, and then enough entries are added for a third group to trigger
-  // pruning. |kGroupSize| is chosen so that exactly all the entries in the
-  // first group or the second will typically be pruned. Note that group 1 is
-  // always added before group 2.
-  const size_t kGroupSize =
-      features::kExpectCTPruneMax.Get() - features::kExpectCTPruneMin.Get();
-  // This test requires |2 * kGroupSize| to be less than |kExpectCTPruneMax|.
-  ASSERT_LT(2 * kGroupSize,
-            static_cast<size_t>(features::kExpectCTPruneMax.Get()));
-  const size_t kThirdGroupSize =
-      features::kExpectCTPruneMax.Get() - 2 * kGroupSize;
-
-  // Specifies where the entries of no groups or of only the first group are old
-  // enough to be pruned.
-  enum class GroupsOldEnoughToBePruned {
-    kNone,
-    kFirstGroupOnly,
-    kFirstAndSecondGroups,
-  };
-
-  const struct TestCase {
-    bool first_group_has_transient_nik;
-    bool second_group_has_transient_nik;
-    bool first_group_has_enforce;
-    bool second_group_has_enforce;
-    bool first_group_is_expired;
-    bool second_group_is_expired;
-    GroupsOldEnoughToBePruned groups_old_enough_to_be_pruned;
-    bool expect_first_group_retained;
-    bool expect_second_group_retained;
-  } kTestCases[] = {
-      // No entries are prunable, so will exceed features::kExpectCTPruneMax.
-      {
-          false /* first_group_has_transient_nik */,
-          false /* second_group_has_transient_nik */,
-          true /* bool first_group_has_enforce */,
-          true /* bool second_group_has_enforce */,
-          false /* first_group_is_expired */,
-          false /* second_group_is_expired */, GroupsOldEnoughToBePruned::kNone,
-          true /* expect_first_group_retained */,
-          true /* expect_second_group_retained */
-      },
-
-      // Only second group is prunable, so it should end up empty.
-      {
-          false /* first_group_has_transient_nik */,
-          false /* second_group_has_transient_nik */,
-          true /* bool first_group_has_enforce */,
-          false /* bool second_group_has_enforce */,
-          false /* first_group_is_expired */,
-          false /* second_group_is_expired */, GroupsOldEnoughToBePruned::kNone,
-          true /* expect_first_group_retained */,
-          false /* expect_second_group_retained */
-      },
-      {
-          false /* first_group_has_transient_nik */,
-          true /* second_group_has_transient_nik */,
-          true /* bool first_group_has_enforce */,
-          true /* bool second_group_has_enforce */,
-          false /* first_group_is_expired */,
-          false /* second_group_is_expired */, GroupsOldEnoughToBePruned::kNone,
-          true /* expect_first_group_retained */,
-          false /* expect_second_group_retained */
-      },
-
-      // Only first group is prunable, so only it should be evicted.
-      {
-          false /* first_group_has_transient_nik */,
-          false /* second_group_has_transient_nik */,
-          false /* bool first_group_has_enforce */,
-          true /* bool second_group_has_enforce */,
-          false /* first_group_is_expired */,
-          false /* second_group_is_expired */, GroupsOldEnoughToBePruned::kNone,
-          false /* expect_first_group_retained */,
-          true /* expect_second_group_retained */
-      },
-      {
-          false /* first_group_has_transient_nik */,
-          false /* second_group_has_transient_nik */,
-          true /* bool first_group_has_enforce */,
-          true /* bool second_group_has_enforce */,
-          false /* first_group_is_expired */,
-          false /* second_group_is_expired */,
-          GroupsOldEnoughToBePruned::kFirstGroupOnly,
-          false /* expect_first_group_retained */,
-          true /* expect_second_group_retained */
-      },
-
-      // Both groups are prunable for the same reason, but group 1 is older
-      // (since group 1 is added first).
-      {
-          true /* first_group_has_transient_nik */,
-          true /* second_group_has_transient_nik */,
-          true /* bool first_group_has_enforce */,
-          true /* bool second_group_has_enforce */,
-          false /* first_group_is_expired */,
-          false /* second_group_is_expired */, GroupsOldEnoughToBePruned::kNone,
-          false /* expect_first_group_retained */,
-          true /* expect_second_group_retained */
-      },
-      {
-          false /* first_group_has_transient_nik */,
-          false /* second_group_has_transient_nik */,
-          true /* bool first_group_has_enforce */,
-          true /* bool second_group_has_enforce */,
-          false /* first_group_is_expired */,
-          false /* second_group_is_expired */,
-          GroupsOldEnoughToBePruned::kFirstAndSecondGroups,
-          false /* expect_first_group_retained */,
-          true /* expect_second_group_retained */
-      },
-
-      // First group has enforce not set, second uses a transient NIK. First
-      // should take priority.
-      {
-          false /* first_group_has_transient_nik */,
-          true /* second_group_has_transient_nik */,
-          false /* bool first_group_has_enforce */,
-          true /* bool second_group_has_enforce */,
-          false /* first_group_is_expired */,
-          false /* second_group_is_expired */, GroupsOldEnoughToBePruned::kNone,
-          true /* expect_first_group_retained */,
-          false /* expect_second_group_retained */
-      },
-
-      // First group outside the non-prunable window, second has enforce set.
-      // not set. First should take priority.
-      {
-          false /* first_group_has_transient_nik */,
-          false /* second_group_has_transient_nik */,
-          true /* bool first_group_has_enforce */,
-          false /* bool second_group_has_enforce */,
-          false /* first_group_is_expired */,
-          false /* second_group_is_expired */,
-          GroupsOldEnoughToBePruned::kFirstGroupOnly,
-          true /* expect_first_group_retained */,
-          false /* expect_second_group_retained */
-      },
-
-      // Second group is expired, so it is evicted, even though the first group
-      // would otherwise be prunable and the second would not.
-      {
-          true /* first_group_has_transient_nik */,
-          false /* second_group_has_transient_nik */,
-          false /* bool first_group_has_enforce */,
-          true /* bool second_group_has_enforce */,
-          false /* first_group_is_expired */,
-          true /* second_group_is_expired */,
-          GroupsOldEnoughToBePruned::kFirstGroupOnly,
-          true /* expect_first_group_retained */,
-          false /* expect_second_group_retained */
-      },
-  };
-
-  for (const auto& test_case : kTestCases) {
-    // Each test case simulates up to |features::kExpectCTSafeFromPruneDays
-    // + 1| days passing, so if an entry added for a test case should not expire
-    // over the course of running the test, its expiry date must be farther into
-    // the future than that.
-    base::Time unexpired_expiry_time =
-        base::Time::Now() +
-        base::Days(2 * features::kExpectCTSafeFromPruneDays.Get() + 1);
-
-    // Always add entries unexpired.
-    base::Time first_group_expiry =
-        test_case.first_group_is_expired
-            ? base::Time::Now() + base::Milliseconds(1)
-            : unexpired_expiry_time;
-
-    TransportSecurityState state;
-    base::Time first_group_observation_time = base::Time::Now();
-    for (size_t i = 0; i < kGroupSize; ++i) {
-      // All entries use a unique NetworkIsolationKey, so
-      // NetworkIsolationKey-based pruning will do nothing.
-      state.AddExpectCT(CreateUniqueHostName(), first_group_expiry,
-                        test_case.first_group_has_enforce, report_uri,
-                        CreateUniqueNetworkIsolationKey(
-                            test_case.first_group_has_transient_nik));
-    }
-
-    // Skip forward in time slightly, so the first group is always older than
-    // the first.
-    FastForwardBy(base::Seconds(1));
-
-    // If only the first group should be old enough to be pruned, wait until
-    // enough time for the group to be prunable has passed.
-    if (test_case.groups_old_enough_to_be_pruned ==
-        GroupsOldEnoughToBePruned::kFirstGroupOnly) {
-      FastForwardBy(base::Days(features::kExpectCTSafeFromPruneDays.Get() + 1));
-    }
-
-    // Always add entries unexpired.
-    base::Time second_group_expiry =
-        test_case.second_group_is_expired
-            ? base::Time::Now() + base::Milliseconds(1)
-            : unexpired_expiry_time;
-
-    base::Time second_group_observation_time = base::Time::Now();
-    ASSERT_NE(first_group_observation_time, second_group_observation_time);
-    for (size_t i = 0; i < kGroupSize; ++i) {
-      state.AddExpectCT(CreateUniqueHostName(), second_group_expiry,
-                        test_case.second_group_has_enforce, report_uri,
-                        CreateUniqueNetworkIsolationKey(
-                            test_case.second_group_has_transient_nik));
-    }
-
-    // Skip forward in time slightly, so the first group is always older than
-    // the first. This needs to be long enough so that if
-    // |second_group_is_expired| is true, the entry will expire.
-    FastForwardBy(base::Seconds(1));
-
-    // If both the first and second groups should be old enough to be pruned,
-    // wait until enough time has passed for both groups to prunable.
-    if (test_case.groups_old_enough_to_be_pruned ==
-        GroupsOldEnoughToBePruned::kFirstAndSecondGroups) {
-      FastForwardBy(base::Days(features::kExpectCTSafeFromPruneDays.Get() + 1));
-    }
-
-    for (size_t i = 0; i < kThirdGroupSize; ++i) {
-      state.AddExpectCT(
-          CreateUniqueHostName(), base::Time::Now() + base::Seconds(1),
-          true /* enforce */, report_uri,
-          CreateUniqueNetworkIsolationKey(false /* is_transient */));
-    }
-
-    size_t first_group_size = 0;
-    size_t second_group_size = 0;
-    size_t third_group_size = 0;
-    for (TransportSecurityState::ExpectCTStateIterator iterator(state);
-         iterator.HasNext(); iterator.Advance()) {
-      if (iterator.domain_state().last_observed ==
-          first_group_observation_time) {
-        ++first_group_size;
-      } else if (iterator.domain_state().last_observed ==
-                 second_group_observation_time) {
-        ++second_group_size;
-      } else {
-        ++third_group_size;
-      }
-    }
-
-    EXPECT_EQ(test_case.expect_first_group_retained ? kGroupSize : 0,
-              first_group_size);
-    EXPECT_EQ(test_case.expect_second_group_retained ? kGroupSize : 0,
-              second_group_size);
-    EXPECT_EQ(kThirdGroupSize, third_group_size);
-
-    // Make sure that |unexpired_expiry_time| was set correctly - if this fails,
-    // it will need to be increased to avoid unexpected entry expirations.
-    ASSERT_LT(base::Time::Now(), unexpired_expiry_time);
-  }
-}
-
-// Test the delay between pruning Expect-CT entries.
-TEST_F(TransportSecurityStateTest, PruneExpectCTDelay) {
-  const GURL report_uri(kReportUri);
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      TransportSecurityState::kDynamicExpectCTFeature);
-
-  TransportSecurityState state;
-  base::Time expiry = base::Time::Now() + base::Days(10);
-  // Add prunable entries until pruning is triggered.
-  for (int i = 0; i < features::kExpectCTPruneMax.Get(); ++i) {
-    state.AddExpectCT(CreateUniqueHostName(), expiry, false /* enforce */,
-                      report_uri,
-                      CreateUniqueNetworkIsolationKey(true /* is_transient */));
-  }
-  // Should have removed enough entries to get down to kExpectCTPruneMin
-  // entries.
-  EXPECT_EQ(features::kExpectCTPruneMin.Get(),
-            static_cast<int>(state.num_expect_ct_entries_for_testing()));
-
-  // Add more prunable entries, but pruning should not be triggered, due to the
-  // delay between subsequent pruning tasks.
-  for (int i = 0; i < features::kExpectCTPruneMax.Get(); ++i) {
-    state.AddExpectCT(CreateUniqueHostName(), expiry, false /* enforce */,
-                      report_uri,
-                      CreateUniqueNetworkIsolationKey(true /* is_transient */));
-  }
-  EXPECT_EQ(
-      features::kExpectCTPruneMax.Get() + features::kExpectCTPruneMin.Get(),
-      static_cast<int>(state.num_expect_ct_entries_for_testing()));
-
-  // Time passes, which does not trigger pruning.
-  FastForwardBy(base::Seconds(features::kExpectCTPruneDelaySecs.Get()));
-  EXPECT_EQ(
-      features::kExpectCTPruneMax.Get() + features::kExpectCTPruneMin.Get(),
-      static_cast<int>(state.num_expect_ct_entries_for_testing()));
-
-  // Another entry is added, which triggers pruning, now that enough time has
-  // passed.
-  state.AddExpectCT(CreateUniqueHostName(), expiry, false /* enforce */,
-                    report_uri,
-                    CreateUniqueNetworkIsolationKey(true /* is_transient */));
-  EXPECT_EQ(features::kExpectCTPruneMin.Get(),
-            static_cast<int>(state.num_expect_ct_entries_for_testing()));
-
-  // More time passes.
-  FastForwardBy(base::Seconds(10 * features::kExpectCTPruneDelaySecs.Get()));
-  EXPECT_EQ(features::kExpectCTPruneMin.Get(),
-            static_cast<int>(state.num_expect_ct_entries_for_testing()));
-
-  // When enough entries are added to trigger pruning, it runs immediately,
-  // since enough time has passed.
-  for (int i = 0; i < features::kExpectCTPruneMax.Get() -
-                          features::kExpectCTPruneMin.Get();
-       ++i) {
-    state.AddExpectCT(CreateUniqueHostName(), expiry, false /* enforce */,
-                      report_uri,
-                      CreateUniqueNetworkIsolationKey(true /* is_transient */));
-  }
-  EXPECT_EQ(features::kExpectCTPruneMin.Get(),
-            static_cast<int>(state.num_expect_ct_entries_for_testing()));
-}
-
-// Test that Expect-CT pruning respects kExpectCTMaxEntriesPerNik, which is only
-// applied if there are more than kExpectCTPruneMin entries after global
-// pruning.
-TEST_F(TransportSecurityStateTest, PruneExpectCTNetworkIsolationKeyLimit) {
-  const GURL report_uri(kReportUri);
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeatures(
-      // enabled_features
-      {TransportSecurityState::kDynamicExpectCTFeature,
-       features::kPartitionExpectCTStateByNetworkIsolationKey},
-      // disabled_features
-      {});
-
-  TransportSecurityState state;
-
-  // Three different expiration times, which are used to distinguish entries
-  // added by each loop. No entries actually expire in this test.
-  base::Time expiry1 = base::Time::Now() + base::Days(10);
-  base::Time expiry2 = expiry1 + base::Days(10);
-  base::Time expiry3 = expiry2 + base::Days(10);
-
-  // Add non-prunable entries using different non-transient NIKs. They should
-  // not be pruned because they are recently-observed enforce entries.
-  for (int i = 0; i < features::kExpectCTPruneMax.Get(); ++i) {
-    state.AddExpectCT(
-        CreateUniqueHostName(), expiry1, true /* enforce */, report_uri,
-        CreateUniqueNetworkIsolationKey(false /* is_transient */));
-  }
-  EXPECT_EQ(features::kExpectCTPruneMax.Get(),
-            static_cast<int>(state.num_expect_ct_entries_for_testing()));
-
-  // Add kExpectCTMaxEntriesPerNik non-prunable entries with a single NIK,
-  // allowing pruning to run each time. No entries should be deleted.
-  NetworkIsolationKey network_isolation_key =
-      CreateUniqueNetworkIsolationKey(false /* is_transient */);
-  for (int i = 0; i < features::kExpectCTMaxEntriesPerNik.Get(); ++i) {
-    FastForwardBy(base::Seconds(features::kExpectCTPruneDelaySecs.Get()));
-    state.AddExpectCT(CreateUniqueHostName(), expiry2, true /* enforce */,
-                      report_uri, network_isolation_key);
-    EXPECT_EQ(features::kExpectCTPruneMax.Get() + i + 1,
-              static_cast<int>(state.num_expect_ct_entries_for_testing()));
-  }
-
-  // Add kExpectCTMaxEntriesPerNik non-prunable entries with the same NIK as
-  // before, allowing pruning to run each time. Each time, a single entry should
-  // be removed, resulting in the same total number of entries as before.
-  for (int i = 0; i < features::kExpectCTMaxEntriesPerNik.Get(); ++i) {
-    FastForwardBy(base::Seconds(features::kExpectCTPruneDelaySecs.Get()));
-    state.AddExpectCT(CreateUniqueHostName(), expiry3, true /* enforce */,
-                      report_uri, network_isolation_key);
-    EXPECT_EQ(features::kExpectCTPruneMax.Get() +
-                  features::kExpectCTMaxEntriesPerNik.Get(),
-              static_cast<int>(state.num_expect_ct_entries_for_testing()));
-
-    // Count entries with |expiry2| and |expiry3|. For each loop iteration, an
-    // entry with |expiry2| should be replaced by one with |expiry3|.
-    int num_expiry2_entries = 0;
-    int num_expiry3_entries = 0;
-    for (TransportSecurityState::ExpectCTStateIterator iterator(state);
-         iterator.HasNext(); iterator.Advance()) {
-      if (iterator.domain_state().expiry == expiry2) {
-        EXPECT_EQ(network_isolation_key, iterator.network_isolation_key());
-        ++num_expiry2_entries;
-      } else if (iterator.domain_state().expiry == expiry3) {
-        EXPECT_EQ(network_isolation_key, iterator.network_isolation_key());
-        ++num_expiry3_entries;
-      }
-    }
-    EXPECT_EQ(features::kExpectCTMaxEntriesPerNik.Get() - i - 1,
-              num_expiry2_entries);
-    EXPECT_EQ(i + 1, num_expiry3_entries);
-  }
-}
-
 TEST_F(TransportSecurityStateTest, UpdateKeyPinsListValidPin) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      net::features::kStaticKeyPinningEnforcement);
   HostPortPair host_port_pair(kHost, kPort);
   GURL report_uri(kReportUri);
-  NetworkIsolationKey network_isolation_key =
-      NetworkIsolationKey::CreateTransient();
+  NetworkAnonymizationKey network_anonymization_key =
+      NetworkAnonymizationKey::CreateTransient();
   // Two dummy certs to use as the server-sent and validated chains. The
   // contents don't matter.
   scoped_refptr<X509Certificate> cert1 =
@@ -3909,7 +2260,7 @@ TEST_F(TransportSecurityStateTest, UpdateKeyPinsListValidPin) {
             state.CheckPublicKeyPins(
                 host_port_pair, true, bad_hashes, cert1.get(), cert2.get(),
                 TransportSecurityState::ENABLE_PIN_REPORTS,
-                network_isolation_key, &unused_failure_log));
+                network_anonymization_key, &unused_failure_log));
 
   // Update the pins list, adding bad_hashes to the accepted hashes for this
   // host.
@@ -3934,14 +2285,17 @@ TEST_F(TransportSecurityStateTest, UpdateKeyPinsListValidPin) {
             state.CheckPublicKeyPins(
                 host_port_pair, true, bad_hashes, cert1.get(), cert2.get(),
                 TransportSecurityState::ENABLE_PIN_REPORTS,
-                network_isolation_key, &unused_failure_log));
+                network_anonymization_key, &unused_failure_log));
 }
 
 TEST_F(TransportSecurityStateTest, UpdateKeyPinsListNotValidPin) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      net::features::kStaticKeyPinningEnforcement);
   HostPortPair host_port_pair(kHost, kPort);
   GURL report_uri(kReportUri);
-  NetworkIsolationKey network_isolation_key =
-      NetworkIsolationKey::CreateTransient();
+  NetworkAnonymizationKey network_anonymization_key =
+      NetworkAnonymizationKey::CreateTransient();
   // Two dummy certs to use as the server-sent and validated chains. The
   // contents don't matter.
   scoped_refptr<X509Certificate> cert1 =
@@ -3965,7 +2319,7 @@ TEST_F(TransportSecurityStateTest, UpdateKeyPinsListNotValidPin) {
             state.CheckPublicKeyPins(
                 host_port_pair, true, good_hashes, cert1.get(), cert2.get(),
                 TransportSecurityState::ENABLE_PIN_REPORTS,
-                network_isolation_key, &unused_failure_log));
+                network_anonymization_key, &unused_failure_log));
 
   // Update the pins list, adding good_hashes to the rejected hashes for this
   // host.
@@ -3990,14 +2344,34 @@ TEST_F(TransportSecurityStateTest, UpdateKeyPinsListNotValidPin) {
             state.CheckPublicKeyPins(
                 host_port_pair, true, good_hashes, cert1.get(), cert2.get(),
                 TransportSecurityState::ENABLE_PIN_REPORTS,
-                network_isolation_key, &unused_failure_log));
+                network_anonymization_key, &unused_failure_log));
+
+  // Hashes should also be rejected if the hostname has a trailing dot.
+  host_port_pair = HostPortPair("example.test.", kPort);
+  EXPECT_EQ(TransportSecurityState::PKPStatus::VIOLATED,
+            state.CheckPublicKeyPins(
+                host_port_pair, true, good_hashes, cert1.get(), cert2.get(),
+                TransportSecurityState::ENABLE_PIN_REPORTS,
+                network_anonymization_key, &unused_failure_log));
+
+  // Hashes should also be rejected if the hostname has different
+  // capitalization.
+  host_port_pair = HostPortPair("ExAmpLe.tEsT", kPort);
+  EXPECT_EQ(TransportSecurityState::PKPStatus::VIOLATED,
+            state.CheckPublicKeyPins(
+                host_port_pair, true, good_hashes, cert1.get(), cert2.get(),
+                TransportSecurityState::ENABLE_PIN_REPORTS,
+                network_anonymization_key, &unused_failure_log));
 }
 
 TEST_F(TransportSecurityStateTest, UpdateKeyPinsEmptyList) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      net::features::kStaticKeyPinningEnforcement);
   HostPortPair host_port_pair(kHost, kPort);
   GURL report_uri(kReportUri);
-  NetworkIsolationKey network_isolation_key =
-      NetworkIsolationKey::CreateTransient();
+  NetworkAnonymizationKey network_anonymization_key =
+      NetworkAnonymizationKey::CreateTransient();
   // Two dummy certs to use as the server-sent and validated chains. The
   // contents don't matter.
   scoped_refptr<X509Certificate> cert1 =
@@ -4021,7 +2395,7 @@ TEST_F(TransportSecurityStateTest, UpdateKeyPinsEmptyList) {
             state.CheckPublicKeyPins(
                 host_port_pair, true, bad_hashes, cert1.get(), cert2.get(),
                 TransportSecurityState::ENABLE_PIN_REPORTS,
-                network_isolation_key, &unused_failure_log));
+                network_anonymization_key, &unused_failure_log));
 
   // Update the pins list with an empty list.
   state.UpdatePinList({}, {}, base::Time::Now());
@@ -4031,14 +2405,229 @@ TEST_F(TransportSecurityStateTest, UpdateKeyPinsEmptyList) {
             state.CheckPublicKeyPins(
                 host_port_pair, true, bad_hashes, cert1.get(), cert2.get(),
                 TransportSecurityState::ENABLE_PIN_REPORTS,
-                network_isolation_key, &unused_failure_log));
+                network_anonymization_key, &unused_failure_log));
+}
+
+TEST_F(TransportSecurityStateTest, UpdateKeyPinsIncludeSubdomains) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      net::features::kStaticKeyPinningEnforcement);
+  HostPortPair host_port_pair("example.sub.test", kPort);
+  GURL report_uri(kReportUri);
+  NetworkAnonymizationKey network_anonymization_key =
+      NetworkAnonymizationKey::CreateTransient();
+  // Two dummy certs to use as the server-sent and validated chains. The
+  // contents don't matter.
+  scoped_refptr<X509Certificate> cert1 =
+      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
+  ASSERT_TRUE(cert1);
+  scoped_refptr<X509Certificate> cert2 =
+      ImportCertFromFile(GetTestCertsDirectory(), "expired_cert.pem");
+  ASSERT_TRUE(cert2);
+
+  // unpinned_hashes is a set of hashes that (after the update) won't match the
+  // expected hashes for the tld of this domain. kGoodPath is used here because
+  // it's a path that is accepted prior to any updates, and this test will
+  // validate it is rejected afterwards.
+  HashValueVector unpinned_hashes;
+  for (size_t i = 0; kGoodPath[i]; i++) {
+    EXPECT_TRUE(AddHash(kGoodPath[i], &unpinned_hashes));
+  }
+
+  TransportSecurityState state;
+  EnableStaticPins(&state);
+  std::string unused_failure_log;
+
+  // Prior to updating the list, unpinned_hashes should be accepted
+  EXPECT_EQ(TransportSecurityState::PKPStatus::OK,
+            state.CheckPublicKeyPins(
+                host_port_pair, true, unpinned_hashes, cert1.get(), cert2.get(),
+                TransportSecurityState::ENABLE_PIN_REPORTS,
+                network_anonymization_key, &unused_failure_log));
+
+  // Update the pins list, adding kBadPath to the accepted hashes for this
+  // host, relying on include_subdomains for enforcement. The contents of the
+  // hashes don't matter as long as they are different from unpinned_hashes,
+  // kBadPath is used for convenience.
+  std::vector<std::vector<uint8_t>> accepted_hashes;
+  for (size_t i = 0; kBadPath[i]; i++) {
+    HashValue hash;
+    ASSERT_TRUE(hash.FromString(kBadPath[i]));
+    accepted_hashes.emplace_back(hash.data(), hash.data() + hash.size());
+  }
+  TransportSecurityState::PinSet test_pinset(
+      /*name=*/"test",
+      /*static_spki_hashes=*/{accepted_hashes},
+      /*bad_static_spki_hashes=*/{},
+      /*report_uri=*/kReportUri);
+  // The host used in the test is "example.sub.test", so this pinset will only
+  // match due to include subdomains.
+  TransportSecurityState::PinSetInfo test_pinsetinfo(
+      /*hostname=*/"sub.test", /* pinset_name=*/"test",
+      /*include_subdomains=*/true);
+  state.UpdatePinList({test_pinset}, {test_pinsetinfo}, base::Time::Now());
+
+  // The path that was accepted before updating the pins should now be rejected.
+  EXPECT_EQ(TransportSecurityState::PKPStatus::VIOLATED,
+            state.CheckPublicKeyPins(
+                host_port_pair, true, unpinned_hashes, cert1.get(), cert2.get(),
+                TransportSecurityState::ENABLE_PIN_REPORTS,
+                network_anonymization_key, &unused_failure_log));
+}
+
+TEST_F(TransportSecurityStateTest, UpdateKeyPinsIncludeSubdomainsTLD) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      net::features::kStaticKeyPinningEnforcement);
+  HostPortPair host_port_pair(kHost, kPort);
+  GURL report_uri(kReportUri);
+  NetworkAnonymizationKey network_anonymization_key =
+      NetworkAnonymizationKey::CreateTransient();
+  // Two dummy certs to use as the server-sent and validated chains. The
+  // contents don't matter.
+  scoped_refptr<X509Certificate> cert1 =
+      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
+  ASSERT_TRUE(cert1);
+  scoped_refptr<X509Certificate> cert2 =
+      ImportCertFromFile(GetTestCertsDirectory(), "expired_cert.pem");
+  ASSERT_TRUE(cert2);
+
+  // unpinned_hashes is a set of hashes that (after the update) won't match the
+  // expected hashes for the tld of this domain. kGoodPath is used here because
+  // it's a path that is accepted prior to any updates, and this test will
+  // validate it is rejected afterwards.
+  HashValueVector unpinned_hashes;
+  for (size_t i = 0; kGoodPath[i]; i++) {
+    EXPECT_TRUE(AddHash(kGoodPath[i], &unpinned_hashes));
+  }
+
+  TransportSecurityState state;
+  EnableStaticPins(&state);
+  std::string unused_failure_log;
+
+  // Prior to updating the list, unpinned_hashes should be accepted
+  EXPECT_EQ(TransportSecurityState::PKPStatus::OK,
+            state.CheckPublicKeyPins(
+                host_port_pair, true, unpinned_hashes, cert1.get(), cert2.get(),
+                TransportSecurityState::ENABLE_PIN_REPORTS,
+                network_anonymization_key, &unused_failure_log));
+
+  // Update the pins list, adding kBadPath to the accepted hashes for this
+  // host, relying on include_subdomains for enforcement. The contents of the
+  // hashes don't matter as long as they are different from unpinned_hashes,
+  // kBadPath is used for convenience.
+  std::vector<std::vector<uint8_t>> accepted_hashes;
+  for (size_t i = 0; kBadPath[i]; i++) {
+    HashValue hash;
+    ASSERT_TRUE(hash.FromString(kBadPath[i]));
+    accepted_hashes.emplace_back(hash.data(), hash.data() + hash.size());
+  }
+  TransportSecurityState::PinSet test_pinset(
+      /*name=*/"test",
+      /*static_spki_hashes=*/{accepted_hashes},
+      /*bad_static_spki_hashes=*/{},
+      /*report_uri=*/kReportUri);
+  // The host used in the test is "example.test", so this pinset will only match
+  // due to include subdomains.
+  TransportSecurityState::PinSetInfo test_pinsetinfo(
+      /*hostname=*/"test", /* pinset_name=*/"test",
+      /*include_subdomains=*/true);
+  state.UpdatePinList({test_pinset}, {test_pinsetinfo}, base::Time::Now());
+
+  // The path that was accepted before updating the pins should now be rejected.
+  EXPECT_EQ(TransportSecurityState::PKPStatus::VIOLATED,
+            state.CheckPublicKeyPins(
+                host_port_pair, true, unpinned_hashes, cert1.get(), cert2.get(),
+                TransportSecurityState::ENABLE_PIN_REPORTS,
+                network_anonymization_key, &unused_failure_log));
+}
+
+TEST_F(TransportSecurityStateTest, UpdateKeyPinsDontIncludeSubdomains) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      net::features::kStaticKeyPinningEnforcement);
+  HostPortPair host_port_pair(kHost, kPort);
+  GURL report_uri(kReportUri);
+  NetworkAnonymizationKey network_anonymization_key =
+      NetworkAnonymizationKey::CreateTransient();
+  // Two dummy certs to use as the server-sent and validated chains. The
+  // contents don't matter.
+  scoped_refptr<X509Certificate> cert1 =
+      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
+  ASSERT_TRUE(cert1);
+  scoped_refptr<X509Certificate> cert2 =
+      ImportCertFromFile(GetTestCertsDirectory(), "expired_cert.pem");
+  ASSERT_TRUE(cert2);
+
+  // unpinned_hashes is a set of hashes that (after the update) won't match the
+  // expected hashes for the tld of this domain. kGoodPath is used here because
+  // it's a path that is accepted prior to any updates, and this test will
+  // validate it is accepted or rejected afterwards depending on whether the
+  // domain is an exact match.
+  HashValueVector unpinned_hashes;
+  for (size_t i = 0; kGoodPath[i]; i++) {
+    EXPECT_TRUE(AddHash(kGoodPath[i], &unpinned_hashes));
+  }
+
+  TransportSecurityState state;
+  EnableStaticPins(&state);
+  std::string unused_failure_log;
+
+  // Prior to updating the list, unpinned_hashes should be accepted
+  EXPECT_EQ(TransportSecurityState::PKPStatus::OK,
+            state.CheckPublicKeyPins(
+                host_port_pair, true, unpinned_hashes, cert1.get(), cert2.get(),
+                TransportSecurityState::ENABLE_PIN_REPORTS,
+                network_anonymization_key, &unused_failure_log));
+
+  // Update the pins list, adding kBadPath to the accepted hashes for the
+  // tld of this host, but without include_subdomains set. The contents of the
+  // hashes don't matter as long as they are different from unpinned_hashes,
+  // kBadPath is used for convenience.
+  std::vector<std::vector<uint8_t>> accepted_hashes;
+  for (size_t i = 0; kBadPath[i]; i++) {
+    HashValue hash;
+    ASSERT_TRUE(hash.FromString(kBadPath[i]));
+    accepted_hashes.emplace_back(hash.data(), hash.data() + hash.size());
+  }
+  TransportSecurityState::PinSet test_pinset(
+      /*name=*/"test",
+      /*static_spki_hashes=*/{accepted_hashes},
+      /*bad_static_spki_hashes=*/{},
+      /*report_uri=*/kReportUri);
+  // The host used in the test is "example.test", so this pinset will not match
+  // due to include subdomains not being set.
+  TransportSecurityState::PinSetInfo test_pinsetinfo(
+      /*hostname=*/"test", /* pinset_name=*/"test",
+      /*include_subdomains=*/false);
+  state.UpdatePinList({test_pinset}, {test_pinsetinfo}, base::Time::Now());
+
+  // Hashes that were accepted before the update should still be accepted since
+  // include subdomains is not set for the pinset, and this is not an exact
+  // match.
+  EXPECT_EQ(TransportSecurityState::PKPStatus::OK,
+            state.CheckPublicKeyPins(
+                host_port_pair, true, unpinned_hashes, cert1.get(), cert2.get(),
+                TransportSecurityState::ENABLE_PIN_REPORTS,
+                network_anonymization_key, &unused_failure_log));
+
+  // Hashes should be rejected for an exact match of the hostname.
+  HostPortPair exact_match_host("test", kPort);
+  EXPECT_EQ(TransportSecurityState::PKPStatus::VIOLATED,
+            state.CheckPublicKeyPins(
+                exact_match_host, true, unpinned_hashes, cert1.get(),
+                cert2.get(), TransportSecurityState::ENABLE_PIN_REPORTS,
+                network_anonymization_key, &unused_failure_log));
 }
 
 TEST_F(TransportSecurityStateTest, UpdateKeyPinsListTimestamp) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      net::features::kStaticKeyPinningEnforcement);
   HostPortPair host_port_pair(kHost, kPort);
   GURL report_uri(kReportUri);
-  NetworkIsolationKey network_isolation_key =
-      NetworkIsolationKey::CreateTransient();
+  NetworkAnonymizationKey network_anonymization_key =
+      NetworkAnonymizationKey::CreateTransient();
   // Two dummy certs to use as the server-sent and validated chains. The
   // contents don't matter.
   scoped_refptr<X509Certificate> cert1 =
@@ -4062,7 +2651,13 @@ TEST_F(TransportSecurityStateTest, UpdateKeyPinsListTimestamp) {
             state.CheckPublicKeyPins(
                 host_port_pair, true, bad_hashes, cert1.get(), cert2.get(),
                 TransportSecurityState::ENABLE_PIN_REPORTS,
-                network_isolation_key, &unused_failure_log));
+                network_anonymization_key, &unused_failure_log));
+
+  // TransportSecurityStateTest sets a flag when EnableStaticPins is called that
+  // results in TransportSecurityState considering the pins list as always
+  // timely. We need to disable it so we can test that the timestamp has the
+  // required effect.
+  state.SetPinningListAlwaysTimelyForTesting(false);
 
   // Update the pins list, with bad hashes as rejected, but a timestamp >70 days
   // old.
@@ -4088,7 +2683,7 @@ TEST_F(TransportSecurityStateTest, UpdateKeyPinsListTimestamp) {
             state.CheckPublicKeyPins(
                 host_port_pair, true, bad_hashes, cert1.get(), cert2.get(),
                 TransportSecurityState::ENABLE_PIN_REPORTS,
-                network_isolation_key, &unused_failure_log));
+                network_anonymization_key, &unused_failure_log));
 
   // Update the pins list again, with a timestamp <70 days old.
   state.UpdatePinList({test_pinset}, {test_pinsetinfo},
@@ -4099,7 +2694,50 @@ TEST_F(TransportSecurityStateTest, UpdateKeyPinsListTimestamp) {
             state.CheckPublicKeyPins(
                 host_port_pair, true, bad_hashes, cert1.get(), cert2.get(),
                 TransportSecurityState::ENABLE_PIN_REPORTS,
-                network_isolation_key, &unused_failure_log));
+                network_anonymization_key, &unused_failure_log));
+}
+
+class TransportSecurityStatePinningKillswitchTest
+    : public TransportSecurityStateTest {
+ public:
+  TransportSecurityStatePinningKillswitchTest() {
+    scoped_feature_list_.InitAndDisableFeature(
+        features::kStaticKeyPinningEnforcement);
+  }
+
+ protected:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+TEST_F(TransportSecurityStatePinningKillswitchTest, PinningKillswitchSet) {
+  HostPortPair host_port_pair(kHost, kPort);
+  GURL report_uri(kReportUri);
+  NetworkAnonymizationKey network_anonymization_key =
+      NetworkAnonymizationKey::CreateTransient();
+  // Two dummy certs to use as the server-sent and validated chains. The
+  // contents don't matter.
+  scoped_refptr<X509Certificate> cert1 =
+      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
+  ASSERT_TRUE(cert1);
+  scoped_refptr<X509Certificate> cert2 =
+      ImportCertFromFile(GetTestCertsDirectory(), "expired_cert.pem");
+  ASSERT_TRUE(cert2);
+
+  HashValueVector bad_hashes;
+
+  for (size_t i = 0; kBadPath[i]; i++)
+    EXPECT_TRUE(AddHash(kBadPath[i], &bad_hashes));
+
+  TransportSecurityState state;
+  EnableStaticPins(&state);
+  std::string unused_failure_log;
+
+  // Hashes should be accepted since pinning enforcement is disabled.
+  EXPECT_EQ(TransportSecurityState::PKPStatus::OK,
+            state.CheckPublicKeyPins(
+                host_port_pair, true, bad_hashes, cert1.get(), cert2.get(),
+                TransportSecurityState::ENABLE_PIN_REPORTS,
+                network_anonymization_key, &unused_failure_log));
 }
 
 }  // namespace net

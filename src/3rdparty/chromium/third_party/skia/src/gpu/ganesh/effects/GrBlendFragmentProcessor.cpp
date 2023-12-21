@@ -7,8 +7,11 @@
 
 #include "src/gpu/ganesh/effects/GrBlendFragmentProcessor.h"
 
+#include "src/core/SkBlendModePriv.h"
+#include "src/gpu/Blend.h"
 #include "src/gpu/KeyBuilder.h"
 #include "src/gpu/ganesh/GrFragmentProcessor.h"
+#include "src/gpu/ganesh/GrProcessorUnitTest.h"
 #include "src/gpu/ganesh/SkGr.h"
 #include "src/gpu/ganesh/glsl/GrGLSLBlend.h"
 #include "src/gpu/ganesh/glsl/GrGLSLFragmentShaderBuilder.h"
@@ -68,10 +71,19 @@ private:
         OptimizationFlags flags;
         switch (mode) {
             case SkBlendMode::kClear:
-            case SkBlendMode::kSrc:
-            case SkBlendMode::kDst:
-                SkDEBUGFAIL("Shouldn't have created a Blend FP as 'clear', 'src', or 'dst'.");
                 flags = kNone_OptimizationFlags;
+                break;
+
+            // Just propagates src, and its flags:
+            case SkBlendMode::kSrc:
+                flags = ProcessorOptimizationFlags(src) &
+                        ~kConstantOutputForConstantInput_OptimizationFlag;
+                break;
+
+            // Just propagates dst, and its flags:
+            case SkBlendMode::kDst:
+                flags = ProcessorOptimizationFlags(dst) &
+                        ~kConstantOutputForConstantInput_OptimizationFlag;
                 break;
 
             // Produces opaque if both src and dst are opaque. These also will modulate the child's
@@ -179,7 +191,7 @@ private:
 /////////////////////////////////////////////////////////////////////
 
 
-GR_DEFINE_FRAGMENT_PROCESSOR_TEST(BlendFragmentProcessor);
+GR_DEFINE_FRAGMENT_PROCESSOR_TEST(BlendFragmentProcessor)
 
 #if GR_TEST_UTILS
 std::unique_ptr<GrFragmentProcessor> BlendFragmentProcessor::TestCreate(GrProcessorTestData* d) {
@@ -191,10 +203,8 @@ std::unique_ptr<GrFragmentProcessor> BlendFragmentProcessor::TestCreate(GrProces
     }
     bool shareLogic = d->fRandom->nextBool();
 
-    SkBlendMode mode;
-    do {
-        mode = static_cast<SkBlendMode>(d->fRandom->nextRangeU(0, (int)SkBlendMode::kLastMode));
-    } while (SkBlendMode::kClear == mode || SkBlendMode::kSrc == mode || SkBlendMode::kDst == mode);
+    SkBlendMode mode =
+            static_cast<SkBlendMode>(d->fRandom->nextRangeU(0, (int)SkBlendMode::kLastMode));
     return std::unique_ptr<GrFragmentProcessor>(
             new BlendFragmentProcessor(std::move(src), std::move(dst), mode, shareLogic));
 }
@@ -229,7 +239,7 @@ std::unique_ptr<GrFragmentProcessor::ProgramImpl> BlendFragmentProcessor::onMake
             } else {
                 // Blend src and dst colors together using a hardwired built-in blend function.
                 fragBuilder->codeAppendf("return %s(%s, %s);",
-                                         GrGLSLBlend::BlendFuncName(mode),
+                                         skgpu::BlendFuncName(mode),
                                          srcColor.c_str(),
                                          dstColor.c_str());
             }
@@ -256,15 +266,10 @@ std::unique_ptr<GrFragmentProcessor> GrBlendFragmentProcessor::Make(
         std::unique_ptr<GrFragmentProcessor> dst,
         SkBlendMode mode,
         bool shareBlendLogic) {
-    switch (mode) {
-        case SkBlendMode::kClear:
-            return GrFragmentProcessor::MakeColor(SK_PMColor4fTRANSPARENT);
-        case SkBlendMode::kSrc:
-            return src;
-        case SkBlendMode::kDst:
-            return dst;
-        default:
-            return BlendFragmentProcessor::Make(
-                    std::move(src), std::move(dst), mode, shareBlendLogic);
+    // These modes simplify dramatically in the shader, but only if we bypass the shared logic:
+    if (mode == SkBlendMode::kClear || mode == SkBlendMode::kSrc || mode == SkBlendMode::kDst) {
+        shareBlendLogic = false;
     }
+
+    return BlendFragmentProcessor::Make(std::move(src), std::move(dst), mode, shareBlendLogic);
 }

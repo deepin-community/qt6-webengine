@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/ranges/algorithm.h"
 #include "base/strings/string_piece.h"
 #include "base/time/time.h"
 #include "net/base/connection_endpoint_metadata_test_util.h"
@@ -319,11 +320,9 @@ TEST(DnsResponseResultExtractorTest, ExtractsTxtResponses) {
                   "foo1", "foo2", "foo3", "bar1", "bar2")));
   std::vector<std::string> results_vector = results.text_records().value();
   EXPECT_NE(results_vector.end(),
-            std::search(results_vector.begin(), results_vector.end(),
-                        foo_records.begin(), foo_records.end()));
+            base::ranges::search(results_vector, foo_records));
   EXPECT_NE(results_vector.end(),
-            std::search(results_vector.begin(), results_vector.end(),
-                        bar_records.begin(), bar_records.end()));
+            base::ranges::search(results_vector, bar_records));
 }
 
 TEST(DnsResponseResultExtractorTest, ExtractsNxdomainTxtResponses) {
@@ -740,167 +739,6 @@ TEST(DnsResponseResultExtractorTest, IgnoresWrongTypeSrvResponses) {
   EXPECT_FALSE(results.has_ttl());
 }
 
-TEST(DnsResponseResultExtractorTest, ExtractsExperimentalHttpsResponses) {
-  constexpr char kName[] = "https.test";
-  constexpr auto kTtl = base::Minutes(31);
-
-  DnsResponse response = BuildTestDnsResponse(
-      kName, dns_protocol::kTypeHttps,
-      {BuildTestHttpsAliasRecord(kName, "alias.test", kTtl)});
-  DnsResponseResultExtractor extractor(&response);
-
-  HostCache::Entry results(ERR_FAILED, HostCache::Entry::SOURCE_UNKNOWN);
-  EXPECT_EQ(extractor.ExtractDnsResults(DnsQueryType::HTTPS_EXPERIMENTAL,
-                                        /*original_domain_name=*/kName,
-                                        /*request_port=*/0, &results),
-            DnsResponseResultExtractor::ExtractionError::kOk);
-
-  EXPECT_THAT(results.error(), test::IsOk());
-  EXPECT_THAT(results.https_record_compatibility(),
-              testing::Pointee(testing::ElementsAre(true)));
-
-  ASSERT_TRUE(results.has_ttl());
-  EXPECT_EQ(results.ttl(), kTtl);
-}
-
-TEST(DnsResponseResultExtractorTest,
-     ExtractsNxdomainExperimentalHttpsResponses) {
-  constexpr char kName[] = "https.test";
-  constexpr auto kTtl = base::Hours(8);
-
-  DnsResponse response = BuildTestDnsResponse(
-      kName, dns_protocol::kTypeHttps, /*answers=*/{},
-      /*authority=*/
-      {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA, "fake rdata", kTtl)},
-      /*additional=*/{}, dns_protocol::kRcodeNXDOMAIN);
-  DnsResponseResultExtractor extractor(&response);
-
-  HostCache::Entry results(ERR_FAILED, HostCache::Entry::SOURCE_UNKNOWN);
-  EXPECT_EQ(extractor.ExtractDnsResults(DnsQueryType::HTTPS_EXPERIMENTAL,
-                                        /*original_domain_name=*/kName,
-                                        /*request_port=*/0, &results),
-            DnsResponseResultExtractor::ExtractionError::kOk);
-
-  EXPECT_THAT(results.error(), test::IsError(ERR_NAME_NOT_RESOLVED));
-  EXPECT_THAT(results.https_record_compatibility(),
-              testing::Pointee(testing::IsEmpty()));
-
-  ASSERT_TRUE(results.has_ttl());
-  EXPECT_EQ(results.ttl(), kTtl);
-}
-
-TEST(DnsResponseResultExtractorTest, ExtractsNodataExperimentalHttpsResponses) {
-  constexpr char kName[] = "https.test";
-  constexpr auto kTtl = base::Days(3);
-
-  DnsResponse response = BuildTestDnsResponse(
-      kName, dns_protocol::kTypeHttps, /*answers=*/{},
-      /*authority=*/
-      {BuildTestDnsRecord(kName, dns_protocol::kTypeSOA, "fake rdata", kTtl)});
-  DnsResponseResultExtractor extractor(&response);
-
-  HostCache::Entry results(ERR_FAILED, HostCache::Entry::SOURCE_UNKNOWN);
-  EXPECT_EQ(extractor.ExtractDnsResults(DnsQueryType::HTTPS_EXPERIMENTAL,
-                                        /*original_domain_name=*/kName,
-                                        /*request_port=*/0, &results),
-            DnsResponseResultExtractor::ExtractionError::kOk);
-
-  EXPECT_THAT(results.error(), test::IsError(ERR_NAME_NOT_RESOLVED));
-  EXPECT_THAT(results.https_record_compatibility(),
-              testing::Pointee(testing::IsEmpty()));
-
-  ASSERT_TRUE(results.has_ttl());
-  EXPECT_EQ(results.ttl(), kTtl);
-}
-
-TEST(DnsResponseResultExtractorTest, RejectsMalformedExperimentalHttpsRecord) {
-  constexpr char kName[] = "https.test";
-
-  DnsResponse response = BuildTestDnsResponse(
-      kName, dns_protocol::kTypeHttps,
-      {BuildTestDnsRecord(kName, dns_protocol::kTypeHttps,
-                          "malformed rdata")} /* answers */);
-  DnsResponseResultExtractor extractor(&response);
-
-  HostCache::Entry results(ERR_FAILED, HostCache::Entry::SOURCE_UNKNOWN);
-  EXPECT_EQ(extractor.ExtractDnsResults(DnsQueryType::HTTPS_EXPERIMENTAL,
-                                        /*original_domain_name=*/kName,
-                                        /*request_port=*/0, &results),
-            DnsResponseResultExtractor::ExtractionError::kMalformedRecord);
-
-  EXPECT_THAT(results.error(), test::IsError(ERR_DNS_MALFORMED_RESPONSE));
-  EXPECT_FALSE(results.has_ttl());
-}
-
-TEST(DnsResponseResultExtractorTest, RejectsWrongNameExperimentalHttpsRecord) {
-  constexpr char kName[] = "https.test";
-
-  DnsResponse response = BuildTestDnsResponse(
-      kName, dns_protocol::kTypeHttps,
-      {BuildTestHttpsAliasRecord("different.test", "alias.test")});
-  DnsResponseResultExtractor extractor(&response);
-
-  HostCache::Entry results(ERR_FAILED, HostCache::Entry::SOURCE_UNKNOWN);
-  EXPECT_EQ(extractor.ExtractDnsResults(DnsQueryType::HTTPS_EXPERIMENTAL,
-                                        /*original_domain_name=*/kName,
-                                        /*request_port=*/0, &results),
-            DnsResponseResultExtractor::ExtractionError::kNameMismatch);
-
-  EXPECT_THAT(results.error(), test::IsError(ERR_DNS_MALFORMED_RESPONSE));
-  EXPECT_FALSE(results.has_ttl());
-}
-
-TEST(DnsResponseResultExtractorTest,
-     IgnoresWrongTypeExperimentalHttpsResponses) {
-  constexpr char kName[] = "https.test";
-
-  DnsResponse response = BuildTestDnsResponse(
-      kName, dns_protocol::kTypeHttps,
-      {BuildTestAddressRecord(kName, IPAddress(1, 2, 3, 4))});
-  DnsResponseResultExtractor extractor(&response);
-
-  HostCache::Entry results(ERR_FAILED, HostCache::Entry::SOURCE_UNKNOWN);
-  EXPECT_EQ(extractor.ExtractDnsResults(DnsQueryType::HTTPS_EXPERIMENTAL,
-                                        /*original_domain_name=*/kName,
-                                        /*request_port=*/0, &results),
-            DnsResponseResultExtractor::ExtractionError::kOk);
-
-  EXPECT_THAT(results.error(), test::IsError(ERR_NAME_NOT_RESOLVED));
-  EXPECT_THAT(results.https_record_compatibility(),
-              testing::Pointee(testing::IsEmpty()));
-  EXPECT_FALSE(results.has_ttl());
-}
-
-TEST(DnsResponseResultExtractorTest,
-     IgnoresAdditionalExperimentalHttpsRecords) {
-  constexpr char kName[] = "https.test";
-  constexpr auto kTtl = base::Days(3);
-
-  DnsResponse response = BuildTestDnsResponse(
-      kName, dns_protocol::kTypeHttps,
-      /*answers=*/{BuildTestHttpsAliasRecord(kName, "alias.test", kTtl)},
-      /*authority=*/{},
-      /*additional=*/
-      {BuildTestHttpsServiceRecord(kName, 3u, "service1.test", {},
-                                   base::Minutes(44)),
-       BuildTestHttpsServiceRecord(kName, 2u, "service2.test", {},
-                                   base::Minutes(30))});
-  DnsResponseResultExtractor extractor(&response);
-
-  HostCache::Entry results(ERR_FAILED, HostCache::Entry::SOURCE_UNKNOWN);
-  EXPECT_EQ(extractor.ExtractDnsResults(DnsQueryType::HTTPS_EXPERIMENTAL,
-                                        /*original_domain_name=*/kName,
-                                        /*request_port=*/0, &results),
-            DnsResponseResultExtractor::ExtractionError::kOk);
-
-  EXPECT_THAT(results.error(), test::IsOk());
-  EXPECT_THAT(results.https_record_compatibility(),
-              testing::Pointee(testing::ElementsAre(true)));
-
-  ASSERT_TRUE(results.has_ttl());
-  EXPECT_EQ(results.ttl(), kTtl);
-}
-
 TEST(DnsResponseResultExtractorTest, ExtractsBasicHttpsResponses) {
   constexpr char kName[] = "https.test";
   constexpr auto kTtl = base::Hours(12);
@@ -922,7 +760,8 @@ TEST(DnsResponseResultExtractorTest, ExtractsBasicHttpsResponses) {
   EXPECT_THAT(
       results.GetMetadatas(),
       testing::Optional(testing::ElementsAre(ExpectConnectionEndpointMetadata(
-          testing::ElementsAre(dns_protocol::kHttpsServiceDefaultAlpn)))));
+          testing::ElementsAre(dns_protocol::kHttpsServiceDefaultAlpn),
+          testing::IsEmpty(), kName))));
   EXPECT_THAT(results.https_record_compatibility(),
               testing::Pointee(testing::ElementsAre(true)));
 
@@ -963,11 +802,12 @@ TEST(DnsResponseResultExtractorTest, ExtractsComprehensiveHttpsResponses) {
   EXPECT_THAT(results.error(), test::IsOk());
   EXPECT_THAT(results.GetMetadatas(),
               testing::Optional(testing::ElementsAre(
-                  ExpectConnectionEndpointMetadata(testing::ElementsAre(kAlpn)),
+                  ExpectConnectionEndpointMetadata(testing::ElementsAre(kAlpn),
+                                                   testing::IsEmpty(), kName),
                   ExpectConnectionEndpointMetadata(
                       testing::ElementsAre(
                           kAlpn, dns_protocol::kHttpsServiceDefaultAlpn),
-                      testing::ElementsAreArray(kEchConfig)))));
+                      testing::ElementsAreArray(kEchConfig), kName))));
   EXPECT_THAT(results.https_record_compatibility(),
               testing::Pointee(testing::ElementsAre(true, true)));
 
@@ -1058,7 +898,8 @@ TEST(DnsResponseResultExtractorTest, IgnoresUnsupportedParamsInHttpsRecord) {
   EXPECT_THAT(
       results.GetMetadatas(),
       testing::Optional(testing::ElementsAre(ExpectConnectionEndpointMetadata(
-          testing::ElementsAre(dns_protocol::kHttpsServiceDefaultAlpn)))));
+          testing::ElementsAre(dns_protocol::kHttpsServiceDefaultAlpn),
+          testing::IsEmpty(), kName))));
   EXPECT_THAT(results.https_record_compatibility(),
               testing::Pointee(testing::ElementsAre(true)));
 }
@@ -1092,10 +933,11 @@ TEST(DnsResponseResultExtractorTest,
             DnsResponseResultExtractor::ExtractionError::kOk);
 
   EXPECT_THAT(results.error(), test::IsOk());
-  EXPECT_THAT(results.GetMetadatas(),
-              testing::Optional(testing::ElementsAre(
-                  ExpectConnectionEndpointMetadata(testing::ElementsAre(
-                      "foo", dns_protocol::kHttpsServiceDefaultAlpn)))));
+  EXPECT_THAT(
+      results.GetMetadatas(),
+      testing::Optional(testing::ElementsAre(ExpectConnectionEndpointMetadata(
+          testing::ElementsAre("foo", dns_protocol::kHttpsServiceDefaultAlpn),
+          testing::IsEmpty(), kName))));
   EXPECT_THAT(results.https_record_compatibility(),
               testing::Pointee(testing::ElementsAre(false, true)));
 }
@@ -1119,10 +961,11 @@ TEST(DnsResponseResultExtractorTest,
             DnsResponseResultExtractor::ExtractionError::kOk);
 
   EXPECT_THAT(results.error(), test::IsOk());
-  EXPECT_THAT(results.GetMetadatas(),
-              testing::Optional(testing::ElementsAre(
-                  ExpectConnectionEndpointMetadata(testing::ElementsAre(
-                      "foo", dns_protocol::kHttpsServiceDefaultAlpn)))));
+  EXPECT_THAT(
+      results.GetMetadatas(),
+      testing::Optional(testing::ElementsAre(ExpectConnectionEndpointMetadata(
+          testing::ElementsAre("foo", dns_protocol::kHttpsServiceDefaultAlpn),
+          testing::IsEmpty(), kName))));
   EXPECT_THAT(results.https_record_compatibility(),
               testing::Pointee(testing::ElementsAre(true)));
 }
@@ -1146,10 +989,11 @@ TEST(DnsResponseResultExtractorTest,
             DnsResponseResultExtractor::ExtractionError::kOk);
 
   EXPECT_THAT(results.error(), test::IsOk());
-  EXPECT_THAT(results.GetMetadatas(),
-              testing::Optional(testing::ElementsAre(
-                  ExpectConnectionEndpointMetadata(testing::ElementsAre(
-                      "foo", dns_protocol::kHttpsServiceDefaultAlpn)))));
+  EXPECT_THAT(
+      results.GetMetadatas(),
+      testing::Optional(testing::ElementsAre(ExpectConnectionEndpointMetadata(
+          testing::ElementsAre("foo", dns_protocol::kHttpsServiceDefaultAlpn),
+          testing::IsEmpty(), kName))));
   EXPECT_THAT(results.https_record_compatibility(),
               testing::Pointee(testing::ElementsAre(true)));
 }
@@ -1174,10 +1018,11 @@ TEST(DnsResponseResultExtractorTest,
             DnsResponseResultExtractor::ExtractionError::kOk);
 
   EXPECT_THAT(results.error(), test::IsOk());
-  EXPECT_THAT(results.GetMetadatas(),
-              testing::Optional(testing::ElementsAre(
-                  ExpectConnectionEndpointMetadata(testing::ElementsAre(
-                      "foo", dns_protocol::kHttpsServiceDefaultAlpn)))));
+  EXPECT_THAT(
+      results.GetMetadatas(),
+      testing::Optional(testing::ElementsAre(ExpectConnectionEndpointMetadata(
+          testing::ElementsAre("foo", dns_protocol::kHttpsServiceDefaultAlpn),
+          testing::IsEmpty(), kName))));
   EXPECT_THAT(results.https_record_compatibility(),
               testing::Pointee(testing::ElementsAre(true)));
 }
@@ -1202,10 +1047,11 @@ TEST(DnsResponseResultExtractorTest,
             DnsResponseResultExtractor::ExtractionError::kOk);
 
   EXPECT_THAT(results.error(), test::IsOk());
-  EXPECT_THAT(results.GetMetadatas(),
-              testing::Optional(testing::ElementsAre(
-                  ExpectConnectionEndpointMetadata(testing::ElementsAre(
-                      "foo", dns_protocol::kHttpsServiceDefaultAlpn)))));
+  EXPECT_THAT(
+      results.GetMetadatas(),
+      testing::Optional(testing::ElementsAre(ExpectConnectionEndpointMetadata(
+          testing::ElementsAre("foo", dns_protocol::kHttpsServiceDefaultAlpn),
+          testing::IsEmpty(), kName))));
   EXPECT_THAT(results.https_record_compatibility(),
               testing::Pointee(testing::ElementsAre(true)));
 }
@@ -1234,25 +1080,25 @@ TEST(DnsResponseResultExtractorTest,
             DnsResponseResultExtractor::ExtractionError::kOk);
 
   EXPECT_THAT(results.error(), test::IsOk());
-  EXPECT_THAT(results.GetMetadatas(),
-              testing::Optional(testing::ElementsAre(
-                  ExpectConnectionEndpointMetadata(testing::ElementsAre(
-                      "foo", dns_protocol::kHttpsServiceDefaultAlpn)))));
+  EXPECT_THAT(
+      results.GetMetadatas(),
+      testing::Optional(testing::ElementsAre(ExpectConnectionEndpointMetadata(
+          testing::ElementsAre("foo", dns_protocol::kHttpsServiceDefaultAlpn),
+          testing::IsEmpty(), kName))));
   EXPECT_THAT(results.https_record_compatibility(),
               testing::Pointee(testing::ElementsAre(true, true)));
 }
 
 TEST(DnsResponseResultExtractorTest,
-     IgnoreHttpsRecordWithPrefixedNameAndDefaultServiceName) {
+     ExtractsHttpsRecordWithPrefixedNameAndDefaultServiceName) {
   constexpr char kPrefixedName[] = "_445._https.https.test";
 
-  DnsResponse response =
-      BuildTestDnsResponse(kPrefixedName, dns_protocol::kTypeHttps,
-                           {BuildTestHttpsServiceRecord(
-                               kPrefixedName, /*priority=*/4,
-                               /*service_name=*/".",
-                               /*params=*/
-                               {BuildTestHttpsServiceAlpnParam({"ignored"})})});
+  DnsResponse response = BuildTestDnsResponse(
+      kPrefixedName, dns_protocol::kTypeHttps,
+      {BuildTestHttpsServiceRecord(kPrefixedName, /*priority=*/4,
+                                   /*service_name=*/".",
+                                   /*params=*/
+                                   {BuildTestHttpsServiceAlpnParam({"foo"})})});
   DnsResponseResultExtractor extractor(&response);
 
   HostCache::Entry results(ERR_FAILED, HostCache::Entry::SOURCE_UNKNOWN);
@@ -1261,14 +1107,18 @@ TEST(DnsResponseResultExtractorTest,
                                         /*request_port=*/0, &results),
             DnsResponseResultExtractor::ExtractionError::kOk);
 
-  EXPECT_THAT(results.error(), test::IsError(ERR_NAME_NOT_RESOLVED));
-  EXPECT_THAT(results.GetMetadatas(), testing::Optional(testing::IsEmpty()));
+  EXPECT_THAT(results.error(), test::IsOk());
+  EXPECT_THAT(
+      results.GetMetadatas(),
+      testing::Optional(testing::ElementsAre(ExpectConnectionEndpointMetadata(
+          testing::ElementsAre("foo", dns_protocol::kHttpsServiceDefaultAlpn),
+          testing::IsEmpty(), kPrefixedName))));
   EXPECT_THAT(results.https_record_compatibility(),
               testing::Pointee(testing::ElementsAre(true)));
 }
 
 TEST(DnsResponseResultExtractorTest,
-     IgnoreHttpsRecordWithAliasingAndDefaultServiceName) {
+     ExtractsHttpsRecordWithAliasingAndDefaultServiceName) {
   constexpr char kName[] = "https.test";
 
   DnsResponse response = BuildTestDnsResponse(
@@ -1286,8 +1136,12 @@ TEST(DnsResponseResultExtractorTest,
                                         /*request_port=*/0, &results),
             DnsResponseResultExtractor::ExtractionError::kOk);
 
-  EXPECT_THAT(results.error(), test::IsError(ERR_NAME_NOT_RESOLVED));
-  EXPECT_THAT(results.GetMetadatas(), testing::Optional(testing::IsEmpty()));
+  EXPECT_THAT(results.error(), test::IsOk());
+  EXPECT_THAT(
+      results.GetMetadatas(),
+      testing::Optional(testing::ElementsAre(ExpectConnectionEndpointMetadata(
+          testing::ElementsAre("foo", dns_protocol::kHttpsServiceDefaultAlpn),
+          testing::IsEmpty(), "alias.test"))));
   EXPECT_THAT(results.https_record_compatibility(),
               testing::Pointee(testing::ElementsAre(true)));
 }
@@ -1312,10 +1166,11 @@ TEST(DnsResponseResultExtractorTest, ExtractsHttpsRecordWithMatchingPort) {
             DnsResponseResultExtractor::ExtractionError::kOk);
 
   EXPECT_THAT(results.error(), test::IsOk());
-  EXPECT_THAT(results.GetMetadatas(),
-              testing::Optional(testing::ElementsAre(
-                  ExpectConnectionEndpointMetadata(testing::ElementsAre(
-                      "foo", dns_protocol::kHttpsServiceDefaultAlpn)))));
+  EXPECT_THAT(
+      results.GetMetadatas(),
+      testing::Optional(testing::ElementsAre(ExpectConnectionEndpointMetadata(
+          testing::ElementsAre("foo", dns_protocol::kHttpsServiceDefaultAlpn),
+          testing::IsEmpty(), kName))));
   EXPECT_THAT(results.https_record_compatibility(),
               testing::Pointee(testing::ElementsAre(true)));
 }
@@ -1343,10 +1198,11 @@ TEST(DnsResponseResultExtractorTest, IgnoresHttpsRecordWithMismatchingPort) {
             DnsResponseResultExtractor::ExtractionError::kOk);
 
   EXPECT_THAT(results.error(), test::IsOk());
-  EXPECT_THAT(results.GetMetadatas(),
-              testing::Optional(testing::ElementsAre(
-                  ExpectConnectionEndpointMetadata(testing::ElementsAre(
-                      "foo", dns_protocol::kHttpsServiceDefaultAlpn)))));
+  EXPECT_THAT(
+      results.GetMetadatas(),
+      testing::Optional(testing::ElementsAre(ExpectConnectionEndpointMetadata(
+          testing::ElementsAre("foo", dns_protocol::kHttpsServiceDefaultAlpn),
+          testing::IsEmpty(), kName))));
   EXPECT_THAT(results.https_record_compatibility(),
               testing::Pointee(testing::ElementsAre(true, true)));
 }
@@ -1376,10 +1232,11 @@ TEST(DnsResponseResultExtractorTest, IgnoresHttpsRecordWithNoAlpn) {
             DnsResponseResultExtractor::ExtractionError::kOk);
 
   EXPECT_THAT(results.error(), test::IsOk());
-  EXPECT_THAT(results.GetMetadatas(),
-              testing::Optional(testing::ElementsAre(
-                  ExpectConnectionEndpointMetadata(testing::ElementsAre(
-                      "foo", dns_protocol::kHttpsServiceDefaultAlpn)))));
+  EXPECT_THAT(
+      results.GetMetadatas(),
+      testing::Optional(testing::ElementsAre(ExpectConnectionEndpointMetadata(
+          testing::ElementsAre("foo", dns_protocol::kHttpsServiceDefaultAlpn),
+          testing::IsEmpty(), kName))));
   EXPECT_THAT(results.https_record_compatibility(),
               testing::Pointee(testing::ElementsAre(true, true)));
 }
@@ -1579,10 +1436,11 @@ TEST(DnsResponseResultExtractorTest, IgnoresAdditionalHttpsRecords) {
             DnsResponseResultExtractor::ExtractionError::kOk);
 
   EXPECT_THAT(results.error(), test::IsOk());
-  EXPECT_THAT(results.GetMetadatas(),
-              testing::Optional(testing::ElementsAre(
-                  ExpectConnectionEndpointMetadata(testing::ElementsAre(
-                      "foo1", dns_protocol::kHttpsServiceDefaultAlpn)))));
+  EXPECT_THAT(
+      results.GetMetadatas(),
+      testing::Optional(testing::ElementsAre(ExpectConnectionEndpointMetadata(
+          testing::ElementsAre("foo1", dns_protocol::kHttpsServiceDefaultAlpn),
+          testing::IsEmpty(), kName))));
   EXPECT_THAT(results.https_record_compatibility(),
               testing::Pointee(testing::ElementsAre(true)));
 
@@ -2125,9 +1983,18 @@ TEST(DnsResponseResultExtractorTest, ValidatesAliasNames) {
 TEST(DnsResponseResultExtractorTest, CanonicalizesAliasNames) {
   const IPAddress kExpected(192, 168, 0, 1);
   constexpr char kName[] = "address.test";
+  constexpr char kCname[] = "\005ALIAS\004test\000";
 
+  // Need to build records directly in order to manually encode alias target
+  // name because BuildTestDnsAddressResponseWithCname() uses DNSDomainFromDot()
+  // which does not support non-URL-canonicalized names.
+  std::vector<DnsResourceRecord> answers = {
+      BuildTestDnsRecord(kName, dns_protocol::kTypeCNAME,
+                         std::string(kCname, sizeof(kCname) - 1)),
+      BuildTestAddressRecord("alias.test", kExpected)};
   DnsResponse response =
-      BuildTestDnsAddressResponseWithCname(kName, kExpected, "ALIAS.test.");
+      BuildTestDnsResponse(kName, dns_protocol::kTypeA, answers);
+
   DnsResponseResultExtractor extractor(&response);
 
   HostCache::Entry results(ERR_FAILED, HostCache::Entry::SOURCE_UNKNOWN);

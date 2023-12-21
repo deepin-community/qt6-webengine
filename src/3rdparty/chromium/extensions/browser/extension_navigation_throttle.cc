@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "base/containers/contains.h"
 #include "components/guest_view/browser/guest_view_base.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_handle.h"
@@ -16,19 +17,21 @@
 #include "extensions/browser/app_window/app_window.h"
 #include "extensions/browser/app_window/app_window_registry.h"
 #include "extensions/browser/extension_host.h"
+#include "extensions/browser/extension_host_registry.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/guest_view/app_view/app_view_guest.h"
 #include "extensions/browser/guest_view/mime_handler_view/mime_handler_view_embedder.h"
 #include "extensions/browser/guest_view/web_view/web_view_guest.h"
-#include "extensions/browser/process_manager.h"
 #include "extensions/browser/url_request_util.h"
 #include "extensions/browser/view_type_utils.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
+#include "extensions/common/extension_urls.h"
 #include "extensions/common/identifiability_metrics.h"
 #include "extensions/common/manifest_handlers/icons_handler.h"
+#include "extensions/common/manifest_handlers/mime_types_handler.h"
 #include "extensions/common/manifest_handlers/web_accessible_resources_info.h"
 #include "extensions/common/manifest_handlers/webview_info.h"
 #include "extensions/common/mojom/view_type.mojom.h"
@@ -105,7 +108,9 @@ bool ShouldBlockNavigationToPlatformAppResource(
   DCHECK(view_type == mojom::ViewType::kBackgroundContents ||
          view_type == mojom::ViewType::kComponent ||
          view_type == mojom::ViewType::kExtensionPopup ||
-         view_type == mojom::ViewType::kTabContents)
+         view_type == mojom::ViewType::kTabContents ||
+         view_type == mojom::ViewType::kOffscreenDocument ||
+         view_type == mojom::ViewType::kExtensionSidePanel)
       << "Unhandled view type: " << view_type;
 
   return true;
@@ -117,7 +122,7 @@ ExtensionNavigationThrottle::ExtensionNavigationThrottle(
     content::NavigationHandle* navigation_handle)
     : content::NavigationThrottle(navigation_handle) {}
 
-ExtensionNavigationThrottle::~ExtensionNavigationThrottle() {}
+ExtensionNavigationThrottle::~ExtensionNavigationThrottle() = default;
 
 content::NavigationThrottle::ThrottleCheckResult
 ExtensionNavigationThrottle::WillStartOrRedirectRequest() {
@@ -125,22 +130,21 @@ ExtensionNavigationThrottle::WillStartOrRedirectRequest() {
   content::WebContents* web_contents = navigation_handle()->GetWebContents();
   content::BrowserContext* browser_context = web_contents->GetBrowserContext();
 
-  // Prevent the extension's background page from being navigated away. See
-  // crbug.com/1130083.
+  // Prevent background extension contexts from being navigated away.
+  // See crbug.com/1130083.
   if (navigation_handle()->IsInPrimaryMainFrame()) {
-    ProcessManager* process_manager = ProcessManager::Get(browser_context);
-    DCHECK(process_manager);
-    ExtensionHost* host = process_manager->GetExtensionHostForRenderFrameHost(
-        web_contents->GetMainFrame());
+    ExtensionHostRegistry* host_registry =
+        ExtensionHostRegistry::Get(browser_context);
+    DCHECK(host_registry);
+    ExtensionHost* host = host_registry->GetExtensionHostForPrimaryMainFrame(
+        web_contents->GetPrimaryMainFrame());
 
     // Navigation throttles don't intercept same document navigations, hence we
     // can ignore that case.
     DCHECK(!navigation_handle()->IsSameDocument());
 
-    if (host &&
-        host->extension_host_type() ==
-            mojom::ViewType::kExtensionBackgroundPage &&
-        host->initial_url() != navigation_handle()->GetURL()) {
+    if (host && host->initial_url() != navigation_handle()->GetURL() &&
+        !host->ShouldAllowNavigations()) {
       return content::NavigationThrottle::CANCEL;
     }
   }
@@ -158,8 +162,8 @@ ExtensionNavigationThrottle::WillStartOrRedirectRequest() {
   const Extension* target_extension = nullptr;
   if (url_has_extension_scheme) {
     // "chrome-extension://" URL.
-    target_extension =
-        registry->enabled_extensions().GetExtensionOrAppByURL(url);
+    target_extension = registry->enabled_extensions().GetExtensionOrAppByURL(
+        url, true /*include_guid*/);
   } else if (target_origin.scheme() == kExtensionScheme) {
     // "blob:chrome-extension://" or "filesystem:chrome-extension://" URL.
     DCHECK(url.SchemeIsFileSystem() || url.SchemeIsBlob());
@@ -173,6 +177,12 @@ ExtensionNavigationThrottle::WillStartOrRedirectRequest() {
       const Extension* hosted_app =
           registry->enabled_extensions().GetHostedAppByURL(url);
       if (hosted_app && hosted_app->id() == kWebStoreAppId)
+        return content::NavigationThrottle::BLOCK_REQUEST;
+      // Also apply the same blocking if the URL maps to the new webstore
+      // domain. Note: We can't use the extension_urls::IsWebstoreDomain check
+      // here, as the webstore hosted app is associated with a specific path and
+      // we don't want to block navigations to other paths on that domain.
+      if (url.DomainIs(extension_urls::GetNewWebstoreLaunchURL().host()))
         return content::NavigationThrottle::BLOCK_REQUEST;
     }
 
@@ -270,19 +280,31 @@ ExtensionNavigationThrottle::WillStartOrRedirectRequest() {
     return content::NavigationThrottle::BLOCK_REQUEST;
   }
 
-  // A browser-initiated navigation is always considered trusted, and thus
-  // allowed.
-  if (!navigation_handle()->IsRendererInitiated())
-    return content::NavigationThrottle::PROCEED;
-
-  // A renderer-initiated request without an initiator origin is a history
-  // traversal to an entry that was originally loaded in a browser-initiated
-  // navigation. Those are trusted, too.
+  // Automatically trusted navigation:
+  // * Browser-initiated navigations without an initiator origin happen when a
+  //   user directly triggers a navigation (e.g. using the omnibox, or the
+  //   bookmark bar).
+  // * Renderer-initiated navigations without an initiator origin represent a
+  //   history traversal to an entry that was originally loaded in a
+  //   browser-initiated navigation.
   if (!navigation_handle()->GetInitiatorOrigin().has_value())
     return content::NavigationThrottle::PROCEED;
 
+  // Not automatically trusted navigation:
+  // * Some browser-initiated navigations with an initiator origin are not
+  //   automatically trusted and allowed. For example, see the scenario where
+  //   a frame-reload is triggered from the context menu in crbug.com/1343610.
+  // * An initiator origin matching an extension. There are some MIME type
+  //   handlers in an allow list. For example, there are a variety of mechanisms
+  //   that can initiate navigations from the PDF viewer. The extension isn't
+  //   navigated, but the page that contains the PDF can be.
   const url::Origin& initiator_origin =
       navigation_handle()->GetInitiatorOrigin().value();
+  if (initiator_origin.scheme() == kExtensionScheme &&
+      base::Contains(MimeTypesHandler::GetMIMETypeAllowlist(),
+                     initiator_origin.host())) {
+    return content::NavigationThrottle::PROCEED;
+  }
 
   // Navigations from chrome://, devtools:// or chrome-search:// pages need to
   // be allowed, even if the target |url| is not web-accessible.  See also:

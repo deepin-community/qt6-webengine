@@ -1,4 +1,4 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -474,6 +474,8 @@ class _IRBuilder(object):
                     # Discard the arguments.
                     arguments = ()
                     name = child.GetName()
+                else:
+                    assert False
 
             return ExtendedAttribute(
                 key=key, values=values, arguments=arguments, name=name)
@@ -608,30 +610,28 @@ class _IRBuilder(object):
         iter_map[Identifier('entries')].is_iterator = True
         iter_ops = list(iter_map.values())
         read_ops = [
-            self._create_operation(
-                Identifier('get'),
-                arguments=self._create_arguments([
-                    (Identifier('key'), key_type),
-                ]),
-                return_type=value_type,
-                extended_attributes={
-                    'CallWith': 'ScriptState',
-                    'RaisesException': None,
-                    'ImplementedAs': 'getForBinding',
-                },
-                node=node),
-            self._create_operation(
-                Identifier('has'),
-                arguments=self._create_arguments([
-                    (Identifier('key'), key_type),
-                ]),
-                return_type='boolean',
-                extended_attributes={
-                    'CallWith': 'ScriptState',
-                    'RaisesException': None,
-                    'ImplementedAs': 'hasForBinding',
-                },
-                node=node),
+            self._create_operation(Identifier('get'),
+                                   arguments=self._create_arguments([
+                                       (Identifier('key'), key_type),
+                                   ]),
+                                   return_type='any',
+                                   extended_attributes={
+                                       'CallWith': 'ScriptState',
+                                       'RaisesException': None,
+                                       'ImplementedAs': 'getForBinding',
+                                   },
+                                   node=node),
+            self._create_operation(Identifier('has'),
+                                   arguments=self._create_arguments([
+                                       (Identifier('key'), key_type),
+                                   ]),
+                                   return_type='boolean',
+                                   extended_attributes={
+                                       'CallWith': 'ScriptState',
+                                       'RaisesException': None,
+                                       'ImplementedAs': 'hasForBinding',
+                                   },
+                                   node=node),
         ]
         write_ops = [
             self._create_operation(
@@ -888,7 +888,7 @@ class _IRBuilder(object):
         def build_simple_type(node, extended_attributes):
             name = node.GetName()
             if name is None:
-                assert node.GetClass() == 'Any'
+                assert node.GetClass() in ('Any', 'Undefined')
                 name = node.GetClass().lower()
             if node.GetProperty('UNRESTRICTED'):
                 name = 'unrestricted {}'.format(name)
@@ -939,6 +939,7 @@ class _IRBuilder(object):
             'Sequence': build_sequence_type,
             'StringType': build_simple_type,
             'Typeref': build_reference_type,
+            'Undefined': build_simple_type,
             'UnionType': build_union_type,
         }
         return build_functions[body_node.GetClass()](
@@ -1020,49 +1021,46 @@ class _IRBuilder(object):
         """Constructs a set of iterator operations."""
         return {
             Identifier('forEach'):
-            self._create_operation(
-                Identifier('forEach'),
-                arguments=self._create_arguments([
-                    (Identifier('callback'),
-                     Identifier('ForEachIteratorCallback')),
-                    (Identifier('thisArg'), 'any', 'null'),
-                ]),
-                extended_attributes={
-                    'CallWith': ('ScriptState', 'ThisValue'),
-                    'RaisesException': None,
-                    'ImplementedAs': 'forEachForBinding',
-                },
-                node=node),
+            self._create_operation(Identifier('forEach'),
+                                   arguments=self._create_arguments([
+                                       (Identifier('callback'),
+                                        Identifier('ForEachIteratorCallback')),
+                                       (Identifier('thisArg'), 'any', 'null'),
+                                   ]),
+                                   extended_attributes={
+                                       'CallWith':
+                                       ('ScriptState', 'ThisValue'),
+                                       'RaisesException': None,
+                                       'ImplementedAs': 'forEachForBinding',
+                                   },
+                                   node=node),
             Identifier('entries'):
-            self._create_operation(
-                Identifier('entries'),
-                return_type=Identifier('Iterator'),
-                extended_attributes={
-                    'CallWith': 'ScriptState',
-                    'RaisesException': None,
-                    'ImplementedAs': 'entriesForBinding',
-                },
-                node=node),
+            self._create_operation(Identifier('entries'),
+                                   return_type=Identifier('SyncIteratorType'),
+                                   extended_attributes={
+                                       'CallWith': 'ScriptState',
+                                       'RaisesException': None,
+                                       'ImplementedAs': 'entriesForBinding',
+                                   },
+                                   node=node),
             Identifier('keys'):
-            self._create_operation(
-                Identifier('keys'),
-                return_type=Identifier('Iterator'),
-                extended_attributes={
-                    'CallWith': 'ScriptState',
-                    'RaisesException': None,
-                    'ImplementedAs': 'keysForBinding',
-                },
-                node=node),
+            self._create_operation(Identifier('keys'),
+                                   return_type=Identifier('SyncIteratorType'),
+                                   extended_attributes={
+                                       'CallWith': 'ScriptState',
+                                       'RaisesException': None,
+                                       'ImplementedAs': 'keysForBinding',
+                                   },
+                                   node=node),
             Identifier('values'):
-            self._create_operation(
-                Identifier('values'),
-                return_type=Identifier('Iterator'),
-                extended_attributes={
-                    'CallWith': 'ScriptState',
-                    'RaisesException': None,
-                    'ImplementedAs': 'valuesForBinding',
-                },
-                node=node),
+            self._create_operation(Identifier('values'),
+                                   return_type=Identifier('SyncIteratorType'),
+                                   extended_attributes={
+                                       'CallWith': 'ScriptState',
+                                       'RaisesException': None,
+                                       'ImplementedAs': 'valuesForBinding',
+                                   },
+                                   node=node),
         }
 
     def _create_literal_constant(self, token):

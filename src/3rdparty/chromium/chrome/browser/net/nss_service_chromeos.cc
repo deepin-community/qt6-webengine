@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,13 +7,11 @@
 #include <memory>
 #include <utility>
 
-#include "ash/components/settings/cros_settings_names.h"
-#include "ash/components/tpm/tpm_token_info_getter.h"
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/callback_list.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/memory/weak_ptr.h"
 #include "base/supports_user_data.h"
@@ -25,8 +23,10 @@
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/userdataauth/cryptohome_pkcs11_client.h"
+#include "chromeos/ash/components/dbus/dbus_thread_manager.h"
+#include "chromeos/ash/components/dbus/userdataauth/cryptohome_pkcs11_client.h"
+#include "chromeos/ash/components/settings/cros_settings_names.h"
+#include "chromeos/ash/components/tpm/tpm_token_info_getter.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/browser_context.h"
@@ -99,8 +99,8 @@ void GetTPMInfoForUserOnUIThread(const AccountId& account_id,
            << " " << account_id.Serialize() << " " << username_hash;
   std::unique_ptr<ash::TPMTokenInfoGetter> scoped_token_info_getter =
       ash::TPMTokenInfoGetter::CreateForUserToken(
-          account_id, chromeos::CryptohomePkcs11Client::Get(),
-          base::ThreadTaskRunnerHandle::Get());
+          account_id, ash::CryptohomePkcs11Client::Get(),
+          base::SingleThreadTaskRunner::GetCurrentDefault());
   ash::TPMTokenInfoGetter* token_info_getter = scoped_token_info_getter.get();
 
   // Bind |token_info_getter| to the callback to ensure it does not go away

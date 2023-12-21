@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,29 +11,28 @@
 
 // Current version number.  Note: when changing the current version number,
 // corresponding changes must happen in the unit tests, and new migration test
-// added.  See |WebDatabaseMigrationTest::kCurrentTestedVersionNumber|.
+// added.  See `WebDatabaseMigrationTest::kCurrentTestedVersionNumber`.
 // static
-const int WebDatabase::kCurrentVersionNumber = 104;
+const int WebDatabase::kCurrentVersionNumber = 111;
 
-const int WebDatabase::kDeprecatedVersionNumber = 51;
+const int WebDatabase::kDeprecatedVersionNumber = 82;
 
 const base::FilePath::CharType WebDatabase::kInMemoryPath[] =
     FILE_PATH_LITERAL(":memory");
 
 namespace {
 
-const int kCompatibleVersionNumber = 99;
+const int kCompatibleVersionNumber = 106;
 
 // Change the version number and possibly the compatibility version of
 // |meta_table_|.
-void ChangeVersion(sql::MetaTable* meta_table,
-                   int version_num,
-                   bool update_compatible_version_num) {
-  meta_table->SetVersionNumber(version_num);
-  if (update_compatible_version_num) {
-    meta_table->SetCompatibleVersionNumber(
-        std::min(version_num, kCompatibleVersionNumber));
-  }
+[[nodiscard]] bool ChangeVersion(sql::MetaTable* meta_table,
+                                 int version_num,
+                                 bool update_compatible_version_num) {
+  return meta_table->SetVersionNumber(version_num) &&
+         (!update_compatible_version_num ||
+          meta_table->SetCompatibleVersionNumber(
+              std::min(version_num, kCompatibleVersionNumber)));
 }
 
 // Outputs the failed version number as a warning and always returns
@@ -48,17 +47,17 @@ sql::InitStatus FailedMigrationTo(int version_num) {
 }  // namespace
 
 WebDatabase::WebDatabase()
-    : db_(sql::DatabaseOptions(// Run the database in exclusive mode. Nobody else should be
+    : db_({// Run the database in exclusive mode. Nobody else should be
            // accessing the database while we're running, and this will give
            // somewhat improved perf.
-           /* .exclusive_locking = */ true,
+           .exclusive_locking = true,
            // We don't store that much data in the tables so use a small page
            // size. This provides a large benefit for empty tables (which is
            // very likely with the tables we create).
-           /* .page_size = */ 2048,
+           .page_size = 2048,
            // We shouldn't have much data and what access we currently have is
            // quite infrequent. So we go with a small cache size.
-           /* .cache_size = */ 32)) {}
+           .cache_size = 32}) {}
 
 WebDatabase::~WebDatabase() = default;
 
@@ -148,8 +147,10 @@ sql::InitStatus WebDatabase::MigrateOldVersionsAsNeeded() {
   // version number.
   int current_version = std::max(meta_table_.GetVersionNumber(),
                                  meta_table_.GetCompatibleVersionNumber());
-  if (current_version > meta_table_.GetVersionNumber())
-    ChangeVersion(&meta_table_, current_version, false);
+  if (current_version > meta_table_.GetVersionNumber() &&
+      !ChangeVersion(&meta_table_, current_version, false)) {
+    return FailedMigrationTo(current_version);
+  }
 
   DCHECK_GT(current_version, kDeprecatedVersionNumber);
 
@@ -157,21 +158,21 @@ sql::InitStatus WebDatabase::MigrateOldVersionsAsNeeded() {
        next_version <= kCurrentVersionNumber; ++next_version) {
     // Do any database-wide migrations.
     bool update_compatible_version = false;
-    if (!MigrateToVersion(next_version, &update_compatible_version))
+    if (!MigrateToVersion(next_version, &update_compatible_version) ||
+        !ChangeVersion(&meta_table_, next_version, update_compatible_version)) {
       return FailedMigrationTo(next_version);
-
-    ChangeVersion(&meta_table_, next_version, update_compatible_version);
+    }
 
     // Give each table a chance to migrate to this version.
     for (const auto& table : tables_) {
       // Any of the tables may set this to true, but by default it is false.
       update_compatible_version = false;
       if (!table.second->MigrateToVersion(next_version,
-                                          &update_compatible_version)) {
+                                          &update_compatible_version) ||
+          !ChangeVersion(&meta_table_, next_version,
+                         update_compatible_version)) {
         return FailedMigrationTo(next_version);
       }
-
-      ChangeVersion(&meta_table_, next_version, update_compatible_version);
     }
   }
   return sql::INIT_OK;
@@ -187,6 +188,9 @@ bool WebDatabase::MigrateToVersion(int version,
     case 79:
       *update_compatible_version = true;
       return MigrateToVersion79DropLoginsTable();
+    case 105:
+      *update_compatible_version = true;
+      return MigrateToVersion105DropIbansTable();
   }
 
   return true;
@@ -206,4 +210,8 @@ bool WebDatabase::MigrateToVersion79DropLoginsTable() {
   return transaction.Begin() &&
          db_.Execute("DROP TABLE IF EXISTS ie7_logins") &&
          db_.Execute("DROP TABLE IF EXISTS logins") && transaction.Commit();
+}
+
+bool WebDatabase::MigrateToVersion105DropIbansTable() {
+  return db_.Execute("DROP TABLE IF EXISTS ibans");
 }

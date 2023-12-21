@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,24 +10,23 @@
 #include <utility>
 
 #include "base/allocator/allocator_extension.h"
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/command_line.h"
 #include "base/debug/dump_without_crashing.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/weak_ptr.h"
 #include "base/power_monitor/power_monitor.h"
 #include "base/power_monitor/power_monitor_device_source.h"
 #include "base/run_loop.h"
 #include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "content/child/child_process.h"
 #include "content/common/process_visibility_tracker.h"
 #include "content/gpu/browser_exposed_gpu_interfaces.h"
 #include "content/gpu/gpu_service_factory.h"
-#include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/gpu/content_gpu_client.h"
@@ -90,6 +89,7 @@ viz::VizMainImpl::ExternalDependencies CreateVizMainDependencies() {
     deps.sync_point_manager = GetContentClient()->gpu()->GetSyncPointManager();
     deps.shared_image_manager =
         GetContentClient()->gpu()->GetSharedImageManager();
+    deps.scheduler = GetContentClient()->gpu()->GetScheduler();
     deps.viz_compositor_thread_runner =
         GetContentClient()->gpu()->GetVizCompositorThreadRunner();
   }
@@ -140,7 +140,7 @@ GpuChildThread::GpuChildThread(base::RepeatingClosure quit_closure,
 
 GpuChildThread::~GpuChildThread() = default;
 
-void GpuChildThread::Init(const base::Time& process_start_time) {
+void GpuChildThread::Init(const base::TimeTicks& process_start_time) {
   if (!in_process_gpu())
     mojo::SetDefaultProcessErrorHandler(base::BindRepeating(&HandleBadMessage));
 
@@ -182,13 +182,13 @@ void GpuChildThread::OnGpuServiceConnection(viz::GpuServiceImpl* gpu_service) {
 #if BUILDFLAG(IS_ANDROID)
   overlay_factory_cb =
       base::BindRepeating(&GpuChildThread::CreateAndroidOverlay,
-                          base::ThreadTaskRunnerHandle::Get());
+                          base::SingleThreadTaskRunner::GetCurrentDefault());
   gpu_service->media_gpu_channel_manager()->SetOverlayFactory(
       overlay_factory_cb);
 #endif
 
 #if defined(TOOLKIT_QT)
-  gpu_channel_manager()->set_share_group(GetContentClient()->browser()->GetInProcessGpuShareGroup());
+  gpu_channel_manager()->set_share_group(GetContentClient()->gpu()->GetInProcessGpuShareGroup());
 #endif
 
   if (!IsInBrowserProcess()) {
@@ -268,7 +268,7 @@ void GpuChildThread::QuitSafelyHelper(
 // before quitting the main message loop. Must be called on the main thread.
 base::RepeatingClosure GpuChildThread::MakeQuitSafelyClosure() {
   return base::BindRepeating(&GpuChildThread::QuitSafelyHelper,
-                             base::ThreadTaskRunnerHandle::Get());
+                             base::SingleThreadTaskRunner::GetCurrentDefault());
 }
 
 #if BUILDFLAG(IS_ANDROID)

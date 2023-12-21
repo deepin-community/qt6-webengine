@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -37,7 +37,7 @@ class PageNodeImpl
   using FrozenFrameDataStorage =
       InternalNodeAttachedDataStorage<sizeof(uintptr_t) + 8>;
   using PageAggregatorDataStorage =
-      InternalNodeAttachedDataStorage<sizeof(uintptr_t) + 12>;
+      InternalNodeAttachedDataStorage<sizeof(uintptr_t) + 16>;
 
   static constexpr NodeTypeEnum Type() { return NodeTypeEnum::kPage; }
 
@@ -59,12 +59,14 @@ class PageNodeImpl
   // dereferenced on the UI thread.
   const WebContentsProxy& contents_proxy() const;
 
+  void SetType(PageType type);
   void SetIsVisible(bool is_visible);
   void SetIsAudible(bool is_audible);
   void SetLoadingState(LoadingState loading_state);
   void SetUkmSourceId(ukm::SourceId ukm_source_id);
   void OnFaviconUpdated();
   void OnTitleUpdated();
+  void OnAboutToBeDiscarded(base::WeakPtr<PageNode> new_page_node);
   void OnMainFrameNavigationCommitted(bool same_document,
                                       base::TimeTicks navigation_committed_time,
                                       int64_t navigation_id,
@@ -90,6 +92,7 @@ class PageNodeImpl
   FrameNodeImpl* opener_frame_node() const;
   FrameNodeImpl* embedder_frame_node() const;
   EmbeddingType embedding_type() const;
+  PageType type() const;
   bool is_visible() const;
   bool is_audible() const;
   LoadingState loading_state() const;
@@ -104,6 +107,7 @@ class PageNodeImpl
   int64_t navigation_id() const;
   const std::string& contents_mime_type() const;
   bool had_form_interaction() const;
+  bool had_user_edits() const;
   const absl::optional<freezing::FreezingVote>& freezing_vote() const;
   PageState page_state() const;
 
@@ -137,6 +141,10 @@ class PageNodeImpl
 
   void SetHadFormInteractionForTesting(bool had_form_interaction) {
     SetHadFormInteraction(had_form_interaction);
+  }
+
+  void SetHadUserEditsForTesting(bool had_user_edits) {
+    SetHadUserEdits(had_user_edits);
   }
 
   base::WeakPtr<PageNodeImpl> GetWeakPtrOnUIThread() {
@@ -191,6 +199,11 @@ class PageNodeImpl
     SetHadFormInteraction(had_form_interaction);
   }
 
+  void SetHadUserEdits(base::PassKey<PageAggregatorAccess>,
+                       bool had_user_edits) {
+    SetHadUserEdits(had_user_edits);
+  }
+
  private:
   friend class PageNodeImplDescriber;
 
@@ -200,6 +213,7 @@ class PageNodeImpl
   const FrameNode* GetOpenerFrameNode() const override;
   const FrameNode* GetEmbedderFrameNode() const override;
   EmbeddingType GetEmbeddingType() const override;
+  PageType GetType() const override;
   bool IsVisible() const override;
   base::TimeDelta GetTimeSinceLastVisibilityChange() const override;
   bool IsAudible() const override;
@@ -216,9 +230,12 @@ class PageNodeImpl
   const base::flat_set<const FrameNode*> GetMainFrameNodes() const override;
   const GURL& GetMainFrameUrl() const override;
   bool HadFormInteraction() const override;
+  bool HadUserEdits() const override;
   const WebContentsProxy& GetContentsProxy() const override;
   const absl::optional<freezing::FreezingVote>& GetFreezingVote()
       const override;
+  uint64_t EstimateResidentSetSize() const override;
+  uint64_t EstimatePrivateFootprintSize() const override;
 
   // NodeBase:
   void OnJoiningGraph() override;
@@ -229,6 +246,7 @@ class PageNodeImpl
   void SetIsHoldingWebLock(bool is_holding_weblock);
   void SetIsHoldingIndexedDBLock(bool is_holding_indexeddb_lock);
   void SetHadFormInteraction(bool had_form_interaction);
+  void SetHadUserEdits(bool had_user_edits);
 
   // The WebContentsProxy associated with this page.
   const WebContentsProxy contents_proxy_;
@@ -293,6 +311,13 @@ class PageNodeImpl
   EmbeddingType embedding_type_ GUARDED_BY_CONTEXT(sequence_checker_) =
       EmbeddingType::kInvalid;
 
+  // The type of the page.
+  ObservedProperty::NotifiesOnlyOnChangesWithPreviousValue<
+      PageType,
+      PageType,
+      &PageNodeObserver::OnTypeChanged>
+      type_ GUARDED_BY_CONTEXT(sequence_checker_){PageType::kUnknown};
+
   // Whether or not the page is visible. Driven by browser instrumentation.
   // Initialized on construction.
   ObservedProperty::NotifiesOnlyOnChanges<bool,
@@ -341,6 +366,11 @@ class PageNodeImpl
       bool,
       &PageNodeObserver::OnHadFormInteractionChanged>
       had_form_interaction_ GUARDED_BY_CONTEXT(sequence_checker_){false};
+  // Indicates if at least one frame of the page has received some
+  // user-initiated edits.
+  ObservedProperty::
+      NotifiesOnlyOnChanges<bool, &PageNodeObserver::OnHadUserEditsChanged>
+          had_user_edits_ GUARDED_BY_CONTEXT(sequence_checker_){false};
   // The freezing vote associated with this page, see the comment of to
   // Page::GetFreezingVote for a description of the different values this can
   // take.

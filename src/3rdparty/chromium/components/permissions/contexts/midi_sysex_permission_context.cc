@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -28,7 +28,7 @@ void MidiSysexPermissionContext::UpdateTabContext(const PermissionRequestID& id,
                                                   bool allowed) {
   content_settings::PageSpecificContentSettings* content_settings =
       content_settings::PageSpecificContentSettings::GetForFrame(
-          id.render_process_id(), id.render_frame_id());
+          id.global_render_frame_host_id());
   if (!content_settings)
     return;
 
@@ -36,14 +36,10 @@ void MidiSysexPermissionContext::UpdateTabContext(const PermissionRequestID& id,
     content_settings->OnContentAllowed(ContentSettingsType::MIDI_SYSEX);
 
     content::ChildProcessSecurityPolicy::GetInstance()
-        ->GrantSendMidiSysExMessage(id.render_process_id());
+        ->GrantSendMidiSysExMessage(id.global_render_frame_host_id().child_id);
   } else {
     content_settings->OnContentBlocked(ContentSettingsType::MIDI_SYSEX);
   }
-}
-
-bool MidiSysexPermissionContext::IsRestrictedToSecureOrigins() const {
-  return true;
 }
 
 }  // namespace permissions

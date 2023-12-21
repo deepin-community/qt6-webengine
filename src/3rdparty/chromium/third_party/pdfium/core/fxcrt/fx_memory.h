@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -24,17 +24,7 @@ void FXMEM_DefaultFree(void* pointer);
 
 #include "third_party/base/compiler_specific.h"
 
-namespace pdfium {
-namespace base {
-class PartitionAllocatorGeneric;
-}  // namespace base
-}  // namespace pdfium
-
-pdfium::base::PartitionAllocatorGeneric& GetArrayBufferPartitionAllocator();
-pdfium::base::PartitionAllocatorGeneric& GetGeneralPartitionAllocator();
-pdfium::base::PartitionAllocatorGeneric& GetStringPartitionAllocator();
-
-void FXMEM_InitializePartitionAlloc();
+void FX_InitializeMemoryAllocators();
 NOINLINE void FX_OutOfMemoryTerminate(size_t size);
 
 // General Partition Allocators.
@@ -54,7 +44,7 @@ NOINLINE void FX_OutOfMemoryTerminate(size_t size);
   static_cast<type*>(pdfium::internal::Realloc(ptr, size, sizeof(type)))
 
 // These never return nullptr, but return uninitialized memory.
-// TOOD(thestig): Add FX_TryAllocUninit() if there is a use case.
+// TODO(thestig): Add FX_TryAllocUninit() if there is a use case.
 #define FX_AllocUninit(type, size) \
   static_cast<type*>(pdfium::internal::AllocOrDie(size, sizeof(type)))
 #define FX_AllocUninit2D(type, w, h) \
@@ -66,8 +56,21 @@ NOINLINE void FX_OutOfMemoryTerminate(size_t size);
 #define FX_StringAlloc(type, size) \
   static_cast<type*>(pdfium::internal::StringAllocOrDie(size, sizeof(type)))
 
-// Free accepts memory from all of the above.
+// FX_Free accepts memory from all of the above.
 void FX_Free(void* ptr);
+
+#ifndef V8_ENABLE_SANDBOX
+// V8 Array Buffer Partition Allocators.
+
+// This never returns nullptr, and returns zeroed memory.
+void* FX_ArrayBufferAllocate(size_t length);
+
+// This never returns nullptr, but returns uninitialized memory.
+void* FX_ArrayBufferAllocateUninitialized(size_t length);
+
+// FX_ArrayBufferFree accepts memory from both of the above.
+void FX_ArrayBufferFree(void* data);
+#endif  // V8_ENABLE_SANDBOX
 
 namespace pdfium {
 namespace internal {

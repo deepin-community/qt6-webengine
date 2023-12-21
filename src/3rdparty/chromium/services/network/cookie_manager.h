@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -29,7 +29,7 @@ class URLRequestContext;
 class GURL;
 
 namespace network {
-class FirstPartySetsManager;
+class FirstPartySetsAccessDelegate;
 class SessionCleanupCookieStore;
 
 // Wrap a cookie store in an implementation of the mojo cookie interface.
@@ -38,11 +38,11 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CookieManager
  public:
   // Construct a CookieService that can serve mojo requests for the underlying
   // cookie store.  |url_request_context->cookie_store()| must outlive this
-  // object. `*first_party_sets` must outlive
+  // object. `*first_party_sets_access_delegate` must outlive
   // `url_request_context->cookie_store()`.
   CookieManager(
       net::URLRequestContext* url_request_context,
-      FirstPartySetsManager* const first_party_sets_manager,
+      FirstPartySetsAccessDelegate* const first_party_sets_access_delegate,
       scoped_refptr<SessionCleanupCookieStore> session_cleanup_cookie_store,
       mojom::CookieManagerParamsPtr params);
 
@@ -108,6 +108,9 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CookieManager
   void SetStorageAccessGrantSettings(
       const ContentSettingsForOneType& settings,
       SetStorageAccessGrantSettingsCallback callback) override;
+  void SetTopLevelStorageAccessSettings(
+      const ContentSettingsForOneType& settings,
+      SetTopLevelStorageAccessSettingsCallback callback) override;
 
   // Configures |out| based on |params|. (This doesn't honor
   // allow_file_scheme_cookies, which affects the cookie store rather than the
@@ -118,23 +121,6 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CookieManager
 
   // Causes the next call to GetCookieList to crash the process.
   static void CrashOnGetCookieList();
-
-  // Will convert a site's partitioned cookies into unpartitioned cookies. This
-  // may result in multiple cookies which have the same (partition_key, name,
-  // host_key, path), which violates the database's unique constraint. The
-  // algorithm we use to coalesce the cookies into a single unpartitioned cookie
-  // is the following:
-  //
-  // 1.  If one of the cookies has no partition key (i.e. it is unpartitioned)
-  //     choose this cookie.
-  //
-  // 2.  Choose the partitioned cookie with the most recent last_access_time.
-  //
-  // This function is a no-op when PartitionedCookies are disabled or
-  // PartitionedCookiesBypassOriginTrial is enabled.
-  // TODO(crbug.com/1296161): Delete this when the partitioned cookies Origin
-  // Trial ends.
-  void ConvertPartitionedCookiesToUnpartitioned(const GURL& url) override;
 
  private:
   // State associated with a CookieChangeListener.
@@ -158,30 +144,6 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CookieManager
 
   // Handles connection errors on change listener pipes.
   void RemoveChangeListener(ListenerRegistration* registration);
-
-  // Called after getting the First-Party-Set-aware partition key when setting a
-  // cookie.
-  void OnGotFirstPartySetPartitionKeyForSet(
-      const GURL& source_url,
-      const net::CookieOptions& cookie_options,
-      std::unique_ptr<net::CanonicalCookie> cookie,
-      SetCanonicalCookieCallback callback,
-      absl::optional<net::CookiePartitionKey> cookie_partition_key,
-      absl::optional<net::CookiePartitionKey> fps_cookie_partition_key);
-
-  // Called after getting the First-Party-Set-aware partition key when deleting
-  // a cookie.
-  void OnGotFirstPartySetPartitionKeyForDelete(
-      std::unique_ptr<net::CanonicalCookie> cookie,
-      DeleteCanonicalCookieCallback callback,
-      absl::optional<net::CookiePartitionKey> cookie_partition_key,
-      absl::optional<net::CookiePartitionKey> fps_cookie_partition_key);
-
-  void OnGotCookiePartitionKeyCollection(
-      const GURL& url,
-      const net::CookieOptions& cookie_options,
-      GetCookieListCallback callback,
-      net::CookiePartitionKeyCollection cookie_partition_key_collection);
 
   const raw_ptr<net::CookieStore> cookie_store_;
   scoped_refptr<SessionCleanupCookieStore> session_cleanup_cookie_store_;

@@ -1,5 +1,6 @@
 include_rules = [
   "+cc/base",
+  "+components/metal_util/types.h",
   "+components/viz/common/resources/resource_format.h",
   "+mojo/public/cpp/bindings",
   "+third_party/khronos",
@@ -9,6 +10,7 @@ include_rules = [
   "+ui/base/x",
   "+ui/gfx",
   "+ui/ozone/buildflags.h",
+  "+third_party/angle/src/gpu_info_util/SystemInfo.h",
 ]
 
 specific_include_rules = {
@@ -18,6 +20,10 @@ specific_include_rules = {
   ],
   "delegated_ink_point_renderer_gpu_unittest.cc": [
     "+ui/base/win/hidden_window.h",
+  ],
+  "dcomp_presenter_unittest.cc": [
+    "+ui/base/win/hidden_window.h",
+    "+ui/platform_window",
   ],
   "direct_composition_surface_win_unittest.cc": [
     "+ui/base/win/hidden_window.h",
@@ -30,6 +36,9 @@ specific_include_rules = {
   "gl_angle_util_win.cc": [
     "+third_party/angle/include/EGL/egl.h",
     "+third_party/angle/include/EGL/eglext.h",
+  ],
+  "gl_fence_android_native_fence_sync.cc": [
+    "+components/crash/core/common/crash_key.h",
   ],
   "gl_fence_win_unittest.cc": [
     "+media/base/win/d3d11_mocks.h",

@@ -193,8 +193,9 @@ class Array
       *
       * \sa  Array(const Scalar& a0, const Scalar& a1, const Scalar& a2, const Scalar& a3, const ArgTypes&... args)
       */
-    EIGEN_DEVICE_FUNC
-    EIGEN_STRONG_INLINE Array(const std::initializer_list<std::initializer_list<Scalar>>& list) : Base(list) {}
+    EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE constexpr Array(
+        const std::initializer_list<std::initializer_list<Scalar>>& list)
+        : Base(list) {}
 
     #ifndef EIGEN_PARSED_BY_DOXYGEN
     template<typename T>
@@ -274,8 +275,8 @@ class Array
     template<typename OtherDerived>
     EIGEN_DEVICE_FUNC
     EIGEN_STRONG_INLINE Array(const EigenBase<OtherDerived> &other,
-                              typename internal::enable_if<internal::is_convertible<typename OtherDerived::Scalar,Scalar>::value,
-                                                           PrivateType>::type = PrivateType())
+                              std::enable_if_t<internal::is_convertible<typename OtherDerived::Scalar,Scalar>::value,
+                                               PrivateType> = PrivateType())
       : Base(other.derived())
     { }
 

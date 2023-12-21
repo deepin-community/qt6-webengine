@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -30,26 +30,25 @@ SettingsPrivateDelegate::SettingsPrivateDelegate(Profile* profile)
 SettingsPrivateDelegate::~SettingsPrivateDelegate() {
 }
 
-std::unique_ptr<base::Value> SettingsPrivateDelegate::GetPref(
-    const std::string& name) {
-  std::unique_ptr<api::settings_private::PrefObject> pref =
+base::Value SettingsPrivateDelegate::GetPref(const std::string& name) {
+  absl::optional<api::settings_private::PrefObject> pref =
       prefs_util_->GetPref(name);
   if (!pref)
-    return std::make_unique<base::Value>();
-  return pref->ToValue();
+    return base::Value();
+  return base::Value(pref->ToValue());
 }
 
-std::unique_ptr<base::Value> SettingsPrivateDelegate::GetAllPrefs() {
-  std::unique_ptr<base::ListValue> prefs(new base::ListValue());
+base::Value::List SettingsPrivateDelegate::GetAllPrefs() {
+  base::Value::List prefs;
 
   const TypedPrefMap& keys = prefs_util_->GetAllowlistedKeys();
   for (const auto& it : keys) {
-    std::unique_ptr<base::Value> pref = GetPref(it.first);
-    if (!pref->is_none())
-      prefs->Append(std::move(pref));
+    base::Value pref = GetPref(it.first);
+    if (!pref.is_none())
+      prefs.Append(std::move(pref));
   }
 
-  return std::move(prefs);
+  return prefs;
 }
 
 settings_private::SetPrefResult SettingsPrivateDelegate::SetPref(

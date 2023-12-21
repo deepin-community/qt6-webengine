@@ -1,4 +1,4 @@
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -9,8 +9,7 @@ load("@stdlib//internal/luci/common.star", "keys", "kinds", "triggerer")
 load("./args.star", "args")
 load("./nodes.star", "nodes")
 load("./structs.star", "structs")
-
-# TODO(gbeaty) Add support for PROVIDE_TEST_SPEC mirrors
+load("//project.star", "settings")
 
 def _enum(**kwargs):
     """Create an enum struct.
@@ -161,24 +160,6 @@ def _android_config(*, config, apply_configs = None):
         apply_configs = args.listify(apply_configs),
     )
 
-def _test_results_config(*, config):
-    """The details for configuring test_results recipe module.
-
-    This uses the recipe engine's config item facility.
-
-    Args:
-        config: (str) The name of the recipe module config item to use.
-
-    Returns:
-        A struct that can be passed to the `test_results_config` argument of
-        `builder_spec`.
-    """
-    if not config:
-        fail("config must be provided")
-    return struct(
-        config = config,
-    )
-
 def _skylab_upload_location(*, gs_bucket, gs_extra = None):
     """The details for where tests are uploaded for skylab.
 
@@ -198,20 +179,50 @@ def _skylab_upload_location(*, gs_bucket, gs_extra = None):
         gs_extra = gs_extra,
     )
 
+def _clusterfuzz_archive(
+        *,
+        gs_bucket,
+        gs_acl = None,
+        archive_name_prefix,
+        archive_subdir = None):
+    """The details for configuring clusterfuzz archiving.
+
+    Args:
+        gs_bucket: (str) The name of the Google Cloud Storage bucket to upload
+            the archive to.
+        gs_acl: (str) The name of a Google Cloud Storage canned ACL to apply to
+            the uploaded archive.
+        archive_name_prefix: (str) The prefix of the archive's name. The name of
+            the archive will contain additional details such as platform and
+            target among others.
+        archive_subdir: (str) An optional additional subdirectory within the
+            platform/target directory to upload the archive to.
+    """
+    if not gs_bucket:
+        fail("gs_bucket must be provided")
+    if not archive_name_prefix:
+        fail("archive_name_prefix must be provided")
+    return struct(
+        gs_bucket = gs_bucket,
+        gs_acl = gs_acl,
+        archive_name_prefix = archive_name_prefix,
+        archive_subdir = archive_subdir,
+    )
+
 def _builder_spec(
         *,
         execution_mode = _execution_mode.COMPILE_AND_TEST,
         gclient_config,
         chromium_config,
         android_config = None,
-        test_results_config = None,
         android_version_file = None,
         clobber = None,
         build_gs_bucket = None,
         run_tests_serially = None,
         perf_isolate_upload = None,
         expose_trigger_properties = None,
-        skylab_upload_location = None):
+        skylab_upload_location = None,
+        clusterfuzz_archive = None):
     """Details for configuring execution for a single builder.
 
     Args:
@@ -219,8 +230,6 @@ def _builder_spec(
         gclient_config: (gclient_config) The gclient config for the builder.
         chromium_config: (chromium_config) The chromium config for the builder.
         android_config: (android_config) The android config for the builder.
-        test_results_config: (test_results_config) The test_results config for
-            the builder.
         android_version_file: (str) A path relative to the checkout to a file
             containing the Chrome version information for Android.
         clobber: (bool) Whether to have bot_update perform a clobber of any
@@ -251,6 +260,8 @@ def _builder_spec(
         skylab_upload_location: (skylab_upload_location) The location to upload
             tests when using the lacros on skylab pipeline. This must be set if
             the builder triggers tests on skylab.
+        clusterfuzz_archive: (clusterfuzz_archive) The details of archiving for
+            clusterfuzz.
 
     Returns:
         A builder spec struct that can be passed to builder to set the builder
@@ -268,7 +279,6 @@ def _builder_spec(
         gclient_config = gclient_config,
         chromium_config = chromium_config,
         android_config = android_config,
-        test_results_config = test_results_config,
         android_version_file = android_version_file,
         clobber = clobber,
         build_gs_bucket = build_gs_bucket,
@@ -276,6 +286,7 @@ def _builder_spec(
         perf_isolate_upload = perf_isolate_upload,
         expose_trigger_properties = expose_trigger_properties,
         skylab_upload_location = skylab_upload_location,
+        clusterfuzz_archive = clusterfuzz_archive,
     )
 
 _rts_condition = _enum(
@@ -373,10 +384,11 @@ builder_config = struct(
     # builder's
     copy_from = _copy_from,
 
-    # Function and associated constants for defining builder spec
+    # Functions and associated constants for defining builder spec
     builder_spec = _builder_spec,
     execution_mode = _execution_mode,
     skylab_upload_location = _skylab_upload_location,
+    clusterfuzz_archive = _clusterfuzz_archive,
 
     # Function for defining gclient recipe module config
     gclient_config = _gclient_config,
@@ -390,9 +402,6 @@ builder_config = struct(
 
     # Function for defining android recipe module config
     android_config = _android_config,
-
-    # Function for defining test_results recipe module config
-    test_results_config = _test_results_config,
 
     # Function for defining try-specific settings
     try_settings = _try_settings,
@@ -507,10 +516,7 @@ def _get_mirroring_builders(bc_state, node):
 
 def _builder_id(node):
     return dict(
-        # TODO(crbug.com/868153) Once the configs for all chromium builders are
-        # migrated src-side, switch this to settings.project and remove the use
-        # of project_trigger_override within the starlark
-        project = "chromium",
+        project = settings.project,
         bucket = node.key.container.id,
         builder = node.key.id,
     )
@@ -524,7 +530,6 @@ def _entry(bc_state, node, parent = None):
         ("gclient_config", "legacy_gclient_config"),
         ("chromium_config", "legacy_chromium_config"),
         ("android_config", "legacy_android_config"),
-        ("test_results_config", "legacy_test_results_config"),
     ):
         if src in builder_spec:
             builder_spec[dst] = builder_spec.pop(src)
@@ -592,6 +597,8 @@ def _set_builder_config_property(ctx):
     bc_state = _bc_state()
 
     for bucket in cfg.buckets:
+        if not proto.has(bucket, "swarming"):
+            continue
         bucket_name = bucket.name
         for builder in bucket.swarming.builders:
             builder_name = builder.name

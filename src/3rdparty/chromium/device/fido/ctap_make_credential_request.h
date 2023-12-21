@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,7 @@
 
 #include "base/component_export.h"
 #include "device/fido/authenticator_selection_criteria.h"
+#include "device/fido/device_public_key_extension.h"
 #include "device/fido/fido_constants.h"
 #include "device/fido/pin.h"
 #include "device/fido/public_key_credential_descriptor.h"
@@ -76,8 +77,18 @@ struct COMPONENT_EXPORT(DEVICE_FIDO) CtapMakeCredentialRequest {
   // asserted to CTAP2 authenticators.
   bool hmac_secret = false;
 
+  // prf indicates that the "prf" extension should be asserted to request that
+  // the authenticator associate a PRF with the credential.
+  bool prf = false;
+
+  // large_blob_support indicates whether support for largeBlobs should be
+  // requested using the `largeBlob` extension. This should be mutually
+  // exclusive with `large_blob_key`.
+  LargeBlobSupport large_blob_support = LargeBlobSupport::kNotRequested;
+
   // large_blob_key indicates whether a large blob key should be associated to
-  // the new credential through the "largeBlobKey" extension.
+  // the new credential through the "largeBlobKey" extension. This should be
+  // mutually exclusive with `large_blob_support`.
   bool large_blob_key = false;
 
   std::vector<PublicKeyCredentialDescriptor> exclude_list;
@@ -126,6 +137,10 @@ struct COMPONENT_EXPORT(DEVICE_FIDO) CtapMakeCredentialRequest {
   // cred_blob contains an optional credBlob extension.
   // https://fidoalliance.org/specs/fido-v2.1-rd-20201208/fido-client-to-authenticator-protocol-v2.1-rd-20201208.html#sctn-credBlob-extension
   absl::optional<std::vector<uint8_t>> cred_blob;
+
+  // device_public_key contains parameters for the devicePubKey extension
+  // https://github.com/w3c/webauthn/pull/1663
+  absl::optional<DevicePublicKeyRequest> device_public_key;
 };
 
 // MakeCredentialOptions contains higher-level request parameters that aren't
@@ -174,11 +189,6 @@ struct COMPONENT_EXPORT(DEVICE_FIDO) MakeCredentialOptions {
   // Values other than kNotRequested will attempt to initialize the large blob
   // on the authenticator.
   LargeBlobSupport large_blob_support = LargeBlobSupport::kNotRequested;
-
-  // make_u2f_api_credential indicates that the credential should be made on a
-  // U2F security key. It will be scoped to an appId, which is passed in the
-  // rp.id field of |CtapMakeCredentialRequest|.
-  bool make_u2f_api_credential = false;
 
   // Indicates whether the request was created in an off-the-record
   // BrowserContext (e.g. Chrome Incognito mode).

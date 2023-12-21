@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,15 +8,18 @@
 
 #include <math.h>
 
+#include <iterator>
 #include <memory>
+#include <utility>
 
 #include "core/fxcrt/fx_system.h"
+#include "core/fxcrt/span_util.h"
 #include "core/fxge/cfx_defaultrenderdevice.h"
 #include "core/fxge/cfx_renderdevice.h"
 #include "core/fxge/cfx_unicodeencoding.h"
 #include "core/fxge/dib/cfx_dibitmap.h"
 #include "third_party/base/check.h"
-#include "third_party/base/cxx17_backports.h"
+#include "third_party/base/notreached.h"
 #include "xfa/fgas/graphics/cfgas_gecolor.h"
 #include "xfa/fgas/graphics/cfgas_gepath.h"
 #include "xfa/fgas/graphics/cfgas_gepattern.h"
@@ -106,8 +109,8 @@ const FX_HATCHDATA kHatchPlaceHolder = {
     }};
 
 const FX_HATCHDATA& GetHatchBitmapData(size_t index) {
-  return index < pdfium::size(kHatchBitmapData) ? kHatchBitmapData[index]
-                                                : kHatchPlaceHolder;
+  return index < std::size(kHatchBitmapData) ? kHatchBitmapData[index]
+                                             : kHatchPlaceHolder;
 }
 
 }  // namespace
@@ -126,9 +129,10 @@ void CFGAS_GEGraphics::SaveGraphState() {
 
 void CFGAS_GEGraphics::RestoreGraphState() {
   m_renderDevice->RestoreState(false);
-  if (m_infoStack.empty())
+  if (m_infoStack.empty()) {
+    NOTREACHED();
     return;
-
+  }
   m_info = *m_infoStack.back();
   m_infoStack.pop_back();
   return;
@@ -256,13 +260,15 @@ void CFGAS_GEGraphics::FillPathWithPattern(
 
   auto mask = pdfium::MakeRetain<CFX_DIBitmap>();
   mask->Create(data.width, data.height, FXDIB_Format::k1bppMask);
-  memcpy(mask->GetBuffer(), data.maskBits, mask->GetPitch() * data.height);
+  fxcrt::spancpy(
+      mask->GetBuffer(),
+      pdfium::make_span(data.maskBits).first(mask->GetPitch() * data.height));
   const CFX_FloatRect rectf =
       matrix.TransformRect(path.GetPath().GetBoundingBox());
   const FX_RECT rect = rectf.ToRoundedFxRect();
 
   CFX_DefaultRenderDevice device;
-  device.Attach(bmp, false, nullptr, false);
+  device.Attach(bmp);
   device.FillRect(rect, m_info.fillColor.GetPattern()->GetBackArgb());
   for (int32_t j = rect.bottom; j < rect.top; j += mask->GetHeight()) {
     for (int32_t i = rect.left; i < rect.right; i += mask->GetWidth()) {
@@ -272,7 +278,7 @@ void CFGAS_GEGraphics::FillPathWithPattern(
   }
   CFX_RenderDevice::StateRestorer restorer(m_renderDevice);
   m_renderDevice->SetClip_PathFill(path.GetPath(), &matrix, fill_options);
-  SetDIBitsWithMatrix(bmp, CFX_Matrix());
+  SetDIBitsWithMatrix(std::move(bmp), CFX_Matrix());
 }
 
 void CFGAS_GEGraphics::FillPathWithShading(
@@ -392,11 +398,11 @@ void CFGAS_GEGraphics::FillPathWithShading(
   if (result) {
     CFX_RenderDevice::StateRestorer restorer(m_renderDevice);
     m_renderDevice->SetClip_PathFill(path.GetPath(), &matrix, fill_options);
-    SetDIBitsWithMatrix(bmp, matrix);
+    SetDIBitsWithMatrix(std::move(bmp), matrix);
   }
 }
 
-void CFGAS_GEGraphics::SetDIBitsWithMatrix(const RetainPtr<CFX_DIBBase>& source,
+void CFGAS_GEGraphics::SetDIBitsWithMatrix(RetainPtr<CFX_DIBBase> source,
                                            const CFX_Matrix& matrix) {
   if (matrix.IsIdentity()) {
     m_renderDevice->SetDIBits(source, 0, 0);
@@ -429,4 +435,13 @@ CFGAS_GEGraphics::TInfo& CFGAS_GEGraphics::TInfo::operator=(
   strokeColor = other.strokeColor;
   fillColor = other.fillColor;
   return *this;
+}
+
+CFGAS_GEGraphics::StateRestorer::StateRestorer(CFGAS_GEGraphics* graphics)
+    : graphics_(graphics) {
+  graphics_->SaveGraphState();
+}
+
+CFGAS_GEGraphics::StateRestorer::~StateRestorer() {
+  graphics_->RestoreGraphState();
 }

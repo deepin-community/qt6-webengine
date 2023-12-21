@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/strings/string_piece.h"
 #include "crypto/crypto_buildflags.h"
 #include "net/base/hash_value.h"
@@ -104,13 +104,6 @@ scoped_refptr<X509Certificate> ImportCertFromFile(
 scoped_refptr<X509Certificate> ImportCertFromFile(
     const base::FilePath& certs_dir,
     base::StringPiece cert_file);
-
-// Imports a private key from |key_path|, which should be a PEM file containing
-// a PRIVATE KEY block. Only the first private key found will be returned, if
-// the file contains multiple private keys or other PEM blocks, they will be
-// ignored.
-bssl::UniquePtr<EVP_PKEY> LoadPrivateKeyFromFile(
-    const base::FilePath& key_path);
 
 // ScopedTestEVPolicy causes certificates marked with |policy|, issued from a
 // root with the given fingerprint, to be treated as EV. |policy| is expressed

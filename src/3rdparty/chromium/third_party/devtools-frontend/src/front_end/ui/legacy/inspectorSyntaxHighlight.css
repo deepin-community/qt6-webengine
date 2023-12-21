@@ -31,7 +31,6 @@
 }
 
 .webkit-html-comment {
-  /* Keep this in sync with view-source.css (.webkit-html-comment) */
   color: var(--color-token-comment);
 }
 
@@ -90,6 +89,7 @@
 .devtools-link {
   color: var(--color-link);
   text-decoration: underline;
+  outline-offset: 2px;
 }
 
 .elements-disclosure .devtools-link {

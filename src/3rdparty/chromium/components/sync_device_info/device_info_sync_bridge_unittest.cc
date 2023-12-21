@@ -1,16 +1,18 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/sync_device_info/device_info_sync_bridge.h"
+#include "build/build_config.h"
 
 #include <algorithm>
 #include <map>
 #include <set>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
+#include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
@@ -33,9 +35,9 @@
 #include "components/sync/protocol/entity_specifics.pb.h"
 #include "components/sync/protocol/model_type_state.pb.h"
 #include "components/sync/protocol/sync_enums.pb.h"
-#include "components/sync/test/model/mock_model_type_change_processor.h"
-#include "components/sync/test/model/model_type_store_test_util.h"
-#include "components/sync/test/model/test_matchers.h"
+#include "components/sync/test/mock_model_type_change_processor.h"
+#include "components/sync/test/model_type_store_test_util.h"
+#include "components/sync/test/test_matchers.h"
 #include "components/sync_device_info/device_info_prefs.h"
 #include "components/sync_device_info/device_info_util.h"
 #include "components/sync_device_info/local_device_info_util.h"
@@ -43,13 +45,12 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chromeos/system/fake_statistics_provider.h"
+#include "chromeos/ash/components/system/fake_statistics_provider.h"
 #endif
 
 namespace syncer {
 namespace {
 
-using base::OneShotTimer;
 using sync_pb::DeviceInfoSpecifics;
 using sync_pb::EntitySpecifics;
 using sync_pb::ModelTypeState;
@@ -66,7 +67,7 @@ using testing::Return;
 using testing::SizeIs;
 using testing::UnorderedElementsAre;
 
-using DeviceCountMap = std::map<sync_pb::SyncEnums_DeviceType, int>;
+using DeviceCountMap = std::map<DeviceInfo::FormFactor, int>;
 using DeviceInfoList = std::vector<std::unique_ptr<DeviceInfo>>;
 using StorageKeyList = ModelTypeSyncBridge::StorageKeyList;
 using RecordList = ModelTypeStore::RecordList;
@@ -77,6 +78,9 @@ const int kLocalSuffix = 0;
 
 const sync_pb::SyncEnums_DeviceType kLocalDeviceType =
     sync_pb::SyncEnums_DeviceType_TYPE_LINUX;
+const DeviceInfo::OsType kLocalDeviceOS = DeviceInfo::OsType::kLinux;
+const DeviceInfo::FormFactor kLocalDeviceFormFactor =
+    DeviceInfo::FormFactor::kDesktop;
 
 MATCHER_P(HasDeviceInfo, expected, "") {
   return arg.device_info().SerializeAsString() == expected.SerializeAsString();
@@ -87,8 +91,10 @@ MATCHER_P(EqualsProto, expected, "") {
 }
 
 MATCHER_P(ModelEqualsSpecifics, expected_specifics, "") {
-  if (expected_specifics.has_sharing_fields() != arg.sharing_info().has_value())
+  if (expected_specifics.has_sharing_fields() !=
+      arg.sharing_info().has_value()) {
     return false;
+  }
 
   if (expected_specifics.has_sharing_fields()) {
     auto& expected_fields = expected_specifics.sharing_fields();
@@ -110,16 +116,16 @@ MATCHER_P(ModelEqualsSpecifics, expected_specifics, "") {
     }
 
     for (int i = 0; i < expected_fields.enabled_features_size(); ++i) {
-      if (!arg_info.enabled_features.count(expected_fields.enabled_features(i)))
+      if (!arg_info.enabled_features.count(
+              expected_fields.enabled_features(i))) {
         return false;
+      }
     }
   }
 
-  ModelTypeSet expected_data_types;
-  for (const int field_number :
-       expected_specifics.invalidation_fields().interested_data_type_ids()) {
-    expected_data_types.Put(GetModelTypeFromSpecificsFieldNumber(field_number));
-  }
+  ModelTypeSet expected_data_types =
+      GetModelTypeSetFromSpecificsFieldNumberList(
+          expected_specifics.invalidation_fields().interested_data_type_ids());
   if (expected_data_types != arg.interested_data_types()) {
     return false;
   }
@@ -381,9 +387,9 @@ class TestLocalDeviceInfoProvider : public MutableLocalDeviceInfoProvider {
         sharing_enabled_features{SharingEnabledFeaturesForSuffix(kLocalSuffix)};
     local_device_info_ = std::make_unique<DeviceInfo>(
         cache_guid, session_name, ChromeVersionForSuffix(kLocalSuffix),
-        SyncUserAgentForSuffix(kLocalSuffix), kLocalDeviceType,
-        SigninScopedDeviceIdForSuffix(kLocalSuffix), manufacturer_name,
-        model_name, full_hardware_class, base::Time(),
+        SyncUserAgentForSuffix(kLocalSuffix), kLocalDeviceType, kLocalDeviceOS,
+        kLocalDeviceFormFactor, SigninScopedDeviceIdForSuffix(kLocalSuffix),
+        manufacturer_name, model_name, full_hardware_class, base::Time(),
         DeviceInfoUtil::GetPulseInterval(),
         /*send_tab_to_self_receiving_enabled=*/true,
         DeviceInfo::SharingInfo(
@@ -463,7 +469,7 @@ class DeviceInfoSyncBridgeTest : public testing::Test,
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
     statistics_provider_ =
-        std::make_unique<chromeos::system::ScopedFakeStatisticsProvider>();
+        std::make_unique<ash::system::ScopedFakeStatisticsProvider>();
 #endif
 
     local_device_name_info_ = GetLocalDeviceNameInfoBlocking();
@@ -478,8 +484,9 @@ class DeviceInfoSyncBridgeTest : public testing::Test,
 
   ~DeviceInfoSyncBridgeTest() override {
     // Some tests may never initialize the bridge.
-    if (bridge_)
+    if (bridge_) {
       bridge_->RemoveObserver(this);
+    }
 
     // Force all remaining (store) tasks to execute so we don't leak memory.
     base::RunLoop().RunUntilIdle();
@@ -561,7 +568,7 @@ class DeviceInfoSyncBridgeTest : public testing::Test,
   }
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-  chromeos::system::ScopedFakeStatisticsProvider* statistics_provider() {
+  ash::system::ScopedFakeStatisticsProvider* statistics_provider() {
     EXPECT_TRUE(statistics_provider_);
     return statistics_provider_.get();
   }
@@ -715,7 +722,7 @@ class DeviceInfoSyncBridgeTest : public testing::Test,
   raw_ptr<TestLocalDeviceInfoProvider> local_device_info_provider_ = nullptr;
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-  std::unique_ptr<chromeos::system::ScopedFakeStatisticsProvider>
+  std::unique_ptr<ash::system::ScopedFakeStatisticsProvider>
       statistics_provider_;
 #endif
 };
@@ -990,7 +997,7 @@ TEST_F(DeviceInfoSyncBridgeTest, MergeLocalGuid) {
 TEST_F(DeviceInfoSyncBridgeTest, CountActiveDevices) {
   InitializeAndMergeInitialData(SyncMode::kFull);
   // Local device.
-  EXPECT_EQ(DeviceCountMap({{kLocalDeviceType, 1}}),
+  EXPECT_EQ(DeviceCountMap({{kLocalDeviceFormFactor, 1}}),
             bridge()->CountActiveDevicesByType());
 
   ON_CALL(*processor(), GetEntityCreationTime)
@@ -1002,32 +1009,32 @@ TEST_F(DeviceInfoSyncBridgeTest, CountActiveDevices) {
   // have the same guid as the local device.
   bridge()->ApplySyncChanges(bridge()->CreateMetadataChangeList(),
                              EntityAddList({CreateLocalDeviceSpecifics()}));
-  EXPECT_EQ(DeviceCountMap({{kLocalDeviceType, 1}}),
+  EXPECT_EQ(DeviceCountMap({{kLocalDeviceFormFactor, 1}}),
             bridge()->CountActiveDevicesByType());
 
   bridge()->ApplySyncChanges(bridge()->CreateMetadataChangeList(),
                              EntityAddList({CreateLocalDeviceSpecifics()}));
-  EXPECT_EQ(DeviceCountMap({{kLocalDeviceType, 1}}),
+  EXPECT_EQ(DeviceCountMap({{kLocalDeviceFormFactor, 1}}),
             bridge()->CountActiveDevicesByType());
 
   // A different guid will actually contribute to the count.
   bridge()->ApplySyncChanges(bridge()->CreateMetadataChangeList(),
                              EntityAddList({CreateSpecifics(1)}));
-  EXPECT_EQ(DeviceCountMap({{kLocalDeviceType, 2}}),
+  EXPECT_EQ(DeviceCountMap({{kLocalDeviceFormFactor, 2}}),
             bridge()->CountActiveDevicesByType());
 
   // Now set time to long ago in the past, it should not be active anymore.
   bridge()->ApplySyncChanges(
       bridge()->CreateMetadataChangeList(),
       EntityAddList({CreateSpecifics(1, base::Time::Now() - base::Days(365))}));
-  EXPECT_EQ(DeviceCountMap({{kLocalDeviceType, 1}}),
+  EXPECT_EQ(DeviceCountMap({{kLocalDeviceFormFactor, 1}}),
             bridge()->CountActiveDevicesByType());
 }
 
 TEST_F(DeviceInfoSyncBridgeTest, CountActiveDevicesWithOverlappingTime) {
   InitializeAndMergeInitialData(SyncMode::kFull);
   // Local device.
-  ASSERT_EQ(DeviceCountMap({{kLocalDeviceType, 1}}),
+  ASSERT_EQ(DeviceCountMap({{kLocalDeviceFormFactor, 1}}),
             bridge()->CountActiveDevicesByType());
 
   const DeviceInfoSpecifics specifics1 = CreateSpecifics(1);
@@ -1053,7 +1060,7 @@ TEST_F(DeviceInfoSyncBridgeTest, CountActiveDevicesWithOverlappingTime) {
                              EntityAddList({specifics1, specifics2}));
 
   ASSERT_EQ(3u, bridge()->GetAllDeviceInfo().size());
-  EXPECT_EQ(DeviceCountMap({{kLocalDeviceType, 2}}),
+  EXPECT_EQ(DeviceCountMap({{kLocalDeviceFormFactor, 2}}),
             bridge()->CountActiveDevicesByType());
 
   // The third device is also overlapping with the first two (and the local one
@@ -1062,14 +1069,14 @@ TEST_F(DeviceInfoSyncBridgeTest, CountActiveDevicesWithOverlappingTime) {
                              EntityAddList({specifics3}));
 
   ASSERT_EQ(4u, bridge()->GetAllDeviceInfo().size());
-  EXPECT_EQ(DeviceCountMap({{kLocalDeviceType, 3}}),
+  EXPECT_EQ(DeviceCountMap({{kLocalDeviceFormFactor, 3}}),
             bridge()->CountActiveDevicesByType());
 }
 
 TEST_F(DeviceInfoSyncBridgeTest, CountActiveDevicesWithNonOverlappingTime) {
   InitializeAndMergeInitialData(SyncMode::kFull);
   // Local device.
-  ASSERT_EQ(DeviceCountMap({{kLocalDeviceType, 1}}),
+  ASSERT_EQ(DeviceCountMap({{kLocalDeviceFormFactor, 1}}),
             bridge()->CountActiveDevicesByType());
 
   const DeviceInfoSpecifics specifics1 = CreateSpecifics(1);
@@ -1095,7 +1102,7 @@ TEST_F(DeviceInfoSyncBridgeTest, CountActiveDevicesWithNonOverlappingTime) {
       EntityAddList({specifics1, specifics2, specifics3}));
 
   ASSERT_EQ(4u, bridge()->GetAllDeviceInfo().size());
-  EXPECT_EQ(DeviceCountMap({{kLocalDeviceType, 1}}),
+  EXPECT_EQ(DeviceCountMap({{kLocalDeviceFormFactor, 1}}),
             bridge()->CountActiveDevicesByType());
 }
 
@@ -1103,7 +1110,7 @@ TEST_F(DeviceInfoSyncBridgeTest,
        CountActiveDevicesWithNonOverlappingTimeAndDistinctType) {
   InitializeAndMergeInitialData(SyncMode::kFull);
   // Local device.
-  ASSERT_EQ(DeviceCountMap({{kLocalDeviceType, 1}}),
+  ASSERT_EQ(DeviceCountMap({{kLocalDeviceFormFactor, 1}}),
             bridge()->CountActiveDevicesByType());
 
   DeviceInfoSpecifics specifics1 = CreateSpecifics(1);
@@ -1134,17 +1141,15 @@ TEST_F(DeviceInfoSyncBridgeTest,
       EntityAddList({specifics1, specifics2, specifics3}));
 
   ASSERT_EQ(4u, bridge()->GetAllDeviceInfo().size());
-  EXPECT_EQ(DeviceCountMap({{kLocalDeviceType, 1},
-                            {sync_pb::SyncEnums_DeviceType_TYPE_PHONE, 1},
-                            {sync_pb::SyncEnums_DeviceType_TYPE_CROS, 1},
-                            {sync_pb::SyncEnums_DeviceType_TYPE_WIN, 1}}),
+  EXPECT_EQ(DeviceCountMap({{kLocalDeviceFormFactor, 3},
+                            {DeviceInfo::FormFactor::kPhone, 1}}),
             bridge()->CountActiveDevicesByType());
 }
 
 TEST_F(DeviceInfoSyncBridgeTest, CountActiveDevicesWithMalformedTimestamps) {
   InitializeAndMergeInitialData(SyncMode::kFull);
   // Local device.
-  ASSERT_EQ(DeviceCountMap({{kLocalDeviceType, 1}}),
+  ASSERT_EQ(DeviceCountMap({{kLocalDeviceFormFactor, 1}}),
             bridge()->CountActiveDevicesByType());
 
   const DeviceInfoSpecifics specifics1 = CreateSpecifics(1);
@@ -1165,15 +1170,23 @@ TEST_F(DeviceInfoSyncBridgeTest, CountActiveDevicesWithMalformedTimestamps) {
                              EntityAddList({specifics1, specifics2}));
 
   ASSERT_EQ(3u, bridge()->GetAllDeviceInfo().size());
-  EXPECT_EQ(DeviceCountMap({{kLocalDeviceType, 1}}),
+  EXPECT_EQ(DeviceCountMap({{kLocalDeviceFormFactor, 1}}),
             bridge()->CountActiveDevicesByType());
 }
 
+// TODO(crbug.com/1416485): Re-enable this test
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_ShouldFilterOutNonChromeClientsFromDeviceTracker \
+  DISABLED_ShouldFilterOutNonChromeClientsFromDeviceTracker
+#else
+#define MAYBE_ShouldFilterOutNonChromeClientsFromDeviceTracker \
+  ShouldFilterOutNonChromeClientsFromDeviceTracker
+#endif
 TEST_F(DeviceInfoSyncBridgeTest,
-       ShouldFilterOutNonChromeClientsFromDeviceTracker) {
+       MAYBE_ShouldFilterOutNonChromeClientsFromDeviceTracker) {
   InitializeAndMergeInitialData(SyncMode::kFull);
   // Local device.
-  EXPECT_EQ(DeviceCountMap({{kLocalDeviceType, 1}}),
+  EXPECT_EQ(DeviceCountMap({{kLocalDeviceFormFactor, 1}}),
             bridge()->CountActiveDevicesByType());
 
   ON_CALL(*processor(), GetEntityCreationTime)
@@ -1186,7 +1199,7 @@ TEST_F(DeviceInfoSyncBridgeTest,
                              EntityAddList({CreateSpecifics(1)}));
   ASSERT_THAT(GetAllData(), SizeIs(2));
   ASSERT_THAT(bridge()->GetAllDeviceInfo(), SizeIs(2));
-  ASSERT_EQ(DeviceCountMap({{kLocalDeviceType, 2}}),
+  ASSERT_EQ(DeviceCountMap({{kLocalDeviceFormFactor, 2}}),
             bridge()->CountActiveDevicesByType());
   ASSERT_THAT(bridge()->GetDeviceInfo(CacheGuidForSuffix(1)), NotNull());
 
@@ -1197,7 +1210,7 @@ TEST_F(DeviceInfoSyncBridgeTest,
                              EntityAddList({specifics2}));
   ASSERT_THAT(GetAllData(), SizeIs(3));
   EXPECT_THAT(bridge()->GetAllDeviceInfo(), SizeIs(2));
-  EXPECT_EQ(DeviceCountMap({{kLocalDeviceType, 2}}),
+  EXPECT_EQ(DeviceCountMap({{kLocalDeviceFormFactor, 2}}),
             bridge()->CountActiveDevicesByType());
   EXPECT_THAT(bridge()->GetDeviceInfo(CacheGuidForSuffix(2)), IsNull());
 
@@ -1210,7 +1223,7 @@ TEST_F(DeviceInfoSyncBridgeTest,
                              EntityAddList({specifics3}));
   ASSERT_THAT(GetAllData(), SizeIs(4));
   EXPECT_THAT(bridge()->GetAllDeviceInfo(), SizeIs(3));
-  EXPECT_EQ(DeviceCountMap({{kLocalDeviceType, 3}}),
+  EXPECT_EQ(DeviceCountMap({{kLocalDeviceFormFactor, 3}}),
             bridge()->CountActiveDevicesByType());
   EXPECT_THAT(bridge()->GetDeviceInfo(CacheGuidForSuffix(3)), NotNull());
 }
@@ -1734,6 +1747,48 @@ TEST_F(DeviceInfoSyncBridgeTest, ShouldUploadOutdatedLocalDeviceInfo) {
   EXPECT_CALL(*processor(), Put);
 
   WaitForReadyToSync();
+}
+
+TEST_F(DeviceInfoSyncBridgeTest, ShouldDeriveOsFromDeviceType) {
+  const DeviceInfoSpecifics local_specifics = CreateLocalDeviceSpecifics();
+  WriteToStoreWithMetadata({local_specifics}, StateWithEncryption("ekn"));
+  InitializeAndPump();
+
+  // Test LINUX desktop device info.
+  EXPECT_EQ(bridge()->GetDeviceInfo(local_specifics.cache_guid())->os_type(),
+            kLocalDeviceOS);
+  EXPECT_THAT(
+      bridge()->GetDeviceInfo(local_specifics.cache_guid())->form_factor(),
+      kLocalDeviceFormFactor);
+
+  // Test Android phone device info.
+  {
+    DeviceInfoSpecifics remote_specifics = CreateSpecifics(1);
+    remote_specifics.set_device_type(sync_pb::SyncEnums_DeviceType_TYPE_PHONE);
+    bridge()->ApplySyncChanges(bridge()->CreateMetadataChangeList(),
+                               EntityAddList({remote_specifics}));
+    EXPECT_THAT(
+        bridge()->GetDeviceInfo(remote_specifics.cache_guid())->os_type(),
+        DeviceInfo::OsType::kAndroid);
+    EXPECT_THAT(
+        bridge()->GetDeviceInfo(remote_specifics.cache_guid())->form_factor(),
+        DeviceInfo::FormFactor::kPhone);
+  }
+
+  // Test IOS phone device info specifying the manufacturer.
+  {
+    DeviceInfoSpecifics remote_specifics = CreateSpecifics(1);
+    remote_specifics.set_manufacturer("Apple Inc.");
+    remote_specifics.set_device_type(sync_pb::SyncEnums_DeviceType_TYPE_PHONE);
+    bridge()->ApplySyncChanges(bridge()->CreateMetadataChangeList(),
+                               EntityAddList({remote_specifics}));
+    EXPECT_THAT(
+        bridge()->GetDeviceInfo(remote_specifics.cache_guid())->os_type(),
+        DeviceInfo::OsType::kIOS);
+    EXPECT_THAT(
+        bridge()->GetDeviceInfo(remote_specifics.cache_guid())->form_factor(),
+        DeviceInfo::FormFactor::kPhone);
+  }
 }
 
 }  // namespace

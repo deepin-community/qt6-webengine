@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/process/current_process.h"
 #include "base/trace_event/trace_event.h"
 #include "content/browser/browser_main_runner_impl.h"
 #include "content/common/content_constants_internal.h"
@@ -16,7 +17,8 @@ namespace content {
 int BrowserMain(MainFunctionParams parameters) {
   TRACE_EVENT_INSTANT0("startup", "BrowserMain", TRACE_EVENT_SCOPE_THREAD);
 
-  base::trace_event::TraceLog::GetInstance()->set_process_name("Browser");
+  base::CurrentProcess::GetInstance().SetProcessType(
+      base::CurrentProcessType::PROCESS_BROWSER);
   base::trace_event::TraceLog::GetInstance()->SetProcessSortIndex(
       kTraceEventBrowserProcessSortIndex);
 

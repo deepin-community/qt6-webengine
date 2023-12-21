@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,15 +8,15 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/containers/circular_deque.h"
+#include "base/functional/bind.h"
 #include "base/json/json_reader.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_clock.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -152,19 +152,18 @@ class MockSnippetsAvailableCallback {
 void ParseJson(const std::string& json,
                SuccessCallback success_callback,
                ErrorCallback error_callback) {
-  base::JSONReader::ValueWithError parsed_json =
-      base::JSONReader::ReadAndReturnValueWithError(json);
-  if (parsed_json.value) {
-    std::move(success_callback).Run(std::move(*parsed_json.value));
+  auto parsed_json = base::JSONReader::ReadAndReturnValueWithError(json);
+  if (parsed_json.has_value()) {
+    std::move(success_callback).Run(std::move(*parsed_json));
   } else {
-    std::move(error_callback).Run(std::move(parsed_json.error_message));
+    std::move(error_callback).Run(std::move(parsed_json.error().message));
   }
 }
 
 void ParseJsonDelayed(const std::string& json,
                       SuccessCallback success_callback,
                       ErrorCallback error_callback) {
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE,
       base::BindOnce(&ParseJson, json, std::move(success_callback),
                      std::move(error_callback)),

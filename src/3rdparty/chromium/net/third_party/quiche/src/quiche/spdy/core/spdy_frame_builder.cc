@@ -61,8 +61,7 @@ bool SpdyFrameBuilder::Seek(size_t length) {
   return true;
 }
 
-bool SpdyFrameBuilder::BeginNewFrame(SpdyFrameType type,
-                                     uint8_t flags,
+bool SpdyFrameBuilder::BeginNewFrame(SpdyFrameType type, uint8_t flags,
                                      SpdyStreamId stream_id) {
   uint8_t raw_frame_type = SerializeFrameType(type);
   QUICHE_DCHECK(IsDefinedFrameType(raw_frame_type));
@@ -84,15 +83,13 @@ bool SpdyFrameBuilder::BeginNewFrame(SpdyFrameType type,
   return success;
 }
 
-bool SpdyFrameBuilder::BeginNewFrame(SpdyFrameType type,
-                                     uint8_t flags,
-                                     SpdyStreamId stream_id,
-                                     size_t length) {
+bool SpdyFrameBuilder::BeginNewFrame(SpdyFrameType type, uint8_t flags,
+                                     SpdyStreamId stream_id, size_t length) {
   uint8_t raw_frame_type = SerializeFrameType(type);
   QUICHE_DCHECK(IsDefinedFrameType(raw_frame_type));
   QUICHE_DCHECK_EQ(0u, stream_id & ~kStreamIdMask);
-  QUICHE_BUG_IF(spdy_bug_73_2, length > kHttp2DefaultFramePayloadLimit)
-      << "Frame length  " << length_ << " is longer than frame size limit.";
+  QUICHE_BUG_IF(spdy_bug_73_2, length > kSpdyMaxFrameSizeLimit)
+      << "Frame length  " << length << " is longer than frame size limit.";
   return BeginNewFrameInternal(raw_frame_type, flags, stream_id, length);
 }
 

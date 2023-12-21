@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -249,10 +249,9 @@ class MessagePopupCollectionTest : public views::ViewsTestBase,
   std::unique_ptr<Notification> CreateNotification(const std::string& id,
                                                    const std::string& title) {
     return std::make_unique<Notification>(
-        NOTIFICATION_TYPE_BASE_FORMAT, id, base::UTF8ToUTF16(title),
-        u"test message", ui::ImageModel(),
-        std::u16string() /* display_source */, GURL(), NotifierId(),
-        RichNotificationData(), new NotificationDelegate());
+        NOTIFICATION_TYPE_SIMPLE, id, base::UTF8ToUTF16(title), u"test message",
+        ui::ImageModel(), std::u16string() /* display_source */, GURL(),
+        NotifierId(), RichNotificationData(), new NotificationDelegate());
   }
 
   std::string AddNotification() {
@@ -445,7 +444,8 @@ TEST_F(MessagePopupCollectionTest, UpdateContents) {
   EXPECT_TRUE(GetPopup(id)->updated());
 }
 
-TEST_F(MessagePopupCollectionTest, UpdateContentsCausesPopupClose) {
+// TODO(crbug.com/1403996): Flaky on all platforms.
+TEST_F(MessagePopupCollectionTest, DISABLED_UpdateContentsCausesPopupClose) {
   std::string id = AddNotification();
   AnimateToEnd();
   RunPendingMessages();
@@ -756,7 +756,7 @@ TEST_F(MessagePopupCollectionTest, HoverClose) {
   GetPopup(id0)->SetHovered(true);
   EXPECT_FALSE(IsPopupTimerStarted());
 
-  const int first_popup_top = GetPopup(id0)->GetBoundsInScreen().y();
+  const int first_popup_bottom = GetPopup(id0)->GetBoundsInScreen().bottom();
 
   MessageCenter::Get()->RemoveNotification(id0, true);
   EXPECT_TRUE(IsAnimating());
@@ -766,15 +766,12 @@ TEST_F(MessagePopupCollectionTest, HoverClose) {
   GetPopup(id1)->SetHovered(true);
   AnimateToEnd();
   EXPECT_FALSE(IsAnimating());
-  EXPECT_EQ(first_popup_top, GetPopup(id1)->GetBoundsInScreen().y());
+  EXPECT_EQ(first_popup_bottom, GetPopup(id1)->GetBoundsInScreen().bottom());
 
   EXPECT_FALSE(IsPopupTimerStarted());
   GetPopup(id1)->SetHovered(false);
-  EXPECT_TRUE(IsAnimating());
-  AnimateToEnd();
-  EXPECT_FALSE(IsAnimating());
   EXPECT_TRUE(IsPopupTimerStarted());
-  EXPECT_GT(first_popup_top, GetPopup(id1)->GetBoundsInScreen().y());
+  EXPECT_EQ(first_popup_bottom, GetPopup(id1)->GetBoundsInScreen().bottom());
 }
 
 // Popup timers should be paused if a notification has focus.

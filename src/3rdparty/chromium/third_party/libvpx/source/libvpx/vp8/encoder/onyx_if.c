@@ -328,8 +328,8 @@ void vp8_init_temporal_layer_context(VP8_COMP *cpi, VP8_CONFIG *oxcf,
 // for any "new" layers. For "existing" layers, let them inherit the parameters
 // from the previous layer state (at the same layer #). In future we may want
 // to better map the previous layer state(s) to the "new" ones.
-static void reset_temporal_layer_change(VP8_COMP *cpi, VP8_CONFIG *oxcf,
-                                        const int prev_num_layers) {
+void vp8_reset_temporal_layer_change(VP8_COMP *cpi, VP8_CONFIG *oxcf,
+                                     const int prev_num_layers) {
   int i;
   double prev_layer_framerate = 0;
   const int curr_num_layers = cpi->oxcf.number_of_layers;
@@ -1443,6 +1443,11 @@ void vp8_change_config(VP8_COMP *cpi, VP8_CONFIG *oxcf) {
   last_h = cpi->oxcf.Height;
   prev_number_of_layers = cpi->oxcf.number_of_layers;
 
+  if (cpi->initial_width) {
+    // TODO(https://crbug.com/1486441): Allow changing thread counts; the
+    // allocation is done once in vp8_create_compressor().
+    oxcf->multi_threaded = cpi->oxcf.multi_threaded;
+  }
   cpi->oxcf = *oxcf;
 
   switch (cpi->oxcf.Mode) {
@@ -1643,7 +1648,7 @@ void vp8_change_config(VP8_COMP *cpi, VP8_CONFIG *oxcf) {
       cpi->temporal_layer_id = 0;
     }
     cpi->temporal_pattern_counter = 0;
-    reset_temporal_layer_change(cpi, oxcf, prev_number_of_layers);
+    vp8_reset_temporal_layer_change(cpi, oxcf, prev_number_of_layers);
   }
 
   if (!cpi->initial_width) {
@@ -2012,36 +2017,26 @@ struct VP8_COMP *vp8_create_compressor(VP8_CONFIG *oxcf) {
   cpi->fn_ptr[BLOCK_16X16].sdf = vpx_sad16x16;
   cpi->fn_ptr[BLOCK_16X16].vf = vpx_variance16x16;
   cpi->fn_ptr[BLOCK_16X16].svf = vpx_sub_pixel_variance16x16;
-  cpi->fn_ptr[BLOCK_16X16].sdx3f = vpx_sad16x16x3;
-  cpi->fn_ptr[BLOCK_16X16].sdx8f = vpx_sad16x16x8;
   cpi->fn_ptr[BLOCK_16X16].sdx4df = vpx_sad16x16x4d;
 
   cpi->fn_ptr[BLOCK_16X8].sdf = vpx_sad16x8;
   cpi->fn_ptr[BLOCK_16X8].vf = vpx_variance16x8;
   cpi->fn_ptr[BLOCK_16X8].svf = vpx_sub_pixel_variance16x8;
-  cpi->fn_ptr[BLOCK_16X8].sdx3f = vpx_sad16x8x3;
-  cpi->fn_ptr[BLOCK_16X8].sdx8f = vpx_sad16x8x8;
   cpi->fn_ptr[BLOCK_16X8].sdx4df = vpx_sad16x8x4d;
 
   cpi->fn_ptr[BLOCK_8X16].sdf = vpx_sad8x16;
   cpi->fn_ptr[BLOCK_8X16].vf = vpx_variance8x16;
   cpi->fn_ptr[BLOCK_8X16].svf = vpx_sub_pixel_variance8x16;
-  cpi->fn_ptr[BLOCK_8X16].sdx3f = vpx_sad8x16x3;
-  cpi->fn_ptr[BLOCK_8X16].sdx8f = vpx_sad8x16x8;
   cpi->fn_ptr[BLOCK_8X16].sdx4df = vpx_sad8x16x4d;
 
   cpi->fn_ptr[BLOCK_8X8].sdf = vpx_sad8x8;
   cpi->fn_ptr[BLOCK_8X8].vf = vpx_variance8x8;
   cpi->fn_ptr[BLOCK_8X8].svf = vpx_sub_pixel_variance8x8;
-  cpi->fn_ptr[BLOCK_8X8].sdx3f = vpx_sad8x8x3;
-  cpi->fn_ptr[BLOCK_8X8].sdx8f = vpx_sad8x8x8;
   cpi->fn_ptr[BLOCK_8X8].sdx4df = vpx_sad8x8x4d;
 
   cpi->fn_ptr[BLOCK_4X4].sdf = vpx_sad4x4;
   cpi->fn_ptr[BLOCK_4X4].vf = vpx_variance4x4;
   cpi->fn_ptr[BLOCK_4X4].svf = vpx_sub_pixel_variance4x4;
-  cpi->fn_ptr[BLOCK_4X4].sdx3f = vpx_sad4x4x3;
-  cpi->fn_ptr[BLOCK_4X4].sdx8f = vpx_sad4x4x8;
   cpi->fn_ptr[BLOCK_4X4].sdx4df = vpx_sad4x4x4d;
 
 #if VPX_ARCH_X86 || VPX_ARCH_X86_64
@@ -2052,7 +2047,6 @@ struct VP8_COMP *vp8_create_compressor(VP8_CONFIG *oxcf) {
   cpi->fn_ptr[BLOCK_4X4].copymem = vp8_copy32xn;
 #endif
 
-  cpi->full_search_sad = vp8_full_search_sad;
   cpi->diamond_search_sad = vp8_diamond_search_sad;
   cpi->refining_search_sad = vp8_refining_search_sad;
 
@@ -4213,11 +4207,10 @@ static void encode_frame_to_data_rate(VP8_COMP *cpi, size_t *size,
       }
 
       /* Clamp cpi->zbin_over_quant */
-      cpi->mb.zbin_over_quant = (cpi->mb.zbin_over_quant < zbin_oq_low)
-                                    ? zbin_oq_low
-                                    : (cpi->mb.zbin_over_quant > zbin_oq_high)
-                                          ? zbin_oq_high
-                                          : cpi->mb.zbin_over_quant;
+      cpi->mb.zbin_over_quant =
+          (cpi->mb.zbin_over_quant < zbin_oq_low)    ? zbin_oq_low
+          : (cpi->mb.zbin_over_quant > zbin_oq_high) ? zbin_oq_high
+                                                     : cpi->mb.zbin_over_quant;
 
       Loop = Q != last_q;
     } else {

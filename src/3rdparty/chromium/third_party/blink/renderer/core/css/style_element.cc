@@ -41,7 +41,7 @@
 namespace blink {
 
 static bool IsCSS(const Element& element, const AtomicString& type) {
-  return type.IsEmpty() ||
+  return type.empty() ||
          (element.IsHTMLElement() ? EqualIgnoringASCIICase(type, "text/css")
                                   : (type == "text/css"));
 }
@@ -52,7 +52,8 @@ StyleElement::StyleElement(Document* document, bool created_by_parser)
       registered_as_candidate_(false),
       created_by_parser_(created_by_parser),
       start_position_(TextPosition::BelowRangePosition()),
-      pending_sheet_type_(PendingSheetType::kNone) {
+      pending_sheet_type_(PendingSheetType::kNone),
+      render_blocking_behavior_(RenderBlockingBehavior::kUnset) {
   if (created_by_parser && document &&
       document->GetScriptableDocumentParser() &&
       !document->IsInDocumentWrite()) {
@@ -71,16 +72,18 @@ StyleElement::ProcessingResult StyleElement::ProcessStyleSheet(
 
   registered_as_candidate_ = true;
   document.GetStyleEngine().AddStyleSheetCandidateNode(element);
-  if (!has_finished_parsing_children_)
+  if (!has_finished_parsing_children_) {
     return kProcessingSuccessful;
+  }
 
   return Process(element);
 }
 
 void StyleElement::RemovedFrom(Element& element,
                                ContainerNode& insertion_point) {
-  if (!insertion_point.isConnected())
+  if (!insertion_point.isConnected()) {
     return;
+  }
 
   Document& document = element.GetDocument();
   if (registered_as_candidate_) {
@@ -89,13 +92,15 @@ void StyleElement::RemovedFrom(Element& element,
     registered_as_candidate_ = false;
   }
 
-  if (sheet_)
+  if (sheet_) {
     ClearSheet(element);
+  }
 }
 
 StyleElement::ProcessingResult StyleElement::ChildrenChanged(Element& element) {
-  if (!has_finished_parsing_children_)
+  if (!has_finished_parsing_children_) {
     return kProcessingSuccessful;
+  }
   probe::WillChangeStyleElement(&element);
   return Process(element);
 }
@@ -108,8 +113,9 @@ StyleElement::ProcessingResult StyleElement::FinishParsingChildren(
 }
 
 StyleElement::ProcessingResult StyleElement::Process(Element& element) {
-  if (!element.isConnected())
+  if (!element.isConnected()) {
     return kProcessingSuccessful;
+  }
   return CreateSheet(element, element.TextFromChildren());
 }
 
@@ -118,9 +124,9 @@ void StyleElement::ClearSheet(Element& owner_element) {
 
   if (sheet_->IsLoading()) {
     DCHECK(IsSameObject(owner_element));
-    if (pending_sheet_type_ == PendingSheetType::kBlocking) {
-      owner_element.GetDocument().GetStyleEngine().RemovePendingSheet(
-          owner_element);
+    if (pending_sheet_type_ != PendingSheetType::kNonBlocking) {
+      owner_element.GetDocument().GetStyleEngine().RemovePendingBlockingSheet(
+          owner_element, pending_sheet_type_);
     }
     pending_sheet_type_ = PendingSheetType::kNone;
   }
@@ -152,17 +158,22 @@ StyleElement::ProcessingResult StyleElement::CreateSheet(Element& element,
                                &element, text, element.nonce(), document.Url(),
                                start_position_.line_));
 
-  // Clearing the current sheet may remove the cache entry so create the new
-  // sheet first
+  // Use a strong reference to keep the cache entry (which is a weak reference)
+  // alive after ClearSheet().
+  Persistent<CSSStyleSheet> old_sheet = sheet_;
+  if (old_sheet) {
+    ClearSheet(element);
+  }
+
   CSSStyleSheet* new_sheet = nullptr;
 
   // If type is empty or CSS, this is a CSS style sheet.
   const AtomicString& type = this->type();
   if (IsCSS(element, type) && passes_content_security_policy_checks) {
-    scoped_refptr<MediaQuerySet> media_queries;
+    MediaQuerySet* media_queries = nullptr;
     const AtomicString& media_string = media();
     bool media_query_matches = true;
-    if (!media_string.IsEmpty()) {
+    if (!media_string.empty()) {
       media_queries =
           MediaQuerySet::Create(media_string, element.GetExecutionContext());
       if (LocalFrame* frame = document.GetFrame()) {
@@ -170,48 +181,51 @@ StyleElement::ProcessingResult StyleElement::CreateSheet(Element& element,
         media_query_matches = evaluator.Eval(*media_queries);
       }
     }
-    pending_sheet_type_ =
-        media_query_matches &&
-                (created_by_parser_ ||
-                 (RuntimeEnabledFeatures::BlockingAttributeEnabled() &&
-                  blocking() && blocking()->IsRenderBlocking()))
-            ? PendingSheetType::kBlocking
-            : PendingSheetType::kNonBlocking;
+    auto type_and_behavior = ComputePendingSheetTypeAndRenderBlockingBehavior(
+        element, media_query_matches, created_by_parser_);
+    pending_sheet_type_ = type_and_behavior.first;
+    render_blocking_behavior_ = type_and_behavior.second;
+
     loading_ = true;
     TextPosition start_position =
         start_position_ == TextPosition::BelowRangePosition()
             ? TextPosition::MinimumPosition()
             : start_position_;
     new_sheet = document.GetStyleEngine().CreateSheet(
-        element, text, start_position, pending_sheet_type_);
+        element, text, start_position, pending_sheet_type_,
+        render_blocking_behavior_);
     new_sheet->SetMediaQueries(media_queries);
     loading_ = false;
   }
 
-  if (sheet_)
-    ClearSheet(element);
-
   sheet_ = new_sheet;
-  if (sheet_)
+  if (sheet_) {
     sheet_->Contents()->CheckLoaded();
+  }
 
   return passes_content_security_policy_checks ? kProcessingSuccessful
                                                : kProcessingFatalError;
 }
 
 bool StyleElement::IsLoading() const {
-  if (loading_)
+  if (loading_) {
     return true;
+  }
   return sheet_ ? sheet_->IsLoading() : false;
 }
 
 bool StyleElement::SheetLoaded(Document& document) {
-  if (IsLoading())
+  if (IsLoading()) {
     return false;
+  }
 
   DCHECK(IsSameObject(*sheet_->ownerNode()));
-  if (pending_sheet_type_ == PendingSheetType::kBlocking)
-    document.GetStyleEngine().RemovePendingSheet(*sheet_->ownerNode());
+  if (pending_sheet_type_ != PendingSheetType::kNonBlocking) {
+    document.GetStyleEngine().RemovePendingBlockingSheet(*sheet_->ownerNode(),
+                                                         pending_sheet_type_);
+  }
+  document.GetStyleEngine().SetNeedsActiveStyleUpdate(
+      sheet_->ownerNode()->GetTreeScope());
   pending_sheet_type_ = PendingSheetType::kNone;
   return true;
 }
@@ -220,7 +234,26 @@ void StyleElement::SetToPendingState(Document& document, Element& element) {
   DCHECK(IsSameObject(element));
   DCHECK_LT(pending_sheet_type_, PendingSheetType::kBlocking);
   pending_sheet_type_ = PendingSheetType::kBlocking;
-  document.GetStyleEngine().AddPendingSheet(element);
+  document.GetStyleEngine().AddPendingBlockingSheet(element,
+                                                    pending_sheet_type_);
+}
+
+void StyleElement::BlockingAttributeChanged(Element& element) {
+  // If this is a dynamically inserted style element, and the `blocking`
+  // has changed so that the element is no longer render-blocking, then unblock
+  // rendering on this element. Note that Parser-inserted stylesheets are
+  // render-blocking by default, so removing `blocking=render` does not unblock
+  // rendering.
+  if (pending_sheet_type_ != PendingSheetType::kDynamicRenderBlocking) {
+    return;
+  }
+  if (!IsA<HTMLElement>(element) ||
+      To<HTMLElement>(element).IsPotentiallyRenderBlocking()) {
+    return;
+  }
+  element.GetDocument().GetStyleEngine().RemovePendingBlockingSheet(
+      element, pending_sheet_type_);
+  pending_sheet_type_ = PendingSheetType::kNonBlocking;
 }
 
 void StyleElement::Trace(Visitor* visitor) const {

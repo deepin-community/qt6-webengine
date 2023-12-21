@@ -1,3 +1,5 @@
+# mypy: allow-untyped-defs
+
 class ClickAction:
     name = "click"
 
@@ -22,6 +24,31 @@ class DeleteAllCookiesAction:
     def __call__(self, payload):
         self.logger.debug("Deleting all cookies")
         self.protocol.cookies.delete_all_cookies()
+
+
+class GetAllCookiesAction:
+    name = "get_all_cookies"
+
+    def __init__(self, logger, protocol):
+        self.logger = logger
+        self.protocol = protocol
+
+    def __call__(self, payload):
+        self.logger.debug("Getting all cookies")
+        return self.protocol.cookies.get_all_cookies()
+
+
+class GetNamedCookieAction:
+    name = "get_named_cookie"
+
+    def __init__(self, logger, protocol):
+        self.logger = logger
+        self.protocol = protocol
+
+    def __call__(self, payload):
+        name = payload["name"]
+        self.logger.debug("Getting cookie named %s" % name)
+        return self.protocol.cookies.get_named_cookie(name)
 
 
 class SendKeysAction:
@@ -68,9 +95,13 @@ class ActionSequenceAction:
     def __init__(self, logger, protocol):
         self.logger = logger
         self.protocol = protocol
+        self.requires_state_reset = False
 
     def __call__(self, payload):
         # TODO: some sort of shallow error checking
+        if self.requires_state_reset:
+            self.reset()
+        self.requires_state_reset = True
         actions = payload["actions"]
         for actionSequence in actions:
             if actionSequence["type"] == "pointer":
@@ -82,6 +113,10 @@ class ActionSequenceAction:
 
     def get_element(self, element_selector):
         return self.protocol.select.element_by_selector(element_selector)
+
+    def reset(self):
+        self.protocol.action_sequence.release()
+        self.requires_state_reset = False
 
 
 class GenerateTestReportAction:
@@ -108,9 +143,8 @@ class SetPermissionAction:
         descriptor = permission_params["descriptor"]
         name = descriptor["name"]
         state = permission_params["state"]
-        one_realm = permission_params.get("oneRealm", False)
-        self.logger.debug("Setting permission %s to %s, oneRealm=%s" % (name, state, one_realm))
-        self.protocol.set_permission.set_permission(descriptor, state, one_realm)
+        self.logger.debug("Setting permission %s to %s" % (name, state))
+        self.protocol.set_permission.set_permission(descriptor, state)
 
 class AddVirtualAuthenticatorAction:
     name = "add_virtual_authenticator"
@@ -217,6 +251,8 @@ class SetSPCTransactionModeAction:
 
 actions = [ClickAction,
            DeleteAllCookiesAction,
+           GetAllCookiesAction,
+           GetNamedCookieAction,
            SendKeysAction,
            MinimizeWindowAction,
            SetWindowRectAction,

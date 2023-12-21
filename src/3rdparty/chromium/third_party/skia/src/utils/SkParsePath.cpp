@@ -4,8 +4,20 @@
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
+
+#include "include/core/SkPath.h"
+#include "include/core/SkPoint.h"
+#include "include/core/SkScalar.h"
+#include "include/core/SkStream.h"
+#include "include/core/SkString.h"
+#include "include/core/SkTypes.h"
 #include "include/utils/SkParse.h"
 #include "include/utils/SkParsePath.h"
+#include "src/core/SkGeometry.h"
+
+#include <cstdio>
+
+enum class SkPathDirection;
 
 static inline bool is_between(int c, int min, int max) {
     return (unsigned)(c - min) <= (unsigned)(max - min);
@@ -221,22 +233,14 @@ bool SkParsePath::FromSVGString(const char data[], SkPath* result) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-#include "include/core/SkStream.h"
-#include "include/core/SkString.h"
-#include "src/core/SkGeometry.h"
-
 static void write_scalar(SkWStream* stream, SkScalar value) {
     char buffer[64];
-#ifdef SK_BUILD_FOR_WIN
-    int len = _snprintf(buffer, sizeof(buffer), "%g", value);
-#else
     int len = snprintf(buffer, sizeof(buffer), "%g", value);
-#endif
     char* stop = buffer + len;
     stream->write(buffer, stop - buffer);
 }
 
-void SkParsePath::ToSVGString(const SkPath& path, SkString* str, PathEncoding encoding) {
+SkString SkParsePath::ToSVGString(const SkPath& path, PathEncoding encoding) {
     SkDynamicMemoryWStream  stream;
 
     SkPoint current_point{0,0};
@@ -290,10 +294,12 @@ void SkParsePath::ToSVGString(const SkPath& path, SkString* str, PathEncoding en
             case SkPath::kClose_Verb:
                 stream.write("Z", 1);
                 break;
-            case SkPath::kDone_Verb:
-                str->resize(stream.bytesWritten());
-                stream.copyTo(str->writable_str());
-            return;
+            case SkPath::kDone_Verb: {
+                SkString str;
+                str.resize(stream.bytesWritten());
+                stream.copyTo(str.data());
+                return str;
+            }
         }
     }
 }

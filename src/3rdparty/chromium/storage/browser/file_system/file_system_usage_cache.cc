@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,9 +10,9 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/containers/contains.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/pickle.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
@@ -36,7 +36,7 @@ FileSystemUsageCache::~FileSystemUsageCache() {
 const base::FilePath::CharType FileSystemUsageCache::kUsageFileName[] =
     FILE_PATH_LITERAL(".usage");
 const char FileSystemUsageCache::kUsageFileHeader[] = "FSU5";
-const int FileSystemUsageCache::kUsageFileHeaderSize = 4;
+const size_t FileSystemUsageCache::kUsageFileHeaderSize = 4;
 
 // Pickle::{Read,Write}Bool treat bool as int
 const int FileSystemUsageCache::kUsageFileSize =

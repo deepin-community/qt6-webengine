@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,8 @@
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS)
+#include <fnmatch.h>
 #include "base/files/file_util.h"
 #include "base/system/sys_info.h"
 #include "chrome/common/chrome_paths.h"
@@ -24,8 +25,7 @@ namespace {
 
 bool g_access_to_all_files_enabled = false;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS) || \
-    BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
 // Returns true if |allowlist| contains |path| or a parent of |path|.
 bool IsPathOnAllowlist(const base::FilePath& path,
                        const std::vector<base::FilePath>& allowlist) {
@@ -40,7 +40,12 @@ bool IsPathOnAllowlist(const base::FilePath& path,
 }
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS)
+bool IsLacrosLogFile(const base::FilePath& path) {
+  return fnmatch("/home/chronos/user/lacros/lacros*.log", path.value().c_str(),
+                 FNM_NOESCAPE) == 0;
+}
+
 // Returns true if access is allowed for |path| for a user with |profile_path).
 bool IsAccessAllowedChromeOS(const base::FilePath& path,
                              const base::FilePath& profile_path) {
@@ -55,6 +60,9 @@ bool IsAccessAllowedChromeOS(const base::FilePath& path,
     }
   }
 
+  if (IsLacrosLogFile(path))
+    return true;
+
   // Use an allowlist to only allow access to files residing in the list of
   // directories below.
   static const base::FilePath::CharType* const kLocalAccessAllowList[] = {
@@ -62,7 +70,7 @@ bool IsAccessAllowedChromeOS(const base::FilePath& path,
       "/home/chronos/user/MyFiles",
       "/home/chronos/user/WebRTC Logs",
       "/home/chronos/user/google-assistant-library/log",
-      "/home/chronos/user/lacros/lacros.log",
+      "/home/chronos/user/lacros/Crash Reports",
       "/home/chronos/user/log",
       "/home/chronos/user/crostini.icons",
       "/media",
@@ -120,7 +128,7 @@ bool IsAccessAllowedChromeOS(const base::FilePath& path,
 
   return IsPathOnAllowlist(path, allowlist);
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_ANDROID)
 // Returns true if access is allowed for |path|.
@@ -164,7 +172,7 @@ bool IsAccessAllowedInternal(const base::FilePath& path,
   if (g_access_to_all_files_enabled)
     return true;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS)
   return IsAccessAllowedChromeOS(path, profile_path);
 #elif BUILDFLAG(IS_ANDROID)
   return IsAccessAllowedAndroid(path);

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,9 +15,11 @@ int StubPasswordManagerDriver::GetId() const {
   return 0;
 }
 
-void StubPasswordManagerDriver::FillPasswordForm(
-    const autofill::PasswordFormFillData& form_data) {
-}
+void StubPasswordManagerDriver::SetPasswordFillData(
+    const autofill::PasswordFormFillData& form_data) {}
+
+void StubPasswordManagerDriver::PasswordFieldHasNoAssociatedUsername(
+    autofill::FieldRendererId password_element_renderer_id) {}
 
 void StubPasswordManagerDriver::GeneratedPasswordAccepted(
     const std::u16string& password) {}
@@ -34,15 +36,22 @@ void StubPasswordManagerDriver::PreviewSuggestion(
     const std::u16string& username,
     const std::u16string& password) {}
 
+void StubPasswordManagerDriver::PreviewGenerationSuggestion(
+    const std::u16string& password) {}
+
 void StubPasswordManagerDriver::ClearPreviewedForm() {
 }
+
+void StubPasswordManagerDriver::SetSuggestionAvailability(
+    autofill::FieldRendererId generation_element_id,
+    const autofill::mojom::AutofillState state) {}
 
 PasswordGenerationFrameHelper*
 StubPasswordManagerDriver::GetPasswordGenerationHelper() {
   return nullptr;
 }
 
-PasswordManager* StubPasswordManagerDriver::GetPasswordManager() {
+PasswordManagerInterface* StubPasswordManagerDriver::GetPasswordManager() {
   return nullptr;
 }
 

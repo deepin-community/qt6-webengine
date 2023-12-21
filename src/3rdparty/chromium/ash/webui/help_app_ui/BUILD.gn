@@ -1,4 +1,4 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -47,18 +47,18 @@ static_library("help_app_ui") {
     "//ash/webui/resources:help_app_kids_magazine_bundle_resources",
     "//ash/webui/resources:help_app_resources",
     "//ash/webui/web_applications",
-    "//chromeos/components/local_search_service/public/cpp",
-    "//chromeos/components/local_search_service/public/mojom",
-    "//chromeos/components/local_search_service/public/mojom:mojom_js",
+    "//chromeos/ash/components/local_search_service/public/cpp",
+    "//chromeos/ash/components/local_search_service/public/mojom",
+    "//chromeos/ash/components/local_search_service/public/mojom:mojom_js",
+    "//chromeos/ash/components/system",
     "//chromeos/constants",
     "//chromeos/strings",
-    "//chromeos/system",
     "//components/keyed_service/content:content",
     "//content/public/browser",
     "//content/public/common",
     "//mojo/public/cpp/bindings",
     "//mojo/public/cpp/platform",
-    "//ui/resources:webui_generated_resources_grd_grit",
+    "//ui/resources:webui_resources_grd_grit",
     "//ui/webui",
   ]
 }
@@ -79,7 +79,7 @@ source_set("unit_tests") {
     ":help_app_ui",
     "//ash/webui/help_app_ui/search:mojo_bindings",
     "//base/test:test_support",
-    "//chromeos/components/local_search_service/public/mojom:mojom",
+    "//chromeos/ash/components/local_search_service/public/mojom",
     "//mojo/public/cpp/bindings:bindings",
     "//testing/gtest",
   ]

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 import {assertNotReached} from 'chrome://resources/js/assert_ts.js';
@@ -47,21 +47,35 @@ export enum PrinterState {
   UNKNOWN = 2,
 }
 
-type StatusReasonEntry = {
-  reason: PrinterStatusReason,
-  severity: PrinterStatusSeverity,
-};
+export enum PrintAttemptOutcome {
+  CANCELLED_PRINT_BUTTON_DISABLED = 0,
+  CANCELLED_NO_PRINTERS_AVAILABLE = 1,
+  CANCELLED_OTHER_PRINTERS_AVAILABLE = 2,
+  CANCELLED_PRINTER_ERROR_STATUS = 3,
+  CANCELLED_PRINTER_GOOD_STATUS = 4,
+  CANCELLED_PRINTER_UNKNOWN_STATUS = 5,
+  PDF_PRINT_ATTEMPTED = 6,
+  PRINT_JOB_SUCCESS_INITIAL_PRINTER = 7,
+  PRINT_JOB_SUCCESS_MANUALLY_SELECTED_PRINTER = 8,
+  PRINT_JOB_FAIL_INITIAL_PRINTER = 9,
+  PRINT_JOB_FAIL_MANUALLY_SELECTED_PRINTER = 10,
+}
+
+interface StatusReasonEntry {
+  reason: PrinterStatusReason;
+  severity: PrinterStatusSeverity;
+}
 
 /**
  * A container for the results of a printer status query. A printer status query
  * can return multiple error reasons. |timestamp| is set at the time of status
  * creation.
  */
-export type PrinterStatus = {
-  printerId: string,
-  statusReasons: StatusReasonEntry[],
-  timestamp: number,
-};
+export interface PrinterStatus {
+  printerId: string;
+  statusReasons: StatusReasonEntry[];
+  timestamp: number;
+}
 
 export const ERROR_STRING_KEY_MAP: Map<PrinterStatusReason, string> = new Map([
   [PrinterStatusReason.DEVICE_ERROR, 'printerStatusDeviceError'],

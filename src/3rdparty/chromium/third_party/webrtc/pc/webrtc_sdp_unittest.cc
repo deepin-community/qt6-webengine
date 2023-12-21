@@ -188,8 +188,6 @@ static const char kSdpFullString[] =
     "a=rtpmap:104 ISAC/32000\r\n"
     "a=ssrc:1 cname:stream_1_cname\r\n"
     "a=ssrc:1 msid:local_stream_1 audio_track_id_1\r\n"
-    "a=ssrc:1 mslabel:local_stream_1\r\n"
-    "a=ssrc:1 label:audio_track_id_1\r\n"
     "m=video 3457 RTP/SAVPF 120\r\n"
     "c=IN IP4 74.125.224.39\r\n"
     "a=rtcp:3456 IN IP4 74.125.224.39\r\n"
@@ -214,12 +212,8 @@ static const char kSdpFullString[] =
     "a=ssrc-group:FEC 2 3\r\n"
     "a=ssrc:2 cname:stream_1_cname\r\n"
     "a=ssrc:2 msid:local_stream_1 video_track_id_1\r\n"
-    "a=ssrc:2 mslabel:local_stream_1\r\n"
-    "a=ssrc:2 label:video_track_id_1\r\n"
     "a=ssrc:3 cname:stream_1_cname\r\n"
-    "a=ssrc:3 msid:local_stream_1 video_track_id_1\r\n"
-    "a=ssrc:3 mslabel:local_stream_1\r\n"
-    "a=ssrc:3 label:video_track_id_1\r\n";
+    "a=ssrc:3 msid:local_stream_1 video_track_id_1\r\n";
 
 // SDP reference string without the candidates.
 static const char kSdpString[] =
@@ -245,8 +239,6 @@ static const char kSdpString[] =
     "a=rtpmap:104 ISAC/32000\r\n"
     "a=ssrc:1 cname:stream_1_cname\r\n"
     "a=ssrc:1 msid:local_stream_1 audio_track_id_1\r\n"
-    "a=ssrc:1 mslabel:local_stream_1\r\n"
-    "a=ssrc:1 label:audio_track_id_1\r\n"
     "m=video 9 RTP/SAVPF 120\r\n"
     "c=IN IP4 0.0.0.0\r\n"
     "a=rtcp:9 IN IP4 0.0.0.0\r\n"
@@ -259,12 +251,8 @@ static const char kSdpString[] =
     "a=ssrc-group:FEC 2 3\r\n"
     "a=ssrc:2 cname:stream_1_cname\r\n"
     "a=ssrc:2 msid:local_stream_1 video_track_id_1\r\n"
-    "a=ssrc:2 mslabel:local_stream_1\r\n"
-    "a=ssrc:2 label:video_track_id_1\r\n"
     "a=ssrc:3 cname:stream_1_cname\r\n"
-    "a=ssrc:3 msid:local_stream_1 video_track_id_1\r\n"
-    "a=ssrc:3 mslabel:local_stream_1\r\n"
-    "a=ssrc:3 label:video_track_id_1\r\n";
+    "a=ssrc:3 msid:local_stream_1 video_track_id_1\r\n";
 
 // draft-ietf-mmusic-sctp-sdp-03
 static const char kSdpSctpDataChannelString[] =
@@ -339,9 +327,7 @@ static const char kSdpAudioString[] =
     "a=sendrecv\r\n"
     "a=rtpmap:111 opus/48000/2\r\n"
     "a=ssrc:1 cname:stream_1_cname\r\n"
-    "a=ssrc:1 msid:local_stream audio_track_id_1\r\n"
-    "a=ssrc:1 mslabel:local_stream\r\n"
-    "a=ssrc:1 label:audio_track_id_1\r\n";
+    "a=ssrc:1 msid:local_stream audio_track_id_1\r\n";
 
 static const char kSdpVideoString[] =
     "m=video 9 RTP/SAVPF 120\r\n"
@@ -352,9 +338,7 @@ static const char kSdpVideoString[] =
     "a=sendrecv\r\n"
     "a=rtpmap:120 VP8/90000\r\n"
     "a=ssrc:2 cname:stream_1_cname\r\n"
-    "a=ssrc:2 msid:local_stream video_track_id_1\r\n"
-    "a=ssrc:2 mslabel:local_stream\r\n"
-    "a=ssrc:2 label:video_track_id_1\r\n";
+    "a=ssrc:2 msid:local_stream video_track_id_1\r\n";
 
 // Reference sdp string using bundle-only.
 static const char kBundleOnlySdpFullString[] =
@@ -395,8 +379,6 @@ static const char kBundleOnlySdpFullString[] =
     "a=rtpmap:104 ISAC/32000\r\n"
     "a=ssrc:1 cname:stream_1_cname\r\n"
     "a=ssrc:1 msid:local_stream_1 audio_track_id_1\r\n"
-    "a=ssrc:1 mslabel:local_stream_1\r\n"
-    "a=ssrc:1 label:audio_track_id_1\r\n"
     "m=video 0 RTP/SAVPF 120\r\n"
     "c=IN IP4 0.0.0.0\r\n"
     "a=rtcp:9 IN IP4 0.0.0.0\r\n"
@@ -409,12 +391,8 @@ static const char kBundleOnlySdpFullString[] =
     "a=ssrc-group:FEC 2 3\r\n"
     "a=ssrc:2 cname:stream_1_cname\r\n"
     "a=ssrc:2 msid:local_stream_1 video_track_id_1\r\n"
-    "a=ssrc:2 mslabel:local_stream_1\r\n"
-    "a=ssrc:2 label:video_track_id_1\r\n"
     "a=ssrc:3 cname:stream_1_cname\r\n"
-    "a=ssrc:3 msid:local_stream_1 video_track_id_1\r\n"
-    "a=ssrc:3 mslabel:local_stream_1\r\n"
-    "a=ssrc:3 label:video_track_id_1\r\n";
+    "a=ssrc:3 msid:local_stream_1 video_track_id_1\r\n";
 
 // Plan B SDP reference string, with 2 streams, 2 audio tracks and 3 video
 // tracks.
@@ -455,12 +433,8 @@ static const char kPlanBSdpFullString[] =
     "a=rtpmap:104 ISAC/32000\r\n"
     "a=ssrc:1 cname:stream_1_cname\r\n"
     "a=ssrc:1 msid:local_stream_1 audio_track_id_1\r\n"
-    "a=ssrc:1 mslabel:local_stream_1\r\n"
-    "a=ssrc:1 label:audio_track_id_1\r\n"
     "a=ssrc:4 cname:stream_2_cname\r\n"
     "a=ssrc:4 msid:local_stream_2 audio_track_id_2\r\n"
-    "a=ssrc:4 mslabel:local_stream_2\r\n"
-    "a=ssrc:4 label:audio_track_id_2\r\n"
     "m=video 3457 RTP/SAVPF 120\r\n"
     "c=IN IP4 74.125.224.39\r\n"
     "a=rtcp:3456 IN IP4 74.125.224.39\r\n"
@@ -485,20 +459,12 @@ static const char kPlanBSdpFullString[] =
     "a=ssrc-group:FEC 2 3\r\n"
     "a=ssrc:2 cname:stream_1_cname\r\n"
     "a=ssrc:2 msid:local_stream_1 video_track_id_1\r\n"
-    "a=ssrc:2 mslabel:local_stream_1\r\n"
-    "a=ssrc:2 label:video_track_id_1\r\n"
     "a=ssrc:3 cname:stream_1_cname\r\n"
     "a=ssrc:3 msid:local_stream_1 video_track_id_1\r\n"
-    "a=ssrc:3 mslabel:local_stream_1\r\n"
-    "a=ssrc:3 label:video_track_id_1\r\n"
     "a=ssrc:5 cname:stream_2_cname\r\n"
     "a=ssrc:5 msid:local_stream_2 video_track_id_2\r\n"
-    "a=ssrc:5 mslabel:local_stream_2\r\n"
-    "a=ssrc:5 label:video_track_id_2\r\n"
     "a=ssrc:6 cname:stream_2_cname\r\n"
-    "a=ssrc:6 msid:local_stream_2 video_track_id_3\r\n"
-    "a=ssrc:6 mslabel:local_stream_2\r\n"
-    "a=ssrc:6 label:video_track_id_3\r\n";
+    "a=ssrc:6 msid:local_stream_2 video_track_id_3\r\n";
 
 // Unified Plan SDP reference string, with 2 streams, 2 audio tracks and 3 video
 // tracks.
@@ -654,8 +620,6 @@ static const char kUnifiedPlanSdpFullStringWithSpecialMsid[] =
     "a=rtpmap:104 ISAC/32000\r\n"
     "a=ssrc:1 cname:stream_1_cname\r\n"
     "a=ssrc:1 msid:local_stream_1 audio_track_id_1\r\n"
-    "a=ssrc:1 mslabel:local_stream_1\r\n"
-    "a=ssrc:1 label:audio_track_id_1\r\n"
     // Audio track 2, with two stream ids.
     "m=audio 9 RTP/SAVPF 111 103 104\r\n"
     "c=IN IP4 0.0.0.0\r\n"
@@ -677,8 +641,6 @@ static const char kUnifiedPlanSdpFullStringWithSpecialMsid[] =
     // The support for Plan B msid signaling only includes the
     // first media stream id "local_stream_1."
     "a=ssrc:4 msid:local_stream_1 audio_track_id_2\r\n"
-    "a=ssrc:4 mslabel:local_stream_1\r\n"
-    "a=ssrc:4 label:audio_track_id_2\r\n"
     // Audio track 3, with no stream ids.
     "m=audio 9 RTP/SAVPF 111 103 104\r\n"
     "c=IN IP4 0.0.0.0\r\n"
@@ -696,9 +658,7 @@ static const char kUnifiedPlanSdpFullStringWithSpecialMsid[] =
     "a=rtpmap:103 ISAC/16000\r\n"
     "a=rtpmap:104 ISAC/32000\r\n"
     "a=ssrc:7 cname:stream_2_cname\r\n"
-    "a=ssrc:7 msid:- audio_track_id_3\r\n"
-    "a=ssrc:7 mslabel:-\r\n"
-    "a=ssrc:7 label:audio_track_id_3\r\n";
+    "a=ssrc:7 msid:- audio_track_id_3\r\n";
 
 // SDP string for unified plan without SSRCs
 static const char kUnifiedPlanSdpFullStringNoSsrc[] =
@@ -2467,7 +2427,7 @@ TEST_F(WebRtcSdpTest, DeserializeSessionDescriptionWithoutRtpmap) {
       // Codec that doesn't appear in the m= line will be ignored.
       "a=rtpmap:104 ISAC/32000\r\n"
       // The rtpmap line for static payload codec is optional.
-      "a=rtpmap:18 G729/16000\r\n"
+      "a=rtpmap:18 G729/8000\r\n"
       "a=rtpmap:103 ISAC/16000\r\n";
 
   JsepSessionDescription jdesc(kDummyType);
@@ -2478,7 +2438,7 @@ TEST_F(WebRtcSdpTest, DeserializeSessionDescriptionWithoutRtpmap) {
   // The codecs in the AudioContentDescription should be in the same order as
   // the payload types (<fmt>s) on the m= line.
   ref_codecs.push_back(AudioCodec(0, "PCMU", 8000, 0, 1));
-  ref_codecs.push_back(AudioCodec(18, "G729", 16000, 0, 1));
+  ref_codecs.push_back(AudioCodec(18, "G729", 8000, 0, 1));
   ref_codecs.push_back(AudioCodec(103, "ISAC", 16000, 0, 1));
   EXPECT_EQ(ref_codecs, audio->codecs());
 }
@@ -2665,21 +2625,6 @@ TEST_F(WebRtcSdpTest, DeserializeSessionDescriptionWithRejectedVideo) {
 
 TEST_F(WebRtcSdpTest, DeserializeSessionDescriptionWithRejectedAudioVideo) {
   EXPECT_TRUE(TestDeserializeRejected(true, true));
-}
-
-// Tests that we can still handle the sdp uses mslabel and label instead of
-// msid for backward compatibility.
-TEST_F(WebRtcSdpTest, DeserializeSessionDescriptionWithoutMsid) {
-  jdesc_.description()->set_msid_supported(false);
-  JsepSessionDescription jdesc(kDummyType);
-  std::string sdp_without_msid = kSdpFullString;
-  Replace("msid", "xmsid", &sdp_without_msid);
-  // Deserialize
-  EXPECT_TRUE(SdpDeserialize(sdp_without_msid, &jdesc));
-  // Verify
-  EXPECT_TRUE(CompareSessionDescription(jdesc_, jdesc));
-  EXPECT_FALSE(jdesc.description()->msid_signaling() &
-               ~cricket::kMsidSignalingSsrcAttribute);
 }
 
 TEST_F(WebRtcSdpTest, DeserializeSessionDescriptionWithExtmapAllowMixed) {
@@ -2998,21 +2943,6 @@ TEST_F(WebRtcSdpTest, DeserializeSdpWithRtpmapAttribute) {
   EXPECT_TRUE(SdpDeserialize(sdp_with_data, &jdesc_output));
 }
 
-TEST_F(WebRtcSdpTest, DeserializeSdpWithStrangeApplicationProtocolNames) {
-  static const char* bad_strings[] = {
-      "DTLS/SCTPRTP/", "obviously-bogus",   "UDP/TL/RTSP/SAVPF",
-      "UDP/TL/RTSP/S", "DTLS/SCTP/RTP/FOO", "obviously-bogus/RTP/"};
-  for (auto proto : bad_strings) {
-    std::string sdp_with_data = kSdpString;
-    sdp_with_data.append("m=application 9 ");
-    sdp_with_data.append(proto);
-    sdp_with_data.append(" 47\r\n");
-    JsepSessionDescription jdesc_output(kDummyType);
-    EXPECT_FALSE(SdpDeserialize(sdp_with_data, &jdesc_output))
-        << "Parsing should have failed on " << proto;
-  }
-}
-
 // For crbug/344475.
 TEST_F(WebRtcSdpTest, DeserializeSdpWithCorruptedSctpDataChannels) {
   std::string sdp_with_data = kSdpString;
@@ -3118,7 +3048,7 @@ TEST_F(WebRtcSdpTest, DeserializeSessionDescriptionWithoutEndLineBreak) {
   // Deserialize
   SdpParseError error;
   EXPECT_FALSE(webrtc::SdpDeserialize(sdp, &jdesc, &error));
-  const std::string lastline = "a=ssrc:3 label:video_track_id_1";
+  const std::string lastline = "a=ssrc:3 msid:local_stream_1 video_track_id_1";
   EXPECT_EQ(lastline, error.line);
   EXPECT_EQ("Invalid SDP line.", error.description);
 }
@@ -4110,11 +4040,54 @@ TEST_F(WebRtcSdpTest, DeserializeInvalidPortInCandidateAttribute) {
   EXPECT_FALSE(SdpDeserialize(kSdpWithInvalidCandidatePort, &jdesc_output));
 }
 
+TEST_F(WebRtcSdpTest, DeserializeMsidAttributeWithStreamIdAndTrackId) {
+  std::string sdp =
+      "v=0\r\n"
+      "o=- 18446744069414584320 18446462598732840960 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "m=audio 9 RTP/SAVPF 111\r\n"
+      "c=IN IP4 0.0.0.0\r\n"
+      "a=rtpmap:111 opus/48000/2\r\n"
+      "a=msid:stream_id track_id\r\n";
+
+  JsepSessionDescription jdesc_output(kDummyType);
+  EXPECT_TRUE(SdpDeserialize(sdp, &jdesc_output));
+  auto stream = jdesc_output.description()
+                    ->contents()[0]
+                    .media_description()
+                    ->streams()[0];
+  ASSERT_EQ(stream.stream_ids().size(), 1u);
+  EXPECT_EQ(stream.stream_ids()[0], "stream_id");
+  EXPECT_EQ(stream.id, "track_id");
+}
+
+TEST_F(WebRtcSdpTest, DeserializeMsidAttributeWithEmptyStreamIdAndTrackId) {
+  std::string sdp =
+      "v=0\r\n"
+      "o=- 18446744069414584320 18446462598732840960 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "m=audio 9 RTP/SAVPF 111\r\n"
+      "c=IN IP4 0.0.0.0\r\n"
+      "a=rtpmap:111 opus/48000/2\r\n"
+      "a=msid:- track_id\r\n";
+
+  JsepSessionDescription jdesc_output(kDummyType);
+  EXPECT_TRUE(SdpDeserialize(sdp, &jdesc_output));
+  auto stream = jdesc_output.description()
+                    ->contents()[0]
+                    .media_description()
+                    ->streams()[0];
+  ASSERT_EQ(stream.stream_ids().size(), 0u);
+  EXPECT_EQ(stream.id, "track_id");
+}
+
 // Test that "a=msid" with a missing track ID is rejected and doesn't crash.
 // Regression test for:
 // https://bugs.chromium.org/p/chromium/issues/detail?id=686405
 TEST_F(WebRtcSdpTest, DeserializeMsidAttributeWithMissingTrackId) {
-  static const char kSdpWithMissingTrackId[] =
+  std::string sdp =
       "v=0\r\n"
       "o=- 18446744069414584320 18446462598732840960 IN IP4 127.0.0.1\r\n"
       "s=-\r\n"
@@ -4125,11 +4098,226 @@ TEST_F(WebRtcSdpTest, DeserializeMsidAttributeWithMissingTrackId) {
       "a=msid:stream_id \r\n";
 
   JsepSessionDescription jdesc_output(kDummyType);
-  EXPECT_FALSE(SdpDeserialize(kSdpWithMissingTrackId, &jdesc_output));
+  EXPECT_FALSE(SdpDeserialize(sdp, &jdesc_output));
+}
+
+TEST_F(WebRtcSdpTest, DeserializeMsidAttributeWithoutColon) {
+  std::string sdp =
+      "v=0\r\n"
+      "o=- 18446744069414584320 18446462598732840960 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "m=audio 9 RTP/SAVPF 111\r\n"
+      "c=IN IP4 0.0.0.0\r\n"
+      "a=rtpmap:111 opus/48000/2\r\n"
+      "a=msid\r\n";
+
+  JsepSessionDescription jdesc_output(kDummyType);
+  EXPECT_FALSE(SdpDeserialize(sdp, &jdesc_output));
+}
+
+TEST_F(WebRtcSdpTest, DeserializeMsidAttributeWithoutAttributes) {
+  std::string sdp =
+      "v=0\r\n"
+      "o=- 18446744069414584320 18446462598732840960 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "m=audio 9 RTP/SAVPF 111\r\n"
+      "c=IN IP4 0.0.0.0\r\n"
+      "a=rtpmap:111 opus/48000/2\r\n"
+      "a=msid:\r\n";
+
+  JsepSessionDescription jdesc_output(kDummyType);
+  EXPECT_FALSE(SdpDeserialize(sdp, &jdesc_output));
+}
+
+TEST_F(WebRtcSdpTest, DeserializeMsidAttributeWithTooManySpaces) {
+  std::string sdp =
+      "v=0\r\n"
+      "o=- 18446744069414584320 18446462598732840960 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "m=audio 9 RTP/SAVPF 111\r\n"
+      "c=IN IP4 0.0.0.0\r\n"
+      "a=rtpmap:111 opus/48000/2\r\n"
+      "a=msid:stream_id track_id bogus\r\n";
+
+  JsepSessionDescription jdesc_output(kDummyType);
+  EXPECT_FALSE(SdpDeserialize(sdp, &jdesc_output));
+}
+
+TEST_F(WebRtcSdpTest, DeserializeMsidAttributeWithDifferentTrackIds) {
+  std::string sdp =
+      "v=0\r\n"
+      "o=- 18446744069414584320 18446462598732840960 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "m=audio 9 RTP/SAVPF 111\r\n"
+      "c=IN IP4 0.0.0.0\r\n"
+      "a=rtpmap:111 opus/48000/2\r\n"
+      "a=msid:stream_id track_id\r\n"
+      "a=msid:stream_id2 track_id2\r\n";
+
+  JsepSessionDescription jdesc_output(kDummyType);
+  EXPECT_FALSE(SdpDeserialize(sdp, &jdesc_output));
+}
+
+TEST_F(WebRtcSdpTest, DeserializeMsidAttributeWithoutAppData) {
+  std::string sdp =
+      "v=0\r\n"
+      "o=- 18446744069414584320 18446462598732840960 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "m=audio 9 RTP/SAVPF 111\r\n"
+      "c=IN IP4 0.0.0.0\r\n"
+      "a=rtpmap:111 opus/48000/2\r\n"
+      "a=msid:stream_id\r\n";
+
+  JsepSessionDescription jdesc_output(kDummyType);
+  EXPECT_TRUE(SdpDeserialize(sdp, &jdesc_output));
+  auto stream = jdesc_output.description()
+                    ->contents()[0]
+                    .media_description()
+                    ->streams()[0];
+  ASSERT_EQ(stream.stream_ids().size(), 1u);
+  EXPECT_EQ(stream.stream_ids()[0], "stream_id");
+  // Track id is randomly generated.
+  EXPECT_NE(stream.id, "");
+}
+
+TEST_F(WebRtcSdpTest, DeserializeMsidAttributeWithoutAppDataTwoStreams) {
+  std::string sdp =
+      "v=0\r\n"
+      "o=- 18446744069414584320 18446462598732840960 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "m=audio 9 RTP/SAVPF 111\r\n"
+      "c=IN IP4 0.0.0.0\r\n"
+      "a=rtpmap:111 opus/48000/2\r\n"
+      "a=msid:stream_id\r\n"
+      "a=msid:stream_id2\r\n";
+
+  JsepSessionDescription jdesc_output(kDummyType);
+  EXPECT_TRUE(SdpDeserialize(sdp, &jdesc_output));
+  auto stream = jdesc_output.description()
+                    ->contents()[0]
+                    .media_description()
+                    ->streams()[0];
+  ASSERT_EQ(stream.stream_ids().size(), 2u);
+  EXPECT_EQ(stream.stream_ids()[0], "stream_id");
+  EXPECT_EQ(stream.stream_ids()[1], "stream_id2");
+  // Track id is randomly generated.
+  EXPECT_NE(stream.id, "");
+}
+
+TEST_F(WebRtcSdpTest, DeserializeMsidAttributeWithoutAppDataDuplicate) {
+  std::string sdp =
+      "v=0\r\n"
+      "o=- 18446744069414584320 18446462598732840960 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "m=audio 9 RTP/SAVPF 111\r\n"
+      "c=IN IP4 0.0.0.0\r\n"
+      "a=rtpmap:111 opus/48000/2\r\n"
+      "a=msid:stream_id\r\n"
+      "a=msid:stream_id\r\n";
+
+  JsepSessionDescription jdesc_output(kDummyType);
+  // This is somewhat silly but accept it. Duplicates get filtered.
+  EXPECT_TRUE(SdpDeserialize(sdp, &jdesc_output));
+  auto stream = jdesc_output.description()
+                    ->contents()[0]
+                    .media_description()
+                    ->streams()[0];
+  ASSERT_EQ(stream.stream_ids().size(), 1u);
+  EXPECT_EQ(stream.stream_ids()[0], "stream_id");
+  // Track id is randomly generated.
+  EXPECT_NE(stream.id, "");
+}
+
+TEST_F(WebRtcSdpTest, DeserializeMsidAttributeWithoutAppDataMixed) {
+  std::string sdp =
+      "v=0\r\n"
+      "o=- 18446744069414584320 18446462598732840960 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "m=audio 9 RTP/SAVPF 111\r\n"
+      "c=IN IP4 0.0.0.0\r\n"
+      "a=rtpmap:111 opus/48000/2\r\n"
+      "a=msid:stream_id\r\n"
+      "a=msid:stream_id2 track_id\r\n";
+
+  JsepSessionDescription jdesc_output(kDummyType);
+  // Mixing the syntax like this is not a good idea but we accept it
+  // and the result is the second track_id.
+  EXPECT_TRUE(SdpDeserialize(sdp, &jdesc_output));
+  auto stream = jdesc_output.description()
+                    ->contents()[0]
+                    .media_description()
+                    ->streams()[0];
+  ASSERT_EQ(stream.stream_ids().size(), 2u);
+  EXPECT_EQ(stream.stream_ids()[0], "stream_id");
+  EXPECT_EQ(stream.stream_ids()[1], "stream_id2");
+
+  // Track id is taken from second line.
+  EXPECT_EQ(stream.id, "track_id");
+}
+
+TEST_F(WebRtcSdpTest, DeserializeMsidAttributeWithoutAppDataMixed2) {
+  std::string sdp =
+      "v=0\r\n"
+      "o=- 18446744069414584320 18446462598732840960 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "m=audio 9 RTP/SAVPF 111\r\n"
+      "c=IN IP4 0.0.0.0\r\n"
+      "a=rtpmap:111 opus/48000/2\r\n"
+      "a=msid:stream_id track_id\r\n"
+      "a=msid:stream_id2\r\n";
+
+  JsepSessionDescription jdesc_output(kDummyType);
+  // Mixing the syntax like this is not a good idea but we accept it
+  // and the result is the second track_id.
+  EXPECT_TRUE(SdpDeserialize(sdp, &jdesc_output));
+  auto stream = jdesc_output.description()
+                    ->contents()[0]
+                    .media_description()
+                    ->streams()[0];
+  ASSERT_EQ(stream.stream_ids().size(), 2u);
+  EXPECT_EQ(stream.stream_ids()[0], "stream_id");
+  EXPECT_EQ(stream.stream_ids()[1], "stream_id2");
+
+  // Track id is taken from first line.
+  EXPECT_EQ(stream.id, "track_id");
+}
+
+TEST_F(WebRtcSdpTest, DeserializeMsidAttributeWithoutAppDataMixedNoStream) {
+  std::string sdp =
+      "v=0\r\n"
+      "o=- 18446744069414584320 18446462598732840960 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "m=audio 9 RTP/SAVPF 111\r\n"
+      "c=IN IP4 0.0.0.0\r\n"
+      "a=rtpmap:111 opus/48000/2\r\n"
+      "a=msid:stream_id\r\n"
+      "a=msid:- track_id\r\n";
+
+  JsepSessionDescription jdesc_output(kDummyType);
+  // This is somewhat undefined behavior but accept it and expect a single
+  // stream.
+  EXPECT_TRUE(SdpDeserialize(sdp, &jdesc_output));
+  auto stream = jdesc_output.description()
+                    ->contents()[0]
+                    .media_description()
+                    ->streams()[0];
+  ASSERT_EQ(stream.stream_ids().size(), 1u);
+  EXPECT_EQ(stream.stream_ids()[0], "stream_id");
+  EXPECT_EQ(stream.id, "track_id");
 }
 
 TEST_F(WebRtcSdpTest, DeserializeMsidAttributeWithMissingStreamId) {
-  static const char kSdpWithMissingStreamId[] =
+  std::string sdp =
       "v=0\r\n"
       "o=- 18446744069414584320 18446462598732840960 IN IP4 127.0.0.1\r\n"
       "s=-\r\n"
@@ -4140,7 +4328,7 @@ TEST_F(WebRtcSdpTest, DeserializeMsidAttributeWithMissingStreamId) {
       "a=msid: track_id\r\n";
 
   JsepSessionDescription jdesc_output(kDummyType);
-  EXPECT_FALSE(SdpDeserialize(kSdpWithMissingStreamId, &jdesc_output));
+  EXPECT_FALSE(SdpDeserialize(sdp, &jdesc_output));
 }
 
 // Tests that if both session-level address and media-level address exist, use
@@ -4283,15 +4471,16 @@ TEST_F(WebRtcSdpTest, DeserializeEmptySessionName) {
 
 // Simulcast malformed input test for invalid format.
 TEST_F(WebRtcSdpTest, DeserializeSimulcastNegative_EmptyAttribute) {
-  ExpectParseFailureWithNewLines("a=ssrc:3 label:video_track_id_1\r\n",
-                                 "a=simulcast:\r\n", "a=simulcast:");
+  ExpectParseFailureWithNewLines(
+      "a=ssrc:3 msid:local_stream_1 video_track_id_1\r\n", "a=simulcast:\r\n",
+      "a=simulcast:");
 }
 
 // Tests that duplicate simulcast entries in the SDP triggers a parse failure.
 TEST_F(WebRtcSdpTest, DeserializeSimulcastNegative_DuplicateAttribute) {
-  ExpectParseFailureWithNewLines("a=ssrc:3 label:video_track_id_1\r\n",
-                                 "a=simulcast:send 1\r\na=simulcast:recv 2\r\n",
-                                 "a=simulcast:");
+  ExpectParseFailureWithNewLines(
+      "a=ssrc:3 msid:local_stream_1 video_track_id_1\r\n",
+      "a=simulcast:send 1\r\na=simulcast:recv 2\r\n", "a=simulcast:");
 }
 
 // Validates that deserialization uses the a=simulcast: attribute
@@ -4630,6 +4819,39 @@ TEST_F(WebRtcSdpTest, DeserializeSessionDescriptionWithoutCname) {
   EXPECT_TRUE(CompareSessionDescription(jdesc_, new_jdesc));
 }
 
+TEST_F(WebRtcSdpTest,
+       DeserializeSdpWithUnrecognizedApplicationProtocolRejectsSection) {
+  const char* unsupported_application_protocols[] = {
+      "bogus/RTP/",      "RTP/SAVPF",         "DTLS/SCTP/RTP/", "DTLS/SCTPRTP/",
+      "obviously-bogus", "UDP/TL/RTSP/SAVPF", "UDP/TL/RTSP/S"};
+
+  for (auto proto : unsupported_application_protocols) {
+    JsepSessionDescription jdesc_output(kDummyType);
+    std::string sdp = kSdpSessionString;
+    sdp.append("m=application 9 ");
+    sdp.append(proto);
+    sdp.append(" 101\r\n");
+
+    EXPECT_TRUE(SdpDeserialize(sdp, &jdesc_output));
+
+    // Make sure we actually parsed a single media section
+    ASSERT_EQ(1u, jdesc_output.description()->contents().size());
+
+    // Content is not getting parsed as sctp but instead unsupported.
+    EXPECT_EQ(nullptr, jdesc_output.description()
+                           ->contents()[0]
+                           .media_description()
+                           ->as_sctp());
+    EXPECT_NE(nullptr, jdesc_output.description()
+                           ->contents()[0]
+                           .media_description()
+                           ->as_unsupported());
+
+    // Reject the content
+    EXPECT_TRUE(jdesc_output.description()->contents()[0].rejected);
+  }
+}
+
 TEST_F(WebRtcSdpTest, DeserializeSdpWithUnsupportedMediaType) {
   std::string sdp = kSdpSessionString;
   sdp +=
@@ -4674,8 +4896,6 @@ TEST_F(WebRtcSdpTest, MediaTypeProtocolMismatch) {
                      "m=video");
   ExpectParseFailure(std::string(sdp + "m=video 9 SOMETHING 120\r\n"),
                      "m=video");
-  ExpectParseFailure(std::string(sdp + "m=application 9 SOMETHING 120\r\n"),
-                     "m=application");
 }
 
 // Regression test for:
@@ -4710,4 +4930,131 @@ TEST_F(WebRtcSdpTest, MaxChannels) {
       "a=rtpmap:108 ISAC/16000/512\r\n";
 
   ExpectParseFailure(sdp, "a=rtpmap:108 ISAC/16000/512");
+}
+
+TEST_F(WebRtcSdpTest, DuplicateAudioRtpmapWithConflict) {
+  std::string sdp =
+      "v=0\r\n"
+      "o=- 11 22 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "m=audio 49232 RTP/AVP 108\r\n"
+      "a=rtpmap:108 ISAC/16000\r\n"
+      "a=rtpmap:108 G711/16000\r\n";
+
+  ExpectParseFailure(sdp, "a=rtpmap:108 G711/16000");
+}
+
+TEST_F(WebRtcSdpTest, DuplicateVideoRtpmapWithConflict) {
+  std::string sdp =
+      "v=0\r\n"
+      "o=- 11 22 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "m=video 49232 RTP/AVP 108\r\n"
+      "a=rtpmap:108 VP8/90000\r\n"
+      "a=rtpmap:108 VP9/90000\r\n";
+
+  ExpectParseFailure(sdp, "a=rtpmap:108 VP9/90000");
+}
+
+TEST_F(WebRtcSdpTest, FmtpBeforeRtpMap) {
+  std::string sdp =
+      "v=0\r\n"
+      "o=- 11 22 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "m=video 49232 RTP/AVP 108\r\n"
+      "a=fmtp:108 profile-level=1\r\n"
+      "a=rtpmap:108 VP9/90000\r\n";
+
+  JsepSessionDescription jdesc_output(kDummyType);
+  EXPECT_TRUE(SdpDeserialize(sdp, &jdesc_output));
+}
+
+TEST_F(WebRtcSdpTest, StaticallyAssignedPayloadTypeWithDifferentCasing) {
+  std::string sdp =
+      "v=0\r\n"
+      "o=- 11 22 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "m=audio 49232 RTP/AVP 18\r\n"
+      // Casing differs from statically assigned type, this should
+      // still be accepted.
+      "a=rtpmap:18 g729/8000\r\n";
+
+  JsepSessionDescription jdesc_output(kDummyType);
+  EXPECT_TRUE(SdpDeserialize(sdp, &jdesc_output));
+}
+
+// This tests parsing of SDP with unknown ssrc-specific attributes.
+TEST_F(WebRtcSdpTest, ParseIgnoreUnknownSsrcSpecificAttribute) {
+  std::string sdp = kSdpString;
+  sdp += "a=ssrc:1 mslabel:something\r\n";
+
+  JsepSessionDescription output(kDummyType);
+  SdpParseError error;
+  ASSERT_TRUE(webrtc::SdpDeserialize(sdp, &output, &error));
+}
+
+TEST_F(WebRtcSdpTest, ParseSessionLevelExtmapAttributes) {
+  std::string sdp =
+      "v=0\r\n"
+      "o=- 0 3 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "a=group:BUNDLE 0\r\n"
+      "a=fingerprint:sha-1 "
+      "4A:AD:B9:B1:3F:82:18:3B:54:02:12:DF:3E:5D:49:6B:19:E5:7C:AB\r\n"
+      "a=setup:actpass\r\n"
+      "a=ice-ufrag:ETEn\r\n"
+      "a=ice-pwd:OtSK0WpNtpUjkY4+86js7Z/l\r\n"
+      "a=extmap:3 "
+      "http://www.ietf.org/id/"
+      "draft-holmer-rmcat-transport-wide-cc-extensions-01\r\n"
+      "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n"
+      "c=IN IP4 0.0.0.0\r\n"
+      "a=rtcp-mux\r\n"
+      "a=sendonly\r\n"
+      "a=mid:0\r\n"
+      "a=rtpmap:111 opus/48000/2\r\n";
+  JsepSessionDescription jdesc(kDummyType);
+  EXPECT_TRUE(SdpDeserialize(sdp, &jdesc));
+  ASSERT_EQ(1u, jdesc.description()->contents().size());
+  const auto content = jdesc.description()->contents()[0];
+  const auto* audio_description = content.media_description()->as_audio();
+  ASSERT_NE(audio_description, nullptr);
+  const auto& extensions = audio_description->rtp_header_extensions();
+  ASSERT_EQ(1u, extensions.size());
+  EXPECT_EQ(extensions[0].uri,
+            "http://www.ietf.org/id/"
+            "draft-holmer-rmcat-transport-wide-cc-extensions-01");
+  EXPECT_EQ(extensions[0].id, 3);
+}
+
+TEST_F(WebRtcSdpTest, RejectSessionLevelMediaLevelExtmapMixedUsage) {
+  std::string sdp =
+      "v=0\r\n"
+      "o=- 0 3 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "a=group:BUNDLE 0\r\n"
+      "a=fingerprint:sha-1 "
+      "4A:AD:B9:B1:3F:82:18:3B:54:02:12:DF:3E:5D:49:6B:19:E5:7C:AB\r\n"
+      "a=setup:actpass\r\n"
+      "a=ice-ufrag:ETEn\r\n"
+      "a=ice-pwd:OtSK0WpNtpUjkY4+86js7Z/l\r\n"
+      "a=extmap:3 "
+      "http://www.ietf.org/id/"
+      "draft-holmer-rmcat-transport-wide-cc-extensions-01\r\n"
+      "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n"
+      "a=extmap:2 "
+      "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time\r\n"
+      "c=IN IP4 0.0.0.0\r\n"
+      "a=rtcp-mux\r\n"
+      "a=sendonly\r\n"
+      "a=mid:0\r\n"
+      "a=rtpmap:111 opus/48000/2\r\n";
+  JsepSessionDescription jdesc(kDummyType);
+  EXPECT_FALSE(SdpDeserialize(sdp, &jdesc));
 }

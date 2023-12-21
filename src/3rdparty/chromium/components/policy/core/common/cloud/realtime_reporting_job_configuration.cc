@@ -1,21 +1,16 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/policy/core/common/cloud/realtime_reporting_job_configuration.h"
 
+#include <utility>
+
 #include "base/json/json_reader.h"
-#include "base/json/json_writer.h"
-#include "base/path_service.h"
 #include "components/enterprise/common/strings.h"
 #include "components/policy/core/common/cloud/cloud_policy_client.h"
-#include "components/policy/core/common/cloud/cloud_policy_util.h"
-#include "components/version_info/version_info.h"
-#include "google_apis/google_api_keys.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
-
-namespace em = enterprise_management;
 
 namespace policy {
 
@@ -47,14 +42,15 @@ RealtimeReportingJobConfiguration::RealtimeReportingJobConfiguration(
     UploadCompleteCallback callback)
     : ReportingJobConfigurationBase(TYPE_UPLOAD_REAL_TIME_REPORT,
                                     client->GetURLLoaderFactory(),
-                                    client,
+                                    DMAuth::FromDMToken(client->dm_token()),
                                     server_url,
-                                    include_device_info,
                                     std::move(callback)) {
-  InitializePayloadInternal(client, add_connector_url_params);
+  InitializePayloadInternal(client, add_connector_url_params,
+                            include_device_info);
 }
 
-RealtimeReportingJobConfiguration::~RealtimeReportingJobConfiguration() {}
+RealtimeReportingJobConfiguration::~RealtimeReportingJobConfiguration() =
+    default;
 
 bool RealtimeReportingJobConfiguration::AddReport(base::Value::Dict report) {
   base::Value::Dict* context = report.FindDict(kContextKey);
@@ -66,7 +62,7 @@ bool RealtimeReportingJobConfiguration::AddReport(base::Value::Dict report) {
   // Overwrite internal context. |context_| will be merged with |payload_| in
   // |GetPayload|.
   if (context_.has_value()) {
-    context_->Merge(*context);
+    context_->Merge(std::move(*context));
   } else {
     context_ = std::move(*context);
   }
@@ -81,7 +77,14 @@ bool RealtimeReportingJobConfiguration::AddReport(base::Value::Dict report) {
 
 void RealtimeReportingJobConfiguration::InitializePayloadInternal(
     CloudPolicyClient* client,
-    bool add_connector_url_params) {
+    bool add_connector_url_params,
+    bool include_device_info) {
+  if (include_device_info) {
+    InitializePayloadWithDeviceInfo(client->dm_token(), client->client_id());
+  } else {
+    InitializePayloadWithoutDeviceInfo();
+  }
+
   payload_.Set(kEventListKey, base::Value::List());
 
   // If specified add extra enterprise connector URL params.
@@ -129,7 +132,7 @@ std::set<std::string> RealtimeReportingJobConfiguration::GetFailedUploadIds(
   base::Value response_value = response ? std::move(*response) : base::Value();
   base::Value* failedUploads = response_value.FindListKey(kFailedUploadsKey);
   if (failedUploads) {
-    for (const auto& failedUpload : failedUploads->GetListDeprecated()) {
+    for (const auto& failedUpload : failedUploads->GetList()) {
       auto* id = failedUpload.FindStringKey(kEventIdKey);
       if (id) {
         failedIds.insert(*id);

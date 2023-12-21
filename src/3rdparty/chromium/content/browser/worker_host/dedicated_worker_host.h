@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,7 @@
 #include "base/scoped_observation.h"
 #include "build/build_config.h"
 #include "content/browser/browser_interface_broker_impl.h"
+#include "content/browser/buckets/bucket_context.h"
 #include "content/browser/renderer_host/code_cache_host_impl.h"
 #include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/render_process_host.h"
@@ -28,6 +29,7 @@
 #include "third_party/blink/public/common/service_worker/service_worker_status_code.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
+#include "third_party/blink/public/mojom/blob/blob_url_store.mojom-forward.h"
 #include "third_party/blink/public/mojom/broadcastchannel/broadcast_channel.mojom.h"
 #include "third_party/blink/public/mojom/frame/back_forward_cache_controller.mojom.h"
 #include "third_party/blink/public/mojom/idle/idle_manager.mojom-forward.h"
@@ -65,12 +67,13 @@ class CrossOriginEmbedderPolicyReporter;
 // A host for a single dedicated worker. It deletes itself upon Mojo
 // disconnection from the worker in the renderer or when the RenderProcessHost
 // of the worker is destroyed. This lives on the UI thread.
-// TODO(crbug.com/1177652): Align this class's lifetime with the associated
+// TODO(crbug.com/1273717): Align this class's lifetime with the associated
 // frame.
 class DedicatedWorkerHost final
     : public blink::mojom::DedicatedWorkerHost,
       public blink::mojom::BackForwardCacheControllerHost,
-      public RenderProcessHostObserver {
+      public RenderProcessHostObserver,
+      public BucketContext {
  public:
   // Creates a new browser-side host for a single dedicated worker.
   //
@@ -132,10 +135,17 @@ class DedicatedWorkerHost final
       mojo::PendingReceiver<blink::mojom::WakeLockService> receiver);
   void BindCacheStorage(
       mojo::PendingReceiver<blink::mojom::CacheStorage> receiver);
+  void BindCacheStorageInternal(
+      mojo::PendingReceiver<blink::mojom::CacheStorage> receiver,
+      const storage::BucketLocator& bucket_locator);
   void CreateCodeCacheHost(
       mojo::PendingReceiver<blink::mojom::CodeCacheHost> receiver);
   void CreateBroadcastChannelProvider(
       mojo::PendingReceiver<blink::mojom::BroadcastChannelProvider> receiver);
+  void CreateBlobUrlStoreProvider(
+      mojo::PendingReceiver<blink::mojom::BlobURLStore> receiver);
+  void CreateBucketManagerHost(
+      mojo::PendingReceiver<blink::mojom::BucketManagerHost> receiver);
 
 #if !BUILDFLAG(IS_ANDROID)
   void BindSerialService(
@@ -169,6 +179,10 @@ class DedicatedWorkerHost final
     return isolation_info_.network_isolation_key();
   }
 
+  const net::NetworkAnonymizationKey& GetNetworkAnonymizationKey() const {
+    return isolation_info_.network_anonymization_key();
+  }
+
   const base::UnguessableToken& GetReportingSource() const {
     return reporting_source_;
   }
@@ -194,6 +208,19 @@ class DedicatedWorkerHost final
       blink::mojom::RendererEvictionReason reason) override;
   void DidChangeBackForwardCacheDisablingFeatures(
       uint64_t features_mask) override;
+
+  // BucketContext:
+  blink::StorageKey GetBucketStorageKey() override;
+  blink::mojom::PermissionStatus GetPermissionStatus(
+      blink::PermissionType permission_type) override;
+  void BindCacheStorageForBucket(
+      const storage::BucketInfo& bucket,
+      mojo::PendingReceiver<blink::mojom::CacheStorage> receiver) override;
+  void GetSandboxedFileSystemForBucket(
+      const storage::BucketInfo& bucket,
+      blink::mojom::FileSystemAccessManager::GetSandboxedFileSystemCallback
+          callback) override;
+  GlobalRenderFrameHostId GetAssociatedRenderFrameHostId() const override;
 
   // Returns the features set that disable back-forward cache.
   blink::scheduler::WebSchedulerTrackedFeatures

@@ -1,4 +1,4 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -6,6 +6,7 @@ import("//build/buildflag_header.gni")
 import("//build/config/chromeos/ui_mode.gni")
 import("//build/config/compiler/compiler.gni")
 import("//build/config/dcheck_always_on.gni")
+import("//build/config/features.gni")
 import("//build/config/jumbo.gni")
 import("//build/config/linux/gtk/gtk.gni")
 import("//build/config/linux/pangocairo/pangocairo.gni")
@@ -19,6 +20,7 @@ import("//testing/libfuzzer/fuzzer_test.gni")
 import("//testing/test.gni")
 import("//tools/grit/grit_rule.gni")
 import("//ui/base/ui_features.gni")
+import("//ui/qt/qt.gni")
 
 if (is_android) {
   import("//build/config/android/config.gni")
@@ -57,6 +59,20 @@ component("ui_data_pack") {
 
   defines = [ "UI_DATA_PACK_IMPLEMENTATION" ]
 
+  if (is_chromeos) {
+    sources += [
+      "resource/temporary_shared_resource_path_chromeos.cc",
+      "resource/temporary_shared_resource_path_chromeos.h",
+    ]
+  }
+  if (is_chromeos_lacros) {
+    sources += [
+      "resource/data_pack_with_resource_sharing_lacros.cc",
+      "resource/data_pack_with_resource_sharing_lacros.h",
+    ]
+    deps += [ "//components/version_info" ]
+  }
+
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
 }
 
@@ -70,6 +86,7 @@ buildflag_header("buildflags") {
     "HAS_NATIVE_ACCESSIBILITY=$has_native_accessibility",
     "HAS_PLATFORM_ACCESSIBILITY_SUPPORT=$has_platform_accessibility_support",
     "USE_GTK=$use_gtk",
+    "USE_QT=$use_qt",
   ]
 }
 
@@ -78,6 +95,16 @@ source_set("hit_test") {
     "hit_test.cc",
     "hit_test.h",
   ]
+}
+
+# This target is used by mojom files, so it should have very few dependencies
+# (ideally none).
+source_set("types") {
+  sources = [ "window_open_disposition.h" ]
+  if (!is_ios) {
+    sources += [ "ui_base_types.h" ]
+  }
+  deps = [ "//build:chromeos_buildflags" ]
 }
 
 jumbo_component("base") {
@@ -101,6 +128,7 @@ jumbo_component("base") {
     "interaction/element_identifier.h",
     "interaction/element_tracker.cc",
     "interaction/element_tracker.h",
+    "interaction/framework_specific_implementation.cc",
     "interaction/framework_specific_implementation.h",
     "interaction/interaction_sequence.cc",
     "interaction/interaction_sequence.h",
@@ -125,6 +153,8 @@ jumbo_component("base") {
     "models/dialog_model_field.cc",
     "models/dialog_model_field.h",
     "models/dialog_model_host.h",
+    "models/dialog_model_menu_model_adapter.cc",
+    "models/dialog_model_menu_model_adapter.h",
     "models/image_model.cc",
     "models/image_model.h",
     "models/list_model.h",
@@ -155,6 +185,8 @@ jumbo_component("base") {
     "resource/allowlist.h",
     "resource/resource_bundle.cc",
     "resource/resource_bundle.h",
+    "resource/scoped_startup_resource_bundle.cc",
+    "resource/scoped_startup_resource_bundle.h",
     "scoped_visibility_tracker.cc",
     "scoped_visibility_tracker.h",
     "template_expressions.cc",
@@ -177,8 +209,8 @@ jumbo_component("base") {
     "webui/resource_path.h",
     "webui/web_ui_util.cc",
     "webui/web_ui_util.h",
-    "window_open_disposition.cc",
-    "window_open_disposition.h",
+    "window_open_disposition_utils.cc",
+    "window_open_disposition_utils.h",
   ]
 
   libs = []
@@ -270,34 +302,34 @@ jumbo_component("base") {
       "cocoa/command_dispatcher.mm",
       "cocoa/constrained_window/constrained_window_animation.h",
       "cocoa/constrained_window/constrained_window_animation.mm",
-      "cocoa/controls/button_utils.h",
-      "cocoa/controls/button_utils.mm",
-      "cocoa/controls/textfield_utils.h",
-      "cocoa/controls/textfield_utils.mm",
+      "cocoa/cursor_accessibility_scale_factor_observer.h",
+      "cocoa/cursor_accessibility_scale_factor_observer.mm",
+      "cocoa/cursor_utils.h",
+      "cocoa/cursor_utils.mm",
       "cocoa/defaults_utils.h",
       "cocoa/defaults_utils.mm",
       "cocoa/find_pasteboard.h",
       "cocoa/find_pasteboard.mm",
       "cocoa/flipped_view.h",
       "cocoa/flipped_view.mm",
-      "cocoa/focus_tracker.h",
-      "cocoa/focus_tracker.mm",
       "cocoa/menu_controller.h",
       "cocoa/menu_controller.mm",
+      "cocoa/nsmenu_additions.h",
+      "cocoa/nsmenu_additions.mm",
       "cocoa/nsmenuitem_additions.h",
       "cocoa/nsmenuitem_additions.mm",
+      "cocoa/nswindow_test_util.cc",
+      "cocoa/nswindow_test_util.h",
       "cocoa/permissions_utils.h",
       "cocoa/permissions_utils.mm",
-      "cocoa/quartz_util.h",
-      "cocoa/quartz_util.mm",
       "cocoa/remote_accessibility_api.h",
       "cocoa/remote_accessibility_api.mm",
       "cocoa/remote_layer_api.h",
       "cocoa/remote_layer_api.mm",
       "cocoa/secure_password_input.h",
       "cocoa/secure_password_input.mm",
-      "cocoa/text_services_context_menu.cc",
       "cocoa/text_services_context_menu.h",
+      "cocoa/text_services_context_menu.mm",
       "cocoa/tool_tip_base_view.h",
       "cocoa/tool_tip_base_view.mm",
       "cocoa/touch_bar_util.h",
@@ -324,6 +356,17 @@ jumbo_component("base") {
     ]
   }
 
+  if (is_apple) {
+    sources += [
+      "cocoa/quartz_util.h",
+      "cocoa/quartz_util.mm",
+    ]
+  }
+
+  if (is_chromeos_lacros) {
+    sources += [ "resource/resource_bundle_lacros.cc" ]
+  }
+
   if (is_ios) {
     sources += [
       "device_form_factor_ios.mm",
@@ -332,6 +375,14 @@ jumbo_component("base") {
   }
 
   if (!is_ios) {
+    sources += [
+      "user_activity/user_activity_detector.cc",
+      "user_activity/user_activity_detector.h",
+      "user_activity/user_activity_observer.h",
+    ]
+  }
+
+  if (use_blink) {
     sources += [
       "accelerators/accelerator.cc",
       "accelerators/accelerator.h",
@@ -347,6 +398,7 @@ jumbo_component("base") {
       "base_window.cc",
       "base_window.h",
       "emoji/emoji_panel_helper.h",
+      "owned_window_anchor.h",
       "pointer/pointer_device.h",
       "pointer/pointer_device_util.cc",
       "pointer/touch_editing_controller.cc",
@@ -355,12 +407,14 @@ jumbo_component("base") {
       "text/bytes_formatting.h",
       "themed_vector_icon.cc",
       "themed_vector_icon.h",
-      "ui_base_types.cc",
-      "ui_base_types.h",
-      "user_activity/user_activity_detector.cc",
-      "user_activity/user_activity_detector.h",
-      "user_activity/user_activity_observer.h",
     ]
+
+    if (!is_android && !is_ios) {
+      sources += [
+        "menu_source_utils.cc",
+        "menu_source_utils.h",
+      ]
+    }
 
     if (is_linux || is_chromeos) {
       sources += [
@@ -368,10 +422,6 @@ jumbo_component("base") {
         "accelerators/menu_label_accelerator_util_linux.h",
         "linux/linux_desktop.cc",
         "linux/linux_desktop.h",
-        "linux/linux_ui_delegate.cc",
-        "linux/linux_ui_delegate.h",
-        "linux/linux_ui_delegate_stub.cc",
-        "linux/linux_ui_delegate_stub.h",
       ]
     }
 
@@ -381,21 +431,24 @@ jumbo_component("base") {
         "accelerators/platform_accelerator_cocoa.mm",
         "cocoa/bubble_closer.h",
         "cocoa/bubble_closer.mm",
-        "dragdrop/cocoa_dnd_util.h",
-        "dragdrop/cocoa_dnd_util.mm",
       ]
     }
-  }
 
-  if (is_mac) {
-    sources += [ "emoji/emoji_panel_helper_mac.mm" ]
-  } else if (is_win) {
-    sources += [ "emoji/emoji_panel_helper_win.cc" ]
-  } else if (is_chromeos_ash) {
-    sources += [ "emoji/emoji_panel_helper_chromeos.cc" ]
-  } else {
-    # Empty implementation for all other platforms.
-    sources += [ "emoji/emoji_panel_helper.cc" ]
+    if (!is_qtwebengine) {
+      if (is_win) {
+        sources += [ "pointer/pointer_device_win.cc" ]
+      } else if (is_android) {
+        sources += [ "pointer/pointer_device_android.cc" ]
+      } else if (is_ios) {
+        sources += [ "pointer/pointer_device_ios.cc" ]
+      } else if (is_linux || is_chromeos) {
+        sources += [ "pointer/pointer_device_linux.cc" ]
+      } else {
+        # Empty implementation for all other cases.
+        sources += [ "pointer/pointer_device.cc" ]
+        sources -= [ "pointer/pointer_device_util.cc" ]
+      }
+    }
   }
 
   if (is_mac) {
@@ -410,25 +463,14 @@ jumbo_component("base") {
     sources += [ "accelerators/media_keys_listener_stub.cc" ]
   }
 
-  if (is_win) {
-    sources += [ "pointer/pointer_device_win.cc" ]
-  } else if (is_android) {
-    sources += [ "pointer/pointer_device_android.cc" ]
-  } else if (is_ios) {
-    sources += [ "pointer/pointer_device_ios.cc" ]
-  } else if (is_linux || is_chromeos) {
-    sources += [ "pointer/pointer_device_linux.cc" ]
-  } else {
-    # Empty implementation for all other cases.
-    sources += [ "pointer/pointer_device.cc" ]
-    sources -= [ "pointer/pointer_device_util.cc" ]
-  }
-
   if (is_fuchsia) {
     sources += [ "resource/resource_bundle_fuchsia.cc" ]
   }
 
-  configs += [ "//build/config/compiler:wexit_time_destructors" ]
+  configs += [
+    "//build/config/compiler:prevent_unsafe_narrowing",
+    "//build/config/compiler:wexit_time_destructors",
+  ]
 
   defines = [ "IS_UI_BASE_IMPL" ]
 
@@ -440,6 +482,7 @@ jumbo_component("base") {
     ":buildflags",
     ":features",
     ":hit_test",
+    ":types",
     ":ui_data_pack",
     "//base",
     "//skia",
@@ -471,7 +514,7 @@ jumbo_component("base") {
     "//ui/display/util:gpu_info_util",
     "//ui/events",
     "//ui/events/devices",
-    "//ui/resources:webui_generated_resources_grd",
+    "//ui/resources:webui_resources_grd",
     "//ui/strings",
     "//url",
   ]
@@ -480,8 +523,7 @@ jumbo_component("base") {
     deps += [ "//third_party/re2" ]
   }
 
-  if (!is_ios) {
-    # iOS does not use Chromium-specific code for event handling.
+  if (use_blink) {
     public_deps += [
       "//ui/base/clipboard:file_info",
       "//ui/events:dom_keycode_converter",
@@ -498,10 +540,13 @@ jumbo_component("base") {
       "l10n/l10n_util_mac_bridge.mm",
     ]
     public_deps += [ "//ui/events:event_constants" ]
-    deps -= [
-      "//ui/events",
-      "//ui/events/devices",
-    ]
+    deps += [ ":l10n_util_ios" ]
+    if (!use_blink) {
+      deps -= [
+        "//ui/events",
+        "//ui/events/devices",
+      ]
+    }
   }
 
   if (is_win) {
@@ -510,6 +555,11 @@ jumbo_component("base") {
       "//ui/base/cursor/mojom:cursor_type_shared",
     ]
     deps += [ "//ui/resources:ui_unscaled_resources_grd" ]
+  }
+
+  if (is_mac) {
+    public_deps += [ "//ui/base/cursor" ]
+    deps += [ "//ui/resources:ui_resources_grd" ]
   }
 
   if (toolkit_views) {
@@ -522,6 +572,13 @@ jumbo_component("base") {
 
   if (is_linux || is_chromeos) {
     deps += [ "//third_party/fontconfig" ]
+  }
+
+  if (is_chromeos_lacros) {
+    deps += [
+      "//chromeos/crosapi/cpp:crosapi_constants",
+      "//chromeos/lacros:lacros_paths",
+    ]
   }
 
   if (use_glib) {
@@ -542,7 +599,7 @@ jumbo_component("base") {
     ]
   }
 
-  if ((is_mac || is_win) && !use_qt) {
+  if ((is_mac || is_win) && !is_qtwebengine) {
     deps += [ "//ui/base/clipboard" ]
   }
 
@@ -554,8 +611,6 @@ jumbo_component("base") {
   }
 
   if (is_mac) {
-    deps += [ "//third_party/mozilla" ]
-
     frameworks = [
       "Accelerate.framework",
       "AppKit.framework",
@@ -589,7 +644,6 @@ jumbo_component("base") {
       "models/button_menu_item_model.cc",
       "pointer/touch_editing_controller.cc",
       "theme_provider.cc",
-      "ui_base_types.cc",
     ]
   }
 
@@ -597,7 +651,7 @@ jumbo_component("base") {
     sources -= [ "device_form_factor_desktop.cc" ]
   }
 
-  if (use_qt) {
+  if (is_qtwebengine) {
     if (toolkit_views || use_aura) {
       sources -= [
         "dragdrop/os_exchange_data_provider_factory.cc",
@@ -628,6 +682,18 @@ jumbo_component("base") {
         "win/win_cursor_factory.h",
       ]
     }
+  }
+}
+
+if (is_ios) {
+  source_set("l10n_util_ios") {
+    configs += [ "//build/config/compiler:enable_arc" ]
+    sources = [
+      "l10n/l10n_util_ios.h",
+      "l10n/l10n_util_ios.mm",
+    ]
+    deps = [ "//base" ]
+    frameworks = [ "Foundation.framework" ]
   }
 }
 
@@ -679,8 +745,7 @@ component("features") {
   ]
 }
 
-# TODO(crbug.com/1091985): Support CrOS.
-if (is_win || is_mac || is_linux || is_chromeos_lacros) {
+if (is_win || is_mac || is_linux || is_chromeos) {
   jumbo_static_library("pixel_diff_test_support") {
     testonly = true
     sources = [
@@ -704,7 +769,7 @@ if (is_win || is_mac || is_linux || is_chromeos_lacros) {
   }
 }
 
-if (!is_ios) {
+if (use_blink) {
   group("goldctl") {
     data = []
 
@@ -730,10 +795,17 @@ jumbo_static_library("test_support") {
     "interaction/element_test_util.cc",
     "interaction/element_test_util.h",
     "interaction/expect_call_in_scope.h",
+    "interaction/interaction_sequence_test_util.h",
     "interaction/interaction_test_util.cc",
     "interaction/interaction_test_util.h",
+    "interaction/interactive_test.cc",
+    "interaction/interactive_test.h",
+    "interaction/interactive_test_internal.cc",
+    "interaction/interactive_test_internal.h",
     "resource/mock_resource_bundle_delegate.cc",
     "resource/mock_resource_bundle_delegate.h",
+    "test/idle_test_utils.cc",
+    "test/idle_test_utils.h",
   ]
 
   if (is_mac) {
@@ -746,8 +818,6 @@ jumbo_static_library("test_support") {
       "test/menu_test_observer.mm",
       "test/ns_ax_tree_validator.h",
       "test/ns_ax_tree_validator.mm",
-      "test/nswindow_fullscreen_notification_waiter.h",
-      "test/nswindow_fullscreen_notification_waiter.mm",
       "test/scoped_fake_full_keyboard_access.h",
       "test/scoped_fake_full_keyboard_access.mm",
       "test/scoped_fake_nswindow_focus.h",
@@ -778,6 +848,7 @@ jumbo_static_library("test_support") {
       "test/mock_base_window.h",
       "test/test_dialog_model_host.cc",
       "test/test_dialog_model_host.h",
+      "test/ui_controls.cc",
       "test/ui_controls.h",
       "test/view_tree_validator.h",
     ]
@@ -790,14 +861,17 @@ jumbo_static_library("test_support") {
     ]
   }
 
-  if (use_aura) {
+  if (use_aura && (is_win || is_chromeos_ash || is_castos)) {
     sources += [
       "test/ui_controls_aura.cc",
       "test/ui_controls_aura.h",
     ]
   }
 
-  public_deps = [ ":base" ]
+  public_deps = [
+    ":base",
+    "//ui/base/idle",
+  ]
   deps = [
     "//base",
     "//base/test:test_config",
@@ -933,6 +1007,7 @@ test("ui_base_unittests") {
     "interaction/framework_specific_implementation_unittest.cc",
     "interaction/interaction_sequence_unittest.cc",
     "interaction/interaction_test_util_unittest.cc",
+    "interaction/interactive_test_unittest.cc",
     "l10n/l10n_util_unittest.cc",
     "l10n/time_format_unittest.cc",
     "layout_unittest.cc",
@@ -967,10 +1042,14 @@ test("ui_base_unittests") {
   if (is_mac) {
     sources += [
       "cocoa/defaults_utils_unittest.mm",
+      "cocoa/nsmenu_additions_unittest.mm",
       "cocoa/nsmenuitem_additions_unittest.mm",
       "interaction/element_tracker_mac_unittest.mm",
       "l10n/l10n_util_mac_unittest.mm",
     ]
+  }
+  if (is_chromeos_lacros) {
+    sources += [ "resource/data_pack_with_resource_sharing_lacros_unittest.cc" ]
   }
   if (!is_ios) {
     sources += [
@@ -979,10 +1058,7 @@ test("ui_base_unittests") {
     ]
 
     if (is_mac) {
-      sources += [
-        "test/scoped_fake_nswindow_fullscreen_unittest.mm",
-        "test/view_tree_validator_unittest.mm",
-      ]
+      sources += [ "test/view_tree_validator_unittest.mm" ]
     }
   }
 
@@ -1032,19 +1108,24 @@ test("ui_base_unittests") {
 
   if (is_ios) {
     sources += [
+      "l10n/l10n_util_ios_unittest.mm",
       "l10n/l10n_util_mac_unittest.mm",
       "test/ios/ui_image_test_utils_unittest.mm",
     ]
-    deps -= [
-      "//ui/events:events_base",
-      "//ui/events:test_support",
-    ]
+    deps += [ ":l10n_util_ios" ]
+    if (!use_blink) {
+      deps -= [
+        "//ui/events:events_base",
+        "//ui/events:test_support",
+      ]
+    }
   } else {  # !is_ios
     sources += [
       "accelerators/accelerator_manager_unittest.cc",
       "accelerators/accelerator_map_unittest.cc",
       "accelerators/accelerator_unittest.cc",
       "accelerators/menu_label_accelerator_util_unittest.cc",
+      "models/dialog_model_menu_model_adapter_unittest.cc",
       "models/dialog_model_unittest.cc",
       "models/list_model_unittest.cc",
       "models/list_selection_model_unittest.cc",
@@ -1065,7 +1146,6 @@ test("ui_base_unittests") {
         "cocoa/bubble_closer_unittest.mm",
         "cocoa/cocoa_base_utils_unittest.mm",
         "cocoa/constrained_window/constrained_window_animation_unittest.mm",
-        "cocoa/focus_tracker_unittest.mm",
         "cocoa/menu_controller_unittest.mm",
         "cocoa/touch_bar_util_unittest.mm",
         "cocoa/tracking_area_unittest.mm",
@@ -1089,6 +1169,7 @@ test("ui_base_unittests") {
       "ime/composition_text_unittest.cc",
       "ime/input_method_base_unittest.cc",
       "ime/mojom/ime_mojom_traits_unittest.cc",
+      "ime/surrounding_text_tracker_unittest.cc",
     ]
     if (is_win) {
       sources += [
@@ -1102,6 +1183,7 @@ test("ui_base_unittests") {
     if (is_chromeos_ash) {
       sources += [
         "dragdrop/os_exchange_data_provider_non_backed_unittest.cc",
+        "ime/ash/component_extension_ime_manager_unittest.cc",
         "ime/ash/extension_ime_util_unittest.cc",
         "ime/ash/ime_keyboard_unittest.cc",
         "ime/ash/input_method_ash_unittest.cc",
@@ -1126,7 +1208,7 @@ test("ui_base_unittests") {
         "//ui/base/ime/linux",
       ]
     }
-    if (is_linux && !is_chromecast && !is_chromeos_lacros) {
+    if (is_linux && !is_castos) {
       sources += [ "ime/linux/composition_text_util_pango_unittest.cc" ]
     }
     if (is_chromeos_ash || use_ozone) {
@@ -1186,10 +1268,7 @@ test("ui_base_unittests") {
   }
 
   if (is_mac) {
-    deps += [
-      ":ui_unittests_framework",
-      "//third_party/mozilla",
-    ]
+    deps += [ ":ui_unittests_framework" ]
   }
 
   if (use_aura || toolkit_views) {
@@ -1236,6 +1315,11 @@ test("ui_base_unittests") {
       "//third_party/abseil-cpp:absl",
       "//ui/lottie",
     ]
+  }
+
+  # If the platform supports wayland, run wayland library unittests, too.
+  if (is_chromeos_ash || ozone_platform_wayland) {
+    deps += [ "//ui/base/wayland:unittests" ]
   }
 }
 

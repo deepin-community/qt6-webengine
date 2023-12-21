@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -72,7 +72,7 @@ class VIEWS_EXPORT SubmenuView : public View,
   MenuItems GetMenuItems() const;
 
   // Returns the MenuItemView at the specified index.
-  MenuItemView* GetMenuItemAt(int index);
+  MenuItemView* GetMenuItemAt(size_t index);
 
   PrefixSelector* GetPrefixSelector();
 
@@ -106,10 +106,10 @@ class VIEWS_EXPORT SubmenuView : public View,
   void OnGestureEvent(ui::GestureEvent* event) override;
 
   // Overridden from PrefixDelegate.
-  int GetRowCount() override;
-  int GetSelectedRow() override;
-  void SetSelectedRow(int row) override;
-  std::u16string GetTextForRow(int row) override;
+  size_t GetRowCount() override;
+  absl::optional<size_t> GetSelectedRow() override;
+  void SetSelectedRow(absl::optional<size_t> row) override;
+  std::u16string GetTextForRow(size_t row) override;
 
   // Returns true if the menu is showing.
   virtual bool IsShowing() const;
@@ -213,19 +213,19 @@ class VIEWS_EXPORT SubmenuView : public View,
   raw_ptr<MenuItemView> drop_item_;
 
   // Position of the drop.
-  MenuDelegate::DropPosition drop_position_;
+  MenuDelegate::DropPosition drop_position_ = MenuDelegate::DropPosition::kNone;
 
   // Ancestor of the SubmenuView, lazily created.
-  raw_ptr<MenuScrollViewContainer> scroll_view_container_;
+  raw_ptr<MenuScrollViewContainer, DanglingUntriaged> scroll_view_container_;
 
   // See description above getter.
-  mutable int max_minor_text_width_;
+  mutable int max_minor_text_width_ = 0;
 
   // Minimum width returned in GetPreferredSize().
-  int minimum_preferred_width_;
+  int minimum_preferred_width_ = 0;
 
   // Reposition open menu when contained views change size.
-  bool resize_open_menu_;
+  bool resize_open_menu_ = false;
 
   // The submenu's scroll animator
   std::unique_ptr<ScrollAnimator> scroll_animator_;
@@ -234,7 +234,7 @@ class VIEWS_EXPORT SubmenuView : public View,
   // OnScroll.
   // TODO(tdresser): This should be removed when raw pixel scrolling for views
   // is enabled. See crbug.com/329354.
-  float roundoff_error_;
+  float roundoff_error_ = 0;
 
   PrefixSelector prefix_selector_;
 };

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,9 @@
 #include <limits>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/check_op.h"
 #include "base/compiler_specific.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
@@ -19,7 +19,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/memory_usage_estimator.h"
 #include "base/values.h"
 #include "net/base/load_timing_info.h"
@@ -38,31 +37,31 @@ namespace {
 base::Value NetLogSpdyStreamErrorParams(spdy::SpdyStreamId stream_id,
                                         int net_error,
                                         base::StringPiece description) {
-  base::Value dict(base::Value::Type::DICTIONARY);
-  dict.SetIntKey("stream_id", static_cast<int>(stream_id));
-  dict.SetStringKey("net_error", ErrorToShortString(net_error));
-  dict.SetStringKey("description", description);
-  return dict;
+  base::Value::Dict dict;
+  dict.Set("stream_id", static_cast<int>(stream_id));
+  dict.Set("net_error", ErrorToShortString(net_error));
+  dict.Set("description", description);
+  return base::Value(std::move(dict));
 }
 
 base::Value NetLogSpdyStreamWindowUpdateParams(spdy::SpdyStreamId stream_id,
                                                int32_t delta,
                                                int32_t window_size) {
-  base::Value dict(base::Value::Type::DICTIONARY);
-  dict.SetIntKey("stream_id", stream_id);
-  dict.SetIntKey("delta", delta);
-  dict.SetIntKey("window_size", window_size);
-  return dict;
+  base::Value::Dict dict;
+  dict.Set("stream_id", static_cast<int>(stream_id));
+  dict.Set("delta", delta);
+  dict.Set("window_size", window_size);
+  return base::Value(std::move(dict));
 }
 
 base::Value NetLogSpdyDataParams(spdy::SpdyStreamId stream_id,
                                  int size,
                                  bool fin) {
-  base::Value dict(base::Value::Type::DICTIONARY);
-  dict.SetIntKey("stream_id", static_cast<int>(stream_id));
-  dict.SetIntKey("size", size);
-  dict.SetBoolKey("fin", fin);
-  return dict;
+  base::Value::Dict dict;
+  dict.Set("stream_id", static_cast<int>(stream_id));
+  dict.Set("size", size);
+  dict.Set("fin", fin);
+  return base::Value(std::move(dict));
 }
 
 }  // namespace
@@ -100,27 +99,15 @@ SpdyStream::SpdyStream(SpdyStreamType type,
                        const NetworkTrafficAnnotationTag& traffic_annotation,
                        bool detect_broken_connection)
     : type_(type),
-      stream_id_(0),
       url_(url),
       priority_(priority),
-      send_stalled_by_flow_control_(false),
       send_window_size_(initial_send_window_size),
       max_recv_window_size_(max_recv_window_size),
       recv_window_size_(max_recv_window_size),
-      unacked_recv_window_bytes_(0),
       last_recv_window_update_(base::TimeTicks::Now()),
       session_(session),
-      delegate_(nullptr),
-      request_headers_valid_(false),
-      pending_send_status_(MORE_DATA_TO_SEND),
       request_time_(base::Time::Now()),
-      response_state_(READY_FOR_HEADERS),
-      io_state_(STATE_IDLE),
       net_log_(net_log),
-      raw_received_bytes_(0),
-      raw_sent_bytes_(0),
-      recv_bytes_(0),
-      write_handler_guard_(false),
       traffic_annotation_(traffic_annotation),
       detect_broken_connection_(detect_broken_connection) {
   CHECK(type_ == SPDY_BIDIRECTIONAL_STREAM ||
@@ -145,7 +132,7 @@ void SpdyStream::SetDelegate(Delegate* delegate) {
 
   if (io_state_ == STATE_HALF_CLOSED_LOCAL_UNCLAIMED) {
     DCHECK_EQ(type_, SPDY_PUSH_STREAM);
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(&SpdyStream::PushedStreamReplay, GetWeakPtr()));
   }

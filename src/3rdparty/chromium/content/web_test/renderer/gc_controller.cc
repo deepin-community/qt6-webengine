@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,8 @@
 
 #include <tuple>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
+#include "base/task/single_thread_task_runner.h"
 #include "gin/arguments.h"
 #include "gin/handle.h"
 #include "gin/object_template_builder.h"
@@ -92,7 +93,7 @@ void GCController::AsyncCollectAllWithEmptyStack(
   for (int i = 0; i < kNumberOfGCsForFullCollection; i++) {
     isolate->RequestGarbageCollectionForTesting(
         v8::Isolate::kFullGarbageCollection,
-        v8::EmbedderHeapTracer::EmbedderStackState::kNoHeapPointers);
+        cppgc::EmbedderStackState::kNoHeapPointers);
   }
 
   v8::HandleScope scope(isolate);
@@ -101,7 +102,8 @@ void GCController::AsyncCollectAllWithEmptyStack(
   v8::Context::Scope context_scope(context);
   v8::TryCatch try_catch(isolate);
   v8::MicrotasksScope microtasks_scope(
-      isolate, v8::MicrotasksScope::kDoNotRunMicrotasks);
+      isolate, context->GetMicrotaskQueue(),
+      v8::MicrotasksScope::kDoNotRunMicrotasks);
   auto result = func->Call(context, context->Global(), 0, nullptr);
   // Swallow potential exception.
   std::ignore = result;

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,7 @@ import android.os.RemoteException;
 
 import androidx.annotation.NonNull;
 
+import org.chromium.base.ContextUtils;
 import org.chromium.weblayer_private.interfaces.ObjectWrapper;
 
 /**
@@ -49,7 +50,7 @@ public class MediaSessionService extends MediaPlaybackBaseService {
         };
 
         IntentFilter filter = new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY);
-        registerReceiver(mAudioBecomingNoisyReceiver, filter);
+        ContextUtils.registerProtectedBroadcastReceiver(this, mAudioBecomingNoisyReceiver, filter);
     }
 
     @Override

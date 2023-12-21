@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -33,9 +33,10 @@ void WaylandZwpPointerGestures::Instantiate(WaylandConnection* connection,
                                             uint32_t name,
                                             const std::string& interface,
                                             uint32_t version) {
-  DCHECK_EQ(interface, kInterfaceName);
+  CHECK_EQ(interface, kInterfaceName) << "Expected \"" << kInterfaceName
+                                      << "\" but got \"" << interface << "\"";
 
-  if (connection->wayland_zwp_pointer_gestures_ ||
+  if (connection->zwp_pointer_gestures_ ||
       !wl::CanBind(interface, version, kMinVersion, kMinVersion)) {
     return;
   }
@@ -46,7 +47,7 @@ void WaylandZwpPointerGestures::Instantiate(WaylandConnection* connection,
     LOG(ERROR) << "Failed to bind wp_pointer_gestures_v1";
     return;
   }
-  connection->wayland_zwp_pointer_gestures_ =
+  connection->zwp_pointer_gestures_ =
       std::make_unique<WaylandZwpPointerGestures>(
           zwp_pointer_gestures_v1.release(), connection,
           connection->event_source());

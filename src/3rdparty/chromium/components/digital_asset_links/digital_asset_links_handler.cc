@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,10 @@
 
 #include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "content/public/browser/web_contents.h"
@@ -32,6 +33,11 @@ const int kNumNetworkRetries = 1;
 // Location on a website where the asset links file can be found, see
 // https://developers.google.com/digital-asset-links/v1/getting-started.
 const char kAssetLinksAbsolutePath[] = ".well-known/assetlinks.json";
+
+void RecordNumFingerprints(size_t num_fingerprints) {
+  base::UmaHistogramExactLinear("DigitalAssetLinks.NumFingerprints",
+                                num_fingerprints, 5);
+}
 
 GURL GetUrlForAssetLinks(const url::Origin& origin) {
   return origin.GetURL().Resolve(kAssetLinksAbsolutePath);
@@ -58,44 +64,15 @@ GURL GetUrlForAssetLinks(const url::Origin& origin) {
 //    }
 //  }]
 
-bool StatementHasMatchingRelationship(const base::Value& statement,
+bool StatementHasMatchingRelationship(const base::Value::Dict& statement,
                                       const std::string& target_relation) {
-  const base::Value* relations =
-      statement.FindKeyOfType("relation", base::Value::Type::LIST);
-
-  if (!relations)
+  const base::Value::List* relations = statement.FindList("relation");
+  if (!relations) {
     return false;
-
-  for (const auto& relation : relations->GetListDeprecated()) {
-    if (relation.is_string() && relation.GetString() == target_relation)
-      return true;
   }
 
-  return false;
-}
-
-bool StatementHasMatchingTargetValue(
-    const base::Value& statement,
-    const std::string& target_key,
-    const std::set<std::string>& target_value) {
-  const base::Value* package = statement.FindPathOfType(
-      {"target", target_key}, base::Value::Type::STRING);
-
-  return package &&
-         target_value.find(package->GetString()) != target_value.end();
-}
-
-bool StatementHasMatchingFingerprint(const base::Value& statement,
-                                     const std::string& target_fingerprint) {
-  const base::Value* fingerprints = statement.FindPathOfType(
-      {"target", "sha256_cert_fingerprints"}, base::Value::Type::LIST);
-
-  if (!fingerprints)
-    return false;
-
-  for (const auto& fingerprint : fingerprints->GetListDeprecated()) {
-    if (fingerprint.is_string() &&
-        fingerprint.GetString() == target_fingerprint) {
+  for (const auto& relation : *relations) {
+    if (relation.is_string() && relation.GetString() == target_relation) {
       return true;
     }
   }
@@ -103,11 +80,53 @@ bool StatementHasMatchingFingerprint(const base::Value& statement,
   return false;
 }
 
+bool StatementHasMatchingTargetValue(
+    const base::Value::Dict& statement,
+    const std::string& target_key,
+    const std::set<std::string>& target_value) {
+  const base::Value::Dict* target = statement.FindDict("target");
+  if (!target) {
+    return false;
+  }
+
+  const std::string* package = target->FindString(target_key);
+
+  return package && target_value.find(*package) != target_value.end();
+}
+
+bool StatementHasMatchingFingerprint(
+    const base::Value::Dict& statement,
+    const std::vector<std::string>& target_fingerprints) {
+  const base::Value::List* fingerprints =
+      statement.FindListByDottedPath("target.sha256_cert_fingerprints");
+
+  if (!fingerprints) {
+    return false;
+  }
+
+  RecordNumFingerprints(fingerprints->size());
+  for (const std::string& target_fingerprint : target_fingerprints) {
+    bool verified_fingerprint = false;
+    for (const auto& fingerprint : *fingerprints) {
+      if (fingerprint.is_string() &&
+          fingerprint.GetString() == target_fingerprint) {
+        verified_fingerprint = true;
+        break;
+      }
+    }
+    if (!verified_fingerprint) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 // Shows a warning message in the DevTools console.
 void AddMessageToConsole(content::WebContents* web_contents,
                          const std::string& message) {
   if (web_contents) {
-    web_contents->GetMainFrame()->AddMessageToConsole(
+    web_contents->GetPrimaryMainFrame()->AddMessageToConsole(
         blink::mojom::ConsoleMessageLevel::kWarning, message);
     return;
   }
@@ -135,7 +154,7 @@ DigitalAssetLinksHandler::~DigitalAssetLinksHandler() = default;
 
 void DigitalAssetLinksHandler::OnURLLoadComplete(
     std::string relationship,
-    absl::optional<std::string> fingerprint,
+    absl::optional<std::vector<std::string>> fingerprints,
     std::map<std::string, std::set<std::string>> target_values,
     std::unique_ptr<std::string> response_body) {
   int response_code = -1;
@@ -165,27 +184,27 @@ void DigitalAssetLinksHandler::OnURLLoadComplete(
       *response_body,
       base::BindOnce(&DigitalAssetLinksHandler::OnJSONParseResult,
                      weak_ptr_factory_.GetWeakPtr(), std::move(relationship),
-                     std::move(fingerprint), std::move(target_values)));
+                     std::move(fingerprints), std::move(target_values)));
 
   url_loader_.reset(nullptr);
 }
 
 void DigitalAssetLinksHandler::OnJSONParseResult(
     std::string relationship,
-    absl::optional<std::string> fingerprint,
+    absl::optional<std::vector<std::string>> fingerprints,
     std::map<std::string, std::set<std::string>> target_values,
     data_decoder::DataDecoder::ValueOrError result) {
-  if (!result.value) {
+  if (!result.has_value()) {
     AddMessageToConsole(
         web_contents_.get(),
         "Digital Asset Links response parsing failed with message: " +
-            *result.error);
+            result.error());
     std::move(callback_).Run(RelationshipCheckResult::kFailure);
     return;
   }
 
-  auto& statement_list = *result.value;
-  if (!statement_list.is_list()) {
+  base::Value::List* statement_list = result->GetIfList();
+  if (!statement_list) {
     std::move(callback_).Run(RelationshipCheckResult::kFailure);
     AddMessageToConsole(web_contents_.get(), "Statement List is not a list.");
     return;
@@ -194,26 +213,27 @@ void DigitalAssetLinksHandler::OnJSONParseResult(
   // We only output individual statement failures if none match.
   std::vector<std::string> failures;
 
-  for (const auto& statement : statement_list.GetListDeprecated()) {
-    if (!statement.is_dict()) {
+  for (const base::Value& statement : *statement_list) {
+    const base::Value::Dict* statement_dict = statement.GetIfDict();
+    if (!statement_dict) {
       failures.push_back("Statement is not a dictionary.");
       continue;
     }
 
-    if (!StatementHasMatchingRelationship(statement, relationship)) {
+    if (!StatementHasMatchingRelationship(*statement_dict, relationship)) {
       failures.push_back("Statement failure matching relationship.");
       continue;
     }
 
-    if (fingerprint &&
-        !StatementHasMatchingFingerprint(statement, *fingerprint)) {
+    if (fingerprints &&
+        !StatementHasMatchingFingerprint(*statement_dict, *fingerprints)) {
       failures.push_back("Statement failure matching fingerprint.");
       continue;
     }
 
     bool failed_target_check = false;
     for (const auto& key_value : target_values) {
-      if (!StatementHasMatchingTargetValue(statement, key_value.first,
+      if (!StatementHasMatchingTargetValue(*statement_dict, key_value.first,
                                            key_value.second)) {
         failures.push_back("Statement failure matching " + key_value.first +
                            ".");
@@ -235,19 +255,19 @@ void DigitalAssetLinksHandler::OnJSONParseResult(
 }
 
 bool DigitalAssetLinksHandler::CheckDigitalAssetLinkRelationshipForAndroidApp(
-    const std::string& web_domain,
+    const url::Origin& web_domain,
     const std::string& relationship,
-    const std::string& fingerprint,
+    std::vector<std::string> fingerprints,
     const std::string& package,
     RelationshipCheckResultCallback callback) {
   // TODO(rayankans): Should we also check the namespace here?
   return CheckDigitalAssetLinkRelationship(
-      web_domain, relationship, fingerprint, {{"package_name", {package}}},
-      std::move(callback));
+      web_domain, relationship, std::move(fingerprints),
+      {{"package_name", {package}}}, std::move(callback));
 }
 
 bool DigitalAssetLinksHandler::CheckDigitalAssetLinkRelationshipForWebApk(
-    const std::string& web_domain,
+    const url::Origin& web_domain,
     const std::string& manifest_url,
     RelationshipCheckResultCallback callback) {
   return CheckDigitalAssetLinkRelationship(
@@ -256,13 +276,12 @@ bool DigitalAssetLinksHandler::CheckDigitalAssetLinkRelationshipForWebApk(
 }
 
 bool DigitalAssetLinksHandler::CheckDigitalAssetLinkRelationship(
-    const std::string& web_domain,
+    const url::Origin& web_domain,
     const std::string& relationship,
-    const absl::optional<std::string>& fingerprint,
+    absl::optional<std::vector<std::string>> fingerprints,
     const std::map<std::string, std::set<std::string>>& target_values,
     RelationshipCheckResultCallback callback) {
-  // TODO(peconn): Propagate the use of url::Origin backwards to clients.
-  GURL request_url = GetUrlForAssetLinks(url::Origin::Create(GURL(web_domain)));
+  GURL request_url = GetUrlForAssetLinks(web_domain);
 
   if (!request_url.is_valid())
     return false;
@@ -310,19 +329,13 @@ bool DigitalAssetLinksHandler::CheckDigitalAssetLinkRelationship(
   url_loader_->SetRetryOptions(
       kNumNetworkRetries,
       network::SimpleURLLoader::RetryMode::RETRY_ON_NETWORK_CHANGE);
-  url_loader_->SetTimeoutDuration(timeout_duration_);
   url_loader_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
       shared_url_loader_factory_.get(),
       base::BindOnce(&DigitalAssetLinksHandler::OnURLLoadComplete,
-                     weak_ptr_factory_.GetWeakPtr(), relationship, fingerprint,
-                     target_values));
+                     weak_ptr_factory_.GetWeakPtr(), relationship,
+                     std::move(fingerprints), target_values));
 
   return true;
-}
-
-void DigitalAssetLinksHandler::SetTimeoutDuration(
-    base::TimeDelta timeout_duration) {
-  timeout_duration_ = timeout_duration;
 }
 
 }  // namespace digital_asset_links

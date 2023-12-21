@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "components/webapps/browser/android/webapps_icon_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/manifest/manifest.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom.h"
 #include "url/gurl.h"
@@ -237,11 +238,44 @@ TEST_F(ShortcutInfoTest, SplashIconFallbackToAny) {
 }
 
 TEST_F(ShortcutInfoTest, DisplayOverride) {
+  manifest_.display = blink::mojom::DisplayMode::kBrowser;
+  manifest_.display_override = {blink::mojom::DisplayMode::kMinimalUi};
+  info_.UpdateFromManifest(manifest_);
+  EXPECT_EQ(info_.display, blink::mojom::DisplayMode::kMinimalUi);
+
+  manifest_.display = blink::mojom::DisplayMode::kFullscreen;
+  manifest_.display_override = {blink::mojom::DisplayMode::kBrowser};
+  info_.UpdateFromManifest(manifest_);
+  EXPECT_EQ(info_.display, blink::mojom::DisplayMode::kBrowser);
+
   manifest_.display = blink::mojom::DisplayMode::kStandalone;
   manifest_.display_override = {blink::mojom::DisplayMode::kFullscreen};
   info_.UpdateFromManifest(manifest_);
-
   EXPECT_EQ(info_.display, blink::mojom::DisplayMode::kFullscreen);
+
+  manifest_.display = blink::mojom::DisplayMode::kMinimalUi;
+  manifest_.display_override = {blink::mojom::DisplayMode::kStandalone};
+  info_.UpdateFromManifest(manifest_);
+  EXPECT_EQ(info_.display, blink::mojom::DisplayMode::kStandalone);
+}
+
+TEST_F(ShortcutInfoTest, ManifestIdGenerated) {
+  manifest_.start_url = GURL("https://new.com/start");
+  manifest_.id = u"new_id";
+
+  info_.UpdateFromManifest(manifest_);
+
+  EXPECT_EQ(info_.manifest_id.spec(), "https://new.com/new_id");
+}
+
+TEST_F(ShortcutInfoTest, ManifestIdFallback) {
+  manifest_.start_url = GURL("https://new.com/start");
+  manifest_.id = absl::nullopt;
+
+  info_.UpdateFromManifest(manifest_);
+
+  // If id is not specified, use start_url.
+  EXPECT_EQ(info_.manifest_id.spec(), manifest_.start_url.spec());
 }
 
 }  // namespace webapps

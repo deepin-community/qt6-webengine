@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -21,8 +21,8 @@ class TextAutosizerClient : public RenderingTestChromeClient {
   float WindowToViewportScalar(LocalFrame*, const float value) const override {
     return value * device_scale_factor_;
   }
-  gfx::Rect ViewportToScreen(const gfx::Rect& rect,
-                             const LocalFrameView*) const override {
+  gfx::Rect LocalRootToScreenDIPs(const gfx::Rect& rect,
+                                  const LocalFrameView*) const override {
     return gfx::ScaleToRoundedRect(rect, 1 / device_scale_factor_);
   }
 
@@ -1110,6 +1110,24 @@ TEST_F(TextAutosizerTest, AfterPrint) {
   GetDocument().GetFrame()->EndPrinting();
   EXPECT_FLOAT_EQ(20.0f * device_scale,
                   target->GetLayoutObject()->StyleRef().ComputedFontSize());
+}
+
+TEST_F(TextAutosizerTest, FingerprintWidth) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      html { font-size: 8px; }
+      #target { width: calc(1px); }
+    </style>
+    <body>
+      <div id='target'>
+        Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed
+        do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+        Ut enim ad minim veniam, quis nostrud exercitation ullamco
+        laboris nisi ut aliquip ex ea commodo consequat.
+      </div>
+    </body>
+  )HTML");
+  // The test pass if it doesn't crash nor hit DCHECK.
 }
 
 class TextAutosizerSimTest : public SimTest {

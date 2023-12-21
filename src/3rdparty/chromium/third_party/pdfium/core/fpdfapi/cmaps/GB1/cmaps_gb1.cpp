@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 
 #include "core/fpdfapi/cmaps/GB1/cmaps_gb1.h"
 
-#include "third_party/base/cxx17_backports.h"
+#include <iterator>
 
 const FXCMAP_CMap kFXCMAP_GB1_cmaps[] = {
     {"GB-EUC-H", kFXCMAP_GB_EUC_H_0, nullptr, 90, 0, FXCMAP_CMap::Range, 0},
@@ -33,4 +33,4 @@ const FXCMAP_CMap kFXCMAP_GB1_cmaps[] = {
      FXCMAP_CMap::Range, -1},
 };
 
-const size_t kFXCMAP_GB1_cmaps_size = pdfium::size(kFXCMAP_GB1_cmaps);
+const size_t kFXCMAP_GB1_cmaps_size = std::size(kFXCMAP_GB1_cmaps);

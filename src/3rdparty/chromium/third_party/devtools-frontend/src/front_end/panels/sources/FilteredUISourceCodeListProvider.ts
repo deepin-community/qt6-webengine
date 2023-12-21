@@ -4,7 +4,9 @@
 
 import type * as Common from '../../core/common/common.js';
 import * as i18n from '../../core/i18n/i18n.js';
+import * as Bindings from '../../models/bindings/bindings.js';
 import * as Persistence from '../../models/persistence/persistence.js';
+import * as Root from '../../core/root/root.js';
 import * as Workspace from '../../models/workspace/workspace.js';
 import * as QuickOpen from '../../ui/legacy/components/quick_open/quick_open.js';
 import * as UI from '../../ui/legacy/legacy.js';
@@ -13,8 +15,8 @@ import {FilePathScoreFunction} from './FilePathScoreFunction.js';
 
 const UIStrings = {
   /**
-  *@description Text in Filtered UISource Code List Provider of the Sources panel
-  */
+   *@description Text in Filtered UISource Code List Provider of the Sources panel
+   */
   noFilesFound: 'No files found',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/sources/FilteredUISourceCodeListProvider.ts', UIStrings);
@@ -60,6 +62,11 @@ export class FilteredUISourceCodeListProvider extends QuickOpen.FilteredListWidg
 
   private filterUISourceCode(uiSourceCode: Workspace.UISourceCode.UISourceCode): boolean {
     if (this.uiSourceCodeUrls.has(uiSourceCode.url())) {
+      return false;
+    }
+    if (Root.Runtime.experiments.isEnabled(Root.Runtime.ExperimentName.JUST_MY_CODE) &&
+        Bindings.IgnoreListManager.IgnoreListManager.instance().isUserOrSourceMapIgnoreListedUISourceCode(
+            uiSourceCode)) {
       return false;
     }
     const binding = Persistence.Persistence.PersistenceImpl.instance().binding(uiSourceCode);
@@ -110,8 +117,14 @@ export class FilteredUISourceCodeListProvider extends QuickOpen.FilteredListWidg
       multiplier = 5;
     }
 
+    let contentTypeBonus = 0;
+    if (uiSourceCode.contentType().isFromSourceMap()) {
+      contentTypeBonus = 100;
+      // Maybe also have a bonus for being a script?
+    }
+
     const fullDisplayName = uiSourceCode.fullDisplayName();
-    return score + multiplier * this.scorer.calculateScore(fullDisplayName, null);
+    return score + multiplier * (contentTypeBonus + this.scorer.calculateScore(fullDisplayName, null));
   }
 
   renderItem(itemIndex: number, query: string, titleElement: Element, subtitleElement: Element): void {

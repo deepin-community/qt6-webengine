@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 
 #include <string>
 
-#include "base/callback_forward.h"
 #include "base/containers/span.h"
+#include "base/functional/callback_forward.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "content/common/content_export.h"
@@ -30,6 +30,8 @@
 namespace device {
 class FidoAuthenticator;
 class FidoDiscoveryFactory;
+class PublicKeyCredentialDescriptor;
+class PublicKeyCredentialUserEntity;
 }  // namespace device
 
 namespace url {
@@ -65,6 +67,22 @@ class CONTENT_EXPORT WebAuthenticationDelegate {
       BrowserContext* browser_context,
       const url::Origin& caller_origin,
       const std::string& relying_party_id);
+
+  // Returns whether |caller_origin| is permitted to use the
+  // RemoteDesktopClientOverride extension.
+  //
+  // This is an access control decision: RP IDs are used to control access to
+  // credentials. If this method returns true, the respective origin is able to
+  // claim any RP ID.
+  virtual bool OriginMayUseRemoteDesktopClientOverride(
+      BrowserContext* browser_context,
+      const url::Origin& caller_origin);
+
+  // Returns true if the tab security level is acceptable to allow WebAuthn
+  // requests, false otherwise.
+  virtual bool IsSecurityLevelAcceptableForWebAuthn(
+      content::RenderFrameHost* rfh,
+      const url::Origin& caller_origin);
 
 #if !BUILDFLAG(IS_ANDROID)
   // Permits the embedder to override the Relying Party ID for a WebAuthn call,
@@ -110,10 +128,14 @@ class CONTENT_EXPORT WebAuthenticationDelegate {
   IsUserVerifyingPlatformAuthenticatorAvailableOverride(
       RenderFrameHost* render_frame_host);
 
-  // Returns the WebAuthenticationRequestProxy for the |browser_context|, if
-  // any.
+  // Returns the active WebAuthenticationRequestProxy for WebAuthn requests
+  // originating from `caller_origin` in `browser_context`.
+  //
+  // If this method returns a proxy, the caller is expected to hand off WebAuthn
+  // request handling to this proxy instance.
   virtual WebAuthenticationRequestProxy* MaybeGetRequestProxy(
-      BrowserContext* browser_context);
+      BrowserContext* browser_context,
+      const url::Origin& caller_origin);
 #endif  // !IS_ANDROID
 
 #if BUILDFLAG(IS_WIN)
@@ -179,6 +201,9 @@ class CONTENT_EXPORT WebAuthenticationDelegate {
 class CONTENT_EXPORT AuthenticatorRequestClientDelegate
     : public device::FidoRequestHandlerBase::Observer {
  public:
+  using AccountPreselectedCallback =
+      base::RepeatingCallback<void(std::vector<uint8_t> credential_id)>;
+
   // Failure reasons that might be of interest to the user, so the embedder may
   // decide to inform the user.
   enum class InterestingFailureReason {
@@ -229,12 +254,13 @@ class CONTENT_EXPORT AuthenticatorRequestClientDelegate
   virtual bool DoesBlockRequestOnFailure(InterestingFailureReason reason);
 
   // Supplies callbacks that the embedder can invoke to initiate certain
-  // actions, namely: cancel the request, start the request over, initiate BLE
-  // pairing process, cancel WebAuthN request, and dispatch request to connected
-  // authenticators.
+  // actions, namely: cancel the request, start the request over, preselect an
+  // account, dispatch request to connected authenticators, and power on the
+  // bluetooth adapter.
   virtual void RegisterActionCallbacks(
       base::OnceClosure cancel_callback,
       base::RepeatingClosure start_over_callback,
+      AccountPreselectedCallback account_preselected_callback,
       device::FidoRequestHandlerBase::RequestCallback request_callback,
       base::RepeatingClosure bluetooth_adapter_power_on_callback);
 
@@ -258,12 +284,14 @@ class CONTENT_EXPORT AuthenticatorRequestClientDelegate
   // ConfigureCable optionally configures Cloud-assisted Bluetooth Low Energy
   // transports. |origin| is the origin of the calling site and
   // |pairings_from_extension| are caBLEv1 pairings that have been provided in
-  // an extension to the WebAuthn get() call. If the embedder wishes, it may use
-  // this to configure caBLE on the |FidoDiscoveryFactory| for use in this
-  // request.
+  // an extension to the WebAuthn get() call. |resident_key_requirement| is only
+  // set when provided (i.e. for makeCredential calls) and reflects the value
+  // requested by the site. If the embedder wishes, it may use this to configure
+  // caBLE on the |FidoDiscoveryFactory| for use in this request.
   virtual void ConfigureCable(
       const url::Origin& origin,
-      device::FidoRequestType request_type,
+      device::CableRequestType request_type,
+      absl::optional<device::ResidentKeyRequirement> resident_key_requirement,
       base::span<const device::CableDiscoveryData> pairings_from_extension,
       device::FidoDiscoveryFactory* fido_discovery_factory);
 
@@ -281,15 +309,31 @@ class CONTENT_EXPORT AuthenticatorRequestClientDelegate
       base::OnceCallback<void(device::AuthenticatorGetAssertionResponse)>
           callback);
 
-  // Disables the UI (needed in cases when called by other components, like
-  // cryptotoken).
+  // Disables the WebAuthn request modal dialog UI.
   virtual void DisableUI();
 
   virtual bool IsWebAuthnUIEnabled();
 
-  // Set to true to enable a mode where a prominent UI is only show for
-  // discoverable platform credentials.
+  // Configures whether a virtual authenticator environment is enabled. The
+  // embedder might choose to e.g. automate account selection under a virtual
+  // environment.
+  void SetVirtualEnvironment(bool virtual_environment);
+
+  bool IsVirtualEnvironmentEnabled();
+
+  // Set to true to enable a mode where a priori discovered credentials are
+  // shown alongside autofilled passwords, instead of the modal flow.
   virtual void SetConditionalRequest(bool is_conditional);
+
+  // Sets a credential filter for conditional mediation requests, which will
+  // only allow passkeys with matching credential IDs to be displayed to the
+  // user.
+  virtual void SetCredentialIdFilter(
+      std::vector<device::PublicKeyCredentialDescriptor> credential_list);
+
+  // Optionally configures the user entity passed for a makeCredential request.
+  virtual void SetUserEntityForMakeCredentialRequest(
+      const device::PublicKeyCredentialUserEntity& user_entity);
 
   // device::FidoRequestHandlerBase::Observer:
   void OnTransportAvailabilityEnumerated(
@@ -317,6 +361,9 @@ class CONTENT_EXPORT AuthenticatorRequestClientDelegate
   void OnSampleCollected(int bio_samples_remaining) override;
   void FinishCollectToken() override;
   void OnRetryUserVerification(int attempts) override;
+
+ private:
+  bool virtual_environment_ = false;
 };
 
 }  // namespace content

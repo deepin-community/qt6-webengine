@@ -30,13 +30,21 @@
 #include <QtWebEngineCore/qwebenginefullscreenrequest.h>
 #include <QtWebEngineCore/qwebenginecontextmenurequest.h>
 #include <QtWebEngineCore/qwebengineregisterprotocolhandlerrequest.h>
+#include <QtWebEngineCore/qwebenginefilesystemaccessrequest.h>
 
 QT_BEGIN_NAMESPACE
+
+// To prevent the same type from being exported twice into qmltypes
+// (for value type and for the enums)
+struct QWebEngineLoadingInfoDerived : public QWebEngineLoadingInfo
+{
+    Q_GADGET
+};
 
 namespace ForeignWebEngineLoadingInfoNamespace
 {
     Q_NAMESPACE
-    QML_FOREIGN_NAMESPACE(QWebEngineLoadingInfo)
+    QML_FOREIGN_NAMESPACE(QWebEngineLoadingInfoDerived)
     QML_NAMED_ELEMENT(WebEngineLoadingInfo)
     QML_ADDED_IN_VERSION(1, 1)
     QML_EXTRA_VERSION(2, 0)
@@ -52,10 +60,17 @@ struct ForeignWebEngineLoadingInfo
     QML_UNCREATABLE("")
 };
 
+// To prevent the same type from being exported twice into qmltypes
+// (for value type and for the enums)
+struct QWebEngineCertificateErrorDerived : public QWebEngineCertificateError
+{
+    Q_GADGET
+};
+
 namespace ForeignWebEngineCertificateErrorNamespace
 {
     Q_NAMESPACE
-    QML_FOREIGN_NAMESPACE(QWebEngineCertificateError)
+    QML_FOREIGN_NAMESPACE(QWebEngineCertificateErrorDerived)
     QML_NAMED_ELEMENT(WebEngineCertificateError)
     QML_ADDED_IN_VERSION(1, 1)
     QML_EXTRA_VERSION(2, 0)
@@ -140,6 +155,7 @@ struct ForeignWebEngineContextMenuRequest
     QML_UNCREATABLE("")
 };
 
+#if QT_DEPRECATED_SINCE(6, 5)
 struct ForeignWebEngineQuotaRequest
 {
     Q_GADGET
@@ -149,6 +165,7 @@ struct ForeignWebEngineQuotaRequest
     QML_EXTRA_VERSION(2, 0)
     QML_UNCREATABLE("")
 };
+#endif
 
 struct ForeignWebEngineRegisterProtocolHandlerRequest
 {
@@ -178,6 +195,30 @@ struct ForeignWebEngineFindTextResult
     QML_ADDED_IN_VERSION(1, 10)
     QML_EXTRA_VERSION(2, 0)
     QML_UNCREATABLE("")
+};
+
+struct ForeginWebEngineFileSystemAccessRequest
+{
+    Q_GADGET
+    QML_FOREIGN(QWebEngineFileSystemAccessRequest)
+    QML_NAMED_ELEMENT(webEngineFileSystemAccessRequest)
+    QML_ADDED_IN_VERSION(6, 4)
+    QML_UNCREATABLE("")
+};
+
+// To prevent the same type from being exported twice into qmltypes
+// (for value type and for the enums)
+struct QWebEngineFileSystemAccessRequestDerived : public QWebEngineFileSystemAccessRequest
+{
+    Q_GADGET
+};
+
+namespace ForeginWebEngineFileSystemAccessRequestNamespace
+{
+    Q_NAMESPACE
+    QML_FOREIGN_NAMESPACE(QWebEngineFileSystemAccessRequestDerived)
+    QML_NAMED_ELEMENT(WebEngineFileSystemAccessRequest)
+    QML_ADDED_IN_VERSION(6, 4)
 };
 
 QT_END_NAMESPACE

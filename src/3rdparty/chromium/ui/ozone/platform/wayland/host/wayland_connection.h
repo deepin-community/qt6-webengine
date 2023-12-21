@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,9 @@
 #include <string>
 #include <vector>
 
-#include "base/callback_forward.h"
 #include "base/containers/flat_map.h"
+#include "base/functional/callback_forward.h"
+#include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/display/tablet_state.h"
@@ -36,23 +37,24 @@ class WaylandProxy;
 
 namespace ui {
 
-class DeviceHotplugEventObserver;
+struct InputDevice;
 class OrgKdeKwinIdle;
 class SurfaceAugmenter;
+struct TouchscreenDevice;
+class WaylandBufferFactory;
 class WaylandBufferManagerHost;
 class WaylandCursor;
 class WaylandCursorBufferListener;
-class WaylandDrm;
 class WaylandEventSource;
 class WaylandOutputManager;
 class WaylandSeat;
-class WaylandShm;
 class WaylandZAuraShell;
+class WaylandZcrColorManager;
 class WaylandZcrCursorShapes;
+class WaylandZcrTouchpadHaptics;
 class WaylandZwpPointerConstraints;
 class WaylandZwpPointerGestures;
 class WaylandZwpRelativePointerManager;
-class WaylandZwpLinuxDmabuf;
 class WaylandDataDeviceManager;
 class WaylandCursorPosition;
 class WaylandWindowDragController;
@@ -60,6 +62,7 @@ class GtkPrimarySelectionDeviceManager;
 class GtkShell1;
 class ZwpIdleInhibitManager;
 class ZwpPrimarySelectionDeviceManager;
+class XdgActivation;
 class XdgForeignWrapper;
 class OverlayPrioritizer;
 
@@ -91,8 +94,8 @@ class WaylandConnection {
 
   bool Initialize();
 
-  // Schedules a flush of the Wayland connection.
-  void ScheduleFlush();
+  // Immediately flushes the Wayland display.
+  void Flush();
 
   // Calls wl_display_roundtrip_queue. Might be required during initialization
   // of some objects that should block until they are initialized.
@@ -118,13 +121,23 @@ class WaylandConnection {
   // version binded).
   uint32_t compositor_version() const { return compositor_version_; }
   wl_subcompositor* subcompositor() const { return subcompositor_.get(); }
+  wp_content_type_manager_v1* content_type_manager_v1() const {
+    return content_type_manager_v1_.get();
+  }
   wp_viewporter* viewporter() const { return viewporter_.get(); }
   zcr_alpha_compositing_v1* alpha_compositing() const {
     return alpha_compositing_.get();
   }
   xdg_wm_base* shell() const { return shell_.get(); }
-  zxdg_shell_v6* shell_v6() const { return shell_v6_.get(); }
   wp_presentation* presentation() const { return presentation_.get(); }
+  zcr_keyboard_extension_v1* keyboard_extension_v1() const {
+    return keyboard_extension_v1_.get();
+  }
+  zwp_keyboard_shortcuts_inhibit_manager_v1*
+  keyboard_shortcuts_inhibit_manager_v1() const {
+    return keyboard_shortcuts_inhibit_manager_v1_.get();
+  }
+  zcr_stylus_v2* stylus_v2() const { return zcr_stylus_v2_.get(); }
   zwp_text_input_manager_v1* text_input_manager_v1() const {
     return text_input_manager_v1_.get();
   }
@@ -161,12 +174,12 @@ class WaylandConnection {
   WaylandClipboard* clipboard() const { return clipboard_.get(); }
 
   WaylandOutputManager* wayland_output_manager() const {
-    return wayland_output_manager_.get();
+    return output_manager_.get();
   }
 
   // Returns the cursor position, which may be null.
   WaylandCursorPosition* wayland_cursor_position() const {
-    return wayland_cursor_position_.get();
+    return cursor_position_.get();
   }
 
   WaylandBufferManagerHost* buffer_manager_host() const {
@@ -175,19 +188,21 @@ class WaylandConnection {
 
   WaylandZAuraShell* zaura_shell() const { return zaura_shell_.get(); }
 
+  WaylandZcrColorManager* zcr_color_manager() const {
+    return zcr_color_manager_.get();
+  }
+
   WaylandZcrCursorShapes* zcr_cursor_shapes() const {
     return zcr_cursor_shapes_.get();
   }
 
-  WaylandZwpLinuxDmabuf* zwp_dmabuf() const { return zwp_dmabuf_.get(); }
-
-  WaylandDrm* drm() const { return drm_.get(); }
-
-  WaylandShm* shm() const { return shm_.get(); }
-
-  WaylandWindowManager* wayland_window_manager() {
-    return &wayland_window_manager_;
+  WaylandZcrTouchpadHaptics* zcr_touchpad_haptics() const {
+    return zcr_touchpad_haptics_.get();
   }
+
+  WaylandWindowManager* window_manager() { return &window_manager_; }
+
+  WaylandBufferFactory* buffer_factory() const { return buffer_factory_.get(); }
 
   WaylandDataDeviceManager* data_device_manager() const {
     return data_device_manager_.get();
@@ -215,18 +230,19 @@ class WaylandConnection {
     return window_drag_controller_.get();
   }
 
-  WaylandZwpPointerConstraints* wayland_zwp_pointer_constraints() const {
-    return wayland_zwp_pointer_constraints_.get();
+  WaylandZwpPointerConstraints* zwp_pointer_constraints() const {
+    return zwp_pointer_constraints_.get();
   }
 
-  WaylandZwpPointerGestures* wayland_zwp_pointer_gestures() const {
-    return wayland_zwp_pointer_gestures_.get();
+  WaylandZwpPointerGestures* zwp_pointer_gestures() const {
+    return zwp_pointer_gestures_.get();
   }
 
-  WaylandZwpRelativePointerManager* wayland_zwp_relative_pointer_manager()
-      const {
-    return wayland_zwp_relative_pointer_manager_.get();
+  WaylandZwpRelativePointerManager* zwp_relative_pointer_manager() const {
+    return zwp_relative_pointer_manager_.get();
   }
+
+  const XdgActivation* xdg_activation() const { return xdg_activation_.get(); }
 
   XdgForeignWrapper* xdg_foreign() const { return xdg_foreign_.get(); }
 
@@ -285,6 +301,10 @@ class WaylandConnection {
     return tablet_layout_state_ == display::TabletState::kInTabletMode ||
            tablet_layout_state_ == display::TabletState::kEnteringTabletMode;
   }
+  display::TabletState GetTabletState() { return tablet_layout_state_; }
+
+  const gfx::PointF MaybeConvertLocation(const gfx::PointF& location,
+                                         const WaylandWindow* window) const;
 
  private:
   friend class WaylandConnectionTestApi;
@@ -301,16 +321,16 @@ class WaylandConnection {
   friend class OverlayPrioritizer;
   friend class SurfaceAugmenter;
   friend class WaylandDataDeviceManager;
-  friend class WaylandDrm;
   friend class WaylandOutput;
   friend class WaylandSeat;
-  friend class WaylandShm;
   friend class WaylandZAuraShell;
-  friend class WaylandZwpLinuxDmabuf;
+  friend class WaylandZcrTouchpadHaptics;
   friend class WaylandZwpPointerConstraints;
   friend class WaylandZwpPointerGestures;
   friend class WaylandZwpRelativePointerManager;
+  friend class WaylandZcrColorManager;
   friend class WaylandZcrCursorShapes;
+  friend class XdgActivation;
   friend class XdgForeignWrapper;
   friend class ZwpIdleInhibitManager;
   friend class ZwpPrimarySelectionDeviceManager;
@@ -318,14 +338,23 @@ class WaylandConnection {
   void RegisterGlobalObjectFactory(const char* interface_name,
                                    wl::GlobalObjectFactory factory);
 
-  void Flush();
+  // Updates InputDevice structures in Chrome. Currently, Wayland doesn't
+  // support such, so the devices are derived from the connected interfaces.
+  // Also, currently, Wayland doesn't expose InputDeviceType so marked as
+  // UNKNOWN.
+  // TODO(crbug.com/1409793): We need further investigation and proper design
+  // how to model these input devices.
   void UpdateInputDevices();
+  std::vector<InputDevice> CreateMouseDevices() const;
+  std::vector<InputDevice> CreateKeyboardDevices() const;
+  std::vector<TouchscreenDevice> CreateTouchscreenDevices() const;
+
+  // Updates cursor related objects in this instance.
+  void UpdateCursor();
 
   // Initialize data-related objects if required protocol objects are already
   // in place, i.e: wl_seat and wl_data_device_manager.
   void CreateDataObjectsIfReady();
-
-  DeviceHotplugEventObserver* GetHotplugEventObserver();
 
   // wl_registry_listener
   static void Global(void* data,
@@ -335,14 +364,13 @@ class WaylandConnection {
                      uint32_t version);
   static void GlobalRemove(void* data, wl_registry* registry, uint32_t name);
 
-  // zxdg_shell_v6_listener
-  static void PingV6(void* data, zxdg_shell_v6* zxdg_shell_v6, uint32_t serial);
-
   // xdg_wm_base_listener
   static void Ping(void* data, xdg_wm_base* shell, uint32_t serial);
 
   // xdg_wm_base_listener
-  static void ClockId(void* data, wp_presentation* shell_v6, uint32_t clk_id);
+  static void ClockId(void* data,
+                      wp_presentation* presentation,
+                      uint32_t clk_id);
 
   base::flat_map<std::string, wl::GlobalObjectFactory> global_object_factories_;
 
@@ -354,11 +382,14 @@ class WaylandConnection {
   wl::Object<wl_compositor> compositor_;
   wl::Object<wl_subcompositor> subcompositor_;
   wl::Object<xdg_wm_base> shell_;
-  wl::Object<zxdg_shell_v6> shell_v6_;
+  wl::Object<wp_content_type_manager_v1> content_type_manager_v1_;
   wl::Object<wp_presentation> presentation_;
   wl::Object<wp_viewporter> viewporter_;
   wl::Object<zcr_alpha_compositing_v1> alpha_compositing_;
   wl::Object<zcr_keyboard_extension_v1> keyboard_extension_v1_;
+  wl::Object<zwp_keyboard_shortcuts_inhibit_manager_v1>
+      keyboard_shortcuts_inhibit_manager_v1_;
+  wl::Object<zcr_stylus_v2> zcr_stylus_v2_;
   wl::Object<zwp_text_input_manager_v1> text_input_manager_v1_;
   wl::Object<zcr_text_input_extension_v1> text_input_extension_v1_;
   wl::Object<zwp_linux_explicit_synchronization_v1>
@@ -368,28 +399,31 @@ class WaylandConnection {
   wl::Object<zxdg_output_manager_v1> xdg_output_manager_;
 
   // Manages Wayland windows.
-  WaylandWindowManager wayland_window_manager_;
+  WaylandWindowManager window_manager_{this};
 
   // Event source instance. Must be declared before input objects so it
   // outlives them so thus being able to properly handle their destruction.
   std::unique_ptr<WaylandEventSource> event_source_;
 
+  // Factory that wraps all the supported wayland objects that are provide
+  // capabilities to create wl_buffers.
+  std::unique_ptr<WaylandBufferFactory> buffer_factory_;
+
   std::unique_ptr<WaylandCursor> cursor_;
   std::unique_ptr<WaylandDataDeviceManager> data_device_manager_;
-  std::unique_ptr<WaylandOutputManager> wayland_output_manager_;
-  std::unique_ptr<WaylandCursorPosition> wayland_cursor_position_;
+  std::unique_ptr<WaylandOutputManager> output_manager_;
+  std::unique_ptr<WaylandCursorPosition> cursor_position_;
   std::unique_ptr<WaylandZAuraShell> zaura_shell_;
+  std::unique_ptr<WaylandZcrColorManager> zcr_color_manager_;
   std::unique_ptr<WaylandZcrCursorShapes> zcr_cursor_shapes_;
-  std::unique_ptr<WaylandZwpPointerConstraints>
-      wayland_zwp_pointer_constraints_;
+  std::unique_ptr<WaylandZcrTouchpadHaptics> zcr_touchpad_haptics_;
+  std::unique_ptr<WaylandZwpPointerConstraints> zwp_pointer_constraints_;
   std::unique_ptr<WaylandZwpRelativePointerManager>
-      wayland_zwp_relative_pointer_manager_;
-  std::unique_ptr<WaylandZwpPointerGestures> wayland_zwp_pointer_gestures_;
-  std::unique_ptr<WaylandZwpLinuxDmabuf> zwp_dmabuf_;
-  std::unique_ptr<WaylandDrm> drm_;
+      zwp_relative_pointer_manager_;
+  std::unique_ptr<WaylandZwpPointerGestures> zwp_pointer_gestures_;
   std::unique_ptr<WaylandSeat> seat_;
-  std::unique_ptr<WaylandShm> shm_;
   std::unique_ptr<WaylandBufferManagerHost> buffer_manager_host_;
+  std::unique_ptr<XdgActivation> xdg_activation_;
   std::unique_ptr<XdgForeignWrapper> xdg_foreign_;
   std::unique_ptr<ZwpIdleInhibitManager> zwp_idle_inhibit_manager_;
   std::unique_ptr<OverlayPrioritizer> overlay_prioritizer_;
@@ -415,18 +449,16 @@ class WaylandConnection {
   // Describes the clock domain that wp_presentation timestamps are in.
   uint32_t presentation_clk_id_ = CLOCK_MONOTONIC;
 
-  // Helper class that lets input emulation access some data of objects
-  // that Wayland holds. For example, wl_surface and others. It's only
-  // created when platform window test config is set.
+  // Allows input emulation access some data of objects that Wayland holds.
+  // For example, wl_surface and others. It's only created when platform window
+  // test config is set.
   std::unique_ptr<wl::WaylandProxy> wayland_proxy_;
 
-  WaylandCursorBufferListener* listener_ = nullptr;
+  raw_ptr<WaylandCursorBufferListener> listener_ = nullptr;
 
   // The current window table mode layout state.
   display::TabletState tablet_layout_state_ =
       display::TabletState::kInClamshellMode;
-
-  bool scheduled_flush_ = false;
 
   // Surfaces are submitted in pixel coordinates. Their buffer scales are always
   // advertised to server as 1, and the scale via vp_viewporter won't be

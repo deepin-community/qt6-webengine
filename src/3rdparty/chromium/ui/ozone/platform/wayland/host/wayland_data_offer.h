@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -40,6 +40,7 @@ class WaylandDataOffer : public WaylandDataOfferBase {
   uint32_t source_actions() const { return source_actions_; }
   uint32_t dnd_action() const { return dnd_action_; }
   void SetDndActions(uint32_t dnd_actions);
+  uint32_t id() const { return data_offer_.id(); }
 
  private:
   // wl_data_offer_listener callbacks.

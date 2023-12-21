@@ -365,6 +365,17 @@ static int vaapi_encode_issue(AVCodecContext *avctx,
             goto fail;
     }
 
+#if VA_CHECK_VERSION(1, 5, 0)
+    if (ctx->max_frame_size) {
+        err = vaapi_encode_make_misc_param_buffer(avctx, pic,
+                                                  VAEncMiscParameterTypeMaxFrameSize,
+                                                  &ctx->mfs_params,
+                                                  sizeof(ctx->mfs_params));
+        if (err < 0)
+            goto fail;
+    }
+#endif
+
     if (pic->type == PICTURE_TYPE_IDR) {
         if (ctx->va_packed_headers & VA_ENC_PACKED_HEADER_SEQUENCE &&
             ctx->codec->write_sequence_header) {
@@ -684,6 +695,7 @@ static int vaapi_encode_output(AVCodecContext *avctx,
         pkt->flags |= AV_PKT_FLAG_KEY;
 
     pkt->pts = pic->pts;
+    pkt->duration = pic->duration;
 
     vas = vaUnmapBuffer(ctx->hwctx->display, pic->output_buffer);
     if (vas != VA_STATUS_SUCCESS) {
@@ -691,6 +703,14 @@ static int vaapi_encode_output(AVCodecContext *avctx,
                "%d (%s).\n", vas, vaErrorStr(vas));
         err = AVERROR(EIO);
         goto fail;
+    }
+
+    // for no-delay encoders this is handled in generic codec
+    if (avctx->codec->capabilities & AV_CODEC_CAP_DELAY &&
+        avctx->flags & AV_CODEC_FLAG_COPY_OPAQUE) {
+        pkt->opaque     = pic->opaque;
+        pkt->opaque_ref = pic->opaque_ref;
+        pic->opaque_ref = NULL;
     }
 
     av_buffer_unref(&pic->output_buffer_ref);
@@ -765,6 +785,8 @@ static int vaapi_encode_free(AVCodecContext *avctx,
 
     av_frame_free(&pic->input_image);
     av_frame_free(&pic->recon_image);
+
+    av_buffer_unref(&pic->opaque_ref);
 
     av_freep(&pic->param_buffers);
     av_freep(&pic->slices);
@@ -1133,6 +1155,15 @@ static int vaapi_encode_send_frame(AVCodecContext *avctx, AVFrame *frame)
 
         pic->input_surface = (VASurfaceID)(uintptr_t)frame->data[3];
         pic->pts = frame->pts;
+        pic->duration = frame->duration;
+
+        if (avctx->flags & AV_CODEC_FLAG_COPY_OPAQUE) {
+            err = av_buffer_replace(&pic->opaque_ref, frame->opaque_ref);
+            if (err < 0)
+                goto fail;
+
+            pic->opaque = frame->opaque;
+        }
 
         av_frame_move_ref(pic->input_image, frame);
 
@@ -1294,9 +1325,14 @@ static const VAAPIEncodeRTFormat vaapi_encode_rt_formats[] = {
     { "YUV420",    VA_RT_FORMAT_YUV420,        8, 3, 1, 1 },
     { "YUV422",    VA_RT_FORMAT_YUV422,        8, 3, 1, 0 },
 #if VA_CHECK_VERSION(1, 2, 0)
+    { "YUV420_12", VA_RT_FORMAT_YUV420_12,    12, 3, 1, 1 },
     { "YUV422_10", VA_RT_FORMAT_YUV422_10,    10, 3, 1, 0 },
+    { "YUV422_12", VA_RT_FORMAT_YUV422_12,    12, 3, 1, 0 },
+    { "YUV444_10", VA_RT_FORMAT_YUV444_10,    10, 3, 0, 0 },
+    { "YUV444_12", VA_RT_FORMAT_YUV444_12,    12, 3, 0, 0 },
 #endif
     { "YUV444",    VA_RT_FORMAT_YUV444,        8, 3, 0, 0 },
+    { "XYUV",      VA_RT_FORMAT_YUV444,        8, 3, 0, 0 },
     { "YUV411",    VA_RT_FORMAT_YUV411,        8, 3, 2, 0 },
 #if VA_CHECK_VERSION(0, 38, 1)
     { "YUV420_10", VA_RT_FORMAT_YUV420_10BPP, 10, 3, 1, 1 },
@@ -1869,12 +1905,70 @@ rc_mode_found:
     return 0;
 }
 
+static av_cold int vaapi_encode_init_max_frame_size(AVCodecContext *avctx)
+{
+#if VA_CHECK_VERSION(1, 5, 0)
+    VAAPIEncodeContext  *ctx = avctx->priv_data;
+    VAConfigAttrib      attr = { VAConfigAttribMaxFrameSize };
+    VAStatus vas;
+
+    if (ctx->va_rc_mode == VA_RC_CQP) {
+        ctx->max_frame_size = 0;
+        av_log(avctx, AV_LOG_ERROR, "Max frame size is invalid in CQP rate "
+               "control mode.\n");
+        return AVERROR(EINVAL);
+    }
+
+    vas = vaGetConfigAttributes(ctx->hwctx->display,
+                                ctx->va_profile,
+                                ctx->va_entrypoint,
+                                &attr, 1);
+    if (vas != VA_STATUS_SUCCESS) {
+        ctx->max_frame_size = 0;
+        av_log(avctx, AV_LOG_ERROR, "Failed to query max frame size "
+               "config attribute: %d (%s).\n", vas, vaErrorStr(vas));
+        return AVERROR_EXTERNAL;
+    }
+
+    if (attr.value == VA_ATTRIB_NOT_SUPPORTED) {
+        ctx->max_frame_size = 0;
+        av_log(avctx, AV_LOG_ERROR, "Max frame size attribute "
+               "is not supported.\n");
+        return AVERROR(EINVAL);
+    } else {
+        VAConfigAttribValMaxFrameSize attr_mfs;
+        attr_mfs.value = attr.value;
+        // Prefer to use VAEncMiscParameterTypeMaxFrameSize for max frame size.
+        if (!attr_mfs.bits.max_frame_size && attr_mfs.bits.multiple_pass) {
+            ctx->max_frame_size = 0;
+            av_log(avctx, AV_LOG_ERROR, "Driver only supports multiple pass "
+                   "max frame size which has not been implemented in FFmpeg.\n");
+            return AVERROR(EINVAL);
+        }
+
+        ctx->mfs_params = (VAEncMiscParameterBufferMaxFrameSize){
+            .max_frame_size = ctx->max_frame_size * 8,
+        };
+
+        av_log(avctx, AV_LOG_VERBOSE, "Set max frame size: %d bytes.\n",
+               ctx->max_frame_size);
+    }
+#else
+    av_log(avctx, AV_LOG_ERROR, "The max frame size option is not supported with "
+           "this VAAPI version.\n");
+    return AVERROR(EINVAL);
+#endif
+
+    return 0;
+}
+
 static av_cold int vaapi_encode_init_gop_structure(AVCodecContext *avctx)
 {
     VAAPIEncodeContext *ctx = avctx->priv_data;
     VAStatus vas;
     VAConfigAttrib attr = { VAConfigAttribEncMaxRefFrames };
     uint32_t ref_l0, ref_l1;
+    int prediction_pre_only;
 
     vas = vaGetConfigAttributes(ctx->hwctx->display,
                                 ctx->va_profile,
@@ -1893,6 +1987,51 @@ static av_cold int vaapi_encode_init_gop_structure(AVCodecContext *avctx)
         ref_l1 = attr.value >> 16 & 0xffff;
     }
 
+    ctx->p_to_gpb = 0;
+    prediction_pre_only = 0;
+
+#if VA_CHECK_VERSION(1, 9, 0)
+    if (!(ctx->codec->flags & FLAG_INTRA_ONLY ||
+        avctx->gop_size <= 1)) {
+        attr = (VAConfigAttrib) { VAConfigAttribPredictionDirection };
+        vas = vaGetConfigAttributes(ctx->hwctx->display,
+                                    ctx->va_profile,
+                                    ctx->va_entrypoint,
+                                    &attr, 1);
+        if (vas != VA_STATUS_SUCCESS) {
+            av_log(avctx, AV_LOG_WARNING, "Failed to query prediction direction "
+                   "attribute: %d (%s).\n", vas, vaErrorStr(vas));
+            return AVERROR_EXTERNAL;
+        } else if (attr.value == VA_ATTRIB_NOT_SUPPORTED) {
+            av_log(avctx, AV_LOG_VERBOSE, "Driver does not report any additional "
+                   "prediction constraints.\n");
+        } else {
+            if (((ref_l0 > 0 || ref_l1 > 0) && !(attr.value & VA_PREDICTION_DIRECTION_PREVIOUS)) ||
+                ((ref_l1 == 0) && (attr.value & (VA_PREDICTION_DIRECTION_FUTURE | VA_PREDICTION_DIRECTION_BI_NOT_EMPTY)))) {
+                av_log(avctx, AV_LOG_ERROR, "Driver report incorrect prediction "
+                       "direction attribute.\n");
+                return AVERROR_EXTERNAL;
+            }
+
+            if (!(attr.value & VA_PREDICTION_DIRECTION_FUTURE)) {
+                if (ref_l0 > 0 && ref_l1 > 0) {
+                    prediction_pre_only = 1;
+                    av_log(avctx, AV_LOG_VERBOSE, "Driver only support same reference "
+                           "lists for B-frames.\n");
+                }
+            }
+
+            if (attr.value & VA_PREDICTION_DIRECTION_BI_NOT_EMPTY) {
+                if (ref_l0 > 0 && ref_l1 > 0) {
+                    ctx->p_to_gpb = 1;
+                    av_log(avctx, AV_LOG_VERBOSE, "Driver does not support P-frames, "
+                           "replacing them with B-frames.\n");
+                }
+            }
+        }
+    }
+#endif
+
     if (ctx->codec->flags & FLAG_INTRA_ONLY ||
         avctx->gop_size <= 1) {
         av_log(avctx, AV_LOG_VERBOSE, "Using intra frames only.\n");
@@ -1902,15 +2041,26 @@ static av_cold int vaapi_encode_init_gop_structure(AVCodecContext *avctx)
                "reference frames.\n");
         return AVERROR(EINVAL);
     } else if (!(ctx->codec->flags & FLAG_B_PICTURES) ||
-               ref_l1 < 1 || avctx->max_b_frames < 1) {
-        av_log(avctx, AV_LOG_VERBOSE, "Using intra and P-frames "
-               "(supported references: %d / %d).\n", ref_l0, ref_l1);
+               ref_l1 < 1 || avctx->max_b_frames < 1 ||
+               prediction_pre_only) {
+        if (ctx->p_to_gpb)
+           av_log(avctx, AV_LOG_VERBOSE, "Using intra and B-frames "
+                  "(supported references: %d / %d).\n",
+                  ref_l0, ref_l1);
+        else
+            av_log(avctx, AV_LOG_VERBOSE, "Using intra and P-frames "
+                   "(supported references: %d / %d).\n", ref_l0, ref_l1);
         ctx->gop_size = avctx->gop_size;
         ctx->p_per_i  = INT_MAX;
         ctx->b_per_p  = 0;
     } else {
-        av_log(avctx, AV_LOG_VERBOSE, "Using intra, P- and B-frames "
-               "(supported references: %d / %d).\n", ref_l0, ref_l1);
+       if (ctx->p_to_gpb)
+           av_log(avctx, AV_LOG_VERBOSE, "Using intra and B-frames "
+                  "(supported references: %d / %d).\n",
+                  ref_l0, ref_l1);
+       else
+           av_log(avctx, AV_LOG_VERBOSE, "Using intra, P- and B-frames "
+                  "(supported references: %d / %d).\n", ref_l0, ref_l1);
         ctx->gop_size = avctx->gop_size;
         ctx->p_per_i  = INT_MAX;
         ctx->b_per_p  = avctx->max_b_frames;
@@ -2059,6 +2209,8 @@ static av_cold int vaapi_encode_init_slice_structure(AVCodecContext *avctx)
         }
         return 0;
     }
+
+    av_assert0(ctx->slice_block_height > 0 && ctx->slice_block_width > 0);
 
     ctx->slice_block_rows = (avctx->height + ctx->slice_block_height - 1) /
                              ctx->slice_block_height;
@@ -2449,6 +2601,20 @@ av_cold int ff_vaapi_encode_init(AVCodecContext *avctx)
     if (err < 0)
         goto fail;
 
+    if (ctx->codec->get_encoder_caps) {
+        err = ctx->codec->get_encoder_caps(avctx);
+        if (err < 0)
+            goto fail;
+    } else {
+        // Assume 16x16 blocks.
+        ctx->surface_width  = FFALIGN(avctx->width,  16);
+        ctx->surface_height = FFALIGN(avctx->height, 16);
+        if (ctx->codec->flags & FLAG_SLICE_CONTROL) {
+            ctx->slice_block_width  = 16;
+            ctx->slice_block_height = 16;
+        }
+    }
+
     err = vaapi_encode_init_rate_control(avctx);
     if (err < 0)
         goto fail;
@@ -2471,6 +2637,12 @@ av_cold int ff_vaapi_encode_init(AVCodecContext *avctx)
 
     if (avctx->compression_level >= 0) {
         err = vaapi_encode_init_quality(avctx);
+        if (err < 0)
+            goto fail;
+    }
+
+    if (ctx->max_frame_size) {
+        err = vaapi_encode_init_max_frame_size(avctx);
         if (err < 0)
             goto fail;
     }

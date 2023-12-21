@@ -1,23 +1,23 @@
-// Copyright (c) 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "gpu/ipc/service/gpu_watchdog_thread.h"
+
+#include <memory>
+#include <string>
+
 #include "base/test/task_environment.h"
 
 #include "base/power_monitor/power_monitor.h"
 #include "base/power_monitor/power_monitor_source.h"
 #include "base/system/sys_info.h"
 #include "base/task/current_thread.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/power_monitor_test.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-#if BUILDFLAG(IS_WIN)
-#include "base/win/windows_version.h"
-#endif
 
 #if BUILDFLAG(IS_MAC)
 #include "base/mac/mac_util.h"
@@ -52,7 +52,7 @@ constexpr auto kExtraGPUJobTimeForTesting = base::Milliseconds(500);
 // out by the OS scheduler. The task on windows is simiulated by reading
 // TimeTicks instead of Sleep().
 void SimpleTask(base::TimeDelta duration, base::TimeDelta extra_time) {
-#if BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
   auto start_timetick = base::TimeTicks::Now();
   do {
   } while ((base::TimeTicks::Now() - start_timetick) < duration);
@@ -110,7 +110,7 @@ class GpuWatchdogPowerTest : public GpuWatchdogTest {
 };
 
 void GpuWatchdogTest::SetUp() {
-  ASSERT_TRUE(base::ThreadTaskRunnerHandle::IsSet());
+  ASSERT_TRUE(base::SingleThreadTaskRunner::HasCurrentDefault());
   ASSERT_TRUE(base::CurrentThread::IsSet());
 
   enum TimeOutType {
@@ -121,13 +121,7 @@ void GpuWatchdogTest::SetUp() {
 
   TimeOutType timeout_type = kNormal;
 
-#if BUILDFLAG(IS_WIN)
-  // Win7
-  if (base::win::GetVersion() < base::win::Version::WIN10) {
-    timeout_type = kSlow;
-  }
-
-#elif BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC)
   // Use slow timeout for Mac versions < 11.00 and for MacBookPro model <
   // MacBookPro14,1
   int os_version = base::mac::internal::MacOSVersion();
@@ -146,7 +140,7 @@ void GpuWatchdogTest::SetUp() {
       // model_ver_str = "MacBookProXX,X", model_ver_str = "XX,X"
       std::string model_ver_str = model_str.substr(model_version_pos);
       int major_model_ver = std::atoi(model_ver_str.c_str());
-      // For version < 14,1
+      // For model version < 14,1
       if (major_model_ver < 14) {
         timeout_type = kSlow;
       }
@@ -267,6 +261,26 @@ TEST_F(GpuWatchdogTest, GpuInitializationHang) {
   // Gpu hangs. OnInitComplete() is not called
   bool result = watchdog_thread_->IsGpuHangDetectedForTesting();
   EXPECT_TRUE(result);
+  // retry on failure.
+}
+
+// GPU Hang In Initialization.
+TEST_F(GpuWatchdogTest, GpuInitializationHangWithReportOnly) {
+  auto allowed_time =
+      timeout_ * (kInitFactor + 1) + full_thread_time_on_windows_;
+
+  watchdog_thread_->EnableReportOnlyMode();
+
+  // GPU init takes longer than timeout.
+  SimpleTask(allowed_time, /*extra_time=*/extra_gpu_job_time_);
+
+  // Gpu hangs. OnInitComplete() is not called
+  bool result = watchdog_thread_->IsGpuHangDetectedWithoutKillForTesting();
+  bool non_result = watchdog_thread_->IsGpuHangDetectedForTesting();
+  EXPECT_TRUE(result);
+  EXPECT_FALSE(non_result);
+
+  watchdog_thread_->DisableReportOnlyMode();
   // retry on failure.
 }
 

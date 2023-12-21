@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,9 +10,9 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
 #include "base/metrics/field_trial_params.h"
@@ -23,6 +23,7 @@
 #include "content/public/browser/back_forward_cache.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/child_process_host.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -30,7 +31,6 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/child_process_host.h"
 #include "content/public/common/content_features.h"
 #include "extensions/browser/api/extensions_api_client.h"
 #include "extensions/browser/api/messaging/channel_endpoint.h"
@@ -50,16 +50,12 @@
 #include "extensions/browser/process_manager.h"
 #include "extensions/common/api/messaging/messaging_endpoint.h"
 #include "extensions/common/api/messaging/port_context.h"
-#include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
-#include "extensions/common/extension_features.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/manifest_handlers/background_info.h"
 #include "extensions/common/manifest_handlers/externally_connectable.h"
 #include "extensions/common/manifest_handlers/incognito_info.h"
 #include "extensions/common/permissions/permissions_data.h"
-#include "net/http/http_response_headers.h"
-#include "third_party/blink/public/common/origin_trials/trial_token_validator.h"
 #include "url/gurl.h"
 
 using content::BrowserContext;
@@ -139,6 +135,59 @@ void MaybeDisableBackForwardCacheForMessaging(content::RenderFrameHost* host) {
                 back_forward_cache::DisabledReasonId::kExtensionMessaging));
 }
 
+// Default apps that grant extended lifetime when connecting to them with a
+// persistent port connection, until the channel is closed. These values extend
+// the values of the
+// ExtensionExtendedBackgroundLifetimeForPortConnectionsToUrls policy. They
+// are chosen as defaults because they are known apps that offer SDKs and do not
+// offer the possibility to restart a closed connection to a previous state.
+constexpr const char* kDefaultSWExtendedLifetimeList[] = {
+    // Smart Card Connector
+    "chrome-extension://khpfeaanjngmcnplbdlpegiifgpfgdco/",
+
+    // Citrix Receiver
+    "chrome-extension://haiffjcadagjlijoggckpgfnoeiflnem/",  // stable
+    "chrome-extension://lbfgjakkeeccemhonnolnmglmfmccaag/",  // beta
+    "chrome-extension://anjihnbmjbbpofafpmklejenkgnjfcdi/",  // back-up
+
+    // VMware Horizon
+    "chrome-extension://ppkfnjlimknmjoaemnpidmdlfchhehel/",  // stable
+    "chrome-extension://kenkpdjcfppbccchillfdjkjnejjgand/",  // beta
+};
+
+std::vector<url::Origin> GetServiceWorkerExtendedLifetimeOrigins(
+    content::BrowserContext* browser_context) {
+  std::vector<url::Origin> origins;
+  const base::Value::List& extended_lifetime_urls =
+      ExtensionPrefs::Get(browser_context)
+          ->pref_service()
+          ->GetList(
+              pref_names::kExtendedBackgroundLifetimeForPortConnectionsToUrls);
+  origins.reserve(std::size(kDefaultSWExtendedLifetimeList) +
+                  extended_lifetime_urls.size());
+
+  // Add default values.
+  for (const std::string& default_value : kDefaultSWExtendedLifetimeList) {
+    url::Origin origin = url::Origin::Create(GURL(default_value));
+    origins.push_back(std::move(origin));
+  }
+
+  // Add policy values.
+  for (const base::Value& value : extended_lifetime_urls) {
+    GURL url(value.GetString());
+    if (!url.is_valid()) {
+      continue;
+    }
+    url::Origin origin = url::Origin::Create(url);
+    if (origin.opaque()) {
+      continue;
+    }
+    origins.push_back(std::move(origin));
+  }
+
+  return origins;
+}
+
 }  // namespace
 
 struct MessageService::MessageChannel {
@@ -148,9 +197,8 @@ struct MessageService::MessageChannel {
 
 struct MessageService::OpenChannelParams {
   ChannelEndpoint source;
-  std::unique_ptr<base::DictionaryValue> source_tab;
-  int source_frame_id;
-  ExtensionApiFrameIdMap::DocumentId source_document_id;
+  absl::optional<base::Value::Dict> source_tab;
+  ExtensionApiFrameIdMap::FrameData source_frame;
   std::unique_ptr<MessagePort> receiver;
   PortId receiver_port_id;
   MessagingEndpoint source_endpoint;
@@ -162,24 +210,21 @@ struct MessageService::OpenChannelParams {
   bool include_guest_process_info;
 
   // Takes ownership of receiver.
-  OpenChannelParams(
-      const ChannelEndpoint& source,
-      std::unique_ptr<base::DictionaryValue> source_tab,
-      int source_frame_id,
-      const ExtensionApiFrameIdMap::DocumentId& source_document_id,
-      MessagePort* receiver,
-      const PortId& receiver_port_id,
-      const MessagingEndpoint& source_endpoint,
-      std::unique_ptr<MessagePort> opener_port,
-      const std::string& target_extension_id,
-      const GURL& source_url,
-      absl::optional<url::Origin> source_origin,
-      const std::string& channel_name,
-      bool include_guest_process_info)
+  OpenChannelParams(const ChannelEndpoint& source,
+                    absl::optional<base::Value::Dict> source_tab,
+                    const ExtensionApiFrameIdMap::FrameData& source_frame,
+                    MessagePort* receiver,
+                    const PortId& receiver_port_id,
+                    const MessagingEndpoint& source_endpoint,
+                    std::unique_ptr<MessagePort> opener_port,
+                    const std::string& target_extension_id,
+                    const GURL& source_url,
+                    absl::optional<url::Origin> source_origin,
+                    const std::string& channel_name,
+                    bool include_guest_process_info)
       : source(source),
         source_tab(std::move(source_tab)),
-        source_frame_id(source_frame_id),
-        source_document_id(source_document_id),
+        source_frame(source_frame),
         receiver(receiver),
         receiver_port_id(receiver_port_id),
         source_endpoint(source_endpoint),
@@ -295,35 +340,9 @@ void MessageService::OpenChannelToExtension(
 
         is_web_connection = true;
 
-        // Sites can only connect to the CryptoToken component extension if it
-        // has been enabled via feature flag, enterprise policy or deprecation
-        // trial.
-        // TODO(1224886): Delete together with CryptoToken code.
-        if (target_extension_id == extension_misc::kCryptotokenExtensionId) {
-          blink::TrialTokenValidator validator;
-          const net::HttpResponseHeaders* response_headers =
-              source_render_frame_host->GetLastResponseHeaders();
-          const bool u2f_api_enabled =
-              base::FeatureList::IsEnabled(
-                  extensions_features::kU2FSecurityKeyAPI) ||
-              ExtensionPrefs::Get(context)->pref_service()->GetBoolean(
-                  extensions::pref_names::kU2fSecurityKeyApiEnabled) ||
-              (response_headers &&
-               validator.RequestEnablesFeature(
-                   source_render_frame_host->GetLastCommittedURL(),
-                   response_headers,
-                   extension_misc::kCryptotokenDeprecationTrialName,
-                   base::Time::Now()));
-          is_externally_connectable =
-              u2f_api_enabled &&
-              externally_connectable->matches.MatchesURL(
-                  source_render_frame_host->GetLastCommittedURL());
-        } else {
-          // Check that the web page URL matches.
-          is_externally_connectable =
-              externally_connectable->matches.MatchesURL(
-                  source_render_frame_host->GetLastCommittedURL());
-        }
+        // Check that the web page URL matches.
+        is_externally_connectable = externally_connectable->matches.MatchesURL(
+            source_render_frame_host->GetLastCommittedURL());
       }
     } else {
       // Default behaviour. Any extension or content script, no webpages.
@@ -345,30 +364,28 @@ void MessageService::OpenChannelToExtension(
         WebContents::FromRenderFrameHost(source_render_frame_host);
   }
 
-  int source_frame_id = -1;
-  ExtensionApiFrameIdMap::DocumentId source_document_id;
+  ExtensionApiFrameIdMap::FrameData source_frame;
   bool include_guest_process_info = false;
 
   // Get information about the opener's tab, if applicable.
-  std::unique_ptr<base::DictionaryValue> source_tab =
+  absl::optional<base::Value::Dict> source_tab =
       messaging_delegate_->MaybeGetTabInfo(source_contents);
 
   absl::optional<url::Origin> source_origin;
   if (source_render_frame_host)
     source_origin = source_render_frame_host->GetLastCommittedOrigin();
 
-  if (source_tab.get()) {
+  if (source_tab) {
     DCHECK(source_render_frame_host);
-    source_frame_id =
-        ExtensionApiFrameIdMap::GetFrameId(source_render_frame_host);
-    source_document_id =
-        ExtensionApiFrameIdMap::GetDocumentId(source_render_frame_host);
+    source_frame = ExtensionApiFrameIdMap::Get()->GetFrameData(
+        source_render_frame_host->GetGlobalId());
   } else {
 #if !defined(TOOLKIT_QT)
     // Check to see if it was a WebView making the request.
     // Sending messages from WebViews to extensions breaks webview isolation,
     // so only allow component extensions to receive messages from WebViews.
-    bool is_web_view = !!WebViewGuest::FromWebContents(source_contents);
+    bool is_web_view =
+        !!WebViewGuest::FromRenderFrameHost(source_render_frame_host);
     if (is_web_view &&
         Manifest::IsComponentLocation(target_extension->location())) {
 #else
@@ -380,8 +397,8 @@ void MessageService::OpenChannelToExtension(
 
   std::unique_ptr<OpenChannelParams> params =
       std::make_unique<OpenChannelParams>(
-          source, std::move(source_tab), source_frame_id, source_document_id,
-          nullptr, source_port_id.GetOppositePortId(), source_endpoint,
+          source, std::move(source_tab), source_frame, nullptr,
+          source_port_id.GetOppositePortId(), source_endpoint,
           std::move(opener_port), target_extension_id, source_url,
           std::move(source_origin), channel_name, include_guest_process_info);
   pending_incognito_channels_[params->receiver_port_id.GetChannelId()] =
@@ -502,7 +519,7 @@ void MessageService::OpenChannelToNativeApp(
 
   // Keep the opener alive until the channel is closed.
   channel->opener->IncrementLazyKeepaliveCount(
-      true /* is_for_native_message_connect */);
+      /* should_have_strong_keepalive= */ true);
 
   AddChannel(std::move(channel), receiver_port_id);
 #else   // !(BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) ||
@@ -546,7 +563,8 @@ void MessageService::OpenChannelToTab(const ChannelEndpoint& source,
     return;
   }
 
-  MaybeDisableBackForwardCacheForMessaging(receiver_contents->GetMainFrame());
+  MaybeDisableBackForwardCacheForMessaging(
+      receiver_contents->GetPrimaryMainFrame());
 
   const PortId receiver_port_id = source_port_id.GetOppositePortId();
   std::unique_ptr<MessagePort> receiver =
@@ -574,15 +592,10 @@ void MessageService::OpenChannelToTab(const ChannelEndpoint& source,
   std::unique_ptr<OpenChannelParams> params =
       std::make_unique<OpenChannelParams>(
           source,
-          std::unique_ptr<base::DictionaryValue>(),  // Source tab doesn't make
-                                                     // sense
-                                                     // for opening to tabs.
-          -1,  // If there is no tab, then there is no frame either.
-          ExtensionApiFrameIdMap::DocumentId(),  // If there is no frame, there
-                                                 // is no document either.
-          receiver.release(), receiver_port_id,
-          MessagingEndpoint::ForExtension(extension_id), std::move(opener_port),
-          extension_id,
+          absl::nullopt,  // No source_tab, as there is no frame.
+          ExtensionApiFrameIdMap::FrameData(), receiver.release(),
+          receiver_port_id, MessagingEndpoint::ForExtension(extension_id),
+          std::move(opener_port), extension_id,
           GURL(),         // Source URL doesn't make sense for opening to tabs.
           url::Origin(),  // Origin URL doesn't make sense for opening to tabs.
           channel_name,
@@ -619,10 +632,10 @@ void MessageService::OpenChannelImpl(BrowserContext* browser_context,
   if (!will_open_channel) {
     // The channel won't open. If this was a pending channel, remove it,
     // because now it will never open. This prevents the pending message
-    // from being re-added indefinitely.  See https://crbug.com/1231683.
+    // from being re-added indefinitely. See https://crbug.com/1231683.
     // TODO(crbug.com/1296492): This probably isn't the best solution.
     // Ideally, we should close the channel before we get to this point
-    // if there's  no chance it will ever open, remove it from pending
+    // if there's no chance it will ever open, remove it from pending
     // channels, and then only try to open the pending channel if it's
     // still valid.
     pending_lazy_context_channels_.erase(
@@ -657,17 +670,15 @@ void MessageService::OpenChannelImpl(BrowserContext* browser_context,
     guest_render_frame_routing_id = port_context.frame->routing_id;
 
 #if !defined(TOOLKIT_QT)
-    DCHECK(WebViewGuest::FromWebContents(
-        WebContents::FromRenderFrameHost(source.GetRenderFrameHost())));
+    DCHECK(WebViewGuest::FromRenderFrameHost(source.GetRenderFrameHost()));
 #endif
   }
 
   // Send the connect event to the receiver.  Give it the opener's port ID (the
   // opener has the opposite port ID).
   channel->receiver->DispatchOnConnect(
-      params->channel_name, std::move(params->source_tab),
-      params->source_frame_id, params->source_document_id, guest_process_id,
-      guest_render_frame_routing_id, params->source_endpoint,
+      params->channel_name, std::move(params->source_tab), params->source_frame,
+      guest_process_id, guest_render_frame_routing_id, params->source_endpoint,
       params->target_extension_id, params->source_url, params->source_origin);
 
   // Report the event to the event router, if the target is an extension.
@@ -701,14 +712,38 @@ void MessageService::OpenChannelImpl(BrowserContext* browser_context,
         ->ReportEvent(histogram_value, target_extension, did_enqueue);
   }
 
+  // Check source and target of the connection and grant extended lifetime if
+  // one of the ends is configured in the
+  // ExtendedBackgroundLifetimeForPortConnectionsToUrls policy.
+  std::vector<url::Origin> extended_lifetime_origins =
+      GetServiceWorkerExtendedLifetimeOrigins(browser_context);
+  url::Origin source_origin = url::Origin::Create(params->source_url);
+  url::Origin target_origin =
+      Extension::CreateOriginFromExtensionId(params->target_extension_id);
+
+  bool should_grant_opener_strong_keepalive = false;
+  bool should_grant_receiver_strong_keepalive = false;
+
+  for (const url::Origin& origin : extended_lifetime_origins) {
+    if (origin == source_origin) {
+      // Opener found in allowlist, keep receiver SW alive.
+      should_grant_receiver_strong_keepalive = true;
+    }
+    if (origin == target_origin) {
+      // Receiver found in allowlist, keep opener SW alive.
+      should_grant_opener_strong_keepalive = true;
+    }
+  }
+
   // Keep both ends of the channel alive until the channel is closed.
   channel->opener->IncrementLazyKeepaliveCount(
-      false /* is_for_native_message_connect */);
+      /* should_have_strong_keepalive= */ should_grant_opener_strong_keepalive);
   // Note: Though the receiver can be SW for native hosts connecting to it, we
   // don't support long lived SW for this particular case yet and specify false
   // below.
   channel->receiver->IncrementLazyKeepaliveCount(
-      false /* is_for_native_message_connect */);
+      /* should_have_strong_keepalive= */
+      should_grant_receiver_strong_keepalive);
 }
 
 void MessageService::AddChannel(std::unique_ptr<MessageChannel> channel,
@@ -1002,7 +1037,7 @@ void MessageService::PendingLazyContextOpenChannel(
       weak_factory_.GetWeakPtr(), params->receiver_port_id,
       params->target_extension_id, context_info->browser_context);
   const Extension* const extension =
-      extensions::ExtensionRegistry::Get(context_info->browser_context)
+      ExtensionRegistry::Get(context_info->browser_context)
           ->enabled_extensions()
           .GetByID(context_info->extension_id);
   OpenChannelImpl(context_info->browser_context, std::move(params), extension,

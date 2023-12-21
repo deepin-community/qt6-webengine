@@ -1,4 +1,4 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -49,6 +49,8 @@ source_set("common") {
     "it2me_native_messaging_host.h",
   ]
 
+  deps = []
+
   if (is_linux) {
     sources += [ "it2me_confirmation_dialog_linux.cc" ]
   }
@@ -75,11 +77,13 @@ source_set("common") {
     ":helpers",
   ]
 
-  deps = [
+  deps += [
     "//base:i18n",
     "//build:chromeos_buildflags",
     "//components/policy:policy_code_generate",
+    "//components/webrtc:thread_wrapper",
     "//extensions/browser/api/messaging:native_messaging",
+    "//google_apis:google_apis",
     "//mojo/core/embedder",
     "//net",
     "//remoting/base",
@@ -101,6 +105,7 @@ source_set("common") {
       # GTK pulls pangoft2, which requires HarfBuzz symbols. When linking
       # our own HarfBuzz avoid mixing symbols from system HarfBuzz and
       # our own through the indirect dependency to harfbuzz-ng here.
+      "//remoting/host/linux:wayland",
       "//third_party:freetype_harfbuzz",
     ]
   }
@@ -143,6 +148,7 @@ if (is_chromeos) {
         "//chromeos/crosapi/mojom",
         "//chromeos/lacros",
         "//extensions/browser/api/messaging:native_messaging",
+        "//google_apis:google_apis",
         "//remoting/host/native_messaging",
         "//remoting/protocol:errors",
       ]
@@ -160,6 +166,7 @@ if (is_chromeos) {
         "//remoting/base:base",
         "//remoting/host:common",
         "//remoting/host/chromeos:enterprise_support",
+        "//remoting/host/chromeos:features",
         "//remoting/host/mojom:mojom",
         "//remoting/host/native_messaging",
         "//skia",
@@ -205,9 +212,14 @@ if (!is_chromeos_ash && enable_remoting_host) {
     ]
 
     if (is_linux) {
+      deps += [ "//remoting/host/linux:wayland" ]
+    }
+    if (is_linux && remoting_use_x11) {
+      defines = [ "REMOTING_USE_X11" ]
       deps += [
         "//build/config/linux/gtk",
         "//ui/events/platform/x11",
+        "//ui/gtk:gtk_config",
       ]
     }
 

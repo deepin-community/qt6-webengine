@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,8 @@
 
 #include "base/barrier_closure.h"
 #include "base/feature_list.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/ranges/algorithm.h"
+#include "base/task/single_thread_task_runner.h"
 #include "components/password_manager/core/browser/password_store_interface.h"
 #include "components/password_manager/core/common/password_manager_features.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
@@ -44,7 +45,7 @@ void PostSaveCompromisedHelper::AnalyzeLeakedCredentials(
   if (!last_check_completed ||
       base::Time::Now() - base::Time::FromDoubleT(last_check_completed) >=
           kMaxTimeSinceLastCheck) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(std::move(callback), BubbleType::kNoBubble, 0));
     return;
@@ -84,8 +85,9 @@ void PostSaveCompromisedHelper::AnalyzeLeakedCredentialsInternal() {
         compromised_password_changed = true;
     }
 
-    if (std::any_of(form->password_issues.begin(), form->password_issues.end(),
-                    [](const auto& issue) { return !issue.second.is_muted; })) {
+    if (base::ranges::any_of(form->password_issues, [](const auto& issue) {
+          return !issue.second.is_muted;
+        })) {
       compromised_count_++;
     }
   }

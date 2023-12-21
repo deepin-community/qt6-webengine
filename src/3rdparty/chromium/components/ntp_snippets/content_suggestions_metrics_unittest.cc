@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -108,7 +108,8 @@ TEST(ContentSuggestionsMetricsTest,
   base::HistogramTester histogram_tester;
   OnPageShown(std::vector<Category>(
                   {Category::FromKnownCategory(KnownCategories::ARTICLES),
-                   Category::FromKnownCategory(KnownCategories::READING_LIST)}),
+                   Category::FromKnownCategory(
+                       KnownCategories::READING_LIST_DEPRECATED)}),
               /*suggestions_per_category=*/{10, 5},
               /*is_category_visible=*/{true, true});
   EXPECT_THAT(

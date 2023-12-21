@@ -32,6 +32,7 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/notreached.h"
 #include "base/time/time.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/platform/graphics/color_behavior.h"
 #include "third_party/blink/renderer/platform/graphics/image_orientation.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_image.h"
@@ -39,15 +40,21 @@
 #include "third_party/blink/renderer/platform/image-decoders/image_frame.h"
 #include "third_party/blink/renderer/platform/image-decoders/segment_reader.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
+#include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
-#include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
-#include "third_party/skia/include/third_party/skcms/skcms.h"
+#include "third_party/skia/modules/skcms/skcms.h"
 
 class SkColorSpace;
 
+namespace gfx {
+struct HDRMetadata;
+}  // namespace gfx
+
 namespace blink {
+
+struct DecodedImageMetaData;
 
 #if SK_B32_SHIFT
 inline skcms_PixelFormat XformColorFormat() {
@@ -209,6 +216,7 @@ class PLATFORM_EXPORT ImageDecoder {
       AnimationOption animation_option = AnimationOption::kUnspecified);
 
   virtual String FilenameExtension() const = 0;
+  virtual const AtomicString& MimeType() const = 0;
 
   bool IsAllDataReceived() const { return is_all_data_received_; }
 
@@ -290,6 +298,11 @@ class PLATFORM_EXPORT ImageDecoder {
   // kA16_unorm_SkColorType and kA16_float_SkColorType ImagePlanes.
   virtual uint8_t GetYUVBitDepth() const { return 8; }
 
+  // Image decoders that support HDR metadata can override this.
+  virtual absl::optional<gfx::HDRMetadata> GetHDRMetadata() const {
+    return absl::nullopt;
+  }
+
   // Returns the information required to decide whether or not hardware
   // acceleration can be used to decode this image. Callers of this function
   // must ensure the header was successfully parsed prior to calling this
@@ -341,6 +354,13 @@ class PLATFORM_EXPORT ImageDecoder {
   // Returns true if a cached complete decode is available.
   bool FrameIsDecodedAtIndex(wtf_size_t) const;
 
+  // Timestamp for displaying a frame. This method is only used by animated
+  // images. Only formats with timestamps (like AVIF) should implement this.
+  virtual absl::optional<base::TimeDelta> FrameTimestampAtIndex(
+      wtf_size_t) const {
+    return absl::nullopt;
+  }
+
   // Duration for displaying a frame. This method is only used by animated
   // images.
   virtual base::TimeDelta FrameDurationAtIndex(wtf_size_t) const {
@@ -354,6 +374,10 @@ class PLATFORM_EXPORT ImageDecoder {
 
   ImageOrientation Orientation() const { return orientation_; }
   gfx::Size DensityCorrectedSize() const { return density_corrected_size_; }
+
+  // Updates orientation, pixel density etc based on |metadata|.
+  void ApplyMetadata(const DecodedImageMetaData& metadata,
+                     const gfx::Size& physical_size);
 
   bool IgnoresColorSpace() const { return color_behavior_.IsIgnore(); }
   const ColorBehavior& GetColorBehavior() const { return color_behavior_; }
@@ -411,7 +435,7 @@ class PLATFORM_EXPORT ImageDecoder {
     // Not all animated image formats share these requirements. Blocking
     // all animated formats is overly aggressive. If a need arises for an
     // external memory allocator for animated images, this should be changed.
-    if (frame_buffer_cache_.IsEmpty()) {
+    if (frame_buffer_cache_.empty()) {
       // Ensure that InitializeNewFrame is called, after parsing if
       // necessary.
       if (!FrameCount())
@@ -589,6 +613,10 @@ class PLATFORM_EXPORT ImageDecoder {
 
   bool purge_aggressively_;
 
+  // Update `sk_image_color_space_` and `embedded_to_sk_image_transform_`, if
+  // needed.
+  void UpdateSkImageColorSpaceAndTransform();
+
   // This methods gets called at the end of InitFrameBuffer. Subclasses can do
   // format specific initialization, for e.g. alpha settings, here.
   virtual void OnInitFrameBuffer(wtf_size_t) {}
@@ -602,11 +630,19 @@ class PLATFORM_EXPORT ImageDecoder {
   bool is_all_data_received_ = false;
   bool failed_ = false;
 
+  // The precise color profile of the image.
   std::unique_ptr<ColorProfile> embedded_color_profile_;
-  sk_sp<SkColorSpace> color_space_for_sk_images_;
 
-  bool source_to_target_color_transform_needs_update_ = false;
-  std::unique_ptr<ColorProfileTransform> source_to_target_color_transform_;
+  // The color space for the SkImage that will be produced.  If
+  // `color_behavior_` is tag, then this is the SkColorSpace representation of
+  // `embedded_color_profile_`. If `color_behavior_` is convert to sRGB, then
+  // this is sRGB.
+  sk_sp<SkColorSpace> sk_image_color_space_;
+
+  // Transforms `embedded_color_profile_` to `sk_image_color_space_`. This
+  // is needed if `sk_image_color_space_` is not an exact representation of
+  // `embedded_color_profile_`.
+  std::unique_ptr<ColorProfileTransform> embedded_to_sk_image_transform_;
 
   wtf_size_t metrics_frame_index_ = kNotFound;
   base::TimeDelta metrics_time_delta_;

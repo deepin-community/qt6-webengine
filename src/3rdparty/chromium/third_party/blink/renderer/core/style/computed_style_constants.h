@@ -32,6 +32,7 @@
 #include <cstdint>
 #include "base/check_op.h"
 #include "third_party/blink/renderer/core/style/computed_style_base_constants.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -74,11 +75,11 @@ enum PseudoId : uint8_t {
   kPseudoIdSpellingError,
   kPseudoIdGrammarError,
   // The following IDs are public but not tracked.
-  kPseudoIdPageTransition,
-  kPseudoIdPageTransitionContainer,
-  kPseudoIdPageTransitionImageWrapper,
-  kPseudoIdPageTransitionOutgoingImage,
-  kPseudoIdPageTransitionIncomingImage,
+  kPseudoIdViewTransition,
+  kPseudoIdViewTransitionGroup,
+  kPseudoIdViewTransitionImagePair,
+  kPseudoIdViewTransitionOld,
+  kPseudoIdViewTransitionNew,
   // Internal IDs follow:
   kPseudoIdFirstLineInherited,
   kPseudoIdScrollbarThumb,
@@ -108,13 +109,24 @@ inline bool IsHighlightPseudoElement(PseudoId pseudo_id) {
   }
 }
 
+inline bool UsesHighlightPseudoInheritance(PseudoId pseudo_id) {
+  // ::highlight() pseudos, ::spelling-error, and ::grammar-error use highlight
+  // inheritance rather than originating inheritance, regardless of whether the
+  // highlight inheritance feature is enabled.
+  return ((IsHighlightPseudoElement(pseudo_id) &&
+           RuntimeEnabledFeatures::HighlightInheritanceEnabled()) ||
+          pseudo_id == PseudoId::kPseudoIdHighlight ||
+          pseudo_id == PseudoId::kPseudoIdSpellingError ||
+          pseudo_id == PseudoId::kPseudoIdGrammarError);
+}
+
 inline bool IsTransitionPseudoElement(PseudoId pseudo_id) {
   switch (pseudo_id) {
-    case kPseudoIdPageTransition:
-    case kPseudoIdPageTransitionContainer:
-    case kPseudoIdPageTransitionImageWrapper:
-    case kPseudoIdPageTransitionOutgoingImage:
-    case kPseudoIdPageTransitionIncomingImage:
+    case kPseudoIdViewTransition:
+    case kPseudoIdViewTransitionGroup:
+    case kPseudoIdViewTransitionImagePair:
+    case kPseudoIdViewTransitionOld:
+    case kPseudoIdViewTransitionNew:
       return true;
     default:
       return false;
@@ -124,10 +136,10 @@ inline bool IsTransitionPseudoElement(PseudoId pseudo_id) {
 inline bool PseudoElementHasArguments(PseudoId pseudo_id) {
   switch (pseudo_id) {
     case kPseudoIdHighlight:
-    case kPseudoIdPageTransitionContainer:
-    case kPseudoIdPageTransitionImageWrapper:
-    case kPseudoIdPageTransitionIncomingImage:
-    case kPseudoIdPageTransitionOutgoingImage:
+    case kPseudoIdViewTransitionGroup:
+    case kPseudoIdViewTransitionImagePair:
+    case kPseudoIdViewTransitionNew:
+    case kPseudoIdViewTransitionOld:
       return true;
     default:
       return false;
@@ -158,10 +170,12 @@ enum class EFillBox : unsigned { kBorder, kPadding, kContent, kText };
 inline EFillBox EnclosingFillBox(EFillBox box_a, EFillBox box_b) {
   // background-clip:text is clipped to the border box.
   if (box_a == EFillBox::kBorder || box_a == EFillBox::kText ||
-      box_b == EFillBox::kBorder || box_b == EFillBox::kText)
+      box_b == EFillBox::kBorder || box_b == EFillBox::kText) {
     return EFillBox::kBorder;
-  if (box_a == EFillBox::kPadding || box_b == EFillBox::kPadding)
+  }
+  if (box_a == EFillBox::kPadding || box_b == EFillBox::kPadding) {
     return EFillBox::kPadding;
+  }
   DCHECK_EQ(box_a, EFillBox::kContent);
   DCHECK_EQ(box_b, EFillBox::kContent);
   return EFillBox::kContent;
@@ -238,7 +252,7 @@ inline Containment& operator|=(Containment& a, Containment b) {
 
 static const size_t kContainerTypeBits = 2;
 enum EContainerType {
-  kContainerTypeNone = 0x0,
+  kContainerTypeNormal = 0x0,
   kContainerTypeInlineSize = 0x1,
   kContainerTypeBlockSize = 0x2,
   kContainerTypeSize = kContainerTypeInlineSize | kContainerTypeBlockSize,
@@ -251,12 +265,12 @@ inline EContainerType& operator|=(EContainerType& a, EContainerType b) {
 }
 
 static const size_t kTextUnderlinePositionBits = 4;
-enum TextUnderlinePosition {
-  kTextUnderlinePositionAuto = 0x0,
-  kTextUnderlinePositionFromFont = 0x1,
-  kTextUnderlinePositionUnder = 0x2,
-  kTextUnderlinePositionLeft = 0x4,
-  kTextUnderlinePositionRight = 0x8
+enum class TextUnderlinePosition : unsigned {
+  kAuto = 0x0,
+  kFromFont = 0x1,
+  kUnder = 0x2,
+  kLeft = 0x4,
+  kRight = 0x8
 };
 inline TextUnderlinePosition operator|(TextUnderlinePosition a,
                                        TextUnderlinePosition b) {
@@ -387,6 +401,9 @@ enum class ViewportUnitFlag {
   // dv*
   kDynamic = 0x2,
 };
+
+enum class TimelineAxis { kBlock, kInline, kVertical, kHorizontal };
+enum class TimelineScroller { kNearest, kRoot };
 
 }  // namespace blink
 

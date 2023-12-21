@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -142,14 +142,16 @@ class MediaRouterAndroid : public MediaRouterBase {
   void UnregisterMediaSinksObserver(MediaSinksObserver* observer) override;
   void RegisterMediaRoutesObserver(MediaRoutesObserver* observer) override;
   void UnregisterMediaRoutesObserver(MediaRoutesObserver* observer) override;
-  void RegisterRouteMessageObserver(RouteMessageObserver* observer) override;
-  void UnregisterRouteMessageObserver(RouteMessageObserver* observer) override;
+  void RegisterPresentationConnectionMessageObserver(
+      PresentationConnectionMessageObserver* observer) override;
+  void UnregisterPresentationConnectionMessageObserver(
+      PresentationConnectionMessageObserver* observer) override;
 
   void OnPresentationConnectionError(const std::string& route_id);
   void OnRouteRequestError(
       const std::string& error_text,
       int route_request_id,
-      base::OnceCallback<void(RouteRequestResult::ResultCode,
+      base::OnceCallback<void(mojom::RouteRequestResultCode,
                               absl::optional<mojom::MediaRouteProviderId>)>
           callback);
 
@@ -166,7 +168,7 @@ class MediaRouterAndroid : public MediaRouterBase {
                          std::unique_ptr<MediaSinksObserverList>>;
   MediaSinkObservers sinks_observers_;
 
-  base::ObserverList<MediaRoutesObserver>::Unchecked routes_observers_;
+  base::ObserverList<MediaRoutesObserver> routes_observers_;
 
   struct MediaRouteRequest {
     MediaRouteRequest(const MediaSource& source,

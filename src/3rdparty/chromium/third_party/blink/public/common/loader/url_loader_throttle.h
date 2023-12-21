@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -75,7 +75,8 @@ class BLINK_COMMON_EXPORT URLLoaderThrottle {
     // URLLoaderThrottle::WillProcessResponse() and before calling
     // Delegate::Resume().
     virtual void UpdateDeferredResponseHead(
-        network::mojom::URLResponseHeadPtr new_response_head);
+        network::mojom::URLResponseHeadPtr new_response_head,
+        mojo::ScopedDataPipeConsumerHandle body);
 
     // Pauses/resumes reading response body if the resource is fetched from
     // network.
@@ -208,8 +209,8 @@ class BLINK_COMMON_EXPORT URLLoaderThrottle {
   // Called prior WillRedirectRequest() to allow throttles to restart the URL
   // load by calling delegate_->RestartWithFlags().
   //
-  // Having this method separate from WillProcessResponse() ensures that
-  // WillProcessResponse() is called at most once per redirect even in the
+  // Having this method separate from WillRedirectRequest() ensures that
+  // WillRedirectRequest() is called at most once per redirect even in the
   // presence of restarts.
   //
   // Note: restarting with the url reset triggers an internal redirect, which
@@ -237,7 +238,7 @@ class BLINK_COMMON_EXPORT URLLoaderThrottle {
  protected:
   URLLoaderThrottle();
 
-  raw_ptr<Delegate> delegate_ = nullptr;
+  raw_ptr<Delegate, DanglingUntriaged> delegate_ = nullptr;
 };
 
 }  // namespace blink

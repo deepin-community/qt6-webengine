@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,21 +6,21 @@
  * @fileoverview certificate-subentry represents an SSL certificate sub-entry.
  */
 
-import '../../cr_elements/cr_action_menu/cr_action_menu.js';
-import '../../cr_elements/cr_icon_button/cr_icon_button.m.js';
-import '../../cr_elements/cr_lazy_render/cr_lazy_render.m.js';
-import '../../cr_elements/policy/cr_policy_indicator.m.js';
-import '../../cr_elements/icons.m.js';
-import './certificate_shared_css.js';
+import 'chrome://resources/cr_elements/cr_action_menu/cr_action_menu.js';
+import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
+import 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.js';
+import 'chrome://resources/cr_elements/policy/cr_policy_indicator.js';
+import 'chrome://resources/cr_elements/icons.html.js';
+import './certificate_shared.css.js';
 
-import {html, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
-
-import {CrActionMenuElement} from '../../cr_elements/cr_action_menu/cr_action_menu.js';
-import {CrLazyRenderElement} from '../../cr_elements/cr_lazy_render/cr_lazy_render.m.js';
-import {CrPolicyIndicatorType} from '../../cr_elements/policy/cr_policy_indicator_behavior.m.js';
-import {I18nMixin} from '../../js/i18n_mixin.js';
+import {CrActionMenuElement} from 'chrome://resources/cr_elements/cr_action_menu/cr_action_menu.js';
+import {CrLazyRenderElement} from 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.js';
+import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
+import {CrPolicyIndicatorType} from 'chrome://resources/cr_elements/policy/cr_policy_indicator_mixin.js';
+import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {CertificateAction, CertificateActionEvent} from './certificate_manager_types.js';
+import {getTemplate} from './certificate_subentry.html.js';
 import {CertificatesBrowserProxy, CertificatesBrowserProxyImpl, CertificatesError, CertificateSubnode, CertificateType} from './certificates_browser_proxy.js';
 
 export interface CertificateSubentryElement {
@@ -38,7 +38,7 @@ export class CertificateSubentryElement extends CertificateSubentryElementBase {
   }
 
   static get template() {
-    return html`{__html_template__}`;
+    return getTemplate();
   }
 
   static get properties() {

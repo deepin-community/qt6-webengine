@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -64,6 +64,7 @@ namespace views {
 class DesktopWindowTreeHost;
 class NativeWidget;
 class NonClientFrameView;
+class SublevelManager;
 class TooltipManager;
 class View;
 class WidgetDelegate;
@@ -214,8 +215,14 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
       // destroyed.
       NATIVE_WIDGET_OWNS_WIDGET,
       // Used when the Widget is owned by someone other than the NativeWidget,
-      // e.g. a scoped_ptr in tests.
-      WIDGET_OWNS_NATIVE_WIDGET
+      // e.g. a scoped_ptr in tests. Production use is discouraged because the
+      // Widget API might become unsafe after the platform window is closed.
+      WIDGET_OWNS_NATIVE_WIDGET,
+      // NOT READY FOR PRODUCTION USE.
+      // This is intended to be a safe replacement for
+      // WIDGET_OWNS_NATIVE_WIDGET.
+      // The NativeWidget will be closed along with the platform window.
+      CLIENT_OWNS_WIDGET
     };
 
     enum class ShadowType {
@@ -250,7 +257,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
 
     // If null, a default implementation will be constructed. The default
     // implementation deletes itself when the Widget closes.
-    WidgetDelegate* delegate = nullptr;
+    raw_ptr<WidgetDelegate> delegate = nullptr;
 
     // Internal name. Propagated to the NativeWidget. Useful for debugging.
     std::string name;
@@ -274,8 +281,15 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
 
     Activatable activatable = Activatable::kDefault;
 
-    // The class of window and its overall z-order.
+    // The class of window and its overall z-order level. This level is visible
+    // to other applications in the system. A value other than `kNormal` will
+    // create an "always on top" widget.
     absl::optional<ui::ZOrderLevel> z_order;
+
+    // The z-order sublevel that is invisible to other applications in the
+    // system. Widgets of the same `z_order` are stacked in the order specified
+    // by their sub-levels.
+    int sublevel = 0;
 
     bool visible_on_all_workspaces = false;
 
@@ -349,13 +363,13 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
 
     // If set, this value is used as the Widget's NativeWidget implementation.
     // The Widget will not construct a default one.
-    NativeWidget* native_widget = nullptr;
+    raw_ptr<NativeWidget> native_widget = nullptr;
 
     // Aura-only. Provides a DesktopWindowTreeHost implementation to use instead
     // of the default one.
     // TODO(beng): Figure out if there's a better way to expose this, e.g. get
     // rid of NW subclasses and do this all via message handling.
-    DesktopWindowTreeHost* desktop_window_tree_host = nullptr;
+    raw_ptr<DesktopWindowTreeHost> desktop_window_tree_host = nullptr;
 
     // Only used by NativeWidgetAura. Specifies the type of layer for the
     // aura::Window.
@@ -394,11 +408,38 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
     // If set, the widget was created in headless mode.
     bool headless_mode = false;
 
+#if defined(USE_AURA) && (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))
+    // Indicates whether the desktop native widget is required for the widget.
+    // This may enforce changing the type of the underlying platform window.
+    // See crbug.com/1280332
+    bool requires_accelerated_widget = false;
+#endif
+
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+    // TODO(crbug.com/1327490): Rename restore info variables.
+    // Only used by Wayland. Specifies the session id window key, the restore
+    // window id, and the app id, respectively, respectively, used by the
+    // compositor to restore window state upon creation. Only one of
+    // `restore_window_id` and `restore_window_id_source` should be set, as
+    // `restore_window_id_source` is used for widgets without inherent restore
+    // window ids, e.g. Chrome apps.
+    int32_t restore_session_id = 0;
+    absl::optional<int32_t> restore_window_id;
+    absl::optional<std::string> restore_window_id_source;
+#endif
+
     // Contains any properties with which the native widget should be
     // initialized prior to adding it to the window hierarchy. All the
     // properties in |init_properties_container| will be moved to the native
     // widget.
     ui::PropertyHandler init_properties_container;
+
+#if BUILDFLAG(IS_OZONE)
+    // Only used by Wayland for root level windows. Specifies whether this
+    // window should request the wayland compositor to send key events,
+    // even if it matches with the compositor's keyboard shortcuts.
+    bool inhibit_keyboard_shortcuts = false;
+#endif
   };
 
   // Represents a lock held on the widget's ShouldPaintAsActive() state. As
@@ -551,7 +592,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   const Widget* GetPrimaryWindowWidget() const;
 
   // Gets/Sets the WidgetDelegate.
-  WidgetDelegate* widget_delegate() const { return widget_delegate_; }
+  WidgetDelegate* widget_delegate() const { return widget_delegate_.get(); }
 
   // Sets the specified view as the contents of this Widget. There can only
   // be one contents view child of this Widget's RootView. This view is sized to
@@ -584,7 +625,9 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   gfx::Rect GetRestoredBounds() const;
 
   // Retrieves the current workspace for the window. (On macOS: an opaque
-  // binary blob that encodes the workspace and other window state.)
+  // binary blob that encodes the workspace and other window state. On ChromeOS,
+  // this returns empty string if this widget is a window that appears on all
+  // desks.)
   std::string GetWorkspace() const;
 
   // Sizes and/or places the widget to the specified bounds, size or position.
@@ -628,6 +671,9 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   void StackAboveWidget(Widget* widget);
   void StackAbove(gfx::NativeView native_view);
   void StackAtTop();
+
+  // Returns true if widget is above the specified window in z-order.
+  bool IsStackedAbove(gfx::NativeView native_view);
 
   // Sets a shape on the widget. Passing a NULL |shape| reverts the widget to
   // be rectangular.
@@ -692,6 +738,14 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // Gets the z-order of the widget. This only applies to top-level widgets.
   ui::ZOrderLevel GetZOrderLevel() const;
 
+  // Sets the z-order sublevel of the widget. This applies to both top-level
+  // and non top-level widgets.
+  void SetZOrderSublevel(int sublevel);
+
+  // Gets the z-order sublevel of the widget. This applies to both top-level
+  // and non top-level widgets.
+  int GetZOrderSublevel() const;
+
   // Sets the widget to be visible on all work spaces.
   void SetVisibleOnAllWorkspaces(bool always_visible);
 
@@ -711,15 +765,10 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   bool IsMinimized() const;
 
   // Accessors for fullscreen state.
-  // If `delay` is given, some underlying implementations will set their target
-  // fullscreen state and then post a delayed task to request the actual window
-  // transition, in order to handle some platform-specific quirks in specific
-  // fullscreen scenarios. See crbug.com/1210548 and crbug.com/1034783.
   // The `target_display_id` may only be specified if `fullscreen` is true, and
   // indicates a specific display to become fullscreen on (note that this may
   // move a fullscreen widget from one display to another).
   void SetFullscreen(bool fullscreen,
-                     base::TimeDelta delay = {},
                      int64_t target_display_id = display::kInvalidDisplayId);
   bool IsFullscreen() const;
 
@@ -782,6 +831,9 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // Returns the ui::InputMethod for this widget.
   ui::InputMethod* GetInputMethod();
 
+  // Returns the SublevelManager for this widget.
+  SublevelManager* GetSublevelManager();
+
   // Starts a drag operation for the specified view. This blocks until the drag
   // operation completes. |view| can be NULL.
   // If the view is non-NULL it can be accessed during the drag by calling
@@ -809,9 +861,8 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // not need to call this.
   void ScheduleLayout();
 
-  // Sets the currently visible cursor. If |cursor| is NULL, the cursor used
-  // before the current is restored.
-  void SetCursor(gfx::NativeCursor cursor);
+  // Sets the currently visible cursor.
+  void SetCursor(const ui::Cursor& cursor);
 
   // Returns true if and only if mouse events are enabled.
   bool IsMouseEventsEnabled() const;
@@ -918,10 +969,11 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   NativeWidget* native_widget();
 
   internal::NativeWidgetPrivate* native_widget_private() {
-    return native_widget_;
+    return native_widget_.get();
   }
+
   const internal::NativeWidgetPrivate* native_widget_private() const {
-    return native_widget_;
+    return native_widget_.get();
   }
 
   // Sets capture to the specified view. This makes it so that all mouse, touch
@@ -954,8 +1006,10 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   //   with its parent.
   // * The native widget may change a widget's parent.
   // * The native view's parent might or might not be the parent's native view.
-  Widget* parent() { return parent_; }
-  const Widget* parent() const { return parent_; }
+  // * For a desktop widget with a non-desktop parent, this value might be
+  //   nullptr during shutdown.
+  Widget* parent() { return parent_.get(); }
+  const Widget* parent() const { return parent_.get(); }
 
   // True if the widget is considered top level widget. Top level widget
   // is a widget of TYPE_WINDOW, TYPE_PANEL, TYPE_WINDOW_FRAMELESS, BUBBLE,
@@ -1006,7 +1060,8 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // returned lock can safely outlive the associated widget.
   std::unique_ptr<PaintAsActiveLock> LockPaintAsActive();
 
-  // Undoes LockPaintAsActive(). Called by PaintAsActiveLock destructor.
+  // Undoes LockPaintAsActive(). This should never be called outside of
+  // PaintAsActiveLock destructor.
   void UnlockPaintAsActive();
 
   // Returns true if the window should paint as active.
@@ -1135,6 +1190,9 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   friend class TextfieldTest;
   friend class ViewAuraTest;
   friend class ui_devtools::PageAgentViews;
+  // TODO (kylixrd): Remove this after Widget no longer can "own" the
+  // WidgetDelegate.
+  friend class WidgetDelegate;
   friend void DisableActivationChangeHandlingForTests();
 
   // Sets/gets the type of disabling widget activation change handling.
@@ -1177,23 +1235,44 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // If a descendent of |root_view_| is focused, then clear the focus.
   void ClearFocusFromWidget();
 
+  // This holds logic that needs to called synchronously after showing, before
+  // the native widget asynchronously invokes OnNativeWidgetVisibilityChanged().
+  void HandleShowRequested();
+
   static DisableActivationChangeHandlingType
       g_disable_activation_change_handling_;
 
-  raw_ptr<internal::NativeWidgetPrivate> native_widget_ = nullptr;
+  base::WeakPtr<internal::NativeWidgetPrivate> native_widget_ = nullptr;
+
+  // This unique pointer is only set when WIDGET_OWNS_NATIVE_WIDGET so that we
+  // can destroy the NativeWidget. Except for managing lifetime for
+  // WIDGET_OWNS_NATIVE_WIDGET, the NativeWidget should always be referenced
+  // through the |native_widget_| weak ptr.
+  std::unique_ptr<internal::NativeWidgetPrivate> owned_native_widget_;
 
   base::ObserverList<WidgetObserver> observers_;
 
   base::ObserverList<WidgetRemovalsObserver>::Unchecked removals_observers_;
 
-  // Non-owned pointer to the Widget's delegate. If a NULL delegate is supplied
+  // Weak pointer to the Widget's delegate. If a NULL delegate is supplied
   // to Init() a default WidgetDelegate is created.
-  raw_ptr<WidgetDelegate> widget_delegate_ = nullptr;
+  base::WeakPtr<WidgetDelegate> widget_delegate_;
+
+  // TODO(kylixrd): Rename this once the transition requiring the client to own
+  // the delegate is finished.
+  // [Owned Widget delegate if the DefaultWidgetDelegate is used. This
+  // ties the lifetime of the default delegate to the Widget.]
+  //
+  // This will "own" the delegate when WidgetDelegate::owned_by_widget() is
+  // true.
+  std::unique_ptr<WidgetDelegate> owned_widget_delegate_;
 
   // The parent of this widget. This is the widget that associates with
   // the |params.parent| supplied to Init(). If no parent is given or the native
   // view parent has no associating Widget, this value will be nullptr.
-  raw_ptr<Widget> parent_ = nullptr;
+  // For a desktop widget with a non-desktop parent, this value might be nullptr
+  // during shutdown.
+  base::WeakPtr<Widget> parent_ = nullptr;
 
   // The root of the View hierarchy attached to this window.
   // WARNING: see warning in tooltip_manager_ for ordering dependencies with
@@ -1211,6 +1290,10 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // WARNING: RootView's destructor calls into the FocusManager. As such, this
   // must be destroyed AFTER root_view_. This is enforced in DestroyRootView().
   std::unique_ptr<FocusManager> focus_manager_;
+
+  // The sublevel manager that ensures that the children are stacked in the
+  // order specified by their InitParams::sublevel.
+  std::unique_ptr<SublevelManager> sublevel_manager_;
 
   // Valid for the lifetime of RunShellDrag(), indicates the view the drag
   // started from.
@@ -1274,9 +1357,6 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
 
   // Tracks whether native widget has been initialized.
   bool native_widget_initialized_ = false;
-
-  // Whether native widget has been destroyed.
-  bool native_widget_destroyed_ = false;
 
   // TODO(beng): Remove NativeWidgetGtk's dependence on these:
   // If true, the mouse is currently down.

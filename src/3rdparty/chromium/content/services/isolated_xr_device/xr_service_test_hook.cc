@@ -1,10 +1,10 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/services/isolated_xr_device/xr_service_test_hook.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/process/process.h"
 #include "content/services/isolated_xr_device/xr_test_hook_wrapper.h"
 #include "device/vr/buildflags/buildflags.h"

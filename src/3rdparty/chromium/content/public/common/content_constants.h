@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -58,6 +58,10 @@ CONTENT_EXPORT extern const char kCorsExemptPurposeHeaderName[];
 // overwriting the value of the constant so try to confirm by constructing
 // it at run time.
 CONTENT_EXPORT std::string GetCorsExemptRequestedWithHeaderName();
+
+// This is a value never returned as the unique id of any child processes of
+// any kind, including the values returned by RenderProcessHost::GetID().
+static constexpr int kInvalidChildProcessUniqueId = -1;
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 // The OOM score adj constants

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -35,6 +35,7 @@ const char* const kDeprecatedTypesToAllow[] = {
 };
 const char* const kDeprecatedTypesToBlock[] = {
     "plugins",
+    "ppapi-broker",
 };
 
 const char* GetForcedValueForDeprecatedSetting(base::StringPiece type) {
@@ -54,22 +55,19 @@ bool IsDeprecated(base::StringPiece type) {
 v8::Local<v8::Object> ContentSetting::Create(
     v8::Isolate* isolate,
     const std::string& property_name,
-    const base::ListValue* property_values,
+    const base::Value::List* property_values,
     APIRequestHandler* request_handler,
     APIEventHandler* event_handler,
     APITypeReferenceMap* type_refs,
     const BindingAccessChecker* access_checker) {
-  base::Value::ConstListView property_values_list =
-      property_values->GetListDeprecated();
-  CHECK_GE(property_values_list.size(), 2u);
-  std::string pref_name = property_values_list[0].GetString();
-  const base::Value& value_spec = property_values_list[1u];
-  CHECK(value_spec.is_dict());
+  CHECK_GE(property_values->size(), 2u);
+  CHECK((*property_values)[1u].is_dict());
+  const std::string& pref_name = (*property_values)[0].GetString();
+  const base::Value::Dict& value_spec = (*property_values)[1u].GetDict();
 
   gin::Handle<ContentSetting> handle = gin::CreateHandle(
-      isolate, new ContentSetting(
-                   request_handler, type_refs, access_checker, pref_name,
-                   static_cast<const base::DictionaryValue&>(value_spec)));
+      isolate, new ContentSetting(request_handler, type_refs, access_checker,
+                                  pref_name, value_spec));
   return handle.ToV8().As<v8::Object>();
 }
 
@@ -77,7 +75,7 @@ ContentSetting::ContentSetting(APIRequestHandler* request_handler,
                                const APITypeReferenceMap* type_refs,
                                const BindingAccessChecker* access_checker,
                                const std::string& pref_name,
-                               const base::DictionaryValue& set_value_spec)
+                               const base::Value::Dict& set_value_spec)
     : request_handler_(request_handler),
       type_refs_(type_refs),
       access_checker_(access_checker),
@@ -212,14 +210,14 @@ void ContentSetting::HandleFunction(const std::string& method_name,
     }
   }
 
-  parse_result.arguments_list->Insert(
-      parse_result.arguments_list->GetListDeprecated().begin(),
-      base::Value(pref_name_));
+  parse_result.arguments_list->Insert(parse_result.arguments_list->begin(),
+                                      base::Value(pref_name_));
 
   v8::Local<v8::Promise> promise = request_handler_->StartRequest(
       context, "contentSettings." + method_name,
-      std::move(parse_result.arguments_list), parse_result.async_type,
-      parse_result.callback, v8::Local<v8::Function>());
+      std::move(*parse_result.arguments_list), parse_result.async_type,
+      parse_result.callback, v8::Local<v8::Function>(),
+      binding::ResultModifierFunction());
   if (!promise.IsEmpty())
     arguments->Return(promise);
 }

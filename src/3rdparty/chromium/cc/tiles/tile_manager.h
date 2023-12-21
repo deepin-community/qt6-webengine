@@ -1,4 +1,4 @@
-// Copyright 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -230,7 +230,8 @@ class CC_EXPORT TileManager : CheckerImageTrackerClient {
       // The raster here never really happened, cuz tests. So just add an
       // arbitrary sync token.
       if (resource.gpu_backing()) {
-        resource.gpu_backing()->mailbox = gpu::Mailbox::Generate();
+        resource.gpu_backing()->mailbox =
+            gpu::Mailbox::GenerateForSharedImage();
         resource.gpu_backing()->mailbox_sync_token.Set(
             gpu::GPU_IO, gpu::CommandBufferId::FromUnsafeValue(1), 1);
       }
@@ -441,11 +442,11 @@ class CC_EXPORT TileManager : CheckerImageTrackerClient {
 
   bool ShouldRasterOccludedTiles() const;
 
-  raw_ptr<TileManagerClient> client_;
+  raw_ptr<TileManagerClient, DanglingUntriaged> client_;
   raw_ptr<base::SequencedTaskRunner> task_runner_;
-  raw_ptr<ResourcePool> resource_pool_;
+  raw_ptr<ResourcePool, DanglingUntriaged> resource_pool_;
   std::unique_ptr<TileTaskManager> tile_task_manager_;
-  raw_ptr<RasterBufferProvider> raster_buffer_provider_;
+  raw_ptr<RasterBufferProvider, DanglingUntriaged> raster_buffer_provider_;
   GlobalStateThatImpactsTilePriority global_state_;
   size_t scheduled_raster_task_limit_;
 

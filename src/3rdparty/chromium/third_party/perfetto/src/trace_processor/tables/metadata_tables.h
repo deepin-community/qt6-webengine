@@ -18,6 +18,7 @@
 #define SRC_TRACE_PROCESSOR_TABLES_METADATA_TABLES_H_
 
 #include "src/trace_processor/tables/macros.h"
+#include "src/trace_processor/tables/metadata_tables_py.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -59,91 +60,52 @@ PERFETTO_TP_TABLE(PERFETTO_TP_ARG_TABLE_DEF);
 
 PERFETTO_TP_TABLE(PERFETTO_TP_METADATA_TABLE_DEF);
 
-// Contains information of threads seen during the trace
+// Contains information of filedescriptors collected during the trace
 //
-// @name thread
-// @param utid             {uint32_t} Unique thread id. This is != the OS tid.
-//                         This is a monotonic number associated to each thread.
-//                         The OS thread id (tid) cannot be used as primary key
-//                         because tids and pids are recycled by most kernels.
-// @param tid              The OS id for this thread. Note: this is *not*
-//                         unique over the lifetime of the trace so cannot be
-//                         used as a primary key. Use |utid| instead.
-// @param name             The name of the thread. Can be populated from many
-//                         sources (e.g. ftrace, /proc scraping, track event
-//                         etc).
-// @param start_ts         The start timestamp of this thread (if known). Is
-//                         null in most cases unless a thread creation event is
-//                         enabled (e.g. task_newtask ftrace event on
-//                         Linux/Android).
-// @param end_ts           The end timestamp of this thread (if known). Is
-//                         null in most cases unless a thread destruction event
-//                         is enabled (e.g. sched_process_free ftrace event on
-//                         Linux/Android).
-// @param upid             {@joinable process.upid} The process hosting this
-//                         thread.
-// @param is_main_thread   Boolean indicating if this thread is the main thread
-//                         in the process.
-#define PERFETTO_TP_THREAD_TABLE_DEF(NAME, PARENT, C) \
-  NAME(ThreadTable, "internal_thread")                \
-  PERFETTO_TP_ROOT_TABLE(PARENT, C)                   \
-  C(uint32_t, tid)                                    \
-  C(base::Optional<StringPool::Id>, name)             \
-  C(base::Optional<int64_t>, start_ts)                \
-  C(base::Optional<int64_t>, end_ts)                  \
-  C(base::Optional<uint32_t>, upid)                   \
-  C(base::Optional<uint32_t>, is_main_thread)
+// @name filedescriptor
+// @param ufd             {int64_t} Unique fd. This is != the OS fd.
+//                        This is a monotonic number associated to each
+//                        filedescriptor. The OS assigned fd cannot be used as
+//                        primary key because fds are recycled by most kernels.
+// @param fd              The OS id for this process. Note: this is *not*
+//                        unique over the lifetime of the trace so cannot be
+//                        used as a primary key. Use |ufd| instead.
+// @param ts              The timestamp for when the fd was collected.
+// @param upid            {@joinable process.upid} The upid of the process which
+//                        opened the filedescriptor.
+// @param path            The path to the file or device backing the fd
+//                        In case this was a socket the path will be the port
+//                        number.
+#define PERFETTO_TP_FILEDESCRIPTOR_TABLE_DEF(NAME, PARENT, C) \
+  NAME(FiledescriptorTable, "filedescriptor")                 \
+  PERFETTO_TP_ROOT_TABLE(PARENT, C)                           \
+  C(int64_t, fd)                                              \
+  C(base::Optional<int64_t>, ts)                              \
+  C(base::Optional<uint32_t>, upid)                           \
+  C(base::Optional<StringPool::Id>, path)
 
-PERFETTO_TP_TABLE(PERFETTO_TP_THREAD_TABLE_DEF);
+PERFETTO_TP_TABLE(PERFETTO_TP_FILEDESCRIPTOR_TABLE_DEF);
+
+// Experimental table, subject to arbitrary breaking changes.
+#define PERFETTO_TP_EXP_MISSING_CHROME_PROC_TABLE_DEF(NAME, PARENT, C)     \
+  NAME(ExpMissingChromeProcTable, "experimental_missing_chrome_processes") \
+  PERFETTO_TP_ROOT_TABLE(PARENT, C)                                        \
+  C(uint32_t, upid)                                                        \
+  C(base::Optional<int64_t>, reliable_from)
+
+PERFETTO_TP_TABLE(PERFETTO_TP_EXP_MISSING_CHROME_PROC_TABLE_DEF);
 
 // Contains information of processes seen during the trace
 //
-// @name process
-// @param upid            {uint32_t} Unique process id. This is != the OS pid.
-//                        This is a monotonic number associated to each process.
-//                        The OS process id (pid) cannot be used as primary key
-//                        because tids and pids are recycled by most kernels.
-// @param pid             The OS id for this process. Note: this is *not*
-//                        unique over the lifetime of the trace so cannot be
-//                        used as a primary key. Use |upid| instead.
-// @param name            The name of the process. Can be populated from many
-//                        sources (e.g. ftrace, /proc scraping, track event
-//                        etc).
-// @param start_ts        The start timestamp of this process (if known). Is
-//                        null in most cases unless a process creation event is
-//                        enabled (e.g. task_newtask ftrace event on
-//                        Linux/Android).
-// @param end_ts          The end timestamp of this process (if known). Is
-//                        null in most cases unless a process destruction event
-//                        is enabled (e.g. sched_process_free ftrace event on
-//                        Linux/Android).
-// @param parent_upid     {@joinable process.upid} The upid of the process which
-//                        caused this process to be spawned.
-// @param uid             {@joinable package_list.uid} The Unix user id of the
-//                        process.
-// @param android_appid   Android appid of this process.
-// @param cmdline         /proc/cmdline for this process.
-// @param arg_set_id      {@joinable args.arg_set_id} Extra args for this
-//                        process.
-#define PERFETTO_TP_PROCESS_TABLE_DEF(NAME, PARENT, C) \
-  NAME(ProcessTable, "internal_process")               \
-  PERFETTO_TP_ROOT_TABLE(PARENT, C)                    \
-  C(uint32_t, pid)                                     \
-  C(base::Optional<StringPool::Id>, name)              \
-  C(base::Optional<int64_t>, start_ts)                 \
-  C(base::Optional<int64_t>, end_ts)                   \
-  C(base::Optional<uint32_t>, parent_upid)             \
-  C(base::Optional<uint32_t>, uid)                     \
-  C(base::Optional<uint32_t>, android_appid)           \
-  C(base::Optional<StringPool::Id>, cmdline)           \
-  C(uint32_t, arg_set_id)
-
-PERFETTO_TP_TABLE(PERFETTO_TP_PROCESS_TABLE_DEF);
-
+// @name cpu
+// @param id                     id of this CPU
+// @param cluster_id             the cluster id is shared by CPUs in
+//                               the same cluster
+// @param processor              a string describing this core
 #define PERFETTO_TP_CPU_TABLE_DEF(NAME, PARENT, C) \
   NAME(CpuTable, "cpu")                            \
   PERFETTO_TP_ROOT_TABLE(PARENT, C)                \
-  C(uint32_t, time_in_state_cpu_id)                \
+  C(uint32_t, cluster_id)                          \
   C(StringPool::Id, processor)
 
 PERFETTO_TP_TABLE(PERFETTO_TP_CPU_TABLE_DEF);

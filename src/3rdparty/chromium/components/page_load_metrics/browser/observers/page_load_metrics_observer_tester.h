@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -7,7 +7,7 @@
 
 #include <vector>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "components/page_load_metrics/browser/page_load_metrics_observer.h"
@@ -99,9 +99,6 @@ class PageLoadMetricsObserverTester : public test::WeakMockTimerProvider {
   void SimulateInputTimingUpdate(const mojom::InputTiming& input_timing);
   void SimulateInputTimingUpdate(const mojom::InputTiming& input_timing,
                                  content::RenderFrameHost* rfh);
-  void SimulateMobileFriendlinessUpdate(
-      const blink::MobileFriendliness& mobile_friendliness,
-      content::RenderFrameHost* rfh);
   void SimulateTimingAndMetadataUpdate(const mojom::PageLoadTiming& timing,
                                        const mojom::FrameMetadata& metadata);
   void SimulateMetadataUpdate(const mojom::FrameMetadata& metadata,
@@ -117,6 +114,7 @@ class PageLoadMetricsObserverTester : public test::WeakMockTimerProvider {
       const mojom::FrameRenderDataUpdate& render_data);
   void SimulateRenderDataUpdate(const mojom::FrameRenderDataUpdate& render_data,
                                 content::RenderFrameHost* render_frame_host);
+  void SimulateSoftNavigationCountUpdate(uint32_t soft_navigation_count);
 
   // Simulates a loaded resource. Main frame resources must specify a
   // GlobalRequestID, using the SimulateLoadedResource() method that takes a
@@ -139,6 +137,7 @@ class PageLoadMetricsObserverTester : public test::WeakMockTimerProvider {
 
   // Simulate playing a media element.
   void SimulateMediaPlayed();
+  void SimulateMediaPlayed(content::RenderFrameHost* rfh);
 
   // Simulate accessingcookies.
   void SimulateCookieAccess(const content::CookieAccessDetails& details);
@@ -152,9 +151,6 @@ class PageLoadMetricsObserverTester : public test::WeakMockTimerProvider {
   // Simulate a V8 per-frame memory update.
   void SimulateMemoryUpdate(content::RenderFrameHost* render_frame_host,
                             int64_t delta_bytes);
-
-  void SimulateMobileFriendlinessUpdate(
-      blink::MobileFriendliness& mobile_friendliness);
 
   MetricsWebContentsObserver* metrics_web_contents_observer() {
     return metrics_web_contents_observer_;
@@ -176,8 +172,9 @@ class PageLoadMetricsObserverTester : public test::WeakMockTimerProvider {
       const mojom::FrameRenderDataUpdate& render_data,
       const mojom::CpuTiming& cpu_timing,
       const mojom::InputTiming& input_timing,
-      const blink::MobileFriendliness& mobile_friendliness,
-      content::RenderFrameHost* rfh);
+      const mojom::SubresourceLoadMetrics& subresource_load_metrics,
+      content::RenderFrameHost* rfh,
+      uint32_t soft_navigation_count = 0);
 
   content::WebContents* web_contents() const { return web_contents_; }
 

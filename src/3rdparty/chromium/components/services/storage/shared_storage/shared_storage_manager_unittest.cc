@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,9 @@
 #include <queue>
 #include <string>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/memory_pressure_listener.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
@@ -43,19 +43,26 @@ namespace storage {
 namespace {
 
 using ::testing::ElementsAre;
+using ::testing::Pair;
 using InitStatus = SharedStorageDatabase::InitStatus;
 using SetBehavior = SharedStorageDatabase::SetBehavior;
 using OperationResult = SharedStorageDatabase::OperationResult;
 using GetResult = SharedStorageDatabase::GetResult;
-using OriginMatcherFunction = SharedStorageDatabase::OriginMatcherFunction;
+using BudgetResult = SharedStorageDatabase::BudgetResult;
+using TimeResult = SharedStorageDatabase::TimeResult;
+using MetadataResult = SharedStorageDatabase::MetadataResult;
+using EntriesResult = SharedStorageDatabase::EntriesResult;
+using StorageKeyPolicyMatcherFunction =
+    SharedStorageDatabase::StorageKeyPolicyMatcherFunction;
 using DBOperation = TestDatabaseOperationReceiver::DBOperation;
 using Type = DBOperation::Type;
 using DBType = SharedStorageTestDBType;
 using MemoryPressureLevel = base::MemoryPressureListener::MemoryPressureLevel;
 
-std::string TimeDeltaToString(base::TimeDelta delta) {
-  return base::StrCat({base::NumberToString(delta.InMilliseconds()), "ms"});
-}
+const int kBitBudget = 8;
+const int kInitialPurgeIntervalHours = 4;
+const int kRecurringPurgeIntervalHours = 2;
+const int kThresholdHours = 7;
 
 class MockResultQueue {
  public:
@@ -84,6 +91,22 @@ class MockResultQueue {
     return next_result;
   }
 
+  BudgetResult NextBudgetResult() {
+    DCHECK(!result_queue_.empty());
+    BudgetResult next_result = MakeBudgetResultForSqlError();
+    next_result.result = result_queue_.front();
+    result_queue_.pop();
+    return next_result;
+  }
+
+  TimeResult NextTimeResult() {
+    DCHECK(!result_queue_.empty());
+    TimeResult next_result;
+    next_result.result = result_queue_.front();
+    result_queue_.pop();
+    return next_result;
+  }
+
   bool NextBool() {
     DCHECK(!result_queue_.empty());
     bool next_success = (static_cast<int>(result_queue_.front()) < 3);
@@ -102,6 +125,24 @@ class MockResultQueue {
     DCHECK(!result_queue_.empty());
     result_queue_.pop();
     return std::vector<mojom::StorageUsageInfoPtr>();
+  }
+
+  MetadataResult NextMetadata() {
+    DCHECK(!result_queue_.empty());
+    MetadataResult metadata;
+    metadata.time_result = result_queue_.front();
+    metadata.budget_result = result_queue_.front();
+    result_queue_.pop();
+    return metadata;
+  }
+
+  EntriesResult NextEntries() {
+    DCHECK(!result_queue_.empty());
+
+    EntriesResult entries;
+    entries.result = result_queue_.front();
+    result_queue_.pop();
+    return entries;
   }
 
  private:
@@ -174,16 +215,14 @@ class MockAsyncSharedStorageDatabase : public AsyncSharedStorageDatabase {
                base::OnceCallback<void(OperationResult)> callback) override {
     Run(std::move(callback));
   }
-  void PurgeMatchingOrigins(OriginMatcherFunction origin_matcher,
+  void PurgeMatchingOrigins(StorageKeyPolicyMatcherFunction storage_key_matcher,
                             base::Time begin,
                             base::Time end,
                             base::OnceCallback<void(OperationResult)> callback,
                             bool perform_storage_cleanup = false) override {
     Run(std::move(callback));
   }
-  void PurgeStaleOrigins(
-      base::TimeDelta window_to_be_deemed_active,
-      base::OnceCallback<void(OperationResult)> callback) override {
+  void PurgeStale(base::OnceCallback<void(OperationResult)> callback) override {
     Run(std::move(callback));
   }
   void FetchOrigins(
@@ -191,6 +230,36 @@ class MockAsyncSharedStorageDatabase : public AsyncSharedStorageDatabase {
           callback) override {
     Run(std::move(callback));
   }
+  void MakeBudgetWithdrawal(
+      url::Origin context_origin,
+      double bits_debit,
+      base::OnceCallback<void(OperationResult)> callback) override {
+    Run(std::move(callback));
+  }
+  void GetRemainingBudget(
+      url::Origin context_origin,
+      base::OnceCallback<void(BudgetResult)> callback) override {
+    Run(std::move(callback));
+  }
+  void GetCreationTime(url::Origin context_origin,
+                       base::OnceCallback<void(TimeResult)> callback) override {
+    Run(std::move(callback));
+  }
+  void GetMetadata(url::Origin context_origin,
+                   base::OnceCallback<void(MetadataResult)> callback) override {
+    Run(std::move(callback));
+  }
+  void GetEntriesForDevTools(
+      url::Origin context_origin,
+      base::OnceCallback<void(EntriesResult)> callback) override {
+    Run(std::move(callback));
+  }
+  void ResetBudgetForDevTools(
+      url::Origin context_origin,
+      base::OnceCallback<void(OperationResult)> callback) override {
+    Run(std::move(callback));
+  }
+
   void SetResultsForTesting(std::queue<OperationResult> result_queue,
                             base::OnceClosure callback) {
     mock_result_queue_.AsyncCall(&MockResultQueue::SetResultQueue)
@@ -234,6 +303,18 @@ class MockAsyncSharedStorageDatabase : public AsyncSharedStorageDatabase {
         .Then(std::move(callback));
   }
 
+  void Run(base::OnceCallback<void(BudgetResult)> callback) {
+    DCHECK(callback);
+    mock_result_queue_.AsyncCall(&MockResultQueue::NextBudgetResult)
+        .Then(std::move(callback));
+  }
+
+  void Run(base::OnceCallback<void(TimeResult)> callback) {
+    DCHECK(callback);
+    mock_result_queue_.AsyncCall(&MockResultQueue::NextTimeResult)
+        .Then(std::move(callback));
+  }
+
   void Run(base::OnceCallback<void(int)> callback) {
     DCHECK(callback);
     mock_result_queue_.AsyncCall(&MockResultQueue::NextInt)
@@ -244,6 +325,18 @@ class MockAsyncSharedStorageDatabase : public AsyncSharedStorageDatabase {
                callback) {
     DCHECK(callback);
     mock_result_queue_.AsyncCall(&MockResultQueue::NextInfos)
+        .Then(std::move(callback));
+  }
+
+  void Run(base::OnceCallback<void(MetadataResult)> callback) {
+    DCHECK(callback);
+    mock_result_queue_.AsyncCall(&MockResultQueue::NextMetadata)
+        .Then(std::move(callback));
+  }
+
+  void Run(base::OnceCallback<void(EntriesResult)> callback) {
+    DCHECK(callback);
+    mock_result_queue_.AsyncCall(&MockResultQueue::NextEntries)
         .Then(std::move(callback));
   }
 
@@ -311,18 +404,21 @@ class SharedStorageManagerTest : public testing::Test {
         {blink::features::kSharedStorageAPI},
         // Set these intervals to be long enough not to interfere with the
         // basic tests.
-        {{"SharedStorageStaleOriginPurgeInitialInterval",
-          TimeDeltaToString(base::Hours(1))},
-         {"SharedStorageStaleOriginPurgeRecurringInterval",
-          TimeDeltaToString(base::Hours(2))},
-         {"SharedStorageOriginStalenessThreshold",
-          TimeDeltaToString(base::Hours(4))}});
+        {{"SharedStorageStalePurgeInitialInterval",
+          TimeDeltaToString(base::Hours(kInitialPurgeIntervalHours))},
+         {"SharedStorageStalePurgeRecurringInterval",
+          TimeDeltaToString(base::Hours(kRecurringPurgeIntervalHours))},
+         {"SharedStorageStalenessThreshold",
+          TimeDeltaToString(base::Hours(kThresholdHours))},
+         {"SharedStorageBitBudget", base::NumberToString(kBitBudget)},
+         {"SharedStorageBudgetInterval",
+          TimeDeltaToString(base::Hours(kBudgetIntervalHours_))}});
   }
 
   // Return the relative file path in the "storage/" subdirectory of test data
   // for the SQL file from which to initialize an async shared storage database
   // instance.
-  virtual const char* GetRelativeFilePath() { return nullptr; }
+  virtual std::string GetRelativeFilePath() { return nullptr; }
 
   virtual DBType GetType() { return DBType::kInMemory; }
 
@@ -411,7 +507,7 @@ class SharedStorageManagerTest : public testing::Test {
     base::test::TestFuture<GetResult> future;
     GetManager()->Get(std::move(context_origin), std::move(key),
                       future.GetCallback());
-    return future.Get();
+    return future.Take();
   }
 
   void Set(url::Origin context_origin,
@@ -605,12 +701,13 @@ class SharedStorageManagerTest : public testing::Test {
     return future.Take();
   }
 
-  void PurgeMatchingOrigins(OriginMatcherFunctionUtility* matcher_utility,
-                            size_t matcher_id,
-                            base::Time begin,
-                            base::Time end,
-                            OperationResult* out_result,
-                            bool perform_storage_cleanup = false) {
+  void PurgeMatchingOrigins(
+      StorageKeyPolicyMatcherFunctionUtility* matcher_utility,
+      size_t matcher_id,
+      base::Time begin,
+      base::Time end,
+      OperationResult* out_result,
+      bool perform_storage_cleanup = false) {
     DCHECK(out_result);
     DCHECK(GetManager());
     DCHECK(receiver_);
@@ -631,20 +728,40 @@ class SharedStorageManagerTest : public testing::Test {
         std::move(callback), perform_storage_cleanup);
   }
 
-  OperationResult PurgeMatchingOriginsSync(OriginMatcherFunction origin_matcher,
-                                           base::Time begin,
-                                           base::Time end,
-                                           bool perform_storage_cleanup) {
+  OperationResult PurgeMatchingOriginsSync(
+      StorageKeyPolicyMatcherFunction storage_key_matcher,
+      base::Time begin,
+      base::Time end,
+      bool perform_storage_cleanup) {
     DCHECK(GetManager());
     base::test::TestFuture<OperationResult> future;
-    GetManager()->PurgeMatchingOrigins(std::move(origin_matcher), begin, end,
-                                       future.GetCallback(),
+    GetManager()->PurgeMatchingOrigins(std::move(storage_key_matcher), begin,
+                                       end, future.GetCallback(),
                                        perform_storage_cleanup);
     return future.Get();
   }
 
-  void OverrideLastUsedTime(url::Origin context_origin,
-                            base::Time new_last_used_time,
+  OperationResult MakeBudgetWithdrawalSync(const url::Origin& context_origin,
+                                           double bits_debit) {
+    DCHECK(GetManager());
+
+    base::test::TestFuture<OperationResult> future;
+    GetManager()->MakeBudgetWithdrawal(std::move(context_origin), bits_debit,
+                                       future.GetCallback());
+    return future.Get();
+  }
+
+  BudgetResult GetRemainingBudgetSync(const url::Origin& context_origin) {
+    DCHECK(GetManager());
+
+    base::test::TestFuture<BudgetResult> future;
+    GetManager()->GetRemainingBudget(std::move(context_origin),
+                                     future.GetCallback());
+    return future.Take();
+  }
+
+  void OverrideCreationTime(url::Origin context_origin,
+                            base::Time new_creation_time,
                             bool* out_success) {
     DCHECK(out_success);
     DCHECK(GetManager());
@@ -652,14 +769,70 @@ class SharedStorageManagerTest : public testing::Test {
 
     auto callback = receiver_->MakeBoolCallback(
         DBOperation(
-            Type::DB_OVERRIDE_TIME, context_origin,
-            {TestDatabaseOperationReceiver::SerializeTime(new_last_used_time)}),
+            Type::DB_OVERRIDE_TIME_ORIGIN, context_origin,
+            {TestDatabaseOperationReceiver::SerializeTime(new_creation_time)}),
         out_success);
-    GetManager()->OverrideLastUsedTimeForTesting(
-        std::move(context_origin), new_last_used_time, std::move(callback));
+    GetManager()->OverrideCreationTimeForTesting(
+        std::move(context_origin), new_creation_time, std::move(callback));
+  }
+
+  int GetNumBudgetEntriesSync(url::Origin context_origin) {
+    DCHECK(GetManager());
+
+    base::test::TestFuture<int> future;
+    GetManager()->GetNumBudgetEntriesForTesting(std::move(context_origin),
+                                                future.GetCallback());
+    return future.Get();
+  }
+
+  int GetTotalNumBudgetEntriesSync() {
+    DCHECK(GetManager());
+
+    base::test::TestFuture<int> future;
+    GetManager()->GetTotalNumBudgetEntriesForTesting(future.GetCallback());
+    return future.Get();
+  }
+
+  TimeResult GetCreationTimeSync(const url::Origin& context_origin) {
+    DCHECK(GetManager());
+
+    base::test::TestFuture<TimeResult> future;
+    GetManager()->GetCreationTime(std::move(context_origin),
+                                  future.GetCallback());
+    return future.Take();
+  }
+
+  MetadataResult GetMetadataSync(const url::Origin& context_origin) {
+    DCHECK(GetManager());
+
+    base::test::TestFuture<MetadataResult> future;
+    GetManager()->GetMetadata(std::move(context_origin), future.GetCallback());
+    return future.Take();
+  }
+
+  EntriesResult GetEntriesForDevToolsSync(const url::Origin& context_origin) {
+    DCHECK(GetManager());
+
+    base::test::TestFuture<EntriesResult> future;
+    GetManager()->GetEntriesForDevTools(std::move(context_origin),
+                                        future.GetCallback());
+    return future.Take();
+  }
+
+  OperationResult ResetBudgetForDevToolsSync(
+      const url::Origin& context_origin) {
+    DCHECK(GetManager());
+
+    base::test::TestFuture<OperationResult> future;
+    GetManager()->ResetBudgetForDevTools(std::move(context_origin),
+                                         future.GetCallback());
+    return future.Get();
   }
 
  protected:
+  static constexpr int kBudgetIntervalHours_ =
+      kInitialPurgeIntervalHours + 2 * kRecurringPurgeIntervalHours;
+
   base::test::ScopedFeatureList scoped_feature_list_;
   base::test::TaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
@@ -674,15 +847,154 @@ class SharedStorageManagerTest : public testing::Test {
   bool memory_trimmed_ = false;
 };
 
-class SharedStorageManagerFromFileV1Test : public SharedStorageManagerTest {
+class SharedStorageManagerFromFileTest : public SharedStorageManagerTest {
  public:
   DBType GetType() override { return DBType::kFileBackedFromExisting; }
 
-  const char* GetRelativeFilePath() override { return "shared_storage.v1.sql"; }
+  std::string GetRelativeFilePath() override {
+    return GetTestFileNameForCurrentVersion();
+  }
+};
+
+// Test loading current version database.
+TEST_F(SharedStorageManagerFromFileTest, CurrentVersion_LoadFromFile) {
+  url::Origin google_com = url::Origin::Create(GURL("http://google.com/"));
+  EXPECT_EQ(GetSync(google_com, u"key1").data, u"value1");
+  EXPECT_EQ(GetSync(google_com, u"key2").data, u"value2");
+
+  url::Origin youtube_com = url::Origin::Create(GURL("http://youtube.com/"));
+  EXPECT_EQ(1L, LengthSync(youtube_com));
+
+  EntriesResult youtube_com_entries = GetEntriesForDevToolsSync(youtube_com);
+  EXPECT_EQ(OperationResult::kSuccess, youtube_com_entries.result);
+  EXPECT_THAT(youtube_com_entries.entries,
+              ElementsAre(Pair("visited", "1111111")));
+
+  url::Origin chromium_org = url::Origin::Create(GURL("http://chromium.org/"));
+  EXPECT_EQ(GetSync(chromium_org, u"a").data, u"");
+
+  TestSharedStorageEntriesListenerUtility listener_utility(
+      task_environment_.GetMainThreadTaskRunner());
+  size_t id1 = listener_utility.RegisterListener();
+  EXPECT_EQ(OperationResult::kSuccess,
+            KeysSync(chromium_org,
+                     listener_utility.BindNewPipeAndPassRemoteForId(id1)));
+  listener_utility.FlushForId(id1);
+  EXPECT_THAT(listener_utility.TakeKeysForId(id1),
+              ElementsAre(u"a", u"b", u"c"));
+  EXPECT_EQ(1U, listener_utility.BatchCountForId(id1));
+  listener_utility.VerifyNoErrorForId(id1);
+
+  size_t id2 = listener_utility.RegisterListener();
+  EXPECT_EQ(OperationResult::kSuccess,
+            EntriesSync(chromium_org,
+                        listener_utility.BindNewPipeAndPassRemoteForId(id2)));
+  listener_utility.FlushForId(id2);
+  EXPECT_THAT(listener_utility.TakeEntriesForId(id2),
+              ElementsAre(Pair(u"a", u""), Pair(u"b", u"hello"),
+                          Pair(u"c", u"goodbye")));
+  EXPECT_EQ(1U, listener_utility.BatchCountForId(id2));
+  listener_utility.VerifyNoErrorForId(id2);
+
+  EntriesResult chromium_org_entries = GetEntriesForDevToolsSync(chromium_org);
+  EXPECT_EQ(OperationResult::kSuccess, chromium_org_entries.result);
+  EXPECT_THAT(
+      chromium_org_entries.entries,
+      ElementsAre(Pair("a", ""), Pair("b", "hello"), Pair("c", "goodbye")));
+
+  url::Origin google_org = url::Origin::Create(GURL("http://google.org/"));
+  EXPECT_EQ(
+      GetSync(google_org, u"1").data,
+      u"fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      "fffffffffffffffff");
+  EXPECT_EQ(GetSync(google_org,
+                    u"ffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    "fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    "fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    "fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    "fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    "fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    "fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    "fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    "fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    "fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    "fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    "fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    "fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    "fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    "fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    "fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    "fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+                .data,
+            u"k");
+
+  url::Origin abc_xyz = url::Origin::Create(GURL("http://abc.xyz"));
+  EXPECT_EQ(13269481776356965, GetCreationTimeSync(abc_xyz)
+                                   .time.ToDeltaSinceWindowsEpoch()
+                                   .InMicroseconds());
+  auto abc_xyz_metadata = GetMetadataSync(abc_xyz);
+  EXPECT_EQ(OperationResult::kSuccess, abc_xyz_metadata.time_result);
+  EXPECT_EQ(OperationResult::kSuccess, abc_xyz_metadata.budget_result);
+  EXPECT_EQ(13269481776356965,
+            abc_xyz_metadata.creation_time.ToDeltaSinceWindowsEpoch()
+                .InMicroseconds());
+  EXPECT_EQ(2, abc_xyz_metadata.length);
+  EXPECT_DOUBLE_EQ(kBitBudget - 5.3, abc_xyz_metadata.remaining_budget);
+
+  url::Origin growwithgoogle_com =
+      url::Origin::Create(GURL("http://growwithgoogle.com"));
+  EXPECT_EQ(13269546593856733, GetCreationTimeSync(growwithgoogle_com)
+                                   .time.ToDeltaSinceWindowsEpoch()
+                                   .InMicroseconds());
+  auto growwithgoogle_com_metadata = GetMetadataSync(growwithgoogle_com);
+  EXPECT_EQ(OperationResult::kSuccess, growwithgoogle_com_metadata.time_result);
+  EXPECT_EQ(OperationResult::kSuccess,
+            growwithgoogle_com_metadata.budget_result);
+  EXPECT_EQ(13269546593856733,
+            growwithgoogle_com_metadata.creation_time.ToDeltaSinceWindowsEpoch()
+                .InMicroseconds());
+  EXPECT_EQ(3, growwithgoogle_com_metadata.length);
+  EXPECT_DOUBLE_EQ(kBitBudget - 1.2,
+                   growwithgoogle_com_metadata.remaining_budget);
+
+  std::vector<mojom::StorageUsageInfoPtr> infos = FetchOriginsSync();
+  std::vector<url::Origin> origins;
+  for (const auto& info : infos)
+    origins.push_back(info->storage_key.origin());
+  EXPECT_THAT(origins,
+              ElementsAre(abc_xyz, chromium_org, google_com, google_org,
+                          growwithgoogle_com,
+                          url::Origin::Create(GURL("http://gv.com")),
+                          url::Origin::Create(GURL("http://waymo.com")),
+                          url::Origin::Create(GURL("http://withgoogle.com")),
+                          youtube_com));
+}
+
+class SharedStorageManagerFromFileV1NoBudgetTableTest
+    : public SharedStorageManagerFromFileTest {
+ public:
+  std::string GetRelativeFilePath() override {
+    return "shared_storage.v1.no_budget_table.sql";
+  }
 };
 
 // Test loading version 1 database.
-TEST_F(SharedStorageManagerFromFileV1Test, Version1_LoadFromFile) {
+TEST_F(SharedStorageManagerFromFileV1NoBudgetTableTest,
+       Version1_LoadFromFileNoBudgetTable) {
   url::Origin google_com = url::Origin::Create(GURL("http://google.com/"));
   EXPECT_EQ(GetSync(google_com, u"key1").data, u"value1");
   EXPECT_EQ(GetSync(google_com, u"key2").data, u"value2");
@@ -710,10 +1022,9 @@ TEST_F(SharedStorageManagerFromFileV1Test, Version1_LoadFromFile) {
             EntriesSync(chromium_org,
                         listener_utility.BindNewPipeAndPassRemoteForId(id2)));
   listener_utility.FlushForId(id2);
-  EXPECT_THAT(
-      listener_utility.TakeEntriesForId(id2),
-      ElementsAre(std::make_pair(u"a", u""), std::make_pair(u"b", u"hello"),
-                  std::make_pair(u"c", u"goodbye")));
+  EXPECT_THAT(listener_utility.TakeEntriesForId(id2),
+              ElementsAre(Pair(u"a", u""), Pair(u"b", u"hello"),
+                          Pair(u"c", u"goodbye")));
   EXPECT_EQ(1U, listener_utility.BatchCountForId(id2));
   listener_utility.VerifyNoErrorForId(id2);
 
@@ -760,15 +1071,20 @@ TEST_F(SharedStorageManagerFromFileV1Test, Version1_LoadFromFile) {
   std::vector<mojom::StorageUsageInfoPtr> infos = FetchOriginsSync();
   std::vector<url::Origin> origins;
   for (const auto& info : infos)
-    origins.push_back(info->origin);
+    origins.push_back(info->storage_key.origin());
   EXPECT_THAT(
       origins,
-      testing::UnorderedElementsAre(
+      ElementsAre(
           url::Origin::Create(GURL("http://abc.xyz")), chromium_org, google_com,
           google_org, url::Origin::Create(GURL("http://growwithgoogle.com")),
           url::Origin::Create(GURL("http://gv.com")),
           url::Origin::Create(GURL("http://waymo.com")),
           url::Origin::Create(GURL("http://withgoogle.com")), youtube_com));
+
+  EXPECT_DOUBLE_EQ(kBitBudget, GetRemainingBudgetSync(chromium_org).bits);
+  EXPECT_DOUBLE_EQ(kBitBudget, GetRemainingBudgetSync(google_com).bits);
+  EXPECT_DOUBLE_EQ(kBitBudget, GetRemainingBudgetSync(google_org).bits);
+  EXPECT_DOUBLE_EQ(kBitBudget, GetRemainingBudgetSync(youtube_com).bits);
 }
 
 class SharedStorageManagerParamTest
@@ -795,7 +1111,7 @@ TEST_P(SharedStorageManagerParamTest, BasicOperations) {
   EXPECT_EQ(GetSync(kOrigin1, u"key1").data, u"value2");
 
   EXPECT_EQ(OperationResult::kSuccess, DeleteSync(kOrigin1, u"key1"));
-  EXPECT_FALSE(GetSync(kOrigin1, u"key1").data);
+  EXPECT_EQ(OperationResult::kNotFound, GetSync(kOrigin1, u"key1").result);
 }
 
 TEST_P(SharedStorageManagerParamTest, IgnoreIfPresent) {
@@ -927,8 +1243,7 @@ TEST_P(SharedStorageManagerParamTest, Entries) {
                         listener_utility.BindNewPipeAndPassRemoteForId(id1)));
   listener_utility.FlushForId(id1);
   EXPECT_THAT(listener_utility.TakeEntriesForId(id1),
-              ElementsAre(std::make_pair(u"key1", u"value1"),
-                          std::make_pair(u"key2", u"value2")));
+              ElementsAre(Pair(u"key1", u"value1"), Pair(u"key2", u"value2")));
   EXPECT_EQ(1U, listener_utility.BatchCountForId(id1));
   listener_utility.VerifyNoErrorForId(id1);
 
@@ -952,9 +1267,8 @@ TEST_P(SharedStorageManagerParamTest, Entries) {
                         listener_utility.BindNewPipeAndPassRemoteForId(id3)));
   listener_utility.FlushForId(id3);
   EXPECT_THAT(listener_utility.TakeEntriesForId(id3),
-              ElementsAre(std::make_pair(u"key1", u"value1"),
-                          std::make_pair(u"key2", u"value2"),
-                          std::make_pair(u"key3", u"value3")));
+              ElementsAre(Pair(u"key1", u"value1"), Pair(u"key2", u"value2"),
+                          Pair(u"key3", u"value3")));
   EXPECT_EQ(1U, listener_utility.BatchCountForId(id3));
   listener_utility.VerifyNoErrorForId(id3);
 
@@ -966,8 +1280,7 @@ TEST_P(SharedStorageManagerParamTest, Entries) {
                         listener_utility.BindNewPipeAndPassRemoteForId(id4)));
   listener_utility.FlushForId(id4);
   EXPECT_THAT(listener_utility.TakeEntriesForId(id4),
-              ElementsAre(std::make_pair(u"key1", u"value1"),
-                          std::make_pair(u"key3", u"value3")));
+              ElementsAre(Pair(u"key1", u"value1"), Pair(u"key3", u"value3")));
   EXPECT_EQ(1U, listener_utility.BatchCountForId(id4));
   listener_utility.VerifyNoErrorForId(id4);
 }
@@ -1007,7 +1320,7 @@ TEST_P(SharedStorageManagerParamTest,
 
   std::vector<url::Origin> origins;
   for (const auto& info : FetchOriginsSync())
-    origins.push_back(info->origin);
+    origins.push_back(info->storage_key.origin());
   EXPECT_THAT(origins, ElementsAre(kOrigin1));
 
   url::Origin kOrigin2 = url::Origin::Create(GURL("http://www.example2.test"));
@@ -1018,10 +1331,10 @@ TEST_P(SharedStorageManagerParamTest,
 
   origins.clear();
   for (const auto& info : FetchOriginsSync())
-    origins.push_back(info->origin);
+    origins.push_back(info->storage_key.origin());
   EXPECT_THAT(origins, ElementsAre(kOrigin1, kOrigin2));
 
-  OriginMatcherFunctionUtility matcher_utility;
+  StorageKeyPolicyMatcherFunctionUtility matcher_utility;
   EXPECT_EQ(
       OperationResult::kSuccess,
       PurgeMatchingOriginsSync(matcher_utility.MakeMatcherFunction({kOrigin1}),
@@ -1030,7 +1343,7 @@ TEST_P(SharedStorageManagerParamTest,
 
   origins.clear();
   for (const auto& info : FetchOriginsSync())
-    origins.push_back(info->origin);
+    origins.push_back(info->storage_key.origin());
   EXPECT_THAT(origins, ElementsAre(kOrigin2));
 
   EXPECT_EQ(OperationResult::kSuccess,
@@ -1042,23 +1355,189 @@ TEST_P(SharedStorageManagerParamTest,
   EXPECT_TRUE(FetchOriginsSync().empty());
 }
 
-TEST_P(SharedStorageManagerParamTest, AdvanceTime_StaleOriginsPurged) {
+TEST_P(SharedStorageManagerParamTest, DevTools) {
+  url::Origin kOrigin1 = url::Origin::Create(GURL("http://www.example1.test"));
+
+  EXPECT_EQ(OperationResult::kSet, SetSync(kOrigin1, u"key1", u"value1"));
+  EXPECT_EQ(OperationResult::kSet, SetSync(kOrigin1, u"key2", u"value2"));
+  EXPECT_EQ(OperationResult::kSet, SetSync(kOrigin1, u"key3", u"value3"));
+
+  EXPECT_EQ(3, LengthSync(kOrigin1));
+
+  url::Origin kOrigin2 = url::Origin::Create(GURL("http://www.example2.test"));
+  EXPECT_EQ(OperationResult::kSet, SetSync(kOrigin2, u"key1", u"value1"));
+  EXPECT_EQ(OperationResult::kSet, SetSync(kOrigin2, u"key2", u"value2"));
+
+  EXPECT_EQ(2, LengthSync(kOrigin2));
+
+  EntriesResult origin1_entries = GetEntriesForDevToolsSync(kOrigin1);
+  EXPECT_EQ(OperationResult::kSuccess, origin1_entries.result);
+  EXPECT_THAT(origin1_entries.entries,
+              ElementsAre(Pair("key1", "value1"), Pair("key2", "value2"),
+                          Pair("key3", "value3")));
+
+  MetadataResult origin1_metadata = GetMetadataSync(kOrigin1);
+  EXPECT_EQ(OperationResult::kSuccess, origin1_metadata.time_result);
+  EXPECT_EQ(OperationResult::kSuccess, origin1_metadata.budget_result);
+  EXPECT_EQ(3, origin1_metadata.length);
+  EXPECT_GT(origin1_metadata.creation_time.ToDeltaSinceWindowsEpoch()
+                .InMicroseconds(),
+            0);
+  EXPECT_DOUBLE_EQ(kBitBudget, origin1_metadata.remaining_budget);
+
+  EntriesResult origin2_entries = GetEntriesForDevToolsSync(kOrigin2);
+  EXPECT_EQ(OperationResult::kSuccess, origin2_entries.result);
+  EXPECT_THAT(origin2_entries.entries,
+              ElementsAre(Pair("key1", "value1"), Pair("key2", "value2")));
+
+  MetadataResult origin2_metadata = GetMetadataSync(kOrigin2);
+  EXPECT_EQ(OperationResult::kSuccess, origin2_metadata.time_result);
+  EXPECT_EQ(OperationResult::kSuccess, origin2_metadata.budget_result);
+  EXPECT_EQ(2, origin2_metadata.length);
+  EXPECT_GT(origin2_metadata.creation_time.ToDeltaSinceWindowsEpoch()
+                .InMicroseconds(),
+            0);
+  EXPECT_DOUBLE_EQ(kBitBudget, origin2_metadata.remaining_budget);
+
+  url::Origin kOrigin3 = url::Origin::Create(GURL("http://www.example3.test"));
+
+  EntriesResult origin3_entries = GetEntriesForDevToolsSync(kOrigin3);
+  EXPECT_EQ(OperationResult::kSuccess, origin3_entries.result);
+  EXPECT_TRUE(origin3_entries.entries.empty());
+
+  MetadataResult origin3_metadata = GetMetadataSync(kOrigin3);
+  EXPECT_EQ(OperationResult::kNotFound, origin3_metadata.time_result);
+  EXPECT_EQ(OperationResult::kSuccess, origin3_metadata.budget_result);
+  EXPECT_EQ(0, origin3_metadata.length);
+  EXPECT_DOUBLE_EQ(kBitBudget, origin3_metadata.remaining_budget);
+}
+
+TEST_P(SharedStorageManagerParamTest, AdvanceTime_StalePurged) {
   url::Origin kOrigin1 = url::Origin::Create(GURL("http://www.example1.test"));
   EXPECT_EQ(OperationResult::kSet, SetSync(kOrigin1, u"key1", u"value1"));
   EXPECT_FALSE(FetchOriginsSync().empty());
 
-  // Initial interval for checking origin staleness is 1 hour for this test.
-  task_environment_.FastForwardBy(base::Hours(1));
+  // Initial interval for checking staleness is `kInitialPurgeIntervalHours`
+  // hours for this test.
+  task_environment_.FastForwardBy(base::Hours(kInitialPurgeIntervalHours));
+  EXPECT_FALSE(FetchOriginsSync().empty());
+  EXPECT_LE(GetSync(kOrigin1, u"key1").last_used_time,
+            base::Time::Now() - base::Hours(kInitialPurgeIntervalHours));
+  EXPECT_LE(GetCreationTimeSync(kOrigin1).time,
+            base::Time::Now() - base::Hours(kInitialPurgeIntervalHours));
+
+  // Subsequent intervals are `kRecurringPurgeIntervalHours` hours each.
+  task_environment_.FastForwardBy(base::Hours(kRecurringPurgeIntervalHours));
+  EXPECT_EQ(GetSync(kOrigin1, u"key1").data, u"value1");
   EXPECT_FALSE(FetchOriginsSync().empty());
 
-  // Subsequent intervals are 2 hours each.
-  task_environment_.FastForwardBy(base::Hours(2));
-  EXPECT_FALSE(FetchOriginsSync().empty());
-
-  // We have set the staleness threshold to 4 hours for this test. So `kOrigin1`
-  // should now be cleared.
-  task_environment_.FastForwardBy(base::Hours(2));
+  // We have set the staleness threshold to `kThresholdHours` hours for this
+  // test. So `kOrigin1` should now be cleared.
+  task_environment_.FastForwardBy(base::Hours(kThresholdHours));
   EXPECT_TRUE(FetchOriginsSync().empty());
+}
+
+// Synchronously tests budget operations.
+TEST_P(SharedStorageManagerParamTest, SyncMakeBudgetWithdrawal) {
+  // There should be no entries in the budget table.
+  EXPECT_EQ(0, GetTotalNumBudgetEntriesSync());
+
+  // SQL database hasn't yet been lazy-initialized. Nevertheless, remaining
+  // budgets should be returned as the max possible.
+  const url::Origin kOrigin1 =
+      url::Origin::Create(GURL("http://www.example1.test"));
+  EXPECT_DOUBLE_EQ(kBitBudget, GetRemainingBudgetSync(kOrigin1).bits);
+  const url::Origin kOrigin2 =
+      url::Origin::Create(GURL("http://www.example2.test"));
+  EXPECT_DOUBLE_EQ(kBitBudget, GetRemainingBudgetSync(kOrigin2).bits);
+
+  // A withdrawal for `kOrigin1` doesn't affect `kOrigin2`.
+  EXPECT_EQ(OperationResult::kSuccess,
+            MakeBudgetWithdrawalSync(kOrigin1, 1.75));
+  EXPECT_DOUBLE_EQ(kBitBudget - 1.75, GetRemainingBudgetSync(kOrigin1).bits);
+  EXPECT_DOUBLE_EQ(kBitBudget, GetRemainingBudgetSync(kOrigin2).bits);
+  EXPECT_EQ(1, GetNumBudgetEntriesSync(kOrigin1));
+  EXPECT_EQ(1, GetTotalNumBudgetEntriesSync());
+
+  // An additional withdrawal for `kOrigin1` at or near the same time as the
+  // previous one is debited appropriately.
+  EXPECT_EQ(OperationResult::kSuccess, MakeBudgetWithdrawalSync(kOrigin1, 2.5));
+  EXPECT_DOUBLE_EQ(kBitBudget - 1.75 - 2.5,
+                   GetRemainingBudgetSync(kOrigin1).bits);
+  EXPECT_DOUBLE_EQ(kBitBudget, GetRemainingBudgetSync(kOrigin2).bits);
+  EXPECT_EQ(2, GetNumBudgetEntriesSync(kOrigin1));
+  EXPECT_EQ(2, GetTotalNumBudgetEntriesSync());
+
+  // A withdrawal for `kOrigin2` doesn't affect `kOrigin1`.
+  EXPECT_EQ(OperationResult::kSuccess, MakeBudgetWithdrawalSync(kOrigin2, 3.4));
+  EXPECT_DOUBLE_EQ(kBitBudget - 3.4, GetRemainingBudgetSync(kOrigin2).bits);
+  EXPECT_DOUBLE_EQ(kBitBudget - 1.75 - 2.5,
+                   GetRemainingBudgetSync(kOrigin1).bits);
+  EXPECT_EQ(2, GetNumBudgetEntriesSync(kOrigin1));
+  EXPECT_EQ(1, GetNumBudgetEntriesSync(kOrigin2));
+  EXPECT_EQ(3, GetTotalNumBudgetEntriesSync());
+
+  // Advance partway through the lookback window, to the point where the first
+  // call to `PurgeStale()` happens.
+  task_environment_.FastForwardBy(base::Hours(kInitialPurgeIntervalHours));
+
+  // Remaining budgets continue to take into account the withdrawals above, as
+  // they are still within the lookback window.
+  EXPECT_DOUBLE_EQ(kBitBudget - 3.4, GetRemainingBudgetSync(kOrigin2).bits);
+  EXPECT_DOUBLE_EQ(kBitBudget - 1.75 - 2.5,
+                   GetRemainingBudgetSync(kOrigin1).bits);
+
+  // An additional withdrawal for `kOrigin1` at a later time from previous ones
+  // is debited appropriately.
+  EXPECT_EQ(OperationResult::kSuccess, MakeBudgetWithdrawalSync(kOrigin1, 1.0));
+  EXPECT_DOUBLE_EQ(kBitBudget - 1.75 - 2.5 - 1.0,
+                   GetRemainingBudgetSync(kOrigin1).bits);
+  EXPECT_DOUBLE_EQ(kBitBudget - 3.4, GetRemainingBudgetSync(kOrigin2).bits);
+  EXPECT_EQ(3, GetNumBudgetEntriesSync(kOrigin1));
+  EXPECT_EQ(1, GetNumBudgetEntriesSync(kOrigin2));
+  EXPECT_EQ(4, GetTotalNumBudgetEntriesSync());
+
+  // Advance further through the lookback window, to the point where the second
+  // call to `PurgeStale()` happens.
+  task_environment_.FastForwardBy(base::Hours(kRecurringPurgeIntervalHours));
+  // Advance further through the lookback window, to the point where the third
+  // call to `PurgeStale()` happens.
+  task_environment_.FastForwardBy(base::Hours(kRecurringPurgeIntervalHours));
+  // Advance further through the lookback window, to the point where the fourth
+  // call to `PurgeStale()` happens.
+  task_environment_.FastForwardBy(base::Hours(kRecurringPurgeIntervalHours));
+
+  // After `PurgeStale()` runs via the timer, there will only be the most
+  // recent debit left in the budget table.
+  EXPECT_DOUBLE_EQ(kBitBudget - 1.0, GetRemainingBudgetSync(kOrigin1).bits);
+  EXPECT_DOUBLE_EQ(kBitBudget, GetRemainingBudgetSync(kOrigin2).bits);
+  EXPECT_EQ(1, GetNumBudgetEntriesSync(kOrigin1));
+  EXPECT_EQ(0, GetNumBudgetEntriesSync(kOrigin2));
+  EXPECT_EQ(1, GetTotalNumBudgetEntriesSync());
+}
+
+TEST_P(SharedStorageManagerParamTest, ResetBudgetForDevTools) {
+  // There should be no entries in the budget table.
+  EXPECT_EQ(0, GetTotalNumBudgetEntriesSync());
+
+  // SQL database hasn't yet been lazy-initialized. Nevertheless, remaining
+  // budgets should be returned as the max possible.
+  const url::Origin kOrigin1 =
+      url::Origin::Create(GURL("http://www.example1.test"));
+  EXPECT_DOUBLE_EQ(kBitBudget, GetRemainingBudgetSync(kOrigin1).bits);
+
+  // Make withdrawal.
+  EXPECT_EQ(OperationResult::kSuccess,
+            MakeBudgetWithdrawalSync(kOrigin1, 1.75));
+  EXPECT_DOUBLE_EQ(kBitBudget - 1.75, GetRemainingBudgetSync(kOrigin1).bits);
+  EXPECT_EQ(1, GetNumBudgetEntriesSync(kOrigin1));
+  EXPECT_EQ(1, GetTotalNumBudgetEntriesSync());
+
+  // Reset budget.
+  EXPECT_EQ(OperationResult::kSuccess, ResetBudgetForDevToolsSync(kOrigin1));
+  EXPECT_DOUBLE_EQ(kBitBudget, GetRemainingBudgetSync(kOrigin1).bits);
+  EXPECT_EQ(0, GetNumBudgetEntriesSync(kOrigin1));
+  EXPECT_EQ(0, GetTotalNumBudgetEntriesSync());
 }
 
 class SharedStorageManagerErrorParamTest
@@ -1422,9 +1901,9 @@ TEST_P(SharedStorageManagerParamTest, AsyncOperations) {
   listener_utility.FlushForId(id2);
 
   EXPECT_EQ(OperationResult::kSuccess, result8);
-  EXPECT_THAT(listener_utility.TakeEntriesForId(id2),
-              ElementsAre(std::make_pair(u"key1", u"value1value1"),
-                          std::make_pair(u"key2", u"value1")));
+  EXPECT_THAT(
+      listener_utility.TakeEntriesForId(id2),
+      ElementsAre(Pair(u"key1", u"value1value1"), Pair(u"key2", u"value1")));
   EXPECT_EQ(1U, listener_utility.BatchCountForId(id2));
   listener_utility.VerifyNoErrorForId(id2);
 
@@ -1460,7 +1939,7 @@ TEST_P(SharedStorageManagerPurgeMatchingOriginsParamTest, SinceThreshold) {
   operation_list.push(DBOperation(Type::DB_FETCH_ORIGINS));
 
   base::Time threshold1 = base::Time::Now();
-  OriginMatcherFunctionUtility matcher_utility;
+  StorageKeyPolicyMatcherFunctionUtility matcher_utility;
   size_t matcher_id1 = matcher_utility.RegisterMatcherFunction({kOrigin1});
 
   operation_list.push(DBOperation(
@@ -1542,7 +2021,7 @@ TEST_P(SharedStorageManagerPurgeMatchingOriginsParamTest, SinceThreshold) {
   base::Time threshold2 = base::Time::Now() + base::Days(1);
   base::Time override_time1 = threshold2 + base::Milliseconds(5);
   operation_list.push(DBOperation(
-      Type::DB_OVERRIDE_TIME, kOrigin1,
+      Type::DB_OVERRIDE_TIME_ORIGIN, kOrigin1,
       {TestDatabaseOperationReceiver::SerializeTime(override_time1)}));
 
   size_t matcher_id2 =
@@ -1565,12 +2044,12 @@ TEST_P(SharedStorageManagerPurgeMatchingOriginsParamTest, SinceThreshold) {
 
   base::Time threshold3 = threshold2 + base::Days(1);
   operation_list.push(
-      DBOperation(Type::DB_OVERRIDE_TIME, kOrigin3,
+      DBOperation(Type::DB_OVERRIDE_TIME_ORIGIN, kOrigin3,
                   {TestDatabaseOperationReceiver::SerializeTime(threshold3)}));
 
   base::Time threshold4 = threshold3 + base::Seconds(100);
   operation_list.push(
-      DBOperation(Type::DB_OVERRIDE_TIME, kOrigin5,
+      DBOperation(Type::DB_OVERRIDE_TIME_ORIGIN, kOrigin5,
                   {TestDatabaseOperationReceiver::SerializeTime(threshold4)}));
 
   size_t matcher_id3 = matcher_utility.RegisterMatcherFunction(
@@ -1656,7 +2135,7 @@ TEST_P(SharedStorageManagerPurgeMatchingOriginsParamTest, SinceThreshold) {
   FetchOrigins(&infos2);
 
   bool success1 = false;
-  OverrideLastUsedTime(kOrigin1, override_time1, &success1);
+  OverrideCreationTime(kOrigin1, override_time1, &success1);
 
   // Verify that the only match we get is for `kOrigin1`, whose `last_used_time`
   // is between the time parameters.
@@ -1680,9 +2159,9 @@ TEST_P(SharedStorageManagerPurgeMatchingOriginsParamTest, SinceThreshold) {
   FetchOrigins(&infos3);
 
   bool success2 = false;
-  OverrideLastUsedTime(kOrigin3, threshold3, &success2);
+  OverrideCreationTime(kOrigin3, threshold3, &success2);
   bool success3 = false;
-  OverrideLastUsedTime(kOrigin5, threshold4, &success3);
+  OverrideCreationTime(kOrigin5, threshold4, &success3);
 
   // Verify that we still get matches for `kOrigin3`, whose `last_used_time` is
   // exactly at the `begin` time, as well as for `kOrigin5`, whose
@@ -1751,7 +2230,7 @@ TEST_P(SharedStorageManagerPurgeMatchingOriginsParamTest, SinceThreshold) {
 
   std::vector<url::Origin> origins;
   for (const auto& info : infos2)
-    origins.push_back(info->origin);
+    origins.push_back(info->storage_key.origin());
   EXPECT_THAT(origins,
               ElementsAre(kOrigin1, kOrigin2, kOrigin3, kOrigin4, kOrigin5));
 
@@ -1770,7 +2249,7 @@ TEST_P(SharedStorageManagerPurgeMatchingOriginsParamTest, SinceThreshold) {
 
   origins.clear();
   for (const auto& info : infos3)
-    origins.push_back(info->origin);
+    origins.push_back(info->storage_key.origin());
   EXPECT_THAT(origins, ElementsAre(kOrigin2, kOrigin3, kOrigin4, kOrigin5));
 
   EXPECT_TRUE(success2);
@@ -1790,7 +2269,7 @@ TEST_P(SharedStorageManagerPurgeMatchingOriginsParamTest, SinceThreshold) {
 
   origins.clear();
   for (const auto& info : infos4)
-    origins.push_back(info->origin);
+    origins.push_back(info->storage_key.origin());
   EXPECT_THAT(origins, ElementsAre(kOrigin2, kOrigin4));
 
   // Database is still intact after trimming memory (and possibly performing

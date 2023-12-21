@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,6 +20,7 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/no_destructor.h"
 #include "base/numerics/safe_conversions.h"
@@ -413,7 +414,6 @@ class HarfBuzzLineBreaker {
                       float glyph_height_for_test,
                       WordWrapBehavior word_wrap_behavior,
                       const std::u16string& text,
-                      const BreakList<size_t>* words,
                       const internal::TextRunList& run_list)
       : max_width_((max_width == 0) ? SK_ScalarMax : SkIntToScalar(max_width)),
         min_baseline_(min_baseline),
@@ -421,7 +421,6 @@ class HarfBuzzLineBreaker {
         glyph_height_for_test_(glyph_height_for_test),
         word_wrap_behavior_(word_wrap_behavior),
         text_(text),
-        words_(words),
         run_list_(run_list),
         max_descent_(0),
         max_ascent_(0),
@@ -435,8 +434,8 @@ class HarfBuzzLineBreaker {
 
   // Constructs a single line for |text_| using |run_list_|.
   void ConstructSingleLine() {
-    for (size_t i = 0; i < run_list_.size(); i++) {
-      const internal::TextRunHarfBuzz& run = *(run_list_.runs()[i]);
+    for (size_t i = 0; i < run_list_->size(); i++) {
+      const internal::TextRunHarfBuzz& run = *(run_list_->runs()[i]);
       internal::LineSegment segment;
       segment.run = i;
       segment.char_range = run.range;
@@ -448,10 +447,17 @@ class HarfBuzzLineBreaker {
 
   // Constructs multiple lines for |text_| based on words iteration approach.
   void ConstructMultiLines() {
-    DCHECK(words_);
-    for (auto iter = words_->breaks().begin(); iter != words_->breaks().end();
-         iter++) {
-      const Range word_range = words_->GetRange(iter);
+    // Get an iterator that pass through valid line breaking positions.
+    // See https://www.unicode.org/reports/tr14/tr14-11.html for lines breaking.
+    base::i18n::BreakIterator words(*text_,
+                                    base::i18n::BreakIterator::BREAK_LINE);
+    const bool success = words.Init();
+    DCHECK(success);
+    if (!success)
+      return;
+
+    while (words.Advance()) {
+      const Range word_range = Range(words.prev(), words.pos());
       std::vector<internal::LineSegment> word_segments;
       SkScalar word_width = GetWordWidth(word_range, &word_segments);
 
@@ -459,7 +465,7 @@ class HarfBuzzLineBreaker {
       // the word to the current line.
       bool new_line = false;
       if (!word_segments.empty() &&
-          IsNewlineSegment(text_, word_segments.back())) {
+          IsNewlineSegment(*text_, word_segments.back())) {
         new_line = true;
 
         // Subtract the width of newline segments, they are not drawn.
@@ -488,7 +494,7 @@ class HarfBuzzLineBreaker {
     // the final line.
     internal::Line* line = &lines_.back();
     if (line->display_text_index == 0)
-      line->display_text_index = text_.size();
+      line->display_text_index = text_->size();
     // Add an empty line to finish the line size calculation and remove it.
     AdvanceLine();
     lines_.pop_back();
@@ -517,8 +523,8 @@ class HarfBuzzLineBreaker {
       std::sort(line->segments.begin(), line->segments.end(),
                 [this](const internal::LineSegment& s1,
                        const internal::LineSegment& s2) -> bool {
-                  return run_list_.logical_to_visual(s1.run) <
-                         run_list_.logical_to_visual(s2.run);
+                  return run_list_->logical_to_visual(s1.run) <
+                         run_list_->logical_to_visual(s2.run);
                 });
 
       line->size.set_height(
@@ -532,11 +538,11 @@ class HarfBuzzLineBreaker {
       // drawn.
       float line_width = line->size.width();
       if (!line->segments.empty() &&
-          IsNewlineSegment(text_, line->segments.back())) {
+          IsNewlineSegment(*text_, line->segments.back())) {
         line_width -= line->segments.back().width();
       }
       if (line->segments.size() > 1 &&
-          IsNewlineSegment(text_, line->segments.front())) {
+          IsNewlineSegment(*text_, line->segments.front())) {
         line_width -= line->segments.front().width();
       }
       total_size_.set_height(total_size_.height() + line->size.height());
@@ -560,7 +566,7 @@ class HarfBuzzLineBreaker {
       if (has_truncated)
         break;
 
-      if (IsNewlineSegment(text_, segment) ||
+      if (IsNewlineSegment(*text_, segment) ||
           segment.width() <= available_width_ ||
           word_wrap_behavior_ == IGNORE_LONG_WORDS) {
         AddLineSegment(segment, true);
@@ -569,13 +575,14 @@ class HarfBuzzLineBreaker {
                word_wrap_behavior_ == WRAP_LONG_WORDS);
         has_truncated = (word_wrap_behavior_ == TRUNCATE_LONG_WORDS);
 
-        const internal::TextRunHarfBuzz& run = *(run_list_.runs()[segment.run]);
+        const internal::TextRunHarfBuzz& run =
+            *(run_list_->runs()[segment.run]);
         internal::LineSegment remaining_segment = segment;
         while (!remaining_segment.char_range.is_empty()) {
           size_t cutoff_pos = GetCutoffPos(remaining_segment);
           SkScalar width = run.GetGlyphWidthForCharRange(
               Range(remaining_segment.char_range.start(), cutoff_pos));
-          if (width > 0) {
+          if (remaining_segment.char_range.start() != cutoff_pos) {
             internal::LineSegment cut_segment;
             cut_segment.run = remaining_segment.run;
             cut_segment.char_range =
@@ -602,7 +609,7 @@ class HarfBuzzLineBreaker {
   void AddLineSegment(const internal::LineSegment& segment, bool multiline) {
     DCHECK(!lines_.empty());
     internal::Line* line = &lines_.back();
-    const internal::TextRunHarfBuzz& run = *(run_list_.runs()[segment.run]);
+    const internal::TextRunHarfBuzz& run = *(run_list_->runs()[segment.run]);
     if (!line->segments.empty()) {
       internal::LineSegment& last_segment = line->segments.back();
       // Merge segments that belong to the same run.
@@ -628,7 +635,7 @@ class HarfBuzzLineBreaker {
     line->size.set_width(line->size.width() + segment.width());
 
     // Newline characters are not drawn for multi-line, ignore their metrics.
-    if (!multiline || !IsNewlineSegment(text_, segment)) {
+    if (!multiline || !IsNewlineSegment(*text_, segment)) {
       SkFont font(run.font_params.skia_face, run.font_params.font_size);
       font.setEdging(run.font_params.render_params.antialiasing
                          ? SkFont::Edging::kAntiAlias
@@ -661,7 +668,7 @@ class HarfBuzzLineBreaker {
   size_t GetCutoffPos(const internal::LineSegment& segment) const {
     DCHECK(!segment.char_range.is_empty());
     const internal::TextRunHarfBuzz& run =
-        *(run_list_.runs()[segment.run]).get();
+        *(run_list_->runs()[segment.run]).get();
     size_t end_pos = segment.char_range.start();
     SkScalar width = 0;
     while (end_pos < segment.char_range.end()) {
@@ -674,8 +681,7 @@ class HarfBuzzLineBreaker {
     }
 
     const size_t valid_end_pos = std::max(
-        segment.char_range.start(),
-        static_cast<uint32_t>(FindValidBoundaryBefore(text_, end_pos)));
+        segment.char_range.start(), FindValidBoundaryBefore(*text_, end_pos));
     if (end_pos != valid_end_pos) {
       end_pos = valid_end_pos;
       width = run.GetGlyphWidthForCharRange(
@@ -686,10 +692,10 @@ class HarfBuzzLineBreaker {
     // need to put at least one character in the line. Note that, we should
     // not separate surrogate pair or combining characters.
     // See RenderTextHarfBuzzTest.Multiline_MinWidth for an example.
-    if (width == 0 && available_width_ == max_width_) {
-      end_pos = std::min(
-          segment.char_range.end(),
-          static_cast<uint32_t>(FindValidBoundaryAfter(text_, end_pos + 1)));
+    if (width == 0 && available_width_ == max_width_ &&
+        end_pos < segment.char_range.end()) {
+      end_pos = std::min(segment.char_range.end(),
+                         FindValidBoundaryAfter(*text_, end_pos + 1));
     }
 
     return end_pos;
@@ -699,14 +705,13 @@ class HarfBuzzLineBreaker {
   // segments based on its runs.
   SkScalar GetWordWidth(const Range& word_range,
                         std::vector<internal::LineSegment>* segments) const {
-    DCHECK(words_);
     if (word_range.is_empty() || segments == nullptr)
       return 0;
-    size_t run_start_index = run_list_.GetRunIndexAt(word_range.start());
-    size_t run_end_index = run_list_.GetRunIndexAt(word_range.end() - 1);
+    size_t run_start_index = run_list_->GetRunIndexAt(word_range.start());
+    size_t run_end_index = run_list_->GetRunIndexAt(word_range.end() - 1);
     SkScalar width = 0;
     for (size_t i = run_start_index; i <= run_end_index; i++) {
-      const internal::TextRunHarfBuzz& run = *(run_list_.runs()[i]);
+      const internal::TextRunHarfBuzz& run = *(run_list_->runs()[i]);
       const Range char_range = run.range.Intersect(word_range);
       DCHECK(!char_range.is_empty());
       const SkScalar char_width = run.GetGlyphWidthForCharRange(char_range);
@@ -744,9 +749,8 @@ class HarfBuzzLineBreaker {
   const float min_height_;
   const float glyph_height_for_test_;
   const WordWrapBehavior word_wrap_behavior_;
-  const std::u16string& text_;
-  const raw_ptr<const BreakList<size_t>> words_;
-  const internal::TextRunList& run_list_;
+  const raw_ref<const std::u16string> text_;
+  const raw_ref<const internal::TextRunList> run_list_;
 
   // Stores the resulting lines.
   std::vector<internal::Line> lines_;
@@ -804,6 +808,14 @@ internal::TextRunHarfBuzz::FontParams CreateFontParams(
   // Odd BiDi embedding levels correspond to RTL runs.
   font_params.is_rtl = (font_params.level % 2) == 1;
   return font_params;
+}
+
+BASE_FEATURE(kRemoveFontLinkFallbacks,
+             "RemoveFontLinkFallbacks",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+bool IsRemoveFontLinkFallbacks() {
+  return base::FeatureList::IsEnabled(kRemoveFontLinkFallbacks);
 }
 
 }  // namespace
@@ -1705,7 +1717,7 @@ void RenderTextHarfBuzz::EnsureLayout() {
         display_rect().width(),
         DetermineBaselineCenteringText(height, font_list()), height,
         glyph_height_for_test_, word_wrap_behavior(), GetDisplayText(),
-        multiline() ? &GetLineBreaks() : nullptr, *run_list);
+        *run_list);
 
     if (multiline())
       line_breaker.ConstructMultiLines();
@@ -1713,7 +1725,9 @@ void RenderTextHarfBuzz::EnsureLayout() {
       line_breaker.ConstructSingleLine();
     std::vector<internal::Line> lines;
     line_breaker.FinalizeLines(&lines, &total_size_);
-    if (multiline() && max_lines()) {
+    // In multiline, only ELIDE_TAIL is supported. max_lines_ is not used
+    // otherwise.
+    if (multiline() && max_lines() && elide_behavior() == ELIDE_TAIL) {
       // TODO(crbug.com/866720): no more than max_lines() should be rendered.
       // Remove the IsHomogeneous() condition for the following DCHECK when the
       // bug is fixed.
@@ -2067,38 +2081,40 @@ void RenderTextHarfBuzz::ShapeRuns(
     return;
   }
 
-  std::vector<Font> fallback_font_list;
-  {
-    SCOPED_UMA_HISTOGRAM_LONG_TIMER("RenderTextHarfBuzz.GetFallbackFontsTime");
-    TRACE_EVENT1("ui", "RenderTextHarfBuzz::GetFallbackFonts", "script",
-                 TRACE_STR_COPY(uscript_getShortName(font_params.script)));
-    fallback_font_list = GetFallbackFonts(primary_font);
+  if (!IsRemoveFontLinkFallbacks()) {
+    std::vector<Font> fallback_font_list;
+    {
+      SCOPED_UMA_HISTOGRAM_LONG_TIMER(
+          "RenderTextHarfBuzz.GetFallbackFontsTime");
+      TRACE_EVENT1("ui", "RenderTextHarfBuzz::GetFallbackFonts", "script",
+                   TRACE_STR_COPY(uscript_getShortName(font_params.script)));
+      fallback_font_list = GetFallbackFonts(primary_font);
 
 #if BUILDFLAG(IS_WIN)
-    // Append fonts in the fallback list of the fallback fonts.
-    // TODO(tapted): Investigate whether there's a case that benefits from this
-    // on Mac.
-    for (const auto& fallback_font : fallback_font_candidates) {
-      std::vector<Font> fallback_fonts = GetFallbackFonts(fallback_font);
-      fallback_font_list.insert(fallback_font_list.end(),
-                                fallback_fonts.begin(), fallback_fonts.end());
-    }
+      // Append fonts in the fallback list of the fallback fonts.
+      // TODO(tapted): Investigate whether there's a case that benefits from
+      // this on Mac.
+      for (const auto& fallback_font : fallback_font_candidates) {
+        std::vector<Font> fallback_fonts = GetFallbackFonts(fallback_font);
+        fallback_font_list.insert(fallback_font_list.end(),
+                                  fallback_fonts.begin(), fallback_fonts.end());
+      }
 
-    // Add Segoe UI and its associated linked fonts to the fallback font list to
-    // ensure that the fallback list covers the basic cases.
-    // http://crbug.com/467459. On some Windows configurations the default font
-    // could be a raster font like System, which would not give us a reasonable
-    // fallback font list.
-    Font segoe("Segoe UI", 13);
-    if (!FontWasAlreadyTried(segoe.platform_font()->GetNativeSkTypeface(),
-                             &fallback_fonts_already_tried)) {
-      std::vector<Font> default_fallback_families = GetFallbackFonts(segoe);
-      fallback_font_list.insert(fallback_font_list.end(),
-                                default_fallback_families.begin(),
-                                default_fallback_families.end());
-    }
+      // Add Segoe UI and its associated linked fonts to the fallback font list
+      // to ensure that the fallback list covers the basic cases.
+      // http://crbug.com/467459. On some Windows configurations the default
+      // font could be a raster font like System, which would not give us a
+      // reasonable fallback font list.
+      Font segoe("Segoe UI", 13);
+      if (!FontWasAlreadyTried(segoe.platform_font()->GetNativeSkTypeface(),
+                               &fallback_fonts_already_tried)) {
+        std::vector<Font> default_fallback_families = GetFallbackFonts(segoe);
+        fallback_font_list.insert(fallback_font_list.end(),
+                                  default_fallback_families.begin(),
+                                  default_fallback_families.end());
+      }
 #endif
-  }
+    }
 
   // Use a set to track the fallback fonts and avoid duplicate entries.
   SCOPED_UMA_HISTOGRAM_LONG_TIMER(
@@ -2108,30 +2124,32 @@ void RenderTextHarfBuzz::ShapeRuns(
 
   // Try shaping with the fallback fonts.
   for (const auto& font : fallback_font_list) {
-    std::string font_name = font.GetFontName();
+      std::string font_name = font.GetFontName();
 
-    FontRenderParamsQuery query;
-    query.families.push_back(font_name);
-    query.pixel_size = font_params.font_size;
-    query.style = font_params.italic ? Font::ITALIC : 0;
-    FontRenderParams fallback_render_params = GetFontRenderParams(query, NULL);
-    internal::TextRunHarfBuzz::FontParams test_font_params = font_params;
-    if (test_font_params.SetRenderParamsOverrideSkiaFaceFromFont(
-            font, fallback_render_params) &&
-        !FontWasAlreadyTried(test_font_params.skia_face,
-                             &fallback_fonts_already_tried)) {
-      ShapeRunsWithFont(text, test_font_params, &runs);
-      MarkFontAsTried(test_font_params.skia_face,
-                      &fallback_fonts_already_tried);
-    }
-    if (runs.empty()) {
-      TRACE_EVENT_INSTANT2("ui", "RenderTextHarfBuzz::FallbackFont",
-                           TRACE_EVENT_SCOPE_THREAD, "font_name",
-                           TRACE_STR_COPY(font_name.c_str()),
-                           "primary_font_name", primary_font.GetFontName());
-      RecordShapeRunsFallback(ShapeRunFallback::FALLBACKS);
-      return;
-    }
+      FontRenderParamsQuery query;
+      query.families.push_back(font_name);
+      query.pixel_size = font_params.font_size;
+      query.style = font_params.italic ? Font::ITALIC : 0;
+      FontRenderParams fallback_render_params =
+          GetFontRenderParams(query, nullptr);
+      internal::TextRunHarfBuzz::FontParams test_font_params = font_params;
+      if (test_font_params.SetRenderParamsOverrideSkiaFaceFromFont(
+              font, fallback_render_params) &&
+          !FontWasAlreadyTried(test_font_params.skia_face,
+                               &fallback_fonts_already_tried)) {
+        ShapeRunsWithFont(text, test_font_params, &runs);
+        MarkFontAsTried(test_font_params.skia_face,
+                        &fallback_fonts_already_tried);
+      }
+      if (runs.empty()) {
+        TRACE_EVENT_INSTANT2("ui", "RenderTextHarfBuzz::FallbackFont",
+                             TRACE_EVENT_SCOPE_THREAD, "font_name",
+                             TRACE_STR_COPY(font_name.c_str()),
+                             "primary_font_name", primary_font.GetFontName());
+        RecordShapeRunsFallback(ShapeRunFallback::FALLBACKS);
+        return;
+      }
+  }
   }
 
   for (internal::TextRunHarfBuzz*& run : runs) {

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,17 +8,17 @@
 #import <Foundation/Foundation.h>
 #include <Security/Security.h>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/scoped_cftyperef.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
+#import "base/task/sequenced_task_runner.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "components/device_event_log/device_event_log.h"
 #include "device/fido/mac/authenticator_config.h"
 #include "device/fido/mac/keychain.h"
@@ -28,17 +28,6 @@ namespace fido {
 namespace mac {
 
 namespace {
-
-API_AVAILABLE(macosx(10.12.2))
-base::ScopedCFTypeRef<SecAccessControlRef> DefaultAccessControl() {
-  // The default access control policy used for WebAuthn credentials stored by
-  // the Touch ID platform authenticator.
-  return base::ScopedCFTypeRef<SecAccessControlRef>(
-      SecAccessControlCreateWithFlags(
-          kCFAllocatorDefault, kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-          kSecAccessControlPrivateKeyUsage | kSecAccessControlUserPresence,
-          nullptr));
-}
 
 // Returns whether the main executable is signed with a keychain-access-groups
 // entitlement that contains |keychain_access_group|. This is required for the
@@ -70,7 +59,6 @@ bool ExecutableHasKeychainAccessGroupEntitlement(
 
 // Returns whether creating a key pair in the secure enclave succeeds. Keys are
 // not persisted to the keychain.
-API_AVAILABLE(macosx(10.12.2))
 bool CanCreateSecureEnclaveKeyPairBlocking() {
   base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
                                                 base::BlockingType::MAY_BLOCK);
@@ -155,11 +143,7 @@ void TouchIdContext::TouchIdAvailable(
       std::move(callback));
 }
 
-TouchIdContext::TouchIdContext()
-    : context_([[LAContext alloc] init]),
-      access_control_(DefaultAccessControl()),
-      callback_(),
-      weak_ptr_factory_(this) {}
+TouchIdContext::TouchIdContext() : context_([[LAContext alloc] init]) {}
 
 TouchIdContext::~TouchIdContext() {
   // Invalidating the LAContext will dismiss any pending UI dialog (e.g. if the
@@ -172,7 +156,7 @@ void TouchIdContext::PromptTouchId(const std::u16string& reason,
                                    Callback callback) {
   callback_ = std::move(callback);
   scoped_refptr<base::SequencedTaskRunner> runner =
-      base::SequencedTaskRunnerHandle::Get();
+      base::SequencedTaskRunner::GetCurrentDefault();
   auto weak_self = weak_ptr_factory_.GetWeakPtr();
   // If evaluation succeeds (i.e. user provides a fingerprint), |context_| can
   // be used for one signing operation. N.B. even in |MakeCredentialOperation|,

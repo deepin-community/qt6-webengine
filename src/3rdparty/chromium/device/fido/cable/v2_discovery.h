@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,10 +9,10 @@
 #include <memory>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/component_export.h"
 #include "base/containers/flat_set.h"
 #include "base/containers/span.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "device/fido/cable/cable_discovery_data.h"
@@ -36,7 +36,7 @@ class COMPONENT_EXPORT(DEVICE_FIDO) Discovery : public FidoDeviceDiscovery {
   using AdvertEventStream = EventStream<base::span<const uint8_t, kAdvertSize>>;
 
   Discovery(
-      FidoRequestType request_type,
+      CableRequestType request_type,
       network::mojom::NetworkContext* network_context,
       absl::optional<base::span<const uint8_t, kQRKeySize>> qr_generator_key,
       std::unique_ptr<AdvertEventStream> advert_stream,
@@ -78,7 +78,7 @@ class COMPONENT_EXPORT(DEVICE_FIDO) Discovery : public FidoDeviceDiscovery {
   static std::vector<UnpairedKeys> KeysFromExtension(
       const std::vector<CableDiscoveryData>& extension_contents);
 
-  const FidoRequestType request_type_;
+  const CableRequestType request_type_;
   const raw_ptr<network::mojom::NetworkContext> network_context_;
   const absl::optional<UnpairedKeys> qr_keys_;
   const std::vector<UnpairedKeys> extension_keys_;

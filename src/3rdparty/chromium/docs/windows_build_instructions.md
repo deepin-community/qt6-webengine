@@ -23,10 +23,8 @@ Are you a Google employee? See
 
 ### Visual Studio
 
-Chromium requires [Visual Studio 2017](https://docs.microsoft.com/en-us/visualstudio/releasenotes/vs2017-relnotes) (>=15.7.2)
-to build, but [Visual Studio 2019](https://docs.microsoft.com/en-us/visualstudio/releases/2019/release-notes) (>=16.0.0)
-is preferred. Visual Studio can also be used to debug Chromium, and version 2019 is
-preferred for this as it handles Chromium's large debug information much better.
+Chromium requires [Visual Studio 2022](https://learn.microsoft.com/en-us/visualstudio/releases/2022/release-notes) (>=17.0.0)
+to build. Visual Studio can also be used to debug Chromium.
 The clang-cl compiler is used but Visual Studio's header files, libraries, and
 some tools are required. Visual Studio Community Edition should work if its
 license is appropriate for you. You must install the "Desktop development with
@@ -51,17 +49,13 @@ $ PATH_TO_INSTALLER.EXE ^
 --includeRecommended
 ```
 
--You must have the version 10.0.20348.0 or higher [Windows 10 SDK](https://developer.microsoft.com/en-us/windows/downloads/sdk-archive/)
-installed. This
-can be installed separately or by checking the appropriate box in the Visual
-Studio Installer.
+-You must have the version 10.0.22621.0 [Windows 11 SDK](https://developer.microsoft.com/en-us/windows/downloads/windows-sdk/)
+installed. This can be installed separately or by checking the appropriate box
+in the Visual Studio Installer.
 
-The SDK Debugging Tools must also be installed. If the Windows 10 SDK was
-installed via the Visual Studio installer, then they can be installed by going
-to: Control Panel → Programs → Programs and Features → Select the "Windows
-Software Development Kit" → Change → Change → Check "Debugging Tools For
-Windows" → Change. Or, you can download the standalone SDK installer and use it
-to install the Debugging Tools.
+The 10.0.22621.755 (Windows 11) SDK Debugging Tools must also be installed. This
+version of the Debugging tools is needed in order to support reading the
+large-page PDBs that Chrome uses to allow greater-than 4 GiB PDBs.
 
 ## Install `depot_tools`
 
@@ -97,12 +91,9 @@ Also, add a DEPOT_TOOLS_WIN_TOOLCHAIN environment variable in the same way, and 
 it to 0. This tells depot_tools to use your locally installed version of Visual
 Studio (by default, depot_tools will try to use a google-internal version).
 
-You may also have to set variable `vs2017_install` or `vs2019_install` or
-`vs2022_install` to your installation path of Visual Studio 2017 or 19 or 22, like
-`set vs2019_install=C:\Program Files (x86)\Microsoft Visual Studio\2019\Professional`
-for Visual Studio 2019, or
-`set vs2022_install=C:\Program Files\Microsoft Visual Studio\2022\Professional`
-for Visual Studio 2022.
+You may also have to set variable `vs2022_install` to your installation path of
+Visual Studio 2022, like
+`set vs2022_install=C:\Program Files\Microsoft Visual Studio\2022\Professional`.
 
 From a cmd.exe shell, run:
 
@@ -162,8 +153,15 @@ $ fetch chromium
 If you don't want the full repo history, you can save a lot of time by
 adding the `--no-history` flag to `fetch`.
 
-Expect the command to take 30 minutes on even a fast connection, and many
-hours on slower ones.
+Expect the command to take over an hour on even a fast connection, and many
+hours on slower ones. You should configure your PC so that it doesn't sleep
+or hibernate during the fetch or else errors may occur. If errors occur while
+fetching sub-repos then you can start over, or you may be able to correct them
+by going to the chromium/src directory and running this command:
+
+```shell
+$ gclient sync
+```
 
 When `fetch` completes, it will have created a hidden `.gclient` file and a
 directory called `src` in the working directory. The remaining instructions
@@ -213,15 +211,14 @@ There are some gn flags that can improve build speeds. You can specify these
 in the editor that appears when you create your output directory
 (`gn args out/Default`) or on the gn gen command line
 (`gn gen out/Default --args="is_component_build = true is_debug = true"`).
-Some helpful settings to consider using include:
 * `use_jumbo_build = true` - [Jumbo/unity](jumbo.md) builds.
-* `is_component_build = true` - this uses more, smaller DLLs, and incremental
-linking.
+* `is_component_build = true` - this uses more, smaller DLLs, and may avoid
+having to relink chrome.dll after every change.
 * `enable_nacl = false` - this disables Native Client which is usually not
 needed for local builds.
-* `target_cpu = "x86"` - x86 builds are slightly faster than x64 builds and
-support incremental linking for more targets. Note that if you set this but
-don't' set enable_nacl = false then build times may get worse.
+* `target_cpu = "x86"` - x86 builds may be slightly faster than x64 builds. Note
+that if you set this but don't set `enable_nacl = false` then build times may
+get worse.
 * `blink_symbol_level = 0` - turn off source-level debugging for
 blink to reduce build times, appropriate if you don't plan to debug blink.
 * `v8_symbol_level = 0` - turn off source-level debugging for v8 to reduce
@@ -333,7 +330,6 @@ an excluded directory:
 ```shell
 $ set NINJA_SUMMARIZE_BUILD=1
 $ autoninja -C out\Default base
-"c:\src\depot_tools\ninja.exe" -C out\Default base -j 10 -d stats
 metric                  count   avg (us)        total (ms)
 .ninja parse            3555    1539.4          5472.6
 canonicalize str        1383032 0.0             12.7
@@ -350,7 +346,7 @@ CLParser::Parse         45      1889.1          85.0
 
 You can also get a visual report of the build performance with
 [ninjatracing](https://github.com/nico/ninjatracing). This converts the
-.ninja_log file into a .json file which can be loaded into chrome://tracing:
+.ninja_log file into a .json file which can be loaded into [chrome://tracing](chrome://tracing):
 
 ```shell
 $ python ninjatracing out\Default\.ninja_log >build.json
@@ -421,10 +417,11 @@ Intellisense support.
 If you want to use Visual Studio Intellisense when developing Chromium, use the
 `--ide` command line argument to `gn gen` when you generate your output
 directory (as described on the [get the code](https://dev.chromium.org/developers/how-tos/get-the-code)
-page):
+page). This is an example when your checkout is `C:\src\chromium` and your
+output directory is `out\Default`:
 
 ```shell
-$ gn gen --ide=vs out\Default
+$ gn gen --ide=vs --ninja-executable=C:\src\chromium\src\third_party\ninja\ninja.exe out\Default
 $ devenv out\Default\all.sln
 ```
 
@@ -443,7 +440,7 @@ let you compile and run Chrome in the IDE but will not show any source files
 is:
 
 ```
-$ gn gen --ide=vs --filters=//chrome --no-deps out\Default
+$ gn gen --ide=vs --ninja-executable=C:\src\chromium\src\third_party\ninja\ninja.exe --filters=//chrome --no-deps out\Default
 ```
 
 You can selectively add other directories you care about to the filter like so:

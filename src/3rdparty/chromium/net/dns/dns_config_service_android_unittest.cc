@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "base/android/build_info.h"
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/test/task_environment.h"
@@ -23,8 +23,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace net {
-namespace internal {
+namespace net::internal {
 namespace {
 
 const IPEndPoint kNameserver1(IPAddress(1, 2, 3, 4), 53);
@@ -273,5 +272,4 @@ TEST_F(DnsConfigServiceAndroidTest, ReadsEmptySearchSuffixes) {
 }
 
 }  // namespace
-}  // namespace internal
-}  // namespace net
+}  // namespace net::internal

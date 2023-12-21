@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,9 +20,7 @@
 namespace views {
 
 SelectionController::SelectionController(SelectionControllerDelegate* delegate)
-    : aggregated_clicks_(0),
-      delegate_(delegate),
-      handles_selection_clipboard_(false) {
+    : delegate_(delegate) {
   // If selection clipboard is used, update it on a text selection.
   if (ui::Clipboard::IsSupportedClipboardBuffer(
           ui::ClipboardBuffer::kSelection)) {
@@ -72,7 +70,7 @@ bool SelectionController::OnMousePressed(
         SelectAll();
         break;
       default:
-        NOTREACHED();
+        NOTREACHED_NORETURN();
     }
   }
 
@@ -161,7 +159,7 @@ void SelectionController::OnMouseCaptureLost() {
     delegate_->UpdateSelectionClipboard();
 }
 
-void SelectionController::OffsetDoubleClickWord(int offset) {
+void SelectionController::OffsetDoubleClickWord(size_t offset) {
   double_click_word_.set_start(double_click_word_.start() + offset);
   double_click_word_.set_end(double_click_word_.end() + offset);
 }

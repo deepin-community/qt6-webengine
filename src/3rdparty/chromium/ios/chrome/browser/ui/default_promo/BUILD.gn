@@ -1,4 +1,4 @@
-# Copyright 2015 The Chromium Authors. All rights reserved.
+# Copyright 2015 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -9,10 +9,11 @@ source_set("utils") {
     "default_browser_utils.mm",
   ]
   deps = [
-    "//base",
+    "//components/feature_engagement/public",
+    "//ios/chrome/browser/feature_engagement",
     "//ios/chrome/browser/ui:feature_flags",
-    "//ios/chrome/browser/ui/first_run:field_trial",
   ]
+  public_deps = [ "//base" ]
   frameworks = [ "Foundation.framework" ]
 }
 
@@ -43,11 +44,12 @@ source_set("default_promo") {
   deps = [
     ":utils",
     "//base",
-    "//ios/chrome/app/strings:ios_google_chrome_strings",
-    "//ios/chrome/app/strings:ios_strings",
+    "//components/feature_engagement/public",
+    "//ios/chrome/app/strings",
+    "//ios/chrome/browser/browser_state",
+    "//ios/chrome/browser/feature_engagement",
     "//ios/chrome/browser/main:public",
     "//ios/chrome/browser/overlays",
-    "//ios/chrome/browser/ui:feature_flags",
     "//ios/chrome/browser/ui/commands",
     "//ios/chrome/browser/ui/coordinators:chrome_coordinators",
     "//ios/chrome/browser/ui/default_promo/resources",
@@ -71,9 +73,11 @@ source_set("default_promo_ui") {
   ]
   deps = [
     ":default_promo",
+    ":utils",
     "//base",
-    "//ios/chrome/app/strings:ios_google_chrome_strings_grit",
-    "//ios/chrome/app/strings:ios_strings_grit",
+    "//components/feature_engagement/public",
+    "//ios/chrome/app/strings",
+    "//ios/chrome/browser/feature_engagement",
     "//ios/chrome/browser/main:public",
     "//ios/chrome/browser/ui/commands",
     "//ios/chrome/browser/ui/infobars/banners",
@@ -83,6 +87,16 @@ source_set("default_promo_ui") {
     "//ios/public/provider/chrome/browser/branded_images:branded_images_api",
     "//ui/base",
   ]
+}
+
+source_set("test_support") {
+  configs += [ "//build/config/compiler:enable_arc" ]
+  testonly = true
+  sources = [
+    "default_browser_utils_test_support.h",
+    "default_browser_utils_test_support.mm",
+  ]
+  deps = [ ":utils" ]
 }
 
 source_set("unit_tests") {
@@ -95,11 +109,11 @@ source_set("unit_tests") {
   ]
   deps = [
     ":default_promo",
+    ":test_support",
     ":utils",
     "//base",
     "//base/test:test_support",
-    "//ios/chrome/app/strings:ios_google_chrome_strings_grit",
-    "//ios/chrome/app/strings:ios_strings_grit",
+    "//ios/chrome/app/strings",
     "//ios/chrome/browser/browser_state:test_support",
     "//ios/chrome/browser/infobars",
     "//ios/chrome/browser/infobars/test",
@@ -107,7 +121,6 @@ source_set("unit_tests") {
     "//ios/chrome/browser/overlays",
     "//ios/chrome/browser/overlays/public/common/infobars",
     "//ios/chrome/browser/overlays/test",
-    "//ios/chrome/browser/ui:feature_flags",
     "//ios/chrome/browser/ui/commands:commands",
     "//ios/chrome/browser/ui/main:scene_state_header",
     "//ios/chrome/browser/ui/main:scene_state_header",
@@ -131,9 +144,8 @@ source_set("eg2_tests") {
   deps = [
     "//base",
     "//base/test:test_support",
-    "//components/strings:components_strings_grit",
-    "//ios/chrome/app/strings:ios_chromium_strings_grit",
-    "//ios/chrome/app/strings:ios_strings_grit",
+    "//components/strings",
+    "//ios/chrome/app/strings",
     "//ios/chrome/browser/ui:feature_flags",
     "//ios/chrome/browser/ui/infobars/banners:public",
     "//ios/chrome/test:eg_test_support+eg2",

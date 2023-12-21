@@ -169,8 +169,8 @@ void CheckArrayKey(const IDBKey* key, const IDBKey::KeyArray& expected) {
 // V8 serialization code. The code below DCHECKs that
 constexpr static size_t kSSVHeaderBlinkVersionTagOffset = 0;
 constexpr static size_t kSSVHeaderBlinkVersionOffset = 1;
-constexpr static size_t kSSVHeaderV8VersionTagOffset = 2;
-// constexpr static size_t kSSVHeaderV8VersionOffset = 3;
+constexpr static size_t kSSVHeaderV8VersionTagOffset = 15;
+// constexpr static size_t kSSVHeaderV8VersionOffset = 16;
 
 // Follows the same steps as the IndexedDB value serialization code.
 void SerializeV8Value(v8::Local<v8::Value> value,
@@ -183,7 +183,7 @@ void SerializeV8Value(v8::Local<v8::Value> value,
       SerializedScriptValue::Serialize(isolate, value, options,
                                        non_throwable_exception_state);
   base::span<const uint8_t> ssv_wire_data = serialized_value->GetWireData();
-  DCHECK(wire_bytes->IsEmpty());
+  DCHECK(wire_bytes->empty());
   wire_bytes->Append(ssv_wire_data.data(),
                      static_cast<wtf_size_t>(ssv_wire_data.size()));
 

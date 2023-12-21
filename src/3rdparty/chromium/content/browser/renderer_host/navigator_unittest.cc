@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,7 +14,6 @@
 #include "content/browser/renderer_host/navigation_entry_impl.h"
 #include "content/browser/renderer_host/navigation_request.h"
 #include "content/browser/renderer_host/navigation_request_info.h"
-#include "content/browser/renderer_host/navigator.h"
 #include "content/browser/renderer_host/render_frame_host_manager.h"
 #include "content/browser/site_info.h"
 #include "content/browser/site_instance_impl.h"
@@ -397,15 +396,15 @@ TEST_F(NavigatorTest,
   // RFHI that navigation2 depends on.
   navigation2->Redirect(kUrl2);
   EXPECT_FALSE(GetSpeculativeRenderFrameHost(node));
-  EXPECT_TRUE(node->navigation_request()->associated_site_instance_type() ==
-              NavigationRequest::AssociatedSiteInstanceType::CURRENT);
+  EXPECT_TRUE(node->navigation_request()->GetAssociatedRFHType() ==
+              NavigationRequest::AssociatedRenderFrameHostType::CURRENT);
 
   navigation2->ReadyToCommit();
   EXPECT_EQ(1u, raw_runner->NumPendingTasks());
   EXPECT_TRUE(navigation2->IsDeferred());
   EXPECT_TRUE(GetSpeculativeRenderFrameHost(node));
-  EXPECT_EQ(node->navigation_request()->associated_site_instance_type(),
-            NavigationRequest::AssociatedSiteInstanceType::SPECULATIVE);
+  EXPECT_EQ(node->navigation_request()->GetRenderFrameHost(),
+            GetSpeculativeRenderFrameHost(node));
 
   // Abort the initial navigation.
   navigation1->AbortFromRenderer();
@@ -574,7 +573,8 @@ TEST_F(NavigatorTest, NoContent) {
       std::string(kNoContentHeaders, std::size(kNoContentHeaders)));
   GetLoaderForNavigationRequest(main_request)
       ->CallOnResponseStarted(std::move(response),
-                              mojo::ScopedDataPipeConsumerHandle());
+                              mojo::ScopedDataPipeConsumerHandle(),
+                              absl::nullopt);
 
   // There should be no pending nor speculative RenderFrameHost; the navigation
   // was aborted.
@@ -599,7 +599,8 @@ TEST_F(NavigatorTest, NoContent) {
       std::string(kResetContentHeaders, std::size(kResetContentHeaders)));
   GetLoaderForNavigationRequest(main_request)
       ->CallOnResponseStarted(std::move(response),
-                              mojo::ScopedDataPipeConsumerHandle());
+                              mojo::ScopedDataPipeConsumerHandle(),
+                              absl::nullopt);
 
   // There should be no pending nor speculative RenderFrameHost; the navigation
   // was aborted.
@@ -1235,8 +1236,8 @@ TEST_F(NavigatorTest, SiteInstanceDescriptionConversion) {
   // 2) Convert a descriptor pointing an instance unrelated to the current one,
   // with a different site.
   GURL kUrl2("http://b.com");
-  scoped_refptr<SiteInstance> unrelated_instance(
-      SiteInstance::CreateForURL(browser_context(), kUrl2));
+  scoped_refptr<SiteInstanceImpl> unrelated_instance(
+      SiteInstanceImpl::CreateForURL(browser_context(), kUrl2));
   EXPECT_FALSE(
       current_instance->IsRelatedSiteInstance(unrelated_instance.get()));
   {
@@ -1373,88 +1374,6 @@ TEST_F(NavigatorTest, CrossSiteClaimWithinPage) {
   EXPECT_EQ(process()->bad_msg_count(), bad_msg_count + 1);
 }
 
-// Tests that an ongoing NavigationRequest is deleted when a same-site
-// user-initiated navigation commits.
-TEST_F(NavigatorTest, NavigationRequestDeletedWhenUserInitiatedCommits) {
-  const GURL kUrl1("http://www.chromium.org/");
-  const GURL kUrl2("http://www.chromium.org/foo");
-  const GURL kUrl3("http://www.google.com/");
-
-  contents()->NavigateAndCommit(kUrl1);
-  FrameTreeNode* node = main_test_rfh()->frame_tree_node();
-
-  // The test below only makes sense if the same-site navigation below will not
-  // create a speculative RFH, so we need to ensure that we won't trigger a
-  // same-site cross-RFH navigation.
-  // Note: this will not disable RenderDocument.
-  // TODO(crbug.com/936696): Skip this test when main-frame RenderDocument is
-  // enabled.
-  DisableProactiveBrowsingInstanceSwapFor(main_test_rfh());
-
-  // Navigate same-site.
-  auto navigation =
-      NavigationSimulator::CreateBrowserInitiated(kUrl2, contents());
-  navigation->ReadyToCommit();
-  EXPECT_TRUE(main_test_rfh()->is_loading());
-  EXPECT_FALSE(node->navigation_request());
-
-  // Start a new cross-site navigation. The current RFH should still be trying
-  // to commit the previous navigation, but we create a NavigationRequest in the
-  // FrameTreeNode.
-  auto navigation2 =
-      NavigationSimulator::CreateBrowserInitiated(kUrl3, contents());
-  navigation2->Start();
-  EXPECT_TRUE(main_test_rfh()->is_loading());
-  EXPECT_TRUE(node->navigation_request());
-  EXPECT_TRUE(GetSpeculativeRenderFrameHost(node));
-
-  // The first navigation commits. This should clear up the speculative RFH and
-  // the ongoing NavigationRequest.
-  navigation->Commit();
-  EXPECT_FALSE(node->navigation_request());
-  EXPECT_FALSE(GetSpeculativeRenderFrameHost(node));
-}
-
-// Tests that an ongoing NavigationRequest is deleted when a cross-site
-// navigation commits.
-TEST_F(NavigatorTest, NavigationRequestDeletedWhenCrossSiteCommits) {
-  const GURL kUrl1("http://www.chromium.org/");
-  const GURL kUrl2("http://www.google.com/");
-  const GURL kUrl3("http://www.google.com/foo");
-
-  contents()->NavigateAndCommit(kUrl1);
-  FrameTreeNode* node = main_test_rfh()->frame_tree_node();
-
-  // Navigate cross-site.
-  auto navigation =
-      NavigationSimulator::CreateBrowserInitiated(kUrl2, contents());
-  navigation->ReadyToCommit();
-  TestRenderFrameHost* speculative_rfh = GetSpeculativeRenderFrameHost(node);
-  ASSERT_TRUE(speculative_rfh);
-  EXPECT_TRUE(speculative_rfh->is_loading());
-  EXPECT_FALSE(node->navigation_request());
-
-  // Start a new cross-site navigation to the same-site as the ongoing
-  // navigation. The speculative RFH should still be live and trying
-  // to commit the previous navigation, and we create a NavigationRequest in the
-  // FrameTreeNode.
-  auto navigation2 =
-      NavigationSimulator::CreateBrowserInitiated(kUrl3, contents());
-  navigation2->Start();
-  TestRenderFrameHost* speculative_rfh_2 = GetSpeculativeRenderFrameHost(node);
-  ASSERT_TRUE(speculative_rfh_2);
-  EXPECT_EQ(speculative_rfh_2, speculative_rfh);
-  EXPECT_TRUE(speculative_rfh->is_loading());
-  EXPECT_TRUE(node->navigation_request());
-
-  // The first navigation commits. This should clear up the speculative RFH and
-  // the ongoing NavigationRequest.
-  navigation->Commit();
-  EXPECT_FALSE(node->navigation_request());
-  EXPECT_FALSE(GetSpeculativeRenderFrameHost(node));
-  EXPECT_EQ(speculative_rfh, main_test_rfh());
-}
-
 // Permissions Policy: Test that the permissions policy is reset when navigating
 // pages within a site.
 TEST_F(NavigatorTest, PermissionsPolicySameSiteNavigation) {
@@ -1510,7 +1429,7 @@ TEST_F(NavigatorTest, PermissionsPolicyNewChild) {
 
   // Simulate the navigation triggered by inserting a child frame into a page.
   TestRenderFrameHost* subframe_rfh =
-      contents()->GetMainFrame()->AppendChild("child");
+      contents()->GetPrimaryMainFrame()->AppendChild("child");
   NavigationSimulator::NavigateAndCommitFromDocument(kUrl2, subframe_rfh);
 
   const blink::PermissionsPolicy* subframe_permissions_policy =
@@ -1523,27 +1442,27 @@ TEST_F(NavigatorTest, TwoNavigationsRacingCommit) {
   const GURL kUrl1("http://www.chromium.org/");
   const GURL kUrl2("http://www.chromium.org/Home");
 
-  EXPECT_EQ(0u, contents()->GetMainFrame()->navigation_requests_.size());
+  EXPECT_EQ(0u, contents()->GetPrimaryMainFrame()->navigation_requests_.size());
 
   // Have the first navigation reach ReadyToCommit.
   auto first_navigation =
       NavigationSimulator::CreateBrowserInitiated(kUrl1, contents());
   first_navigation->ReadyToCommit();
-  EXPECT_EQ(1u, contents()->GetMainFrame()->navigation_requests_.size());
+  EXPECT_EQ(1u, contents()->GetPrimaryMainFrame()->navigation_requests_.size());
 
   // A second navigation starts and reaches ReadyToCommit.
   auto second_navigation =
       NavigationSimulator::CreateBrowserInitiated(kUrl1, contents());
   second_navigation->ReadyToCommit();
-  EXPECT_EQ(2u, contents()->GetMainFrame()->navigation_requests_.size());
+  EXPECT_EQ(2u, contents()->GetPrimaryMainFrame()->navigation_requests_.size());
 
   // The first navigation commits.
   first_navigation->Commit();
-  EXPECT_EQ(1u, contents()->GetMainFrame()->navigation_requests_.size());
+  EXPECT_EQ(1u, contents()->GetPrimaryMainFrame()->navigation_requests_.size());
 
   // The second navigation commits.
   second_navigation->Commit();
-  EXPECT_EQ(0u, contents()->GetMainFrame()->navigation_requests_.size());
+  EXPECT_EQ(0u, contents()->GetPrimaryMainFrame()->navigation_requests_.size());
 }
 
 }  // namespace content

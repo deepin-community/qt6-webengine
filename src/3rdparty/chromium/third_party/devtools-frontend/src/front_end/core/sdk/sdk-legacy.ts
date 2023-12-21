@@ -193,6 +193,9 @@ SDK.Script = SDKModule.Script.Script;
 /** @constructor */
 SDK.SecurityOriginManager = SDKModule.SecurityOriginManager.SecurityOriginManager;
 
+/** @constructor */
+SDK.StorageKeyManager = SDKModule.StorageKeyManager.StorageKeyManager;
+
 /** @enum {symbol} */
 SDK.SecurityOriginManager.Events = SDKModule.SecurityOriginManager.Events;
 
@@ -204,9 +207,6 @@ SDK.ServiceWorkerManager = SDKModule.ServiceWorkerManager.ServiceWorkerManager;
 
 /** @interface */
 SDK.SourceMap = SDKModule.SourceMap.SourceMap;
-
-/** @constructor */
-SDK.TextSourceMap = SDKModule.SourceMap.TextSourceMap;
 
 /** @constructor */
 SDK.SourceMapManager = SDKModule.SourceMapManager.SourceMapManager;

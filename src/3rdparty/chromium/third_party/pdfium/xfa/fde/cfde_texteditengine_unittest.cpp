@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -265,14 +265,14 @@ TEST_F(CFDE_TextEditEngineTest, GetChar) {
 
 TEST_F(CFDE_TextEditEngineTest, GetWidthOfChar) {
   // Out of Bounds.
-  EXPECT_EQ(0U, engine()->GetWidthOfChar(0));
+  EXPECT_EQ(0, engine()->GetWidthOfChar(0));
 
   engine()->Insert(0, L"Hello World");
-  EXPECT_EQ(173280U, engine()->GetWidthOfChar(0));
-  EXPECT_EQ(133440U, engine()->GetWidthOfChar(1));
+  EXPECT_EQ(173280, engine()->GetWidthOfChar(0));
+  EXPECT_EQ(133440, engine()->GetWidthOfChar(1));
 
   engine()->Insert(0, L"\t");
-  EXPECT_EQ(0U, engine()->GetWidthOfChar(0));
+  EXPECT_EQ(0, engine()->GetWidthOfChar(0));
 }
 
 TEST_F(CFDE_TextEditEngineTest, GetDisplayPos) {

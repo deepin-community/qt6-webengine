@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -50,7 +50,7 @@ ui::KeyEvent ConvertKeyboardEventToUIKeyEvent(
   const auto key_code = static_cast<ui::KeyboardCode>(
       event.key_code && *event.key_code != ui::VKEY_UNKNOWN
           ? *event.key_code
-          : ui::DomKeycodeToKeyboardCode(event.code));
+          : ash::DomKeycodeToKeyboardCode(event.code));
 
   int flags = ui::EF_NONE;
   flags |= event.alt_key && *event.alt_key ? ui::EF_ALT_DOWN : ui::EF_NONE;
@@ -164,13 +164,12 @@ ExtensionFunction::ResponseAction InputImeSetCompositionFunction::Run() {
   if (!engine->SetComposition(params.context_id, params.text.c_str(),
                               selection_start, selection_end, params.cursor,
                               segments, &error)) {
-    std::unique_ptr<base::ListValue> results =
-        std::make_unique<base::ListValue>();
-    results->Append(false);
+    base::Value::List results;
+    results.Append(false);
     return RespondNow(ErrorWithArguments(
         std::move(results), InformativeError(error, static_function_name())));
   }
-  return RespondNow(OneArgument(base::Value(true)));
+  return RespondNow(WithArguments(true));
 }
 
 ExtensionFunction::ResponseAction InputImeCommitTextFunction::Run() {
@@ -185,13 +184,12 @@ ExtensionFunction::ResponseAction InputImeCommitTextFunction::Run() {
   const CommitText::Params::Parameters& params = parent_params->parameters;
   if (!engine->CommitText(params.context_id, base::UTF8ToUTF16(params.text),
                           &error)) {
-    std::unique_ptr<base::ListValue> results =
-        std::make_unique<base::ListValue>();
-    results->Append(false);
+    base::Value::List results;
+    results.Append(false);
     return RespondNow(ErrorWithArguments(
         std::move(results), InformativeError(error, static_function_name())));
   }
-  return RespondNow(OneArgument(base::Value(true)));
+  return RespondNow(WithArguments(true));
 }
 
 ExtensionFunction::ResponseAction InputImeSendKeyEventsFunction::Run() {

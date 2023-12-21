@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,7 +20,7 @@ void CheckOnValidThread() { DCHECK_CURRENTLY_ON(BrowserThread::IO); }
 
 }  // namespace
 
-InfoMap::InfoMap() {}
+InfoMap::InfoMap() = default;
 
 const ExtensionSet& InfoMap::extensions() const {
   CheckOnValidThread();

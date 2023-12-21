@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,7 +13,7 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
@@ -78,8 +78,7 @@ class VIEWS_EXPORT Textfield : public View,
   enum MenuCommands {
     kUndo = kLastTouchEditableCommandId + 1,
     kDelete,
-    kSelectAll,
-    kLastCommandId = kSelectAll,
+    kLastCommandId = kDelete,
   };
 
 #if BUILDFLAG(IS_MAC)
@@ -181,6 +180,11 @@ class VIEWS_EXPORT Textfield : public View,
   // the logical beginning of the text; this generally shows the leading portion
   // of text that overflows its display area.
   void SelectAll(bool reversed);
+
+  // Selects the word at which the cursor is currently positioned. If there is a
+  // non-empty selection, the selection bounds are extended to their nearest
+  // word boundaries.
+  void SelectWord();
 
   // A convenience method to select the word closest to |point|.
   void SelectWordAt(const gfx::Point& point);
@@ -299,11 +303,6 @@ class VIEWS_EXPORT Textfield : public View,
   // Clears Edit history.
   void ClearEditHistory();
 
-  // Get/Set the accessible name of the text field. If the textfield has a
-  // visible label, use SetAssociatedLabel() instead.
-  std::u16string GetAccessibleName() const;
-  void SetAccessibleName(const std::u16string& name);
-
   // If the accessible name should be the same as the labelling view's text,
   // use this. It will set the accessible label relationship and copy the
   // accessible name from the labelling views's accessible name. Any view with
@@ -313,7 +312,9 @@ class VIEWS_EXPORT Textfield : public View,
   // Set extra spacing placed between glyphs; used for obscured text styling.
   void SetObscuredGlyphSpacing(int spacing);
 
-  int GetPasswordCharRevealIndex() const { return password_char_reveal_index_; }
+  absl::optional<size_t> GetPasswordCharRevealIndex() const {
+    return password_char_reveal_index_;
+  }
 
   void SetExtraInsets(const gfx::Insets& insets);
 
@@ -326,7 +327,7 @@ class VIEWS_EXPORT Textfield : public View,
   gfx::Size CalculatePreferredSize() const override;
   gfx::Size GetMinimumSize() const override;
   void SetBorder(std::unique_ptr<Border> b) override;
-  gfx::NativeCursor GetCursor(const ui::MouseEvent& event) override;
+  ui::Cursor GetCursor(const ui::MouseEvent& event) override;
   bool OnMousePressed(const ui::MouseEvent& event) override;
   bool OnMouseDragged(const ui::MouseEvent& event) override;
   void OnMouseReleased(const ui::MouseEvent& event) override;
@@ -386,8 +387,10 @@ class VIEWS_EXPORT Textfield : public View,
   bool HasTextBeingDragged() const override;
 
   // ui::TouchEditable overrides:
-  void SelectRect(const gfx::Point& start, const gfx::Point& end) override;
-  void MoveCaretTo(const gfx::Point& point) override;
+  void MoveCaret(const gfx::Point& position) override;
+  void MoveRangeSelectionExtent(const gfx::Point& extent) override;
+  void SelectBetweenCoordinates(const gfx::Point& base,
+                                const gfx::Point& extent) override;
   void GetSelectionEndPoints(gfx::SelectionBound* anchor,
                              gfx::SelectionBound* focus) override;
   gfx::Rect GetBounds() override;
@@ -407,7 +410,7 @@ class VIEWS_EXPORT Textfield : public View,
 
   // ui::TextInputClient overrides:
   void SetCompositionText(const ui::CompositionText& composition) override;
-  uint32_t ConfirmCompositionText(bool keep_selection) override;
+  size_t ConfirmCompositionText(bool keep_selection) override;
   void ClearCompositionText() override;
   void InsertText(const std::u16string& text,
                   InsertTextCursorBehavior cursor_behavior) override;
@@ -419,7 +422,7 @@ class VIEWS_EXPORT Textfield : public View,
   bool CanComposeInline() const override;
   gfx::Rect GetCaretBounds() const override;
   gfx::Rect GetSelectionBoundingBox() const override;
-  bool GetCompositionCharacterBounds(uint32_t index,
+  bool GetCompositionCharacterBounds(size_t index,
                                      gfx::Rect* rect) const override;
   bool HasCompositionText() const override;
   FocusReason GetFocusReason() const override;
@@ -427,7 +430,11 @@ class VIEWS_EXPORT Textfield : public View,
   bool GetCompositionTextRange(gfx::Range* range) const override;
   bool GetEditableSelectionRange(gfx::Range* range) const override;
   bool SetEditableSelectionRange(const gfx::Range& range) override;
+#if BUILDFLAG(IS_MAC)
   bool DeleteRange(const gfx::Range& range) override;
+#else
+  bool DeleteRange(const gfx::Range& range);
+#endif
   bool GetTextFromRange(const gfx::Range& range,
                         std::u16string* text) const override;
   void OnInputMethodChanged() override;
@@ -449,10 +456,12 @@ class VIEWS_EXPORT Textfield : public View,
       const std::vector<ui::ImeTextSpan>& ui_ime_text_spans) override;
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   gfx::Range GetAutocorrectRange() const override;
   gfx::Rect GetAutocorrectCharacterBounds() const override;
   bool SetAutocorrectRange(const gfx::Range& range) override;
+  bool AddGrammarFragments(
+      const std::vector<ui::GrammarFragment>& fragments) override;
 #endif
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)
@@ -492,7 +501,7 @@ class VIEWS_EXPORT Textfield : public View,
   // Offsets the double-clicked word's range. This is only used in the unusual
   // case where the text changes on the second mousedown of a double-click.
   // This is harmless if there is not a currently double-clicked word.
-  void OffsetDoubleClickWord(int offset);
+  void OffsetDoubleClickWord(size_t offset);
 
   // Returns true if the drop cursor is for insertion at a target text location,
   // the standard behavior/style. Returns false when drop will do something
@@ -615,9 +624,10 @@ class VIEWS_EXPORT Textfield : public View,
   bool ImeEditingAllowed() const;
 
   // Reveals the password character at |index| for a set duration.
-  // If |index| is -1, the existing revealed character will be reset.
+  // If |index| is nullopt, the existing revealed character will be reset.
   // |duration| is the time to remain the password char to be visible.
-  void RevealPasswordChar(int index, base::TimeDelta duration);
+  void RevealPasswordChar(absl::optional<size_t> index,
+                          base::TimeDelta duration);
 
   void CreateTouchSelectionControllerAndNotifyIt();
 
@@ -650,11 +660,23 @@ class VIEWS_EXPORT Textfield : public View,
   void DropDraggedText(const ui::DropTargetEvent& event,
                        ui::mojom::DragOperation& output_drag_op);
 
+  // Returns the corner radius of the text field.
+  float GetCornerRadius();
+
+#if BUILDFLAG(IS_CHROMEOS)
+  // Checks and updates the selection dragging state for the upcoming scroll
+  // sequence, if required. If the scroll sequence starts while long pressing,
+  // it will be used for adjusting the text selection. Otherwise, if the scroll
+  // begins horizontally it will be used for cursor placement. Otherwise, the
+  // scroll sequence won't be used for selection dragging.
+  void MaybeStartSelectionDragging(ui::GestureEvent* event);
+#endif
+
   // The text model.
   std::unique_ptr<TextfieldModel> model_;
 
   // This is the current listener for events from this Textfield.
-  raw_ptr<TextfieldController> controller_ = nullptr;
+  raw_ptr<TextfieldController, DanglingUntriaged> controller_ = nullptr;
 
   // An edit command to execute on the next key event. When set to a valid
   // value, the key event is still passed to |controller_|, but otherwise
@@ -704,9 +726,6 @@ class VIEWS_EXPORT Textfield : public View,
   // such.
   bool invalid_ = false;
 
-  // The accessible name of the text field.
-  std::u16string accessible_name_;
-
   // The input type of this text field.
   ui::TextInputType text_input_type_ = ui::TEXT_INPUT_TYPE_TEXT;
 
@@ -739,10 +758,39 @@ class VIEWS_EXPORT Textfield : public View,
 
   SelectionController selection_controller_;
 
+  // Tracks when the current scroll sequence should be used for cursor placement
+  // or adjusting the text selection.
+  enum class SelectionDraggingState {
+    kNone,
+    kDraggingCursor,
+    kDraggingSelectionExtent
+  };
+  SelectionDraggingState selection_dragging_state_ =
+      SelectionDraggingState::kNone;
+
+  // The offset applied to the touch drag location when determining selection
+  // updates.
+  gfx::Vector2d selection_dragging_offset_;
+
   // Used to track touch drag starting location and offset to enable touch
   // scrolling.
-  gfx::Point drag_start_location_;
+  int drag_start_location_x_;
   int drag_start_display_offset_ = 0;
+
+  // Tracks the selection extent, which is used to determine the logical end of
+  // the selection. Roughly, this corresponds to the last drag position of the
+  // touch handle used to update the selection range. Note that the extent may
+  // be different to the logical end of the selection due to "expand by word,
+  // shrink by character" behaviour, in which the selection end can move to the
+  // next word boundary from the extent when expanding.
+  gfx::SelectionModel extent_caret_;
+
+  // Break type which selection endpoints can be moved to when updating the
+  // selection extent. For "expand by word, shrink by character" behaviour, the
+  // break type is set to WORD_BREAK if the selection has expanded past the
+  // current word boundary and back to CHARACTER_BREAK if the selection is
+  // shrinking.
+  gfx::BreakType break_type_ = gfx::CHARACTER_BREAK;
 
   // Tracks if touch editing handles are hidden because user has started
   // scrolling. If |true|, handles are shown after scrolling ends.
@@ -760,7 +808,7 @@ class VIEWS_EXPORT Textfield : public View,
   std::unique_ptr<views::MenuRunner> context_menu_runner_;
 
   // View containing the text cursor.
-  raw_ptr<View> cursor_view_ = nullptr;
+  raw_ptr<View, DanglingUntriaged> cursor_view_ = nullptr;
 
 #if BUILDFLAG(IS_MAC)
   // Used to track active password input sessions.
@@ -772,7 +820,7 @@ class VIEWS_EXPORT Textfield : public View,
       ui::TextInputClient::FOCUS_REASON_NONE;
 
   // The password char reveal index, for testing only.
-  int password_char_reveal_index_ = -1;
+  absl::optional<size_t> password_char_reveal_index_;
 
   // Extra insets, useful to make room for a button for example.
   gfx::Insets extra_insets_ = gfx::Insets();
@@ -796,7 +844,6 @@ class VIEWS_EXPORT Textfield : public View,
 };
 
 BEGIN_VIEW_BUILDER(VIEWS_EXPORT, Textfield, View)
-VIEW_BUILDER_PROPERTY(std::u16string, AccessibleName)
 VIEW_BUILDER_PROPERTY(SkColor, BackgroundColor)
 VIEW_BUILDER_PROPERTY(TextfieldController*, Controller)
 VIEW_BUILDER_PROPERTY(bool, CursorEnabled)

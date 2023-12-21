@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,10 +14,7 @@ namespace re2 {
 class RE2;
 }  // namespace re2
 
-using autofill::structured_address::AddressComponent;
-
 namespace autofill {
-namespace structured_address {
 
 // Atomic component that represents the honorific prefix of a name.
 class NameHonorific : public AddressComponent {
@@ -202,8 +199,6 @@ class NameFullWithPrefix : public AddressComponent {
   NameHonorificPrefix honorific_prefix_{this};
   NameFull name_full_{this};
 };
-
-}  // namespace structured_address
 
 }  // namespace autofill
 #endif  // COMPONENTS_AUTOFILL_CORE_BROWSER_DATA_MODEL_AUTOFILL_STRUCTURED_ADDRESS_NAME_H_

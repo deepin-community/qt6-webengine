@@ -3,12 +3,12 @@
 // found in the LICENSE file.
 
 import * as SDK from '../../../core/sdk/sdk.js';
-import * as Formatter from '../../../models/formatter/formatter.js';
+import * as Bindings from '../../../models/bindings/bindings.js';
 import * as JavaScriptMetaData from '../../../models/javascript_metadata/javascript_metadata.js';
 import * as CodeMirror from '../../../third_party/codemirror.next/codemirror.next.js';
 import * as UI from '../../legacy/legacy.js';
 
-import {type ArgumentHintsTooltip, closeTooltip, cursorTooltip} from './cursor_tooltip.js';
+import {closeTooltip, cursorTooltip, type ArgumentHintsTooltip} from './cursor_tooltip.js';
 
 export function completion(): CodeMirror.Extension {
   return CodeMirror.javascript.javascriptLanguage.data.of({
@@ -151,16 +151,16 @@ export function getQueryType(tree: CodeMirror.Tree, pos: number, doc: CodeMirror
   }
   if (node.name === '(') {
     // map.get(<auto-complete>
-    if (parent.name === 'ArgList' && parent.parent.name === 'CallExpression') {
+    if (parent?.name === 'ArgList' && parent?.parent?.name === 'CallExpression') {
       // map.get
-      const callReceiver = parent.parent.firstChild;
-      if (callReceiver.name === 'MemberExpression') {
+      const callReceiver = parent?.parent?.firstChild;
+      if (callReceiver?.name === 'MemberExpression') {
         // get
-        const propertyExpression = callReceiver.lastChild;
-        if (doc.sliceString(propertyExpression.from, propertyExpression.to) === 'get') {
+        const propertyExpression = callReceiver?.lastChild;
+        if (propertyExpression && doc.sliceString(propertyExpression.from, propertyExpression.to) === 'get') {
           // map
-          const potentiallyMapObject = callReceiver.firstChild;
-          return {type: QueryType.PotentiallyRetrievingFromMap, relatedNode: potentiallyMapObject};
+          const potentiallyMapObject = callReceiver?.firstChild;
+          return {type: QueryType.PotentiallyRetrievingFromMap, relatedNode: potentiallyMapObject || undefined};
         }
       }
     }
@@ -172,6 +172,12 @@ export async function javascriptCompletionSource(cx: CodeMirror.CompletionContex
     Promise<CodeMirror.CompletionResult|null> {
   const query = getQueryType(CodeMirror.syntaxTree(cx.state), cx.pos, cx.state.doc);
   if (!query || query.from === undefined && !cx.explicit && query.type === QueryType.Expression) {
+    return null;
+  }
+
+  const script = getExecutionContext()?.debuggerModel.selectedCallFrame()?.script;
+  if (script &&
+      Bindings.DebuggerWorkspaceBinding.DebuggerWorkspaceBinding.instance().pluginManager?.hasPluginForScript(script)) {
     return null;
   }
 
@@ -212,12 +218,14 @@ export async function javascriptCompletionSource(cx: CodeMirror.CompletionContex
   return {
     from: query.from ?? cx.pos,
     options: result.completions,
-    span: !quote ? SPAN_IDENT : quote === '\'' ? SPAN_SINGLE_QUOTE : SPAN_DOUBLE_QUOTE,
+    validFor: !quote   ? SPAN_IDENT :
+        quote === '\'' ? SPAN_SINGLE_QUOTE :
+                         SPAN_DOUBLE_QUOTE,
   };
 }
 
-const SPAN_IDENT = /^#?[\w\P{ASCII}]*$/u, SPAN_SINGLE_QUOTE = /^\'(\\.|[^\\'\n])*'?$/,
-      SPAN_DOUBLE_QUOTE = /^"(\\.|[^\\"\n])*"?$/;
+const SPAN_IDENT = /^#?(?:[$_\p{ID_Start}])(?:[$_\u200C\u200D\p{ID_Continue}])*$/u,
+      SPAN_SINGLE_QUOTE = /^\'(\\.|[^\\'\n])*'?$/, SPAN_DOUBLE_QUOTE = /^"(\\.|[^\\"\n])*"?$/;
 
 function getExecutionContext(): SDK.RuntimeModel.ExecutionContext|null {
   return UI.Context.Context.instance().flavor(SDK.RuntimeModel.ExecutionContext);
@@ -340,8 +348,6 @@ async function completeProperties(
   return result;
 }
 
-const prototypePropertyPenalty = -80;
-
 async function completePropertiesInner(
     expression: string,
     context: SDK.RuntimeModel.ExecutionContext,
@@ -382,17 +388,10 @@ async function completePropertiesInner(
           (!prop.private || expression === 'this') && (quoted || SPAN_IDENT.test(prop.name))) {
         const label =
             quoted ? quoted + prop.name.replaceAll('\\', '\\\\').replaceAll(quoted, '\\' + quoted) + quoted : prop.name;
-        const completion: CodeMirror.Completion = {
-          label,
-          type: prop.value?.type === 'function' ? functionType : otherType,
-        };
-        if (quoted && !hasBracket) {
-          completion.apply = label + ']';
-        }
-        if (!prop.isOwn) {
-          completion.boost = prototypePropertyPenalty;
-        }
-        result.add(completion);
+        const apply = (quoted && !hasBracket) ? `${label}]` : undefined;
+        const boost = 2 * Number(prop.isOwn) + 1 * Number(prop.enumerable);
+        const type = prop.value?.type === 'function' ? functionType : otherType;
+        result.add({apply, label, type, boost});
       }
     }
   }
@@ -517,21 +516,99 @@ async function getArgumentsForExpression(
   if (!context) {
     return null;
   }
-  try {
-    const expression = doc.sliceString(callee.from, callee.to);
-    const result = await evaluateExpression(context, expression, 'argumentsHint');
-    if (!result || result.type !== 'function') {
+  const expression = doc.sliceString(callee.from, callee.to);
+  const result = await evaluateExpression(context, expression, 'argumentsHint');
+  if (!result || result.type !== 'function') {
+    return null;
+  }
+  const objGetter = async(): Promise<SDK.RemoteObject.RemoteObject|null> => {
+    const first = callee.firstChild;
+    if (!first || callee.name !== 'MemberExpression') {
       return null;
     }
-    return getArgumentsForFunctionValue(result, async () => {
-      const first = callee.firstChild;
-      if (!first || callee.name !== 'MemberExpression') {
-        return null;
+    return evaluateExpression(context, doc.sliceString(first.from, first.to), 'argumentsHint');
+  };
+  return getArgumentsForFunctionValue(result, objGetter, expression)
+      .finally(() => context.runtimeModel.releaseObjectGroup('argumentsHint'));
+}
+
+export function argumentsList(input: string): string[] {
+  function parseParamList(cursor: CodeMirror.TreeCursor): string[] {
+    while (cursor.name !== 'ParamList' && cursor.nextSibling()) {
+    }
+    const parameters = [];
+    if (cursor.name === 'ParamList' && cursor.firstChild()) {
+      let prefix = '';
+      do {
+        switch (cursor.name as string) {
+          case 'ArrayPattern':
+            parameters.push(prefix + 'arr');
+            prefix = '';
+            break;
+          case 'ObjectPattern':
+            parameters.push(prefix + 'obj');
+            prefix = '';
+            break;
+          case 'VariableDefinition':
+            parameters.push(prefix + input.slice(cursor.from, cursor.to));
+            prefix = '';
+            break;
+          case 'Spread':
+            prefix = '...';
+            break;
+        }
+      } while (cursor.nextSibling());
+    }
+    return parameters;
+  }
+  try {
+    try {
+      // First check if the |input| can be parsed as a method definition.
+      const {parser} = CodeMirror.javascript.javascriptLanguage.configure({strict: true, top: 'SingleClassItem'});
+      const cursor = parser.parse(input).cursor();
+      if (cursor.firstChild() && cursor.name === 'MethodDeclaration' && cursor.firstChild()) {
+        return parseParamList(cursor);
       }
-      return evaluateExpression(context, doc.sliceString(first.from, first.to), 'argumentsHint');
-    }, expression);
-  } finally {
-    context.runtimeModel.releaseObjectGroup('argumentsHint');
+      throw new Error('SingleClassItem rule is expected to have exactly one MethodDeclaration child');
+    } catch {
+      // Otherwise fall back to parsing as an expression.
+      const {parser} = CodeMirror.javascript.javascriptLanguage.configure({strict: true, top: 'SingleExpression'});
+      const cursor = parser.parse(input).cursor();
+      if (!cursor.firstChild()) {
+        throw new Error('SingleExpression rule is expected to have children');
+      }
+      switch (cursor.name) {
+        case 'ArrowFunction':
+        case 'FunctionExpression': {
+          if (!cursor.firstChild()) {
+            throw new Error(`${cursor.name} rule is expected to have children`);
+          }
+          return parseParamList(cursor);
+        }
+        case 'ClassExpression': {
+          if (!cursor.firstChild()) {
+            throw new Error(`${cursor.name} rule is expected to have children`);
+          }
+          while (cursor.nextSibling() && cursor.name as string !== 'ClassBody') {
+          }
+          if (cursor.name as string === 'ClassBody' && cursor.firstChild()) {
+            do {
+              if (cursor.name as string === 'MethodDeclaration' && cursor.firstChild()) {
+                if (cursor.name as string === 'PropertyDefinition' &&
+                    input.slice(cursor.from, cursor.to) === 'constructor') {
+                  return parseParamList(cursor);
+                }
+                cursor.parent();
+              }
+            } while (cursor.nextSibling());
+          }
+          return [];
+        }
+      }
+      throw new Error('Unexpected expression');
+    }
+  } catch (cause) {
+    throw new Error(`Failed to parse for arguments list: ${input}`, {cause});
   }
 }
 
@@ -545,7 +622,7 @@ async function getArgumentsForFunctionValue(
     return null;
   }
   if (!description.endsWith('{ [native code] }')) {
-    return [await Formatter.FormatterWorkerPool.formatterWorkerPool().argumentsList(description)];
+    return [argumentsList(description)];
   }
 
   // Check if this is a bound function.

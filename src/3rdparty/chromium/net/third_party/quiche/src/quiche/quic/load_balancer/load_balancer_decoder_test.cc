@@ -57,7 +57,7 @@ TEST_F(LoadBalancerDecoderTest, UnencryptedConnectionIdTestVectors) {
   }
 }
 
-// Compare test vectors from Appendix B of draft-ietf-quic-load-balancers-12.
+// Compare test vectors from Appendix B of draft-ietf-quic-load-balancers-15.
 TEST_F(LoadBalancerDecoderTest, DecoderTestVectors) {
   // Try (1) the "standard" CID length of 8
   // (2) server_id_len > nonce_len, so there is a fourth decryption pass
@@ -66,13 +66,13 @@ TEST_F(LoadBalancerDecoderTest, DecoderTestVectors) {
   const struct LoadBalancerDecoderTestCase test_vectors[4] = {
       {
           *LoadBalancerConfig::Create(0, 3, 4, kKey),
-          QuicConnectionId({0x07, 0xfb, 0xfe, 0x05, 0xf7, 0x31, 0xb4, 0x25}),
+          QuicConnectionId({0x07, 0x41, 0x26, 0xee, 0x38, 0xbf, 0x54, 0x54}),
           MakeServerId(kServerId, 3),
       },
       {
           *LoadBalancerConfig::Create(1, 10, 5, kKey),
-          QuicConnectionId({0x4f, 0x01, 0x09, 0x56, 0xfb, 0x5c, 0x1d, 0x4d,
-                            0x86, 0xe0, 0x10, 0x18, 0x3e, 0x0b, 0x7d, 0x1e}),
+          QuicConnectionId({0x4f, 0xcd, 0x3f, 0x57, 0x2d, 0x4e, 0xef, 0xb0,
+                            0x46, 0xfd, 0xb5, 0x1d, 0x16, 0x4e, 0xfc, 0xcc}),
           MakeServerId(kServerId, 10),
       },
       {
@@ -84,9 +84,9 @@ TEST_F(LoadBalancerDecoderTest, DecoderTestVectors) {
       },
       {
           *LoadBalancerConfig::Create(0, 9, 9, kKey),
-          QuicConnectionId({0x12, 0x7a, 0x28, 0x5a, 0x09, 0xf8, 0x52, 0x80,
-                            0xf4, 0xfd, 0x6a, 0xbb, 0x43, 0x4a, 0x71, 0x59,
-                            0xe4, 0xd3, 0xeb}),
+          QuicConnectionId({0x12, 0x12, 0x4d, 0x1e, 0xb8, 0xfb, 0xb2, 0x1e,
+                            0x4a, 0x49, 0x0c, 0xa5, 0x3c, 0xfe, 0x21, 0xd0,
+                            0x4a, 0xe6, 0x3a}),
           MakeServerId(kServerId, 9),
       },
   };
@@ -208,13 +208,31 @@ TEST_F(LoadBalancerDecoderTest, GetConfigId) {
   EXPECT_FALSE(
       LoadBalancerDecoder::GetConfigId(QuicConnectionId()).has_value());
   for (uint8_t i = 0; i < 3; i++) {
-    auto config_id = LoadBalancerDecoder::GetConfigId(
-        QuicConnectionId({static_cast<unsigned char>(i << 6)}));
+    const QuicConnectionId connection_id({static_cast<unsigned char>(i << 6)});
+    auto config_id = LoadBalancerDecoder::GetConfigId(connection_id);
+    EXPECT_EQ(config_id,
+              LoadBalancerDecoder::GetConfigId(connection_id.data()[0]));
     EXPECT_TRUE(config_id.has_value());
     EXPECT_EQ(*config_id, i);
   }
   EXPECT_FALSE(
       LoadBalancerDecoder::GetConfigId(QuicConnectionId({0xc0})).has_value());
+}
+
+TEST_F(LoadBalancerDecoderTest, GetConfig) {
+  LoadBalancerDecoder decoder;
+  decoder.AddConfig(*LoadBalancerConfig::CreateUnencrypted(2, 3, 4));
+
+  EXPECT_EQ(decoder.GetConfig(0), nullptr);
+  EXPECT_EQ(decoder.GetConfig(1), nullptr);
+  EXPECT_EQ(decoder.GetConfig(3), nullptr);
+  EXPECT_EQ(decoder.GetConfig(4), nullptr);
+
+  const LoadBalancerConfig* config = decoder.GetConfig(2);
+  ASSERT_NE(config, nullptr);
+  EXPECT_EQ(config->server_id_len(), 3);
+  EXPECT_EQ(config->nonce_len(), 4);
+  EXPECT_FALSE(config->IsEncrypted());
 }
 
 }  // namespace

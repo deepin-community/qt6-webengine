@@ -1,11 +1,11 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef NET_COOKIES_COOKIE_STORE_CHANGE_UNITTEST_H_
 #define NET_COOKIES_COOKIE_STORE_CHANGE_UNITTEST_H_
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_change_dispatcher_test_helpers.h"
 #include "net/cookies/cookie_constants.h"

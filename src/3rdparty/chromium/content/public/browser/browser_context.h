@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,11 +14,12 @@
 #include <unordered_set>
 #include <vector>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/weak_ptr.h"
 #include "base/supports_user_data.h"
 #include "components/spellcheck/spellcheck_buildflags.h"
 #include "content/common/content_export.h"
+#include "content/public/browser/k_anonymity_service_delegate.h"
 #include "content/public/browser/zoom_level_delegate.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -45,6 +46,7 @@ class ExternalMountPoints;
 
 namespace media {
 class VideoDecodePerfHistory;
+class WebrtcVideoPerfHistory;
 namespace learning {
 class LearningSession;
 }
@@ -83,15 +85,16 @@ class ClientHintsControllerDelegate;
 class ContentIndexProvider;
 class DownloadManager;
 class DownloadManagerDelegate;
-class FederatedIdentityActiveSessionPermissionContextDelegate;
+class FederatedIdentityPermissionContextDelegate;
 class FederatedIdentityApiPermissionContextDelegate;
-class FederatedIdentityRequestPermissionContextDelegate;
-class FederatedIdentitySharingPermissionContextDelegate;
+class FederatedIdentityAutoReauthnPermissionContextDelegate;
 class FileSystemAccessPermissionContext;
+class OriginTrialsControllerDelegate;
 class PermissionController;
 class PermissionControllerDelegate;
 class PlatformNotificationService;
 class PushMessagingService;
+class ReduceAcceptLanguageControllerDelegate;
 class ResourceContext;
 class SSLHostStateDelegate;
 class SharedCorsOriginAccessList;
@@ -155,23 +158,33 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
   StoragePartition* GetStoragePartitionForUrl(const GURL& url,
                                               bool can_create = true);
 
+  // Synchronously invokes |callback| for each loaded StoragePartition.
+  // Persisted StoragePartitions (not in-memory) are loaded lazily on first
+  // use, at which point a StoragePartition object will be created that's
+  // backed by the on-disk storage. StoragePartitions will not be unloaded for
+  // the remainder of the BrowserContext's lifetime.
   using StoragePartitionCallback =
       base::RepeatingCallback<void(StoragePartition*)>;
-  void ForEachStoragePartition(StoragePartitionCallback callback);
-  // Returns the number of StoragePartitions that exist for `this`
+  void ForEachLoadedStoragePartition(StoragePartitionCallback callback);
+
+  // Returns the number of loaded StoragePartitions that exist for `this`
   // BrowserContext.
-  size_t GetStoragePartitionCount();
+  // See |ForEachLoadedStoragePartition| for details about loaded
+  // StoragePartitions.
+  size_t GetLoadedStoragePartitionCount();
 
   // Starts an asynchronous best-effort attempt to delete all on-disk storage
   // related to |partition_domain| and synchronously invokes |done_callback|
-  // once all on-disk storage is deleted.
+  // once all deletable on-disk storage is deleted. |on_gc_required| will be
+  // invoked if |partition_domain| corresponds to any StoragePartitions that
+  // are loaded and can't safely be deleted. In this case the caller should
+  // attempt to delete the StoragePartition again at next browser launch.
   void AsyncObliterateStoragePartition(const std::string& partition_domain,
                                        base::OnceClosure on_gc_required,
                                        base::OnceClosure done_callback);
 
-  // Examines the on-disk storage and removes any entries that are not listed
-  // in the `active_paths`, or in use by current entries in the storage
-  // partition.
+  // Examines all on-disk StoragePartitions and removes any entries that are
+  // not loaded or listed in `active_paths`.
   //
   // The `done` closure is executed on the calling thread when garbage
   // collection is complete.
@@ -271,6 +284,12 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
   // directly, so privacy is not compromised.
   media::VideoDecodePerfHistory* GetVideoDecodePerfHistory();
 
+  // Gets media service for storing/retrieving WebRTC video performance stats.
+  // Exposed here rather than StoragePartition because all SiteInstances should
+  // have similar encode/decode performance and stats are not exposed to the web
+  // directly, so privacy is not compromised.
+  media::WebrtcVideoPerfHistory* GetWebrtcVideoPerfHistory();
+
   // Returns a LearningSession associated with |this|. Used as the central
   // source from which to retrieve LearningTaskControllers for media machine
   // learning.
@@ -281,8 +300,8 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
 
   // Retrieves the InProgressDownloadManager associated with this object if
   // available
-  virtual download::InProgressDownloadManager*
-  RetriveInProgressDownloadManager();
+  virtual std::unique_ptr<download::InProgressDownloadManager>
+  RetrieveInProgressDownloadManager();
 
   // Utility function useful for embedders. Only needs to be called if
   // 1) The embedder needs to use a new salt, and
@@ -363,6 +382,11 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
   // BrowserContext::GetPermissionController() instead.
   virtual PermissionControllerDelegate* GetPermissionControllerDelegate() = 0;
 
+  // Returns the ReduceAcceptLanguageControllerDelegate associated with that
+  // context if any, nullptr otherwise.
+  virtual ReduceAcceptLanguageControllerDelegate*
+  GetReduceAcceptLanguageControllerDelegate() = 0;
+
   // Returns the ClientHintsControllerDelegate associated with that context if
   // any, nullptr otherwise.
   virtual ClientHintsControllerDelegate* GetClientHintsControllerDelegate() = 0;
@@ -421,19 +445,23 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
   // enabled in site settings.
   virtual FederatedIdentityApiPermissionContextDelegate*
   GetFederatedIdentityApiPermissionContext();
+  // Gets the permission context for determining whether the FedCM API's auto
+  // re-authentication feature is enabled in site settings.
+  virtual FederatedIdentityAutoReauthnPermissionContextDelegate*
+  GetFederatedIdentityAutoReauthnPermissionContext();
   // Gets the permission context for allowing session management capabilities
   // between an identity provider and a relying party if one exists, or
   // nullptr otherwise.
-  virtual FederatedIdentityActiveSessionPermissionContextDelegate*
-  GetFederatedIdentityActiveSessionPermissionContext();
-  // Gets the permission context for issuing WebID requests if one exists, or
-  // nullptr otherwise.
-  virtual FederatedIdentityRequestPermissionContextDelegate*
-  GetFederatedIdentityRequestPermissionContext();
-  // Gets the permission context for WebID identity token sharing if one
-  // exists, or nullptr otherwise.
-  virtual FederatedIdentitySharingPermissionContextDelegate*
-  GetFederatedIdentitySharingPermissionContext();
+  virtual FederatedIdentityPermissionContextDelegate*
+  GetFederatedIdentityPermissionContext();
+
+  // Gets the KAnonymityServiceDelegate if supported. Returns nullptr if
+  // unavailable.
+  virtual KAnonymityServiceDelegate* GetKAnonymityServiceDelegate();
+
+  // Returns the OriginTrialsControllerDelegate associated with the context if
+  // any, nullptr otherwise.
+  virtual OriginTrialsControllerDelegate* GetOriginTrialsControllerDelegate();
 
  private:
   // Please don't add more fields to BrowserContext.

@@ -10,7 +10,6 @@
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
 #include "quiche/quic/core/http/quic_spdy_client_session.h"
-#include "quiche/quic/masque/masque_compression_engine.h"
 #include "quiche/quic/masque/masque_utils.h"
 #include "quiche/quic/platform/api/quic_export.h"
 #include "quiche/quic/platform/api/quic_socket_address.h"
@@ -30,20 +29,19 @@ class QUIC_NO_EXPORT MasqueClientSession : public QuicSpdyClientSession {
    public:
     virtual ~Owner() {}
 
-    // Notifies the owner that the client connection ID is no longer in use.
-    virtual void UnregisterClientConnectionId(
-        QuicConnectionId client_connection_id) = 0;
-
     // Notifies the owner that a settings frame has been received.
     virtual void OnSettingsReceived() = 0;
   };
-  // Interface meant to be implemented by encapsulated client sessions, i.e.
-  // the end-to-end QUIC client sessions that run inside MASQUE encapsulation.
+
+  // Interface meant to be implemented by client sessions encapsulated inside
+  // CONNECT-UDP, i.e. the end-to-end QUIC client sessions that run inside
+  // CONNECT-UDP encapsulation.
   class QUIC_NO_EXPORT EncapsulatedClientSession {
    public:
     virtual ~EncapsulatedClientSession() {}
 
-    // Process packet that was just decapsulated.
+    // Process UDP packet that was just decapsulated. |packet| contains the UDP
+    // payload.
     virtual void ProcessPacket(absl::string_view packet,
                                QuicSocketAddress target_server_address) = 0;
 
@@ -51,6 +49,28 @@ class QUIC_NO_EXPORT MasqueClientSession : public QuicSpdyClientSession {
     virtual void CloseConnection(
         QuicErrorCode error, const std::string& details,
         ConnectionCloseBehavior connection_close_behavior) = 0;
+  };
+
+  // Interface meant to be implemented by client sessions encapsulated inside
+  // CONNECT-IP, i.e. the end-to-end QUIC client sessions that run inside
+  // CONNECT-IP encapsulation.
+  class QUIC_NO_EXPORT EncapsulatedIpSession {
+   public:
+    virtual ~EncapsulatedIpSession() {}
+
+    // Process packet that was just decapsulated. |packet| contains the IP
+    // header and payload.
+    virtual void ProcessIpPacket(absl::string_view packet) = 0;
+
+    // Close the encapsulated connection.
+    virtual void CloseIpSession(const std::string& details) = 0;
+
+    virtual bool OnAddressAssignCapsule(
+        const quiche::AddressAssignCapsule& capsule) = 0;
+    virtual bool OnAddressRequestCapsule(
+        const quiche::AddressRequestCapsule& capsule) = 0;
+    virtual bool OnRouteAdvertisementCapsule(
+        const quiche::RouteAdvertisementCapsule& capsule) = 0;
   };
 
   // Takes ownership of |connection|, but not of |crypto_config| or
@@ -70,7 +90,6 @@ class QUIC_NO_EXPORT MasqueClientSession : public QuicSpdyClientSession {
   MasqueClientSession& operator=(const MasqueClientSession&) = delete;
 
   // From QuicSession.
-  void OnMessageReceived(absl::string_view message) override;
   void OnMessageAcked(QuicMessageId message_id,
                       QuicTime receive_timestamp) override;
   void OnMessageLost(QuicMessageId message_id) override;
@@ -81,34 +100,26 @@ class QUIC_NO_EXPORT MasqueClientSession : public QuicSpdyClientSession {
   // From QuicSpdySession.
   bool OnSettingsFrame(const SettingsFrame& frame) override;
 
-  // Send encapsulated packet.
-  void SendPacket(QuicConnectionId client_connection_id,
-                  QuicConnectionId server_connection_id,
-                  absl::string_view packet,
+  // Send encapsulated UDP packet. |packet| contains the UDP payload.
+  void SendPacket(absl::string_view packet,
                   const QuicSocketAddress& target_server_address,
                   EncapsulatedClientSession* encapsulated_client_session);
 
-  // Register encapsulated client. This allows clients that are encapsulated
-  // within this MASQUE session to indicate they own a given client connection
-  // ID so incoming packets with that connection ID are routed back to them.
-  // Callers must not register a second different |encapsulated_client_session|
-  // with the same |client_connection_id|. Every call must be matched with a
-  // call to UnregisterConnectionId.
-  void RegisterConnectionId(
-      QuicConnectionId client_connection_id,
+  // Send encapsulated IP packet. |packet| contains the IP header and payload.
+  void SendIpPacket(absl::string_view packet,
+                    EncapsulatedIpSession* encapsulated_ip_session);
+
+  // Close CONNECT-UDP stream tied to this encapsulated client session.
+  void CloseConnectUdpStream(
       EncapsulatedClientSession* encapsulated_client_session);
 
-  // Unregister encapsulated client. |client_connection_id| must match a
-  // value previously passed to RegisterConnectionId.
-  void UnregisterConnectionId(
-      QuicConnectionId client_connection_id,
-      EncapsulatedClientSession* encapsulated_client_session);
+  // Close CONNECT-IP stream tied to this encapsulated client session.
+  void CloseConnectIpStream(EncapsulatedIpSession* encapsulated_ip_session);
 
  private:
   // State that the MasqueClientSession keeps for each CONNECT-UDP request.
   class QUIC_NO_EXPORT ConnectUdpClientState
-      : public QuicSpdyStream::Http3DatagramRegistrationVisitor,
-        public QuicSpdyStream::Http3DatagramVisitor {
+      : public QuicSpdyStream::Http3DatagramVisitor {
    public:
     // |stream| and |encapsulated_client_session| must be valid for the lifetime
     // of the ConnectUdpClientState.
@@ -116,7 +127,6 @@ class QUIC_NO_EXPORT MasqueClientSession : public QuicSpdyClientSession {
         QuicSpdyClientStream* stream,
         EncapsulatedClientSession* encapsulated_client_session,
         MasqueClientSession* masque_session,
-        absl::optional<QuicDatagramContextId> context_id,
         const QuicSocketAddress& target_server_address);
 
     ~ConnectUdpClientState();
@@ -131,52 +141,81 @@ class QUIC_NO_EXPORT MasqueClientSession : public QuicSpdyClientSession {
     EncapsulatedClientSession* encapsulated_client_session() const {
       return encapsulated_client_session_;
     }
-    absl::optional<QuicDatagramContextId> context_id() const {
-      return context_id_;
-    }
     const QuicSocketAddress& target_server_address() const {
       return target_server_address_;
     }
 
     // From QuicSpdyStream::Http3DatagramVisitor.
     void OnHttp3Datagram(QuicStreamId stream_id,
-                         absl::optional<QuicDatagramContextId> context_id,
                          absl::string_view payload) override;
-
-    // From QuicSpdyStream::Http3DatagramRegistrationVisitor.
-    void OnContextReceived(QuicStreamId stream_id,
-                           absl::optional<QuicDatagramContextId> context_id,
-                           DatagramFormatType format_type,
-                           absl::string_view format_additional_data) override;
-    void OnContextClosed(QuicStreamId stream_id,
-                         absl::optional<QuicDatagramContextId> context_id,
-                         ContextCloseCode close_code,
-                         absl::string_view close_details) override;
 
    private:
     QuicSpdyClientStream* stream_;                            // Unowned.
     EncapsulatedClientSession* encapsulated_client_session_;  // Unowned.
     MasqueClientSession* masque_session_;                     // Unowned.
-    absl::optional<QuicDatagramContextId> context_id_;
     QuicSocketAddress target_server_address_;
   };
 
+  // State that the MasqueClientSession keeps for each CONNECT-IP request.
+  class QUIC_NO_EXPORT ConnectIpClientState
+      : public QuicSpdyStream::Http3DatagramVisitor,
+        public QuicSpdyStream::ConnectIpVisitor {
+   public:
+    // |stream| and |encapsulated_client_session| must be valid for the lifetime
+    // of the ConnectUdpClientState.
+    explicit ConnectIpClientState(
+        QuicSpdyClientStream* stream,
+        EncapsulatedIpSession* encapsulated_ip_session,
+        MasqueClientSession* masque_session);
+
+    ~ConnectIpClientState();
+
+    // Disallow copy but allow move.
+    ConnectIpClientState(const ConnectIpClientState&) = delete;
+    ConnectIpClientState(ConnectIpClientState&&);
+    ConnectIpClientState& operator=(const ConnectIpClientState&) = delete;
+    ConnectIpClientState& operator=(ConnectIpClientState&&);
+
+    QuicSpdyClientStream* stream() const { return stream_; }
+    EncapsulatedIpSession* encapsulated_ip_session() const {
+      return encapsulated_ip_session_;
+    }
+
+    // From QuicSpdyStream::Http3DatagramVisitor.
+    void OnHttp3Datagram(QuicStreamId stream_id,
+                         absl::string_view payload) override;
+
+    // From QuicSpdyStream::ConnectIpVisitor.
+    bool OnAddressAssignCapsule(
+        const quiche::AddressAssignCapsule& capsule) override;
+    bool OnAddressRequestCapsule(
+        const quiche::AddressRequestCapsule& capsule) override;
+    bool OnRouteAdvertisementCapsule(
+        const quiche::RouteAdvertisementCapsule& capsule) override;
+    void OnHeadersWritten() override;
+
+   private:
+    QuicSpdyClientStream* stream_;                    // Unowned.
+    EncapsulatedIpSession* encapsulated_ip_session_;  // Unowned.
+    MasqueClientSession* masque_session_;             // Unowned.
+  };
+
   HttpDatagramSupport LocalHttpDatagramSupport() override {
-    return HttpDatagramSupport::kDraft00And04;
+    return HttpDatagramSupport::kRfc;
   }
 
   const ConnectUdpClientState* GetOrCreateConnectUdpClientState(
       const QuicSocketAddress& target_server_address,
       EncapsulatedClientSession* encapsulated_client_session);
 
+  const ConnectIpClientState* GetOrCreateConnectIpClientState(
+      EncapsulatedIpSession* encapsulated_ip_session);
+
   MasqueMode masque_mode_;
   std::string uri_template_;
   std::list<ConnectUdpClientState> connect_udp_client_states_;
-  absl::flat_hash_map<QuicConnectionId, EncapsulatedClientSession*,
-                      QuicConnectionIdHash>
-      client_connection_id_registrations_;
+  std::list<ConnectIpClientState> connect_ip_client_states_;
   Owner* owner_;  // Unowned;
-  MasqueCompressionEngine compression_engine_;
 };
 
 }  // namespace quic

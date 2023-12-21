@@ -1,14 +1,14 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 import 'chrome://resources/cr_elements/cr_drawer/cr_drawer.js';
-import 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.m.js';
+import 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.js';
 import 'chrome://resources/cr_elements/cr_toast/cr_toast_manager.js';
 import 'chrome://resources/cr_elements/cr_toolbar/cr_toolbar.js';
 import 'chrome://resources/cr_elements/cr_view_manager/cr_view_manager.js';
-import 'chrome://resources/cr_elements/hidden_style_css.m.js';
-import 'chrome://resources/cr_elements/shared_vars_css.m.js';
+import 'chrome://resources/cr_elements/cr_hidden_style.css.js';
+import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
 import './activity_log/activity_log.js';
 import './detail_view.js';
 import './drop_overlay.js';
@@ -30,7 +30,8 @@ import './kiosk_dialog.js';
 
 import {CrViewManagerElement} from 'chrome://resources/cr_elements/cr_view_manager/cr_view_manager.js';
 import {assert, assertNotReached} from 'chrome://resources/js/assert_ts.js';
-import {loadTimeData} from 'chrome://resources/js/load_time_data.m.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+import {PromiseResolver} from 'chrome://resources/js/promise_resolver.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {ActivityLogExtensionPlaceholder} from './activity_log/activity_log.js';
@@ -218,8 +219,8 @@ export class ExtensionsManagerElement extends PolymerElement {
   private detailViewItem_?: chrome.developerPrivate.ExtensionInfo;
   private activityLogItem_?: chrome.developerPrivate.ExtensionInfo|
       ActivityLogExtensionPlaceholder;
-  private extensions_: Array<chrome.developerPrivate.ExtensionInfo>;
-  private apps_: Array<chrome.developerPrivate.ExtensionInfo>;
+  private extensions_: chrome.developerPrivate.ExtensionInfo[];
+  private apps_: chrome.developerPrivate.ExtensionInfo[];
   private didInitPage_: boolean;
   private showDrawer_: boolean;
   private showLoadErrorDialog_: boolean;
@@ -227,6 +228,7 @@ export class ExtensionsManagerElement extends PolymerElement {
   private installWarnings_: string[]|null;
   private showOptionsDialog_: boolean;
   private fromActivityLog_: boolean;
+  private pageInitializedResolver_: PromiseResolver<void>;
 
   // <if expr="chromeos_ash">
   private kioskEnabled_: boolean;
@@ -250,6 +252,12 @@ export class ExtensionsManagerElement extends PolymerElement {
      * listener can be removed when this element is detached (happens in tests).
      */
     this.navigationListener_ = null;
+
+    /**
+     * A promise resolver for any external files waiting for initPage_ to be
+     * called after the extensions info has been fetched.
+     */
+    this.pageInitializedResolver_ = new PromiseResolver();
   }
 
   override ready() {
@@ -310,12 +318,21 @@ export class ExtensionsManagerElement extends PolymerElement {
   }
 
   /**
+   * @return the promise of `pageInitializedResolver_` so tests can wait for the
+   * page to be initialized.
+   */
+  whenPageInitializedForTest(): Promise<void> {
+    return this.pageInitializedResolver_.promise;
+  }
+
+  /**
    * Initializes the page to reflect what's specified in the url so that if
    * the user visits chrome://extensions/?id=..., we land on the proper page.
    */
   private initPage_() {
     this.didInitPage_ = true;
     this.changePage_(navigation.getCurrentPage());
+    this.pageInitializedResolver_.resolve();
   }
 
   private onItemStateChanged_(eventData: chrome.developerPrivate.EventData) {
@@ -422,8 +439,8 @@ export class ExtensionsManagerElement extends PolymerElement {
    * Categorizes |extensionsAndApps| to apps and extensions and initializes
    * those lists.
    */
-  private initExtensionsAndApps_(
-      extensionsAndApps: Array<chrome.developerPrivate.ExtensionInfo>) {
+  private initExtensionsAndApps_(extensionsAndApps:
+                                     chrome.developerPrivate.ExtensionInfo[]) {
     extensionsAndApps.sort(compareExtensions);
     const apps: chrome.developerPrivate.ExtensionInfo[] = [];
     const extensions: chrome.developerPrivate.ExtensionInfo[] = [];
@@ -587,7 +604,8 @@ export class ExtensionsManagerElement extends PolymerElement {
       assert(newPage.extensionId);
       this.showOptionsDialog_ = true;
       setTimeout(() => {
-        this.shadowRoot!.querySelector('extensions-options-dialog')!.show(data!
+        this.shadowRoot!.querySelector('extensions-options-dialog')!.show(
+            data!,
         );
       }, 0);
     }
@@ -659,7 +677,7 @@ export class ExtensionsManagerElement extends PolymerElement {
     }
   }
 
-  private onShowInstallWarnings_(e: CustomEvent<Array<string>>) {
+  private onShowInstallWarnings_(e: CustomEvent<string[]>) {
     // Leverage Polymer data bindings instead of just assigning the
     // installWarnings on the dialog since the dialog hasn't been stamped
     // in the DOM yet.

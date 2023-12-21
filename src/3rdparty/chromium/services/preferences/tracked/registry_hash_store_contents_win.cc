@@ -1,4 +1,4 @@
-// Copyright (c) 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -191,7 +191,7 @@ void RegistryHashStoreContentsWin::ImportEntry(const std::string& path,
       << "RegistryHashStoreContents does not support the ImportEntry operation";
 }
 
-const base::DictionaryValue* RegistryHashStoreContentsWin::GetContents() const {
+const base::Value::Dict* RegistryHashStoreContentsWin::GetContents() const {
   NOTREACHED()
       << "RegistryHashStoreContents does not support the GetContents operation";
   return NULL;

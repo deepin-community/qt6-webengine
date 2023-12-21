@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,9 @@
 #include <memory>
 #include <string>
 
-#include "base/callback.h"
 #include "base/callback_list.h"
 #include "base/containers/linked_list.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
@@ -33,7 +33,7 @@ class CookieMonsterChangeDispatcher : public CookieChangeDispatcher {
 
   // Expects |cookie_monster| to outlive this.
   CookieMonsterChangeDispatcher(const CookieMonster* cookie_monster,
-                                bool first_party_sets_enabled);
+                                bool same_party_attribute_enabled);
 
   CookieMonsterChangeDispatcher(const CookieMonsterChangeDispatcher&) = delete;
   CookieMonsterChangeDispatcher& operator=(
@@ -78,7 +78,7 @@ class CookieMonsterChangeDispatcher : public CookieChangeDispatcher {
                  std::string name_key,
                  GURL url,
                  absl::optional<CookiePartitionKey> cookie_partition_key,
-                 const bool first_party_sets_enabled,
+                 bool same_party_attribute_enabled,
                  net::CookieChangeCallback callback);
 
     Subscription(const Subscription&) = delete;
@@ -107,7 +107,7 @@ class CookieMonsterChangeDispatcher : public CookieChangeDispatcher {
     // nullopt means all Partitioned cookies will be ignored.
     const absl::optional<CookiePartitionKey> cookie_partition_key_;
     const net::CookieChangeCallback callback_;
-    const bool first_party_sets_enabled_;
+    bool same_party_attribute_enabled_;
 
     void DoDispatchChange(const CookieChangeInfo& change) const;
 
@@ -157,7 +157,7 @@ class CookieMonsterChangeDispatcher : public CookieChangeDispatcher {
 
   CookieDomainMap cookie_domain_map_;
 
-  const bool first_party_sets_enabled_;
+  const bool same_party_attribute_enabled_;
 
   THREAD_CHECKER(thread_checker_);
 

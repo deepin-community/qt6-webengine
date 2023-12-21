@@ -1,8 +1,7 @@
-# Copyright 2018 The Chromium Authors. All rights reserved.
+# Copyright 2018 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import argparse
 import collections
 import contextlib
 import itertools
@@ -537,7 +536,6 @@ def CreateRJavaFiles(srcjar_dir,
                      srcjar_out,
                      custom_root_package_name=None,
                      grandparent_custom_package_name=None,
-                     extra_main_r_text_files=None,
                      ignore_mismatched_values=False):
   """Create all R.java files for a set of packages and R.txt files.
 
@@ -558,7 +556,6 @@ def CreateRJavaFiles(srcjar_dir,
       as the grandparent_custom_package_name. The format of this package name
       is identical to custom_root_package_name.
       (eg. for vr grandparent_custom_package_name would be "base")
-    extra_main_r_text_files: R.txt files to be added to the root R.java file.
     ignore_mismatched_values: If True, ignores if a resource appears multiple
       times with different entry values (useful when all the values are
       dummy anyways).
@@ -580,8 +577,6 @@ def CreateRJavaFiles(srcjar_dir,
   all_resources_by_type = collections.defaultdict(list)
 
   main_r_text_files = [main_r_txt_file]
-  if extra_main_r_text_files:
-    main_r_text_files.extend(extra_main_r_text_files)
   for r_txt_file in main_r_text_files:
     for entry in _ParseTextSymbolsFile(r_txt_file, fix_package_ids=True):
       entry_key = (entry.resource_type, entry.name)
@@ -949,60 +944,6 @@ def BuildContext(temp_dir=None, keep_files=False):
   finally:
     if context:
       context.Close()
-
-
-def ResourceArgsParser():
-  """Create an argparse.ArgumentParser instance with common argument groups.
-
-  Returns:
-    A tuple of (parser, in_group, out_group) corresponding to the parser
-    instance, and the input and output argument groups for it, respectively.
-  """
-  parser = argparse.ArgumentParser(description=__doc__)
-
-  input_opts = parser.add_argument_group('Input options')
-  output_opts = parser.add_argument_group('Output options')
-
-  build_utils.AddDepfileOption(output_opts)
-
-  input_opts.add_argument('--include-resources', required=True, action="append",
-                        help='Paths to arsc resource files used to link '
-                             'against. Can be specified multiple times.')
-
-  input_opts.add_argument('--dependencies-res-zips', required=True,
-                    help='Resources zip archives from dependents. Required to '
-                         'resolve @type/foo references into dependent '
-                         'libraries.')
-
-  input_opts.add_argument(
-      '--extra-res-packages',
-      help='Additional package names to generate R.java files for.')
-
-  return (parser, input_opts, output_opts)
-
-
-def HandleCommonOptions(options):
-  """Handle common command-line options after parsing.
-
-  Args:
-    options: the result of parse_args() on the parser returned by
-        ResourceArgsParser(). This function updates a few common fields.
-  """
-  options.include_resources = [build_utils.ParseGnList(r) for r in
-                               options.include_resources]
-  # Flatten list of include resources list to make it easier to use.
-  options.include_resources = [r for resources in options.include_resources
-                               for r in resources]
-
-  options.dependencies_res_zips = (
-      build_utils.ParseGnList(options.dependencies_res_zips))
-
-  # Don't use [] as default value since some script explicitly pass "".
-  if options.extra_res_packages:
-    options.extra_res_packages = (
-        build_utils.ParseGnList(options.extra_res_packages))
-  else:
-    options.extra_res_packages = []
 
 
 def ParseAndroidResourceStringsFromXml(xml_data):

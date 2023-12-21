@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -325,11 +325,6 @@ TEST_F(FFmpegGlueContainerTest, AAC) {
 TEST_F(FFmpegGlueContainerTest, AVI) {
   InitializeAndOpen("bear.avi");
   ExpectContainer(container_names::CONTAINER_AVI);
-}
-
-TEST_F(FFmpegGlueContainerTest, AMR) {
-  InitializeAndOpen("bear.amr");
-  ExpectContainer(container_names::CONTAINER_AMR);
 }
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 #endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)

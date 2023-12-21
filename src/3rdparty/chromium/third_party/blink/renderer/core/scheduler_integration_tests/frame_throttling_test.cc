@@ -1,8 +1,8 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "cc/base/features.h"
@@ -222,7 +222,7 @@ TEST_P(FrameThrottlingTest, IntersectionObservationOverridesThrottling) {
 
   inner_view->SetNeedsLayout("test");
   inner_view->SetShouldDoFullPaintInvalidation(
-      PaintInvalidationReason::kForTesting);
+      PaintInvalidationReason::kLayout);
   inner_view->Layer()->SetNeedsRepaint();
   EXPECT_TRUE(inner_frame_document->View()
                   ->GetLayoutView()
@@ -393,15 +393,18 @@ TEST_P(FrameThrottlingTest, ForAllThrottledLocalFrameViews) {
   // Main frame is not throttled.
   EXPECT_FALSE(GetDocument().View()->ShouldThrottleRenderingForTest());
 
+  LocalFrameView::AllowThrottlingScope allow_throttling(*GetDocument().View());
   unsigned throttled_count = 0;
-  auto throttled_callback = base::BindLambdaForTesting(
+  GetDocument().View()->ForAllThrottledLocalFrameViews(
       [&throttled_count](LocalFrameView&) { throttled_count++; });
-  GetDocument().View()->ForAllThrottledLocalFrameViewsForTesting(
-      throttled_callback);
   EXPECT_EQ(1u, throttled_count);
 }
 
 TEST_P(FrameThrottlingTest, HiddenCrossOriginDisplayNoneFramesAreThrottled) {
+  // Enable cross-origin non-visible iframe throttling.
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      features::kThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframes);
   // Create a document with doubly nested iframes.
   SimRequest main_resource("https://example.com/", "text/html");
   SimRequest frame_resource("https://example.com/iframe.html", "text/html");
@@ -433,10 +436,16 @@ TEST_P(FrameThrottlingTest, HiddenCrossOriginDisplayNoneFramesAreThrottled) {
   // we will throttle the frame.
   EXPECT_FALSE(frame_document->View()->CanThrottleRendering());
   EXPECT_TRUE(inner_frame_document->View()->CanThrottleRendering());
+  EXPECT_TRUE(base::FeatureList::IsEnabled(
+      features::kThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframes));
   {
     // Re-test with flag disabled.
-    ScopedThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframesForTest
-        scoped_flag_override(false);
+    base::test::ScopedFeatureList feature_list_inner;
+    feature_list_inner.InitAndDisableFeature(
+        features::kThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframes);
+    EXPECT_FALSE(
+        features::
+            IsThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframesEnabled());
 
     frame_document->View()->GetLayoutView()->SetNeedsLayout("test");
     frame_document->View()->ScheduleAnimation();
@@ -733,8 +742,9 @@ TEST_P(FrameThrottlingTest, ChangeOriginInThrottledFrame) {
   CompositeFrame();
 
   EXPECT_TRUE(frame_element->contentDocument()->View()->CanThrottleRendering());
-  EXPECT_TRUE(
-      frame_element->contentDocument()->GetFrame()->IsCrossOriginToMainFrame());
+  EXPECT_TRUE(frame_element->contentDocument()
+                  ->GetFrame()
+                  ->IsCrossOriginToNearestMainFrame());
   EXPECT_FALSE(frame_element->contentDocument()
                    ->View()
                    ->GetLayoutView()
@@ -747,8 +757,9 @@ TEST_P(FrameThrottlingTest, ChangeOriginInThrottledFrame) {
   frame_element->contentDocument()->setDomain(String("example.com"),
                                               exception_state);
 
-  EXPECT_FALSE(
-      frame_element->contentDocument()->GetFrame()->IsCrossOriginToMainFrame());
+  EXPECT_FALSE(frame_element->contentDocument()
+                   ->GetFrame()
+                   ->IsCrossOriginToNearestMainFrame());
   EXPECT_FALSE(
       frame_element->contentDocument()->View()->CanThrottleRendering());
   EXPECT_TRUE(frame_element->contentDocument()
@@ -774,7 +785,7 @@ TEST_P(FrameThrottlingTest, MainFrameOriginChangeInvalidatesDescendants) {
       To<HTMLIFrameElement>(GetDocument().getElementById("frame"));
   auto* frame_document = frame_element->contentDocument();
   EXPECT_TRUE(frame_document->View()->CanThrottleRendering());
-  EXPECT_TRUE(frame_document->GetFrame()->IsCrossOriginToMainFrame());
+  EXPECT_TRUE(frame_document->GetFrame()->IsCrossOriginToNearestMainFrame());
   EXPECT_FALSE(
       frame_document->View()->GetLayoutView()->NeedsPaintPropertyUpdate());
 
@@ -784,14 +795,14 @@ TEST_P(FrameThrottlingTest, MainFrameOriginChangeInvalidatesDescendants) {
   frame_element->contentDocument()->setDomain(String("example.com"),
                                               exception_state);
   EXPECT_TRUE(frame_document->View()->CanThrottleRendering());
-  EXPECT_TRUE(frame_document->GetFrame()->IsCrossOriginToMainFrame());
+  EXPECT_TRUE(frame_document->GetFrame()->IsCrossOriginToNearestMainFrame());
   EXPECT_FALSE(
       frame_document->View()->GetLayoutView()->NeedsPaintPropertyUpdate());
 
   // Then change the main frame origin which needs to invalidate the newly
   // cross-origin child.
   GetDocument().setDomain(String("example.com"), exception_state);
-  EXPECT_FALSE(frame_document->GetFrame()->IsCrossOriginToMainFrame());
+  EXPECT_FALSE(frame_document->GetFrame()->IsCrossOriginToNearestMainFrame());
   EXPECT_FALSE(frame_document->View()->CanThrottleRendering());
   EXPECT_TRUE(
       frame_document->View()->GetLayoutView()->NeedsPaintPropertyUpdate());
@@ -1323,10 +1334,14 @@ TEST_P(FrameThrottlingTest, UpdatePaintPropertiesOnUnthrottling) {
                                        ->FirstFragment()
                                        .PaintProperties()
                                        ->Transform()
-                                       ->Translation2D());
+                                       ->Get2dTranslation());
 }
 
 TEST_P(FrameThrottlingTest, DisplayNoneNotThrottled) {
+  // Enable cross-origin non-visible iframe throttling.
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      features::kThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframes);
   SimRequest main_resource("https://example.com/", "text/html");
 
   LoadURL("https://example.com/");
@@ -1350,8 +1365,9 @@ TEST_P(FrameThrottlingTest, DisplayNoneNotThrottled) {
   EXPECT_TRUE(frame_document->View()->CanThrottleRendering());
   {
     // Re-test with flag disabled.
-    ScopedThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframesForTest
-        scoped_flag_override(false);
+    base::test::ScopedFeatureList feature_list_inner;
+    feature_list_inner.InitAndDisableFeature(
+        features::kThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframes);
 
     frame_document->View()->GetLayoutView()->SetNeedsLayout("test");
     frame_document->View()->ScheduleAnimation();
@@ -1363,6 +1379,10 @@ TEST_P(FrameThrottlingTest, DisplayNoneNotThrottled) {
 }
 
 TEST_P(FrameThrottlingTest, DisplayNoneChildrenRemainThrottled) {
+  // Enable cross-origin non-visible iframe throttling.
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      features::kThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframes);
   // Create two nested frames which are throttled.
   SimRequest main_resource("https://example.com/", "text/html");
   SimRequest frame_resource("https://example.com/iframe.html", "text/html");
@@ -1397,8 +1417,9 @@ TEST_P(FrameThrottlingTest, DisplayNoneChildrenRemainThrottled) {
       child_frame_element->contentDocument()->View()->CanThrottleRendering());
   {
     // Re-test with flag disabled.
-    ScopedThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframesForTest
-        scoped_flag_override(false);
+    base::test::ScopedFeatureList feature_list_inner;
+    feature_list_inner.InitAndDisableFeature(
+        features::kThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframes);
 
     frame_element->contentDocument()->View()->GetLayoutView()->SetNeedsLayout(
         "test");
@@ -1463,7 +1484,7 @@ TEST_P(FrameThrottlingTest, NestedFramesInRemoteFrameHiddenAndShown) {
 
   mojom::blink::ViewportIntersectionState intersection;
   intersection.main_frame_intersection = gfx::Rect(0, 0, 100, 100);
-  intersection.main_frame_viewport_size = gfx::Size(100, 100);
+  intersection.outermost_main_frame_size = gfx::Size(100, 100);
   intersection.viewport_intersection = gfx::Rect(0, 0, 100, 100);
   LocalFrameRoot().FrameWidget()->Resize(gfx::Size(300, 200));
   static_cast<WebFrameWidgetImpl*>(LocalFrameRoot().FrameWidget())
@@ -1592,8 +1613,11 @@ class TestEventListener : public NativeEventListener {
 }  // namespace
 
 TEST_P(FrameThrottlingTest, ThrottledIframeGetsResizeEvents) {
-  ScopedThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframesForTest
-      scoped_flag_override(true);
+  // Enable cross-origin non-visible iframe throttling.
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      features::kThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframes);
+
   WebView().GetSettings()->SetJavaScriptEnabled(true);
 
   // Set up child-iframe that can be throttled and make sure it still gets a
@@ -1965,9 +1989,9 @@ TEST_P(FrameThrottlingTest, PrintThrottledFrame) {
   WebPrintParams print_params(gfx::Size(500, 500));
   web_frame->PrintBegin(print_params, blink::WebNode());
   cc::PaintRecorder recorder;
-  web_frame->PrintPage(0, recorder.beginRecording(500, 500));
+  web_frame->PrintPage(0, recorder.beginRecording());
   auto record = recorder.finishRecordingAsPicture();
-  String record_string = RecordAsDebugString(*record);
+  String record_string = RecordAsDebugString(record);
   EXPECT_TRUE(record_string.Contains("drawTextBlob")) << record_string.Utf8();
   web_frame->PrintEnd();
 }

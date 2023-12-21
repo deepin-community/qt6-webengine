@@ -143,6 +143,9 @@ struct QUIC_EXPORT_PRIVATE QuicConnectionStats {
   // Number of connectivity probing packets received by this connection.
   uint64_t num_connectivity_probing_received = 0;
 
+  // Number of PATH_RESPONSE frame received by this connection.
+  uint64_t num_path_response_received = 0;
+
   // Whether a RETRY packet was successfully processed.
   bool retry_packet_processed = false;
 
@@ -166,10 +169,6 @@ struct QUIC_EXPORT_PRIVATE QuicConnectionStats {
 
   // Max consecutive retransmission timeout before making forward progress.
   size_t max_consecutive_rto_with_forward_progress = 0;
-
-  // Number of sent packets that were encapsulated using Legacy Version
-  // Encapsulation.
-  QuicPacketCount sent_legacy_version_encapsulated_packets = 0;
 
   // Number of times when the connection tries to send data but gets throttled
   // by amplification factor.
@@ -218,6 +217,12 @@ struct QUIC_EXPORT_PRIVATE QuicConnectionStats {
   size_t num_new_connection_id_sent = 0;
   // Number of RETIRE_CONNECTION_ID frames sent.
   size_t num_retire_connection_id_sent = 0;
+
+  bool server_preferred_address_validated = false;
+  bool failed_to_validate_server_preferred_address = false;
+  // Number of duplicated packets that have been sent to server preferred
+  // address while the validation is pending.
+  size_t num_duplicated_packets_sent_to_server_preferred_address = 0;
 
   struct QUIC_NO_EXPORT TlsServerOperationStats {
     bool success = false;

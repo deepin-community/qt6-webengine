@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -32,14 +32,6 @@ declare namespace chrome {
       buckets: HistogramBucket[];
     }
 
-    export function getHistogram(
-        name: string, callback: (p1: Histogram) => void): void;
-    export function getIsCrashReportingEnabled(callback: (p1: boolean) => void):
-        void;
-    export function getFieldTrial(name: string, callback: (p1: string) => void):
-        void;
-    export function getVariationParams(
-        name: string, callback: (p1: Object|undefined) => void): void;
     export function recordUserAction(name: string): void;
     export function recordPercentage(metricName: string, value: number): void;
     export function recordCount(metricName: string, value: number): void;
@@ -48,8 +40,10 @@ declare namespace chrome {
     export function recordTime(metricName: string, value: number): void;
     export function recordMediumTime(metricName: string, value: number): void;
     export function recordLongTime(metricName: string, value: number): void;
-    export function recordSparseHashable(metricName: string, value: string):
-        void;
+    export function recordSparseValueWithHashMetricName(
+      metricName: string, value: string): void;
+    export function recordSparseValueWithPersistentHash(
+      metricName: string, value: string): void;
     export function recordSparseValue(metricName: string, value: number): void;
     export function recordValue(metric: MetricType, value: number): void;
     export function recordBoolean(metricName: string, value: boolean): void;

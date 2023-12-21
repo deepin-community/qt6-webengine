@@ -10,23 +10,23 @@ import * as InlineEditor from '../../ui/legacy/components/inline_editor/inline_e
 import type * as SDK from '../../core/sdk/sdk.js';
 import * as UI from '../../ui/legacy/legacy.js';
 
-import type {AnimationImpl, KeyframeStyle} from './AnimationModel.js';
-import type {AnimationTimeline} from './AnimationTimeline.js';
-import {StepTimingFunction} from './AnimationTimeline.js';
+import {type AnimationImpl, type KeyframeStyle} from './AnimationModel.js';
+
+import {StepTimingFunction, type AnimationTimeline} from './AnimationTimeline.js';
 
 const UIStrings = {
   /**
-  *@description Title of the first and last points of an animation
-  */
+   *@description Title of the first and last points of an animation
+   */
   animationEndpointSlider: 'Animation Endpoint slider',
   /**
-  *@description Title of an Animation Keyframe point
-  */
+   *@description Title of an Animation Keyframe point
+   */
   animationKeyframeSlider: 'Animation Keyframe slider',
   /**
-  *@description Title of an animation keyframe group
-  *@example {anilogo} PH1
-  */
+   *@description Title of an animation keyframe group
+   *@example {anilogo} PH1
+   */
   sSlider: '{PH1} slider',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/animation/AnimationUI.ts', UIStrings);
@@ -487,14 +487,14 @@ export const Options = {
 };
 
 export const Colors = new Map<string, Common.Color.Color|null>([
-  ['Purple', Common.Color.Color.parse('#9C27B0')],
-  ['Light Blue', Common.Color.Color.parse('#03A9F4')],
-  ['Deep Orange', Common.Color.Color.parse('#FF5722')],
-  ['Blue', Common.Color.Color.parse('#5677FC')],
-  ['Lime', Common.Color.Color.parse('#CDDC39')],
-  ['Blue Grey', Common.Color.Color.parse('#607D8B')],
-  ['Pink', Common.Color.Color.parse('#E91E63')],
-  ['Green', Common.Color.Color.parse('#0F9D58')],
-  ['Brown', Common.Color.Color.parse('#795548')],
-  ['Cyan', Common.Color.Color.parse('#00BCD4')],
+  ['Purple', Common.Color.parse('#9C27B0')],
+  ['Light Blue', Common.Color.parse('#03A9F4')],
+  ['Deep Orange', Common.Color.parse('#FF5722')],
+  ['Blue', Common.Color.parse('#5677FC')],
+  ['Lime', Common.Color.parse('#CDDC39')],
+  ['Blue Grey', Common.Color.parse('#607D8B')],
+  ['Pink', Common.Color.parse('#E91E63')],
+  ['Green', Common.Color.parse('#0F9D58')],
+  ['Brown', Common.Color.parse('#795548')],
+  ['Cyan', Common.Color.parse('#00BCD4')],
 ]);

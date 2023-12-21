@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -525,14 +525,14 @@ void ContentSubresourceFilterWebContentsHelper::OnPageActivationComputed(
   }
 }
 
-void ContentSubresourceFilterWebContentsHelper::OnSubframeNavigationEvaluated(
+void ContentSubresourceFilterWebContentsHelper::OnChildFrameNavigationEvaluated(
     content::NavigationHandle* navigation_handle,
     LoadPolicy load_policy) {
   DCHECK(!IsInSubresourceFilterRoot(navigation_handle));
   if (ContentSubresourceFilterThrottleManager* throttle_manager =
           GetThrottleManager(*navigation_handle)) {
-    throttle_manager->OnSubframeNavigationEvaluated(navigation_handle,
-                                                    load_policy);
+    throttle_manager->OnChildFrameNavigationEvaluated(navigation_handle,
+                                                      load_policy);
   }
 }
 
@@ -553,21 +553,12 @@ bool IsSubresourceFilterRoot(content::RenderFrameHost* rfh) {
 }
 
 content::Page& GetSubresourceFilterRootPage(content::RenderFrameHost* rfh) {
-  bool mparch_fenced_frames_enabled =
-      blink::features::IsFencedFramesEnabled() &&
-      blink::features::kFencedFramesImplementationTypeParam.Get() ==
-          blink::features::FencedFramesImplementationType::kMPArch;
-
-  // ShadowDOM fenced frames do not have a nested frame tree so there's no need
-  // to escape an inner page.
-  if (mparch_fenced_frames_enabled) {
-    // This only "breaks out" from fenced frames since the desired behavior in
-    // other nested frame trees (e.g. portals) isn't clear. Otherwise we could
-    // just use GetOutermostMainFrame.
-    while (rfh->IsNestedWithinFencedFrame()) {
-      rfh = rfh->GetMainFrame()->GetParentOrOuterDocument();
-      DCHECK(rfh);
-    }
+  // This only "breaks out" from fenced frames since the desired behavior in
+  // other nested frame trees (e.g. portals) isn't clear. Otherwise we could
+  // just use GetOutermostMainFrame.
+  while (rfh->IsNestedWithinFencedFrame()) {
+    rfh = rfh->GetMainFrame()->GetParentOrOuterDocument();
+    DCHECK(rfh);
   }
 
   return rfh->GetPage();

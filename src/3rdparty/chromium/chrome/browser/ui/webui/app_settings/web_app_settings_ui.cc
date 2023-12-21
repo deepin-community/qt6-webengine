@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -65,7 +65,7 @@ class WebAppSettingsWindowDelegate : public AppManagementPageHandler::Delegate {
   }
 
  private:
-  raw_ptr<Profile> profile_;
+  raw_ptr<Profile, DanglingUntriaged> profile_;
 };
 
 }  // namespace
@@ -79,8 +79,10 @@ WebAppSettingsUI::CreateAppManagementPageHandlerDelegate(Profile* profile) {
 WebAppSettingsUI::WebAppSettingsUI(content::WebUI* web_ui)
     : ui::MojoWebUIController(web_ui, /*enable_chrome_send=*/true) {
   // Set up the chrome://app-settings source.
+  Profile* profile = Profile::FromWebUI(web_ui);
   content::WebUIDataSource* html_source =
-      content::WebUIDataSource::Create(chrome::kChromeUIWebAppSettingsHost);
+      content::WebUIDataSource::CreateAndAdd(
+          profile, chrome::kChromeUIWebAppSettingsHost);
 
   AddAppManagementStrings(html_source);
 
@@ -89,9 +91,6 @@ WebAppSettingsUI::WebAppSettingsUI(content::WebUI* web_ui)
       html_source,
       base::make_span(kAppSettingsResources, kAppSettingsResourcesSize),
       IDR_APP_SETTINGS_WEB_APP_SETTINGS_HTML);
-
-  Profile* profile = Profile::FromWebUI(web_ui);
-  content::WebUIDataSource::Add(profile, html_source);
 
   auto* provider = web_app::WebAppProvider::GetForWebApps(profile);
   install_manager_observation_.Observe(&provider->install_manager());

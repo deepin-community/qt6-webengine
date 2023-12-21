@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -159,19 +159,24 @@ TEST_F(RasterFormatTest, BeginRasterCHROMIUMImmediate) {
   cmds::BeginRasterCHROMIUMImmediate& cmd =
       *GetBufferAs<cmds::BeginRasterCHROMIUMImmediate>();
   void* next_cmd =
-      cmd.Set(&cmd, static_cast<GLuint>(11), static_cast<GLboolean>(12),
-              static_cast<GLuint>(13), static_cast<gpu::raster::MsaaMode>(14),
-              static_cast<GLboolean>(15), static_cast<GLboolean>(16), data);
+      cmd.Set(&cmd, static_cast<GLfloat>(11), static_cast<GLfloat>(12),
+              static_cast<GLfloat>(13), static_cast<GLfloat>(14),
+              static_cast<GLboolean>(15), static_cast<GLuint>(16),
+              static_cast<gpu::raster::MsaaMode>(17),
+              static_cast<GLboolean>(18), static_cast<GLboolean>(19), data);
   EXPECT_EQ(static_cast<uint32_t>(cmds::BeginRasterCHROMIUMImmediate::kCmdId),
             cmd.header.command);
   EXPECT_EQ(sizeof(cmd) + RoundSizeToMultipleOfEntries(sizeof(data)),
             cmd.header.size * 4u);
-  EXPECT_EQ(static_cast<GLuint>(11), cmd.sk_color);
-  EXPECT_EQ(static_cast<GLboolean>(12), cmd.needs_clear);
-  EXPECT_EQ(static_cast<GLuint>(13), cmd.msaa_sample_count);
-  EXPECT_EQ(static_cast<gpu::raster::MsaaMode>(14), cmd.msaa_mode);
-  EXPECT_EQ(static_cast<GLboolean>(15), cmd.can_use_lcd_text);
-  EXPECT_EQ(static_cast<GLboolean>(16), cmd.visible);
+  EXPECT_EQ(static_cast<GLfloat>(11), cmd.r);
+  EXPECT_EQ(static_cast<GLfloat>(12), cmd.g);
+  EXPECT_EQ(static_cast<GLfloat>(13), cmd.b);
+  EXPECT_EQ(static_cast<GLfloat>(14), cmd.a);
+  EXPECT_EQ(static_cast<GLboolean>(15), cmd.needs_clear);
+  EXPECT_EQ(static_cast<GLuint>(16), cmd.msaa_sample_count);
+  EXPECT_EQ(static_cast<gpu::raster::MsaaMode>(17), cmd.msaa_mode);
+  EXPECT_EQ(static_cast<GLboolean>(18), cmd.can_use_lcd_text);
+  EXPECT_EQ(static_cast<GLboolean>(19), cmd.visible);
   CheckBytesWrittenMatchesExpectedSize(
       next_cmd, sizeof(cmd) + RoundSizeToMultipleOfEntries(sizeof(data)));
 }
@@ -252,27 +257,6 @@ TEST_F(RasterFormatTest, UnlockTransferCacheEntryINTERNAL) {
   CheckBytesWrittenMatchesExpectedSize(next_cmd, sizeof(cmd));
 }
 
-TEST_F(RasterFormatTest, DeletePaintCacheTextBlobsINTERNALImmediate) {
-  static GLuint ids[] = {
-      12,
-      23,
-      34,
-  };
-  cmds::DeletePaintCacheTextBlobsINTERNALImmediate& cmd =
-      *GetBufferAs<cmds::DeletePaintCacheTextBlobsINTERNALImmediate>();
-  void* next_cmd = cmd.Set(&cmd, static_cast<GLsizei>(std::size(ids)), ids);
-  EXPECT_EQ(static_cast<uint32_t>(
-                cmds::DeletePaintCacheTextBlobsINTERNALImmediate::kCmdId),
-            cmd.header.command);
-  EXPECT_EQ(sizeof(cmd) + RoundSizeToMultipleOfEntries(cmd.n * 4u),
-            cmd.header.size * 4u);
-  EXPECT_EQ(static_cast<GLsizei>(std::size(ids)), cmd.n);
-  CheckBytesWrittenMatchesExpectedSize(
-      next_cmd,
-      sizeof(cmd) + RoundSizeToMultipleOfEntries(std::size(ids) * 4u));
-  EXPECT_EQ(0, memcmp(ids, ImmediateDataAddress(&cmd), sizeof(ids)));
-}
-
 TEST_F(RasterFormatTest, DeletePaintCachePathsINTERNALImmediate) {
   static GLuint ids[] = {
       12,
@@ -294,6 +278,21 @@ TEST_F(RasterFormatTest, DeletePaintCachePathsINTERNALImmediate) {
   EXPECT_EQ(0, memcmp(ids, ImmediateDataAddress(&cmd), sizeof(ids)));
 }
 
+TEST_F(RasterFormatTest, DeletePaintCachePathsINTERNAL) {
+  cmds::DeletePaintCachePathsINTERNAL& cmd =
+      *GetBufferAs<cmds::DeletePaintCachePathsINTERNAL>();
+  void* next_cmd =
+      cmd.Set(&cmd, static_cast<GLsizei>(11), static_cast<uint32_t>(12),
+              static_cast<uint32_t>(13));
+  EXPECT_EQ(static_cast<uint32_t>(cmds::DeletePaintCachePathsINTERNAL::kCmdId),
+            cmd.header.command);
+  EXPECT_EQ(sizeof(cmd), cmd.header.size * 4u);
+  EXPECT_EQ(static_cast<GLsizei>(11), cmd.n);
+  EXPECT_EQ(static_cast<uint32_t>(12), cmd.ids_shm_id);
+  EXPECT_EQ(static_cast<uint32_t>(13), cmd.ids_shm_offset);
+  CheckBytesWrittenMatchesExpectedSize(next_cmd, sizeof(cmd));
+}
+
 TEST_F(RasterFormatTest, ClearPaintCacheINTERNAL) {
   cmds::ClearPaintCacheINTERNAL& cmd =
       *GetBufferAs<cmds::ClearPaintCacheINTERNAL>();
@@ -304,7 +303,7 @@ TEST_F(RasterFormatTest, ClearPaintCacheINTERNAL) {
   CheckBytesWrittenMatchesExpectedSize(next_cmd, sizeof(cmd));
 }
 
-TEST_F(RasterFormatTest, CopySubTextureINTERNALImmediate) {
+TEST_F(RasterFormatTest, CopySharedImageINTERNALImmediate) {
   const int kSomeBaseValueToTestWith = 51;
   static GLbyte data[] = {
       static_cast<GLbyte>(kSomeBaseValueToTestWith + 0),
@@ -340,14 +339,14 @@ TEST_F(RasterFormatTest, CopySubTextureINTERNALImmediate) {
       static_cast<GLbyte>(kSomeBaseValueToTestWith + 30),
       static_cast<GLbyte>(kSomeBaseValueToTestWith + 31),
   };
-  cmds::CopySubTextureINTERNALImmediate& cmd =
-      *GetBufferAs<cmds::CopySubTextureINTERNALImmediate>();
+  cmds::CopySharedImageINTERNALImmediate& cmd =
+      *GetBufferAs<cmds::CopySharedImageINTERNALImmediate>();
   void* next_cmd = cmd.Set(&cmd, static_cast<GLint>(11), static_cast<GLint>(12),
                            static_cast<GLint>(13), static_cast<GLint>(14),
                            static_cast<GLsizei>(15), static_cast<GLsizei>(16),
                            static_cast<GLboolean>(17), data);
   EXPECT_EQ(
-      static_cast<uint32_t>(cmds::CopySubTextureINTERNALImmediate::kCmdId),
+      static_cast<uint32_t>(cmds::CopySharedImageINTERNALImmediate::kCmdId),
       cmd.header.command);
   EXPECT_EQ(sizeof(cmd) + RoundSizeToMultipleOfEntries(sizeof(data)),
             cmd.header.size * 4u);
@@ -429,12 +428,12 @@ TEST_F(RasterFormatTest, ReadbackARGBImagePixelsINTERNALImmediate) {
   };
   cmds::ReadbackARGBImagePixelsINTERNALImmediate& cmd =
       *GetBufferAs<cmds::ReadbackARGBImagePixelsINTERNALImmediate>();
-  void* next_cmd = cmd.Set(&cmd, static_cast<GLint>(11), static_cast<GLint>(12),
-                           static_cast<GLuint>(13), static_cast<GLuint>(14),
-                           static_cast<GLuint>(15), static_cast<GLuint>(16),
-                           static_cast<GLuint>(17), static_cast<GLint>(18),
-                           static_cast<GLuint>(19), static_cast<GLuint>(20),
-                           static_cast<GLuint>(21), data);
+  void* next_cmd = cmd.Set(
+      &cmd, static_cast<GLint>(11), static_cast<GLint>(12),
+      static_cast<GLint>(13), static_cast<GLuint>(14), static_cast<GLuint>(15),
+      static_cast<GLuint>(16), static_cast<GLuint>(17), static_cast<GLuint>(18),
+      static_cast<GLint>(19), static_cast<GLuint>(20), static_cast<GLuint>(21),
+      static_cast<GLuint>(22), data);
   EXPECT_EQ(static_cast<uint32_t>(
                 cmds::ReadbackARGBImagePixelsINTERNALImmediate::kCmdId),
             cmd.header.command);
@@ -442,15 +441,16 @@ TEST_F(RasterFormatTest, ReadbackARGBImagePixelsINTERNALImmediate) {
             cmd.header.size * 4u);
   EXPECT_EQ(static_cast<GLint>(11), cmd.src_x);
   EXPECT_EQ(static_cast<GLint>(12), cmd.src_y);
-  EXPECT_EQ(static_cast<GLuint>(13), cmd.dst_width);
-  EXPECT_EQ(static_cast<GLuint>(14), cmd.dst_height);
-  EXPECT_EQ(static_cast<GLuint>(15), cmd.row_bytes);
-  EXPECT_EQ(static_cast<GLuint>(16), cmd.dst_sk_color_type);
-  EXPECT_EQ(static_cast<GLuint>(17), cmd.dst_sk_alpha_type);
-  EXPECT_EQ(static_cast<GLint>(18), cmd.shm_id);
-  EXPECT_EQ(static_cast<GLuint>(19), cmd.shm_offset);
-  EXPECT_EQ(static_cast<GLuint>(20), cmd.color_space_offset);
-  EXPECT_EQ(static_cast<GLuint>(21), cmd.pixels_offset);
+  EXPECT_EQ(static_cast<GLint>(13), cmd.plane_index);
+  EXPECT_EQ(static_cast<GLuint>(14), cmd.dst_width);
+  EXPECT_EQ(static_cast<GLuint>(15), cmd.dst_height);
+  EXPECT_EQ(static_cast<GLuint>(16), cmd.row_bytes);
+  EXPECT_EQ(static_cast<GLuint>(17), cmd.dst_sk_color_type);
+  EXPECT_EQ(static_cast<GLuint>(18), cmd.dst_sk_alpha_type);
+  EXPECT_EQ(static_cast<GLint>(19), cmd.shm_id);
+  EXPECT_EQ(static_cast<GLuint>(20), cmd.shm_offset);
+  EXPECT_EQ(static_cast<GLuint>(21), cmd.color_space_offset);
+  EXPECT_EQ(static_cast<GLuint>(22), cmd.pixels_offset);
   CheckBytesWrittenMatchesExpectedSize(
       next_cmd, sizeof(cmd) + RoundSizeToMultipleOfEntries(sizeof(data)));
 }
@@ -584,6 +584,70 @@ TEST_F(RasterFormatTest, ConvertYUVAMailboxesToRGBINTERNALImmediate) {
       static_cast<GLbyte>(kSomeBaseValueToTestWith + 77),
       static_cast<GLbyte>(kSomeBaseValueToTestWith + 78),
       static_cast<GLbyte>(kSomeBaseValueToTestWith + 79),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 80),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 81),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 82),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 83),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 84),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 85),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 86),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 87),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 88),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 89),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 90),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 91),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 92),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 93),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 94),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 95),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 96),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 97),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 98),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 99),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 100),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 101),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 102),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 103),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 104),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 105),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 106),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 107),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 108),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 109),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 110),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 111),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 112),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 113),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 114),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 115),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 116),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 117),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 118),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 119),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 120),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 121),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 122),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 123),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 124),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 125),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 126),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 127),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 128),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 129),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 130),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 131),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 132),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 133),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 134),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 135),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 136),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 137),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 138),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 139),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 140),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 141),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 142),
+      static_cast<GLbyte>(kSomeBaseValueToTestWith + 143),
   };
   cmds::ConvertYUVAMailboxesToRGBINTERNALImmediate& cmd =
       *GetBufferAs<cmds::ConvertYUVAMailboxesToRGBINTERNALImmediate>();

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -116,17 +116,17 @@ class VIEWS_EXPORT CocoaScrollBar : public ScrollBar,
   gfx::SlideAnimation thickness_animation_;
 
   // The scroll offset from the last adjustment to the scrollbar.
-  int last_contents_scroll_offset_;
+  int last_contents_scroll_offset_ = 0;
 
   // True when the scrollbar is expanded.
-  bool is_expanded_;
+  bool is_expanded_ = false;
 
   // True when the scrolltrack should be drawn.
   bool has_scrolltrack_;
 
   // True when the scrollbar has started dragging since it was last shown.
   // This is set to false when we begin to hide the scrollbar.
-  bool did_start_dragging_;
+  bool did_start_dragging_ = false;
 
   // The bridge for NSScroller.
   base::scoped_nsobject<ViewsScrollbarBridge> bridge_;

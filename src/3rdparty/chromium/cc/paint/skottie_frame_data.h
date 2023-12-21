@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -28,11 +28,8 @@ struct CC_PAINT_EXPORT SkottieFrameData {
   PaintImage image;
   // Chromium version of SkSamplingOptions. Controls resampling quality if the
   // image needs to be resized when rendering.
-  PaintFlags::FilterQuality quality;
+  PaintFlags::FilterQuality quality = PaintFlags::FilterQuality::kLow;
 };
-
-CC_PAINT_EXPORT bool operator==(const SkottieFrameData& frame_l,
-                                const SkottieFrameData& frame_r);
 
 // Map from asset id to the image to use for that asset.
 using SkottieFrameDataMap =

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,13 +7,12 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "components/update_client/net/url_loader_post_interceptor.h"
 #include "components/update_client/test_configurator.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -149,7 +148,6 @@ TEST_P(RequestSenderTest, RequestSendSuccess) {
   EXPECT_EQ(0, post_interceptor_->GetHitCountForURL(GURL(kUrl2)))
       << post_interceptor_->GetRequestsAsString();
 
-  // Sanity check the request.
   EXPECT_STREQ("test", post_interceptor_->GetRequestBody(0).c_str());
 
   // Check the response post conditions.

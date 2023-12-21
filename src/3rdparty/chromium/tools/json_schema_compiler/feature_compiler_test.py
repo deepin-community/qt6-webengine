@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2015 The Chromium Authors. All rights reserved.
+# Copyright 2015 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -58,6 +58,7 @@ class FeatureCompilerTest(unittest.TestCase):
       'internal': True,
       'matches': ['*://*/*'],
       'max_manifest_version': 1,
+      'requires_delegated_availability_check': True,
       'noparent': True,
       'platforms': ['mac', 'win'],
       'session_types': ['kiosk', 'regular'],
@@ -365,9 +366,24 @@ class FeatureCompilerTest(unittest.TestCase):
           'contexts': ['webui'],
         }])
 
-    with self.assertRaisesRegexp(AssertionError,
-                                 'No default parent found for bookmarks'):
+    with self.assertRaisesRegex(AssertionError,
+                                'No default parent found for bookmarks'):
       c._CompileFeature('bookmarks.export', { "allowlist": ["asdf"] })
+
+  def testComplexFeatureWithSinglePropertyBlock(self):
+    compiler = self._createTestFeatureCompiler('APIFeature')
+
+    error = ('Error parsing feature "feature_alpha": A complex feature '
+             'definition is only needed when there are multiple objects '
+             'specifying different groups of properties for feature '
+             'availability. You can reduce it down to a single object on the '
+             'feature key instead of a list.')
+    with self.assertRaisesRegex(AssertionError, error):
+      compiler._CompileFeature('feature_alpha',
+        [{
+          'contexts': ['blessed_extension'],
+          'channel': 'stable',
+        }])
 
   def testRealIdsDisallowedInAllowlist(self):
     fake_id = 'a' * 32;

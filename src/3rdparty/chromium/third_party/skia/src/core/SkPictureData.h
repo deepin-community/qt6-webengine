@@ -11,7 +11,7 @@
 #include "include/core/SkBitmap.h"
 #include "include/core/SkDrawable.h"
 #include "include/core/SkPicture.h"
-#include "include/private/SkTArray.h"
+#include "include/private/base/SkTArray.h"
 #include "src/core/SkPictureFlat.h"
 
 #include <memory>
@@ -71,7 +71,7 @@ public:
 template <typename T>
 T* read_index_base_1_or_null(SkReadBuffer* reader, const SkTArray<sk_sp<T>>& array) {
     int index = reader->readInt();
-    return reader->validate(index > 0 && index <= array.count()) ? array[index - 1].get() : nullptr;
+    return reader->validate(index > 0 && index <= array.size()) ? array[index - 1].get() : nullptr;
 }
 
 class SkPictureData {
@@ -81,11 +81,14 @@ public:
     static SkPictureData* CreateFromStream(SkStream*,
                                            const SkPictInfo&,
                                            const SkDeserialProcs&,
-                                           SkTypefacePlayback*);
+                                           SkTypefacePlayback*,
+                                           int recursionLimit);
     static SkPictureData* CreateFromBuffer(SkReadBuffer&, const SkPictInfo&);
 
     void serialize(SkWStream*, const SkSerialProcs&, SkRefCntSet*, bool textBlobsOnly=false) const;
     void flatten(SkWriteBuffer&) const;
+
+    const SkPictInfo& info() const { return fInfo; }
 
     const sk_sp<SkData>& opData() const { return fOpData; }
 
@@ -93,19 +96,20 @@ protected:
     explicit SkPictureData(const SkPictInfo& info);
 
     // Does not affect ownership of SkStream.
-    bool parseStream(SkStream*, const SkDeserialProcs&, SkTypefacePlayback*);
+    bool parseStream(SkStream*, const SkDeserialProcs&, SkTypefacePlayback*,
+                     int recursionLimit);
     bool parseBuffer(SkReadBuffer& buffer);
 
 public:
     const SkImage* getImage(SkReadBuffer* reader) const {
         // images are written base-0, unlike paths, pictures, drawables, etc.
         const int index = reader->readInt();
-        return reader->validateIndex(index, fImages.count()) ? fImages[index].get() : nullptr;
+        return reader->validateIndex(index, fImages.size()) ? fImages[index].get() : nullptr;
     }
 
     const SkPath& getPath(SkReadBuffer* reader) const {
         int index = reader->readInt();
-        return reader->validate(index > 0 && index <= fPaths.count()) ?
+        return reader->validate(index > 0 && index <= fPaths.size()) ?
                 fPaths[index - 1] : fEmptyPath;
     }
 
@@ -129,7 +133,7 @@ public:
     }
 
 #if SK_SUPPORT_GPU
-    const GrSlug* getSlug(SkReadBuffer* reader) const {
+    const sktext::gpu::Slug* getSlug(SkReadBuffer* reader) const {
         return read_index_base_1_or_null(reader, fSlugs);
     }
 #endif
@@ -142,7 +146,8 @@ private:
     // these help us with reading/writing
     // Does not affect ownership of SkStream.
     bool parseStreamTag(SkStream*, uint32_t tag, uint32_t size,
-                        const SkDeserialProcs&, SkTypefacePlayback*);
+                        const SkDeserialProcs&, SkTypefacePlayback*,
+                        int recursionLimit);
     void parseBufferTag(SkReadBuffer&, uint32_t tag, uint32_t size);
     void flattenToBuffer(SkWriteBuffer&, bool textBlobsOnly) const;
 
@@ -160,7 +165,7 @@ private:
     SkTArray<sk_sp<const SkVertices>>  fVertices;
     SkTArray<sk_sp<const SkImage>>     fImages;
 #if SK_SUPPORT_GPU
-    SkTArray<sk_sp<const GrSlug>>      fSlugs;
+    SkTArray<sk_sp<const sktext::gpu::Slug>>      fSlugs;
 #endif
 
 

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,6 @@ namespace blink {
 NGMathSpaceLayoutAlgorithm::NGMathSpaceLayoutAlgorithm(
     const NGLayoutAlgorithmParams& params)
     : NGLayoutAlgorithm(params) {
-  DCHECK(params.fragment_geometry.scrollbar.IsEmpty());
   DCHECK(params.space.IsNewFormattingContext());
 }
 
@@ -27,7 +26,7 @@ const NGLayoutResult* NGMathSpaceLayoutAlgorithm::Layout() {
   container_builder_.SetIntrinsicBlockSize(intrinsic_block_size);
   container_builder_.SetFragmentsTotalBlockSize(block_size);
 
-  container_builder_.SetBaseline(
+  container_builder_.SetBaselines(
       BorderScrollbarPadding().block_start +
       ValueForLength(Style().GetMathBaseline(), LayoutUnit()));
   return container_builder_.ToBoxFragment();

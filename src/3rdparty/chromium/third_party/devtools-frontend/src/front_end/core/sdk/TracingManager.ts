@@ -5,10 +5,9 @@
 import type * as ProtocolProxyApi from '../../generated/protocol-proxy-api.js';
 import * as Protocol from '../../generated/protocol.js';
 
-import type {Target} from './Target.js';
-import {Capability} from './Target.js';
+import {Capability, type Target} from './Target.js';
 import {SDKModel} from './SDKModel.js';
-import type {ObjectSnapshot} from './TracingModel.js';
+import {type ObjectSnapshot} from './TracingModel.js';
 
 export class TracingManager extends SDKModel<void> {
   readonly #tracingAgent: ProtocolProxyApi.TracingApi;
@@ -144,8 +143,4 @@ export interface EventPayload {
     local: (string|undefined),
   };
   scope: string;
-  // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
-  // eslint-disable-next-line @typescript-eslint/naming-convention
-  bind_id: string;
-  s: string;
 }

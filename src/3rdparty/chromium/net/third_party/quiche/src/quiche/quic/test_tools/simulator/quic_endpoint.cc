@@ -34,18 +34,24 @@ QuicEndpoint::QuicEndpoint(Simulator* simulator, std::string name,
   connection_ = std::make_unique<QuicConnection>(
       connection_id, GetAddressFromName(name), GetAddressFromName(peer_name),
       simulator, simulator->GetAlarmFactory(), &writer_, false, perspective,
-      ParsedVersionOfIndex(CurrentSupportedVersions(), 0));
+      ParsedVersionOfIndex(CurrentSupportedVersions(), 0),
+      connection_id_generator_);
   connection_->set_visitor(this);
   connection_->SetEncrypter(ENCRYPTION_FORWARD_SECURE,
-                            std::make_unique<NullEncrypter>(perspective));
+                            std::make_unique<quic::test::TaggingEncrypter>(
+                                ENCRYPTION_FORWARD_SECURE));
   connection_->SetEncrypter(ENCRYPTION_INITIAL, nullptr);
   if (connection_->version().KnowsWhichDecrypterToUse()) {
-    connection_->InstallDecrypter(ENCRYPTION_FORWARD_SECURE,
-                                  std::make_unique<NullDecrypter>(perspective));
+    connection_->InstallDecrypter(
+        ENCRYPTION_FORWARD_SECURE,
+        std::make_unique<quic::test::StrictTaggingDecrypter>(
+            ENCRYPTION_FORWARD_SECURE));
     connection_->RemoveDecrypter(ENCRYPTION_INITIAL);
   } else {
-    connection_->SetDecrypter(ENCRYPTION_FORWARD_SECURE,
-                              std::make_unique<NullDecrypter>(perspective));
+    connection_->SetDecrypter(
+        ENCRYPTION_FORWARD_SECURE,
+        std::make_unique<quic::test::StrictTaggingDecrypter>(
+            ENCRYPTION_FORWARD_SECURE));
   }
   connection_->SetDefaultEncryptionLevel(ENCRYPTION_FORWARD_SECURE);
   connection_->OnHandshakeComplete();
@@ -149,14 +155,6 @@ void QuicEndpoint::OnCanWrite() {
     return;
   }
   WriteStreamData();
-}
-
-bool QuicEndpoint::SendProbingData() {
-  if (connection()->sent_packet_manager().MaybeRetransmitOldestPacket(
-          PROBING_RETRANSMISSION)) {
-    return true;
-  }
-  return false;
 }
 
 bool QuicEndpoint::WillingAndAbleToWrite() const {

@@ -135,6 +135,7 @@ hb_script_get_horizontal_direction
 hb_language_from_string
 hb_language_to_string
 hb_language_get_default
+hb_language_matches
 hb_feature_from_string
 hb_feature_to_string
 hb_variation_from_string
@@ -255,8 +256,6 @@ hb_coretext_font_get_ct_font
 <FILE>hb-directwrite</FILE>
 hb_directwrite_face_create
 hb_directwrite_face_get_font_face
-<SUBSECTION Private>
-hb_directwrite_shape_experimental_width
 </SECTION>
 
 <SECTION>
@@ -286,6 +285,7 @@ hb_face_collect_variation_selectors
 hb_face_collect_variation_unicodes
 hb_face_builder_create
 hb_face_builder_add_table
+hb_face_builder_sort_tables
 </SECTION>
 
 <SECTION>
@@ -373,6 +373,8 @@ hb_font_glyph_from_string
 hb_font_glyph_to_string
 hb_font_is_immutable
 hb_font_make_immutable
+hb_font_get_serial
+hb_font_changed
 hb_font_reference
 hb_font_set_face
 hb_font_set_funcs
@@ -400,9 +402,6 @@ hb_font_get_h_extents
 hb_font_get_v_extents
 hb_font_extents_t
 hb_glyph_extents_t
-<SUBSECTION Private>
-hb_font_get_var_coords_design
-hb_font_draw_glyph
 </SECTION>
 
 <SECTION>
@@ -419,6 +418,7 @@ hb_ft_font_unlock_face
 hb_ft_font_set_load_flags
 hb_ft_font_get_load_flags
 hb_ft_font_set_funcs
+hb_ft_hb_font_changed
 </SECTION>
 
 <SECTION>
@@ -453,14 +453,17 @@ hb_icu_script_to_script
 HB_MAP_VALUE_INVALID
 hb_map_allocation_successful
 hb_map_clear
+hb_map_copy
 hb_map_create
 hb_map_del
 hb_map_destroy
 hb_map_get
 hb_map_get_empty
 hb_map_get_population
+hb_map_is_equal
 hb_map_get_user_data
 hb_map_has
+hb_map_hash
 hb_map_is_empty
 hb_map_reference
 hb_map_set
@@ -552,6 +555,7 @@ hb_ot_layout_language_get_feature_tags
 hb_ot_layout_language_get_required_feature
 hb_ot_layout_lookup_collect_glyphs
 hb_ot_layout_lookup_get_glyph_alternates
+hb_ot_layout_lookup_get_optical_bound
 hb_ot_layout_lookup_substitute_closure
 hb_ot_layout_lookups_substitute_closure
 hb_ot_layout_lookup_would_substitute
@@ -651,6 +655,7 @@ hb_set_get_min
 hb_set_get_population
 hb_set_get_user_data
 hb_set_has
+hb_set_hash
 hb_set_intersect
 hb_set_invert
 hb_set_is_empty
@@ -783,4 +788,7 @@ hb_subset_plan_old_to_new_glyph_mapping
 hb_link_t
 hb_object_t
 hb_subset_repack_or_fail
+hb_subset_preprocess
+hb_subset_input_pin_axis_location
+hb_subset_input_pin_axis_to_default
 </SECTION>

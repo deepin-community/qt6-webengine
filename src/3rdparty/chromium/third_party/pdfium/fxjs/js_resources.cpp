@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -102,10 +102,10 @@ WideString JSGetStringFromID(JSMessage msg) {
 WideString JSFormatErrorString(const char* class_name,
                                const char* property_name,
                                const WideString& details) {
-  WideString result = WideString::FromDefANSI(class_name);
+  WideString result = WideString::FromUTF8(class_name);
   if (property_name) {
     result += L".";
-    result += WideString::FromDefANSI(property_name);
+    result += WideString::FromUTF8(property_name);
   }
   result += L": ";
   result += details;

@@ -34,28 +34,26 @@ import * as Protocol from '../../generated/protocol.js';
 import type * as ProtocolProxyApi from '../../generated/protocol-proxy-api.js';
 
 export class IndexedDBModel extends SDK.SDKModel.SDKModel<EventTypes> implements ProtocolProxyApi.StorageDispatcher {
-  private readonly securityOriginManager: SDK.SecurityOriginManager.SecurityOriginManager|null;
+  private readonly storageKeyManager: SDK.StorageKeyManager.StorageKeyManager|null;
   private readonly indexedDBAgent: ProtocolProxyApi.IndexedDBApi;
   private readonly storageAgent: ProtocolProxyApi.StorageApi;
   private readonly databasesInternal: Map<DatabaseId, Database>;
-  private databaseNamesBySecurityOrigin: {
-    [x: string]: string[],
-  };
-  private readonly originsUpdated: Set<string>;
+  private databaseNamesByStorageKey: Map<string, Set<string>>;
+  private readonly updatedStorageKeys: Set<string>;
   private readonly throttler: Common.Throttler.Throttler;
   private enabled?: boolean;
 
   constructor(target: SDK.Target.Target) {
     super(target);
     target.registerStorageDispatcher(this);
-    this.securityOriginManager = target.model(SDK.SecurityOriginManager.SecurityOriginManager);
+    this.storageKeyManager = target.model(SDK.StorageKeyManager.StorageKeyManager);
     this.indexedDBAgent = target.indexedDBAgent();
     this.storageAgent = target.storageAgent();
 
     this.databasesInternal = new Map();
-    this.databaseNamesBySecurityOrigin = {};
+    this.databaseNamesByStorageKey = new Map();
 
-    this.originsUpdated = new Set();
+    this.updatedStorageKeys = new Set();
     this.throttler = new Common.Throttler.Throttler(1000);
   }
 
@@ -149,41 +147,38 @@ export class IndexedDBModel extends SDK.SDKModel.SDKModel<EventTypes> implements
     }
 
     void this.indexedDBAgent.invoke_enable();
-    if (this.securityOriginManager) {
-      this.securityOriginManager.addEventListener(
-          SDK.SecurityOriginManager.Events.SecurityOriginAdded, this.securityOriginAdded, this);
-      this.securityOriginManager.addEventListener(
-          SDK.SecurityOriginManager.Events.SecurityOriginRemoved, this.securityOriginRemoved, this);
-
-      for (const securityOrigin of this.securityOriginManager.securityOrigins()) {
-        this.addOrigin(securityOrigin);
+    if (this.storageKeyManager) {
+      this.storageKeyManager.addEventListener(SDK.StorageKeyManager.Events.StorageKeyAdded, this.storageKeyAdded, this);
+      this.storageKeyManager.addEventListener(
+          SDK.StorageKeyManager.Events.StorageKeyRemoved, this.storageKeyRemoved, this);
+      for (const storageKey of this.storageKeyManager.storageKeys()) {
+        this.addStorageKey(storageKey);
       }
     }
 
     this.enabled = true;
   }
 
-  clearForOrigin(origin: string): void {
-    if (!this.enabled || !this.databaseNamesBySecurityOrigin[origin]) {
+  clearForStorageKey(storageKey: string): void {
+    if (!this.enabled || !this.databaseNamesByStorageKey.has(storageKey)) {
       return;
     }
 
-    this.removeOrigin(origin);
-    this.addOrigin(origin);
+    this.removeStorageKey(storageKey);
+    this.addStorageKey(storageKey);
   }
 
   async deleteDatabase(databaseId: DatabaseId): Promise<void> {
     if (!this.enabled) {
       return;
     }
-    await this.indexedDBAgent.invoke_deleteDatabase(
-        {securityOrigin: databaseId.securityOrigin, databaseName: databaseId.name});
-    void this.loadDatabaseNames(databaseId.securityOrigin);
+    await this.indexedDBAgent.invoke_deleteDatabase({storageKey: databaseId.storageKey, databaseName: databaseId.name});
+    void this.loadDatabaseNamesByStorageKey(databaseId.storageKey);
   }
 
   async refreshDatabaseNames(): Promise<void> {
-    for (const securityOrigin in this.databaseNamesBySecurityOrigin) {
-      await this.loadDatabaseNames(securityOrigin);
+    for (const storageKey of this.databaseNamesByStorageKey.keys()) {
+      await this.loadDatabaseNamesByStorageKey(storageKey);
     }
     this.dispatchEventToListeners(Events.DatabaseNamesRefreshed);
   }
@@ -194,107 +189,98 @@ export class IndexedDBModel extends SDK.SDKModel.SDKModel<EventTypes> implements
 
   async clearObjectStore(databaseId: DatabaseId, objectStoreName: string): Promise<void> {
     await this.indexedDBAgent.invoke_clearObjectStore(
-        {securityOrigin: databaseId.securityOrigin, databaseName: databaseId.name, objectStoreName});
+        {storageKey: databaseId.storageKey, databaseName: databaseId.name, objectStoreName});
   }
 
   async deleteEntries(databaseId: DatabaseId, objectStoreName: string, idbKeyRange: IDBKeyRange): Promise<void> {
     const keyRange = IndexedDBModel.keyRangeFromIDBKeyRange(idbKeyRange);
     await this.indexedDBAgent.invoke_deleteObjectStoreEntries(
-        {securityOrigin: databaseId.securityOrigin, databaseName: databaseId.name, objectStoreName, keyRange});
+        {storageKey: databaseId.storageKey, databaseName: databaseId.name, objectStoreName, keyRange});
   }
 
-  private securityOriginAdded(event: Common.EventTarget.EventTargetEvent<string>): void {
-    this.addOrigin(event.data);
+  private storageKeyAdded(event: Common.EventTarget.EventTargetEvent<string>): void {
+    this.addStorageKey(event.data);
   }
 
-  private securityOriginRemoved(event: Common.EventTarget.EventTargetEvent<string>): void {
-    this.removeOrigin(event.data);
+  private storageKeyRemoved(event: Common.EventTarget.EventTargetEvent<string>): void {
+    this.removeStorageKey(event.data);
   }
 
-  private addOrigin(securityOrigin: string): void {
-    console.assert(!this.databaseNamesBySecurityOrigin[securityOrigin]);
-    this.databaseNamesBySecurityOrigin[securityOrigin] = [];
-    void this.loadDatabaseNames(securityOrigin);
-    if (this.isValidSecurityOrigin(securityOrigin)) {
-      void this.storageAgent.invoke_trackIndexedDBForOrigin({origin: securityOrigin});
+  private addStorageKey(storageKey: string): void {
+    console.assert(!this.databaseNamesByStorageKey.has(storageKey));
+    this.databaseNamesByStorageKey.set(storageKey, new Set());
+    void this.loadDatabaseNamesByStorageKey(storageKey);
+    void this.storageAgent.invoke_trackIndexedDBForStorageKey({storageKey});
+  }
+
+  private removeStorageKey(storageKey: string): void {
+    console.assert(this.databaseNamesByStorageKey.has(storageKey));
+    for (const name of this.databaseNamesByStorageKey.get(storageKey) || []) {
+      this.databaseRemovedForStorageKey(storageKey, name);
     }
+    this.databaseNamesByStorageKey.delete(storageKey);
+    void this.storageAgent.invoke_untrackIndexedDBForStorageKey({storageKey});
   }
 
-  private removeOrigin(securityOrigin: string): void {
-    console.assert(Boolean(this.databaseNamesBySecurityOrigin[securityOrigin]));
-    for (let i = 0; i < this.databaseNamesBySecurityOrigin[securityOrigin].length; ++i) {
-      this.databaseRemoved(securityOrigin, this.databaseNamesBySecurityOrigin[securityOrigin][i]);
-    }
-    delete this.databaseNamesBySecurityOrigin[securityOrigin];
-    if (this.isValidSecurityOrigin(securityOrigin)) {
-      void this.storageAgent.invoke_untrackIndexedDBForOrigin({origin: securityOrigin});
-    }
-  }
+  private updateStorageKeyDatabaseNames(storageKey: string, databaseNames: string[]): void {
+    const newDatabaseNames = new Set(databaseNames);
+    const oldDatabaseNames = new Set(this.databaseNamesByStorageKey.get(storageKey));
 
-  private isValidSecurityOrigin(securityOrigin: string): boolean {
-    const parsedURL = Common.ParsedURL.ParsedURL.fromString(securityOrigin);
-    return parsedURL !== null && parsedURL.scheme.startsWith('http');
-  }
-
-  private updateOriginDatabaseNames(securityOrigin: string, databaseNames: string[]): void {
-    const newDatabaseNames = new Set<string>(databaseNames);
-    const oldDatabaseNames = new Set<string>(this.databaseNamesBySecurityOrigin[securityOrigin]);
-
-    this.databaseNamesBySecurityOrigin[securityOrigin] = databaseNames;
+    this.databaseNamesByStorageKey.set(storageKey, newDatabaseNames);
 
     for (const databaseName of oldDatabaseNames) {
       if (!newDatabaseNames.has(databaseName)) {
-        this.databaseRemoved(securityOrigin, databaseName);
+        this.databaseRemovedForStorageKey(storageKey, databaseName);
       }
     }
     for (const databaseName of newDatabaseNames) {
       if (!oldDatabaseNames.has(databaseName)) {
-        this.databaseAdded(securityOrigin, databaseName);
+        this.databaseAddedForStorageKey(storageKey, databaseName);
       }
     }
   }
 
   databases(): DatabaseId[] {
     const result = [];
-    for (const securityOrigin in this.databaseNamesBySecurityOrigin) {
-      const databaseNames = this.databaseNamesBySecurityOrigin[securityOrigin];
-      for (let i = 0; i < databaseNames.length; ++i) {
-        result.push(new DatabaseId(securityOrigin, databaseNames[i]));
+    for (const [storageKey, databaseNames] of this.databaseNamesByStorageKey) {
+      for (const name of databaseNames) {
+        result.push(new DatabaseId(storageKey, name));
       }
     }
     return result;
   }
 
-  private databaseAdded(securityOrigin: string, databaseName: string): void {
-    const databaseId = new DatabaseId(securityOrigin, databaseName);
+  private databaseAddedForStorageKey(storageKey: string, databaseName: string): void {
+    const databaseId = new DatabaseId(storageKey, databaseName);
     this.dispatchEventToListeners(Events.DatabaseAdded, {model: this, databaseId: databaseId});
   }
 
-  private databaseRemoved(securityOrigin: string, databaseName: string): void {
-    const databaseId = new DatabaseId(securityOrigin, databaseName);
+  private databaseRemovedForStorageKey(storageKey: string, databaseName: string): void {
+    const databaseId = new DatabaseId(storageKey, databaseName);
     this.dispatchEventToListeners(Events.DatabaseRemoved, {model: this, databaseId: databaseId});
   }
 
-  private async loadDatabaseNames(securityOrigin: string): Promise<string[]> {
-    const {databaseNames} = await this.indexedDBAgent.invoke_requestDatabaseNames({securityOrigin});
+  private async loadDatabaseNamesByStorageKey(storageKey: string): Promise<string[]> {
+    const {databaseNames} = await this.indexedDBAgent.invoke_requestDatabaseNames({storageKey});
     if (!databaseNames) {
       return [];
     }
-    if (!this.databaseNamesBySecurityOrigin[securityOrigin]) {
+    if (!this.databaseNamesByStorageKey.has(storageKey)) {
       return [];
     }
-    this.updateOriginDatabaseNames(securityOrigin, databaseNames);
+    this.updateStorageKeyDatabaseNames(storageKey, databaseNames);
     return databaseNames;
   }
 
   private async loadDatabase(databaseId: DatabaseId, entriesUpdated: boolean): Promise<void> {
-    const {databaseWithObjectStores} = await this.indexedDBAgent.invoke_requestDatabase(
-        {securityOrigin: databaseId.securityOrigin, databaseName: databaseId.name});
-
-    if (!databaseWithObjectStores) {
+    const databaseWithObjectStores = (await this.indexedDBAgent.invoke_requestDatabase({
+                                       storageKey: databaseId.storageKey,
+                                       databaseName: databaseId.name,
+                                     })).databaseWithObjectStores;
+    if (!this.databaseNamesByStorageKey.has(databaseId.storageKey)) {
       return;
     }
-    if (!this.databaseNamesBySecurityOrigin[databaseId.securityOrigin]) {
+    if (!databaseWithObjectStores) {
       return;
     }
 
@@ -334,9 +320,9 @@ export class IndexedDBModel extends SDK.SDKModel.SDKModel<EventTypes> implements
       idbKeyRange: IDBKeyRange|null, skipCount: number, pageSize: number,
       callback: (arg0: Array<Entry>, arg1: boolean) => void): Promise<void> {
     const keyRange = idbKeyRange ? IndexedDBModel.keyRangeFromIDBKeyRange(idbKeyRange) : undefined;
-
+    const runtimeModel = this.target().model(SDK.RuntimeModel.RuntimeModel);
     const response = await this.indexedDBAgent.invoke_requestData({
-      securityOrigin: databaseId.securityOrigin,
+      storageKey: databaseId.storageKey,
       databaseName,
       objectStoreName,
       indexName,
@@ -344,33 +330,33 @@ export class IndexedDBModel extends SDK.SDKModel.SDKModel<EventTypes> implements
       pageSize,
       keyRange,
     });
-
+    if (!runtimeModel || !this.databaseNamesByStorageKey.has(databaseId.storageKey)) {
+      return;
+    }
     if (response.getError()) {
       console.error('IndexedDBAgent error: ' + response.getError());
       return;
     }
 
-    const runtimeModel = this.target().model(SDK.RuntimeModel.RuntimeModel);
-    if (!runtimeModel || !this.databaseNamesBySecurityOrigin[databaseId.securityOrigin]) {
-      return;
-    }
     const dataEntries = response.objectStoreDataEntries;
     const entries = [];
     for (const dataEntry of dataEntries) {
-      const key = runtimeModel.createRemoteObject(dataEntry.key);
-      const primaryKey = runtimeModel.createRemoteObject(dataEntry.primaryKey);
-      const value = runtimeModel.createRemoteObject(dataEntry.value);
+      const key = runtimeModel?.createRemoteObject(dataEntry.key);
+      const primaryKey = runtimeModel?.createRemoteObject(dataEntry.primaryKey);
+      const value = runtimeModel?.createRemoteObject(dataEntry.value);
+      if (!key || !primaryKey || !value) {
+        return;
+      }
       entries.push(new Entry(key, primaryKey, value));
     }
     callback(entries, response.hasMore);
   }
 
   async getMetadata(databaseId: DatabaseId, objectStore: ObjectStore): Promise<ObjectStoreMetadata|null> {
-    const databaseOrigin = databaseId.securityOrigin;
     const databaseName = databaseId.name;
     const objectStoreName = objectStore.name;
-    const response =
-        await this.indexedDBAgent.invoke_getMetadata({securityOrigin: databaseOrigin, databaseName, objectStoreName});
+    const response = await this.indexedDBAgent.invoke_getMetadata(
+        {storageKey: databaseId.storageKey, databaseName, objectStoreName});
 
     if (response.getError()) {
       console.error('IndexedDBAgent error: ' + response.getError());
@@ -379,28 +365,29 @@ export class IndexedDBModel extends SDK.SDKModel.SDKModel<EventTypes> implements
     return {entriesCount: response.entriesCount, keyGeneratorValue: response.keyGeneratorValue};
   }
 
-  private async refreshDatabaseList(securityOrigin: string): Promise<void> {
-    const databaseNames = await this.loadDatabaseNames(securityOrigin);
+  private async refreshDatabaseListForStorageKey(storageKey: string): Promise<void> {
+    const databaseNames = await this.loadDatabaseNamesByStorageKey(storageKey);
     for (const databaseName of databaseNames) {
-      void this.loadDatabase(new DatabaseId(securityOrigin, databaseName), false);
+      void this.loadDatabase(new DatabaseId(storageKey, databaseName), false);
     }
   }
 
-  indexedDBListUpdated({origin: securityOrigin}: Protocol.Storage.IndexedDBListUpdatedEvent): void {
-    this.originsUpdated.add(securityOrigin);
-
-    void this.throttler.schedule(() => {
-      const promises = Array.from(this.originsUpdated, securityOrigin => {
-        void this.refreshDatabaseList(securityOrigin);
+  indexedDBListUpdated({storageKey: storageKey}: Protocol.Storage.IndexedDBListUpdatedEvent): void {
+    if (storageKey) {
+      this.updatedStorageKeys.add(storageKey);
+      void this.throttler.schedule(() => {
+        const promises = Array.from(this.updatedStorageKeys, storageKey => {
+          void this.refreshDatabaseListForStorageKey(storageKey);
+        });
+        this.updatedStorageKeys.clear();
+        return Promise.all(promises);
       });
-      this.originsUpdated.clear();
-      return Promise.all(promises);
-    });
+    }
   }
 
-  indexedDBContentUpdated({origin: securityOrigin, databaseName, objectStoreName}:
-                              Protocol.Storage.IndexedDBContentUpdatedEvent): void {
-    const databaseId = new DatabaseId(securityOrigin, databaseName);
+  indexedDBContentUpdated({storageKey, databaseName, objectStoreName}: Protocol.Storage.IndexedDBContentUpdatedEvent):
+      void {
+    const databaseId = new DatabaseId(storageKey, databaseName);
     this.dispatchEventToListeners(
         Events.IndexedDBContentUpdated, {databaseId: databaseId, objectStoreName: objectStoreName, model: this});
   }
@@ -412,6 +399,9 @@ export class IndexedDBModel extends SDK.SDKModel.SDKModel<EventTypes> implements
   }
 
   interestGroupAccessed(_event: Protocol.Storage.InterestGroupAccessedEvent): void {
+  }
+
+  sharedStorageAccessed(_event: Protocol.Storage.SharedStorageAccessedEvent): void {
   }
 }
 
@@ -450,15 +440,15 @@ export class Entry {
 }
 
 export class DatabaseId {
-  securityOrigin: string;
+  readonly storageKey: string;
   name: string;
-  constructor(securityOrigin: string, name: string) {
-    this.securityOrigin = securityOrigin;
+  constructor(storageKey: string, name: string) {
+    this.storageKey = storageKey;
     this.name = name;
   }
 
   equals(databaseId: DatabaseId): boolean {
-    return this.name === databaseId.name && this.securityOrigin === databaseId.securityOrigin;
+    return this.name === databaseId.name && this.storageKey === databaseId.storageKey;
   }
 }
 

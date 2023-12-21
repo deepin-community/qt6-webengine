@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,14 +11,15 @@
 #include <tuple>
 #include <vector>
 
+#include "base/component_export.h"
 #include "ui/accessibility/ax_node_position.h"
 #include "ui/accessibility/ax_position.h"
 #include "ui/accessibility/ax_range.h"
 #include "ui/accessibility/platform/ax_platform_node_win.h"
 
 namespace ui {
-class AX_EXPORT __declspec(uuid("3071e40d-a10d-45ff-a59f-6e8e1138e2c1"))
-    AXPlatformNodeTextRangeProviderWin
+class COMPONENT_EXPORT(AX_PLATFORM) __declspec(uuid(
+    "3071e40d-a10d-45ff-a59f-6e8e1138e2c1")) AXPlatformNodeTextRangeProviderWin
     : public CComObjectRootEx<CComMultiThreadModel>,
       public ITextRangeProvider {
  public:
@@ -105,7 +106,7 @@ class AX_EXPORT __declspec(uuid("3071e40d-a10d-45ff-a59f-6e8e1138e2c1"))
   static AXPositionInstance GetNextTextBoundaryPosition(
       const AXPositionInstance& position,
       ax::mojom::TextBoundary boundary_type,
-      AXBoundaryBehavior boundary_behavior,
+      AXMovementOptions options,
       ax::mojom::MoveDirection boundary_direction);
 
   // Prefer these *Impl methods when functionality is needed internally. We
@@ -252,12 +253,13 @@ class AX_EXPORT __declspec(uuid("3071e40d-a10d-45ff-a59f-6e8e1138e2c1"))
   // before the TextRangeEndpoints does, so when the destructor of the
   // ScopedObserver calls ScopedObserver::RemoveAll on an already deleted
   // AXTreeManager, it crashes.
-  class TextRangeEndpoints : public AXTreeObserver {
+  class COMPONENT_EXPORT(AX_PLATFORM) TextRangeEndpoints
+      : public AXTreeObserver {
    public:
     TextRangeEndpoints();
     ~TextRangeEndpoints() override;
-    const AXPositionInstance& GetStart() const { return start_; }
-    const AXPositionInstance& GetEnd() const { return end_; }
+    const AXPositionInstance& GetStart();
+    const AXPositionInstance& GetEnd();
     void SetStart(AXPositionInstance new_start);
     void SetEnd(AXPositionInstance new_end);
 
@@ -271,11 +273,21 @@ class AX_EXPORT __declspec(uuid("3071e40d-a10d-45ff-a59f-6e8e1138e2c1"))
     struct DeletionOfInterest {
       AXTreeID tree_id;
       AXNodeID node_id;
+      // Needed to defer validation from OnNodeDeleted to
+      // ValidateEndpointsAfterNodeDeletionIfNeeded.
+      bool validation_needed;
     };
 
     void AdjustEndpointForSubtreeDeletion(AXTree* tree,
                                           const AXNode* const node,
                                           bool is_start_endpoint);
+    // TODO(accessibility): Re-evaluate if we want to continue deferring
+    // validation after the BrowserAccessibilityManager-specific nodes have been
+    // moved to a single unified tree. At this point, deferring will no longer
+    // be necessary as there would be no danger in accessing the tree during
+    // OnNodeDeleted. However, it may still be preferable to defer the
+    // validation to keep work out of unserialize.
+    void ValidateEndpointsAfterNodeDeletionIfNeeded();
 
     AXPositionInstance start_;
     AXPositionInstance end_;
@@ -283,7 +295,9 @@ class AX_EXPORT __declspec(uuid("3071e40d-a10d-45ff-a59f-6e8e1138e2c1"))
     absl::optional<DeletionOfInterest> validation_necessary_for_start_;
     absl::optional<DeletionOfInterest> validation_necessary_for_end_;
   };
-  TextRangeEndpoints endpoints_;
+  // This is marked as mutable since endpoints will lazily validate their
+  // positions after a deletion of interest was actually deleted.
+  mutable TextRangeEndpoints endpoints_;
 };
 
 }  // namespace ui

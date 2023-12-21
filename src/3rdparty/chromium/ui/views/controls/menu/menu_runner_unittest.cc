@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 #include <memory>
 #include <utility>
 
-#include "base/callback_helpers.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
@@ -35,8 +35,11 @@
 #include "ui/views/widget/widget_delegate.h"
 #include "ui/views/widget/widget_utils.h"
 
-namespace views {
-namespace test {
+#if BUILDFLAG(IS_MAC)
+#include "ui/views/controls/menu/menu_cocoa_watcher_mac.h"
+#endif
+
+namespace views::test {
 
 class MenuRunnerTest : public ViewsTestBase {
  public:
@@ -74,10 +77,27 @@ class MenuRunnerTest : public ViewsTestBase {
   MenuRunner* menu_runner() { return menu_runner_.get(); }
   Widget* owner() { return owner_.get(); }
 
+#if BUILDFLAG(IS_MAC)
+  void SetUp() override {
+    ViewsTestBase::SetUp();
+
+    // Ignore app activation notifications during tests (they make the tests
+    // flaky).
+    MenuCocoaWatcherMac::SetNotificationFilterForTesting(
+        MacNotificationFilter::IgnoreWorkspaceNotifications);
+  }
+#endif
+
   // ViewsTestBase:
   void TearDown() override {
     if (owner_)
       owner_->CloseNow();
+
+#if BUILDFLAG(IS_MAC)
+    MenuCocoaWatcherMac::SetNotificationFilterForTesting(
+        MacNotificationFilter::DontIgnoreNotifications);
+#endif
+
     ViewsTestBase::TearDown();
   }
 
@@ -138,7 +158,7 @@ TEST_F(MenuRunnerTest, AsynchronousKeyEventHandling) {
 // Tests that a key press on a US keyboard layout activates the correct menu
 // item.
 // This test is flaky on ozone (https://crbug.com/1197217).
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
 #define MAYBE_LatinMnemonic DISABLED_LatinMnemonic
 #else
 #define MAYBE_LatinMnemonic LatinMnemonic
@@ -735,5 +755,4 @@ TEST_F(MenuRunnerImplTest, FocusOnMenuCloseDeleteAfterRun) {
   EXPECT_EQ(nullptr, menu_controller.controller());
 }
 
-}  // namespace test
-}  // namespace views
+}  // namespace views::test

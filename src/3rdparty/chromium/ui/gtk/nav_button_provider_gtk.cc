@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,6 +12,7 @@
 #include "ui/gfx/image/image_skia_source.h"
 #include "ui/gtk/gtk_compat.h"
 #include "ui/gtk/gtk_util.h"
+#include "ui/linux/nav_button_provider.h"
 #include "ui/views/widget/widget.h"
 
 namespace gtk {
@@ -33,14 +34,14 @@ const int kNavButtonIconSize = 16;
 const int kHeaderSpacing = 6;
 
 const char* ButtonStyleClassFromButtonType(
-    views::NavButtonProvider::FrameButtonDisplayType type) {
+    ui::NavButtonProvider::FrameButtonDisplayType type) {
   switch (type) {
-    case views::NavButtonProvider::FrameButtonDisplayType::kMinimize:
+    case ui::NavButtonProvider::FrameButtonDisplayType::kMinimize:
       return "minimize";
-    case views::NavButtonProvider::FrameButtonDisplayType::kMaximize:
-    case views::NavButtonProvider::FrameButtonDisplayType::kRestore:
+    case ui::NavButtonProvider::FrameButtonDisplayType::kMaximize:
+    case ui::NavButtonProvider::FrameButtonDisplayType::kRestore:
       return "maximize";
-    case views::NavButtonProvider::FrameButtonDisplayType::kClose:
+    case ui::NavButtonProvider::FrameButtonDisplayType::kClose:
       return "close";
     default:
       NOTREACHED();
@@ -48,16 +49,17 @@ const char* ButtonStyleClassFromButtonType(
   }
 }
 
-GtkStateFlags GtkStateFlagsFromButtonState(views::Button::ButtonState state) {
+GtkStateFlags GtkStateFlagsFromButtonState(
+    ui::NavButtonProvider::ButtonState state) {
   switch (state) {
-    case views::Button::STATE_NORMAL:
+    case ui::NavButtonProvider::ButtonState::kNormal:
       return GTK_STATE_FLAG_NORMAL;
-    case views::Button::STATE_HOVERED:
+    case ui::NavButtonProvider::ButtonState::kHovered:
       return GTK_STATE_FLAG_PRELIGHT;
-    case views::Button::STATE_PRESSED:
+    case ui::NavButtonProvider::ButtonState::kPressed:
       return static_cast<GtkStateFlags>(GTK_STATE_FLAG_PRELIGHT |
                                         GTK_STATE_FLAG_ACTIVE);
-    case views::Button::STATE_DISABLED:
+    case ui::NavButtonProvider::ButtonState::kDisabled:
       return GTK_STATE_FLAG_INSENSITIVE;
     default:
       NOTREACHED();
@@ -66,15 +68,15 @@ GtkStateFlags GtkStateFlagsFromButtonState(views::Button::ButtonState state) {
 }
 
 const char* IconNameFromButtonType(
-    views::NavButtonProvider::FrameButtonDisplayType type) {
+    ui::NavButtonProvider::FrameButtonDisplayType type) {
   switch (type) {
-    case views::NavButtonProvider::FrameButtonDisplayType::kMinimize:
+    case ui::NavButtonProvider::FrameButtonDisplayType::kMinimize:
       return "window-minimize-symbolic";
-    case views::NavButtonProvider::FrameButtonDisplayType::kMaximize:
+    case ui::NavButtonProvider::FrameButtonDisplayType::kMaximize:
       return "window-maximize-symbolic";
-    case views::NavButtonProvider::FrameButtonDisplayType::kRestore:
+    case ui::NavButtonProvider::FrameButtonDisplayType::kRestore:
       return "window-restore-symbolic";
-    case views::NavButtonProvider::FrameButtonDisplayType::kClose:
+    case ui::NavButtonProvider::FrameButtonDisplayType::kClose:
       return "window-close-symbolic";
     default:
       NOTREACHED();
@@ -82,11 +84,10 @@ const char* IconNameFromButtonType(
   }
 }
 
-gfx::Size LoadNavButtonIcon(
-    views::NavButtonProvider::FrameButtonDisplayType type,
-    GtkStyleContext* button_context,
-    int scale,
-    NavButtonIcon* icon = nullptr) {
+gfx::Size LoadNavButtonIcon(ui::NavButtonProvider::FrameButtonDisplayType type,
+                            GtkStyleContext* button_context,
+                            int scale,
+                            NavButtonIcon* icon = nullptr) {
   const char* icon_name = IconNameFromButtonType(type);
   if (!GtkCheckVersion(4)) {
     auto icon_info = TakeGObject(gtk_icon_theme_lookup_icon_for_scale(
@@ -97,8 +98,9 @@ gfx::Size LoadNavButtonIcon(
         icon_info, button_context, nullptr, nullptr));
     gfx::Size size{gdk_pixbuf_get_width(icon_pixbuf),
                    gdk_pixbuf_get_height(icon_pixbuf)};
-    if (icon)
+    if (icon) {
       icon->pixbuf = std::move(icon_pixbuf);
+    }
     return size;
   }
   auto icon_paintable = Gtk4IconThemeLookupIcon(
@@ -118,8 +120,9 @@ gfx::Size LoadNavButtonIcon(
     size_t stride = sizeof(SkColor) * width;
     gdk_texture_download(texture, reinterpret_cast<guchar*>(pixels), stride);
     SkColor fg = GtkStyleContextGetColor(button_context);
-    for (int i = 0; i < width * height; ++i)
+    for (int i = 0; i < width * height; ++i) {
       pixels[i] = SkColorSetA(fg, SkColorGetA(pixels[i]));
+    }
     icon->texture = TakeGObject(
         gdk_memory_texture_new(width, height, GDK_MEMORY_B8G8R8A8,
                                g_bytes_new_take(pixels, nbytes), stride));
@@ -132,8 +135,9 @@ gfx::Size GetMinimumWidgetSize(gfx::Size content_size,
                                GtkStyleContext* content_context,
                                GtkCssContext widget_context) {
   gfx::Rect widget_rect = gfx::Rect(content_size);
-  if (content_context)
+  if (content_context) {
     widget_rect.Inset(-GtkStyleContextGetMargin(content_context));
+  }
 
   int min_width = 0;
   int min_height = 0;
@@ -173,8 +177,9 @@ gfx::Size GetMinimumWidgetSize(gfx::Size content_size,
 
 GtkCssContext CreateHeaderContext(bool maximized) {
   std::string window_selector = "GtkWindow#window.background.csd";
-  if (maximized)
+  if (maximized) {
     window_selector += ".maximized";
+  }
   return AppendCssNodeToStyleContext(
       AppendCssNodeToStyleContext({}, window_selector),
       "GtkHeaderBar#headerbar.header-bar.titlebar");
@@ -186,7 +191,7 @@ GtkCssContext CreateWindowControlsContext(bool maximized) {
 }
 
 void CalculateUnscaledButtonSize(
-    views::NavButtonProvider::FrameButtonDisplayType type,
+    ui::NavButtonProvider::FrameButtonDisplayType type,
     bool maximized,
     gfx::Size* button_size,
     gfx::Insets* button_margin) {
@@ -213,8 +218,8 @@ void CalculateUnscaledButtonSize(
 
 class NavButtonImageSource : public gfx::ImageSkiaSource {
  public:
-  NavButtonImageSource(views::NavButtonProvider::FrameButtonDisplayType type,
-                       views::Button::ButtonState state,
+  NavButtonImageSource(ui::NavButtonProvider::FrameButtonDisplayType type,
+                       ui::NavButtonProvider::ButtonState state,
                        bool maximized,
                        bool active,
                        gfx::Size button_size)
@@ -231,8 +236,9 @@ class NavButtonImageSource : public gfx::ImageSkiaSource {
     // RenderNavButton() is called at most once for each needed scale
     // factor.  Additionally, buttons in the HOVERED or PRESSED states
     // are not actually rendered until they are needed.
-    if (button_size_.IsEmpty())
+    if (button_size_.IsEmpty()) {
       return gfx::ImageSkiaRep();
+    }
 
     auto button_context =
         AppendCssNodeToStyleContext(CreateWindowControlsContext(maximized_),
@@ -316,13 +322,10 @@ class NavButtonImageSource : public gfx::ImageSkiaSource {
 
     cairo_save(cr);
     cairo_scale(cr, scale, scale);
-    if (GtkCheckVersion(3, 11, 3) ||
-        (button_state & (GTK_STATE_FLAG_PRELIGHT | GTK_STATE_FLAG_ACTIVE))) {
-      gtk_render_background(button_context, cr, 0, 0, button_size_.width(),
-                            button_size_.height());
-      gtk_render_frame(button_context, cr, 0, 0, button_size_.width(),
-                       button_size_.height());
-    }
+    gtk_render_background(button_context, cr, 0, 0, button_size_.width(),
+                          button_size_.height());
+    gtk_render_frame(button_context, cr, 0, 0, button_size_.width(),
+                     button_size_.height());
     cairo_restore(cr);
     cairo_save(cr);
     float pixbuf_extra_scale = scale / pixbuf_scale;
@@ -339,8 +342,8 @@ class NavButtonImageSource : public gfx::ImageSkiaSource {
   bool HasRepresentationAtAllScales() const override { return true; }
 
  private:
-  views::NavButtonProvider::FrameButtonDisplayType type_;
-  views::Button::ButtonState state_;
+  ui::NavButtonProvider::FrameButtonDisplayType type_;
+  ui::NavButtonProvider::ButtonState state_;
   bool maximized_;
   bool active_;
   gfx::Size button_size_;
@@ -359,15 +362,15 @@ void NavButtonProviderGtk::RedrawImages(int top_area_height,
   auto header_padding = GtkStyleContextGetPadding(header_context);
 
   double scale = 1.0f;
-  std::map<views::NavButtonProvider::FrameButtonDisplayType, gfx::Size>
+  std::map<ui::NavButtonProvider::FrameButtonDisplayType, gfx::Size>
       button_sizes;
-  std::map<views::NavButtonProvider::FrameButtonDisplayType, gfx::Insets>
+  std::map<ui::NavButtonProvider::FrameButtonDisplayType, gfx::Insets>
       button_margins;
-  std::vector<views::NavButtonProvider::FrameButtonDisplayType> display_types{
-      views::NavButtonProvider::FrameButtonDisplayType::kMinimize,
-      maximized ? views::NavButtonProvider::FrameButtonDisplayType::kRestore
-                : views::NavButtonProvider::FrameButtonDisplayType::kMaximize,
-      views::NavButtonProvider::FrameButtonDisplayType::kClose,
+  std::vector<ui::NavButtonProvider::FrameButtonDisplayType> display_types{
+      ui::NavButtonProvider::FrameButtonDisplayType::kMinimize,
+      maximized ? ui::NavButtonProvider::FrameButtonDisplayType::kRestore
+                : ui::NavButtonProvider::FrameButtonDisplayType::kMaximize,
+      ui::NavButtonProvider::FrameButtonDisplayType::kClose,
   };
   for (auto type : display_types) {
     CalculateUnscaledButtonSize(type, maximized, &button_sizes[type],
@@ -379,9 +382,10 @@ void NavButtonProviderGtk::RedrawImages(int top_area_height,
     int needed_height = header_padding.top() + button_unconstrained_height +
                         header_padding.bottom();
 
-    if (needed_height > top_area_height)
+    if (needed_height > top_area_height) {
       scale =
           std::min(scale, static_cast<double>(top_area_height) / needed_height);
+    }
   }
 
   top_area_spacing_ =
@@ -413,26 +417,32 @@ void NavButtonProviderGtk::RedrawImages(int top_area_height,
 
     button_margins_[type] = margin;
 
-    for (size_t state = 0; state < views::Button::STATE_COUNT; state++) {
-      button_images_[type][state] = gfx::ImageSkia(
-          std::make_unique<NavButtonImageSource>(
-              type, static_cast<views::Button::ButtonState>(state), maximized,
-              active, size),
-          size);
+    for (auto state : {
+             ui::NavButtonProvider::ButtonState::kNormal,
+             ui::NavButtonProvider::ButtonState::kHovered,
+             ui::NavButtonProvider::ButtonState::kPressed,
+             ui::NavButtonProvider::ButtonState::kDisabled,
+         }) {
+      button_images_[type][state] =
+          gfx::ImageSkia(std::make_unique<NavButtonImageSource>(
+                             type, state, maximized, active, size),
+                         size);
     }
   }
 }
 
 gfx::ImageSkia NavButtonProviderGtk::GetImage(
-    views::NavButtonProvider::FrameButtonDisplayType type,
-    views::Button::ButtonState state) const {
+    ui::NavButtonProvider::FrameButtonDisplayType type,
+    ui::NavButtonProvider::ButtonState state) const {
   auto it = button_images_.find(type);
   DCHECK(it != button_images_.end());
-  return it->second[state];
+  auto it2 = it->second.find(state);
+  DCHECK(it2 != it->second.end());
+  return it2->second;
 }
 
 gfx::Insets NavButtonProviderGtk::GetNavButtonMargin(
-    views::NavButtonProvider::FrameButtonDisplayType type) const {
+    ui::NavButtonProvider::FrameButtonDisplayType type) const {
   auto it = button_margins_.find(type);
   DCHECK(it != button_margins_.end());
   return it->second;

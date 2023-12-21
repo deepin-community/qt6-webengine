@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -51,7 +51,8 @@ void FakeServiceWorker::InitializeGlobalScope(
     blink::mojom::ServiceWorkerObjectInfoPtr service_worker_info,
     blink::mojom::FetchHandlerExistence fetch_handler_existence,
     mojo::PendingReceiver<blink::mojom::ReportingObserver>
-        reporting_observer_receiver) {
+        reporting_observer_receiver,
+    blink::mojom::AncestorFrameType ancestor_frame_type) {
   host_.Bind(std::move(service_worker_host));
 
   // Enable callers to use these endpoints without us actually binding them
@@ -233,6 +234,14 @@ void FakeServiceWorker::Ping(PingCallback callback) {
 
 void FakeServiceWorker::SetIdleDelay(base::TimeDelta delay) {
   idle_delay_ = delay;
+}
+
+void FakeServiceWorker::AddKeepAlive() {
+  NOTIMPLEMENTED();
+}
+
+void FakeServiceWorker::ClearKeepAlive() {
+  NOTIMPLEMENTED();
 }
 
 void FakeServiceWorker::AddMessageToConsole(

@@ -1,18 +1,21 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/password_manager/core/browser/store_metrics_reporter.h"
+#include <string>
 
-#include "base/callback_helpers.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_callback.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/time/time.h"
 #include "components/os_crypt/os_crypt_mocker.h"
 #include "components/password_manager/core/browser/mock_password_reuse_manager.h"
 #include "components/password_manager/core/browser/mock_password_store_interface.h"
+#include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/password_manager_features_util.h"
 #include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "components/password_manager/core/browser/stub_password_manager_client.h"
@@ -22,6 +25,7 @@
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/testing_pref_service.h"
+#include "components/sync/base/features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -48,26 +52,26 @@ void AddMetricsTestData(TestPasswordStore* store) {
   password_form.username_value = u"test1@gmail.com";
   password_form.password_value = u"test";
   password_form.signon_realm = "http://example.com/";
-  password_form.times_used = 0;
+  password_form.times_used_in_html_form = 0;
   store->AddLogin(password_form);
 
   password_form.username_value = u"test2@gmail.com";
-  password_form.times_used = 1;
+  password_form.times_used_in_html_form = 1;
   store->AddLogin(password_form);
 
   password_form.url = GURL("http://second.example.com");
   password_form.signon_realm = "http://second.example.com";
-  password_form.times_used = 3;
+  password_form.times_used_in_html_form = 3;
   store->AddLogin(password_form);
 
   password_form.username_value = u"test3@gmail.com";
   password_form.type = PasswordForm::Type::kGenerated;
-  password_form.times_used = 2;
+  password_form.times_used_in_html_form = 2;
   store->AddLogin(password_form);
 
   password_form.url = GURL("ftp://third.example.com/");
   password_form.signon_realm = "ftp://third.example.com/";
-  password_form.times_used = 4;
+  password_form.times_used_in_html_form = 4;
   password_form.scheme = PasswordForm::Scheme::kOther;
   store->AddLogin(password_form);
 
@@ -75,12 +79,13 @@ void AddMetricsTestData(TestPasswordStore* store) {
   password_form.signon_realm = "http://fourth.example.com/";
   password_form.type = PasswordForm::Type::kFormSubmission;
   password_form.username_value = u"";
-  password_form.times_used = 10;
+  password_form.times_used_in_html_form = 10;
   password_form.scheme = PasswordForm::Scheme::kHtml;
   store->AddLogin(password_form);
 
   password_form.url = GURL("https://fifth.example.com/");
   password_form.signon_realm = "https://fifth.example.com/";
+  password_form.username_value = u"";
   password_form.password_value = u"";
   password_form.blocked_by_user = true;
   store->AddLogin(password_form);
@@ -104,6 +109,8 @@ void AddMetricsTestData(TestPasswordStore* store) {
 
   password_form.url = GURL("http://rsolomakhin.github.io/autofill/");
   password_form.signon_realm = "http://rsolomakhin.github.io/";
+  password_form.username_value = u"";
+  password_form.password_value = u"";
   password_form.blocked_by_user = true;
   store->AddLogin(password_form);
 
@@ -132,7 +139,8 @@ class StoreMetricsReporterTest : public SyncUsernameTestBase {
     // should be mocked.
     OSCryptMocker::SetUp();
 
-    feature_list_.InitWithFeatures({features::kPasswordReuseDetectionEnabled},
+    feature_list_.InitWithFeatures({features::kPasswordReuseDetectionEnabled,
+                                    syncer::kPasswordNotesWithBackup},
                                    {});
 
     prefs_.registry()->RegisterBooleanPref(prefs::kCredentialsEnableService,
@@ -143,6 +151,10 @@ class StoreMetricsReporterTest : public SyncUsernameTestBase {
                                            false);
     prefs_.registry()->RegisterDoublePref(
         prefs::kLastTimePasswordStoreMetricsReported, 0.0);
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+    prefs_.registry()->RegisterBooleanPref(
+        prefs::kBiometricAuthenticationBeforeFilling, false);
+#endif
   }
 
   void TearDown() override { OSCryptMocker::TearDown(); }
@@ -154,14 +166,16 @@ class StoreMetricsReporterTest : public SyncUsernameTestBase {
   TestingPrefServiceSimple prefs_;
 };
 
-// The test fixture is used to test StoreIndependentMetrics. The parameter
-// defines whether password manager is enabled.
+// The test fixture is used to test StoreIndependentMetrics. Depending on the
+// test, the parameter defines whether password manager or
+// kBiometricAuthenticationBeforeFilling pref is enabled.
 class StoreMetricsReporterTestWithParams
     : public StoreMetricsReporterTest,
       public ::testing::WithParamInterface<bool> {};
 
-// Test that store-independent metrics are reported correctly.
-TEST_P(StoreMetricsReporterTestWithParams, StoreIndependentMetrics) {
+// Test if password manager status is recorded correctly.
+TEST_P(StoreMetricsReporterTestWithParams,
+       ReportMetricsPasswordManagerEnabled) {
   const bool password_manager_enabled = GetParam();
 
   prefs_.SetBoolean(password_manager::prefs::kCredentialsEnableService,
@@ -174,9 +188,33 @@ TEST_P(StoreMetricsReporterTestWithParams, StoreIndependentMetrics) {
       /*is_under_advanced_protection=*/false,
       /*done_callback*/ base::DoNothing());
 
-  histogram_tester.ExpectUniqueSample("PasswordManager.Enabled3",
+  histogram_tester.ExpectUniqueSample("PasswordManager.Enabled4",
                                       password_manager_enabled, 1);
 }
+
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+TEST_P(StoreMetricsReporterTestWithParams,
+       ReportMetricsBiometricAuthBeforeFilling) {
+  const bool biometric_auth_before_filling_enabled = GetParam();
+
+  prefs_.SetBoolean(
+      password_manager::prefs::kBiometricAuthenticationBeforeFilling,
+      biometric_auth_before_filling_enabled);
+  base::HistogramTester histogram_tester;
+
+  StoreMetricsReporter reporter(
+      /*profile_store=*/nullptr, /*account_store=*/nullptr, sync_service(),
+      identity_manager(), &prefs_, /*password_reuse_manager=*/nullptr,
+      /*is_under_advanced_protection=*/false,
+      /*done_callback*/ base::DoNothing());
+
+  histogram_tester.ExpectUniqueSample(
+      "PasswordManager.BiometricAuthBeforeFillingEnabled2",
+      biometric_auth_before_filling_enabled, 1);
+}
+#endif
+
+INSTANTIATE_TEST_SUITE_P(All, StoreMetricsReporterTestWithParams, Bool());
 
 TEST_F(StoreMetricsReporterTest, ReportMetricsAtMostOncePerDay) {
   auto profile_store =
@@ -189,7 +227,7 @@ TEST_F(StoreMetricsReporterTest, ReportMetricsAtMostOncePerDay) {
       profile_store.get(), /*account_store=*/nullptr, sync_service(),
       identity_manager(), &prefs_, /*password_reuse_manager=*/nullptr,
       /*is_under_advanced_protection=*/false, done_callback.Get());
-  histogram_tester.ExpectTotalCount("PasswordManager.Enabled3", 1);
+  histogram_tester.ExpectTotalCount("PasswordManager.Enabled4", 1);
   EXPECT_CALL(done_callback, Run());
   RunUntilIdle();
 
@@ -202,7 +240,7 @@ TEST_F(StoreMetricsReporterTest, ReportMetricsAtMostOncePerDay) {
       profile_store.get(), /*account_store=*/nullptr, sync_service(),
       identity_manager(), &prefs_, /*password_reuse_manager=*/nullptr,
       /*is_under_advanced_protection=*/false, done_callback2.Get());
-  histogram_tester2.ExpectTotalCount("PasswordManager.Enabled3", 0);
+  histogram_tester2.ExpectTotalCount("PasswordManager.Enabled4", 0);
   EXPECT_CALL(done_callback2, Run());
   RunUntilIdle();
 
@@ -237,29 +275,29 @@ TEST_F(StoreMetricsReporterTest, ReportAccountsPerSiteHiResMetricsTest) {
   RunUntilIdle();
 
   histogram_tester.ExpectUniqueSample(
-      "PasswordManager.ProfileStore.AccountsPerSiteHiRes2."
+      "PasswordManager.ProfileStore.AccountsPerSiteHiRes3."
       "AutoGenerated."
       "WithoutCustomPassphrase",
       1, 2);
 
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.ProfileStore.AccountsPerSiteHiRes2."
+      "PasswordManager.ProfileStore.AccountsPerSiteHiRes3."
       "UserCreated."
       "WithoutCustomPassphrase",
       1, 3);
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.ProfileStore.AccountsPerSiteHiRes2."
+      "PasswordManager.ProfileStore.AccountsPerSiteHiRes3."
       "UserCreated."
       "WithoutCustomPassphrase",
       2, 2);
 
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.ProfileStore.AccountsPerSiteHiRes2."
+      "PasswordManager.ProfileStore.AccountsPerSiteHiRes3."
       "Overall."
       "WithoutCustomPassphrase",
       1, 5);
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.ProfileStore.AccountsPerSiteHiRes2."
+      "PasswordManager.ProfileStore.AccountsPerSiteHiRes3."
       "Overall."
       "WithoutCustomPassphrase",
       2, 2);
@@ -297,44 +335,44 @@ TEST_F(StoreMetricsReporterTest, ReportTotalAccountsHiResMetricsTest) {
   RunUntilIdle();
 
   histogram_tester.ExpectUniqueSample(
-      "PasswordManager.ProfileStore.TotalAccountsHiRes2."
+      "PasswordManager.ProfileStore.TotalAccountsHiRes3."
       "ByType."
       "AutoGenerated."
       "WithoutCustomPassphrase",
       2, 1);
 
   histogram_tester.ExpectUniqueSample(
-      "PasswordManager.ProfileStore.TotalAccountsHiRes2."
+      "PasswordManager.ProfileStore.TotalAccountsHiRes3."
       "ByType."
       "UserCreated."
       "WithoutCustomPassphrase",
       7, 1);
 
   histogram_tester.ExpectUniqueSample(
-      "PasswordManager.ProfileStore.TotalAccountsHiRes2."
+      "PasswordManager.ProfileStore.TotalAccountsHiRes3."
       "ByType.Overall."
       "WithoutCustomPassphrase",
       9, 1);
 
   histogram_tester.ExpectUniqueSample(
-      "PasswordManager.ProfileStore.TotalAccountsHiRes2."
+      "PasswordManager.ProfileStore.TotalAccountsHiRes3."
       "WithScheme."
       "Android",
       2, 1);
   histogram_tester.ExpectUniqueSample(
-      "PasswordManager.ProfileStore.TotalAccountsHiRes2."
+      "PasswordManager.ProfileStore.TotalAccountsHiRes3."
       "WithScheme.Ftp",
       1, 1);
   histogram_tester.ExpectUniqueSample(
-      "PasswordManager.ProfileStore.TotalAccountsHiRes2."
+      "PasswordManager.ProfileStore.TotalAccountsHiRes3."
       "WithScheme.Http",
       5, 1);
   histogram_tester.ExpectUniqueSample(
-      "PasswordManager.ProfileStore.TotalAccountsHiRes2."
+      "PasswordManager.ProfileStore.TotalAccountsHiRes3."
       "WithScheme.Https",
       1, 1);
   histogram_tester.ExpectUniqueSample(
-      "PasswordManager.ProfileStore.TotalAccountsHiRes2."
+      "PasswordManager.ProfileStore.TotalAccountsHiRes3."
       "WithScheme.Other",
       0, 1);
 
@@ -371,50 +409,50 @@ TEST_F(StoreMetricsReporterTest, ReportTimesPasswordUsedMetricsTest) {
   RunUntilIdle();
 
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.ProfileStore.TimesPasswordUsed2."
+      "PasswordManager.ProfileStore.TimesPasswordUsed3."
       "AutoGenerated."
       "WithoutCustomPassphrase",
       2, 1);
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.ProfileStore.TimesPasswordUsed2."
+      "PasswordManager.ProfileStore.TimesPasswordUsed3."
       "AutoGenerated."
       "WithoutCustomPassphrase",
       4, 1);
 
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.ProfileStore.TimesPasswordUsed2."
+      "PasswordManager.ProfileStore.TimesPasswordUsed3."
       "UserCreated."
       "WithoutCustomPassphrase",
       0, 1);
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.ProfileStore.TimesPasswordUsed2."
+      "PasswordManager.ProfileStore.TimesPasswordUsed3."
       "UserCreated."
       "WithoutCustomPassphrase",
       1, 1);
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.ProfileStore.TimesPasswordUsed2."
+      "PasswordManager.ProfileStore.TimesPasswordUsed3."
       "UserCreated."
       "WithoutCustomPassphrase",
       3, 1);
 
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.ProfileStore.TimesPasswordUsed2."
+      "PasswordManager.ProfileStore.TimesPasswordUsed3."
       "Overall."
       "WithoutCustomPassphrase",
       0, 1);
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.ProfileStore.TimesPasswordUsed2."
+      "PasswordManager.ProfileStore.TimesPasswordUsed3."
       "Overall."
       "WithoutCustomPassphrase",
       1, 1);
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.ProfileStore.TimesPasswordUsed2."
+      "PasswordManager.ProfileStore.TimesPasswordUsed3."
       "Overall."
       "WithoutCustomPassphrase",
       2, 1);
   // The bucket for 3 and 4 is the same. Thus we expect two samples here.
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.ProfileStore.TimesPasswordUsed2."
+      "PasswordManager.ProfileStore.TimesPasswordUsed3."
       "Overall."
       "WithoutCustomPassphrase",
       3, 2);
@@ -462,29 +500,29 @@ TEST_F(StoreMetricsReporterTest,
   RunUntilIdle();
 
   histogram_tester.ExpectUniqueSample(
-      "PasswordManager.AccountStore.AccountsPerSiteHiRes2."
+      "PasswordManager.AccountStore.AccountsPerSiteHiRes3."
       "AutoGenerated."
       "WithoutCustomPassphrase",
       1, 2);
 
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.AccountStore.AccountsPerSiteHiRes2."
+      "PasswordManager.AccountStore.AccountsPerSiteHiRes3."
       "UserCreated."
       "WithoutCustomPassphrase",
       1, 3);
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.AccountStore.AccountsPerSiteHiRes2."
+      "PasswordManager.AccountStore.AccountsPerSiteHiRes3."
       "UserCreated."
       "WithoutCustomPassphrase",
       2, 2);
 
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.AccountStore.AccountsPerSiteHiRes2."
+      "PasswordManager.AccountStore.AccountsPerSiteHiRes3."
       "Overall."
       "WithoutCustomPassphrase",
       1, 5);
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.AccountStore.AccountsPerSiteHiRes2."
+      "PasswordManager.AccountStore.AccountsPerSiteHiRes3."
       "Overall."
       "WithoutCustomPassphrase",
       2, 2);
@@ -528,41 +566,41 @@ TEST_F(StoreMetricsReporterTest,
   RunUntilIdle();
 
   histogram_tester.ExpectUniqueSample(
-      "PasswordManager.AccountStore.TotalAccountsHiRes2."
+      "PasswordManager.AccountStore.TotalAccountsHiRes3."
       "ByType.AutoGenerated."
       "WithoutCustomPassphrase",
       2, 1);
 
   histogram_tester.ExpectUniqueSample(
-      "PasswordManager.AccountStore.TotalAccountsHiRes2."
+      "PasswordManager.AccountStore.TotalAccountsHiRes3."
       "ByType.UserCreated."
       "WithoutCustomPassphrase",
       7, 1);
 
   histogram_tester.ExpectUniqueSample(
-      "PasswordManager.AccountStore.TotalAccountsHiRes2."
+      "PasswordManager.AccountStore.TotalAccountsHiRes3."
       "ByType.Overall."
       "WithoutCustomPassphrase",
       9, 1);
 
   histogram_tester.ExpectUniqueSample(
-      "PasswordManager.AccountStore.TotalAccountsHiRes2."
+      "PasswordManager.AccountStore.TotalAccountsHiRes3."
       "WithScheme.Android",
       2, 1);
   histogram_tester.ExpectUniqueSample(
-      "PasswordManager.AccountStore.TotalAccountsHiRes2."
+      "PasswordManager.AccountStore.TotalAccountsHiRes3."
       "WithScheme.Ftp",
       1, 1);
   histogram_tester.ExpectUniqueSample(
-      "PasswordManager.AccountStore.TotalAccountsHiRes2."
+      "PasswordManager.AccountStore.TotalAccountsHiRes3."
       "WithScheme.Http",
       5, 1);
   histogram_tester.ExpectUniqueSample(
-      "PasswordManager.AccountStore.TotalAccountsHiRes2."
+      "PasswordManager.AccountStore.TotalAccountsHiRes3."
       "WithScheme.Https",
       1, 1);
   histogram_tester.ExpectUniqueSample(
-      "PasswordManager.AccountStore.TotalAccountsHiRes2."
+      "PasswordManager.AccountStore.TotalAccountsHiRes3."
       "WithScheme.Other",
       0, 1);
 
@@ -605,50 +643,50 @@ TEST_F(StoreMetricsReporterTest,
   RunUntilIdle();
 
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.AccountStore.TimesPasswordUsed2."
+      "PasswordManager.AccountStore.TimesPasswordUsed3."
       "AutoGenerated."
       "WithoutCustomPassphrase",
       2, 1);
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.AccountStore.TimesPasswordUsed2."
+      "PasswordManager.AccountStore.TimesPasswordUsed3."
       "AutoGenerated."
       "WithoutCustomPassphrase",
       4, 1);
 
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.AccountStore.TimesPasswordUsed2."
+      "PasswordManager.AccountStore.TimesPasswordUsed3."
       "UserCreated."
       "WithoutCustomPassphrase",
       0, 1);
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.AccountStore.TimesPasswordUsed2."
+      "PasswordManager.AccountStore.TimesPasswordUsed3."
       "UserCreated."
       "WithoutCustomPassphrase",
       1, 1);
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.AccountStore.TimesPasswordUsed2."
+      "PasswordManager.AccountStore.TimesPasswordUsed3."
       "UserCreated."
       "WithoutCustomPassphrase",
       3, 1);
 
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.AccountStore.TimesPasswordUsed2."
+      "PasswordManager.AccountStore.TimesPasswordUsed3."
       "Overall."
       "WithoutCustomPassphrase",
       0, 1);
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.AccountStore.TimesPasswordUsed2."
+      "PasswordManager.AccountStore.TimesPasswordUsed3."
       "Overall."
       "WithoutCustomPassphrase",
       1, 1);
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.AccountStore.TimesPasswordUsed2."
+      "PasswordManager.AccountStore.TimesPasswordUsed3."
       "Overall."
       "WithoutCustomPassphrase",
       2, 1);
   // The bucket for 3 and 4 is the same. Thus we expect two samples here.
   histogram_tester.ExpectBucketCount(
-      "PasswordManager.AccountStore.TimesPasswordUsed2."
+      "PasswordManager.AccountStore.TimesPasswordUsed3."
       "Overall."
       "WithoutCustomPassphrase",
       3, 2);
@@ -689,9 +727,8 @@ TEST_F(StoreMetricsReporterTest, DuplicatesMetrics_NoDuplicates) {
   password_form.username_value = u"username_1";
   profile_store->AddLogin(password_form);
   password_form.blocked_by_user = true;
-  password_form.username_value = u"username_2";
-  profile_store->AddLogin(password_form);
-  password_form.username_value = u"username_3";
+  password_form.username_value = u"";
+  password_form.password_value = u"";
   profile_store->AddLogin(password_form);
 
   base::HistogramTester histogram_tester;
@@ -706,11 +743,11 @@ TEST_F(StoreMetricsReporterTest, DuplicatesMetrics_NoDuplicates) {
   RunUntilIdle();
 
   EXPECT_THAT(histogram_tester.GetAllSamples(
-                  "PasswordManager.CredentialsWithDuplicates2"),
+                  "PasswordManager.CredentialsWithDuplicates3"),
               testing::ElementsAre(base::Bucket(0, 1)));
   EXPECT_THAT(
       histogram_tester.GetAllSamples("PasswordManager."
-                                     "CredentialsWithMismatchedDuplicates2"),
+                                     "CredentialsWithMismatchedDuplicates3"),
       testing::ElementsAre(base::Bucket(0, 1)));
 
   profile_store->ShutdownOnUIThread();
@@ -759,11 +796,11 @@ TEST_F(StoreMetricsReporterTest, DuplicatesMetrics_ExactDuplicates) {
 
   // There should be 2 groups of "exact" duplicates.
   EXPECT_THAT(histogram_tester.GetAllSamples(
-                  "PasswordManager.CredentialsWithDuplicates2"),
+                  "PasswordManager.CredentialsWithDuplicates3"),
               testing::ElementsAre(base::Bucket(2, 1)));
   EXPECT_THAT(
       histogram_tester.GetAllSamples("PasswordManager."
-                                     "CredentialsWithMismatchedDuplicates2"),
+                                     "CredentialsWithMismatchedDuplicates3"),
       testing::ElementsAre(base::Bucket(0, 1)));
 
   profile_store->ShutdownOnUIThread();
@@ -809,11 +846,11 @@ TEST_F(StoreMetricsReporterTest, DuplicatesMetrics_MismatchedDuplicates) {
   RunUntilIdle();
 
   EXPECT_THAT(histogram_tester.GetAllSamples(
-                  "PasswordManager.CredentialsWithDuplicates2"),
+                  "PasswordManager.CredentialsWithDuplicates3"),
               testing::ElementsAre(base::Bucket(0, 1)));
   EXPECT_THAT(
       histogram_tester.GetAllSamples("PasswordManager."
-                                     "CredentialsWithMismatchedDuplicates2"),
+                                     "CredentialsWithMismatchedDuplicates3"),
       testing::ElementsAre(base::Bucket(1, 1)));
 
   profile_store->ShutdownOnUIThread();
@@ -918,36 +955,36 @@ TEST_F(StoreMetricsReporterTest, MultiStoreMetrics) {
 
     if (opted_in) {
       histogram_tester.ExpectUniqueSample(
-          "PasswordManager.AccountStoreVsProfileStore3."
+          "PasswordManager.AccountStoreVsProfileStore4."
           "Additional",
           2, 1);
       histogram_tester.ExpectUniqueSample(
-          "PasswordManager.AccountStoreVsProfileStore3."
+          "PasswordManager.AccountStoreVsProfileStore4."
           "Missing",
           4, 1);
       histogram_tester.ExpectUniqueSample(
-          "PasswordManager.AccountStoreVsProfileStore3."
+          "PasswordManager.AccountStoreVsProfileStore4."
           "Identical",
           2, 1);
       histogram_tester.ExpectUniqueSample(
-          "PasswordManager.AccountStoreVsProfileStore3."
+          "PasswordManager.AccountStoreVsProfileStore4."
           "Conflicting",
           1, 1);
     } else {
       histogram_tester.ExpectTotalCount(
-          "PasswordManager.AccountStoreVsProfileStore3."
+          "PasswordManager.AccountStoreVsProfileStore4."
           "Additional",
           0);
       histogram_tester.ExpectTotalCount(
-          "PasswordManager.AccountStoreVsProfileStore3."
+          "PasswordManager.AccountStoreVsProfileStore4."
           "Missing",
           0);
       histogram_tester.ExpectTotalCount(
-          "PasswordManager.AccountStoreVsProfileStore3."
+          "PasswordManager.AccountStoreVsProfileStore4."
           "Identical",
           0);
       histogram_tester.ExpectTotalCount(
-          "PasswordManager.AccountStoreVsProfileStore3."
+          "PasswordManager.AccountStoreVsProfileStore4."
           "Conflicting",
           0);
     }
@@ -987,6 +1024,133 @@ TEST_F(StoreMetricsReporterTest, ReportMetricsForAdvancedProtection) {
   RunUntilIdle();
 }
 
-INSTANTIATE_TEST_SUITE_P(All, StoreMetricsReporterTestWithParams, Bool());
+TEST_F(StoreMetricsReporterTest, ReportPasswordNoteMetrics) {
+  auto profile_store =
+      base::MakeRefCounted<TestPasswordStore>(IsAccountStore(false));
+  profile_store->Init(&prefs_, /*affiliated_match_helper=*/nullptr);
+
+  PasswordForm password_form;
+  password_form.url = GURL("http://example.com");
+  password_form.username_value = u"test1@gmail.com";
+  password_form.notes = {PasswordNote(u"note", base::Time::Now())};
+  profile_store->AddLogin(password_form);
+  // ProfileStore - CountCredentialsWithNonEmptyNotes2: 1
+
+  password_form.username_value = u"test2@gmail.com";
+  password_form.notes = {PasswordNote(u"another note", base::Time::Now()),
+                         PasswordNote(std::u16string(), base::Time::Now())};
+  profile_store->AddLogin(password_form);
+  // ProfileStore - CountCredentialsWithNonEmptyNotes2: 2
+
+  password_form.username_value = u"test3@gmail.com";
+  password_form.notes = {PasswordNote(std::u16string(), base::Time::Now()),
+                         PasswordNote(u"some note", base::Time::Now())};
+  profile_store->AddLogin(password_form);
+  // ProfileStore -  CountCredentialsWithNonEmptyNotes2: 3
+
+  password_form.username_value = u"test4@gmail.com";
+  password_form.notes = {PasswordNote(std::u16string(), base::Time::Now())};
+  profile_store->AddLogin(password_form);
+  // ProfileStore - CountCredentialsWithNonEmptyNotes2: 3
+
+  password_form.username_value = u"test5@gmail.com";
+  password_form.notes = {};
+  profile_store->AddLogin(password_form);
+  // ProfileStore - CountCredentialsWithNonEmptyNotes2: 3
+
+  auto account_store =
+      base::MakeRefCounted<TestPasswordStore>(IsAccountStore(true));
+  account_store->Init(&prefs_, /*affiliated_match_helper=*/nullptr);
+
+  account_store->AddLogin(password_form);
+  // AccountStore - CountCredentialsWithNonEmptyNotes2: 0
+
+  password_form.username_value = u"test6@gmail.com";
+  password_form.notes = {PasswordNote(std::u16string(), base::Time::Now())};
+  account_store->AddLogin(password_form);
+  // AccountStore - CountCredentialsWithNonEmptyNotes2: 0
+
+  password_form.username_value = u"test7@gmail.com";
+  password_form.notes = {PasswordNote(u"note", base::Time::Now())};
+  account_store->AddLogin(password_form);
+  // AccountStore - CountCredentialsWithNonEmptyNotes2: 1
+
+  base::HistogramTester histogram_tester;
+  StoreMetricsReporter reporter(profile_store.get(), account_store.get(),
+                                sync_service(), identity_manager(), &prefs_,
+                                /*password_reuse_manager=*/nullptr,
+                                /*is_under_advanced_protection=*/false,
+                                /*done_callback*/ base::DoNothing());
+
+  RunUntilIdle();
+
+  EXPECT_THAT(
+      histogram_tester.GetAllSamples("PasswordManager.ProfileStore."
+                                     "PasswordNotes.CountNotesPerCredential3"),
+      BucketsAre(base::Bucket(0, 0), base::Bucket(1, 2), base::Bucket(2, 2)));
+  histogram_tester.ExpectBucketCount(
+      "PasswordManager.ProfileStore.PasswordNotes."
+      "CountCredentialsWithNonEmptyNotes2",
+      3, 1);
+
+  EXPECT_THAT(
+      histogram_tester.GetAllSamples("PasswordManager.AccountStore."
+                                     "PasswordNotes.CountNotesPerCredential3"),
+      BucketsAre(base::Bucket(0, 0), base::Bucket(1, 2)));
+  histogram_tester.ExpectBucketCount(
+      "PasswordManager.AccountStore.PasswordNotes."
+      "CountCredentialsWithNonEmptyNotes2",
+      1, 1);
+
+  account_store->ShutdownOnUIThread();
+  profile_store->ShutdownOnUIThread();
+  // Make sure the PasswordStore destruction parts on the background sequence
+  // finish, otherwise we get memory leak reports.
+  RunUntilIdle();
+}
+
+TEST_F(StoreMetricsReporterTest, ReportPasswordInsecureCredentialMetrics) {
+  auto profile_store =
+      base::MakeRefCounted<TestPasswordStore>(IsAccountStore(false));
+  profile_store->Init(&prefs_, /*affiliated_match_helper=*/nullptr);
+
+  const std::string kRealm1 = "https://example.com";
+
+  PasswordForm secure_password = CreateForm(kRealm1, "user", "pass");
+  profile_store->AddLogin(secure_password);
+
+  PasswordForm leaked_password = CreateForm(kRealm1, "user2", "pass");
+  leaked_password.password_issues.insert(
+      {InsecureType::kLeaked, InsecurityMetadata()});
+  profile_store->AddLogin(leaked_password);
+
+  PasswordForm phished_and_leaked_password =
+      CreateForm(kRealm1, "user3", "pass");
+  phished_and_leaked_password.password_issues.insert(
+      {InsecureType::kLeaked, InsecurityMetadata()});
+  phished_and_leaked_password.password_issues.insert(
+      {InsecureType::kPhished, InsecurityMetadata()});
+  profile_store->AddLogin(phished_and_leaked_password);
+
+  base::HistogramTester histogram_tester;
+  StoreMetricsReporter reporter(profile_store.get(), /*account_store=*/nullptr,
+                                sync_service(), identity_manager(), &prefs_,
+                                /*password_reuse_manager=*/nullptr,
+                                /*is_under_advanced_protection=*/false,
+                                /*done_callback*/ base::DoNothing());
+
+  RunUntilIdle();
+
+  histogram_tester.ExpectUniqueSample(
+      "PasswordManager.CompromisedCredentials3.CountPhished", 1, 1);
+  histogram_tester.ExpectUniqueSample(
+      "PasswordManager.CompromisedCredentials3.CountLeaked", 2, 1);
+
+  profile_store->ShutdownOnUIThread();
+  // Make sure the PasswordStore destruction parts on the background sequence
+  // finish, otherwise we get memory leak reports.
+  RunUntilIdle();
+}
+
 }  // namespace
 }  // namespace password_manager

@@ -1,4 +1,4 @@
-// Copyright 2018 The PDFium Authors. All rights reserved.
+// Copyright 2018 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,10 +9,12 @@
 
 #include <algorithm>
 #include <functional>
+#include <iterator>
 #include <string>
 #include <utility>
 
 #include "public/cpp/fpdf_scopers.h"
+#include "public/fpdf_doc.h"
 #include "public/fpdf_transformpage.h"
 #include "testing/fx_string_testhelpers.h"
 

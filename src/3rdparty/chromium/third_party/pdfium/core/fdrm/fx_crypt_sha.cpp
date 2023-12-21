@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -549,7 +549,7 @@ void CRYPT_SHA384Finish(CRYPT_sha2_context* context, uint8_t digest[48]) {
 
 void CRYPT_SHA384Generate(const uint8_t* data,
                           uint32_t size,
-                          uint8_t digest[64]) {
+                          uint8_t digest[48]) {
   CRYPT_sha2_context context;
   CRYPT_SHA384Start(&context);
   CRYPT_SHA384Update(&context, data, size);

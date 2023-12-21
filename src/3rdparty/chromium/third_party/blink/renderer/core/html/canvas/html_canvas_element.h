@@ -60,6 +60,7 @@ namespace blink {
 class Canvas2DLayerBridge;
 class CanvasContextCreationAttributesCore;
 class CanvasDrawListener;
+class CanvasHighDynamicRangeOptions;
 class CanvasRenderingContext;
 class CanvasRenderingContextFactory;
 class CanvasResourceProvider;
@@ -131,6 +132,8 @@ class CORE_EXPORT HTMLCanvasElement final
               ExceptionState& exception_state) {
     return toBlob(callback, mime_type, ScriptValue(), exception_state);
   }
+  void configureHighDynamicRange(const CanvasHighDynamicRangeOptions*,
+                                 ExceptionState&);
 
   bool IsPresentationAttribute(const QualifiedName&) const final;
   void CollectStyleForPresentationAttribute(const QualifiedName&,
@@ -141,7 +144,7 @@ class CORE_EXPORT HTMLCanvasElement final
   void AddListener(CanvasDrawListener*);
   void RemoveListener(CanvasDrawListener*);
   // Derived from OffscreenCanvasPlaceholder.
-  bool HasCanvasCapture() const final { return !listeners_.IsEmpty(); }
+  bool HasCanvasCapture() const final { return !listeners_.empty(); }
 
   // Used for rendering
   void DidDraw(const SkIRect&) override;
@@ -183,7 +186,7 @@ class CORE_EXPORT HTMLCanvasElement final
 
   CanvasResourceDispatcher* GetOrCreateResourceDispatcher() override;
 
-  bool PushFrame(scoped_refptr<CanvasResource> image,
+  bool PushFrame(scoped_refptr<CanvasResource>&& image,
                  const SkIRect& damage_rect) override;
 
   // ExecutionContextLifecycleObserver and PageVisibilityObserver implementation
@@ -235,7 +238,7 @@ class CORE_EXPORT HTMLCanvasElement final
                                   ExceptionState&) override;
 
   // OffscreenCanvasPlaceholder implementation.
-  void SetOffscreenCanvasResource(scoped_refptr<CanvasResource>,
+  void SetOffscreenCanvasResource(scoped_refptr<CanvasResource>&&,
                                   viz::ResourceId resource_id) override;
   void Trace(Visitor*) const override;
 
@@ -276,6 +279,8 @@ class CORE_EXPORT HTMLCanvasElement final
     return DispatchEvent(*event);
   }
 
+  void UpdateSuspendOffscreenCanvasAnimation();
+
   // Gets the settings of this Html Canvas Element. If there is a frame, it will
   // return the settings from the frame. If it is a frameless element it will
   // try to fetch the global dom window and get the settings from there.
@@ -283,13 +288,7 @@ class CORE_EXPORT HTMLCanvasElement final
   bool IsWebGL1Enabled() const override;
   bool IsWebGL2Enabled() const override;
   bool IsWebGLBlocked() const override;
-  void SetContextCreationWasBlocked() override {
-    context_creation_was_blocked_ = true;
-  }
-
-  ScriptPromise convertToBlob(ScriptState*,
-                              const ImageEncodeOptions*,
-                              ExceptionState&);
+  void SetContextCreationWasBlocked() override;
 
   bool NeedsUnbufferedInputEvents() const { return needs_unbuffered_input_; }
 
@@ -315,9 +314,13 @@ class CORE_EXPORT HTMLCanvasElement final
 
  protected:
   void DidMoveToNewDocument(Document& old_document) override;
+  void DidRecalcStyle(const StyleRecalcChange change) override;
+  void RemovedFrom(ContainerNode& insertion_point) override;
 
  private:
   void Dispose();
+
+  void ColorSchemeMayHaveChanged();
 
   void RecordIdentifiabilityMetric(IdentifiableSurface surface,
                                    IdentifiableToken value) const;

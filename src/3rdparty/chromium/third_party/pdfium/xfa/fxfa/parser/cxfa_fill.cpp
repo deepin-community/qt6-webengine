@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -96,8 +96,7 @@ void CXFA_Fill::Draw(CFGAS_GEGraphics* pGS,
                      const CFGAS_GEPath& fillPath,
                      const CFX_RectF& rtWidget,
                      const CFX_Matrix& matrix) {
-  pGS->SaveGraphState();
-
+  CFGAS_GEGraphics::StateRestorer restorer(pGS);
   switch (GetType()) {
     case XFA_Element::Radial:
       DrawRadial(pGS, fillPath, rtWidget, matrix);
@@ -117,8 +116,6 @@ void CXFA_Fill::Draw(CFGAS_GEGraphics* pGS,
                     matrix);
       break;
   }
-
-  pGS->RestoreGraphState();
 }
 
 void CXFA_Fill::DrawStipple(CFGAS_GEGraphics* pGS,

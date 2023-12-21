@@ -1,4 +1,4 @@
-// Copyright (c) 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,6 +16,14 @@ bool g_disable_for_testing = false;
 void InputEventActivationProtector::VisibilityChanged(bool is_visible) {
   if (is_visible)
     view_shown_time_stamp_ = base::TimeTicks::Now();
+}
+
+void InputEventActivationProtector::UpdateViewShownTimeStamp() {
+  // The UI was never shown, ignore.
+  if (view_shown_time_stamp_ == base::TimeTicks())
+    return;
+
+  view_shown_time_stamp_ = base::TimeTicks::Now();
 }
 
 bool InputEventActivationProtector::IsPossiblyUnintendedInteraction(

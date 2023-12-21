@@ -1,4 +1,4 @@
-# Copyright (c) 2013 The Chromium Authors. All rights reserved.
+# Copyright 2013 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -45,9 +45,7 @@ declare_args() {
   use_clang_diagnostics_format = false
 
   # Indicates whether to use /pdbpagesize:8192 to allow PDBs larger than 4 GiB.
-  # This requires updated debugging and profiling tools which are not widely
-  # distributed yet which is why it is currently opt-in.
-  use_large_pdbs = false
+  use_large_pdbs = true
 
   qt_uses_static_runtime = false
 }
@@ -75,7 +73,14 @@ config("compiler") {
   ]
 
   if (is_clang) {
-    cflags += [ "/Zc:twoPhase" ]
+    cflags += [
+      "/Zc:twoPhase",
+
+      # Consistently use backslash as the path separator when expanding the
+      # __FILE__ macro when targeting Windows regardless of the build
+      # environment.
+      "-ffile-reproducible",
+    ]
   }
 
   # Force C/C++ mode for the given GN detected file type. This is necessary
@@ -174,10 +179,13 @@ config("compiler") {
   if (use_large_pdbs) {
     # This allows PDBs up to 8 GiB in size. This requires lld-link.exe or
     # link.exe from VS 2022 or later.
-    ldflags += [ "/pdbpagesize:8192" ]
+    if (!defined(configs)) {
+      configs = []
+    }
+    configs += [ ":pdb_larger_than_4gb" ]
   }
 
-  if (!is_debug && !is_component_build) {
+  if (!is_debug && !is_component_build && !is_mingw) {
     # Enable standard linker optimizations like GC (/OPT:REF) and ICF in static
     # release builds.
     # Release builds always want these optimizations, so enable them explicitly.
@@ -206,13 +214,15 @@ config("compiler") {
   # set for executable and shared library targets so arflags must be set
   # elsewhere. Since this is relatively contained, we just apply them in this
   # more general config and they will only have an effect on static libraries.
-  arflags = [
-    # "No public symbols found; archive member will be inaccessible." This
-    # means that one or more object files in the library can never be
-    # pulled in to targets that link to this library. It's just a warning that
-    # the source file is a no-op.
-    "/ignore:4221",
-  ]
+  if(!is_mingw) {
+    arflags = [
+      # "No public symbols found; archive member will be inaccessible." This
+      # means that one or more object files in the library can never be
+      # pulled in to targets that link to this library. It's just a warning that
+      # the source file is a no-op.
+      "/ignore:4221",
+    ]
+  }
 }
 
 # This is included by reference in the //build/config/compiler:runtime_library
@@ -292,7 +302,7 @@ config("runtime_library") {
 # manually override this config for their compiles.
 config("winver") {
   defines = [
-    "NTDDI_VERSION=NTDDI_WIN10_FE",
+    "NTDDI_VERSION=NTDDI_WIN10_NI",
 
     # We can't say `=_WIN32_WINNT_WIN10` here because some files do
     # `#if WINVER < 0x0600` without including windows.h before,
@@ -337,7 +347,7 @@ config("default_cfg_compiler") {
   # This is needed to allow functions to be called by code that is built
   # with CFG enabled, such as system libraries.
   # The CFG guards are only emitted if |win_enable_cfg_guards| is enabled.
-  if (is_clang) {
+  if (is_clang && !is_mingw) {
     if (win_enable_cfg_guards) {
       cflags = [ "/guard:cf" ]
     } else {
@@ -365,7 +375,7 @@ config("cfi_linker") {
   # ASan and CFG leads to slow process startup. Chromium's test runner uses
   # lots of child processes, so this means things are really slow. Disable CFG
   # for now. https://crbug.com/846966
-  if (!use_incremental_linking && !is_debug && !is_asan) {
+  if (!use_incremental_linking && !is_debug && !is_asan && !is_mingw) {
     # Turn on CFG bitmap generation and CFG load config.
     ldflags = [ "/guard:cf" ]
   }
@@ -536,20 +546,29 @@ config("static_crt") {
 if (current_cpu == "x64") {
   # The number after the comma is the minimum required OS version.
   # 5.02 = Windows Server 2003.
-  subsystem_version_suffix = ",5.02"
+  subsystem_version_suffix = "5.02"
 } else if (current_cpu == "arm64") {
   # Windows ARM64 requires Windows 10.
-  subsystem_version_suffix = ",10.0"
+  subsystem_version_suffix = "10.0"
 } else {
   # 5.01 = Windows XP.
-  subsystem_version_suffix = ",5.01"
+  subsystem_version_suffix = "5.01"
 }
 
 config("console") {
-  ldflags = [ "/SUBSYSTEM:CONSOLE$subsystem_version_suffix" ]
+  if (is_mingw) {
+    ldflags = [ "-Wl,--subsystem,console:$subsystem_version_suffix"]
+  } else {
+    ldflags = [ "/SUBSYSTEM:CONSOLE,$subsystem_version_suffix" ]
+  }
 }
+
 config("windowed") {
-  ldflags = [ "/SUBSYSTEM:WINDOWS$subsystem_version_suffix" ]
+  if (is_mingw) {
+    ldflags = [ "-Wl,--subsystem,windows:$subsystem_version_suffix"]
+  } else {
+    ldflags = [ "/SUBSYSTEM:WINDOWS,$subsystem_version_suffix" ]
+  }
 }
 
 # Incremental linking ----------------------------------------------------------
@@ -559,19 +578,21 @@ config("default_incremental_linking") {
   # Enable incremental linking for debug builds and all component builds - any
   # builds where performance is not job one.
   # TODO(thakis): Always turn this on with lld, no reason not to.
-  if (use_incremental_linking) {
-    ldflags = [ "/INCREMENTAL" ]
-    if (use_lld) {
-      # lld doesn't use ilk files and doesn't really have an incremental link
-      # mode; the only effect of the flag is that the .lib file timestamp isn't
-      # updated if the .lib doesn't change.
-      # TODO(thakis): Why pass /OPT:NOREF for lld, but not otherwise?
-      # TODO(thakis): /INCREMENTAL is on by default in link.exe, but not in
-      # lld.
-      ldflags += [ "/OPT:NOREF" ]
+  if (!is_mingw) {
+    if (use_incremental_linking) {
+      ldflags = [ "/INCREMENTAL" ]
+      if (use_lld) {
+        # lld doesn't use ilk files and doesn't really have an incremental link
+        # mode; the only effect of the flag is that the .lib file timestamp isn't
+        # updated if the .lib doesn't change.
+        # TODO(thakis): Why pass /OPT:NOREF for lld, but not otherwise?
+        # TODO(thakis): /INCREMENTAL is on by default in link.exe, but not in
+        # lld.
+        ldflags += [ "/OPT:NOREF" ]
+      }
+    } else {
+      ldflags = [ "/INCREMENTAL:NO" ]
     }
-  } else {
-    ldflags = [ "/INCREMENTAL:NO" ]
   }
 }
 
@@ -602,4 +623,16 @@ config("lean_and_mean") {
 
 config("nominmax") {
   defines = [ "NOMINMAX" ]
+}
+
+# Some binaries create PDBs larger than 4 GiB. Increasing the PDB page size
+# to 8 KiB allows 8 GiB PDBs. The larger page size also allows larger block maps
+# which is a PDB limit that was hit in https://crbug.com/1406510. The page size
+# can easily be increased in the future to allow even larger PDBs or larger
+# block maps.
+config("pdb_larger_than_4gb") {
+  if (!defined(ldflags)) {
+    ldflags = []
+  }
+  ldflags += [ "/pdbpagesize:8192" ]
 }

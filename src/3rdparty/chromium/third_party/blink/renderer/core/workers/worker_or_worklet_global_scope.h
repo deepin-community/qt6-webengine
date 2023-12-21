@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -41,6 +41,7 @@ class ModuleTreeClient;
 class ResourceFetcher;
 class WorkerResourceTimingNotifier;
 class SubresourceFilter;
+class WebContentSettingsClient;
 class WebWorkerFetchContext;
 class WorkerOrWorkletScriptController;
 class WorkerReportingProxy;
@@ -81,12 +82,17 @@ class CORE_EXPORT WorkerOrWorkletGlobalScope
   bool IsWorkerOrWorkletGlobalScope() const final { return true; }
   bool IsJSExecutionForbidden() const final;
   void DisableEval(const String& error_message) final;
+  void SetWasmEvalErrorMessage(const String& error_message) final;
   bool CanExecuteScripts(ReasonForCallingCanExecuteScripts) final;
   bool HasInsecureContextInAncestors() const override;
 
   // scheduler::WorkerScheduler::Delegate
   void UpdateBackForwardCacheDisablingFeatures(
-      uint64_t features_mask) override {}
+      uint64_t features_mask,
+      const BFCacheBlockingFeatureAndLocations&
+          non_sticky_features_and_js_locations,
+      const BFCacheBlockingFeatureAndLocations&
+          sticky_features_and_js_locations) override {}
 
   // BackForwardCacheLoaderHelperImpl::Delegate
   void EvictFromBackForwardCache(
@@ -182,6 +188,10 @@ class CORE_EXPORT WorkerOrWorkletGlobalScope
   // code since we don't create a CachedMetadataHandler. We need to fix this by
   // creating a cached metadta handler for all workers.
   virtual CodeCacheHost* GetCodeCacheHost() { return nullptr; }
+
+  // Called after the thread initialization is complete but before the script
+  // has started loading.
+  virtual void WillBeginLoading() {}
 
   Deprecation& GetDeprecation() { return deprecation_; }
 
@@ -285,10 +295,6 @@ class CORE_EXPORT WorkerOrWorkletGlobalScope
 
   // This tracks deprecation features that have been used.
   Deprecation deprecation_;
-
-  // LocalDOMWindow::modulator_ workaround equivalent.
-  // TODO(kouhei): Remove this.
-  Member<Modulator> modulator_;
 };
 
 template <>

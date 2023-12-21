@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -25,7 +25,7 @@ class VIEWS_EXPORT ResizeArea : public View {
   ~ResizeArea() override;
 
   // views::View:
-  gfx::NativeCursor GetCursor(const ui::MouseEvent& event) override;
+  ui::Cursor GetCursor(const ui::MouseEvent& event) override;
   void OnGestureEvent(ui::GestureEvent* event) override;
   bool OnMousePressed(const ui::MouseEvent& event) override;
   bool OnMouseDragged(const ui::MouseEvent& event) override;
@@ -48,7 +48,7 @@ class VIEWS_EXPORT ResizeArea : public View {
   // The event's x-position at the start of the resize operation. The resize
   // area will move while being dragged, so |initial_position_| is represented
   // in screen coordinates so that we don't lose our bearings.
-  int initial_position_;
+  int initial_position_ = 0;
 };
 
 }  // namespace views

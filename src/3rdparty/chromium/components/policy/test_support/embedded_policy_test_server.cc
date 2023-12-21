@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,25 +7,28 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 #include "components/policy/proto/chrome_extension_policy.pb.h"
-#endif  // !BUILDFLAG(IS_ANDROID)
+#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 #include "components/policy/test_support/client_storage.h"
-#include "components/policy/test_support/failing_request_handler.h"
 #include "components/policy/test_support/policy_storage.h"
 #include "components/policy/test_support/request_handler_for_api_authorization.h"
 #include "components/policy/test_support/request_handler_for_auto_enrollment.h"
+#include "components/policy/test_support/request_handler_for_cert_upload.h"
 #include "components/policy/test_support/request_handler_for_check_android_management.h"
 #include "components/policy/test_support/request_handler_for_chrome_desktop_report.h"
+#include "components/policy/test_support/request_handler_for_client_cert_provisioning.h"
 #include "components/policy/test_support/request_handler_for_device_attribute_update.h"
 #include "components/policy/test_support/request_handler_for_device_attribute_update_permission.h"
 #include "components/policy/test_support/request_handler_for_device_initial_enrollment_state.h"
 #include "components/policy/test_support/request_handler_for_device_state_retrieval.h"
 #include "components/policy/test_support/request_handler_for_policy.h"
+#if BUILDFLAG(IS_CHROMEOS)
 #include "components/policy/test_support/request_handler_for_psm_auto_enrollment.h"
+#endif  // BUILDFLAG(IS_CHROMEOS)
 #include "components/policy/test_support/request_handler_for_register_browser.h"
 #include "components/policy/test_support/request_handler_for_register_cert_based.h"
 #include "components/policy/test_support/request_handler_for_register_device_and_user.h"
@@ -60,9 +63,9 @@ std::unique_ptr<HttpResponse> LogStatusAndReturn(
   CustomHttpResponse* basic_response =
       static_cast<CustomHttpResponse*>(response.get());
   if (basic_response->code() == net::HTTP_OK) {
-    DLOG(INFO) << "Request succeeded: " << url;
+    LOG(INFO) << "Request succeeded: " << url;
   } else {
-    DLOG(INFO) << "Request failed with error code " << basic_response->code()
+    LOG(ERROR) << "Request failed with error code " << basic_response->code()
                << " (" << basic_response->content() << "): " << url;
   }
   return response;
@@ -74,50 +77,55 @@ const char kFakeDeviceToken[] = "fake_device_management_token";
 const char kInvalidEnrollmentToken[] = "invalid_enrollment_token";
 
 EmbeddedPolicyTestServer::RequestHandler::RequestHandler(
-    ClientStorage* client_storage,
-    PolicyStorage* policy_storage)
-    : client_storage_(client_storage), policy_storage_(policy_storage) {}
+    EmbeddedPolicyTestServer* parent)
+    : parent_(parent) {}
 
 EmbeddedPolicyTestServer::RequestHandler::~RequestHandler() = default;
 
+struct EmbeddedPolicyTestServer::ServerState {
+  ClientStorage client_storage_;
+  PolicyStorage policy_storage_;
+  std::map<std::string, net::HttpStatusCode> configured_errors_map_;
+};
+
+ClientStorage* EmbeddedPolicyTestServer::client_storage() {
+  return &server_state_->client_storage_;
+}
+
+PolicyStorage* EmbeddedPolicyTestServer::policy_storage() {
+  return &server_state_->policy_storage_;
+}
+
 EmbeddedPolicyTestServer::EmbeddedPolicyTestServer()
-    : http_server_(EmbeddedTestServer::TYPE_HTTP),
-      client_storage_(std::make_unique<ClientStorage>()),
-      policy_storage_(std::make_unique<PolicyStorage>()) {
-  RegisterHandler(std::make_unique<RequestHandlerForApiAuthorization>(
-      client_storage_.get(), policy_storage_.get()));
-  RegisterHandler(std::make_unique<RequestHandlerForAutoEnrollment>(
-      client_storage_.get(), policy_storage_.get()));
-  RegisterHandler(std::make_unique<RequestHandlerForCheckAndroidManagement>(
-      client_storage_.get(), policy_storage_.get()));
-  RegisterHandler(std::make_unique<RequestHandlerForChromeDesktopReport>(
-      client_storage_.get(), policy_storage_.get()));
-  RegisterHandler(std::make_unique<RequestHandlerForDeviceAttributeUpdate>(
-      client_storage_.get(), policy_storage_.get()));
+    : http_server_(EmbeddedTestServer::TYPE_HTTP) {
+  ResetServerState();
+  RegisterHandler(std::make_unique<RequestHandlerForApiAuthorization>(this));
+  RegisterHandler(std::make_unique<RequestHandlerForAutoEnrollment>(this));
+  RegisterHandler(std::make_unique<RequestHandlerForCertUpload>(this));
   RegisterHandler(
-      std::make_unique<RequestHandlerForDeviceAttributeUpdatePermission>(
-          client_storage_.get(), policy_storage_.get()));
+      std::make_unique<RequestHandlerForCheckAndroidManagement>(this));
+  RegisterHandler(std::make_unique<RequestHandlerForChromeDesktopReport>(this));
   RegisterHandler(
-      std::make_unique<RequestHandlerForDeviceInitialEnrollmentState>(
-          client_storage_.get(), policy_storage_.get()));
-  RegisterHandler(std::make_unique<RequestHandlerForDeviceStateRetrieval>(
-      client_storage_.get(), policy_storage_.get()));
-  RegisterHandler(std::make_unique<RequestHandlerForPolicy>(
-      client_storage_.get(), policy_storage_.get()));
-  RegisterHandler(std::make_unique<RequestHandlerForPsmAutoEnrollment>(
-      client_storage_.get(), policy_storage_.get()));
-  RegisterHandler(std::make_unique<RequestHandlerForRegisterBrowser>(
-      client_storage_.get(), policy_storage_.get()));
-  RegisterHandler(std::make_unique<RequestHandlerForRegisterCertBased>(
-      client_storage_.get(), policy_storage_.get()));
-  RegisterHandler(std::make_unique<RequestHandlerForRegisterDeviceAndUser>(
-      client_storage_.get(), policy_storage_.get()));
-  RegisterHandler(std::make_unique<RequestHandlerForRemoteCommands>(
-      client_storage_.get(), policy_storage_.get()));
-  RegisterHandler(std::make_unique<RequestHandlerForStatusUpload>(
-      client_storage_.get(), policy_storage_.get()));
-  RegisterHandler(std::make_unique<RequestHandlerForUnregister>(
-      client_storage_.get(), policy_storage_.get()));
+      std::make_unique<RequestHandlerForClientCertProvisioning>(this));
+  RegisterHandler(
+      std::make_unique<RequestHandlerForDeviceAttributeUpdate>(this));
+  RegisterHandler(
+      std::make_unique<RequestHandlerForDeviceAttributeUpdatePermission>(this));
+  RegisterHandler(
+      std::make_unique<RequestHandlerForDeviceInitialEnrollmentState>(this));
+  RegisterHandler(
+      std::make_unique<RequestHandlerForDeviceStateRetrieval>(this));
+  RegisterHandler(std::make_unique<RequestHandlerForPolicy>(this));
+#if BUILDFLAG(IS_CHROMEOS)
+  RegisterHandler(std::make_unique<RequestHandlerForPsmAutoEnrollment>(this));
+#endif  // BUILDFLAG(IS_CHROMEOS)
+  RegisterHandler(std::make_unique<RequestHandlerForRegisterBrowser>(this));
+  RegisterHandler(std::make_unique<RequestHandlerForRegisterCertBased>(this));
+  RegisterHandler(
+      std::make_unique<RequestHandlerForRegisterDeviceAndUser>(this));
+  RegisterHandler(std::make_unique<RequestHandlerForRemoteCommands>(this));
+  RegisterHandler(std::make_unique<RequestHandlerForStatusUpload>(this));
+  RegisterHandler(std::make_unique<RequestHandlerForUnregister>(this));
 
   http_server_.RegisterDefaultHandler(base::BindRepeating(
       &EmbeddedPolicyTestServer::HandleRequest, base::Unretained(this)));
@@ -142,11 +150,11 @@ void EmbeddedPolicyTestServer::RegisterHandler(
 void EmbeddedPolicyTestServer::ConfigureRequestError(
     const std::string& request_type,
     net::HttpStatusCode error_code) {
-  RegisterHandler(std::make_unique<FailingRequestHandler>(
-      client_storage_.get(), policy_storage_.get(), request_type, error_code));
+  server_state_->configured_errors_map_.insert(
+      std::pair<std::string, net::HttpStatusCode>(request_type, error_code));
 }
 
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 void EmbeddedPolicyTestServer::UpdateExternalPolicy(
     const std::string& type,
     const std::string& entity_id,
@@ -167,19 +175,26 @@ void EmbeddedPolicyTestServer::UpdateExternalPolicy(
   policy_storage()->SetPolicyPayload(type, entity_id,
                                      external_policy_data.SerializeAsString());
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
+#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 
 std::unique_ptr<HttpResponse> EmbeddedPolicyTestServer::HandleRequest(
     const HttpRequest& request) {
   GURL url = request.GetURL();
-  DLOG(INFO) << "Request URL: " << url;
+  LOG(INFO) << "Request URL: " << url;
 
   if (url.path() == kExternalPolicyDataPath)
     return HandleExternalPolicyDataRequest(url);
 
   std::string request_type = KeyValueFromUrl(url, dm_protocol::kParamRequest);
-  auto it = request_handlers_.find(request_type);
-  if (it == request_handlers_.end()) {
+
+  auto it_errors = server_state_->configured_errors_map_.find(request_type);
+  if (it_errors != server_state_->configured_errors_map_.end()) {
+    return LogStatusAndReturn(
+        url, CreateHttpResponse(it_errors->second, "Preconfigured error"));
+  }
+
+  auto it_handlers = request_handlers_.find(request_type);
+  if (it_handlers == request_handlers_.end()) {
     LOG(ERROR) << "No request handler for: " << url;
     return nullptr;
   }
@@ -191,7 +206,7 @@ std::unique_ptr<HttpResponse> EmbeddedPolicyTestServer::HandleRequest(
                  "URL must define device type, app type, and device id."));
   }
 
-  return LogStatusAndReturn(url, it->second->HandleRequest(request));
+  return LogStatusAndReturn(url, it_handlers->second->HandleRequest(request));
 }
 
 std::unique_ptr<HttpResponse>
@@ -200,7 +215,7 @@ EmbeddedPolicyTestServer::HandleExternalPolicyDataRequest(const GURL& url) {
   std::string policy_type = KeyValueFromUrl(url, kExternalPolicyTypeParam);
   std::string entity_id = KeyValueFromUrl(url, kExternalEntityIdParam);
   std::string policy_payload =
-      policy_storage_->GetExternalPolicyPayload(policy_type, entity_id);
+      policy_storage()->GetExternalPolicyPayload(policy_type, entity_id);
   std::unique_ptr<HttpResponse> response;
   if (policy_payload.empty()) {
     response = CreateHttpResponse(
@@ -210,6 +225,10 @@ EmbeddedPolicyTestServer::HandleExternalPolicyDataRequest(const GURL& url) {
     response = CreateHttpResponse(net::HTTP_OK, policy_payload);
   }
   return LogStatusAndReturn(url, std::move(response));
+}
+
+void EmbeddedPolicyTestServer::ResetServerState() {
+  server_state_ = std::make_unique<ServerState>();
 }
 
 }  // namespace policy

@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,9 +17,17 @@ class Rect;
 namespace ui {
 
 class WaylandConnection;
+class XDGToplevelWrapperImpl;
+enum class ZOrderLevel;
 
-// A wrapper around different versions of xdg toplevels. Allows
-// WaylandToplevelWindow to set window-like properties such as maximize,
+// Wrapper interface for shell top level windows.
+//
+// This is one of three wrapper classes: Shell{Surface,Toplevel,Popup}Wrapper.
+// It has the only sub-class in Chromium, but should not be removed because it
+// eases downstream implementations.
+// See https://crbug.com/1402672
+//
+// Allows WaylandToplevelWindow to set window-like properties such as maximize,
 // fullscreen, and minimize, set application-specific metadata like title and
 // id, as well as trigger user interactive operations such as interactive resize
 // and move.
@@ -56,6 +64,15 @@ class ShellToplevelWrapper {
 
   // Unsets a native window from fullscreen state.
   virtual void UnSetFullscreen() = 0;
+
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  // Sets a native window's immersive mode.
+  virtual void SetUseImmersiveMode(bool immersive) = 0;
+
+  // Whether the shell supports top level immersive status. The deprecated
+  // immersive status used to be set on the surface level.
+  virtual bool SupportsTopLevelImmersiveStatus() const = 0;
+#endif
 
   // Sets a native window to minimized state.
   virtual void SetMinimized() = 0;
@@ -101,6 +118,14 @@ class ShellToplevelWrapper {
   // with this top level window.
   virtual void SetDecoration(DecorationMode decoration) = 0;
 
+  // Set session id and restore id for the top level.
+  virtual void SetRestoreInfo(int32_t restore_session_id,
+                              int32_t restore_window_id) = 0;
+
+  virtual void SetRestoreInfoWithWindowIdSource(
+      int32_t restore_session_id,
+      const std::string& restore_window_id_source) = 0;
+
   // Request that the server set the orientation lock to the provided lock type.
   // This is only accepted if the requesting window is running in immersive
   // fullscreen mode and in a tablet configuration.
@@ -108,6 +133,50 @@ class ShellToplevelWrapper {
 
   // Request that the server remove the applied orientation lock.
   virtual void Unlock() = 0;
+
+  // Request that the window be made a system modal.
+  virtual void SetSystemModal(bool modal) = 0;
+
+  // Checks if the server supports chrome to control the window position in
+  // screen coordinates.
+  virtual bool SupportsScreenCoordinates() const = 0;
+
+  // Enables screen coordinates support. This is no-op if the server does not
+  // support the screen coordinates.
+  virtual void EnableScreenCoordinates() = 0;
+
+  // Sets/usets a native window to float state. This places it on top of other
+  // windows.
+  virtual void SetFloat() = 0;
+  virtual void UnSetFloat() = 0;
+
+  // Sets the z order of the window.
+  virtual void SetZOrder(ZOrderLevel z_order) = 0;
+
+  // Activation brings a window to the foreground. Deactivation makes a window
+  // non-foregrounded.
+  virtual bool SupportsActivation() = 0;
+  virtual void Activate() = 0;
+  virtual void Deactivate() = 0;
+
+  // Sets the scale factor for the next commit. Scale factor persists until a
+  // new one is set.
+  virtual void SetScaleFactor(float scale_factor) = 0;
+
+  // Snaps the window in the direction of `snap_direction`. `snap_ratio`
+  // indicates the width of the work area to snap to in landscape mode, or
+  // height in portrait mode.
+  virtual void CommitSnap(WaylandWindowSnapDirection snap_direction,
+                          float snap_ratio) = 0;
+
+  // Signals the underneath platform to shows a preview for the given window
+  // snap direction. `allow_haptic_feedback` indicates if it should send haptic
+  // feedback.
+  virtual void ShowSnapPreview(WaylandWindowSnapDirection snap_direction,
+                               bool allow_haptic_feedback) = 0;
+
+  // Casts `this` to XDGToplevelWrapperImpl, if it is of that type.
+  virtual XDGToplevelWrapperImpl* AsXDGToplevelWrapper();
 };
 
 // Look for |value| in |wl_array| in C++ style.

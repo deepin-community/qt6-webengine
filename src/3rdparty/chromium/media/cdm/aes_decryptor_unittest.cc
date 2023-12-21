@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,8 +11,8 @@
 #include <string>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/debug/leak_annotations.h"
+#include "base/functional/bind.h"
 #include "base/json/json_reader.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
@@ -27,7 +27,6 @@
 #include "media/base/decryptor.h"
 #include "media/base/media_switches.h"
 #include "media/base/mock_filters.h"
-#include "media/cdm/cdm_module.h"
 #include "media/media_buildflags.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest-param-test.h"
@@ -38,6 +37,7 @@
 #include "media/cdm/api/content_decryption_module.h"  // nogncheck
 #include "media/cdm/cdm_adapter.h"
 #include "media/cdm/cdm_auxiliary_helper.h"
+#include "media/cdm/cdm_module.h"
 #include "media/cdm/external_clear_key_test_helper.h"
 #include "media/cdm/mock_helpers.h"
 #include "media/cdm/simple_cdm_allocator.h"
@@ -62,7 +62,7 @@ MATCHER(NotEmpty, "") {
 MATCHER(IsJSONDictionary, "") {
   std::string result(arg.begin(), arg.end());
   absl::optional<base::Value> root = base::JSONReader::Read(result);
-  return (root && root->type() == base::Value::Type::DICTIONARY);
+  return (root && root->type() == base::Value::Type::DICT);
 }
 MATCHER(IsNullTime, "") {
   return arg.is_null();

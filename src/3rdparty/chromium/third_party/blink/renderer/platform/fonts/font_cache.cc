@@ -64,9 +64,6 @@
 
 namespace blink {
 
-const base::Feature kAsyncFontAccess{"AsyncFontAccess",
-                                     base::FEATURE_DISABLED_BY_DEFAULT};
-
 const char kColorEmojiLocale[] = "und-Zsye";
 
 #if BUILDFLAG(IS_ANDROID)
@@ -92,7 +89,8 @@ FontCache& FontCache::Get() {
 
 FontCache::FontCache()
     : font_manager_(sk_ref_sp(static_font_manager_)),
-      font_platform_data_cache_(FontPlatformDataCache::Create()) {
+      font_platform_data_cache_(FontPlatformDataCache::Create()),
+      font_data_cache_(FontDataCache::Create()) {
 #if BUILDFLAG(IS_WIN)
   if (!font_manager_ || should_use_test_font_mgr) {
     // This code path is only for unit tests. This SkFontMgr does not work in
@@ -120,11 +118,12 @@ FontCache::~FontCache() = default;
 FontPlatformData* FontCache::SystemFontPlatformData(
     const FontDescription& font_description) {
   const AtomicString& family = FontCache::SystemFontFamily();
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA)
-  if (family.IsEmpty() || family == font_family_names::kSystemUi)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA) || \
+    BUILDFLAG(IS_IOS)
+  if (family.empty() || family == font_family_names::kSystemUi)
     return nullptr;
 #else
-  DCHECK(!family.IsEmpty() && family != font_family_names::kSystemUi);
+  DCHECK(!family.empty() && family != font_family_names::kSystemUi);
 #endif
   return GetFontPlatformData(font_description, FontFaceCreationParams(family),
                              AlternateFontName::kNoAlternate);
@@ -217,8 +216,8 @@ scoped_refptr<SimpleFontData> FontCache::FontDataFromFontPlatformData(
     DCHECK(purge_prevent_count_);
 #endif
 
-  return font_data_cache_.Get(platform_data, should_retain,
-                              subpixel_ascent_descent);
+  return font_data_cache_->Get(platform_data, should_retain,
+                               subpixel_ascent_descent);
 }
 
 bool FontCache::IsPlatformFamilyMatchAvailable(
@@ -279,12 +278,12 @@ scoped_refptr<SimpleFontData> FontCache::FallbackFontForCharacter(
 }
 
 void FontCache::ReleaseFontData(const SimpleFontData* font_data) {
-  font_data_cache_.Release(font_data);
+  font_data_cache_->Release(font_data);
 }
 
 void FontCache::PurgePlatformFontDataCache() {
   TRACE_EVENT0("fonts,ui", "FontCache::PurgePlatformFontDataCache");
-  font_platform_data_cache_->Purge(font_data_cache_);
+  font_platform_data_cache_->Purge(*font_data_cache_);
 }
 
 void FontCache::PurgeFallbackListShaperCache() {
@@ -303,7 +302,7 @@ void FontCache::Purge(PurgeSeverity purge_severity) {
   if (purge_prevent_count_)
     return;
 
-  if (!font_data_cache_.Purge(purge_severity))
+  if (!font_data_cache_->Purge(purge_severity))
     return;
 
   PurgePlatformFontDataCache();

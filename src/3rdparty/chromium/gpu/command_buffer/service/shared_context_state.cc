@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 #include "base/observer_list.h"
 #include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "build/build_config.h"
 #include "components/crash/core/common/crash_key.h"
@@ -37,13 +37,14 @@
 #include "components/viz/common/gpu/vulkan_context_provider.h"
 #include "gpu/command_buffer/service/external_semaphore_pool.h"
 #include "gpu/vulkan/vulkan_device_queue.h"
+#include "gpu/vulkan/vulkan_implementation.h"
 #endif
 
 #if BUILDFLAG(IS_FUCHSIA)
 #include "gpu/vulkan/fuchsia/vulkan_fuchsia_ext.h"
 #endif
 
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_APPLE)
 #include "components/viz/common/gpu/metal_context_provider.h"
 #endif
 
@@ -190,7 +191,7 @@ SharedContextState::SharedContextState(
       break;
     case GrContextType::kMetal:
       if (metal_context_provider_) {
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_APPLE)
         gr_context_ = metal_context_provider_->GetGrContext();
 #endif
         use_virtualized_gl_contexts_ = false;
@@ -208,9 +209,10 @@ SharedContextState::SharedContextState(
       break;
   }
 
-  if (base::ThreadTaskRunnerHandle::IsSet()) {
+  if (base::SingleThreadTaskRunner::HasCurrentDefault()) {
     base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
-        this, "SharedContextState", base::ThreadTaskRunnerHandle::Get());
+        this, "SharedContextState",
+        base::SingleThreadTaskRunner::GetCurrentDefault());
 
     // Create |gr_cache_controller_| only if we have task runner.
     gr_cache_controller_.emplace(this);
@@ -268,7 +270,7 @@ bool SharedContextState::InitializeGrContext(
   progress_reporter_ = progress_reporter;
   gr_shader_cache_ = cache;
 
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_APPLE)
   if (metal_context_provider_)
     metal_context_provider_->SetProgressReporter(progress_reporter);
 #endif
@@ -297,13 +299,10 @@ bool SharedContextState::InitializeGrContext(
 
   if (gr_context_type_ == GrContextType::kGL) {
     DCHECK(context_->IsCurrent(nullptr));
-    bool use_version_es2 = false;
-#if BUILDFLAG(IS_ANDROID)
-    use_version_es2 = base::FeatureList::IsEnabled(features::kUseGles2ForOopR);
-#endif
-    sk_sp<GrGLInterface> interface(gl::init::CreateGrGLInterface(
+    constexpr bool use_version_es2 = false;
+    sk_sp<GrGLInterface> gr_gl_interface(gl::init::CreateGrGLInterface(
         *context_->GetVersionInfo(), use_version_es2, progress_reporter));
-    if (!interface) {
+    if (!gr_gl_interface) {
       LOG(ERROR) << "OOP raster support disabled: GrGLInterface creation "
                     "failed.";
       return false;
@@ -312,7 +311,7 @@ bool SharedContextState::InitializeGrContext(
     if (activity_flags && cache) {
       // |activity_flags| is safe to capture here since it must outlive the
       // this context state.
-      interface->fFunctions.fProgramBinary =
+      gr_gl_interface->fFunctions.fProgramBinary =
           [activity_flags](GrGLuint program, GrGLenum binaryFormat,
                            void* binary, GrGLsizei length) {
             GpuProcessActivityFlags::ScopedSetFlag scoped_set_flag(
@@ -338,7 +337,7 @@ bool SharedContextState::InitializeGrContext(
       DCHECK(owned_gr_context_);
     } else {
       owned_gr_context_ =
-          GrDirectContext::MakeGL(std::move(interface), options);
+          GrDirectContext::MakeGL(std::move(gr_gl_interface), options);
     }
 
     gr_context_ = owned_gr_context_.get();
@@ -468,11 +467,6 @@ bool SharedContextState::InitializeGL(
     MakeCurrent(nullptr);
   }
 
-  bool is_native_vulkan =
-      gpu_preferences.use_vulkan == gpu::VulkanImplementationName::kNative ||
-      gpu_preferences.use_vulkan ==
-          gpu::VulkanImplementationName::kForcedNative;
-
   bool gl_supports_memory_object =
       gl::g_current_gl_driver->ext.b_GL_EXT_memory_object_fd ||
       gl::g_current_gl_driver->ext.b_GL_EXT_memory_object_win32 ||
@@ -481,10 +475,17 @@ bool SharedContextState::InitializeGL(
       gl::g_current_gl_driver->ext.b_GL_EXT_semaphore_fd ||
       gl::g_current_gl_driver->ext.b_GL_EXT_semaphore_win32 ||
       gl::g_current_gl_driver->ext.b_GL_ANGLE_semaphore_fuchsia;
+
   bool vk_supports_external_memory = false;
   bool vk_supports_external_semaphore = false;
+  gpu::VulkanImplementationName vulkan_implementation =
+      gpu::VulkanImplementationName::kNone;
 #if BUILDFLAG(ENABLE_VULKAN)
   if (vk_context_provider_) {
+    vulkan_implementation =
+        vk_context_provider_->GetVulkanImplementation()->use_swiftshader()
+            ? gpu::VulkanImplementationName::kSwiftshader
+            : gpu::VulkanImplementationName::kNative;
     const auto& extensions =
         vk_context_provider_->GetDeviceQueue()->enabled_extensions();
 #if BUILDFLAG(IS_WIN)
@@ -520,10 +521,19 @@ bool SharedContextState::InitializeGL(
   }
 #endif  // BUILDFLAG(ENABLE_VULKAN)
 
-  // Swiftshader GL and Vulkan report supporting external objects extensions,
-  // but they don't.
+  const bool is_native_vulkan_and_gl =
+      vulkan_implementation == gpu::VulkanImplementationName::kNative &&
+      !gl::g_current_gl_version->is_swiftshader &&
+      !gl::g_current_gl_version->is_angle_swiftshader;
+
+  // Swiftshader GL reports supporting external objects extensions, but doesn't.
+  // However, Swiftshader Vulkan and ANGLE can interop using external objects.
+  const bool is_swiftshader_vulkan_and_gl =
+      vulkan_implementation == gpu::VulkanImplementationName::kSwiftshader &&
+      gl::g_current_gl_version->is_angle_swiftshader;
+
   support_vulkan_external_object_ =
-      !gl::g_current_gl_version->is_swiftshader && is_native_vulkan &&
+      (is_native_vulkan_and_gl || is_swiftshader_vulkan_and_gl) &&
       gl_supports_memory_object && gl_supports_semaphore &&
       vk_supports_external_memory && vk_supports_external_semaphore;
 
@@ -707,6 +717,10 @@ void SharedContextState::StoreVkPipelineCacheIfNeeded() {
                                                    kDisplayCompositorClientId);
     gr_shader_cache_->StoreVkPipelineCacheIfNeeded(gr_context_);
   }
+}
+
+gl::GLDisplay* SharedContextState::display() {
+  return surface_.get()->GetGLDisplay();
 }
 
 bool SharedContextState::initialized() const {

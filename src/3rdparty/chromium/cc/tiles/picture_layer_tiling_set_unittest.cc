@@ -1,4 +1,4 @@
-// Copyright 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -244,7 +244,7 @@ class PictureLayerTilingSetTestWithResources : public testing::Test {
                float expected_scale) {
     scoped_refptr<viz::TestContextProvider> context_provider =
         viz::TestContextProvider::Create();
-    ASSERT_EQ(context_provider->BindToCurrentThread(),
+    ASSERT_EQ(context_provider->BindToCurrentSequence(),
               gpu::ContextResult::kSuccess);
     std::unique_ptr<viz::ClientResourceProvider> resource_provider =
         std::make_unique<viz::ClientResourceProvider>();

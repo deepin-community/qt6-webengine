@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,6 +17,7 @@
 #include "net/base/host_port_pair.h"
 
 class ChromeDevToolsSession;
+class Profile;
 class ScopedKeepAlive;
 using RemoteLocations = std::set<net::HostPortPair>;
 
@@ -80,7 +81,8 @@ class ChromeDevToolsManagerDelegate : public content::DevToolsManagerDelegate {
   void ClientDetached(
       content::DevToolsAgentHostClientChannel* channel) override;
   scoped_refptr<content::DevToolsAgentHost> CreateNewTarget(
-      const GURL& url) override;
+      const GURL& url,
+      bool for_tab) override;
   bool HasBundledFrontendResources() override;
 
   void DevicesAvailable(

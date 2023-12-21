@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -65,6 +65,14 @@ api::developer_private::ViewType ConvertViewType(const mojom::ViewType type) {
       break;
     case mojom::ViewType::kTabContents:
       developer_private_type = api::developer_private::VIEW_TYPE_TAB_CONTENTS;
+      break;
+    case mojom::ViewType::kOffscreenDocument:
+      developer_private_type =
+          api::developer_private::VIEW_TYPE_OFFSCREEN_DOCUMENT;
+      break;
+    case mojom::ViewType::kExtensionSidePanel:
+      developer_private_type =
+          api::developer_private::VIEW_TYPE_EXTENSION_SIDE_PANEL;
       break;
     default:
       developer_private_type = api::developer_private::VIEW_TYPE_NONE;
@@ -177,15 +185,14 @@ void InspectableViewsFinder::GetViewsForExtensionProcess(
     // committed (or visible) url yet. In this case, use the initial url.
     if (url.is_empty()) {
       ExtensionHost* extension_host =
-          process_manager->GetExtensionHostForRenderFrameHost(host);
+          process_manager->GetBackgroundHostForRenderFrameHost(host);
       if (extension_host)
         url = extension_host->initial_url();
     }
 
-    bool is_iframe = web_contents->GetMainFrame() != host;
     content::RenderProcessHost* process = host->GetProcess();
     result->push_back(ConstructView(url, process->GetID(), host->GetRoutingID(),
-                                    is_incognito, is_iframe,
+                                    is_incognito, !host->IsInPrimaryMainFrame(),
                                     ConvertViewType(host_type)));
   }
 
@@ -219,7 +226,7 @@ void InspectableViewsFinder::GetAppWindowViewsForExtension(
     if (url.is_empty())
       url = window->initial_url();
 
-    content::RenderFrameHost* main_frame = web_contents->GetMainFrame();
+    content::RenderFrameHost* main_frame = web_contents->GetPrimaryMainFrame();
     result->push_back(ConstructView(
         url, main_frame->GetProcess()->GetID(), main_frame->GetRoutingID(),
         false, false, ConvertViewType(GetViewType(web_contents))));

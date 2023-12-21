@@ -36,25 +36,24 @@ import type * as SDK from '../../core/sdk/sdk.js';
 import * as UI from '../../ui/legacy/legacy.js';
 import type * as Protocol from '../../generated/protocol.js';
 
-import type {ComputedStyleModel} from './ComputedStyleModel.js';
-import {Events} from './ComputedStyleModel.js';
+import {Events, type ComputedStyleModel} from './ComputedStyleModel.js';
 
 const UIStrings = {
   /**
-  *@description Section title text content in Platform Fonts Widget of the Elements panel
-  */
+   *@description Section title text content in Platform Fonts Widget of the Elements panel
+   */
   renderedFonts: 'Rendered Fonts',
   /**
-  *@description Text in Platform Fonts Widget of the Elements panel
-  */
+   *@description Text in Platform Fonts Widget of the Elements panel
+   */
   networkResource: 'Network resource',
   /**
-  *@description Text in Platform Fonts Widget of the Elements panel
-  */
+   *@description Text in Platform Fonts Widget of the Elements panel
+   */
   localFile: 'Local file',
   /**
-  *@description Text in Platform Fonts Widget of the Elements panel. Indicates a number of glyphs (characters) .
-  */
+   *@description Text in Platform Fonts Widget of the Elements panel. Indicates a number of glyphs (characters) .
+   */
   dGlyphs: '{n, plural, =1 {(# glyph)} other {(# glyphs)}}',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/elements/PlatformFontsWidget.ts', UIStrings);

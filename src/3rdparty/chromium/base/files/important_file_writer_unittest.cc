@@ -1,14 +1,14 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/files/important_file_writer.h"
 
-#include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/notreached.h"
@@ -19,7 +19,6 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/task_environment.h"
 #include "base/threading/thread.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/timer/mock_timer.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -159,7 +158,8 @@ class ImportantFileWriterTest : public testing::Test {
 };
 
 TEST_F(ImportantFileWriterTest, Basic) {
-  ImportantFileWriter writer(file_, ThreadTaskRunnerHandle::Get());
+  ImportantFileWriter writer(file_,
+                             SingleThreadTaskRunner::GetCurrentDefault());
   EXPECT_FALSE(PathExists(writer.path()));
   EXPECT_EQ(NOT_CALLED, write_callback_observer_.GetAndResetObservationState());
   writer.WriteNow(std::make_unique<std::string>("foo"));
@@ -171,7 +171,8 @@ TEST_F(ImportantFileWriterTest, Basic) {
 }
 
 TEST_F(ImportantFileWriterTest, WriteWithObserver) {
-  ImportantFileWriter writer(file_, ThreadTaskRunnerHandle::Get());
+  ImportantFileWriter writer(file_,
+                             SingleThreadTaskRunner::GetCurrentDefault());
   EXPECT_FALSE(PathExists(writer.path()));
   EXPECT_EQ(NOT_CALLED, write_callback_observer_.GetAndResetObservationState());
 
@@ -211,7 +212,7 @@ TEST_F(ImportantFileWriterTest, FailedWriteWithObserver) {
   // Use an invalid file path (relative paths are invalid) to get a
   // FILE_ERROR_ACCESS_DENIED error when trying to write the file.
   ImportantFileWriter writer(FilePath().AppendASCII("bad/../path"),
-                             ThreadTaskRunnerHandle::Get());
+                             SingleThreadTaskRunner::GetCurrentDefault());
   EXPECT_FALSE(PathExists(writer.path()));
   EXPECT_EQ(NOT_CALLED, write_callback_observer_.GetAndResetObservationState());
   write_callback_observer_.ObserveNextWriteCallbacks(&writer);
@@ -260,7 +261,7 @@ TEST_F(ImportantFileWriterTest, CallbackRunsOnWriterThread) {
 TEST_F(ImportantFileWriterTest, ScheduleWrite) {
   constexpr TimeDelta kCommitInterval = Seconds(12345);
   MockOneShotTimer timer;
-  ImportantFileWriter writer(file_, ThreadTaskRunnerHandle::Get(),
+  ImportantFileWriter writer(file_, SingleThreadTaskRunner::GetCurrentDefault(),
                              kCommitInterval);
   EXPECT_EQ(0u, writer.previous_data_size());
   writer.SetTimerForTesting(&timer);
@@ -281,7 +282,8 @@ TEST_F(ImportantFileWriterTest, ScheduleWrite) {
 
 TEST_F(ImportantFileWriterTest, DoScheduledWrite) {
   MockOneShotTimer timer;
-  ImportantFileWriter writer(file_, ThreadTaskRunnerHandle::Get());
+  ImportantFileWriter writer(file_,
+                             SingleThreadTaskRunner::GetCurrentDefault());
   writer.SetTimerForTesting(&timer);
   EXPECT_FALSE(writer.HasPendingWrite());
   DataSerializer serializer("foo");
@@ -296,7 +298,8 @@ TEST_F(ImportantFileWriterTest, DoScheduledWrite) {
 
 TEST_F(ImportantFileWriterTest, BatchingWrites) {
   MockOneShotTimer timer;
-  ImportantFileWriter writer(file_, ThreadTaskRunnerHandle::Get());
+  ImportantFileWriter writer(file_,
+                             SingleThreadTaskRunner::GetCurrentDefault());
   writer.SetTimerForTesting(&timer);
   DataSerializer foo("foo"), bar("bar"), baz("baz");
   writer.ScheduleWrite(&foo);
@@ -311,7 +314,8 @@ TEST_F(ImportantFileWriterTest, BatchingWrites) {
 
 TEST_F(ImportantFileWriterTest, ScheduleWrite_FailToSerialize) {
   MockOneShotTimer timer;
-  ImportantFileWriter writer(file_, ThreadTaskRunnerHandle::Get());
+  ImportantFileWriter writer(file_,
+                             SingleThreadTaskRunner::GetCurrentDefault());
   writer.SetTimerForTesting(&timer);
   EXPECT_FALSE(writer.HasPendingWrite());
   FailingDataSerializer serializer;
@@ -326,7 +330,8 @@ TEST_F(ImportantFileWriterTest, ScheduleWrite_FailToSerialize) {
 
 TEST_F(ImportantFileWriterTest, ScheduleWrite_WriteNow) {
   MockOneShotTimer timer;
-  ImportantFileWriter writer(file_, ThreadTaskRunnerHandle::Get());
+  ImportantFileWriter writer(file_,
+                             SingleThreadTaskRunner::GetCurrentDefault());
   writer.SetTimerForTesting(&timer);
   EXPECT_FALSE(writer.HasPendingWrite());
   DataSerializer serializer("foo");
@@ -344,7 +349,8 @@ TEST_F(ImportantFileWriterTest, ScheduleWrite_WriteNow) {
 TEST_F(ImportantFileWriterTest, DoScheduledWrite_FailToSerialize) {
   base::HistogramTester histogram_tester;
   MockOneShotTimer timer;
-  ImportantFileWriter writer(file_, ThreadTaskRunnerHandle::Get());
+  ImportantFileWriter writer(file_,
+                             SingleThreadTaskRunner::GetCurrentDefault());
   writer.SetTimerForTesting(&timer);
   EXPECT_FALSE(writer.HasPendingWrite());
   FailingDataSerializer serializer;
@@ -358,6 +364,7 @@ TEST_F(ImportantFileWriterTest, DoScheduledWrite_FailToSerialize) {
   EXPECT_FALSE(PathExists(writer.path()));
   // We don't record metrics in case the serialization fails.
   histogram_tester.ExpectTotalCount("ImportantFile.SerializationDuration", 0);
+  histogram_tester.ExpectTotalCount("ImportantFile.WriteDuration", 0);
 }
 
 TEST_F(ImportantFileWriterTest, ScheduleWriteWithBackgroundDataSerializer) {
@@ -393,6 +400,7 @@ TEST_F(ImportantFileWriterTest, ScheduleWriteWithBackgroundDataSerializer) {
   ASSERT_TRUE(PathExists(writer.path()));
   EXPECT_EQ("foo", GetFileContent(writer.path()));
   histogram_tester.ExpectTotalCount("ImportantFile.SerializationDuration", 1);
+  histogram_tester.ExpectTotalCount("ImportantFile.WriteDuration", 1);
 }
 
 TEST_F(ImportantFileWriterTest,
@@ -428,6 +436,7 @@ TEST_F(ImportantFileWriterTest,
   // We record the foreground serialization metric despite later failure in
   // background sequence.
   histogram_tester.ExpectTotalCount("ImportantFile.SerializationDuration", 1);
+  histogram_tester.ExpectTotalCount("ImportantFile.WriteDuration", 0);
 }
 
 // Test that the chunking to avoid very large writes works.
@@ -444,25 +453,29 @@ TEST_F(ImportantFileWriterTest, WriteLargeFile) {
 // Verify that a UMA metric for the serialization duration is recorded.
 TEST_F(ImportantFileWriterTest, SerializationDuration) {
   base::HistogramTester histogram_tester;
-  ImportantFileWriter writer(file_, ThreadTaskRunnerHandle::Get());
+  ImportantFileWriter writer(file_,
+                             SingleThreadTaskRunner::GetCurrentDefault());
   DataSerializer serializer("foo");
   writer.ScheduleWrite(&serializer);
   writer.DoScheduledWrite();
   RunLoop().RunUntilIdle();
   histogram_tester.ExpectTotalCount("ImportantFile.SerializationDuration", 1);
+  histogram_tester.ExpectTotalCount("ImportantFile.WriteDuration", 1);
 }
 
 // Verify that a UMA metric for the serialization duration is recorded if the
 // ImportantFileWriter has a custom histogram suffix.
 TEST_F(ImportantFileWriterTest, SerializationDurationWithCustomSuffix) {
   base::HistogramTester histogram_tester;
-  ImportantFileWriter writer(file_, ThreadTaskRunnerHandle::Get(), "Foo");
+  ImportantFileWriter writer(file_, SingleThreadTaskRunner::GetCurrentDefault(),
+                             "Foo");
   DataSerializer serializer("foo");
   writer.ScheduleWrite(&serializer);
   writer.DoScheduledWrite();
   RunLoop().RunUntilIdle();
   histogram_tester.ExpectTotalCount("ImportantFile.SerializationDuration.Foo",
                                     1);
+  histogram_tester.ExpectTotalCount("ImportantFile.WriteDuration.Foo", 1);
 }
 
 }  // namespace base

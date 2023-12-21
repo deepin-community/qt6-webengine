@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,9 +12,10 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram.h"
@@ -22,25 +23,21 @@
 #include "base/no_destructor.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/platform_thread.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
-#include "chrome/common/cache_stats_recorder.mojom.h"
 #include "chrome/common/child_process_logging.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/media/media_resource_provider.h"
 #include "chrome/common/net/net_resource_provider.h"
 #include "chrome/common/url_constants.h"
 #include "components/visitedlink/renderer/visitedlink_reader.h"
-#include "components/web_cache/public/features.h"
 #include "content/public/child/child_thread.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/resource_usage_reporter_type_converters.h"
 #include "content/public/renderer/render_thread.h"
-#include "content/public/renderer/render_view.h"
-#include "content/public/renderer/render_view_visitor.h"
 #include "extensions/buildflags/buildflags.h"
 #include "ipc/ipc_sync_channel.h"
 #include "media/base/localized_strings.h"
@@ -48,6 +45,7 @@
 #include "net/base/net_errors.h"
 #include "net/base/net_module.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/web_request_peer.h"
 #include "third_party/blink/public/platform/web_resource_request_sender_delegate.h"
 #include "third_party/blink/public/platform/web_string.h"
@@ -71,8 +69,6 @@ using content::RenderThread;
 
 namespace {
 
-const int kCacheStatsDelayMS = 2000;
-
 class RendererResourceDelegate
     : public blink::WebResourceRequestSenderDelegate {
  public:
@@ -81,25 +77,7 @@ class RendererResourceDelegate
   RendererResourceDelegate(const RendererResourceDelegate&) = delete;
   RendererResourceDelegate& operator=(const RendererResourceDelegate&) = delete;
 
-  void OnRequestComplete() override {
-    // Update the browser about our cache.
-
-    // No need to update the browser if the WebCache manager doesn't need this
-    // information.
-    if (base::FeatureList::IsEnabled(
-            web_cache::kTrimWebCacheOnMemoryPressureOnly)) {
-      return;
-    }
-    // Rate limit informing the host of our cache stats.
-    if (!weak_factory_.HasWeakPtrs()) {
-      base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-          FROM_HERE,
-          base::BindOnce(&RendererResourceDelegate::InformHostOfCacheStats,
-                         weak_factory_.GetWeakPtr()),
-          base::Milliseconds(kCacheStatsDelayMS));
-    }
-  }
-
+  void OnRequestComplete() override {}
   scoped_refptr<blink::WebRequestPeer> OnReceivedResponse(
       scoped_refptr<blink::WebRequestPeer> current_peer,
       const blink::WebString& mime_type,
@@ -113,21 +91,6 @@ class RendererResourceDelegate
   }
 
  private:
-  void InformHostOfCacheStats() {
-    DCHECK(!base::FeatureList::IsEnabled(
-        web_cache::kTrimWebCacheOnMemoryPressureOnly));
-    WebCache::UsageStats stats;
-    WebCache::GetUsageStats(&stats);
-    if (!cache_stats_recorder_) {
-      RenderThread::Get()->GetChannel()->GetRemoteAssociatedInterface(
-          &cache_stats_recorder_);
-    }
-    cache_stats_recorder_->RecordCacheStats(stats.capacity, stats.size);
-  }
-
-  mojo::AssociatedRemote<chrome::mojom::CacheStatsRecorder>
-      cache_stats_recorder_;
-
   base::WeakPtrFactory<RendererResourceDelegate> weak_factory_{this};
 };
 
@@ -138,7 +101,7 @@ scoped_refptr<base::SequencedTaskRunner> GetCallbackGroupTaskRunner() {
     return child_thread->GetIOTaskRunner();
 
   // This will happen when running via tests.
-  return base::SequencedTaskRunnerHandle::Get();
+  return base::SequencedTaskRunner::GetCurrentDefault();
 }
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
@@ -223,9 +186,10 @@ ChromeRenderThreadObserver::GetDynamicParams() {
 
 void ChromeRenderThreadObserver::RegisterMojoInterfaces(
     blink::AssociatedInterfaceRegistry* associated_interfaces) {
-  associated_interfaces->AddInterface(base::BindRepeating(
-      &ChromeRenderThreadObserver::OnRendererConfigurationAssociatedRequest,
-      base::Unretained(this)));
+  associated_interfaces->AddInterface<chrome::mojom::RendererConfiguration>(
+      base::BindRepeating(
+          &ChromeRenderThreadObserver::OnRendererConfigurationAssociatedRequest,
+          base::Unretained(this)));
 }
 
 void ChromeRenderThreadObserver::UnregisterMojoInterfaces(

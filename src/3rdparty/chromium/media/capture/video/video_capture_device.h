@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -18,9 +18,8 @@
 #include <memory>
 #include <string>
 
-#include "base/callback.h"
 #include "base/files/file.h"
-#include "base/memory/ref_counted.h"
+#include "base/functional/callback.h"
 #include "base/memory/unsafe_shared_memory_region.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
@@ -108,9 +107,6 @@ class CAPTURE_EXPORT VideoCaptureDevice
         // Duplicate as an writable (unsafe) shared memory region.
         virtual base::UnsafeSharedMemoryRegion DuplicateAsUnsafeRegion() = 0;
 
-        // Duplicate as a writable (unsafe) mojo buffer.
-        virtual mojo::ScopedSharedBufferHandle DuplicateAsMojoBuffer() = 0;
-
         // Access a |VideoCaptureBufferHandle| for local, writable memory.
         virtual std::unique_ptr<VideoCaptureBufferHandle>
         GetHandleForInProcessAccess() = 0;
@@ -148,6 +144,9 @@ class CAPTURE_EXPORT VideoCaptureDevice
     };
 
     virtual ~Client() {}
+
+    // The configuration of the VideoCaptureDevice has changed.
+    virtual void OnCaptureConfigurationChanged() = 0;
 
     // Captured a new video frame, data for which is pointed to by |data|.
     //
@@ -194,18 +193,21 @@ class CAPTURE_EXPORT VideoCaptureDevice
         base::TimeDelta timestamp,
         int frame_feedback_id = 0) = 0;
 
-    // Captured a new video frame. The data for this frame is in |handle|,
-    // which is owned by the platform-specific capture device. It is the
-    // responsibilty of the implementation to prevent the buffer in |handle|
-    // from being reused by the external capturer. In practice, this is used
-    // only on macOS, the external capturer maintains a CVPixelBufferPool, and
-    // gfx::ScopedInUseIOSurface is used to prevent reuse of buffers until all
-    // consumers have consumed them.
+    // Captured a new video frame. The data for this frame is in
+    // |buffer.handle|, which is owned by the platform-specific capture device.
+    // It is the responsibility of the implementation to prevent the buffer in
+    // |buffer.handle| from being reused by the external capturer. In practice,
+    // this is used only on macOS, the external capturer maintains a
+    // CVPixelBufferPool, and gfx::ScopedInUseIOSurface is used to prevent reuse
+    // of buffers until all consumers have consumed them. |visible_rect|
+    // specifies the region in the memory pointed to by |buffer.handle| that
+    // contains the captured content.
     virtual void OnIncomingCapturedExternalBuffer(
         CapturedExternalVideoBuffer buffer,
         std::vector<CapturedExternalVideoBuffer> scaled_buffers,
         base::TimeTicks reference_time,
-        base::TimeDelta timestamp) = 0;
+        base::TimeDelta timestamp,
+        gfx::Rect visible_rect) = 0;
 
     // Reserve an output buffer into which contents can be captured directly.
     // The returned |buffer| will always be allocated with a memory size
@@ -321,7 +323,9 @@ class CAPTURE_EXPORT VideoCaptureDevice
   // By including it in frame's metadata, Viz informs Blink what was the
   // latest invocation of cropTo() before a given frame was produced.
   //
-  // The callback reports success/failure.
+  // The callback reports success/failure. It is called on an unspecified
+  // thread, it's the caller's responsibility to wrap it (i.e. via BindPostTask)
+  // as needed.
   virtual void Crop(
       const base::Token& crop_id,
       uint32_t crop_version,

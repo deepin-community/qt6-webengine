@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -51,6 +51,11 @@ bool IsErrorCatastrophic(int sqlite_error_code) {
       // sql::Database::Execute() that catch obvious SQL syntax errors. We can't
       // DCHECK when a SQL statement uses incorrect table/index/row names,
       // because that can legitimately happen in production, due to corruption.
+      //
+      // In 2022 we considered these errors as non-catastrophic, and we didn't
+      // find ANY invalid SQL statements, and only found failed transactions
+      // and schemas that didn't match the reported schema version, which both
+      // suggest corruption. See https://crbug.com/1321483 for context.
       [[fallthrough]];
     case SQLITE_PERM:
       // Failed to get the requested access mode for a newly created database.

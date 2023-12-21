@@ -1,11 +1,11 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/memory/raw_ptr.h"
 
 // This must be before Windows headers
-#include "base/callback_helpers.h"
+#include "base/functional/callback_helpers.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -34,10 +34,10 @@
 #include "content/public/common/content_paths.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/content_browser_test.h"
+#include "content/public/test/content_browser_test_content_browser_client.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/shell/browser/shell.h"
-#include "content/test/test_content_browser_client.h"
 #include "net/base/filename_util.h"
 #include "net/base/net_errors.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -60,7 +60,8 @@ base::FilePath AbsoluteFilePath(const base::FilePath& file_path) {
   return base::MakeAbsoluteFilePath(file_path);
 }
 
-class TestFileAccessContentBrowserClient : public TestContentBrowserClient {
+class TestFileAccessContentBrowserClient
+    : public ContentBrowserTestContentBrowserClient {
  public:
   struct FileAccessAllowedArgs {
     base::FilePath path;
@@ -68,9 +69,7 @@ class TestFileAccessContentBrowserClient : public TestContentBrowserClient {
     base::FilePath profile_path;
   };
 
-  TestFileAccessContentBrowserClient() {
-    old_content_browser_client_ = SetBrowserClientForTesting(this);
-  }
+  TestFileAccessContentBrowserClient() = default;
 
   void set_blocked_path(const base::FilePath& blocked_path) {
     blocked_path_ = AbsoluteFilePath(blocked_path);
@@ -81,9 +80,7 @@ class TestFileAccessContentBrowserClient : public TestContentBrowserClient {
   TestFileAccessContentBrowserClient& operator=(
       const TestFileAccessContentBrowserClient&) = delete;
 
-  ~TestFileAccessContentBrowserClient() override {
-    EXPECT_EQ(this, SetBrowserClientForTesting(old_content_browser_client_));
-  }
+  ~TestFileAccessContentBrowserClient() override = default;
 
   bool IsFileAccessAllowed(const base::FilePath& path,
                            const base::FilePath& absolute_path,
@@ -102,8 +99,6 @@ class TestFileAccessContentBrowserClient : public TestContentBrowserClient {
   void ClearAccessAllowedArgs() { access_allowed_args_.clear(); }
 
  private:
-  raw_ptr<ContentBrowserClient> old_content_browser_client_;
-
   base::FilePath blocked_path_;
 
   std::vector<FileAccessAllowedArgs> access_allowed_args_;
@@ -373,7 +368,7 @@ IN_PROC_BROWSER_TEST_F(FileURLLoaderFactoryBrowserTest,
       RedirectToFileURL().spec().c_str());
   // Unfortunately, fetch doesn't provide a way to unambiguously know if the
   // request failed due to the redirect being unsafe.
-  EXPECT_EQ("error", EvalJs(shell()->web_contents()->GetMainFrame(),
+  EXPECT_EQ("error", EvalJs(shell()->web_contents()->GetPrimaryMainFrame(),
                             fetch_redirect_to_file));
   // There should never have been a request for the file URL.
   EXPECT_TRUE(test_browser_client.access_allowed_args().empty());
@@ -509,7 +504,7 @@ IN_PROC_BROWSER_TEST_F(FileURLLoaderFactoryDisabledSecurityBrowserTest,
   // switch (this is what this test suite is doing) or 2) the following Android
   // WebView API: android.webkit.WebSettings.setAllowFileAccess.  This is why
   // the test asserts below that the access is successful.
-  RenderFrameHost* main_frame = shell()->web_contents()->GetMainFrame();
+  RenderFrameHost* main_frame = shell()->web_contents()->GetPrimaryMainFrame();
   RenderFrameHost* child_frame = ChildFrameAt(main_frame, 0);
   const char kScriptTemplateToTriggerSubresourceFetch[] = R"(
       new Promise(function (resolve, reject) {

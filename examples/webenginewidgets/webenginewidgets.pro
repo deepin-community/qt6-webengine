@@ -1,19 +1,17 @@
-QT_FOR_CONFIG += webenginecore webenginecore-private
+QT_FOR_CONFIG += webenginecore webenginecore-private network-private
 
 TEMPLATE=subdirs
 
 SUBDIRS += \
-    minimal \
     contentmanipulation \
     cookiebrowser \
     notifications \
     simplebrowser \
-    stylesheetbrowser \
-    videoplayer \
-    webui
+    push-notifications \
+    videoplayer
 
 qtConfig(webengine-geolocation): SUBDIRS += maps
-qtConfig(webengine-webchannel): SUBDIRS += markdowneditor
+qtConfig(webengine-webchannel): SUBDIRS += recipebrowser
 
 qtConfig(webengine-printing-and-pdf) {
     SUBDIRS += printme html2pdf
@@ -25,3 +23,4 @@ qtConfig(webengine-spellchecker):!qtConfig(webengine-native-spellchecker):!cross
     message("Spellchecker example will not be built because it depends on usage of Hunspell dictionaries.")
 }
 
+qtConfig(ssl): SUBDIRS += clientcertificate

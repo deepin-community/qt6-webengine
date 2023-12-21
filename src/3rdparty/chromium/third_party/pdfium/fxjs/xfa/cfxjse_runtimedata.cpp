@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -51,9 +51,8 @@ std::unique_ptr<CFXJSE_RuntimeData> CFXJSE_RuntimeData::Create(
 
 CFXJSE_RuntimeData* CFXJSE_RuntimeData::Get(v8::Isolate* pIsolate) {
   FXJS_PerIsolateData::SetUp(pIsolate);
-
   FXJS_PerIsolateData* pData = FXJS_PerIsolateData::Get(pIsolate);
-  if (!pData->m_pFXJSERuntimeData)
-    pData->m_pFXJSERuntimeData = CFXJSE_RuntimeData::Create(pIsolate);
-  return static_cast<CFXJSE_RuntimeData*>(pData->m_pFXJSERuntimeData.get());
+  if (!pData->GetExtension())
+    pData->SetExtension(CFXJSE_RuntimeData::Create(pIsolate));
+  return static_cast<CFXJSE_RuntimeData*>(pData->GetExtension());
 }

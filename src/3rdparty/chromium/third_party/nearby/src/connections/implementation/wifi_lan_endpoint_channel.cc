@@ -19,18 +19,18 @@
 #include "internal/platform/logging.h"
 #include "internal/platform/wifi_lan.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
-
-WifiLanEndpointChannel::WifiLanEndpointChannel(const std::string& channel_name,
+WifiLanEndpointChannel::WifiLanEndpointChannel(const std::string& service_id,
+                                               const std::string& channel_name,
                                                WifiLanSocket socket)
-    : BaseEndpointChannel(channel_name, &socket.GetInputStream(),
+    : BaseEndpointChannel(service_id, channel_name, &socket.GetInputStream(),
                           &socket.GetOutputStream()),
       socket_(std::move(socket)) {}
 
-proto::connections::Medium WifiLanEndpointChannel::GetMedium() const {
-  return proto::connections::Medium::WIFI_LAN;
+location::nearby::proto::connections::Medium WifiLanEndpointChannel::GetMedium()
+    const {
+  return location::nearby::proto::connections::Medium::WIFI_LAN;
 }
 
 void WifiLanEndpointChannel::CloseImpl() {
@@ -44,4 +44,3 @@ void WifiLanEndpointChannel::CloseImpl() {
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,10 +9,11 @@
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/time/time.h"
 #include "content/common/content_export.h"
 #include "net/cookies/cookie_partition_key.h"
+#include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -81,15 +82,18 @@ class CONTENT_EXPORT ClearSiteDataHandler {
       const std::string& header_value,
       int load_flags,
       const absl::optional<net::CookiePartitionKey>& cookie_partition_key,
+      const absl::optional<blink::StorageKey>& storage_key,
       base::OnceClosure callback);
 
   // Exposes ParseHeader() publicly for testing.
-  static bool ParseHeaderForTesting(const std::string& header,
-                                    bool* clear_cookies,
-                                    bool* clear_storage,
-                                    bool* clear_cache,
-                                    ConsoleMessagesDelegate* delegate,
-                                    const GURL& current_url);
+  static bool ParseHeaderForTesting(
+      const std::string& header,
+      bool* clear_cookies,
+      bool* clear_storage,
+      bool* clear_cache,
+      std::set<std::string>* storage_buckets_to_remove,
+      ConsoleMessagesDelegate* delegate,
+      const GURL& current_url);
 
  protected:
   ClearSiteDataHandler(
@@ -99,6 +103,7 @@ class CONTENT_EXPORT ClearSiteDataHandler {
       const std::string& header_value,
       int load_flags,
       const absl::optional<net::CookiePartitionKey>& cookie_partition_key,
+      const absl::optional<blink::StorageKey>& storage_key,
       base::OnceClosure callback,
       std::unique_ptr<ConsoleMessagesDelegate> delegate);
   virtual ~ClearSiteDataHandler();
@@ -119,15 +124,18 @@ class CONTENT_EXPORT ClearSiteDataHandler {
                           bool* clear_cookies,
                           bool* clear_storage,
                           bool* clear_cache,
+                          std::set<std::string>* storage_buckets_to_remove,
                           ConsoleMessagesDelegate* delegate,
                           const GURL& current_url);
 
   // Executes the clearing task. Can be overridden for testing.
-  virtual void ExecuteClearingTask(const url::Origin& origin,
-                                   bool clear_cookies,
-                                   bool clear_storage,
-                                   bool clear_cache,
-                                   base::OnceClosure callback);
+  virtual void ExecuteClearingTask(
+      const url::Origin& origin,
+      bool clear_cookies,
+      bool clear_storage,
+      bool clear_cache,
+      const std::set<std::string>& storage_buckets_to_remove,
+      base::OnceClosure callback);
 
   // Signals that a parsing and deletion task was finished.
   // |clearing_started| is the time when the last clearing operation started.
@@ -151,6 +159,10 @@ class CONTENT_EXPORT ClearSiteDataHandler {
     return cookie_partition_key_;
   }
 
+  const absl::optional<blink::StorageKey> StorageKeyForTesting() const {
+    return storage_key_;
+  }
+
  private:
   // Required to clear the data.
   base::RepeatingCallback<BrowserContext*()> browser_context_getter_;
@@ -168,6 +180,10 @@ class CONTENT_EXPORT ClearSiteDataHandler {
   // The cookie partition key for which we need to clear partitioned cookies
   // when we receive the Clear-Site-Data header.
   absl::optional<net::CookiePartitionKey> cookie_partition_key_;
+
+  // The storage key for which we need to clear partitioned storage when we
+  // receive the Clear-Site-Data header.
+  absl::optional<blink::StorageKey> storage_key_;
 
   // Used to notify that the clearing has completed. Callers could resuming
   // loading after this point.

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,11 +8,11 @@
 
 #include <cmath>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/numerics/math_constants.h"
 #include "base/sequence_checker.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "device/base/synchronization/shared_memory_seqlock_buffer.h"
 #include "services/device/generic_sensor/platform_sensor_provider_mac.h"
 #include "services/device/public/cpp/generic_sensor/sensor_traits.h"
@@ -79,7 +79,7 @@ PlatformSensorAccelerometerMac::BlockingTaskRunnerHelper::
     BlockingTaskRunnerHelper(
         base::WeakPtr<PlatformSensorAccelerometerMac> platform_sensor)
     : platform_sensor_(platform_sensor),
-      owner_task_runner_(base::SequencedTaskRunnerHandle::Get()) {
+      owner_task_runner_(base::SequencedTaskRunner::GetCurrentDefault()) {
   // Detaches from the sequence on which this object was created. It will be
   // bound to another sequence when Init() is called.
   DETACH_FROM_SEQUENCE(sequence_checker_);

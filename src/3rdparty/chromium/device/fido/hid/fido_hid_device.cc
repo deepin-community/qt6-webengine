@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,16 +7,16 @@
 #include <limits>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/command_line.h"
 #include "base/containers/contains.h"
 #include "base/containers/fixed_flat_set.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "components/device_event_log/device_event_log.h"
 #include "crypto/random.h"
 #include "device/fido/hid/fido_hid_message.h"
@@ -488,7 +488,7 @@ void FidoHidDevice::MessageReceived(FidoHidMessage message) {
         // Retry the pending transaction after a short delay. |state_| is still
         // |State::kBusy|, so no other transaction will run in the meantime.
         DCHECK_EQ(State::kBusy, state_);
-        base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
             FROM_HERE,
             base::BindOnce(&FidoHidDevice::RetryAfterChannelBusy,
                            weak_factory_.GetWeakPtr()),
@@ -545,7 +545,7 @@ void FidoHidDevice::ArmTimeout() {
   timeout_callback_.Reset(
       base::BindOnce(&FidoHidDevice::OnTimeout, weak_factory_.GetWeakPtr()));
   // Setup timeout task for 3 seconds.
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE, timeout_callback_.callback(), kDeviceTimeout);
 }
 

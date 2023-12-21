@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,18 +8,17 @@
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 
-#include "base/files/scoped_file.h"
 #include "base/logging.h"
 #include "base/trace_event/trace_event.h"
+#include "third_party/perfetto/include/perfetto/tracing/traced_value.h"
 #include "ui/display/types/gamma_ramp_rgb_entry.h"
-#include "ui/ozone/platform/drm/gpu/drm_device.h"
 
 namespace ui {
 
-bool GetDrmPropertyForName(DrmDevice* drm,
+bool GetDrmPropertyForName(DrmWrapper* drm,
                            drmModeObjectProperties* properties,
                            const std::string& name,
-                           DrmDevice::Property* property) {
+                           DrmWrapper::Property* property) {
   for (uint32_t i = 0; i < properties->count_props; ++i) {
     ScopedDrmPropertyPtr drm_property(drm->GetProperty(properties->props[i]));
     if (name != drm_property->name)
@@ -36,7 +35,7 @@ bool GetDrmPropertyForName(DrmDevice* drm,
 
 bool AddPropertyIfValid(drmModeAtomicReq* property_set,
                         uint32_t object_id,
-                        const DrmDevice::Property& property) {
+                        const DrmWrapper::Property& property) {
   if (!property.id)
     return true;
 
@@ -121,25 +120,28 @@ std::vector<display::GammaRampRGBEntry> ResampleLut(
   return result;
 }
 
-HardwareDisplayControllerInfoList GetDisplayInfosAndUpdateCrtcs(int fd) {
-  auto [displays, invalid_crtcs] = GetDisplayInfosAndInvalidCrtcs(fd);
+HardwareDisplayControllerInfoList GetDisplayInfosAndUpdateCrtcs(
+    DrmWrapper& drm) {
+  auto [displays, invalid_crtcs] = GetDisplayInfosAndInvalidCrtcs(drm);
   // Disable invalid CRTCs to allow the preferred CRTCs to be enabled later
   // instead.
   for (uint32_t crtc : invalid_crtcs) {
-    drmModeSetCrtc(fd, crtc, 0, 0, 0, nullptr, 0, nullptr);
-    VLOG(1) << "Disabled unpreferred CRTC " << crtc;
+    drm.DisableCrtc(crtc);
+    VLOG(1) << "Disabled undesired CRTC " << crtc;
   }
   return std::move(displays);
 }
 
-void DrmAsValueIntoHelper(const drmModeModeInfo& mode_info,
-                          base::trace_event::TracedValue* value) {
-  value->SetString("name", mode_info.name);
-  value->SetInteger("type", mode_info.type);
-  value->SetInteger("flags", mode_info.flags);
-  value->SetInteger("clock", mode_info.clock);
-  value->SetInteger("hdisplay", mode_info.hdisplay);
-  value->SetInteger("vdisplay", mode_info.vdisplay);
+void DrmWriteIntoTraceHelper(const drmModeModeInfo& mode_info,
+                             perfetto::TracedValue context) {
+  auto dict = std::move(context).WriteDictionary();
+
+  dict.Add("name", mode_info.name);
+  dict.Add("type", mode_info.type);
+  dict.Add("flags", mode_info.flags);
+  dict.Add("clock", mode_info.clock);
+  dict.Add("hdisplay", mode_info.hdisplay);
+  dict.Add("vdisplay", mode_info.vdisplay);
 }
 
 }  // namespace ui

@@ -163,7 +163,7 @@ SkSurface* Request::createGPUSurface() {
                     : SkColorSpace::MakeSRGB();
     SkImageInfo info = SkImageInfo::Make(bounds.size(), cap.fColorType, kPremul_SkAlphaType,
                                          cap.fSRGB ? colorSpace : nullptr);
-    SkSurface* surface = SkSurface::MakeRenderTarget(context, SkBudgeted::kNo, info).release();
+    SkSurface* surface = SkSurface::MakeRenderTarget(context, skgpu::Budgeted::kNo, info).release();
     return surface;
 }
 
@@ -229,7 +229,7 @@ sk_sp<SkData> Request::getJsonOps() {
     SkJSONWriter writer(&stream, SkJSONWriter::Mode::kFast);
     writer.beginObject(); // root
 
-    writer.appendString("mode", fGPUEnabled ? "gpu" : "cpu");
+    writer.appendCString("mode", fGPUEnabled ? "gpu" : "cpu");
     writer.appendBool("drawGpuOpBounds", fDebugCanvas->getDrawGpuOpBounds());
     writer.appendS32("colorMode", fColorMode);
     fDebugCanvas->toJSON(writer, fUrlDataManager, canvas);

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -72,16 +72,15 @@ class MainThreadWorkletTest : public PageTestBase {
         window->GetReferrerPolicy(), window->GetSecurityOrigin(),
         window->IsSecureContext(), window->GetHttpsState(),
         nullptr /* worker_clients */, nullptr /* content_settings_client */,
-        window->AddressSpace(),
         OriginTrialContext::GetInheritedTrialFeatures(window).get(),
         base::UnguessableToken::Create(), nullptr /* worker_settings */,
         mojom::blink::V8CacheOptions::kDefault,
         MakeGarbageCollected<WorkletModuleResponsesMap>(),
         mojo::NullRemote() /* browser_interface_broker */,
         window->GetFrame()->Loader().CreateWorkerCodeCacheHost(),
-        BeginFrameProviderParams(), nullptr /* parent_permissions_policy */,
-        window->GetAgentClusterID(), ukm::kInvalidSourceId,
-        window->GetExecutionContextToken());
+        mojo::NullRemote() /* blob_url_store */, BeginFrameProviderParams(),
+        nullptr /* parent_permissions_policy */, window->GetAgentClusterID(),
+        ukm::kInvalidSourceId, window->GetExecutionContextToken());
     global_scope_ = MakeGarbageCollected<FakeWorkletGlobalScope>(
         std::move(creation_params), *reporting_proxy_, &GetFrame(),
         false /* create_microtask_queue */);
@@ -151,7 +150,7 @@ TEST_F(MainThreadWorkletTest, UseCounter) {
   UseCounter::Count(global_scope_, kFeature1);
 
   // This feature is randomly selected from Deprecation::deprecationMessage().
-  const WebFeature kFeature2 = WebFeature::kPrefixedStorageInfo;
+  const WebFeature kFeature2 = WebFeature::kPaymentInstruments;
 
   // Deprecated API use on WorkletGlobalScope for the main thread should be
   // recorded in UseCounter on the Document.

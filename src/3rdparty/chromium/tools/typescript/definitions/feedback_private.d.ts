@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,15 +7,15 @@
 
 declare namespace chrome {
   export namespace feedbackPrivate {
-    type AttachedFile = {
-      name: string,
-      data?: Blob,
-    };
+    interface AttachedFile {
+      name: string;
+      data?: Blob;
+    }
 
-    export type SystemInformation = {
-      key: string,
-      value: string,
-    };
+    export interface SystemInformation {
+      key: string;
+      value: string;
+    }
 
     enum FeedbackFlow {
       REGULAR = 'regular',
@@ -24,29 +24,32 @@ declare namespace chrome {
       GOOGLE_INTERNAL = 'googleInternal',
     }
 
-    export type FeedbackInfo = {
-      description: string,
-      attachedFile?: AttachedFile,
-      categoryTag?: string,
-      descriptionPlaceholder?: string,
-      email?: string,
-      pageUrl?: string,
-      productId?: number,
-      screenshot?: Blob,
-      traceId?: number,
-      systemInformation?: SystemInformation[],
-      sendHistograms?: boolean,
-      flow?: FeedbackFlow,
-      attachedFileBlobUuid?: string,
-      screenshotBlobUuid?: string,
-      useSystemWindowFrame?: boolean,
-      sendBluetoothLogs?: boolean,
-      sendTabTitles?: boolean,
-      assistantDebugInfoAllowed?: boolean,
-      fromAssistant?: boolean,
-      includeBluetoothLogs?: boolean,
-      showQuestionnaire?: boolean,
-    };
+    export interface FeedbackInfo {
+      description: string;
+      attachedFile?: AttachedFile;
+      categoryTag?: string;
+      descriptionPlaceholder?: string;
+      email?: string;
+      pageUrl?: string;
+      productId?: number;
+      screenshot?: Blob;
+      traceId?: number;
+      systemInformation?: SystemInformation[];
+      sendHistograms?: boolean;
+      flow?: FeedbackFlow;
+      attachedFileBlobUuid?: string;
+      screenshotBlobUuid?: string;
+      useSystemWindowFrame?: boolean;
+      sendAutofillMetadata?: boolean;
+      sendBluetoothLogs?: boolean;
+      sendTabTitles?: boolean;
+      assistantDebugInfoAllowed?: boolean;
+      fromAssistant?: boolean;
+      includeBluetoothLogs?: boolean;
+      showQuestionnaire?: boolean;
+      fromAutofill?: boolean;
+      autofillMetadata?: string;
+    }
 
     enum Status {
       SUCCESS = 'success',
@@ -75,27 +78,29 @@ declare namespace chrome {
       UPTIME = 'uptime',
     }
 
-    type ReadLogSourceParams = {
-      source: LogSource,
-      incremental: boolean,
-      readerId?: number,
-    };
+    interface ReadLogSourceParams {
+      source: LogSource;
+      incremental: boolean;
+      readerId?: number;
+    }
 
-    type ReadLogSourceResult = {
-      readerId: number,
-      logLines: string[],
-    };
+    interface ReadLogSourceResult {
+      readerId: number;
+      logLines: string[];
+    }
+
+    export interface SendFeedbackResult {
+      status: Status;
+      landingPageType: LandingPageType;
+    }
 
     export function getUserEmail(callback: (email: string) => void): void;
 
     export function sendFeedback(
-        feedback: FeedbackInfo, loadSystemInfo?: boolean, formOpenTime?: number,
-        callback?: (status: Status, landingPage: LandingPageType) => void):
-        void;
+        feedback: FeedbackInfo, loadSystemInfo?: boolean,
+        formOpenTime?: number): Promise<SendFeedbackResult>;
 
     export function getSystemInformation(
         callback: (info: SystemInformation[]) => void): void;
-
-    export function loginFeedbackComplete(): void;
   }
 }

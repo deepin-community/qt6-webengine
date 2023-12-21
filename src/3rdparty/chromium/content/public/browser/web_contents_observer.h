@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -45,6 +45,10 @@ namespace gfx {
 class Size;
 }  // namespace gfx
 
+namespace ui::mojom {
+enum class VirtualKeyboardMode;
+}  // namespace ui::mojom
+
 namespace content {
 
 class NavigationEntry;
@@ -73,6 +77,12 @@ struct Referrer;
 //   use `DocumentUserData` instead.
 // - Mojo interface implementations that have a 1 RenderFrameHost to many
 //   instances relationship can often use `DocumentService` instead.
+// - `base::WeakPtr<WebContents>` and `WeakDocumentPtr` can be used instead of
+//   manually clearing raw ptrs using observer methods like
+//   `WebContentsDestroyed` or `RenderFrameDeleted`. Similarly, don't create a
+//   `WebContentsObserver` just to be able to check for a null
+//   `WebContentsObserver::web_contents()`. Use a `base::WeakPtr<WebContents>`
+//   instead.
 //
 // These helpers can help avoid memory safety bugs, such as retaining a pointer
 // to a deleted RenderFrameHost, or other security issues, such as origin
@@ -209,8 +219,8 @@ class CONTENT_EXPORT WebContentsObserver {
   virtual void OnCaptureHandleConfigUpdate(
       const blink::mojom::CaptureHandleConfig& config) {}
 
-  // This method is invoked when the RenderView of the current RenderViewHost
-  // is ready, e.g. because we recreated it after a crash.
+  // This method is invoked when the `blink::WebView` of the current
+  // RenderViewHost is ready, e.g. because we recreated it after a crash.
   virtual void RenderViewReady() {}
 
   // This method is invoked when a RenderViewHost of the WebContents is
@@ -248,14 +258,18 @@ class CONTENT_EXPORT WebContentsObserver {
 
   // Navigation ----------------------------------------------------------------
 
-  // Called when a navigation started in the WebContents. |navigation_handle|
-  // is unique to a specific navigation. The same |navigation_handle| will be
-  // provided on subsequent calls to DidRedirectNavigation, DidFinishNavigation,
-  // and ReadyToCommitNavigation when related to this navigation. Observers
-  // should clear any references to |navigation_handle| in DidFinishNavigation,
-  // just before it is destroyed.
+  // Called when a new navigation starts in the WebContents, WITHOUT
+  // guaranteeing that the navigation will either commit or lead to a new
+  // document. Consider whether listening to PrimaryPageChanged or
+  // DidFinishNavigation is a better fit, and see the IMPORTANT NOTES below.
   //
-  // NOTES:
+  // `navigation_handle` is unique to a specific navigation. The same
+  // `navigation_handle` will be provided on subsequent calls to
+  // DidRedirectNavigation, DidFinishNavigation, and ReadyToCommitNavigation
+  // when related to this navigation. Observers should clear any references to
+  // `navigation_handle` in DidFinishNavigation, just before it is destroyed.
+  //
+  // IMPORTANT NOTES:
   // - Starting a navigation doesn't affect which document is shown, or
   // (in many cases) which URL is displayed in the omnibox. Most effects of the
   // navigation only occur at DidFinishNavigation, if it commits. Feature code
@@ -272,13 +286,18 @@ class CONTENT_EXPORT WebContentsObserver {
   // navigations or pushState/replaceState, which will not result in a document
   // change. To filter these out, use NavigationHandle::IsSameDocument.
   //
-  // - There can be more than one navigation can be ongoing in the same frame at
-  // the same time (including the main frame). Each will get its own
+  // - There can be more than one navigation ongoing in the same frame at the
+  // same time (including the main frame). Each will get its own
   // NavigationHandle.
   //
   // - There is no guarantee that DidFinishNavigation will be called
   // for any particular navigation before DidStartNavigation is called on the
   // next.
+  //
+  // TODO(creis, mcnee): Consider renaming this method to better indicate its
+  // semantics (e.g. DidStartNavigationAttempt).
+  //
+  // WARNING: Please read the above IMPORTANT NOTES for correct usage.
   virtual void DidStartNavigation(NavigationHandle* navigation_handle) {}
 
   // Called when a navigation encountered a server redirect.
@@ -553,9 +572,7 @@ class CONTENT_EXPORT WebContentsObserver {
   virtual void FrameSizeChanged(RenderFrameHost* render_frame_host,
                                 const gfx::Size& frame_size) {}
 
-  // This method is invoked when the title of the WebContents is set. Note that
-  // |entry| may be null if the web page whose title changed has not yet had a
-  // NavigationEntry assigned to it.
+  // This method is invoked when the title of the WebContents is set.
   virtual void TitleWasSet(NavigationEntry* entry) {}
 
   // These methods are invoked when a Pepper plugin instance is created/deleted
@@ -565,6 +582,13 @@ class CONTENT_EXPORT WebContentsObserver {
 
   // This method is called when the viewport fit of a WebContents changes.
   virtual void ViewportFitChanged(blink::mojom::ViewportFit value) {}
+
+  // This method is called when the virtual keyboard mode of a WebContents
+  // changes. This can happen as a result of the
+  // `navigator.virtualKeyboard.overlaysContent` API or the virtual-keyboard key
+  // in the viewport meta tag.
+  virtual void VirtualKeyboardModeChanged(ui::mojom::VirtualKeyboardMode mode) {
+  }
 
   // Notification that a plugin has crashed.
   // |plugin_pid| is the process ID identifying the plugin process. Note that
@@ -635,6 +659,10 @@ class CONTENT_EXPORT WebContentsObserver {
   // Called when the audio state of an individual frame changes.
   virtual void OnFrameAudioStateChanged(RenderFrameHost* rfh, bool audible) {}
 
+  // Called when the connected to USB device state changes.
+  virtual void OnIsConnectedToUsbDeviceChanged(
+      bool is_connected_to_usb_device) {}
+
   // Called when the connected to Bluetooth device state changes.
   virtual void OnIsConnectedToBluetoothDeviceChanged(
       bool is_connected_to_bluetooth_device) {}
@@ -668,9 +696,7 @@ class CONTENT_EXPORT WebContentsObserver {
 
   // Invoked when the beforeunload handler fires. |proceed| is set to true if
   // the beforeunload can safely proceed, otherwise it should be interrupted.
-  // The time is from the renderer process.
-  virtual void BeforeUnloadFired(bool proceed,
-                                 const base::TimeTicks& proceed_time) {}
+  virtual void BeforeUnloadFired(bool proceed) {}
 
   // Invoked when a user cancels a before unload dialog.
   virtual void BeforeUnloadDialogCancelled() {}
@@ -800,6 +826,19 @@ class CONTENT_EXPORT WebContentsObserver {
   virtual void OnServiceWorkerAccessed(NavigationHandle* navigation_handle,
                                        const GURL& scope,
                                        AllowServiceWorkerResult allowed) {}
+
+  // Called when this WebContents is about to be discarded, and replaced with
+  // the new, empty `new_contents`. This is an opportunity to transfer to the
+  // new WebContents any data that should persist across the discard process.
+  // Because the point of tab discarding is to free up memory, careful
+  // consideration should be given to transferring data over to the new
+  // WebContents. Large amounts of data or data that can be recreated easily
+  // shouldn't be transferred, unless its existence is necessary for a feature
+  // to work. This will be invoked right after `new_contents` is created, but
+  // before its `WasDiscarded` is set to true and before it's attached to a tab
+  // strip.
+  virtual void AboutToBeDiscarded(WebContents* new_contents) {}
+
   WebContents* web_contents() const;
 
  protected:
@@ -822,7 +861,7 @@ class CONTENT_EXPORT WebContentsObserver {
 
   void ResetWebContents();
 
-  raw_ptr<WebContents> web_contents_ = nullptr;
+  raw_ptr<WebContents, DanglingUntriaged> web_contents_ = nullptr;
 };
 
 }  // namespace content

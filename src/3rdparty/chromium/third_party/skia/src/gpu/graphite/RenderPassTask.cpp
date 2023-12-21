@@ -22,6 +22,9 @@ sk_sp<RenderPassTask> RenderPassTask::Make(std::vector<std::unique_ptr<DrawPass>
                                            sk_sp<TextureProxy> target) {
     // For now we have one DrawPass per RenderPassTask
     SkASSERT(passes.size() == 1);
+    if (!target) {
+        return nullptr;
+    }
 
     return sk_sp<RenderPassTask>(new RenderPassTask(std::move(passes), desc, target));
 }
@@ -35,7 +38,29 @@ RenderPassTask::RenderPassTask(std::vector<std::unique_ptr<DrawPass>> passes,
 
 RenderPassTask::~RenderPassTask() = default;
 
-bool RenderPassTask::addCommands(ResourceProvider* resourceProvider, CommandBuffer* commandBuffer) {
+bool RenderPassTask::prepareResources(ResourceProvider* resourceProvider,
+                                      const RuntimeEffectDictionary* runtimeDict) {
+    SkASSERT(fTarget);
+    if (!TextureProxy::InstantiateIfNotLazy(resourceProvider, fTarget.get())) {
+        SKGPU_LOG_W("Failed to instantiate RenderPassTask target. Will not create renderpass!");
+        SKGPU_LOG_W("Dimensions are (%d, %d).",
+                    fTarget->dimensions().width(), fTarget->dimensions().height());
+        return false;
+    }
+
+    // Assuming one draw pass per renderpasstask for now
+    SkASSERT(fDrawPasses.size() == 1);
+    for (const auto& drawPass: fDrawPasses) {
+        if (!drawPass->prepareResources(resourceProvider, runtimeDict, fRenderPassDesc)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool RenderPassTask::addCommands(Context* context,
+                                 CommandBuffer* commandBuffer,
+                                 ReplayTargetData replayData) {
     // TBD: Expose the surfaces that will need to be attached within the renderpass?
 
     // TODO: for task execution, start the render pass, then iterate passes and
@@ -43,41 +68,57 @@ bool RenderPassTask::addCommands(ResourceProvider* resourceProvider, CommandBuff
     // provided to the task. Then close the render pass and we should have pixels..
 
     // Instantiate the target
-    if (fTarget) {
-        if (!fTarget->instantiate(resourceProvider)) {
-            SKGPU_LOG_W("Given invalid texture proxy. Will not create renderpass!");
-            SKGPU_LOG_W("Dimensions are (%d, %d).",
-                        fTarget->dimensions().width(), fTarget->dimensions().height());
-            return false;
-        }
+    SkASSERT(fTarget && fTarget->isInstantiated());
+
+    if (fTarget->texture() == replayData.fTarget) {
+        commandBuffer->setReplayTranslation(replayData.fTranslation);
+    } else {
+        commandBuffer->clearReplayTranslation();
     }
 
-    sk_sp<Texture> depthStencilTexture;
+    // We don't instantiate the MSAA or DS attachments in prepareResources because we want to use
+    // the discardable attachments from the Context.
+    ResourceProvider* resourceProvider = context->priv().resourceProvider();
+    sk_sp<Texture> colorAttachment;
+    sk_sp<Texture> resolveAttachment;
+    if (fRenderPassDesc.fColorResolveAttachment.fTextureInfo.isValid()) {
+        SkASSERT(fTarget->numSamples() == 1 &&
+                 fRenderPassDesc.fColorAttachment.fTextureInfo.numSamples() > 1);
+        colorAttachment = resourceProvider->findOrCreateDiscardableMSAAAttachment(
+                fTarget->dimensions(), fRenderPassDesc.fColorAttachment.fTextureInfo);
+        if (!colorAttachment) {
+            SKGPU_LOG_W("Could not get Color attachment for RenderPassTask");
+            return false;
+        }
+        resolveAttachment = fTarget->refTexture();
+    } else {
+        colorAttachment = fTarget->refTexture();
+    }
+
+    sk_sp<Texture> depthStencilAttachment;
     if (fRenderPassDesc.fDepthStencilAttachment.fTextureInfo.isValid()) {
         // TODO: ensure this is a scratch/recycled texture
-        depthStencilTexture = resourceProvider->findOrCreateDepthStencilAttachment(
+        depthStencilAttachment = resourceProvider->findOrCreateDepthStencilAttachment(
                 fTarget->dimensions(), fRenderPassDesc.fDepthStencilAttachment.fTextureInfo);
-        if (!depthStencilTexture) {
+        if (!depthStencilAttachment) {
             SKGPU_LOG_W("Could not get DepthStencil attachment for RenderPassTask");
             return false;
         }
     }
 
-    if (commandBuffer->beginRenderPass(fRenderPassDesc, fTarget->refTexture(), nullptr,
-                                       std::move(depthStencilTexture))) {
-        // Assuming one draw pass per renderpasstask for now
-        SkASSERT(fDrawPasses.size() == 1);
-        for (const auto& drawPass: fDrawPasses) {
-            if (!drawPass->addCommands(resourceProvider, commandBuffer, fRenderPassDesc)) {
-                commandBuffer->endRenderPass();
-                return false;
-            }
-        }
-
-        commandBuffer->endRenderPass();
-    }
-
-    return true;
+    // TODO: We need to handle the case where we need to load the single sampled target's data into
+    // the discardable MSAA Surface. On different backends this will be done in various ways. On
+    // Metal we can simply insert a draw at the start of the render pass sampling the single target
+    // texture as normal. In Vulkan, we need to create a whole new subpass at the start, use the
+    // single sample resolve as an input attachment in that subpass, and then do a draw. The big
+    // thing with Vulkan is that this input attachment and subpass means we also need to update
+    // the fRenderPassDesc here.
+    return commandBuffer->addRenderPass(fRenderPassDesc,
+                                        std::move(colorAttachment),
+                                        std::move(resolveAttachment),
+                                        std::move(depthStencilAttachment),
+                                        SkRect::Make(fTarget->dimensions()),
+                                        fDrawPasses);
 }
 
 } // namespace skgpu::graphite

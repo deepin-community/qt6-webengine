@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -100,9 +100,6 @@ bool IsValidRequiredCSPAttr(
 COMPONENT_EXPORT(NETWORK_CPP)
 bool Subsumes(const mojom::ContentSecurityPolicy& policy_a,
               const std::vector<mojom::ContentSecurityPolicyPtr>& policies_b);
-
-COMPONENT_EXPORT(NETWORK_CPP)
-mojom::CSPDirectiveName ToCSPDirectiveName(const std::string& name);
 
 COMPONENT_EXPORT(NETWORK_CPP)
 std::string ToString(mojom::CSPDirectiveName name);

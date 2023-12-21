@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,10 +13,12 @@
 #include "core/fxcrt/bytestring.h"
 #include "core/fxcrt/fx_types.h"
 #include "core/fxcrt/retain_ptr.h"
+#include "third_party/base/span.h"
 
 class IFX_WriteStream {
  public:
-  virtual bool WriteBlock(const void* pData, size_t size) = 0;
+  // When `size` is 0, treat it as a no-op and return true.
+  virtual bool WriteBlock(pdfium::span<const uint8_t> data) = 0;
 
   bool WriteString(ByteStringView str);
   bool WriteByte(uint8_t byte);
@@ -44,12 +46,11 @@ class IFX_SeekableWriteStream : virtual public IFX_StreamWithSize,
                                 public IFX_RetainableWriteStream {
  public:
   // IFX_WriteStream:
-  bool WriteBlock(const void* pData, size_t size) override;
+  bool WriteBlock(pdfium::span<const uint8_t> buffer) override;
 
   virtual bool Flush() = 0;
-  virtual bool WriteBlockAtOffset(const void* pData,
-                                  FX_FILESIZE offset,
-                                  size_t size) = 0;
+  virtual bool WriteBlockAtOffset(pdfium::span<const uint8_t> data,
+                                  FX_FILESIZE offset) = 0;
 };
 
 class IFX_SeekableReadStream : virtual public Retainable,
@@ -60,18 +61,16 @@ class IFX_SeekableReadStream : virtual public Retainable,
 
   virtual bool IsEOF();
   virtual FX_FILESIZE GetPosition();
-  virtual size_t ReadBlock(void* buffer, size_t size);
-
-  virtual bool ReadBlockAtOffset(void* buffer,
-                                 FX_FILESIZE offset,
-                                 size_t size) WARN_UNUSED_RESULT = 0;
+  [[nodiscard]] virtual size_t ReadBlock(pdfium::span<uint8_t> buffer);
+  [[nodiscard]] virtual bool ReadBlockAtOffset(pdfium::span<uint8_t> buffer,
+                                               FX_FILESIZE offset) = 0;
 };
 
 class IFX_SeekableStream : public IFX_SeekableReadStream,
                            public IFX_SeekableWriteStream {
  public:
   // IFX_SeekableWriteStream:
-  bool WriteBlock(const void* buffer, size_t size) override;
+  bool WriteBlock(pdfium::span<const uint8_t> buffer) override;
 };
 
 #endif  // CORE_FXCRT_FX_STREAM_H_

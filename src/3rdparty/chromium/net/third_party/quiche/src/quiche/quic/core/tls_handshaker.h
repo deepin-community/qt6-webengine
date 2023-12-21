@@ -138,14 +138,14 @@ class QUIC_EXPORT_PRIVATE TlsHandshaker : public TlsConnection::Delegate,
   // traffic secrets and application traffic secrets. The provided write secret
   // must be used with the provided cipher suite |cipher|.
   void SetWriteSecret(EncryptionLevel level, const SSL_CIPHER* cipher,
-                      const std::vector<uint8_t>& write_secret) override;
+                      absl::Span<const uint8_t> write_secret) override;
 
   // SetReadSecret is similar to SetWriteSecret, except that it is used for
   // decrypting messages. SetReadSecret at a particular level is always called
   // after SetWriteSecret for that level, except for ENCRYPTION_ZERO_RTT, where
   // the EncryptionLevel for SetWriteSecret is ENCRYPTION_FORWARD_SECURE.
   bool SetReadSecret(EncryptionLevel level, const SSL_CIPHER* cipher,
-                     const std::vector<uint8_t>& read_secret) override;
+                     absl::Span<const uint8_t> read_secret) override;
 
   // WriteMessage is called when there is |data| from the TLS stack ready for
   // the QUIC stack to write in a crypto frame. The data must be transmitted at
@@ -213,6 +213,16 @@ class QUIC_EXPORT_PRIVATE TlsHandshaker : public TlsConnection::Delegate,
   // 1-RTT header protection keys, which are not changed during key update.
   std::vector<uint8_t> one_rtt_read_header_protection_key_;
   std::vector<uint8_t> one_rtt_write_header_protection_key_;
+
+  struct TlsAlert {
+    EncryptionLevel level;
+    // The TLS alert code as listed in
+    // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-6
+    uint8_t desc;
+  };
+  absl::optional<TlsAlert> last_tls_alert_;
+  const bool dont_close_connection_in_tls_alert_callback_ =
+      GetQuicReloadableFlag(quic_dont_close_connection_in_tls_alert_callback);
 };
 
 }  // namespace quic

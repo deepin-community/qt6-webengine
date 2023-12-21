@@ -1,27 +1,26 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 
+#include <memory>
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/no_destructor.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "device/bluetooth/bluetooth_adapter.h"
 
 #if BUILDFLAG(IS_MAC)
 #include "base/mac/mac_util.h"
 #endif
 #if BUILDFLAG(IS_WIN)
-#include "base/win/windows_version.h"
 #include "device/bluetooth/bluetooth_adapter_win.h"
 #endif
 
@@ -57,13 +56,8 @@ bool BluetoothAdapterFactory::IsLowEnergySupported() {
   }
 
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX) || \
-    BUILDFLAG(IS_MAC)
+    BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
   return true;
-#elif BUILDFLAG(IS_WIN)
-  // Windows 8 supports Low Energy GATT operations but it does not support
-  // scanning, initiating connections and GATT Server. To keep the API
-  // consistent we consider Windows 8 as lacking Low Energy support.
-  return base::win::GetVersion() >= base::win::Version::WIN10;
 #else
   return false;
 #endif
@@ -93,12 +87,6 @@ void BluetoothAdapterFactory::GetAdapter(AdapterCallback callback) {
 void BluetoothAdapterFactory::GetClassicAdapter(AdapterCallback callback) {
 #if BUILDFLAG(IS_WIN)
   DCHECK(IsBluetoothSupported());
-
-  if (base::win::GetVersion() < base::win::Version::WIN10) {
-    // Prior to Win10, the default adapter will support Bluetooth classic.
-    GetAdapter(std::move(callback));
-    return;
-  }
 
   if (!classic_adapter_) {
     classic_adapter_callbacks_.push_back(std::move(callback));
@@ -148,7 +136,7 @@ bool BluetoothAdapterFactory::HasSharedInstanceForTesting() {
   return Get()->adapter_ != nullptr;
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS)
 // static
 void BluetoothAdapterFactory::SetBleScanParserCallback(
     BleScanParserCallback callback) {
@@ -160,7 +148,7 @@ BluetoothAdapterFactory::BleScanParserCallback
 BluetoothAdapterFactory::GetBleScanParserCallback() {
   return Get()->ble_scan_parser_;
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 BluetoothAdapterFactory::GlobalValuesForTesting::GlobalValuesForTesting() =
     default;

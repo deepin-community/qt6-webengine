@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 
 #import "base/mac/mac_util.h"
 #import "base/mac/scoped_sending_event.h"
@@ -76,19 +77,21 @@ void WebContentsViewMac::InstallCreateHookForTests(
   g_create_render_widget_host_view = create_render_widget_host_view;
 }
 
-WebContentsView* CreateWebContentsView(
+std::unique_ptr<WebContentsView> CreateWebContentsView(
     WebContentsImpl* web_contents,
-    WebContentsViewDelegate* delegate,
+    std::unique_ptr<WebContentsViewDelegate> delegate,
     RenderViewHostDelegateView** render_view_host_delegate_view) {
-  WebContentsViewMac* rv = new WebContentsViewMac(web_contents, delegate);
-  *render_view_host_delegate_view = rv;
+  auto rv =
+      std::make_unique<WebContentsViewMac>(web_contents, std::move(delegate));
+  *render_view_host_delegate_view = rv.get();
   return rv;
 }
 
-WebContentsViewMac::WebContentsViewMac(WebContentsImpl* web_contents,
-                                       WebContentsViewDelegate* delegate)
+WebContentsViewMac::WebContentsViewMac(
+    WebContentsImpl* web_contents,
+    std::unique_ptr<WebContentsViewDelegate> delegate)
     : web_contents_(web_contents),
-      delegate_(delegate),
+      delegate_(std::move(delegate)),
       ns_view_id_(remote_cocoa::GetNewNSViewId()),
       deferred_close_weak_ptr_factory_(this) {}
 
@@ -140,11 +143,23 @@ gfx::Rect WebContentsViewMac::GetContainerBounds() const {
 
 void WebContentsViewMac::OnCapturerCountChanged() {}
 
+void WebContentsViewMac::FullscreenStateChanged(bool is_fullscreen) {}
+
+void WebContentsViewMac::UpdateWindowControlsOverlay(
+    const gfx::Rect& bounding_rect) {
+  if (remote_ns_view_) {
+    remote_ns_view_->UpdateWindowControlsOverlay(bounding_rect);
+  } else {
+    in_process_ns_view_bridge_->UpdateWindowControlsOverlay(bounding_rect);
+  }
+}
+
 void WebContentsViewMac::StartDragging(
     const DropData& drop_data,
     DragOperationsMask allowed_operations,
     const gfx::ImageSkia& image,
-    const gfx::Vector2d& image_offset,
+    const gfx::Vector2d& cursor_offset,
+    const gfx::Rect& drag_obj_rect,
     const blink::mojom::DragEventSourceInfo& event_info,
     RenderWidgetHostImpl* source_rwh) {
   // By allowing nested tasks, the code below also allows Close(),
@@ -156,17 +171,25 @@ void WebContentsViewMac::StartDragging(
 
   // The drag invokes a nested event loop, arrange to continue
   // processing events.
-  base::CurrentThread::ScopedNestableTaskAllower allow;
+  base::CurrentThread::ScopedAllowApplicationTasksInNativeNestedLoop allow;
   NSDragOperation mask = static_cast<NSDragOperation>(allowed_operations);
   [drag_dest_ setDragStartTrackersForProcess:source_rwh->GetProcess()->GetID()];
   drag_source_start_rwh_ = source_rwh->GetWeakPtr();
 
+  WebContentsDelegate* contents_delegate = web_contents_->GetDelegate();
+  bool is_privileged =
+      contents_delegate ? contents_delegate->IsPrivileged() : false;
+
+  // TODO(crbug.com/1302094): The param `drag_obj_rect` is unused.
+
   if (remote_ns_view_) {
     // TODO(https://crbug.com/898608): Non-trivial gfx::ImageSkias fail to
     // serialize.
-    remote_ns_view_->StartDrag(drop_data, mask, gfx::ImageSkia(), image_offset);
+    remote_ns_view_->StartDrag(drop_data, mask, gfx::ImageSkia(), cursor_offset,
+                               is_privileged);
   } else {
-    in_process_ns_view_bridge_->StartDrag(drop_data, mask, image, image_offset);
+    in_process_ns_view_bridge_->StartDrag(drop_data, mask, image, cursor_offset,
+                                          is_privileged);
   }
 }
 
@@ -262,6 +285,7 @@ void WebContentsViewMac::ShowContextMenu(RenderFrameHost& render_frame_host,
     DLOG(ERROR) << "Cannot show context menus without a delegate.";
 }
 
+#if BUILDFLAG(USE_EXTERNAL_POPUP_MENU)
 void WebContentsViewMac::ShowPopupMenu(
     RenderFrameHost* render_frame_host,
     mojo::PendingRemote<blink::mojom::PopupMenuClient> popup_client,
@@ -279,6 +303,7 @@ void WebContentsViewMac::ShowPopupMenu(
                                     right_aligned, allow_multiple_selection);
   // Note: |this| may be deleted here.
 }
+#endif
 
 void WebContentsViewMac::OnMenuClosed() {
   popup_menu_helper_.reset();
@@ -349,12 +374,6 @@ RenderWidgetHostViewBase* WebContentsViewMac::CreateViewForWidget(
   [GetInProcessNSView() addSubview:view_view
                         positioned:NSWindowBelow
                         relativeTo:nil];
-  // For some reason known only to Cocoa, the autorecalculation of the key view
-  // loop set on the window doesn't set the next key view when the subview is
-  // added. On 10.6 things magically work fine; on 10.5 they fail
-  // <http://crbug.com/61493>. Digging into Cocoa key view loop code yielded
-  // madness; TODO(avi,rohit): look at this again and figure out what's really
-  // going on.
   [GetInProcessNSView() setNextKeyView:view_view];
   return view;
 }
@@ -412,7 +431,7 @@ bool WebContentsViewMac::CloseTabAfterEventTrackingIfNeeded() {
 }
 
 void WebContentsViewMac::CloseTab() {
-  web_contents_->Close(web_contents_->GetRenderViewHost());
+  web_contents_->Close();
 }
 
 std::list<RenderWidgetHostViewMac*> WebContentsViewMac::GetChildViews() {
@@ -543,6 +562,8 @@ bool WebContentsViewMac::DragPromisedFileTo(const base::FilePath& file_path,
 void WebContentsViewMac::EndDrag(uint32_t drag_operation,
                                  const gfx::PointF& local_point,
                                  const gfx::PointF& screen_point) {
+  [drag_dest_ resetDragStartTrackers];
+
   web_contents_->SystemDragEnded(drag_source_start_rwh_.get());
 
   // |localPoint| and |screenPoint| are in the root coordinate space, for
@@ -657,6 +678,7 @@ void WebContentsViewMac::ViewsHostableDetach() {
     remote_ns_view_->SetVisible(false);
     remote_ns_view_->ResetParentNSView();
     remote_ns_view_host_receiver_.reset();
+    remote_ns_view_->Destroy();
     remote_ns_view_.reset();
     // Permit the in-process NSView to call back into |this| again.
     [GetInProcessNSView() setHost:this];

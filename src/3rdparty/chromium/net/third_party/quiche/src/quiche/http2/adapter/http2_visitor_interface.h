@@ -46,7 +46,7 @@ namespace adapter {
 //     - OnCloseStream()
 //
 // More details are at RFC 7540 (go/http2spec).
-class QUICHE_EXPORT_PRIVATE Http2VisitorInterface {
+class QUICHE_EXPORT Http2VisitorInterface {
  public:
   Http2VisitorInterface(const Http2VisitorInterface&) = delete;
   Http2VisitorInterface& operator=(const Http2VisitorInterface&) = delete;
@@ -82,6 +82,8 @@ class QUICHE_EXPORT_PRIVATE Http2VisitorInterface {
     kFlowControlError,
     // The peer sent a GOAWAY with an invalid last-stream-ID field.
     kInvalidGoAwayLastStreamId,
+    // The peer sent an invalid SETTINGS value.
+    kInvalidSetting,
   };
   virtual void OnConnectionError(ConnectionError error) = 0;
 
@@ -164,7 +166,7 @@ class QUICHE_EXPORT_PRIVATE Http2VisitorInterface {
 
   // Called when the peer sends the END_STREAM flag on a stream, indicating that
   // the peer will not send additional headers or data for that stream.
-  virtual void OnEndStream(Http2StreamId stream_id) = 0;
+  virtual bool OnEndStream(Http2StreamId stream_id) = 0;
 
   // Called when the connection receives a RST_STREAM for a stream. This call
   // will be followed by either OnCloseStream().

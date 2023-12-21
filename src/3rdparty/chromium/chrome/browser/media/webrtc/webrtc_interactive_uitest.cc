@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/task/deferred_sequenced_task_runner.h"
 #include "base/test/bind.h"
+#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/media/webrtc/webrtc_browsertest_base.h"
 #include "chrome/browser/media/webrtc/webrtc_browsertest_common.h"
@@ -124,7 +125,7 @@ class WebRtcBrowserTest : public WebRtcTestBase {
     }
 
     mojo::Remote<network::mojom::NetworkServiceTest> network_service_test;
-    content::GetNetworkService()->BindTestInterface(
+    content::GetNetworkService()->BindTestInterfaceForTesting(
         network_service_test.BindNewPipeAndPassReceiver());
     // TODO(crbug.com/901026): Make sure the network process is started to avoid
     // a deadlock on Android.
@@ -158,8 +159,8 @@ class WebRtcBrowserTest : public WebRtcTestBase {
     HangUp(right_tab_);
   }
 
-  raw_ptr<content::WebContents> left_tab_;
-  raw_ptr<content::WebContents> right_tab_;
+  raw_ptr<content::WebContents, DanglingUntriaged> left_tab_;
+  raw_ptr<content::WebContents, DanglingUntriaged> right_tab_;
 };
 
 IN_PROC_BROWSER_TEST_F(WebRtcBrowserTest,
@@ -185,12 +186,6 @@ IN_PROC_BROWSER_TEST_F(WebRtcBrowserTest,
            "(test \"OK\")";
     return;
   }
-
-#if BUILDFLAG(IS_MAC)
-  // TODO(jam): this test only on 10.12.
-  if (base::mac::IsOS10_12())
-    return;
-#endif
 
   RunsAudioVideoWebRTCCallInTwoTabs("H264", true /* prefer_hw_video_codec */);
 }
@@ -305,9 +300,39 @@ IN_PROC_BROWSER_TEST_F(WebRtcBrowserTest,
   for (const std::string& type : VerifyStatsGeneratedPromise(left_tab_)) {
     missing_expected_stats.erase(type);
   }
-  for (const std::string& type : missing_expected_stats) {
-    EXPECT_TRUE(false) << "Expected stats dictionary is missing: " << type;
+  EXPECT_THAT(missing_expected_stats, ::testing::IsEmpty());
+
+  DetectVideoAndHangUp();
+}
+
+class WebRtcBrowserTestIdl : public WebRtcBrowserTest {
+ public:
+  WebRtcBrowserTestIdl() {
+    scoped_features_.InitAndEnableFeature(
+        blink::features::kWebRtcStatsReportIdl);
   }
+
+ private:
+  base::test::ScopedFeatureList scoped_features_;
+};
+
+IN_PROC_BROWSER_TEST_F(WebRtcBrowserTestIdl,
+                       RunsAudioVideoWebRTCCallInTwoTabsGetStatsPromiseIDL) {
+  StartServerAndOpenTabs();
+  SetupPeerconnectionWithLocalStream(left_tab_);
+  SetupPeerconnectionWithLocalStream(right_tab_);
+  CreateDataChannel(left_tab_, "data");
+  CreateDataChannel(right_tab_, "data");
+  NegotiateCall(left_tab_, right_tab_);
+
+  std::set<std::string> missing_expected_stats;
+  for (const std::string& type : GetMandatoryStatsTypes(left_tab_)) {
+    missing_expected_stats.insert(type);
+  }
+  for (const std::string& type : VerifyStatsGeneratedPromise(left_tab_)) {
+    missing_expected_stats.erase(type);
+  }
+  EXPECT_THAT(missing_expected_stats, ::testing::IsEmpty());
 
   DetectVideoAndHangUp();
 }

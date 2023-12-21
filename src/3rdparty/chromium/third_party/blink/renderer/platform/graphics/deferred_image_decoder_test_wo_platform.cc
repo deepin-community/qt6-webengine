@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -105,7 +105,7 @@ TEST(DeferredImageDecoderTestWoPlatform, fragmentedSignature) {
       "/images/resources/wrong-frame-dimensions.ico",
   };
 
-  for (size_t i = 0; i < SK_ARRAY_COUNT(test_files); ++i) {
+  for (size_t i = 0; i < std::size(test_files); ++i) {
     scoped_refptr<SharedBuffer> file_buffer = ReadFile(test_files[i]);
     ASSERT_NE(file_buffer, nullptr);
     // We need contiguous data, which SharedBuffer doesn't guarantee.

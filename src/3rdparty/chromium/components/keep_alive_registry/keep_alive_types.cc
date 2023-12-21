@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,6 +20,8 @@ std::ostream& operator<<(std::ostream& out, const KeepAliveOrigin& origin) {
       return out << "BROWSER_PROCESS_LACROS";
     case KeepAliveOrigin::SESSION_RESTORE:
       return out << "SESSION_RESTORE";
+    case KeepAliveOrigin::APP_LAUNCH:
+      return out << "APP_LAUNCH";
     case KeepAliveOrigin::BACKGROUND_MODE_MANAGER:
       return out << "BACKGROUND_MODE_MANAGER";
     case KeepAliveOrigin::BACKGROUND_MODE_MANAGER_STARTUP:
@@ -76,6 +78,8 @@ std::ostream& operator<<(std::ostream& out, const KeepAliveOrigin& origin) {
       return out << "APP_START_URL_MIGRATION";
     case KeepAliveOrigin::APP_GET_INFO:
       return out << "APP_GET_INFO";
+    case KeepAliveOrigin::WEB_APP_LAUNCH:
+      return out << "WEB_APP_LAUNCH";
     case KeepAliveOrigin::SESSION_DATA_DELETER:
       return out << "SESSION_DATA_DELETER";
   }

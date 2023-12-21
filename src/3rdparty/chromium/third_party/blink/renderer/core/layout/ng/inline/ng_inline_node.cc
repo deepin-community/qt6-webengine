@@ -1,18 +1,19 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_node.h"
 
-#include <algorithm>
 #include <memory>
 #include <numeric>
 
+#include "base/containers/adapters.h"
+#include "base/debug/dump_without_crashing.h"
+#include "base/ranges/algorithm.h"
 #include "base/trace_event/trace_event.h"
-#include "build/build_config.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
-#include "third_party/blink/renderer/core/layout/deferred_shaping.h"
 #include "third_party/blink/renderer/core/layout/layout_block_flow.h"
+#include "third_party/blink/renderer/core/layout/layout_counter.h"
 #include "third_party/blink/renderer/core/layout/layout_inline.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
@@ -21,6 +22,7 @@
 #include "third_party/blink/renderer/core/layout/ng/inline/layout_ng_text.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/layout_ng_text_combine.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_bidi_paragraph.h"
+#include "third_party/blink/renderer/core/layout/ng/inline/ng_initial_letter_utils.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_break_token.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_item.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_items_builder.h"
@@ -71,87 +73,6 @@ float CalculateWidthForTextCombine(const NGInlineItemsData& data) {
       });
 }
 
-bool IsLeftAligned(const ComputedStyle& style) {
-  switch (style.GetTextAlign()) {
-    case ETextAlign::kStart:
-      return IsLtr(style.Direction());
-    case ETextAlign::kEnd:
-      return IsRtl(style.Direction());
-    case ETextAlign::kLeft:
-    case ETextAlign::kWebkitLeft:
-      return true;
-    case ETextAlign::kCenter:
-    case ETextAlign::kWebkitCenter:
-    case ETextAlign::kJustify:
-    case ETextAlign::kRight:
-    case ETextAlign::kWebkitRight:
-      return false;
-  }
-  NOTREACHED();
-  return false;
-}
-
-bool HasLetterSpacingWorkAround(const LayoutObject* layout_object,
-                                bool first_line,
-                                const LayoutBlockFlow* block_flow) {
-  // All we need to know is whether it computes to 0 or not, so any
-  // |maxmimum_value| can work.
-  const LayoutUnit maximum_value(100);
-  if (MinimumValueForLength(block_flow->StyleRef(first_line).TextIndent(),
-                            maximum_value))
-    return true;
-
-  // Margin/padding maybe applied to <span> or to the containing block. Sum up
-  // to the containing block. ex.:
-  //   <div style="letter-spacing: 1em">
-  //     <span style="margin-left: 1em>text</span>
-  //   </div>
-  LayoutUnit margin_padding_start;
-  LayoutUnit margin_padding_end;
-  DCHECK(!layout_object->IsText());
-  for (;; layout_object = layout_object->Parent()) {
-    const ComputedStyle& style = layout_object->StyleRef(first_line);
-    if (style.MayHavePadding() || style.MayHaveMargin()) {
-      margin_padding_start +=
-          MinimumValueForLength(style.MarginStart(), maximum_value) +
-          MinimumValueForLength(style.PaddingStart(), maximum_value);
-      margin_padding_end +=
-          MinimumValueForLength(style.MarginEnd(), maximum_value) +
-          MinimumValueForLength(style.PaddingEnd(), maximum_value);
-    }
-    if (layout_object == block_flow)
-      break;
-  }
-  return margin_padding_start != margin_padding_end;
-}
-
-bool ShouldReportLetterSpacingUseCounter(const LayoutObject* layout_object,
-                                         bool first_line,
-                                         const LayoutBlockFlow* block_flow) {
-  DCHECK(layout_object->IsText());
-  layout_object = layout_object->Parent();
-  const ComputedStyle& style = layout_object->StyleRef(first_line);
-  DCHECK(style.GetFont().GetFontDescription().LetterSpacing());
-
-  // Count only when the containing block has `letter-spacing`. For now, we
-  // don't count cases like:
-  //   <div><span style="letter-spacing: 1em">text</span></div>
-  const ComputedStyle& block_style = block_flow->StyleRef(first_line);
-  if (layout_object != block_flow &&
-      !block_style.GetFont().GetFontDescription().LetterSpacing())
-    return false;
-
-  if (((layout_object->HasBoxDecorationBackground() ||
-        block_flow->HasBoxDecorationBackground() ||
-        !IsLeftAligned(block_style)) &&
-       HasLetterSpacingWorkAround(layout_object, first_line, block_flow)) ||
-      // Workaround for `text-decoration` is complicated, just include all.
-      !style.AppliedTextDecorations().IsEmpty())
-    return true;
-
-  return false;
-}
-
 // Estimate the number of NGInlineItem to minimize the vector expansions.
 unsigned EstimateInlineItemsCount(const LayoutBlockFlow& block) {
   unsigned count = 0;
@@ -198,8 +119,8 @@ class ReusingTextShaper final {
 
     const Vector<const ShapeResult*> reusable_shape_results =
         CollectReusableShapeResults(start_offset, end_offset,
-                                    start_item.Direction());
-    if (reusable_shape_results.IsEmpty())
+                                    font.PrimaryFont(), start_item.Direction());
+    if (reusable_shape_results.empty())
       return Reshape(start_item, font, start_offset, end_offset);
 
     const scoped_refptr<ShapeResult> shape_result =
@@ -243,6 +164,7 @@ class ReusingTextShaper final {
   Vector<const ShapeResult*> CollectReusableShapeResults(
       unsigned start_offset,
       unsigned end_offset,
+      const SimpleFontData* primary_font,
       TextDirection direction) {
     DCHECK_LT(start_offset, end_offset);
     Vector<const ShapeResult*> shape_results;
@@ -258,11 +180,14 @@ class ReusingTextShaper final {
         break;
       if (item->EndOffset() < start_offset)
         continue;
-      if (!item->TextShapeResult() || item->Direction() != direction)
+      const ShapeResult* const shape_result = item->TextShapeResult();
+      if (!shape_result || item->Direction() != direction)
         continue;
-      if (item->TextShapeResult()->IsAppliedSpacing())
+      if (shape_result->PrimaryFont() != primary_font)
         continue;
-      shape_results.push_back(item->TextShapeResult());
+      if (shape_result->IsAppliedSpacing())
+        continue;
+      shape_results.push_back(shape_result);
     }
     return shape_results;
   }
@@ -309,7 +234,40 @@ void CollectInlinesInternal(ItemsBuilder* builder,
   const LayoutObject* symbol =
       LayoutNGListItem::FindSymbolMarkerLayoutText(block);
   while (node) {
-    if (auto* layout_text = DynamicTo<LayoutText>(node)) {
+    if (auto* counter = DynamicTo<LayoutCounter>(node)) {
+      // According to
+      // https://w3c.github.io/csswg-drafts/css-counter-styles/#simple-symbolic,
+      // disclosure-* should have special rendering paths.
+      if (counter->IsDirectionalSymbolMarker()) {
+        const String& text = counter->GetText();
+        // We assume the text representation length for a predefined symbol
+        // marker is always 1.
+        if (text.length() <= 1) {
+          builder->AppendText(counter, previous_data);
+          builder->SetIsSymbolMarker();
+        } else {
+          // The text must be in the following form:
+          // Symbol, separator, symbol, separator, symbol, ...
+          builder->AppendText(text.Substring(0, 1), counter);
+          builder->SetIsSymbolMarker();
+          const AtomicString& separator = counter->Separator();
+          for (wtf_size_t i = 1; i < text.length();) {
+            if (separator.length() > 0) {
+              DCHECK_EQ(separator, text.Substring(i, separator.length()));
+              builder->AppendText(separator, counter);
+              i += separator.length();
+              DCHECK_LT(i, text.length());
+            }
+            builder->AppendText(text.Substring(i, 1), counter);
+            builder->SetIsSymbolMarker();
+            ++i;
+          }
+        }
+      } else {
+        builder->AppendText(counter, previous_data);
+      }
+      builder->ClearNeedsLayout(counter);
+    } else if (auto* layout_text = DynamicTo<LayoutText>(node)) {
       builder->AppendText(layout_text, previous_data);
 
       if (symbol == layout_text)
@@ -334,6 +292,10 @@ void CollectInlinesInternal(ItemsBuilder* builder,
         // block. This is an out-of-flow item whose position is computed
         // automatically.
         builder->AppendOpaque(NGInlineItem::kListMarker, node);
+      } else if (UNLIKELY(node->IsInitialLetterBox())) {
+        builder->AppendOpaque(NGInlineItem::kInitialLetterBox,
+                              kObjectReplacementCharacter, node);
+        builder->SetHasInititialLetterBox();
       } else {
         // For atomic inlines add a unicode "object replacement character" to
         // signal the presence of a non-text object to the unicode bidi
@@ -357,7 +319,6 @@ void CollectInlinesInternal(ItemsBuilder* builder,
       builder->ClearNeedsLayout(layout_inline);
     } else {
       DCHECK(!node->IsInline());
-      DCHECK(RuntimeEnabledFeatures::LayoutNGBlockInInlineEnabled());
       builder->AppendBlockInInline(node);
       builder->ClearInlineFragment(node);
     }
@@ -443,8 +404,12 @@ inline bool NeedsShaping(const NGInlineItem& item) {
     return false;
   // Text item with length==0 exists to maintain LayoutObject states such as
   // ClearNeedsLayout, but not needed to shape.
-  if (!item.Length())
+  if (!item.Length()) {
     return false;
+  }
+  if (item.IsUnsafeToReuseShapeResult()) {
+    return true;
+  }
   const ShapeResult* shape_result = item.TextShapeResult();
   if (!shape_result)
     return true;
@@ -478,15 +443,6 @@ void TruncateOrPadText(String* text, unsigned length) {
       builder.Append(kSpaceCharacter);
     *text = builder.ToString();
   }
-}
-
-bool IsDeferrableContent(const NGInlineNodeData& data) {
-  for (wtf_size_t i = 0; i < data.text_content.length(); ++i) {
-    if (data.text_content[i] != kObjectReplacementCharacter &&
-        !IsASCIISpace(data.text_content[i]))
-      return true;
-  }
-  return false;
 }
 
 }  // namespace
@@ -528,46 +484,6 @@ void NGInlineNode::PrepareLayoutIfNeeded() const {
   }
 }
 
-void NGInlineNode::ShapeTextOrDefer(const NGConstraintSpace& space) const {
-  if (Data().shaping_state_ != NGInlineNodeData::kShapingNone) {
-    if (ShouldBeReshaped()) {
-      ShapeTextIncludingFirstLine(NGInlineNodeData::kShapingDone, MutableData(),
-                                  nullptr, nullptr);
-    }
-    return;
-  }
-
-  NGInlineNodeData* data = MutableData();
-  auto& view = *GetLayoutBox()->GetFrameView();
-  NGInlineNodeData::ShapingState new_state = NGInlineNodeData::kShapingDone;
-  if (view.AllowDeferredShaping() && !GetLayoutBox()->IsInsideFlowThread() &&
-      Style().IsContentVisibilityVisible()) {
-    DCHECK(IsHorizontalWritingMode(Style().GetWritingMode()));
-    const LayoutUnit viewport_bottom = view.CurrentViewportBottom();
-    DCHECK_NE(viewport_bottom, kIndefiniteSize) << GetLayoutBox();
-    LayoutUnit top = view.CurrentMinimumTop();
-    // For css2.1/t080301-c411-vt-mrgn-00-b.html we should apply negative
-    // margin, but not positive margin because of margin collapse.
-    NGBoxStrut margins = ComputeMarginsForSelf(space, Style());
-    if (margins.block_start < LayoutUnit())
-      top += margins.block_start;
-    if (viewport_bottom >= LayoutUnit() && IsDeferrableContent(*data) &&
-        top > viewport_bottom) {
-      new_state = NGInlineNodeData::kShapingDeferred;
-
-      if (Element* element = DynamicTo<Element>(GetDOMNode())) {
-        // We can't call DisplayLockContext::SetRequestedState() during layout.
-        view.RequestToLockDeferred(*element);
-      } else {
-        // We don't support deferring anonymous IFCs because DisplayLock
-        // supports only elements.
-        new_state = NGInlineNodeData::kShapingDone;
-      }
-    }
-  }
-  ShapeTextIncludingFirstLine(new_state, MutableData(), nullptr, nullptr);
-}
-
 void NGInlineNode::PrepareLayout(NGInlineNodeData* previous_data) const {
   // Scan list of siblings collecting all in-flow non-atomic inlines. A single
   // NGInlineNode represent a collection of adjacent non-atomic inlines.
@@ -575,20 +491,8 @@ void NGInlineNode::PrepareLayout(NGInlineNodeData* previous_data) const {
   DCHECK(data);
   CollectInlines(data, previous_data);
   SegmentText(data);
-  if ((previous_data && previous_data->IsShapingDone()) ||
-      UNLIKELY(IsTextCombine())) {
-    ShapeTextIncludingFirstLine(
-        NGInlineNodeData::kShapingDone, data,
-        previous_data ? &previous_data->text_content : nullptr, nullptr);
-  } else if (previous_data && previous_data->IsShapingDeferred()) {
-    if (IsDisplayLocked()) {
-      ShapeTextIncludingFirstLine(NGInlineNodeData::kShapingDeferred, data,
-                                  &previous_data->text_content, nullptr);
-    } else {
-      ShapeTextIncludingFirstLine(NGInlineNodeData::kShapingDone, data, nullptr,
-                                  nullptr);
-    }
-  }
+  ShapeTextIncludingFirstLine(
+      data, previous_data ? &previous_data->text_content : nullptr, nullptr);
   AssociateItemsWithInlines(data);
   DCHECK_EQ(data, MutableData());
 
@@ -635,7 +539,7 @@ class NGInlineNodeDataEditor final {
         block_flow_->GetDocument().NeedsLayoutTreeUpdate() ||
         !block_flow_->GetNGInlineNodeData() ||
         block_flow_->GetNGInlineNodeData()->text_content.IsNull() ||
-        block_flow_->GetNGInlineNodeData()->items.IsEmpty())
+        block_flow_->GetNGInlineNodeData()->items.empty())
       return nullptr;
 
     // For "text-combine-upright:all", we choose font to fit layout result in
@@ -749,7 +653,7 @@ class NGInlineNodeDataEditor final {
       break;
     }
 
-    if (items.IsEmpty()) {
+    if (items.empty()) {
       items.push_back(NGInlineItem(data_->items.front(), 0,
                                    new_data.text_content.length(), nullptr));
     } else if (items.back().end_offset_ < new_data.text_content.length()) {
@@ -775,8 +679,8 @@ class NGInlineNodeDataEditor final {
   static unsigned ConvertDOMOffsetToTextContent(
       base::span<const NGOffsetMappingUnit> units,
       unsigned offset) {
-    auto it = std::find_if(
-        units.begin(), units.end(), [offset](const NGOffsetMappingUnit& unit) {
+    auto it =
+        base::ranges::find_if(units, [offset](const NGOffsetMappingUnit& unit) {
           return unit.DOMStart() <= offset && offset <= unit.DOMEnd();
         });
     DCHECK(it != units.end());
@@ -862,8 +766,7 @@ class NGInlineNodeDataEditor final {
 
   template <typename Span1, typename Span2>
   static unsigned MismatchInternal(const Span1& span1, const Span2& span2) {
-    const auto old_new =
-        std::mismatch(span1.begin(), span1.end(), span2.begin(), span2.end());
+    const auto old_new = base::ranges::mismatch(span1, span2);
     return static_cast<unsigned>(old_new.first - span1.begin());
   }
 
@@ -885,8 +788,8 @@ class NGInlineNodeDataEditor final {
 
   template <typename Span1, typename Span2>
   static unsigned MismatchFromEnd(const Span1& span1, const Span2& span2) {
-    const auto old_new = std::mismatch(span1.rbegin(), span1.rend(),
-                                       span2.rbegin(), span2.rend());
+    const auto old_new =
+        base::ranges::mismatch(base::Reversed(span1), base::Reversed(span2));
     return static_cast<unsigned>(old_new.first - span1.rbegin());
   }
 
@@ -932,7 +835,7 @@ class NGInlineNodeDataEditor final {
 
   void VerifyItems(const HeapVector<NGInlineItem>& items) const {
 #if DCHECK_IS_ON()
-    if (items.IsEmpty())
+    if (items.empty())
       return;
     unsigned last_offset = items.front().start_offset_;
     for (const NGInlineItem& item : items) {
@@ -986,7 +889,7 @@ bool NGInlineNode::SetTextWithOffset(LayoutText* layout_text,
 
   NGInlineNode node(editor.GetLayoutBlockFlow());
   NGInlineNodeData* data = node.MutableData();
-  data->items.ReserveCapacity(previous_data->items.size());
+  data->items.reserve(previous_data->items.size());
   NGInlineItemsBuilder builder(editor.GetLayoutBlockFlow(), &data->items);
   // TODO(yosin): We should reuse before/after |layout_text| during collecting
   // inline items.
@@ -996,11 +899,8 @@ bool NGInlineNode::SetTextWithOffset(LayoutText* layout_text,
   // Relocates |ShapeResult| in |previous_data| after |offset|+|length|
   editor.Run();
   node.SegmentText(data);
-  if (previous_data->IsShapingDone()) {
-    node.ShapeTextIncludingFirstLine(NGInlineNodeData::kShapingDone, data,
-                                     &previous_data->text_content,
-                                     &previous_data->items);
-  }
+  node.ShapeTextIncludingFirstLine(data, &previous_data->text_content,
+                                   &previous_data->items);
   node.AssociateItemsWithInlines(data);
   return true;
 }
@@ -1012,7 +912,7 @@ const NGInlineNodeData& NGInlineNode::EnsureData() const {
 
 const NGOffsetMapping* NGInlineNode::ComputeOffsetMappingIfNeeded() const {
   DCHECK(!GetLayoutBlockFlow()->GetDocument().NeedsLayoutTreeUpdate() ||
-         GetLayoutBlockFlow()->IsLayoutNGObjectForCanvasFormattedText());
+         GetLayoutBlockFlow()->IsLayoutNGObjectForFormattedText());
 
   NGInlineNodeData* data = MutableData();
   if (!data->offset_mapping) {
@@ -1028,7 +928,7 @@ void NGInlineNode::ComputeOffsetMapping(LayoutBlockFlow* layout_block_flow,
                                         NGInlineNodeData* data) {
   DCHECK(!data->offset_mapping);
   DCHECK(!layout_block_flow->GetDocument().NeedsLayoutTreeUpdate() ||
-         layout_block_flow->IsLayoutNGObjectForCanvasFormattedText());
+         layout_block_flow->IsLayoutNGObjectForFormattedText());
 
   const SvgTextChunkOffsets* chunk_offsets = nullptr;
   if (data->svg_node_data_ && data->svg_node_data_->chunk_offsets.size() > 0)
@@ -1040,7 +940,7 @@ void NGInlineNode::ComputeOffsetMapping(LayoutBlockFlow* layout_block_flow,
   // |builder| not construct items and text content.
   HeapVector<NGInlineItem> items;
   ClearCollectionScope<HeapVector<NGInlineItem>> clear_scope(&items);
-  items.ReserveCapacity(EstimateInlineItemsCount(*layout_block_flow));
+  items.reserve(EstimateInlineItemsCount(*layout_block_flow));
   NGInlineItemsBuilderForOffsetMapping builder(layout_block_flow, &items,
                                                chunk_offsets);
   builder.GetOffsetMappingBuilder().ReserveCapacity(
@@ -1073,7 +973,6 @@ const NGOffsetMapping* NGInlineNode::GetOffsetMapping(
     // TODO(kojii): This shouldn't happen, but is not easy to fix all cases.
     // Return nullptr so that callers can chose to fail gracefully, or
     // null-deref. crbug.com/946004
-    NOTREACHED();
     return nullptr;
   }
 
@@ -1102,7 +1001,7 @@ const NGOffsetMapping* NGInlineNode::GetOffsetMapping(
 void NGInlineNode::CollectInlines(NGInlineNodeData* data,
                                   NGInlineNodeData* previous_data) const {
   DCHECK(data->text_content.IsNull());
-  DCHECK(data->items.IsEmpty());
+  DCHECK(data->items.empty());
   LayoutBlockFlow* block = GetLayoutBlockFlow();
   block->WillCollectInlines();
 
@@ -1122,7 +1021,7 @@ void NGInlineNode::CollectInlines(NGInlineNodeData* data,
       chunk_offsets = FindSvgTextChunks(*block, *data);
   }
 
-  data->items.ReserveCapacity(EstimateInlineItemsCount(*block));
+  data->items.reserve(EstimateInlineItemsCount(*block));
   NGInlineItemsBuilder builder(block, &data->items, chunk_offsets);
   CollectInlinesInternal(&builder, previous_data);
   if (block->IsNGSVGText() && !data->svg_node_data_) {
@@ -1145,7 +1044,7 @@ const SvgTextChunkOffsets* NGInlineNode::FindSvgTextChunks(
   // be different from final ones.
   HeapVector<NGInlineItem> items;
   ClearCollectionScope<HeapVector<NGInlineItem>> clear_scope(&items);
-  items.ReserveCapacity(EstimateInlineItemsCount(block));
+  items.reserve(EstimateInlineItemsCount(block));
   NGInlineItemsBuilderForOffsetMapping items_builder(&block, &items);
   NGOffsetMappingBuilder& mapping_builder =
       items_builder.GetOffsetMappingBuilder();
@@ -1160,31 +1059,19 @@ const SvgTextChunkOffsets* NGInlineNode::FindSvgTextChunks(
   // Compute DOM offsets of text chunks.
   mapping_builder.SetDestinationString(ifc_text_content);
   NGOffsetMapping* mapping = mapping_builder.Build();
-  // Index in a UTF-32 sequence
-  unsigned last_addressable = 0;
-  // Index in a UTF-16 sequence for last_addressable.
-  unsigned text_content_offset = 0;
   StringView ifc_text_view(ifc_text_content);
-  for (const auto& char_data : data.svg_node_data_->character_data_list) {
+  for (wtf_size_t i = 0; i < data.svg_node_data_->character_data_list.size();
+       ++i) {
+    const std::pair<unsigned, NGSvgCharacterData>& char_data =
+        data.svg_node_data_->character_data_list[i];
     if (!char_data.second.anchored_chunk)
       continue;
     unsigned addressable_offset = char_data.first;
     if (addressable_offset == 0u)
       continue;
-    while (last_addressable < addressable_offset) {
-      ++last_addressable;
-      text_content_offset =
-          ifc_text_view.NextCodePointOffset(text_content_offset);
-    }
+    unsigned text_content_offset = svg_attr_builder.IfcTextContentOffsetAt(i);
     const auto* unit = mapping->GetLastMappingUnit(text_content_offset);
-    // |text_content_offset| might point a control character not in any
-    // DOM nodes.
-    while (!unit) {
-      text_content_offset =
-          ifc_text_view.NextCodePointOffset(text_content_offset);
-      DCHECK_LT(text_content_offset, ifc_text_view.length());
-      unit = mapping->GetLastMappingUnit(text_content_offset);
-    }
+    DCHECK(unit);
     auto result = data.svg_node_data_->chunk_offsets.insert(
         To<LayoutText>(&unit->GetLayoutObject()), Vector<unsigned>());
     result.stored_value->value.push_back(
@@ -1206,7 +1093,7 @@ void NGInlineNode::SegmentText(NGInlineNodeData* data) const {
 // Segment NGInlineItem by script, Emoji, and orientation using RunSegmenter.
 void NGInlineNode::SegmentScriptRuns(NGInlineNodeData* data) const {
   String& text_content = data->text_content;
-  if (text_content.IsEmpty()) {
+  if (text_content.empty()) {
     data->segments = nullptr;
     return;
   }
@@ -1251,7 +1138,7 @@ void NGInlineNode::SegmentFontOrientation(NGInlineNodeData* data) const {
     return;
 
   HeapVector<NGInlineItem>& items = data->items;
-  if (items.IsEmpty())
+  if (items.empty())
     return;
   String& text_content = data->text_content;
   text_content.Ensure16Bit();
@@ -1372,7 +1259,9 @@ void NGInlineNode::ShapeText(NGInlineItemsData* data,
     // Symbol marker is painted as graphics. Create a ShapeResult of space
     // glyphs with the desired size to make it less special for line breaker.
     if (UNLIKELY(start_item.IsSymbolMarker())) {
-      LayoutUnit symbol_width = ListMarker::WidthOfSymbol(start_style);
+      LayoutUnit symbol_width = ListMarker::WidthOfSymbol(
+          start_style,
+          LayoutCounter::ListStyle(start_item.GetLayoutObject(), start_style));
       DCHECK_GE(symbol_width, 0);
       start_item.shape_result_ = ShapeResult::CreateForSpaces(
           &font, direction, start_item.StartOffset(), start_item.Length(),
@@ -1396,6 +1285,9 @@ void NGInlineNode::ShapeText(NGInlineItemsData* data,
       if (item.Type() == NGInlineItem::kText) {
         if (!item.Length())
           continue;
+        if (item.TextType() == NGTextType::kSymbolMarker) {
+          break;
+        }
         if (ShouldBreakShapingBeforeText(item, start_item, start_style, font,
                                          direction)) {
           break;
@@ -1460,28 +1352,12 @@ void NGInlineNode::ShapeText(NGInlineItemsData* data,
     }
 
     // Shape each item with the full context of the entire node.
-    scoped_refptr<ShapeResult> shape_result;
-    if (MutableData() && MutableData()->IsShapingDeferred() &&
-        font.PrimaryFont()) {
-      unsigned length = end_offset - start_item.StartOffset();
-      shape_result = ShapeResult::CreateForSpacesWithPerGlyphWidth(
-          &font, TextDirection::kLtr, start_item.StartOffset(), length,
-          font.PrimaryFont()->AvgCharWidth());
-    } else {
-      shape_result = shaper.Shape(start_item, font, end_offset);
-    }
+    scoped_refptr<ShapeResult> shape_result =
+        shaper.Shape(start_item, font, end_offset);
 
     if (UNLIKELY(spacing.SetSpacing(font.GetFontDescription()))) {
       DCHECK(!IsTextCombine()) << GetLayoutBlockFlow();
       shape_result->ApplySpacing(spacing);
-      if (spacing.LetterSpacing() &&
-          ShouldReportLetterSpacingUseCounter(
-              start_item.GetLayoutObject(),
-              start_item.StyleVariant() == NGStyleVariant::kFirstLine,
-              GetLayoutBlockFlow())) {
-        UseCounter::Count(GetDocument(),
-                          WebFeature::kLastLetterSpacingAffectsRendering);
-      }
     }
 
     // If the text is from one item, use the ShapeResult as is.
@@ -1501,6 +1377,11 @@ void NGInlineNode::ShapeText(NGInlineItemsData* data,
     // "32" is heuristic, most major sites are up to 8 or so, wikipedia is 21.
     Vector<ShapeResult::ShapeRange, 32> text_item_ranges;
     text_item_ranges.ReserveInitialCapacity(num_text_items);
+    const bool has_ligatures =
+        shape_result->NumGlyphs() < shape_result->NumCharacters();
+    if (has_ligatures) {
+      shape_result->EnsurePositionData();
+    }
     for (; index < end_index; index++) {
       NGInlineItem& item = (*items)[index];
       if (item.Type() != NGInlineItem::kText || !item.Length())
@@ -1516,6 +1397,14 @@ void NGInlineNode::ShapeText(NGInlineItemsData* data,
           ShapeResult::CreateEmpty(*shape_result.get());
       text_item_ranges.emplace_back(item.StartOffset(), item.EndOffset(),
                                     item_result.get());
+      if (has_ligatures && item.EndOffset() < shape_result->EndIndex() &&
+          shape_result->CachedNextSafeToBreakOffset(item.EndOffset()) !=
+              item.EndOffset()) {
+        // Note: We should not reuse `ShapeResult` ends with ligature glyph.
+        // e.g. <div>f<span>i</div> to <div>f</div> with ligature "fi".
+        // See http://crbug.com/1409702
+        item.SetUnsafeToReuseShapeResult();
+      }
       item.shape_result_ = std::move(item_result);
     }
     DCHECK_EQ(text_item_ranges.size(), num_text_items);
@@ -1580,26 +1469,9 @@ void NGInlineNode::ShapeTextForFirstLineIfNeeded(NGInlineNodeData* data) const {
 }
 
 void NGInlineNode::ShapeTextIncludingFirstLine(
-    NGInlineNodeData::ShapingState new_state,
     NGInlineNodeData* data,
     const String* previous_text,
     const HeapVector<NGInlineItem>* previous_items) const {
-  DCHECK_NE(new_state, NGInlineNodeData::kShapingNone);
-  data->shaping_state_ = new_state;
-#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
-  // Because |ElapsedTimer| causes notable speed regression on Android and
-  // ChromeOS, we don't use it. See http://crbug.com/1261519
-#else
-  struct ShapeTextTimingScope final {
-    ~ShapeTextTimingScope() {
-      FontPerformance::AddShapingTime(shaping_timer.Elapsed());
-    }
-    base::ElapsedTimer shaping_timer;
-  };
-
-  ShapeTextTimingScope shape_text_timing_scope;
-#endif
-
   ShapeText(data, previous_text, previous_items);
   ShapeTextForFirstLineIfNeeded(data);
 }
@@ -1642,7 +1514,6 @@ const NGLayoutResult* NGInlineNode::Layout(
     const NGColumnSpannerPath* column_spanner_path,
     NGInlineChildLayoutContext* context) const {
   PrepareLayoutIfNeeded();
-  ShapeTextOrDefer(constraint_space);
 
   const auto* inline_break_token = To<NGInlineBreakToken>(break_token);
   NGInlineLayoutAlgorithm algorithm(*this, constraint_space, inline_break_token,
@@ -1739,7 +1610,7 @@ static LayoutUnit ComputeContentSize(
 
     LayoutUnit ComputeMaxSizeForLine(LayoutUnit line_inline_size,
                                      LayoutUnit max_inline_size) {
-      if (floating_objects_.IsEmpty())
+      if (floating_objects_.empty())
         return std::max(max_inline_size, line_inline_size);
 
       EFloat previous_float_type = EFloat::kNone;
@@ -1896,6 +1767,20 @@ static LayoutUnit ComputeContentSize(
         ForceLineBreak(line_info);
     }
   };
+
+  if (UNLIKELY(node.IsInitialLetterBox())) {
+    LayoutUnit inline_size = LayoutUnit();
+    do {
+      NGLineInfo line_info;
+      line_breaker.NextLine(&line_info);
+      if (line_info.Results().empty())
+        break;
+      inline_size =
+          std::max(CalculateInitialLetterBoxInlineSize(line_info), inline_size);
+    } while (!line_breaker.IsFinished());
+    return inline_size;
+  }
+
   FloatsMaxSize floats_max_size(float_input);
   bool can_compute_max_size_from_min_size = true;
   MaxSizeFromMinSize max_size_from_min_size(items_data, *max_size_cache,
@@ -1904,7 +1789,7 @@ static LayoutUnit ComputeContentSize(
   do {
     NGLineInfo line_info;
     line_breaker.NextLine(&line_info);
-    if (line_info.Results().IsEmpty())
+    if (line_info.Results().empty())
       break;
 
     LayoutUnit inline_size = line_info.Width();
@@ -1993,7 +1878,6 @@ MinMaxSizesResult NGInlineNode::ComputeMinMaxSizes(
     const NGConstraintSpace& space,
     const MinMaxSizesFloatInput& float_input) const {
   PrepareLayoutIfNeeded();
-  ShapeTextOrDefer(space);
 
   // Compute the max of inline sizes of all line boxes with 0 available inline
   // size. This gives the min-content, the width where lines wrap at every
@@ -2025,34 +1909,6 @@ bool NGInlineNode::UseFirstLineStyle() const {
          GetLayoutBox()->GetDocument().GetStyleEngine().UsesFirstLineRules();
 }
 
-bool NGInlineNode::ShouldBeReshaped() const {
-  if (!Data().IsShapingDeferred())
-    return false;
-  if (const auto* context = GetDisplayLockContext()) {
-    if (context->IsLocked())
-      return false;
-    // Need to check the request queue because
-    // 1. ShapeTextOrDefer() in ComputeMinMaxSizes() requested to lock an
-    //    element.
-    // 2. ShapeTextOrDefer() in Layout() calls this function before handling
-    //    the request queue.
-    return !GetLayoutBox()->GetFrameView()->LockDeferredRequested(
-        *To<Element>(GetDOMNode()));
-  }
-  // This is deferred, but not locked yet.
-  return false;
-}
-
-DisplayLockContext* NGInlineNode::GetDisplayLockContext() const {
-  return GetLayoutBox()->GetDisplayLockContext();
-}
-
-bool NGInlineNode::IsDisplayLocked() const {
-  if (const auto* context = GetDisplayLockContext())
-    return context->IsLocked();
-  return false;
-}
-
 void NGInlineNode::CheckConsistency() const {
 #if DCHECK_IS_ON()
   const HeapVector<NGInlineItem>& items = Data().items;
@@ -2061,14 +1917,6 @@ void NGInlineNode::CheckConsistency() const {
            item.Style() == item.GetLayoutObject()->Style());
   }
 #endif
-}
-
-bool NGInlineNode::ShouldReportLetterSpacingUseCounterForTesting(
-    const LayoutObject* layout_object,
-    bool first_line,
-    const LayoutBlockFlow* block_flow) {
-  return ShouldReportLetterSpacingUseCounter(layout_object, first_line,
-                                             block_flow);
 }
 
 const Vector<std::pair<unsigned, NGSvgCharacterData>>&
@@ -2100,7 +1948,7 @@ void NGInlineNode::AdjustFontForTextCombineUprightAll() const {
   const float desired_width = text_combine.DesiredWidth();
   text_combine.ResetLayout();
   if (UNLIKELY(desired_width == 0.0f)) {
-    NOTREACHED() << "We get the test case!";
+    // See http://crbug.com/1342520
     return;
   }
   if (content_width <= desired_width)

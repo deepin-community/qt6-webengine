@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -173,6 +173,10 @@ void RecordShouldTriggerHelpUI(const base::Feature& feature,
   }
   if (!result.display_lock_ok) {
     LogTriggerHelpUIResult(name, TriggerHelpUIResult::FAILURE_DISPLAY_LOCK);
+  }
+  if (!result.groups_ok) {
+    LogTriggerHelpUIResult(
+        name, TriggerHelpUIResult::FAILURE_GROUPS_PRECONDITION_UNMET);
   }
 }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/python3 -i
 #
-# Copyright (c) 2022 The Khronos Group Inc.
+# Copyright (c) 2022-2023 The Khronos Group Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,8 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
-# Author: Spencer Fricke <s.fricke@samsung.com>
 
 import sys
 from generator import *
@@ -126,9 +124,9 @@ class FormatUtilsOutputGenerator(OutputGenerator):
         copyright += '\n'
         copyright += '/***************************************************************************\n'
         copyright += ' *\n'
-        copyright += ' * Copyright (c) 2015-2022 The Khronos Group Inc.\n'
-        copyright += ' * Copyright (c) 2015-2022 Valve Corporation\n'
-        copyright += ' * Copyright (c) 2015-2022 LunarG, Inc.\n'
+        copyright += ' * Copyright (c) 2015-2023 The Khronos Group Inc.\n'
+        copyright += ' * Copyright (c) 2015-2023 Valve Corporation\n'
+        copyright += ' * Copyright (c) 2015-2023 LunarG, Inc.\n'
         copyright += ' *\n'
         copyright += ' * Licensed under the Apache License, Version 2.0 (the "License");\n'
         copyright += ' * you may not use this file except in compliance with the License.\n'
@@ -141,11 +139,6 @@ class FormatUtilsOutputGenerator(OutputGenerator):
         copyright += ' * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n'
         copyright += ' * See the License for the specific language governing permissions and\n'
         copyright += ' * limitations under the License.\n'
-        copyright += ' *\n'
-        copyright += ' * Author: Mark Lobodzinski <mark@lunarg.com>\n'
-        copyright += ' * Author: Dave Houlton <daveh@lunarg.com>\n'
-        copyright += ' * Author: Spencer Fricke <s.fricke@samsung.com>\n'
-        copyright += ' *\n'
         copyright += ' ****************************************************************************/\n'
         write(copyright, file=self.outFile)
         if self.sourceFile:
@@ -205,12 +198,6 @@ extern "C" {
             'blockExtent' : '1,1,1', # default
             'components' : []
         }
-
-        # TODO - The current XML has a bug, remove when new headers with fix are added
-        # Was setting theses as 8 instead of 16
-        # https://gitlab.khronos.org/vulkan/vulkan/-/merge_requests/4975
-        if formatName == 'VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK' or formatName == 'VK_FORMAT_ETC2_R8G8B8A8_SRGB_BLOCK':
-            self.allFormats[formatName]['blockSize'] = 16
 
         if elem.get('blockExtent'):
             self.allFormats[formatName]['blockExtent'] = elem.get('blockExtent')
@@ -320,14 +307,14 @@ struct FORMAT_INFO {
 namespace std {
 template <>
 struct hash<VkFormat> {
-    size_t operator()(VkFormat fmt) const NOEXCEPT {
+    size_t operator()(VkFormat fmt) const noexcept {
         return hash<uint32_t>()(static_cast<uint32_t>(fmt));
     }
 };
 }
 
 // clang-format off
-static const layer_data::unordered_map<VkFormat, FORMAT_INFO> kVkFormatTable = {
+static const vvl::unordered_map<VkFormat, FORMAT_INFO> kVkFormatTable = {
 '''
             for f, info in sorted(self.allFormats.items()):
                 output += '    {{{},\n'.format(f)
@@ -363,7 +350,7 @@ struct MULTIPLANE_COMPATIBILITY {
 
 // Source: Vulkan spec Table 47. Plane Format Compatibility Table
 // clang-format off
-static const layer_data::unordered_map<VkFormat, MULTIPLANE_COMPATIBILITY> kVkMultiplaneCompatibilityMap {
+static const vvl::unordered_map<VkFormat, MULTIPLANE_COMPATIBILITY> kVkMultiplaneCompatibilityMap {
 '''
 
             for f in sorted(self.planarFormats.keys()):
@@ -405,7 +392,7 @@ static const layer_data::unordered_map<VkFormat, MULTIPLANE_COMPATIBILITY> kVkMu
             output += '// Numeric\n'
             output += '// Formats with more then one numeric type (VK_FORMAT_D16_UNORM_S8_UINT) will return false\n'
             for key in self.numericFormats.keys():
-                output += 'VK_LAYER_EXPORT bool FormatIs{}(VkFormat format);\n'.format(key)
+                output += 'bool FormatIs{}(VkFormat format);\n'.format(key)
             output += '''
 // Types from "Interpretation of Numeric Format" table (OpTypeFloat vs OpTypeInt)
 static inline bool FormatIsSampledInt(VkFormat format) { return (FormatIsSINT(format) || FormatIsUINT(format)); }
@@ -434,8 +421,8 @@ static inline bool FormatIsSampledFloat(VkFormat format) {
         if self.headerFile:
             output += '// Compressed\n'
             for key in sorted(self.compressedFormats.keys()):
-                output += 'VK_LAYER_EXPORT bool FormatIsCompressed_{}(VkFormat format);\n'.format(key)
-            output += 'VK_LAYER_EXPORT bool FormatIsCompressed(VkFormat format);\n'
+                output += 'bool FormatIsCompressed_{}(VkFormat format);\n'.format(key)
+            output += 'bool FormatIsCompressed(VkFormat format);\n'
 
         elif self.sourceFile:
             for key in sorted(self.compressedFormats.keys()):
@@ -462,16 +449,16 @@ static inline bool FormatIsSampledFloat(VkFormat format) {
         output = ''
         if self.headerFile:
             output += '''// Depth/Stencil
-VK_LAYER_EXPORT bool FormatIsDepthOrStencil(VkFormat format);
-VK_LAYER_EXPORT bool FormatIsDepthAndStencil(VkFormat format);
-VK_LAYER_EXPORT bool FormatIsDepthOnly(VkFormat format);
-VK_LAYER_EXPORT bool FormatIsStencilOnly(VkFormat format);
+bool FormatIsDepthOrStencil(VkFormat format);
+bool FormatIsDepthAndStencil(VkFormat format);
+bool FormatIsDepthOnly(VkFormat format);
+bool FormatIsStencilOnly(VkFormat format);
 static inline bool FormatHasDepth(VkFormat format) { return (FormatIsDepthOnly(format) || FormatIsDepthAndStencil(format)); }
 static inline bool FormatHasStencil(VkFormat format) { return (FormatIsStencilOnly(format) || FormatIsDepthAndStencil(format)); }
-VK_LAYER_EXPORT uint32_t FormatDepthSize(VkFormat format);
-VK_LAYER_EXPORT uint32_t FormatStencilSize(VkFormat format);
-VK_LAYER_EXPORT FORMAT_NUMERICAL_TYPE FormatDepthNumericalType(VkFormat format);
-VK_LAYER_EXPORT FORMAT_NUMERICAL_TYPE FormatStencilNumericalType(VkFormat format);
+uint32_t FormatDepthSize(VkFormat format);
+uint32_t FormatStencilSize(VkFormat format);
+FORMAT_NUMERICAL_TYPE FormatDepthNumericalType(VkFormat format);
+FORMAT_NUMERICAL_TYPE FormatStencilNumericalType(VkFormat format);
 '''
         elif self.sourceFile:
             output += '\n// Return true if format is a depth OR stencil format\n'
@@ -587,7 +574,7 @@ VK_LAYER_EXPORT FORMAT_NUMERICAL_TYPE FormatStencilNumericalType(VkFormat format
         output = ''
         if self.headerFile:
             output += '''// Packed
-VK_LAYER_EXPORT bool FormatIsPacked(VkFormat format);
+bool FormatIsPacked(VkFormat format);
 '''
         elif self.sourceFile:
             output += '\n// Return true if format is a packed format\n'
@@ -605,9 +592,9 @@ VK_LAYER_EXPORT bool FormatIsPacked(VkFormat format);
         output = ''
         if self.headerFile:
             output += '''// YCbCr
-VK_LAYER_EXPORT bool FormatRequiresYcbcrConversion(VkFormat format);
-VK_LAYER_EXPORT bool FormatIsXChromaSubsampled(VkFormat format);
-VK_LAYER_EXPORT bool FormatIsYChromaSubsampled(VkFormat format);
+bool FormatRequiresYcbcrConversion(VkFormat format);
+bool FormatIsXChromaSubsampled(VkFormat format);
+bool FormatIsYChromaSubsampled(VkFormat format);
 '''
         elif self.sourceFile:
             output += '\n// Return true if format requires sampler YCBCR conversion\n'
@@ -643,11 +630,11 @@ VK_LAYER_EXPORT bool FormatIsYChromaSubsampled(VkFormat format);
         output = ''
         if self.headerFile:
             output += '''// Multiplane
-VK_LAYER_EXPORT bool FormatIsSinglePlane_422(VkFormat format);
-VK_LAYER_EXPORT uint32_t FormatPlaneCount(VkFormat format);
+bool FormatIsSinglePlane_422(VkFormat format);
+uint32_t FormatPlaneCount(VkFormat format);
 static inline bool FormatIsMultiplane(VkFormat format) { return ((FormatPlaneCount(format)) > 1u); }
-VK_LAYER_EXPORT VkFormat FindMultiplaneCompatibleFormat(VkFormat mp_fmt, VkImageAspectFlags plane_aspect);
-VK_LAYER_EXPORT VkExtent2D FindMultiplaneExtentDivisors(VkFormat mp_fmt, VkImageAspectFlags plane_aspect);
+VkFormat FindMultiplaneCompatibleFormat(VkFormat mp_fmt, VkImageAspectFlags plane_aspect);
+VkExtent2D FindMultiplaneExtentDivisors(VkFormat mp_fmt, VkImageAspectFlags plane_aspect);
 '''
         elif self.sourceFile:
             output += '\n// Single-plane "_422" formats are treated as 2x1 compressed (for copies)\n'
@@ -705,12 +692,19 @@ VkExtent2D FindMultiplaneExtentDivisors(VkFormat mp_fmt, VkImageAspectFlags plan
         output = ''
         if self.headerFile:
             output += '''// Size
-VK_LAYER_EXPORT uint32_t FormatComponentCount(VkFormat format);
-VK_LAYER_EXPORT VkExtent3D FormatTexelBlockExtent(VkFormat format);
-VK_LAYER_EXPORT FORMAT_COMPATIBILITY_CLASS FormatCompatibilityClass(VkFormat format);
-VK_LAYER_EXPORT bool FormatElementIsTexel(VkFormat format);
-VK_LAYER_EXPORT uint32_t FormatElementSize(VkFormat format, VkImageAspectFlags aspectMask = VK_IMAGE_ASPECT_COLOR_BIT);
-VK_LAYER_EXPORT double FormatTexelSize(VkFormat format, VkImageAspectFlags aspectMask = VK_IMAGE_ASPECT_COLOR_BIT);
+uint32_t FormatComponentCount(VkFormat format);
+VkExtent3D FormatTexelBlockExtent(VkFormat format);
+FORMAT_COMPATIBILITY_CLASS FormatCompatibilityClass(VkFormat format);
+bool FormatElementIsTexel(VkFormat format);
+uint32_t FormatElementSize(VkFormat format, VkImageAspectFlags aspectMask = VK_IMAGE_ASPECT_COLOR_BIT);
+double FormatTexelSize(VkFormat format, VkImageAspectFlags aspectMask = VK_IMAGE_ASPECT_COLOR_BIT);
+
+// Components
+bool FormatHasComponentSize(VkFormat format, uint32_t size);
+bool FormatHasRed(VkFormat format);
+bool FormatHasGreen(VkFormat format);
+bool FormatHasBlue(VkFormat format);
+bool FormatHasAlpha(VkFormat format);
 '''
         elif self.sourceFile:
             output += '''
@@ -779,7 +773,42 @@ double FormatTexelSize(VkFormat format, VkImageAspectFlags aspectMask) {
     }
     return texel_size;
 }
-'''
+
+bool FormatHasComponentSize(VkFormat format, uint32_t size) {
+    auto item = kVkFormatTable.find(format);
+    if (item == kVkFormatTable.end()) {
+        return false;
+    }
+    const COMPONENT_INFO* begin = item->second.components;
+    const COMPONENT_INFO* end = item->second.components + FORMAT_MAX_COMPONENTS;
+    return std::find_if(begin, end, [size](const COMPONENT_INFO& info) { return info.size == size; }) != end;
+}
+
+static bool FormatHasComponentType(VkFormat format, COMPONENT_TYPE component) {
+    auto item = kVkFormatTable.find(format);
+    if (item == kVkFormatTable.end()) {
+        return false;
+    }
+    const COMPONENT_INFO* begin = item->second.components;
+    const COMPONENT_INFO* end = item->second.components + FORMAT_MAX_COMPONENTS;
+    return std::find_if(begin, end, [component](const COMPONENT_INFO& info) { return info.type == component; }) != end;
+}
+
+bool FormatHasRed(VkFormat format) {
+    return FormatHasComponentType(format, COMPONENT_TYPE::R);
+}
+
+bool FormatHasGreen(VkFormat format) {
+    return FormatHasComponentType(format, COMPONENT_TYPE::G);
+}
+
+bool FormatHasBlue(VkFormat format) {
+    return FormatHasComponentType(format, COMPONENT_TYPE::B);
+}
+
+bool FormatHasAlpha(VkFormat format) {
+    return FormatHasComponentType(format, COMPONENT_TYPE::A);
+}'''
         return output;
 
     #

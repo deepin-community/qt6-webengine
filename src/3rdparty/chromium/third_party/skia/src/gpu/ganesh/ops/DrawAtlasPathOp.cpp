@@ -9,10 +9,14 @@
 
 #include "src/gpu/BufferWriter.h"
 #include "src/gpu/KeyBuilder.h"
+#include "src/gpu/ganesh/GrBuffer.h"
+#include "src/gpu/ganesh/GrCaps.h"
 #include "src/gpu/ganesh/GrGeometryProcessor.h"
+#include "src/gpu/ganesh/GrGpuBuffer.h"
 #include "src/gpu/ganesh/GrOpFlushState.h"
 #include "src/gpu/ganesh/GrOpsRenderPass.h"
 #include "src/gpu/ganesh/GrProgramInfo.h"
+#include "src/gpu/ganesh/GrRecordingContextPriv.h"
 #include "src/gpu/ganesh/GrResourceProvider.h"
 #include "src/gpu/ganesh/glsl/GrGLSLFragmentShaderBuilder.h"
 #include "src/gpu/ganesh/glsl/GrGLSLVarying.h"
@@ -31,7 +35,7 @@ public:
             , fAtlasAccess(GrSamplerState::Filter::kNearest,
                            fAtlasHelper->proxy()->backendFormat(),
                            fAtlasHelper->atlasSwizzle()) {
-        if (!shaderCaps.vertexIDSupport()) {
+        if (!shaderCaps.fVertexIDSupport) {
             constexpr static Attribute kUnitCoordAttrib(
                     "unitCoord", kFloat2_GrVertexAttribType, SkSLType::kFloat2);
             this->setVertexAttributesWithImplicitOffsets(&kUnitCoordAttrib, 1);
@@ -41,11 +45,11 @@ public:
             fAttribs.emplace_back("affineMatrix", kFloat4_GrVertexAttribType, SkSLType::kFloat4);
             fAttribs.emplace_back("translate", kFloat2_GrVertexAttribType, SkSLType::kFloat2);
         }
-        SkASSERT(fAttribs.count() == this->colorAttribIdx());
+        SkASSERT(fAttribs.size() == this->colorAttribIdx());
         fAttribs.emplace_back("color", kFloat4_GrVertexAttribType, SkSLType::kHalf4);
         fAtlasHelper->appendInstanceAttribs(&fAttribs);
-        SkASSERT(fAttribs.count() <= kMaxInstanceAttribs);
-        this->setInstanceAttributesWithImplicitOffsets(fAttribs.data(), fAttribs.count());
+        SkASSERT(fAttribs.size() <= kMaxInstanceAttribs);
+        this->setInstanceAttributesWithImplicitOffsets(fAttribs.data(), fAttribs.size());
         this->setTextureSamplerCnt(1);
     }
 
@@ -82,7 +86,7 @@ private:
         const auto& shader = args.fGeomProc.cast<DrawAtlasPathShader>();
         args.fVaryingHandler->emitAttributes(shader);
 
-        if (args.fShaderCaps->vertexIDSupport()) {
+        if (args.fShaderCaps->fVertexIDSupport) {
             // If we don't have sk_VertexID support then "unitCoord" already came in as a vertex
             // attrib.
             args.fVertBuilder->codeAppendf(R"(
@@ -95,7 +99,7 @@ private:
 
         if (shader.fUsesLocalCoords) {
             args.fVertBuilder->codeAppendf(R"(
-            float2x2 M = float2x2(affineMatrix);
+            float2x2 M = float2x2(affineMatrix.xy, affineMatrix.zw);
             float2 localCoord = inverse(M) * (devCoord - translate);)");
             gpArgs->fLocalCoordVar.set(SkSLType::kFloat2, "localCoord");
         }
@@ -163,7 +167,7 @@ void DrawAtlasPathOp::prepareProgram(const GrCaps& caps, SkArenaAlloc* arena,
                                                    *caps.shaderCaps());
     fProgram = arena->make<GrProgramInfo>(caps, writeView, usesMSAASurface, pipeline,
                                           &GrUserStencilSettings::kUnused, shader,
-                                          GrPrimitiveType::kTriangleStrip, 0,
+                                          GrPrimitiveType::kTriangleStrip,
                                           renderPassXferBarriers, colorLoadOp);
 }
 
@@ -204,7 +208,7 @@ void DrawAtlasPathOp::onPrepare(GrOpFlushState* flushState) {
         }
     }
 
-    if (!flushState->caps().shaderCaps()->vertexIDSupport()) {
+    if (!flushState->caps().shaderCaps()->fVertexIDSupport) {
         constexpr static SkPoint kUnitQuad[4] = {{0,0}, {0,1}, {1,0}, {1,1}};
 
         SKGPU_DEFINE_STATIC_UNIQUE_KEY(gUnitQuadBufferKey);

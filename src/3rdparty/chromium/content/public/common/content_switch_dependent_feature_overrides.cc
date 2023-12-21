@@ -1,9 +1,10 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/public/common/content_switch_dependent_feature_overrides.h"
 
+#include "content/common/private_aggregation_features.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "net/base/features.h"
@@ -45,13 +46,16 @@ GetSwitchDependentFeatureOverrides(const base::CommandLine& command_line) {
      std::cref(blink::features::kUserAgentClientHint),
      base::FeatureList::OVERRIDE_ENABLE_FEATURE},
     {switches::kEnableExperimentalWebPlatformFeatures,
-     std::cref(features::kOriginPolicy),
+     std::cref(blink::features::kDocumentPictureInPictureAPI),
      base::FeatureList::OVERRIDE_ENABLE_FEATURE},
     {switches::kEnableExperimentalWebPlatformFeatures,
      std::cref(features::kOriginIsolationHeader),
      base::FeatureList::OVERRIDE_ENABLE_FEATURE},
     {switches::kEnableExperimentalWebPlatformFeatures,
      std::cref(features::kEnableCanvas2DLayers),
+     base::FeatureList::OVERRIDE_ENABLE_FEATURE},
+    {switches::kEnableExperimentalWebPlatformFeatures,
+     std::cref(blink::features::kCreateImageBitmapOrientationNone),
      base::FeatureList::OVERRIDE_ENABLE_FEATURE},
     {switches::kEnableExperimentalWebPlatformFeatures,
      std::cref(features::kCriticalClientHint),
@@ -69,25 +73,16 @@ GetSwitchDependentFeatureOverrides(const base::CommandLine& command_line) {
      std::cref(features::kBlockInsecurePrivateNetworkRequestsFromUnknown),
      base::FeatureList::OVERRIDE_ENABLE_FEATURE},
     {switches::kEnableExperimentalWebPlatformFeatures,
-     std::cref(features::kPrivateNetworkAccessForWorkers),
+     std::cref(features::kBlockInsecurePrivateNetworkRequestsForNavigations),
      base::FeatureList::OVERRIDE_ENABLE_FEATURE},
     {switches::kEnableExperimentalWebPlatformFeatures,
      std::cref(features::kPrivateNetworkAccessRespectPreflightResults),
      base::FeatureList::OVERRIDE_ENABLE_FEATURE},
     {switches::kEnableExperimentalWebPlatformFeatures,
-     std::cref(blink::features::kPrefersColorSchemeClientHintHeader),
-     base::FeatureList::OVERRIDE_ENABLE_FEATURE},
-    {switches::kEnableExperimentalWebPlatformFeatures,
-     std::cref(blink::features::kViewportHeightClientHintHeader),
-     base::FeatureList::OVERRIDE_ENABLE_FEATURE},
-    {switches::kEnableExperimentalWebPlatformFeatures,
-     std::cref(blink::features::kUserAgentClientHintFullVersionList),
-     base::FeatureList::OVERRIDE_ENABLE_FEATURE},
-    {switches::kEnableExperimentalWebPlatformFeatures,
      std::cref(blink::features::kClientHintsMetaHTTPEquivAcceptCH),
      base::FeatureList::OVERRIDE_ENABLE_FEATURE},
     {switches::kEnableExperimentalWebPlatformFeatures,
-     std::cref(blink::features::kClientHintsMetaNameAcceptCH),
+     std::cref(blink::features::kClientHintsMetaEquivDelegateCH),
      base::FeatureList::OVERRIDE_ENABLE_FEATURE},
     {switches::kEnableExperimentalWebPlatformFeatures,
      std::cref(blink::features::kClientHintThirdPartyDelegation),
@@ -97,6 +92,18 @@ GetSwitchDependentFeatureOverrides(const base::CommandLine& command_line) {
      base::FeatureList::OVERRIDE_ENABLE_FEATURE},
     {switches::kEnableExperimentalWebPlatformFeatures,
      std::cref(blink::features::kEditContext),
+     base::FeatureList::OVERRIDE_ENABLE_FEATURE},
+    {switches::kEnableExperimentalWebPlatformFeatures,
+     std::cref(blink::features::kPendingBeaconAPI),
+     base::FeatureList::OVERRIDE_ENABLE_FEATURE},
+    {switches::kEnableExperimentalWebPlatformFeatures,
+     std::cref(net::features::kThirdPartyStoragePartitioning),
+     base::FeatureList::OVERRIDE_ENABLE_FEATURE},
+    {switches::kEnableExperimentalWebPlatformFeatures,
+     std::cref(blink::features::kStorageAccessAPI),
+     base::FeatureList::OVERRIDE_ENABLE_FEATURE},
+    {switches::kEnableExperimentalWebPlatformFeatures,
+     std::cref(blink::features::kStorageAccessAPIForOriginExtension),
      base::FeatureList::OVERRIDE_ENABLE_FEATURE},
 
     // Overrides for --enable-experimental-cookie-features.
@@ -128,11 +135,6 @@ GetSwitchDependentFeatureOverrides(const base::CommandLine& command_line) {
     {::switches::kHeadless, std::cref(blink::features::kPaintHolding),
      base::FeatureList::OVERRIDE_DISABLE_FEATURE},
 
-    // Override for --force-major-version-to-minor.
-    {switches::kForceMajorVersionToMinorPosition,
-     std::cref(blink::features::kForceMajorVersionInMinorPositionInUserAgent),
-     base::FeatureList::OVERRIDE_ENABLE_FEATURE},
-
     // Override for --durable-client-hints-cache.
     {switches::kDurableClientHintsCache,
      std::cref(blink::features::kDurableClientHintsCache),
@@ -141,6 +143,47 @@ GetSwitchDependentFeatureOverrides(const base::CommandLine& command_line) {
     // Override for --reduce-user-agent-minor-version.
     {switches::kReduceUserAgentMinorVersion,
      std::cref(blink::features::kReduceUserAgentMinorVersion),
+     base::FeatureList::OVERRIDE_ENABLE_FEATURE},
+
+    // Override for --reduce-user-agent-platform-oscpu.
+    {switches::kReduceUserAgentPlatformOsCpu,
+     std::cref(blink::features::kReduceUserAgentPlatformOsCpu),
+     base::FeatureList::OVERRIDE_ENABLE_FEATURE},
+
+    // Override for --reduce-accept-language.
+    {switches::kReduceAcceptLanguage,
+     std::cref(network::features::kReduceAcceptLanguage),
+     base::FeatureList::OVERRIDE_ENABLE_FEATURE},
+
+    // Override for --privacy-sandbox-ads-apis. See also chrome layer overrides.
+    {switches::kEnablePrivacySandboxAdsApis,
+     std::cref(features::kPrivacySandboxAdsAPIsOverride),
+     base::FeatureList::OVERRIDE_ENABLE_FEATURE},
+    {switches::kEnablePrivacySandboxAdsApis,
+     std::cref(blink::features::kInterestGroupStorage),
+     base::FeatureList::OVERRIDE_ENABLE_FEATURE},
+    {switches::kEnablePrivacySandboxAdsApis,
+     std::cref(blink::features::kFledge),
+     base::FeatureList::OVERRIDE_ENABLE_FEATURE},
+    {switches::kEnablePrivacySandboxAdsApis,
+     std::cref(blink::features::kBiddingAndScoringDebugReportingAPI),
+     base::FeatureList::OVERRIDE_ENABLE_FEATURE},
+    {switches::kEnablePrivacySandboxAdsApis,
+     std::cref(blink::features::kAllowURNsInIframes),
+     base::FeatureList::OVERRIDE_ENABLE_FEATURE},
+    {switches::kEnablePrivacySandboxAdsApis,
+     std::cref(blink::features::kBrowsingTopics),
+     base::FeatureList::OVERRIDE_ENABLE_FEATURE},
+    {switches::kEnablePrivacySandboxAdsApis,
+     std::cref(blink::features::kConversionMeasurement),
+     base::FeatureList::OVERRIDE_ENABLE_FEATURE},
+    {switches::kEnablePrivacySandboxAdsApis,
+     std::cref(blink::features::kFencedFrames),
+     base::FeatureList::OVERRIDE_ENABLE_FEATURE},
+    {switches::kEnablePrivacySandboxAdsApis,
+     std::cref(blink::features::kSharedStorageAPI),
+     base::FeatureList::OVERRIDE_ENABLE_FEATURE},
+    {switches::kEnablePrivacySandboxAdsApis, std::cref(kPrivateAggregationApi),
      base::FeatureList::OVERRIDE_ENABLE_FEATURE},
   };
 

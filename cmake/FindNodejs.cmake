@@ -1,3 +1,6 @@
+# Copyright (C) 2022 The Qt Company Ltd.
+# SPDX-License-Identifier: BSD-3-Clause
+
 find_program(Nodejs_EXECUTABLE NAMES node nodejs)
 
 if(Nodejs_EXECUTABLE)
@@ -5,6 +8,11 @@ if(Nodejs_EXECUTABLE)
         COMMAND ${Nodejs_EXECUTABLE} --version
         OUTPUT_VARIABLE Nodejs_VERSION
         ERROR_QUIET
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+
+    execute_process(
+        COMMAND ${Nodejs_EXECUTABLE} -p "process.arch"
+        OUTPUT_VARIABLE Nodejs_ARCH
         OUTPUT_STRIP_TRAILING_WHITESPACE)
 endif()
 

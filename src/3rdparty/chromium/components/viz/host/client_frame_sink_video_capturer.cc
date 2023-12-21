@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,9 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/functional/bind.h"
+#include "base/ranges/algorithm.h"
+#include "base/task/single_thread_task_runner.h"
 #include "media/capture/mojom/video_capture_buffer.mojom.h"
 #include "media/capture/mojom/video_capture_types.mojom.h"
 
@@ -129,10 +130,8 @@ ClientFrameSinkVideoCapturer::CreateOverlay(int32_t stacking_index) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // If there is an existing overlay at the same index, drop it.
-  auto it = std::find_if(overlays_.begin(), overlays_.end(),
-                         [&stacking_index](const Overlay* overlay) {
-                           return overlay->stacking_index() == stacking_index;
-                         });
+  auto it =
+      base::ranges::find(overlays_, stacking_index, &Overlay::stacking_index);
   if (it != overlays_.end()) {
     (*it)->DisconnectPermanently();
     overlays_.erase(it);
@@ -170,6 +169,12 @@ void ClientFrameSinkVideoCapturer::OnFrameWithEmptyRegionCapture() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   consumer_->OnFrameWithEmptyRegionCapture();
+}
+
+void ClientFrameSinkVideoCapturer::OnNewCropVersion(uint32_t crop_version) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  consumer_->OnNewCropVersion(crop_version);
 }
 
 void ClientFrameSinkVideoCapturer::OnLog(const std::string& message) {
@@ -218,7 +223,7 @@ void ClientFrameSinkVideoCapturer::EstablishConnection() {
 void ClientFrameSinkVideoCapturer::OnConnectionError() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE,
       base::BindOnce(&ClientFrameSinkVideoCapturer::EstablishConnection,
                      weak_factory_.GetWeakPtr()),
@@ -237,7 +242,7 @@ void ClientFrameSinkVideoCapturer::StartInternal() {
 void ClientFrameSinkVideoCapturer::OnOverlayDestroyed(Overlay* overlay) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  const auto it = std::find(overlays_.begin(), overlays_.end(), overlay);
+  const auto it = base::ranges::find(overlays_, overlay);
   DCHECK(it != overlays_.end());
   overlays_.erase(it);
 }

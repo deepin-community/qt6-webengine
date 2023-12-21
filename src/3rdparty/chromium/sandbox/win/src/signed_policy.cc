@@ -1,9 +1,10 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "sandbox/win/src/signed_policy.h"
 
+#include <ntstatus.h>
 #include <stdint.h>
 
 #include <string>
@@ -18,19 +19,19 @@
 namespace sandbox {
 
 bool SignedPolicy::GenerateRules(const wchar_t* name,
-                                 TargetPolicy::Semantics semantics,
+                                 Semantics semantics,
                                  LowLevelPolicy* policy) {
   // Only support one semantic.
-  if (TargetPolicy::SIGNED_ALLOW_LOAD != semantics) {
+  if (Semantics::kSignedAllowLoad != semantics) {
     return false;
   }
 
   base::FilePath file_path(name);
-  std::wstring nt_path_name;
-  if (!GetNtPathFromWin32Path(file_path.DirName().value().c_str(),
-                              &nt_path_name))
+  auto nt_path_name = GetNtPathFromWin32Path(file_path.DirName().value());
+  if (!nt_path_name)
     return false;
-  base::FilePath nt_path(nt_path_name);
+
+  base::FilePath nt_path(nt_path_name.value());
   std::wstring nt_filename = nt_path.Append(file_path.BaseName()).value();
   // Create a rule to ASK_BROKER if name matches.
   PolicyRule signed_policy(ASK_BROKER);

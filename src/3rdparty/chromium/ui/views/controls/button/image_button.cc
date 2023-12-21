@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -139,6 +139,14 @@ views::PaintInfo::ScaleType ImageButton::GetPaintScaleType() const {
   // the x & y axis and keeps the scale equal to the device scale factor.
   // See http://crbug.com/754010 for more details.
   return views::PaintInfo::ScaleType::kUniformScaling;
+}
+
+void ImageButton::OnThemeChanged() {
+  Button::OnThemeChanged();
+
+  // If we have any `ImageModel`s, they may need repaint upon a `ColorProvider`
+  // change.
+  SchedulePaint();
 }
 
 void ImageButton::PaintButtonContents(gfx::Canvas* canvas) {

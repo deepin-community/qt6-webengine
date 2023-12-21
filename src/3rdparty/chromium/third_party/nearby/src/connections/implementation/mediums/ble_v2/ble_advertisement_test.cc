@@ -20,7 +20,6 @@
 #include "gtest/gtest.h"
 #include "absl/hash/hash_testing.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 namespace mediums {
@@ -470,7 +469,8 @@ TEST(BleAdvertisementTest, ConstructionWorksWithPsmValue) {
   EXPECT_EQ(psm, ble_advertisement.GetPsm());
 }
 
-TEST(BleAdvertisementTest, ConstructionFromSerializedBytesWithPsmValueWorks) {
+TEST(BleAdvertisementTest,
+     ConstructionFromSerializedBytesWithExtraFieldsWitPsmValueWorks) {
   ByteArray service_id_hash{std::string(kServiceIDHashBytes)};
   ByteArray data{std::string(kData)};
   ByteArray device_token{std::string(kDeviceToken)};
@@ -493,6 +493,33 @@ TEST(BleAdvertisementTest, ConstructionFromSerializedBytesWithPsmValueWorks) {
   EXPECT_EQ(psm, ble_advertisement.GetPsm());
 }
 
+TEST(BleAdvertisementTest,
+     ConstructionFromSerializedBytesWithExtraFieldsWithoutPsmValueFails) {
+  ByteArray service_id_hash{std::string(kServiceIDHashBytes)};
+  ByteArray data{std::string(kData)};
+  ByteArray device_token{std::string(kDeviceToken)};
+
+  // Construct BleAdvertisement without psm.
+  BleAdvertisement original_ble_advertisement(
+      kVersion, kSocketVersion, service_id_hash, data, device_token);
+  // But use ByteArrayWithExtraField to restore back. It should fail.
+  ByteArray ble_advertisement_bytes =
+      original_ble_advertisement.ByteArrayWithExtraField();
+  BleAdvertisement ble_advertisement(ble_advertisement_bytes);
+
+  ASSERT_TRUE(ble_advertisement.IsValid());
+  EXPECT_FALSE(ble_advertisement.IsFastAdvertisement());
+  EXPECT_EQ(kVersion, ble_advertisement.GetVersion());
+  EXPECT_EQ(kSocketVersion, ble_advertisement.GetSocketVersion());
+  EXPECT_EQ(service_id_hash, ble_advertisement.GetServiceIdHash());
+  EXPECT_EQ(data.size(), ble_advertisement.GetData().size());
+  EXPECT_EQ(data, ble_advertisement.GetData());
+  EXPECT_EQ(device_token, ble_advertisement.GetDeviceToken());
+  // The psm value should be default one.
+  EXPECT_EQ(BleAdvertisementHeader::kDefaultPsmValue,
+            ble_advertisement.GetPsm());
+}
+
 TEST(BleAdvertisementTest, Hash) {
   EXPECT_TRUE(absl::VerifyTypeImplementsAbslHashCorrectly({
       BleAdvertisement(),
@@ -512,4 +539,3 @@ TEST(BleAdvertisementTest, Hash) {
 }  // namespace mediums
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location

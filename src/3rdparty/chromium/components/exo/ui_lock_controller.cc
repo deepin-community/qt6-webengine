@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,11 +10,12 @@
 #include "ash/constants/app_types.h"
 #include "ash/constants/ash_features.h"
 #include "ash/public/cpp/keyboard/keyboard_controller.h"
+#include "ash/public/cpp/session/session_controller.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/wm/window_state.h"
 #include "ash/wm/window_state_observer.h"
-#include "base/bind.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
 #include "base/scoped_observation.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -30,7 +31,10 @@
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_observer.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/user_activity/user_activity_detector.h"
+#include "ui/base/user_activity/user_activity_observer.h"
 #include "ui/events/devices/device_data_manager.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/keycodes/dom/dom_code.h"
@@ -66,6 +70,8 @@ constexpr float kExitPopupHideHeight = 150.f;
 // Once the pointer capture notification has finished showing without
 // being interrupted, don't show it again until this long has passed.
 constexpr auto kPointerCaptureNotificationCooldown = base::Minutes(5);
+
+constexpr auto kReshowNotificationsWhenIdleFor = base::Minutes(5);
 
 constexpr int kUILockControllerSeatObserverPriority = 1;
 static_assert(
@@ -163,9 +169,16 @@ void ExitFullscreen(aura::Window* window) {
 
 // Owns the widgets for messages prompting to exit fullscreen/mouselock, and
 // the exit popup. Owned as a window property.
-class ExitNotifier : public ui::EventHandler, public ash::WindowStateObserver {
+class ExitNotifier : public ui::EventHandler,
+                     public exo::UILockController::Notifier,
+                     public aura::WindowObserver,
+                     public ash::WindowStateObserver {
  public:
-  explicit ExitNotifier(aura::Window* window) : window_(window) {
+  explicit ExitNotifier(exo::UILockController* controller, aura::Window* window)
+      : window_(window) {
+    controller_observation_.Observe(controller);
+    window_observation_.Observe(window);
+
     ash::WindowState* window_state = ash::WindowState::Get(window);
     window_state_observation_.Observe(window_state);
     if (window_state->IsFullscreen())
@@ -176,8 +189,40 @@ class ExitNotifier : public ui::EventHandler, public ash::WindowStateObserver {
   ExitNotifier& operator=(const ExitNotifier&) = delete;
 
   ~ExitNotifier() override {
+    want_pointer_capture_notification_ = false;
     OnExitFullscreen();
     ClosePointerCaptureNotification();
+  }
+
+  void OnPointerCaptureEnabled() {
+    pointer_is_captured_ = true;
+    MaybeShowPointerCaptureNotification();
+  }
+
+  void OnPointerCaptureDisabled() { pointer_is_captured_ = false; }
+
+  // If this window is currently in a state that would have triggered a
+  // notification when entered, re-show that notification as a reminder.
+  void NotifyAgain() override {
+    // Always reset the notification cooldown, to ensure notifications show in
+    // the case where pointer lock is not currently active but will be soon.
+    next_pointer_notify_time_ = base::TimeTicks::Now();
+
+    ash::WindowState* window_state = ash::WindowState::Get(window_);
+    if (window_state->IsFullscreen()) {
+      OnFullscreen();
+    } else if (pointer_is_captured_) {
+      MaybeShowPointerCaptureNotification();
+    }
+  }
+
+  void OnWindowDestroying(aura::Window* window) override {
+    window_observation_.Reset();
+    window_state_observation_.Reset();
+  }
+
+  void OnUILockControllerDestroying() override {
+    controller_observation_.Reset();
   }
 
   views::Widget* fullscreen_esc_notification() {
@@ -190,6 +235,7 @@ class ExitNotifier : public ui::EventHandler, public ash::WindowStateObserver {
 
   FullscreenControlPopup* exit_popup() { return exit_popup_.get(); }
 
+ private:
   void MaybeShowPointerCaptureNotification() {
     // Respect cooldown.
     if (base::TimeTicks::Now() < next_pointer_notify_time_)
@@ -246,7 +292,6 @@ class ExitNotifier : public ui::EventHandler, public ash::WindowStateObserver {
     }
   }
 
- private:
   void OnPointerCaptureNotifyTimerFinished() {
     // Start the cooldown when the timer successfully elapses, to ensure the
     // notification was shown for a sufficiently long time.
@@ -398,6 +443,7 @@ class ExitNotifier : public ui::EventHandler, public ash::WindowStateObserver {
   views::Widget* fullscreen_esc_notification_ = nullptr;
   views::Widget* pointer_capture_notification_ = nullptr;
   bool want_pointer_capture_notification_ = false;
+  bool pointer_is_captured_ = false;
   std::unique_ptr<FullscreenControlPopup> exit_popup_;
   bool is_handling_events_ = false;
   bool exit_popup_cooldown_ = false;
@@ -405,8 +451,13 @@ class ExitNotifier : public ui::EventHandler, public ash::WindowStateObserver {
   base::OneShotTimer pointer_capture_notify_timer_;
   base::TimeTicks next_pointer_notify_time_;
   base::OneShotTimer exit_popup_timer_;
+  base::ScopedObservation<aura::Window, aura::WindowObserver>
+      window_observation_{this};
   base::ScopedObservation<ash::WindowState, ash::WindowStateObserver>
       window_state_observation_{this};
+  base::ScopedObservation<exo::UILockController,
+                          exo::UILockController::Notifier>
+      controller_observation_{this};
 };
 
 }  // namespace
@@ -417,10 +468,9 @@ namespace exo {
 namespace {
 DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(ExitNotifier, kExitNotifierKey, nullptr)
 
-ExitNotifier* GetExitNotifier(aura::Window* window, bool create) {
-  if (!base::FeatureList::IsEnabled(chromeos::features::kExoLockNotification))
-    return nullptr;
-
+ExitNotifier* GetExitNotifier(UILockController* controller,
+                              aura::Window* window,
+                              bool create) {
   if (!window)
     return nullptr;
 
@@ -431,8 +481,8 @@ ExitNotifier* GetExitNotifier(aura::Window* window, bool create) {
   ExitNotifier* notifier = toplevel->GetProperty(kExitNotifierKey);
   if (!notifier && create) {
     // Object is owned as a window property.
-    notifier = toplevel->SetProperty(kExitNotifierKey,
-                                     std::make_unique<ExitNotifier>(toplevel));
+    notifier = toplevel->SetProperty(
+        kExitNotifierKey, std::make_unique<ExitNotifier>(controller, toplevel));
   }
 
   return notifier;
@@ -446,13 +496,33 @@ constexpr auto kExcludedFlags = ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN |
                                 ui::EF_ALTGR_DOWN | ui::EF_IS_REPEAT;
 
 UILockController::UILockController(Seat* seat) : seat_(seat) {
+  last_activity_time_ = base::TimeTicks::Now();
   WMHelper::GetInstance()->AddPreTargetHandler(this);
   seat_->AddObserver(this, kUILockControllerSeatObserverPriority);
+
+  WMHelper::GetInstance()->AddPowerObserver(this);
+
+  auto* session_controller = ash::SessionController::Get();
+  if (session_controller)
+    session_controller->AddObserver(this);
+
+  ui::UserActivityDetector::Get()->AddObserver(this);
 }
 
 UILockController::~UILockController() {
+  ui::UserActivityDetector::Get()->RemoveObserver(this);
+
+  auto* session_controller = ash::SessionController::Get();
+  if (session_controller)
+    session_controller->RemoveObserver(this);
+
+  WMHelper::GetInstance()->RemovePowerObserver(this);
+
   seat_->RemoveObserver(this);
   WMHelper::GetInstance()->RemovePreTargetHandler(this);
+
+  for (Notifier& notifier : notifiers_)
+    notifier.OnUILockControllerDestroying();
 }
 
 void UILockController::OnKeyEvent(ui::KeyEvent* event) {
@@ -470,27 +540,46 @@ void UILockController::OnKeyEvent(ui::KeyEvent* event) {
   }
 }
 
+void UILockController::SuspendDone() {
+  ReshowAllNotifications();
+}
+
+void UILockController::ScreenBrightnessChanged(double percent) {
+  // Show alert when the device returns from low (epsilon) brightness which
+  // covers three cases.
+  // 1. The device returns from sleep.
+  // 2. The device lid is opened (with sleep on).
+  // 3. The device returns from low display brightness.
+  double epsilon = std::numeric_limits<double>::epsilon();
+  if (percent <= epsilon) {
+    device_in_dark_ = true;
+  } else {
+    if (device_in_dark_)
+      ReshowAllNotifications();
+    device_in_dark_ = false;
+  }
+}
+
+void UILockController::LidEventReceived(bool opened) {
+  // Show alert when the lid is opened. This also covers the case when the user
+  // turns off "Sleep when cover is closed".
+  if (opened)
+    ReshowAllNotifications();
+}
+
+void UILockController::OnLockStateChanged(bool locked) {
+  if (!locked)
+    ReshowAllNotifications();
+}
+
 void UILockController::OnSurfaceFocused(Surface* gained_focus,
                                         Surface* lost_focus,
                                         bool has_focused_surface) {
   if (gained_focus != focused_surface_to_unlock_)
     StopTimer();
 
-  if (!base::FeatureList::IsEnabled(chromeos::features::kExoLockNotification))
-    return;
-
-  if (!gained_focus || !gained_focus->window())
-    return;
-
-  aura::Window* window = gained_focus->window()->GetToplevelWindow();
-  if (!IsUILockControllerEnabled(window))
-    return;
-
-  // Object is owned as a window property.
-  if (!window->GetProperty(kExitNotifierKey)) {
-    window->SetProperty(kExitNotifierKey,
-                        std::make_unique<ExitNotifier>(window));
-  }
+  if (gained_focus)
+    GetExitNotifier(this, gained_focus->window(), true);
 }
 
 void UILockController::OnPointerCaptureEnabled(Pointer* pointer,
@@ -501,9 +590,9 @@ void UILockController::OnPointerCaptureEnabled(Pointer* pointer,
     return;
 
   captured_pointers_.insert(pointer);
-  ExitNotifier* notifier = GetExitNotifier(window, false);
+  ExitNotifier* notifier = GetExitNotifier(this, window, false);
   if (notifier)
-    notifier->MaybeShowPointerCaptureNotification();
+    notifier->OnPointerCaptureEnabled();
 }
 
 void UILockController::OnPointerCaptureDisabled(Pointer* pointer,
@@ -513,10 +602,18 @@ void UILockController::OnPointerCaptureDisabled(Pointer* pointer,
 
   captured_pointers_.erase(pointer);
   if (captured_pointers_.empty()) {
-    ExitNotifier* notifier = GetExitNotifier(window, false);
+    ExitNotifier* notifier = GetExitNotifier(this, window, false);
     if (notifier)
-      notifier->ClosePointerCaptureNotification();
+      notifier->OnPointerCaptureDisabled();
   }
+}
+
+void UILockController::OnUserActivity(const ui::Event* event) {
+  base::TimeTicks now = base::TimeTicks::Now();
+  if (now - last_activity_time_ >= kReshowNotificationsWhenIdleFor) {
+    ReshowAllNotifications();
+  }
+  last_activity_time_ = now;
 }
 
 views::Widget* UILockController::GetPointerCaptureNotificationForTesting(
@@ -532,6 +629,20 @@ views::Widget* UILockController::GetEscNotificationForTesting(
 FullscreenControlPopup* UILockController::GetExitPopupForTesting(
     aura::Window* window) {
   return window->GetProperty(kExitNotifierKey)->exit_popup();
+}
+
+void UILockController::AddObserver(UILockController::Notifier* notifier) {
+  notifiers_.AddObserver(notifier);
+}
+
+void UILockController::RemoveObserver(UILockController::Notifier* notifier) {
+  notifiers_.RemoveObserver(notifier);
+}
+
+void UILockController::ReshowAllNotifications() {
+  VLOG(1) << "ReshowAllNotifications";
+  for (Notifier& notifier : notifiers_)
+    notifier.NotifyAgain();
 }
 
 namespace {

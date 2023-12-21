@@ -217,8 +217,8 @@ static void set_segment_index(VP9_COMP *cpi, MACROBLOCK *const x, int mi_row,
       break;
   }
 
-  // Set segment index from ROI map if it's enabled.
-  if (cpi->roi.enabled)
+  // Set segment index if ROI map or active_map is enabled.
+  if (cpi->roi.enabled || cpi->active_map.enabled)
     mi->segment_id = get_segment_id(cm, map, bsize, mi_row, mi_col);
 
   vp9_init_plane_quantizers(cpi, x);
@@ -1299,7 +1299,7 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
   // the reference (base layer frame) is key frame (i.e., is_key_frame == 1).
   int is_key_frame =
       (frame_is_intra_only(cm) ||
-       (is_one_pass_cbr_svc(cpi) &&
+       (is_one_pass_svc(cpi) &&
         cpi->svc.layer_context[cpi->svc.temporal_layer_id].is_key_frame));
   // Always use 4x4 partition for key frame.
   const int use_4x4_partition = frame_is_intra_only(cm);
@@ -1406,7 +1406,7 @@ static int choose_partitioning(VP9_COMP *cpi, const TileInfo *const tile,
 
     assert(yv12 != NULL);
 
-    if (!(is_one_pass_cbr_svc(cpi) && cpi->svc.spatial_layer_id) ||
+    if (!(is_one_pass_svc(cpi) && cpi->svc.spatial_layer_id) ||
         cpi->svc.use_gf_temporal_ref_current_layer) {
       // For now, GOLDEN will not be used for non-zero spatial layers, since
       // it may not be a temporal reference.
@@ -1905,13 +1905,17 @@ void vp9_setup_src_planes(MACROBLOCK *x, const YV12_BUFFER_CONFIG *src,
 }
 
 static void set_mode_info_seg_skip(MACROBLOCK *x, TX_MODE tx_mode,
+                                   INTERP_FILTER interp_filter,
                                    RD_COST *rd_cost, BLOCK_SIZE bsize) {
   MACROBLOCKD *const xd = &x->e_mbd;
   MODE_INFO *const mi = xd->mi[0];
   INTERP_FILTER filter_ref;
 
   filter_ref = get_pred_context_switchable_interp(xd);
-  if (filter_ref == SWITCHABLE_FILTERS) filter_ref = EIGHTTAP;
+  if (interp_filter == BILINEAR)
+    filter_ref = BILINEAR;
+  else if (filter_ref == SWITCHABLE_FILTERS)
+    filter_ref = EIGHTTAP;
 
   mi->sb_type = bsize;
   mi->mode = ZEROMV;
@@ -2495,7 +2499,8 @@ static void update_state_rt(VP9_COMP *cpi, ThreadData *td,
   *(xd->mi[0]) = ctx->mic;
   *(x->mbmi_ext) = ctx->mbmi_ext;
 
-  if (seg->enabled && (cpi->oxcf.aq_mode != NO_AQ || cpi->roi.enabled)) {
+  if (seg->enabled && (cpi->oxcf.aq_mode != NO_AQ || cpi->roi.enabled ||
+                       cpi->active_map.enabled)) {
     // Setting segmentation map for cyclic_refresh.
     if (cpi->oxcf.aq_mode == CYCLIC_REFRESH_AQ &&
         cpi->cyclic_refresh->content_mode) {
@@ -3408,7 +3413,8 @@ static void simple_motion_search(const VP9_COMP *const cpi, MACROBLOCK *const x,
   const VP9_COMMON *const cm = &cpi->common;
   MACROBLOCKD *const xd = &x->e_mbd;
   MODE_INFO *const mi = xd->mi[0];
-  const YV12_BUFFER_CONFIG *const yv12 = get_ref_frame_buffer(cpi, ref);
+  YV12_BUFFER_CONFIG *yv12;
+  YV12_BUFFER_CONFIG *scaled_ref_frame = vp9_get_scaled_ref_frame(cpi, ref);
   const int step_param = 1;
   const MvLimits tmp_mv_limits = x->mv_limits;
   const SEARCH_METHODS search_method = NSTEP;
@@ -3416,6 +3422,11 @@ static void simple_motion_search(const VP9_COMP *const cpi, MACROBLOCK *const x,
   MV ref_mv_full = { ref_mv.row >> 3, ref_mv.col >> 3 };
   MV best_mv = { 0, 0 };
   int cost_list[5];
+
+  if (scaled_ref_frame)
+    yv12 = scaled_ref_frame;
+  else
+    yv12 = get_ref_frame_buffer(cpi, ref);
 
   assert(yv12 != NULL);
   if (!yv12) return;
@@ -4682,7 +4693,7 @@ static void nonrd_pick_sb_modes(VP9_COMP *cpi, TileDataEnc *tile_data,
     hybrid_search_svc_baseiskey(cpi, x, rd_cost, bsize, ctx, tile_data, mi_row,
                                 mi_col);
   else if (segfeature_active(&cm->seg, mi->segment_id, SEG_LVL_SKIP))
-    set_mode_info_seg_skip(x, cm->tx_mode, rd_cost, bsize);
+    set_mode_info_seg_skip(x, cm->tx_mode, cm->interp_filter, rd_cost, bsize);
   else if (bsize >= BLOCK_8X8) {
     if (cpi->rc.hybrid_intra_scene_change)
       hybrid_search_scene_change(cpi, x, rd_cost, bsize, ctx, tile_data, mi_row,
@@ -5376,7 +5387,7 @@ static void get_estimated_pred(VP9_COMP *cpi, const TileInfo *const tile,
 
     assert(yv12 != NULL);
 
-    if (!(is_one_pass_cbr_svc(cpi) && cpi->svc.spatial_layer_id) ||
+    if (!(is_one_pass_svc(cpi) && cpi->svc.spatial_layer_id) ||
         cpi->svc.use_gf_temporal_ref_current_layer) {
       // For now, GOLDEN will not be used for non-zero spatial layers, since
       // it may not be a temporal reference.
@@ -5851,9 +5862,12 @@ void vp9_encode_sb_row(VP9_COMP *cpi, ThreadData *td, int tile_row,
   get_start_tok(cpi, tile_row, tile_col, mi_row, &tok);
   cpi->tplist[tile_row][tile_col][tile_sb_row].start = tok;
 
+#if CONFIG_REALTIME_ONLY
+  assert(cpi->sf.use_nonrd_pick_mode);
+  encode_nonrd_sb_row(cpi, td, this_tile, mi_row, &tok);
+#else
   if (cpi->sf.use_nonrd_pick_mode)
     encode_nonrd_sb_row(cpi, td, this_tile, mi_row, &tok);
-#if !CONFIG_REALTIME_ONLY
   else
     encode_rd_sb_row(cpi, td, this_tile, mi_row, &tok);
 #endif

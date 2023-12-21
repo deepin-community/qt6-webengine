@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,19 +6,19 @@
 
 #include <stddef.h>
 
-#include <algorithm>
 #include <queue>
 #include <set>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
+#include "base/containers/contains.h"
 #include "base/containers/cxx20_erase.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/json/json_reader.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -31,6 +31,7 @@
 #include "components/signin/public/base/signin_metrics.h"
 #include "components/signin/public/base/signin_pref_names.h"
 #include "components/signin/public/identity_manager/set_accounts_in_cookie_result.h"
+#include "google_apis/credentials_mode.h"
 #include "google_apis/gaia/gaia_constants.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "net/base/load_flags.h"
@@ -267,7 +268,7 @@ void GaiaCookieManagerService::ExternalCcResultFetcher::TimeoutForTests() {
 
 void GaiaCookieManagerService::ExternalCcResultFetcher::
     OnGetCheckConnectionInfoSuccess(const std::string& data) {
-  std::unique_ptr<base::Value> value = base::JSONReader::ReadDeprecated(data);
+  absl::optional<base::Value> value = base::JSONReader::Read(data);
   if (!value || !value->is_list()) {
     CleanupTransientState();
     GetCheckConnectionInfoCompleted(false);
@@ -275,14 +276,14 @@ void GaiaCookieManagerService::ExternalCcResultFetcher::
   }
 
   // If there is nothing to check, terminate immediately.
-  if (value->GetListDeprecated().size() == 0) {
+  if (value->GetList().size() == 0) {
     CleanupTransientState();
     GetCheckConnectionInfoCompleted(true);
     return;
   }
 
   // Start a fetcher for each connection URL that needs to be checked.
-  for (const base::Value& elem : value->GetListDeprecated()) {
+  for (const base::Value& elem : value->GetList()) {
     if (!elem.is_dict())
       continue;
 
@@ -347,7 +348,8 @@ GaiaCookieManagerService::ExternalCcResultFetcher::CreateAndStartLoader(
 
   auto request = std::make_unique<network::ResourceRequest>();
   request->url = url;
-  request->credentials_mode = network::mojom::CredentialsMode::kOmit;
+  request->credentials_mode =
+      google_apis::GetOmitCredentialsModeForGaiaRequests();
 
   std::unique_ptr<network::SimpleURLLoader> loader =
       network::SimpleURLLoader::Create(std::move(request), traffic_annotation);
@@ -441,9 +443,11 @@ void GaiaCookieManagerService::ExternalCcResultFetcher::
 }
 
 GaiaCookieManagerService::GaiaCookieManagerService(
+    AccountTrackerService* account_tracker_service,
     ProfileOAuth2TokenService* token_service,
     SigninClient* signin_client)
-    : token_service_(token_service),
+    : account_tracker_service_(account_tracker_service),
+      token_service_(token_service),
       signin_client_(signin_client),
       external_cc_result_fetcher_(this),
       fetcher_backoff_(&kBackoffPolicy),
@@ -595,10 +599,8 @@ void GaiaCookieManagerService::TriggerListAccounts() {
     signin_client_->DelayNetworkCall(
         base::BindOnce(&GaiaCookieManagerService::StartFetchingListAccounts,
                        weak_ptr_factory_.GetWeakPtr()));
-  } else if (std::find_if(requests_.begin(), requests_.end(),
-                          [](const GaiaCookieRequest& request) {
-                            return request.request_type() == LIST_ACCOUNTS;
-                          }) == requests_.end()) {
+  } else if (!base::Contains(requests_, LIST_ACCOUNTS,
+                             &GaiaCookieRequest::request_type)) {
     requests_.push_back(GaiaCookieRequest::CreateListAccountsRequest());
   }
 }
@@ -716,7 +718,7 @@ GaiaCookieManagerService::GetURLLoaderFactory() {
 void GaiaCookieManagerService::MarkListAccountsStale() {
   list_accounts_stale_ = true;
 #if BUILDFLAG(IS_IOS)
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(&GaiaCookieManagerService::ForceOnCookieChangeProcessing,
                      weak_ptr_factory_.GetWeakPtr()));
@@ -1008,8 +1010,8 @@ GaiaCookieManagerService::GetCookieManagerForPartition() {
 void GaiaCookieManagerService::InitializeListedAccountsIds() {
   for (gaia::ListedAccount& account : listed_accounts_) {
     DCHECK(account.id.empty());
-    account.id = AccountTrackerService::PickAccountIdForAccount(
-        signin_client_->GetPrefs(), account.gaia_id, account.email);
+    account.id = account_tracker_service_->PickAccountIdForAccount(
+        account.gaia_id, account.email);
   }
 }
 

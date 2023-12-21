@@ -1,16 +1,14 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/input/gesture_manager.h"
 
-#include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/common/input/web_pointer_event.h"
 #include "third_party/blink/public/mojom/frame/user_activation_notification_type.mojom-blink.h"
 #include "third_party/blink/public/public_buildflags.h"
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/editing/selection_controller.h"
 #include "third_party/blink/renderer/core/event_type_names.h"
 #include "third_party/blink/renderer/core/events/gesture_event.h"
@@ -28,8 +26,6 @@
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
-#include "third_party/blink/renderer/core/scroll/scroll_animator_base.h"
-#include "third_party/blink/renderer/platform/wtf/deque.h"
 #include "ui/gfx/geometry/point_conversions.h"
 
 #if BUILDFLAG(ENABLE_UNHANDLED_TAP)
@@ -50,6 +46,11 @@ namespace {
 // The amount of drag (in pixels) that is considered to be within a slop region.
 // This allows firing touch dragend contextmenu events for shaky fingers.
 const int kTouchDragSlop = 8;
+
+bool TouchDragAndContextMenuEnabled(const LocalFrame* frame) {
+  return RuntimeEnabledFeatures::TouchDragAndContextMenuEnabled() &&
+         frame->GetSettings() && !frame->GetSettings()->GetModalContextMenu();
+}
 
 }  // namespace
 
@@ -331,6 +332,10 @@ WebInputEventResult GestureManager::HandleGestureTap(
       click_event_result =
           mouse_event_manager_->SetMousePositionAndDispatchMouseEvent(
               click_target_element, event_type_names::kClick, fake_mouse_up);
+
+      // Dispatching a JS event could have detached the frame.
+      if (frame_->View())
+        frame_->View()->RegisterTapEvent(tapped_element);
     }
     mouse_event_manager_->SetClickElement(nullptr);
   }
@@ -371,7 +376,7 @@ WebInputEventResult GestureManager::HandleGestureTap(
         frame_->GetPage()->GetVisualViewport().RootFrameToViewport(
             tapped_position);
     ShowUnhandledTapUIIfNeeded(dom_tree_changed, style_changed, tapped_node,
-                               tapped_element, tapped_position_in_viewport);
+                               tapped_position_in_viewport);
   }
 
   return event_result;
@@ -385,7 +390,7 @@ WebInputEventResult GestureManager::HandleGestureShortPress(
   // long-press.  However, on Android an ACTION_CANCEL event is fired on
   // drag-start, and occcasionally that happens before long-press gesture
   // timeout which causes GestureRecognizer to suppress long-press detection.
-  if (RuntimeEnabledFeatures::TouchDragAndContextMenuEnabled() &&
+  if (TouchDragAndContextMenuEnabled(frame_) &&
       RuntimeEnabledFeatures::TouchDragOnShortPressEnabled()) {
     drag_in_progress_ =
         mouse_event_manager_->HandleDragDropIfPossible(targeted_event);
@@ -411,7 +416,7 @@ WebInputEventResult GestureManager::HandleGestureLongPress(
 
   gesture_context_menu_deferred_ = false;
 
-  if (RuntimeEnabledFeatures::TouchDragAndContextMenuEnabled()) {
+  if (TouchDragAndContextMenuEnabled(frame_)) {
     if (!RuntimeEnabledFeatures::TouchDragOnShortPressEnabled()) {
       drag_in_progress_ =
           mouse_event_manager_->HandleDragDropIfPossible(targeted_event);
@@ -557,11 +562,9 @@ void GestureManager::ShowUnhandledTapUIIfNeeded(
     bool dom_tree_changed,
     bool style_changed,
     Node* tapped_node,
-    Element* tapped_element,
     const gfx::Point& tapped_position_in_viewport) {
 #if BUILDFLAG(ENABLE_UNHANDLED_TAP)
   WebNode web_node(tapped_node);
-  // TODO(donnd): roll in ML-identified signals for suppression once identified.
   bool should_trigger = !dom_tree_changed && !style_changed &&
                         tapped_node->IsTextNode() &&
                         !web_node.IsContentEditable() &&
@@ -574,22 +577,9 @@ void GestureManager::ShowUnhandledTapUIIfNeeded(
     frame_->GetBrowserInterfaceBroker().GetInterface(
         provider.BindNewPipeAndPassReceiver());
 
-    // Extract text run-length.
-    int text_run_length = 0;
-    if (tapped_element)
-      text_run_length = tapped_element->textContent().length();
-
-    int font_size = 0;
-    // Extract text characteristics from the computed style of the tapped node.
-    if (const ComputedStyle* style = tapped_node->GetComputedStyle())
-      font_size = style->FontSize();
-
-    // TODO(donnd): get the text color and style and return,
-    // e.g. style->GetFontWeight() to return bold.  Need italic, color, etc.
-
     // Notify the Browser.
-    auto tapped_info = mojom::blink::UnhandledTapInfo::New(
-        tapped_position_in_viewport, font_size, text_run_length);
+    auto tapped_info =
+        mojom::blink::UnhandledTapInfo::New(tapped_position_in_viewport);
     provider->ShowUnhandledTapUIIfNeeded(std::move(tapped_info));
   }
 #endif  // BUILDFLAG(ENABLE_UNHANDLED_TAP)

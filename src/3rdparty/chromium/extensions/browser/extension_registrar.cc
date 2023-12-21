@@ -1,21 +1,18 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "extensions/browser/extension_registrar.h"
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/check_op.h"
 #include "base/containers/contains.h"
-#include "base/metrics/histogram_macros.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/notreached.h"
 #include "build/chromeos_buildflags.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/devtools_agent_host.h"
-#include "content/public/browser/storage_partition.h"
-#include "extensions/browser/app_sorting.h"
 #include "extensions/browser/blocklist_extension_prefs.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_prefs.h"
@@ -29,6 +26,7 @@
 #include "extensions/browser/service_worker_task_queue.h"
 #include "extensions/browser/task_queue_util.h"
 #include "extensions/common/manifest_handlers/background_info.h"
+#include "extensions/common/permissions/permissions_data.h"
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "chrome/browser/ash/crosapi/browser_util.h"
@@ -69,10 +67,6 @@ void ExtensionRegistrar::AddExtension(
     // Other than for unpacked extensions, we should not be downgrading.
     if (!Manifest::IsUnpackedLocation(extension->location()) &&
         version_compare_result < 0) {
-      UMA_HISTOGRAM_ENUMERATION(
-          "Extensions.AttemptedToDowngradeVersionLocation",
-          extension->location());
-
       // TODO(https://crbug.com/810799): It would be awfully nice to CHECK this,
       // but that's caused problems. There are apparently times when this
       // happens that we aren't accounting for. We should track those down and
@@ -107,6 +101,7 @@ void ExtensionRegistrar::AddExtension(
       // the new one. ReloadExtension disables the extension, which is
       // sufficient.
       RemoveExtension(extension->id(), UnloadedExtensionReason::UPDATE);
+      UnregisterServiceWorkerWithRootScope(extension.get());
     }
     AddNewExtension(extension);
   }
@@ -129,15 +124,6 @@ void ExtensionRegistrar::AddNewExtension(
   } else if (extension_prefs_->IsExtensionDisabled(extension->id())) {
     registry_->AddDisabled(extension);
   } else {  // Extension should be enabled.
-    // All apps that are displayed in the launcher are ordered by their ordinals
-    // so we must ensure they have valid ordinals.
-    if (extension->RequiresSortOrdinal()) {
-      AppSorting* app_sorting = extension_system_->app_sorting();
-      app_sorting->SetExtensionVisible(extension->id(),
-                                       extension->ShouldDisplayInNewTabPage());
-      app_sorting->EnsureValidOrdinals(extension->id(),
-                                       syncer::StringOrdinal());
-    }
     registry_->AddEnabled(extension);
     ActivateExtension(extension.get(), true);
   }
@@ -299,9 +285,8 @@ std::vector<scoped_refptr<DevToolsAgentHost>> GetDevToolsAgentHostsFor(
     }
   } else {
     content::ServiceWorkerContext* context =
-        util::GetStoragePartitionForExtensionId(
-            extension->id(), process_manager->browser_context())
-            ->GetServiceWorkerContext();
+        util::GetServiceWorkerContextForExtensionId(
+            extension->id(), process_manager->browser_context());
     std::vector<WorkerId> service_worker_ids =
         process_manager->GetServiceWorkersForExtension(extension->id());
     for (const auto& worker_id : service_worker_ids) {
@@ -502,10 +487,10 @@ void ExtensionRegistrar::ActivateExtension(const Extension* extension,
 
   delegate_->PostActivateExtension(extension);
 
-  // When an existing extension is re-enabled, it may be necessary to spin up
-  // its lazy background page.
-  if (!is_newly_added)
-    MaybeSpinUpLazyBackgroundPage(extension);
+  // When an extension is activated, and it is either event page-based or
+  // service worker-based, it may be necessary to spin up its context.
+  if (BackgroundInfo::HasLazyContext(extension))
+    MaybeSpinUpLazyContext(extension, is_newly_added);
 }
 
 void ExtensionRegistrar::DeactivateExtension(const Extension* extension,
@@ -516,6 +501,40 @@ void ExtensionRegistrar::DeactivateExtension(const Extension* extension,
   DeactivateTaskQueueForExtension(browser_context_, extension);
 
   delegate_->PostDeactivateExtension(extension);
+}
+
+void ExtensionRegistrar::UnregisterServiceWorkerWithRootScope(
+    const Extension* new_extension) {
+  // Only cleanup the old service worker if the new extension is
+  // service-worker-based.
+  if (!BackgroundInfo::IsServiceWorkerBased(new_extension)) {
+    return;
+  }
+
+  // Non service-worker based extensions could register root-scope service
+  // workers using regular web APIs. These service workers are not tracked by
+  // extension ServiceWorkerTaskQueue and would prevent newer service worker
+  // version from installing (crbug/1340341).
+  content::ServiceWorkerContext* context =
+      util::GetServiceWorkerContextForExtensionId(new_extension->id(),
+                                                  browser_context_);
+  // Even though the unregistration process for a service worker is
+  // asynchronous, we begin the process before the new extension is added, so
+  // the old worker will be unregistered before the new one is registered.
+  context->UnregisterServiceWorker(
+      new_extension->url(),
+      blink::StorageKey::CreateFirstParty(new_extension->origin()),
+      base::BindOnce(&ExtensionRegistrar::NotifyServiceWorkerUnregistered,
+                     weak_factory_.GetWeakPtr(), new_extension->id()));
+}
+
+void ExtensionRegistrar::NotifyServiceWorkerUnregistered(
+    const ExtensionId& extension_id,
+    bool success) {
+  if (!success) {
+    LOG(ERROR) << "Failed to unregister service worker for extension "
+               << extension_id;
+  }
 }
 
 bool ExtensionRegistrar::ReplaceReloadedExtension(
@@ -551,10 +570,9 @@ void ExtensionRegistrar::OnExtensionRegisteredWithRequestContexts(
     registry_->TriggerOnReady(extension.get());
 }
 
-void ExtensionRegistrar::MaybeSpinUpLazyBackgroundPage(
-    const Extension* extension) {
-  if (!BackgroundInfo::HasLazyBackgroundPage(extension))
-    return;
+void ExtensionRegistrar::MaybeSpinUpLazyContext(const Extension* extension,
+                                                bool is_newly_added) {
+  DCHECK(BackgroundInfo::HasLazyContext(extension));
 
   // For orphaned devtools, we will reconnect devtools to it later in
   // DidCreateMainFrameForBackgroundPage().
@@ -567,11 +585,35 @@ void ExtensionRegistrar::MaybeSpinUpLazyBackgroundPage(
   bool is_component_extension =
       Manifest::IsComponentLocation(extension->location());
 
-  if (!has_orphaned_dev_tools && !is_component_extension)
+  // TODO(crbug.com/1024211): This is either a workaround or something
+  // that will be part of the permanent solution for service worker-
+  // based extensions.
+  // We spin up extensions with the webRequest permission so their
+  // listeners are reconstructed on load.
+  bool has_web_request_permission =
+      extension->permissions_data()->HasAPIPermission(
+          mojom::APIPermissionID::kWebRequest);
+  // Event page-based extension cannot have the webRequest permission.
+  DCHECK(!has_web_request_permission ||
+         BackgroundInfo::IsServiceWorkerBased(extension));
+
+  // If there aren't any special cases, we're done.
+  if (!has_orphaned_dev_tools && !is_component_extension &&
+      !has_web_request_permission) {
+    return;
+  }
+
+  // If the extension's not being reloaded (|is_newly_added| = true),
+  // only wake it up if it has the webRequest permission.
+  if (is_newly_added && !has_web_request_permission)
     return;
 
-  // Wake up the event page by posting a dummy task.
-  const LazyContextId context_id(browser_context_, extension->id());
+  // Wake up the extension by posting a dummy task. In the case of a service
+  // worker-based extension with the webRequest permission that's being newly
+  // installed, this will result in a no-op task that's not necessary, since
+  // this is really only needed for a previously-installed extension. However,
+  // that cost is minimal, since the worker is already active.
+  const LazyContextId context_id(browser_context_, extension);
   context_id.GetTaskQueue()->AddPendingTask(context_id, base::DoNothing());
 }
 

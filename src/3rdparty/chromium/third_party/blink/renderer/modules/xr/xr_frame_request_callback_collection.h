@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "base/check_op.h"
 #include "third_party/blink/renderer/platform/bindings/name_client.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -48,8 +49,7 @@ class XRFrameRequestCallbackCollection final
  private:
   bool IsValidCallbackId(int id) {
     using Traits = HashTraits<CallbackId>;
-    return !Traits::IsDeletedValue(id) &&
-           !WTF::IsHashTraitsEmptyValue<Traits, CallbackId>(id);
+    return !WTF::IsHashTraitsEmptyOrDeletedValue<Traits, CallbackId>(id);
   }
 
   using CallbackFrameRequestMap =

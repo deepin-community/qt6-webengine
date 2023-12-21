@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,6 +27,9 @@ class AutofillClientImpl
   ~AutofillClientImpl() override;
 
   // AutofillClient:
+  bool IsOffTheRecord() override;
+  scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory() override;
+  autofill::AutofillDownloadManager* GetDownloadManager() override;
   autofill::PersonalDataManager* GetPersonalDataManager() override;
   autofill::AutocompleteHistoryManager* GetAutocompleteHistoryManager()
       override;
@@ -40,15 +43,16 @@ class AutofillClientImpl
   ukm::UkmRecorder* GetUkmRecorder() override;
   ukm::SourceId GetUkmSourceId() override;
   autofill::AddressNormalizer* GetAddressNormalizer() override;
-  const GURL& GetLastCommittedURL() const override;
+  const GURL& GetLastCommittedPrimaryMainFrameURL() const override;
+  url::Origin GetLastCommittedPrimaryMainFrameOrigin() const override;
   security_state::SecurityLevel GetSecurityLevelForUmaHistograms() override;
   const translate::LanguageState* GetLanguageState() override;
   translate::TranslateDriver* GetTranslateDriver() override;
 
-  void ShowAutofillSettings(bool show_credit_card_settings) override;
+  void ShowAutofillSettings(autofill::PopupType popup_type) override;
   void ShowUnmaskPrompt(
       const autofill::CreditCard& card,
-      UnmaskCardReason reason,
+      const autofill::CardUnmaskPromptOptions& card_unmask_prompt_options,
       base::WeakPtr<autofill::CardUnmaskDelegate> delegate) override;
   void OnUnmaskVerificationResult(PaymentsRpcResult result) override;
 
@@ -109,29 +113,41 @@ class AutofillClientImpl
       AddressProfileSavePromptCallback callback) override;
   bool HasCreditCardScanFeature() override;
   void ScanCreditCard(CreditCardScanCallback callback) override;
+  bool TryToShowFastCheckout(
+      const autofill::FormData& form,
+      const autofill::FormFieldData& field,
+      base::WeakPtr<autofill::AutofillManager> autofill_manager) override;
+  void HideFastCheckout(bool allow_further_runs) override;
+  bool IsFastCheckoutSupported() override;
+  bool IsShowingFastCheckoutUI() override;
+  bool IsTouchToFillCreditCardSupported() override;
+  bool ShowTouchToFillCreditCard(
+      base::WeakPtr<autofill::TouchToFillDelegate> delegate,
+      base::span<const autofill::CreditCard> cards_to_suggest) override;
+  void HideTouchToFillCreditCard() override;
   void ShowAutofillPopup(
       const autofill::AutofillClient::PopupOpenArgs& open_args,
       base::WeakPtr<autofill::AutofillPopupDelegate> delegate) override;
   void UpdateAutofillPopupDataListValues(
       const std::vector<std::u16string>& values,
       const std::vector<std::u16string>& labels) override;
-  base::span<const autofill::Suggestion> GetPopupSuggestions() const override;
+  std::vector<autofill::Suggestion> GetPopupSuggestions() const override;
   void PinPopupView() override;
   autofill::AutofillClient::PopupOpenArgs GetReopenPopupArgs() const override;
   void UpdatePopup(const std::vector<autofill::Suggestion>& suggestions,
                    autofill::PopupType popup_type) override;
   void HideAutofillPopup(autofill::PopupHidingReason reason) override;
-  bool IsAutocompleteEnabled() override;
+  bool IsAutocompleteEnabled() const override;
   bool IsPasswordManagerEnabled() override;
   void PropagateAutofillPredictions(
-      content::RenderFrameHost* rfh,
+      autofill::AutofillDriver* driver,
       const std::vector<autofill::FormStructure*>& forms) override;
   void DidFillOrPreviewField(const std::u16string& autofilled_value,
                              const std::u16string& profile_full_name) override;
   bool IsContextSecure() const override;
-  bool ShouldShowSigninPromo() override;
-  bool AreServerCardsSupported() const override;
   void ExecuteCommand(int id) override;
+  void OpenPromoCodeOfferDetailsURL(const GURL& url) override;
+  autofill::FormInteractionsFlowId GetCurrentFormInteractionsFlowId() override;
 
   // RiskDataLoader:
   void LoadRiskData(
@@ -140,6 +156,8 @@ class AutofillClientImpl
  private:
   explicit AutofillClientImpl(content::WebContents* web_contents);
   friend class content::WebContentsUserData<AutofillClientImpl>;
+
+  std::unique_ptr<autofill::AutofillDownloadManager> download_manager_;
 
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 };

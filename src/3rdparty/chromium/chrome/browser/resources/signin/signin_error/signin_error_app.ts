@@ -1,20 +1,22 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'chrome://resources/cr_elements/cr_button/cr_button.m.js';
-import 'chrome://resources/cr_elements/icons.m.js';
-import 'chrome://resources/cr_elements/shared_vars_css.m.js';
+import 'chrome://resources/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/cr_elements/icons.html.js';
+import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
 import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
 import './strings.m.js';
-import './signin_shared_css.js';
+import './signin_shared.css.js';
 
-import {loadTimeData} from 'chrome://resources/js/load_time_data.m.js';
-import {WebUIListenerMixin} from 'chrome://resources/js/web_ui_listener_mixin.js';
-import {html, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
+import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+
+import {getTemplate} from './signin_error_app.html.js';
 
 
-const SigninErrorAppElementBase = WebUIListenerMixin(PolymerElement);
+const SigninErrorAppElementBase = WebUiListenerMixin(PolymerElement);
 
 class SigninErrorAppElement extends SigninErrorAppElementBase {
   static get is() {
@@ -22,14 +24,14 @@ class SigninErrorAppElement extends SigninErrorAppElementBase {
   }
 
   static get template() {
-    return html`{__html_template__}`;
+    return getTemplate();
   }
 
   static get properties() {
     return {
-      isSystemProfile_: {
+      fromProfilePicker_: {
         type: Boolean,
-        value: () => loadTimeData.getBoolean('isSystemProfile'),
+        value: () => loadTimeData.getBoolean('fromProfilePicker'),
       },
 
       switchButtonUnavailable_: {
@@ -66,7 +68,7 @@ class SigninErrorAppElement extends SigninErrorAppElementBase {
     };
   }
 
-  private isSystemProfile_: boolean;
+  private fromProfilePicker_: boolean;
   private switchButtonUnavailable_: boolean;
   private hideNormalError_: boolean;
   private hideProfileBlockingErrors_: boolean[];
@@ -74,7 +76,7 @@ class SigninErrorAppElement extends SigninErrorAppElementBase {
   override connectedCallback() {
     super.connectedCallback();
 
-    this.addWebUIListener('switch-button-unavailable', () => {
+    this.addWebUiListener('switch-button-unavailable', () => {
       this.switchButtonUnavailable_ = true;
       // Move focus to the only displayed button in this case.
       (this.shadowRoot!.querySelector('#confirmButton') as HTMLElement).focus();

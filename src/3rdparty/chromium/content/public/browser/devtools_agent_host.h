@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,10 @@
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/containers/span.h"
 #include "base/files/file_path.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 #include "content/common/content_export.h"
@@ -45,6 +46,7 @@ class ServiceWorkerContext;
 class CONTENT_EXPORT DevToolsAgentHost
     : public base::RefCounted<DevToolsAgentHost> {
  public:
+  static const char kTypeTab[];
   static const char kTypePage[];
   static const char kTypeFrame[];
   static const char kTypeDedicatedWorker[];
@@ -67,6 +69,12 @@ class CONTENT_EXPORT DevToolsAgentHost
   // Returns DevToolsAgentHost that can be used for inspecting |web_contents|.
   // A new DevToolsAgentHost will be created if it does not exist.
   static scoped_refptr<DevToolsAgentHost> GetOrCreateFor(
+      WebContents* web_contents);
+
+  // Similar to the above, but returns a DevToolsAgentHost representing 'tab'
+  // target. Unlike the one for RenderFrame, this will remain the same through
+  // all possible transitions of underlying frame trees.
+  static scoped_refptr<DevToolsAgentHost> GetOrCreateForTab(
       WebContents* web_contents);
 
   // Returns true iff an instance of DevToolsAgentHost for the |web_contents|
@@ -103,6 +111,9 @@ class CONTENT_EXPORT DevToolsAgentHost
   static bool IsDebuggerAttached(WebContents* web_contents);
 
   using List = std::vector<scoped_refptr<DevToolsAgentHost>>;
+
+  // Returns all DevToolsAgentHosts without forcing their creation.
+  static List GetAll();
 
   // Returns all non-browser target DevToolsAgentHosts content is aware of.
   static List GetOrCreateAll();
@@ -216,6 +227,9 @@ class CONTENT_EXPORT DevToolsAgentHost
 
   // Returns the time when the host was last active.
   virtual base::TimeTicks GetLastActivityTime() = 0;
+
+  // Terminates all debugging sessions and detaches all clients.
+  virtual void ForceDetachAllSessions() = 0;
 
   // Terminates all debugging sessions and detaches all clients.
   static void DetachAllClients();

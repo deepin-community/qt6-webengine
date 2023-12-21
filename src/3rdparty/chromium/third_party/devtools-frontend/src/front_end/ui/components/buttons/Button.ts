@@ -24,6 +24,9 @@ export const enum Variant {
 export const enum Size {
   SMALL = 'SMALL',
   MEDIUM = 'MEDIUM',
+  // The 'tiny' size only has an effect on buttons of type 'round', for other
+  // button types 'tiny' buttons look just like 'small' buttons.
+  TINY = 'TINY',
 }
 
 type ButtonType = 'button'|'submit'|'reset';
@@ -38,6 +41,8 @@ interface ButtonState {
   type: ButtonType;
   value?: string;
   title?: string;
+  iconWidth?: string;
+  iconHeight?: string;
 }
 
 export type ButtonData = {
@@ -50,6 +55,8 @@ export type ButtonData = {
   type?: ButtonType,
   value?: string,
   title?: string,
+  iconWidth?: string,
+  iconHeight?: string,
 }|{
   variant: Variant.PRIMARY | Variant.SECONDARY,
   iconUrl?: string,
@@ -60,16 +67,9 @@ export type ButtonData = {
   type?: ButtonType,
   value?: string,
   title?: string,
+  iconWidth?: string,
+  iconHeight?: string,
 };
-
-interface ButtonElementInternals extends ElementInternals {
-  readonly form?: HTMLFormElement;
-  readonly validity: ValidityState;
-  readonly willValidate: boolean;
-  readonly validationMessage: string;
-  checkValidity(): void;
-  reportValidity(): void;
-}
 
 export class Button extends HTMLElement {
   static formAssociated = true;
@@ -85,7 +85,7 @@ export class Button extends HTMLElement {
     type: 'button',
   };
   #isEmpty = true;
-  #internals = this.attachInternals() as ButtonElementInternals;
+  #internals = this.attachInternals();
 
   constructor() {
     super();
@@ -100,10 +100,25 @@ export class Button extends HTMLElement {
   set data(data: ButtonData) {
     this.#props.variant = data.variant;
     this.#props.iconUrl = data.iconUrl;
-    this.#props.size = data.size || Size.MEDIUM;
+    this.#props.size = Size.MEDIUM;
+
+    if ('size' in data && data.size) {
+      this.#props.size = data.size;
+    }
+    if ('iconWidth' in data && data.iconWidth) {
+      this.#props.iconWidth = data.iconWidth;
+    }
+    if ('iconHeight' in data && data.iconHeight) {
+      this.#props.iconHeight = data.iconHeight;
+    }
+
     this.#props.active = Boolean(data.active);
-    this.#props.spinner = Boolean(data.spinner);
-    this.#props.type = data.type || 'button';
+    this.#props.spinner = Boolean('spinner' in data ? data.spinner : false);
+
+    this.#props.type = 'button';
+    if ('type' in data && data.type) {
+      this.#props.type = data.type;
+    }
     this.#setDisabledProperty(data.disabled || false);
     this.#props.title = data.title;
     void ComponentHelpers.ScheduledRender.scheduleRender(this, this.#boundRender);
@@ -121,6 +136,16 @@ export class Button extends HTMLElement {
 
   set size(size: Size) {
     this.#props.size = size;
+    void ComponentHelpers.ScheduledRender.scheduleRender(this, this.#boundRender);
+  }
+
+  set iconWidth(iconWidth: string) {
+    this.#props.iconWidth = iconWidth;
+    void ComponentHelpers.ScheduledRender.scheduleRender(this, this.#boundRender);
+  }
+
+  set iconHeight(iconHeight: string) {
+    this.#props.iconHeight = iconHeight;
     void ComponentHelpers.ScheduledRender.scheduleRender(this, this.#boundRender);
   }
 
@@ -197,7 +222,7 @@ export class Button extends HTMLElement {
         throw new Error('Toolbar button requires an icon');
       }
       if (!this.#isEmpty) {
-        throw new Error('Tooblar button does not accept children');
+        throw new Error('Toolbar button does not accept children');
       }
     }
     if (this.#props.variant === Variant.ROUND) {
@@ -215,8 +240,10 @@ export class Button extends HTMLElement {
       round: this.#props.variant === Variant.ROUND,
       'text-with-icon': Boolean(this.#props.iconUrl) && !this.#isEmpty,
       'only-icon': Boolean(this.#props.iconUrl) && this.#isEmpty,
-      small: Boolean(this.#props.size === Size.SMALL),
+      small: Boolean(this.#props.size === Size.SMALL || this.#props.size === Size.TINY),
+      tiny: Boolean(this.#props.size === Size.TINY),
       active: this.#props.active,
+      'explicit-size': Boolean(this.#props.iconHeight || this.#props.iconWidth),
     };
     const spinnerClasses = {
       primary: this.#props.variant === Variant.PRIMARY,
@@ -232,6 +259,8 @@ export class Button extends HTMLElement {
             .data=${{
               iconPath: this.#props.iconUrl,
               color: 'var(--color-background)',
+              width: this.#props.iconWidth || undefined,
+              height: this.#props.iconHeight || undefined,
             } as IconButton.Icon.IconData}
           >
           </${IconButton.Icon.Icon.litTagName}>` : ''}
@@ -254,7 +283,7 @@ export class Button extends HTMLElement {
   // The following properties and methods aren't strictly required,
   // but browser-level form controls provide them. Providing them helps
   // ensure consistency with browser-provided controls.
-  get form(): HTMLFormElement|undefined {
+  get form(): HTMLFormElement|null {
     return this.#internals.form;
   }
   get name(): string|null {
@@ -272,10 +301,10 @@ export class Button extends HTMLElement {
   get willValidate(): boolean {
     return this.#internals.willValidate;
   }
-  checkValidity(): void {
+  checkValidity(): boolean {
     return this.#internals.checkValidity();
   }
-  reportValidity(): void {
+  reportValidity(): boolean {
     return this.#internals.reportValidity();
   }
 }

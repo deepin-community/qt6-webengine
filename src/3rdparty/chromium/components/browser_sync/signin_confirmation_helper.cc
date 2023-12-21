@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,11 +8,10 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/logging.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "components/history/core/browser/history_backend.h"
 #include "components/history/core/browser/history_db_task.h"
 #include "components/history/core/browser/history_service.h"
@@ -26,8 +25,8 @@ namespace {
 class HasTypedURLsTask : public history::HistoryDBTask {
  public:
   explicit HasTypedURLsTask(base::OnceCallback<void(bool)> cb)
-      : has_typed_urls_(false), cb_(std::move(cb)) {}
-  ~HasTypedURLsTask() override {}
+      : cb_(std::move(cb)) {}
+  ~HasTypedURLsTask() override = default;
 
   bool RunOnDBThread(history::HistoryBackend* backend,
                      history::HistoryDatabase* db) override {
@@ -44,7 +43,7 @@ class HasTypedURLsTask : public history::HistoryDBTask {
   void DoneRunOnMainThread() override { std::move(cb_).Run(has_typed_urls_); }
 
  private:
-  bool has_typed_urls_;
+  bool has_typed_urls_ = false;
   base::OnceCallback<void(bool)> cb_;
 };
 
@@ -53,7 +52,7 @@ class HasTypedURLsTask : public history::HistoryDBTask {
 SigninConfirmationHelper::SigninConfirmationHelper(
     history::HistoryService* history_service,
     base::OnceCallback<void(bool)> return_result)
-    : origin_sequence_(base::SequencedTaskRunnerHandle::Get()),
+    : origin_sequence_(base::SequencedTaskRunner::GetCurrentDefault()),
       history_service_(history_service),
       pending_requests_(0),
       return_result_(std::move(return_result)) {}

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -42,7 +42,7 @@ gin::WrapperInfo WrappedExceptionHandler::kWrapperInfo = {
 ExceptionHandler::ExceptionHandler(
     const binding::AddConsoleError& add_console_error)
     : add_console_error_(add_console_error) {}
-ExceptionHandler::~ExceptionHandler() {}
+ExceptionHandler::~ExceptionHandler() = default;
 
 v8::Local<v8::Value> ExceptionHandler::GetV8Wrapper(v8::Isolate* isolate) {
   auto handle = gin::CreateHandle(isolate, new WrappedExceptionHandler);

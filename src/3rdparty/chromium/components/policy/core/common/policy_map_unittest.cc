@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,14 +7,18 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
+#include "base/values.h"
 #include "build/build_config.h"
 #include "components/policy/core/common/external_data_manager.h"
+#include "components/policy/core/common/features.h"
+#include "components/policy/core/common/policy_details.h"
 #include "components/policy/core/common/policy_merger.h"
 #include "components/policy/core/common/policy_types.h"
 #include "components/policy/policy_constants.h"
@@ -53,10 +57,10 @@ void SetPolicy(PolicyMap* map,
 }
 
 template <class T>
-std::vector<base::Value> GetListStorage(const std::vector<T> entry) {
-  std::vector<base::Value> result;
+base::Value::List GetList(const std::vector<T>& entry) {
+  base::Value::List result;
   for (const auto& it : entry)
-    result.emplace_back(base::Value(it));
+    result.Append(it);
   return result;
 }
 
@@ -74,7 +78,21 @@ PolicyMapTestBase::CreateExternalDataFetcher(const std::string& policy) const {
       base::WeakPtr<ExternalDataManager>(), policy);
 }
 
-class PolicyMapTest : public PolicyMapTestBase, public testing::Test {};
+class PolicyMapTest : public PolicyMapTestBase, public testing::Test {
+ public:
+  const PolicyDetails* GetPolicyDetailsExternalCallback(
+      const std::string& policy_name) {
+    return &externalDetails_;
+  }
+
+  const PolicyDetails* GetPolicyDetailsNonExternalCallback(
+      const std::string& policy_name) {
+    return &nonExternalDetails_;
+  }
+
+  PolicyDetails externalDetails_ = {false, false, false, 0, 10, {}};
+  PolicyDetails nonExternalDetails_ = {false, false, false, 0, 0, {}};
+};
 
 TEST_F(PolicyMapTest, SetAndGet) {
   PolicyMap map;
@@ -486,100 +504,106 @@ TEST_F(PolicyMapTest, MergeFrom_CloudMetapolicies) {
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
 TEST_F(PolicyMapTest, MergeValuesList) {
-  std::vector<base::Value> abcd =
-      GetListStorage<std::string>({"a", "b", "c", "d"});
-  std::vector<base::Value> abc = GetListStorage<std::string>({"a", "b", "c"});
-  std::vector<base::Value> ab = GetListStorage<std::string>({"a", "b"});
-  std::vector<base::Value> cd = GetListStorage<std::string>({"c", "d"});
-  std::vector<base::Value> ef = GetListStorage<std::string>({"e", "f"});
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndDisableFeature(
+      policy::features::kPolicyMergeMultiSource);
 
-  std::vector<base::Value> int12 = GetListStorage<int>({1, 2});
-  std::vector<base::Value> int34 = GetListStorage<int>({3, 4});
-  std::vector<base::Value> int56 = GetListStorage<int>({5, 6});
-  std::vector<base::Value> int1234 = GetListStorage<int>({1, 2, 3, 4});
+  base::Value::List abcd = GetList<std::string>({"a", "b", "c", "d"});
+  base::Value::List abc = GetList<std::string>({"a", "b", "c"});
+  base::Value::List ab = GetList<std::string>({"a", "b"});
+  base::Value::List cd = GetList<std::string>({"c", "d"});
+  base::Value::List ef = GetList<std::string>({"e", "f"});
 
-  base::Value dict_ab(base::Value::Type::DICTIONARY);
-  dict_ab.SetBoolKey("a", true);
-  dict_ab.SetBoolKey("b", false);
-  base::Value dict_c(base::Value::Type::DICTIONARY);
-  dict_c.SetBoolKey("c", false);
-  base::Value dict_d(base::Value::Type::DICTIONARY);
-  dict_d.SetBoolKey("d", false);
+  base::Value::List int12 = GetList<int>({1, 2});
+  base::Value::List int34 = GetList<int>({3, 4});
+  base::Value::List int56 = GetList<int>({5, 6});
+  base::Value::List int1234 = GetList<int>({1, 2, 3, 4});
 
-  std::vector<base::Value> list_dict_abd;
-  list_dict_abd.emplace_back(dict_ab.Clone());
-  list_dict_abd.emplace_back(dict_d.Clone());
-  std::vector<base::Value> list_dict_c;
-  list_dict_c.emplace_back(dict_c.Clone());
+  base::Value::Dict dict_ab;
+  dict_ab.Set("a", true);
+  dict_ab.Set("b", false);
+  base::Value::Dict dict_c;
+  dict_c.Set("c", false);
+  base::Value::Dict dict_d;
+  dict_d.Set("d", false);
 
-  std::vector<base::Value> list_dict_abcd;
-  list_dict_abcd.emplace_back(dict_ab.Clone());
-  list_dict_abcd.emplace_back(dict_d.Clone());
-  list_dict_abcd.emplace_back(dict_c.Clone());
+  base::Value::List list_dict_abd;
+  list_dict_abd.Append(dict_ab.Clone());
+  list_dict_abd.Append(dict_d.Clone());
+  base::Value::List list_dict_c;
+  list_dict_c.Append(dict_c.Clone());
+
+  base::Value::List list_dict_abcd;
+  list_dict_abcd.Append(dict_ab.Clone());
+  list_dict_abcd.Append(dict_d.Clone());
+  list_dict_abcd.Append(dict_c.Clone());
 
   // Case 1 - kTestPolicyName1
   // Enterprise default policies should not be merged with other sources.
   PolicyMap::Entry case1(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                         POLICY_SOURCE_PLATFORM, base::Value(abc), nullptr);
+                         POLICY_SOURCE_PLATFORM, base::Value(abc.Clone()),
+                         nullptr);
 
-  case1.AddConflictingPolicy(
-      PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                       POLICY_SOURCE_COMMAND_LINE, base::Value(cd), nullptr));
+  case1.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_COMMAND_LINE,
+      base::Value(cd.Clone()), nullptr));
 
   case1.AddConflictingPolicy(PolicyMap::Entry(
       POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-      POLICY_SOURCE_ENTERPRISE_DEFAULT, base::Value(ef), nullptr));
+      POLICY_SOURCE_ENTERPRISE_DEFAULT, base::Value(ef.Clone()), nullptr));
 
   case1.AddConflictingPolicy(PolicyMap::Entry(
       POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE,
-      POLICY_SOURCE_ENTERPRISE_DEFAULT, base::Value(ef), nullptr));
+      POLICY_SOURCE_ENTERPRISE_DEFAULT, base::Value(ef.Clone()), nullptr));
 
   PolicyMap::Entry expected_case1(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                                  POLICY_SOURCE_MERGED, base::Value(abcd),
-                                  nullptr);
+                                  POLICY_SOURCE_MERGED,
+                                  base::Value(abcd.Clone()), nullptr);
   expected_case1.AddConflictingPolicy(case1.DeepCopy());
 
   // Case 2 - kTestPolicyName2
   // Policies should only be merged with other policies with the same target,
   // level and scope.
   PolicyMap::Entry case2(POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE,
-                         POLICY_SOURCE_CLOUD, base::Value(int12), nullptr);
+                         POLICY_SOURCE_CLOUD, base::Value(int12.Clone()),
+                         nullptr);
 
-  case2.AddConflictingPolicy(
-      PolicyMap::Entry(POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE,
-                       POLICY_SOURCE_PLATFORM, base::Value(int34), nullptr));
+  case2.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE, POLICY_SOURCE_PLATFORM,
+      base::Value(int34.Clone()), nullptr));
 
-  case2.AddConflictingPolicy(
-      PolicyMap::Entry(POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_USER,
-                       POLICY_SOURCE_PLATFORM, base::Value(int56), nullptr));
+  case2.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_USER, POLICY_SOURCE_PLATFORM,
+      base::Value(int56.Clone()), nullptr));
 
   PolicyMap::Entry expected_case2(POLICY_LEVEL_RECOMMENDED,
                                   POLICY_SCOPE_MACHINE, POLICY_SOURCE_MERGED,
-                                  base::Value(int1234), nullptr);
+                                  base::Value(int1234.Clone()), nullptr);
   expected_case2.AddConflictingPolicy(case2.DeepCopy());
 
   // Case 3 - kTestPolicyName3
   // Trivial case with 2 sources.
   PolicyMap::Entry case3(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                         POLICY_SOURCE_CLOUD, base::Value(ab), nullptr);
+                         POLICY_SOURCE_CLOUD, base::Value(ab.Clone()), nullptr);
 
-  case3.AddConflictingPolicy(
-      PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                       POLICY_SOURCE_PLATFORM, base::Value(cd), nullptr));
+  case3.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_PLATFORM,
+      base::Value(cd.Clone()), nullptr));
 
   PolicyMap::Entry expected_case3(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                                  POLICY_SOURCE_MERGED, base::Value(abcd),
-                                  nullptr);
+                                  POLICY_SOURCE_MERGED,
+                                  base::Value(abcd.Clone()), nullptr);
   auto case3_blocked_by_group = expected_case3.DeepCopy();
   case3_blocked_by_group.SetIgnoredByPolicyAtomicGroup();
   expected_case3.AddConflictingPolicy(case3.DeepCopy());
 
   // Case 4 - kTestPolicyName4
-  // Policies with a single source should stay the same.
+  // Policies with a single source should have their source updated to merged.
   PolicyMap::Entry case4(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                         POLICY_SOURCE_CLOUD, base::Value(ef), nullptr);
+                         POLICY_SOURCE_CLOUD, base::Value(ef.Clone()), nullptr);
+
   PolicyMap::Entry expected_case4(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                                  POLICY_SOURCE_MERGED, base::Value(ef),
+                                  POLICY_SOURCE_MERGED, base::Value(ef.Clone()),
                                   nullptr);
   expected_case4.AddConflictingPolicy(case4.DeepCopy());
 
@@ -591,9 +615,7 @@ TEST_F(PolicyMapTest, MergeValuesList) {
                          POLICY_SOURCE_PLATFORM, base::Value("bad stuff"),
                          nullptr);
 
-  PolicyMap::Entry expected_case5(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                                  POLICY_SOURCE_PLATFORM,
-                                  base::Value("bad stuff"), nullptr);
+  PolicyMap::Entry expected_case5 = case5.DeepCopy();
   expected_case5.AddMessage(
       PolicyMap::MessageType::kError,
       IDS_POLICY_LIST_MERGING_WRONG_POLICY_TYPE_SPECIFIED);
@@ -601,56 +623,276 @@ TEST_F(PolicyMapTest, MergeValuesList) {
   // Case 6 - kTestPolicyName6
   // User cloud policies should not be merged with other sources.
   PolicyMap::Entry case6(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                         POLICY_SOURCE_PLATFORM, base::Value(ab), nullptr);
+                         POLICY_SOURCE_PLATFORM, base::Value(ab.Clone()),
+                         nullptr);
   case6.AddConflictingPolicy(
       PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                       POLICY_SOURCE_CLOUD, base::Value(cd), nullptr));
+                       POLICY_SOURCE_CLOUD, base::Value(cd.Clone()), nullptr));
   case6.AddConflictingPolicy(
       PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                       POLICY_SOURCE_CLOUD, base::Value(ef), nullptr));
+                       POLICY_SOURCE_CLOUD, base::Value(ef.Clone()), nullptr));
   PolicyMap::Entry expected_case6(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                                  POLICY_SOURCE_MERGED, base::Value(ab),
+                                  POLICY_SOURCE_MERGED, base::Value(ab.Clone()),
                                   nullptr);
   expected_case6.AddConflictingPolicy(case6.DeepCopy());
 
   // Case 7 - kTestPolicyName7
   // User platform policies should not be merged under any circumstances.
   PolicyMap::Entry case7(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                         POLICY_SOURCE_PLATFORM, base::Value(ab), nullptr);
+                         POLICY_SOURCE_PLATFORM, base::Value(ab.Clone()),
+                         nullptr);
+  case7.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER, POLICY_SOURCE_PLATFORM,
+      base::Value(cd.Clone()), nullptr));
   case7.AddConflictingPolicy(
       PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                       POLICY_SOURCE_PLATFORM, base::Value(cd), nullptr));
-  case7.AddConflictingPolicy(
-      PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                       POLICY_SOURCE_CLOUD, base::Value(cd), nullptr));
-  case7.AddConflictingPolicy(
-      PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                       POLICY_SOURCE_PLATFORM, base::Value(ef), nullptr));
-  case7.AddConflictingPolicy(
-      PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                       POLICY_SOURCE_COMMAND_LINE, base::Value(ef), nullptr));
+                       POLICY_SOURCE_CLOUD, base::Value(cd.Clone()), nullptr));
+  case7.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_PLATFORM,
+      base::Value(ef.Clone()), nullptr));
+  case7.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER, POLICY_SOURCE_COMMAND_LINE,
+      base::Value(ef.Clone()), nullptr));
   PolicyMap::Entry expected_case7(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                                  POLICY_SOURCE_MERGED, base::Value(ab),
+                                  POLICY_SOURCE_MERGED, base::Value(ab.Clone()),
                                   nullptr);
   expected_case7.AddConflictingPolicy(case7.DeepCopy());
 
   // Case 8 - kTestPolicyName8
   // Lists of dictionaries should not have duplicates.
   PolicyMap::Entry case8(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                         POLICY_SOURCE_PLATFORM, base::Value(list_dict_abd),
-                         nullptr);
+                         POLICY_SOURCE_PLATFORM,
+                         base::Value(list_dict_abd.Clone()), nullptr);
 
   case8.AddConflictingPolicy(PolicyMap::Entry(
       POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
-      base::Value(list_dict_abd), nullptr));
+      base::Value(list_dict_abd.Clone()), nullptr));
 
   case8.AddConflictingPolicy(PolicyMap::Entry(
       POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_COMMAND_LINE,
-      base::Value(list_dict_c), nullptr));
+      base::Value(list_dict_c.Clone()), nullptr));
 
   PolicyMap::Entry expected_case8(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
                                   POLICY_SOURCE_MERGED,
-                                  base::Value(list_dict_abcd), nullptr);
+                                  base::Value(list_dict_abcd.Clone()), nullptr);
+  expected_case8.AddConflictingPolicy(case8.DeepCopy());
+
+  PolicyMap policy_not_merged;
+  policy_not_merged.Set(kTestPolicyName1, case1.DeepCopy());
+  policy_not_merged.Set(kTestPolicyName2, case2.DeepCopy());
+  policy_not_merged.Set(kTestPolicyName3, case3.DeepCopy());
+  policy_not_merged.Set(kTestPolicyName4, case4.DeepCopy());
+  policy_not_merged.Set(kTestPolicyName5, case5.DeepCopy());
+  policy_not_merged.Set(kTestPolicyName6, case6.DeepCopy());
+  policy_not_merged.Set(kTestPolicyName7, case7.DeepCopy());
+  policy_not_merged.Set(kTestPolicyName8, case8.DeepCopy());
+
+  PolicyMap expected_list_merged;
+  expected_list_merged.Set(kTestPolicyName1, expected_case1.DeepCopy());
+  expected_list_merged.Set(kTestPolicyName2, expected_case2.DeepCopy());
+  expected_list_merged.Set(kTestPolicyName3, expected_case3.DeepCopy());
+  expected_list_merged.Set(kTestPolicyName4, expected_case4.DeepCopy());
+  expected_list_merged.Set(kTestPolicyName5, expected_case5.DeepCopy());
+  expected_list_merged.Set(kTestPolicyName6, expected_case6.DeepCopy());
+  expected_list_merged.Set(kTestPolicyName7, expected_case7.DeepCopy());
+  expected_list_merged.Set(kTestPolicyName8, expected_case8.DeepCopy());
+
+  PolicyMap list_merged = policy_not_merged.Clone();
+
+  PolicyMap list_merged_wildcard = policy_not_merged.Clone();
+
+  // Merging with no restrictions specified
+  PolicyListMerger empty_policy_list({});
+  list_merged.MergeValues({&empty_policy_list});
+  EXPECT_TRUE(list_merged.Equals(policy_not_merged));
+
+  PolicyListMerger bad_policy_list({"unknown"});
+  // Merging with wrong restrictions specified
+  list_merged.MergeValues({&bad_policy_list});
+  EXPECT_TRUE(list_merged.Equals(policy_not_merged));
+
+  // Merging lists restrictions specified
+  PolicyListMerger good_policy_list(
+      {kTestPolicyName1, kTestPolicyName2, kTestPolicyName3, kTestPolicyName4,
+       kTestPolicyName5, kTestPolicyName6, kTestPolicyName7, kTestPolicyName8});
+  PolicyListMerger wildcard_policy_list({"*"});
+  list_merged.MergeValues({&good_policy_list});
+  EXPECT_TRUE(list_merged.Equals(expected_list_merged));
+
+  PolicyMap expected_list_merged_wildcard = expected_list_merged.Clone();
+  expected_list_merged_wildcard.Set(kTestPolicyName5, case5.DeepCopy());
+  list_merged_wildcard.MergeValues({&wildcard_policy_list});
+  EXPECT_TRUE(list_merged_wildcard.Equals(expected_list_merged_wildcard));
+}
+
+TEST_F(PolicyMapTest, MergeValuesList_FeatureEnabled) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(
+      policy::features::kPolicyMergeMultiSource);
+
+  base::Value::List abcd = GetList<std::string>({"a", "b", "c", "d"});
+  base::Value::List abc = GetList<std::string>({"a", "b", "c"});
+  base::Value::List ab = GetList<std::string>({"a", "b"});
+  base::Value::List cd = GetList<std::string>({"c", "d"});
+  base::Value::List ef = GetList<std::string>({"e", "f"});
+
+  base::Value::List int12 = GetList<int>({1, 2});
+  base::Value::List int34 = GetList<int>({3, 4});
+  base::Value::List int56 = GetList<int>({5, 6});
+  base::Value::List int1234 = GetList<int>({1, 2, 3, 4});
+
+  base::Value::Dict dict_ab;
+  dict_ab.Set("a", true);
+  dict_ab.Set("b", false);
+  base::Value::Dict dict_c;
+  dict_c.Set("c", false);
+  base::Value::Dict dict_d;
+  dict_d.Set("d", false);
+
+  base::Value::List list_dict_abd;
+  list_dict_abd.Append(dict_ab.Clone());
+  list_dict_abd.Append(dict_d.Clone());
+  base::Value::List list_dict_c;
+  list_dict_c.Append(dict_c.Clone());
+
+  base::Value::List list_dict_abcd;
+  list_dict_abcd.Append(dict_ab.Clone());
+  list_dict_abcd.Append(dict_d.Clone());
+  list_dict_abcd.Append(dict_c.Clone());
+
+  // Case 1 - kTestPolicyName1
+  // Enterprise default policies should not be merged with other sources.
+  PolicyMap::Entry case1(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
+                         POLICY_SOURCE_PLATFORM, base::Value(abc.Clone()),
+                         nullptr);
+
+  case1.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_COMMAND_LINE,
+      base::Value(cd.Clone()), nullptr));
+
+  case1.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
+      POLICY_SOURCE_ENTERPRISE_DEFAULT, base::Value(ef.Clone()), nullptr));
+
+  case1.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE,
+      POLICY_SOURCE_ENTERPRISE_DEFAULT, base::Value(ef.Clone()), nullptr));
+
+  PolicyMap::Entry expected_case1(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
+                                  POLICY_SOURCE_MERGED,
+                                  base::Value(abcd.Clone()), nullptr);
+  expected_case1.AddConflictingPolicy(case1.DeepCopy());
+
+  // Case 2 - kTestPolicyName2
+  // Policies should only be merged with other policies with the same target,
+  // level and scope.
+  PolicyMap::Entry case2(POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE,
+                         POLICY_SOURCE_CLOUD, base::Value(int12.Clone()),
+                         nullptr);
+
+  case2.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE, POLICY_SOURCE_PLATFORM,
+      base::Value(int34.Clone()), nullptr));
+
+  case2.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_USER, POLICY_SOURCE_PLATFORM,
+      base::Value(int56.Clone()), nullptr));
+
+  PolicyMap::Entry expected_case2(POLICY_LEVEL_RECOMMENDED,
+                                  POLICY_SCOPE_MACHINE, POLICY_SOURCE_MERGED,
+                                  base::Value(int1234.Clone()), nullptr);
+  expected_case2.AddConflictingPolicy(case2.DeepCopy());
+
+  // Case 3 - kTestPolicyName3
+  // Trivial case with 2 sources.
+  PolicyMap::Entry case3(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
+                         POLICY_SOURCE_CLOUD, base::Value(ab.Clone()), nullptr);
+
+  case3.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_PLATFORM,
+      base::Value(cd.Clone()), nullptr));
+
+  PolicyMap::Entry expected_case3(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
+                                  POLICY_SOURCE_MERGED,
+                                  base::Value(abcd.Clone()), nullptr);
+  auto case3_blocked_by_group = expected_case3.DeepCopy();
+  case3_blocked_by_group.SetIgnoredByPolicyAtomicGroup();
+  expected_case3.AddConflictingPolicy(case3.DeepCopy());
+
+  // Case 4 - kTestPolicyName4
+  // Policies with a single source should stay the same.
+  PolicyMap::Entry case4(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
+                         POLICY_SOURCE_CLOUD, base::Value(ef.Clone()), nullptr);
+  PolicyMap::Entry expected_case4 = case4.DeepCopy();
+
+  // Case 5 - kTestPolicyName5
+  // Policies that are not lists should not be merged.
+  // If such a policy is explicitly in the list of policies to merge, an error
+  // is added to the entry and the policy stays intact.
+  PolicyMap::Entry case5(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
+                         POLICY_SOURCE_PLATFORM, base::Value("bad stuff"),
+                         nullptr);
+
+  PolicyMap::Entry expected_case5 = case5.DeepCopy();
+  expected_case5.AddMessage(
+      PolicyMap::MessageType::kError,
+      IDS_POLICY_LIST_MERGING_WRONG_POLICY_TYPE_SPECIFIED);
+
+  // Case 6 - kTestPolicyName6
+  // User cloud policies should not be merged with other sources.
+  PolicyMap::Entry case6(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+                         POLICY_SOURCE_PLATFORM, base::Value(ab.Clone()),
+                         nullptr);
+  case6.AddConflictingPolicy(
+      PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+                       POLICY_SOURCE_CLOUD, base::Value(cd.Clone()), nullptr));
+  case6.AddConflictingPolicy(
+      PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+                       POLICY_SOURCE_CLOUD, base::Value(ef.Clone()), nullptr));
+  PolicyMap::Entry expected_case6(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+                                  POLICY_SOURCE_MERGED, base::Value(ab.Clone()),
+                                  nullptr);
+  expected_case6.AddConflictingPolicy(case6.DeepCopy());
+
+  // Case 7 - kTestPolicyName7
+  // User platform policies should not be merged under any circumstances.
+  PolicyMap::Entry case7(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+                         POLICY_SOURCE_PLATFORM, base::Value(ab.Clone()),
+                         nullptr);
+  case7.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER, POLICY_SOURCE_PLATFORM,
+      base::Value(cd.Clone()), nullptr));
+  case7.AddConflictingPolicy(
+      PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+                       POLICY_SOURCE_CLOUD, base::Value(cd.Clone()), nullptr));
+  case7.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_PLATFORM,
+      base::Value(ef.Clone()), nullptr));
+  case7.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER, POLICY_SOURCE_COMMAND_LINE,
+      base::Value(ef.Clone()), nullptr));
+  PolicyMap::Entry expected_case7(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+                                  POLICY_SOURCE_MERGED, base::Value(ab.Clone()),
+                                  nullptr);
+  expected_case7.AddConflictingPolicy(case7.DeepCopy());
+
+  // Case 8 - kTestPolicyName8
+  // Lists of dictionaries should not have duplicates.
+  PolicyMap::Entry case8(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
+                         POLICY_SOURCE_PLATFORM,
+                         base::Value(list_dict_abd.Clone()), nullptr);
+
+  case8.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
+      base::Value(list_dict_abd.Clone()), nullptr));
+
+  case8.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_COMMAND_LINE,
+      base::Value(list_dict_c.Clone()), nullptr));
+
+  PolicyMap::Entry expected_case8(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
+                                  POLICY_SOURCE_MERGED,
+                                  base::Value(list_dict_abcd.Clone()), nullptr);
   expected_case8.AddConflictingPolicy(case8.DeepCopy());
 
   PolicyMap policy_not_merged;
@@ -702,109 +944,118 @@ TEST_F(PolicyMapTest, MergeValuesList) {
 }
 
 TEST_F(PolicyMapTest, MergeValuesDictionary) {
-  base::Value dict_a(base::Value::Type::DICTIONARY);
-  dict_a.SetBoolKey("keyA", true);
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndDisableFeature(
+      policy::features::kPolicyMergeMultiSource);
 
-  base::Value dict_b(base::Value::Type::DICTIONARY);
-  dict_b.SetStringKey("keyB", "ValueB2");
-  dict_b.SetStringKey("keyC", "ValueC2");
-  dict_b.SetStringKey("keyD", "ValueD2");
+  base::Value::Dict dict_a;
+  dict_a.Set("keyA", true);
 
-  base::Value dict_c(base::Value::Type::DICTIONARY);
-  dict_c.SetStringKey("keyA", "ValueA");
-  dict_c.SetStringKey("keyB", "ValueB");
-  dict_c.SetStringKey("keyC", "ValueC");
-  dict_c.SetStringKey("keyD", "ValueD");
-  dict_c.SetStringKey("keyZ", "ValueZ");
+  base::Value::Dict dict_b;
+  dict_b.Set("keyB", "ValueB2");
+  dict_b.Set("keyC", "ValueC2");
+  dict_b.Set("keyD", "ValueD2");
 
-  base::Value dict_d(base::Value::Type::DICTIONARY);
-  dict_d.SetStringKey("keyC", "ValueC3");
+  base::Value::Dict dict_c;
+  dict_c.Set("keyA", "ValueA");
+  dict_c.Set("keyB", "ValueB");
+  dict_c.Set("keyC", "ValueC");
+  dict_c.Set("keyD", "ValueD");
+  dict_c.Set("keyZ", "ValueZ");
 
-  base::Value dict_e(base::Value::Type::DICTIONARY);
-  dict_e.SetStringKey("keyD", "ValueD4");
-  dict_e.SetIntKey("keyE", 123);
+  base::Value::Dict dict_d;
+  dict_d.Set("keyC", "ValueC3");
 
-  base::Value dict_f(base::Value::Type::DICTIONARY);
-  dict_f.SetStringKey("keyX", "ValueX");
-  dict_f.SetStringKey("keyE", "ValueE5");
+  base::Value::Dict dict_e;
+  dict_e.Set("keyD", "ValueD4");
+  dict_e.Set("keyE", 123);
+
+  base::Value::Dict dict_f;
+  dict_f.Set("keyX", "ValueX");
+  dict_f.Set("keyE", "ValueE5");
 
   // Case 1: kTestPolicyName1 - Merging should only keep keys with the highest
   // priority
   PolicyMap::Entry case1(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                         POLICY_SOURCE_PLATFORM, dict_a.Clone(), nullptr);
-  case1.AddConflictingPolicy(
-      PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                       POLICY_SOURCE_CLOUD, dict_b.Clone(), nullptr));
-  case1.AddConflictingPolicy(
-      PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                       POLICY_SOURCE_COMMAND_LINE, dict_c.Clone(), nullptr));
+                         POLICY_SOURCE_PLATFORM, base::Value(dict_a.Clone()),
+                         nullptr);
+  case1.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
+      base::Value(dict_b.Clone()), nullptr));
+  case1.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_COMMAND_LINE,
+      base::Value(dict_c.Clone()), nullptr));
 
-  base::Value merged_dict_case1(base::Value::Type::DICTIONARY);
-  merged_dict_case1.MergeDictionary(&dict_c);
-  merged_dict_case1.MergeDictionary(&dict_b);
-  merged_dict_case1.MergeDictionary(&dict_a);
+  base::Value::Dict merged_dict_case1;
+  merged_dict_case1.Merge(dict_c.Clone());
+  merged_dict_case1.Merge(dict_b.Clone());
+  merged_dict_case1.Merge(dict_a.Clone());
 
-  PolicyMap::Entry expected_case1(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                                  POLICY_SOURCE_MERGED,
-                                  merged_dict_case1.Clone(), nullptr);
+  PolicyMap::Entry expected_case1(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_MERGED,
+      base::Value(merged_dict_case1.Clone()), nullptr);
   expected_case1.AddConflictingPolicy(case1.DeepCopy());
 
   // Case 2 - kTestPolicyName2
   // Policies should only be merged with other policies with the same target,
   // level and scope.
   PolicyMap::Entry case2(POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE,
-                         POLICY_SOURCE_PLATFORM, dict_e.Clone(), nullptr);
+                         POLICY_SOURCE_PLATFORM, base::Value(dict_e.Clone()),
+                         nullptr);
 
-  case2.AddConflictingPolicy(
-      PolicyMap::Entry(POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE,
-                       POLICY_SOURCE_CLOUD, dict_f.Clone(), nullptr));
+  case2.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
+      base::Value(dict_f.Clone()), nullptr));
 
-  case2.AddConflictingPolicy(
-      PolicyMap::Entry(POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_USER,
-                       POLICY_SOURCE_PLATFORM, dict_a.Clone(), nullptr));
+  case2.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_USER, POLICY_SOURCE_PLATFORM,
+      base::Value(dict_a.Clone()), nullptr));
 
-  base::Value merged_dict_case2(base::Value::Type::DICTIONARY);
-  merged_dict_case2.MergeDictionary(&dict_f);
-  merged_dict_case2.MergeDictionary(&dict_e);
+  base::Value::Dict merged_dict_case2;
+  merged_dict_case2.Merge(dict_f.Clone());
+  merged_dict_case2.Merge(dict_e.Clone());
 
-  PolicyMap::Entry expected_case2(POLICY_LEVEL_RECOMMENDED,
-                                  POLICY_SCOPE_MACHINE, POLICY_SOURCE_MERGED,
-                                  merged_dict_case2.Clone(), nullptr);
+  PolicyMap::Entry expected_case2(
+      POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE, POLICY_SOURCE_MERGED,
+      base::Value(merged_dict_case2.Clone()), nullptr);
   expected_case2.AddConflictingPolicy(case2.DeepCopy());
 
   // Case 3 - kTestPolicyName3
   // Enterprise default policies should not be merged with other sources.
   PolicyMap::Entry case3(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                         POLICY_SOURCE_PLATFORM, dict_a.Clone(), nullptr);
+                         POLICY_SOURCE_PLATFORM, base::Value(dict_a.Clone()),
+                         nullptr);
 
-  case3.AddConflictingPolicy(
-      PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                       POLICY_SOURCE_COMMAND_LINE, dict_b.Clone(), nullptr));
+  case3.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_COMMAND_LINE,
+      base::Value(dict_b.Clone()), nullptr));
 
   case3.AddConflictingPolicy(PolicyMap::Entry(
       POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-      POLICY_SOURCE_ENTERPRISE_DEFAULT, dict_e.Clone(), nullptr));
+      POLICY_SOURCE_ENTERPRISE_DEFAULT, base::Value(dict_e.Clone()), nullptr));
 
   case3.AddConflictingPolicy(PolicyMap::Entry(
       POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE,
-      POLICY_SOURCE_ENTERPRISE_DEFAULT, dict_f.Clone(), nullptr));
+      POLICY_SOURCE_ENTERPRISE_DEFAULT, base::Value(dict_f.Clone()), nullptr));
 
-  base::Value merged_dict_case3(base::Value::Type::DICTIONARY);
-  merged_dict_case3.MergeDictionary(&dict_b);
-  merged_dict_case3.MergeDictionary(&dict_a);
+  base::Value::Dict merged_dict_case3;
+  merged_dict_case3.Merge(dict_b.Clone());
+  merged_dict_case3.Merge(dict_a.Clone());
 
-  PolicyMap::Entry expected_case3(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                                  POLICY_SOURCE_MERGED,
-                                  merged_dict_case3.Clone(), nullptr);
+  PolicyMap::Entry expected_case3(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_MERGED,
+      base::Value(merged_dict_case3.Clone()), nullptr);
   expected_case3.AddConflictingPolicy(case3.DeepCopy());
 
   // Case 4 - kTestPolicyName4
-  // Policies with a single source should be merged.
+  // Policies with a single source should have their source updated to merged.
   PolicyMap::Entry case4(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                         POLICY_SOURCE_CLOUD, dict_a.Clone(), nullptr);
+                         POLICY_SOURCE_CLOUD, base::Value(dict_a.Clone()),
+                         nullptr);
+
   PolicyMap::Entry expected_case4(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                                  POLICY_SOURCE_MERGED, dict_a.Clone(),
-                                  nullptr);
+                                  POLICY_SOURCE_MERGED,
+                                  base::Value(dict_a.Clone()), nullptr);
   expected_case4.AddConflictingPolicy(case4.DeepCopy());
 
   // Case 5 - kTestPolicyName5
@@ -815,9 +1066,7 @@ TEST_F(PolicyMapTest, MergeValuesDictionary) {
                          POLICY_SOURCE_PLATFORM, base::Value("bad stuff"),
                          nullptr);
 
-  PolicyMap::Entry expected_case5(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                                  POLICY_SOURCE_PLATFORM,
-                                  base::Value("bad stuff"), nullptr);
+  PolicyMap::Entry expected_case5 = case5.DeepCopy();
   expected_case5.AddMessage(
       PolicyMap::MessageType::kError,
       IDS_POLICY_DICTIONARY_MERGING_WRONG_POLICY_TYPE_SPECIFIED);
@@ -825,45 +1074,276 @@ TEST_F(PolicyMapTest, MergeValuesDictionary) {
   // Case 6 - kTestPolicyName6
   // User cloud policies should not be merged with other sources.
   PolicyMap::Entry case6(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                         POLICY_SOURCE_PLATFORM, dict_a.Clone(), nullptr);
-  case6.AddConflictingPolicy(
-      PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                       POLICY_SOURCE_CLOUD, dict_e.Clone(), nullptr));
-  case6.AddConflictingPolicy(
-      PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                       POLICY_SOURCE_CLOUD, dict_f.Clone(), nullptr));
+                         POLICY_SOURCE_PLATFORM, base::Value(dict_a.Clone()),
+                         nullptr);
+  case6.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
+      base::Value(dict_e.Clone()), nullptr));
+  case6.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
+      base::Value(dict_f.Clone()), nullptr));
   PolicyMap::Entry expected_case6(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                                  POLICY_SOURCE_MERGED, dict_a.Clone(),
-                                  nullptr);
+                                  POLICY_SOURCE_MERGED,
+                                  base::Value(dict_a.Clone()), nullptr);
   expected_case6.AddConflictingPolicy(case6.DeepCopy());
 
   // Case 7 - kTestPolicyName7
   // User platform policies should not be merged under any circumstances.
   PolicyMap::Entry case7(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                         POLICY_SOURCE_PLATFORM, dict_a.Clone(), nullptr);
-  case7.AddConflictingPolicy(
-      PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                       POLICY_SOURCE_PLATFORM, dict_b.Clone(), nullptr));
-  case7.AddConflictingPolicy(
-      PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                       POLICY_SOURCE_CLOUD, dict_c.Clone(), nullptr));
-  case7.AddConflictingPolicy(
-      PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                       POLICY_SOURCE_PLATFORM, dict_d.Clone(), nullptr));
-  case7.AddConflictingPolicy(
-      PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                       POLICY_SOURCE_COMMAND_LINE, dict_e.Clone(), nullptr));
+                         POLICY_SOURCE_PLATFORM, base::Value(dict_a.Clone()),
+                         nullptr);
+  case7.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER, POLICY_SOURCE_PLATFORM,
+      base::Value(dict_b.Clone()), nullptr));
+  case7.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
+      base::Value(dict_c.Clone()), nullptr));
+  case7.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_PLATFORM,
+      base::Value(dict_d.Clone()), nullptr));
+  case7.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER, POLICY_SOURCE_COMMAND_LINE,
+      base::Value(dict_e.Clone()), nullptr));
   PolicyMap::Entry expected_case7(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                                  POLICY_SOURCE_MERGED, dict_a.Clone(),
-                                  nullptr);
+                                  POLICY_SOURCE_MERGED,
+                                  base::Value(dict_a.Clone()), nullptr);
   expected_case7.AddConflictingPolicy(case7.DeepCopy());
 
   // Case 8 - kTestPolicyName8
+  // If a dictionary policy is not in the list of dictionary policies allowed to
+  // be merged, an error is added to the entry and the policy stays intact.
+  PolicyMap::Entry case8(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
+                         POLICY_SOURCE_CLOUD, base::Value(dict_a.Clone()),
+                         nullptr);
+
+  PolicyMap::Entry expected_case8 = case8.DeepCopy();
+
+  expected_case8.AddMessage(PolicyMap::MessageType::kError,
+                            IDS_POLICY_DICTIONARY_MERGING_POLICY_NOT_ALLOWED);
+
+  PolicyMap policy_not_merged;
+  policy_not_merged.Set(kTestPolicyName1, case1.DeepCopy());
+  policy_not_merged.Set(kTestPolicyName2, case2.DeepCopy());
+  policy_not_merged.Set(kTestPolicyName3, case3.DeepCopy());
+  policy_not_merged.Set(kTestPolicyName4, case4.DeepCopy());
+  policy_not_merged.Set(kTestPolicyName5, case5.DeepCopy());
+  policy_not_merged.Set(kTestPolicyName6, case6.DeepCopy());
+  policy_not_merged.Set(kTestPolicyName7, case7.DeepCopy());
+  policy_not_merged.Set(kTestPolicyName8, case8.DeepCopy());
+
+  PolicyMap expected_list_merged;
+  expected_list_merged.Set(kTestPolicyName1, expected_case1.DeepCopy());
+  expected_list_merged.Set(kTestPolicyName2, expected_case2.DeepCopy());
+  expected_list_merged.Set(kTestPolicyName3, expected_case3.DeepCopy());
+  expected_list_merged.Set(kTestPolicyName4, expected_case4.DeepCopy());
+  expected_list_merged.Set(kTestPolicyName5, expected_case5.DeepCopy());
+  expected_list_merged.Set(kTestPolicyName6, expected_case6.DeepCopy());
+  expected_list_merged.Set(kTestPolicyName7, expected_case7.DeepCopy());
+  expected_list_merged.Set(kTestPolicyName8, expected_case8.DeepCopy());
+
+  PolicyMap list_merged = policy_not_merged.Clone();
+
+  PolicyMap list_merged_wildcard = policy_not_merged.Clone();
+
+  // Merging with no restrictions specified
+  PolicyDictionaryMerger empty_policy_list({});
+  list_merged.MergeValues({&empty_policy_list});
+  EXPECT_TRUE(list_merged.Equals(policy_not_merged));
+
+  PolicyDictionaryMerger bad_policy_list({"unknown"});
+  // Merging with wrong restrictions specified
+  list_merged.MergeValues({&bad_policy_list});
+  EXPECT_TRUE(list_merged.Equals(policy_not_merged));
+
+  // Merging lists restrictions specified
+  PolicyDictionaryMerger good_policy_list(
+      {kTestPolicyName1, kTestPolicyName2, kTestPolicyName3, kTestPolicyName4,
+       kTestPolicyName5, kTestPolicyName6, kTestPolicyName7, kTestPolicyName8});
+  good_policy_list.SetAllowedPoliciesForTesting(
+      {kTestPolicyName1, kTestPolicyName2, kTestPolicyName3, kTestPolicyName4,
+       kTestPolicyName5, kTestPolicyName6, kTestPolicyName7});
+  PolicyDictionaryMerger wildcard_policy_list({"*"});
+  wildcard_policy_list.SetAllowedPoliciesForTesting(
+      {kTestPolicyName1, kTestPolicyName2, kTestPolicyName3, kTestPolicyName4,
+       kTestPolicyName5, kTestPolicyName6, kTestPolicyName7});
+  list_merged.MergeValues({&good_policy_list});
+  EXPECT_TRUE(list_merged.Equals(expected_list_merged));
+
+  PolicyMap expected_list_merged_wildcard = expected_list_merged.Clone();
+  expected_list_merged_wildcard.Set(kTestPolicyName5, case5.DeepCopy());
+  expected_list_merged_wildcard.Set(kTestPolicyName8, case8.DeepCopy());
+  list_merged_wildcard.MergeValues({&wildcard_policy_list});
+  EXPECT_TRUE(list_merged_wildcard.Equals(expected_list_merged_wildcard));
+}
+
+TEST_F(PolicyMapTest, MergeValuesDictionary_FeatureEnabled) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(
+      policy::features::kPolicyMergeMultiSource);
+
+  base::Value::Dict dict_a;
+  dict_a.Set("keyA", true);
+
+  base::Value::Dict dict_b;
+  dict_b.Set("keyB", "ValueB2");
+  dict_b.Set("keyC", "ValueC2");
+  dict_b.Set("keyD", "ValueD2");
+
+  base::Value::Dict dict_c;
+  dict_c.Set("keyA", "ValueA");
+  dict_c.Set("keyB", "ValueB");
+  dict_c.Set("keyC", "ValueC");
+  dict_c.Set("keyD", "ValueD");
+  dict_c.Set("keyZ", "ValueZ");
+
+  base::Value::Dict dict_d;
+  dict_d.Set("keyC", "ValueC3");
+
+  base::Value::Dict dict_e;
+  dict_e.Set("keyD", "ValueD4");
+  dict_e.Set("keyE", 123);
+
+  base::Value::Dict dict_f;
+  dict_f.Set("keyX", "ValueX");
+  dict_f.Set("keyE", "ValueE5");
+
+  // Case 1: kTestPolicyName1 - Merging should only keep keys with the highest
+  // priority
+  PolicyMap::Entry case1(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
+                         POLICY_SOURCE_PLATFORM, base::Value(dict_a.Clone()),
+                         nullptr);
+  case1.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
+      base::Value(dict_b.Clone()), nullptr));
+  case1.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_COMMAND_LINE,
+      base::Value(dict_c.Clone()), nullptr));
+
+  base::Value::Dict merged_dict_case1;
+  merged_dict_case1.Merge(dict_c.Clone());
+  merged_dict_case1.Merge(dict_b.Clone());
+  merged_dict_case1.Merge(dict_a.Clone());
+
+  PolicyMap::Entry expected_case1(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_MERGED,
+      base::Value(merged_dict_case1.Clone()), nullptr);
+  expected_case1.AddConflictingPolicy(case1.DeepCopy());
+
+  // Case 2 - kTestPolicyName2
+  // Policies should only be merged with other policies with the same target,
+  // level and scope.
+  PolicyMap::Entry case2(POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE,
+                         POLICY_SOURCE_PLATFORM, base::Value(dict_e.Clone()),
+                         nullptr);
+
+  case2.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
+      base::Value(dict_f.Clone()), nullptr));
+
+  case2.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_USER, POLICY_SOURCE_PLATFORM,
+      base::Value(dict_a.Clone()), nullptr));
+
+  base::Value::Dict merged_dict_case2;
+  merged_dict_case2.Merge(dict_f.Clone());
+  merged_dict_case2.Merge(dict_e.Clone());
+
+  PolicyMap::Entry expected_case2(
+      POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE, POLICY_SOURCE_MERGED,
+      base::Value(merged_dict_case2.Clone()), nullptr);
+  expected_case2.AddConflictingPolicy(case2.DeepCopy());
+
+  // Case 3 - kTestPolicyName3
+  // Enterprise default policies should not be merged with other sources.
+  PolicyMap::Entry case3(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
+                         POLICY_SOURCE_PLATFORM, base::Value(dict_a.Clone()),
+                         nullptr);
+
+  case3.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_COMMAND_LINE,
+      base::Value(dict_b.Clone()), nullptr));
+
+  case3.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
+      POLICY_SOURCE_ENTERPRISE_DEFAULT, base::Value(dict_e.Clone()), nullptr));
+
+  case3.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE,
+      POLICY_SOURCE_ENTERPRISE_DEFAULT, base::Value(dict_f.Clone()), nullptr));
+
+  base::Value::Dict merged_dict_case3;
+  merged_dict_case3.Merge(dict_b.Clone());
+  merged_dict_case3.Merge(dict_a.Clone());
+
+  PolicyMap::Entry expected_case3(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_MERGED,
+      base::Value(merged_dict_case3.Clone()), nullptr);
+  expected_case3.AddConflictingPolicy(case3.DeepCopy());
+
+  // Case 4 - kTestPolicyName4
+  // Policies with a single source should stay the same.
+  PolicyMap::Entry case4(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
+                         POLICY_SOURCE_CLOUD, base::Value(dict_a.Clone()),
+                         nullptr);
+  PolicyMap::Entry expected_case4 = case4.DeepCopy();
+
+  // Case 5 - kTestPolicyName5
   // Policies that are not dictionaries should not be merged.
   // If such a policy is explicitly in the list of policies to merge, an error
   // is added to the entry and the policy stays intact.
+  PolicyMap::Entry case5(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
+                         POLICY_SOURCE_PLATFORM, base::Value("bad stuff"),
+                         nullptr);
+
+  PolicyMap::Entry expected_case5 = case5.DeepCopy();
+  expected_case5.AddMessage(
+      PolicyMap::MessageType::kError,
+      IDS_POLICY_DICTIONARY_MERGING_WRONG_POLICY_TYPE_SPECIFIED);
+
+  // Case 6 - kTestPolicyName6
+  // User cloud policies should not be merged with other sources.
+  PolicyMap::Entry case6(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+                         POLICY_SOURCE_PLATFORM, base::Value(dict_a.Clone()),
+                         nullptr);
+  case6.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
+      base::Value(dict_e.Clone()), nullptr));
+  case6.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
+      base::Value(dict_f.Clone()), nullptr));
+  PolicyMap::Entry expected_case6(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+                                  POLICY_SOURCE_MERGED,
+                                  base::Value(dict_a.Clone()), nullptr);
+  expected_case6.AddConflictingPolicy(case6.DeepCopy());
+
+  // Case 7 - kTestPolicyName7
+  // User platform policies should not be merged under any circumstances.
+  PolicyMap::Entry case7(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+                         POLICY_SOURCE_PLATFORM, base::Value(dict_a.Clone()),
+                         nullptr);
+  case7.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER, POLICY_SOURCE_PLATFORM,
+      base::Value(dict_b.Clone()), nullptr));
+  case7.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
+      base::Value(dict_c.Clone()), nullptr));
+  case7.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_PLATFORM,
+      base::Value(dict_d.Clone()), nullptr));
+  case7.AddConflictingPolicy(PolicyMap::Entry(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER, POLICY_SOURCE_COMMAND_LINE,
+      base::Value(dict_e.Clone()), nullptr));
+  PolicyMap::Entry expected_case7(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+                                  POLICY_SOURCE_MERGED,
+                                  base::Value(dict_a.Clone()), nullptr);
+  expected_case7.AddConflictingPolicy(case7.DeepCopy());
+
+  // Case 8 - kTestPolicyName8
+  // If a dictionary policy is not in the list of dictionary policies allowed to
+  // be merged, an error is added to the entry and the policy stays intact.
   PolicyMap::Entry case8(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                         POLICY_SOURCE_CLOUD, dict_a.Clone(), nullptr);
+                         POLICY_SOURCE_CLOUD, base::Value(dict_a.Clone()),
+                         nullptr);
 
   PolicyMap::Entry expected_case8 = case8.DeepCopy();
 
@@ -926,39 +1406,39 @@ TEST_F(PolicyMapTest, MergeValuesDictionary) {
 }
 
 TEST_F(PolicyMapTest, MergeValuesGroup) {
-  std::vector<base::Value> abc = GetListStorage<std::string>({"a", "b", "c"});
-  std::vector<base::Value> ab = GetListStorage<std::string>({"a", "b"});
-  std::vector<base::Value> cd = GetListStorage<std::string>({"c", "d"});
-  std::vector<base::Value> ef = GetListStorage<std::string>({"e", "f"});
+  base::Value::List abc = GetList<std::string>({"a", "b", "c"});
+  base::Value::List ab = GetList<std::string>({"a", "b"});
+  base::Value::List cd = GetList<std::string>({"c", "d"});
+  base::Value::List ef = GetList<std::string>({"e", "f"});
 
   // Case 1 - kTestPolicyName1
   // Should not be affected by the atomic groups
   PolicyMap::Entry platform_user_mandatory(
       POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER, POLICY_SOURCE_PLATFORM,
-      base::Value(abc), nullptr);
+      base::Value(abc.Clone()), nullptr);
 
   platform_user_mandatory.AddConflictingPolicy(
       PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                       POLICY_SOURCE_CLOUD, base::Value(cd), nullptr));
+                       POLICY_SOURCE_CLOUD, base::Value(cd.Clone()), nullptr));
 
   platform_user_mandatory.AddConflictingPolicy(PolicyMap::Entry(
       POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-      POLICY_SOURCE_ENTERPRISE_DEFAULT, base::Value(ef), nullptr));
+      POLICY_SOURCE_ENTERPRISE_DEFAULT, base::Value(ef.Clone()), nullptr));
 
   platform_user_mandatory.AddConflictingPolicy(PolicyMap::Entry(
       POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_USER,
-      POLICY_SOURCE_ENTERPRISE_DEFAULT, base::Value(ef), nullptr));
+      POLICY_SOURCE_ENTERPRISE_DEFAULT, base::Value(ef.Clone()), nullptr));
 
   // Case 2 - policy::key::kExtensionInstallBlocklist
   // This policy is part of the atomic group "Extensions" and has the highest
   // source in its group, its value should remain the same.
   PolicyMap::Entry platform_machine_mandatory(
       POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_PLATFORM,
-      base::Value(ab), nullptr);
+      base::Value(ab.Clone()), nullptr);
 
   platform_machine_mandatory.AddConflictingPolicy(
       PolicyMap::Entry(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                       POLICY_SOURCE_CLOUD, base::Value(cd), nullptr));
+                       POLICY_SOURCE_CLOUD, base::Value(cd.Clone()), nullptr));
 
   // Case 3 - policy::key::kExtensionInstallAllowlist
   // This policy is part of the atomic group "Extensions" and has a lower
@@ -966,7 +1446,7 @@ TEST_F(PolicyMapTest, MergeValuesGroup) {
   // its value should be ignored.
   PolicyMap::Entry cloud_machine_mandatory(
       POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_CLOUD,
-      base::Value(ef), nullptr);
+      base::Value(ef.Clone()), nullptr);
   auto cloud_machine_mandatory_ignored = cloud_machine_mandatory.DeepCopy();
   cloud_machine_mandatory_ignored.SetIgnoredByPolicyAtomicGroup();
 
@@ -975,15 +1455,15 @@ TEST_F(PolicyMapTest, MergeValuesGroup) {
   // source in its group, its value should remain the same.
   PolicyMap::Entry platform_machine_recommended(
       POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE, POLICY_SOURCE_PLATFORM,
-      base::Value(ab), nullptr);
+      base::Value(ab.Clone()), nullptr);
 
   PolicyMap policy_not_merged;
   policy_not_merged.Set(kTestPolicyName1, platform_user_mandatory.DeepCopy());
-  policy_not_merged.Set(policy::key::kExtensionInstallBlocklist,
+  policy_not_merged.Set(policy::key::kPopupsAllowedForUrls,
                         platform_machine_mandatory.DeepCopy());
-  policy_not_merged.Set(policy::key::kExtensionInstallAllowlist,
+  policy_not_merged.Set(policy::key::kPopupsBlockedForUrls,
                         cloud_machine_mandatory.DeepCopy());
-  policy_not_merged.Set(policy::key::kExtensionInstallForcelist,
+  policy_not_merged.Set(policy::key::kDefaultPopupsSetting,
                         platform_machine_recommended.DeepCopy());
 
   PolicyMap group_merged = policy_not_merged.Clone();
@@ -993,26 +1473,24 @@ TEST_F(PolicyMapTest, MergeValuesGroup) {
   PolicyMap expected_group_merged;
   expected_group_merged.Set(kTestPolicyName1,
                             platform_user_mandatory.DeepCopy());
-  expected_group_merged.Set(policy::key::kExtensionInstallBlocklist,
+  expected_group_merged.Set(policy::key::kPopupsAllowedForUrls,
                             platform_machine_mandatory.DeepCopy());
-  expected_group_merged.Set(policy::key::kExtensionInstallAllowlist,
+  expected_group_merged.Set(policy::key::kPopupsBlockedForUrls,
                             cloud_machine_mandatory_ignored.DeepCopy());
-  expected_group_merged.Set(policy::key::kExtensionInstallForcelist,
+  expected_group_merged.Set(policy::key::kDefaultPopupsSetting,
                             platform_machine_recommended.DeepCopy());
 
   EXPECT_TRUE(group_merged.Equals(expected_group_merged));
 }
 
 TEST_F(PolicyMapTest, LoadFromSetsLevelScopeAndSource) {
-  base::DictionaryValue policies;
-  policies.SetStringKey("TestPolicy1", "google.com");
-  policies.SetBoolKey("TestPolicy2", true);
-  policies.SetIntKey("TestPolicy3", -12321);
+  base::Value::Dict policies;
+  policies.Set("TestPolicy1", "google.com");
+  policies.Set("TestPolicy2", true);
+  policies.Set("TestPolicy3", -12321);
 
   PolicyMap loaded;
-  loaded.LoadFrom(&policies,
-                  POLICY_LEVEL_MANDATORY,
-                  POLICY_SCOPE_USER,
+  loaded.LoadFrom(policies, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
                   POLICY_SOURCE_PLATFORM);
 
   PolicyMap expected;
@@ -1025,42 +1503,66 @@ TEST_F(PolicyMapTest, LoadFromSetsLevelScopeAndSource) {
   EXPECT_TRUE(loaded.Equals(expected));
 }
 
-bool IsMandatory(const PolicyMap::PolicyMapType::const_iterator iter) {
-  return iter->second.level == POLICY_LEVEL_MANDATORY;
+TEST_F(PolicyMapTest, LoadFromCheckForExternalPolicy) {
+  base::Value::Dict policies;
+  policies.Set("TestPolicy1", "google.com");
+
+  PolicyMap loaded;
+  loaded.set_chrome_policy_details_callback_for_test(
+      base::BindRepeating(&PolicyMapTest::GetPolicyDetailsExternalCallback,
+                          base::Unretained(this)));
+  loaded.LoadFrom(policies, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+                  POLICY_SOURCE_PLATFORM);
+  EXPECT_TRUE(loaded.empty());
+  loaded.set_chrome_policy_details_callback_for_test(
+      base::BindRepeating(&PolicyMapTest::GetPolicyDetailsNonExternalCallback,
+                          base::Unretained(this)));
+  loaded.LoadFrom(policies, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+                  POLICY_SOURCE_PLATFORM);
+  EXPECT_FALSE(loaded.empty());
 }
 
-TEST_F(PolicyMapTest, EraseNonmatching) {
+bool IsMandatory(PolicyMap::const_reference entry) {
+  return entry.second.level == POLICY_LEVEL_MANDATORY;
+}
+
+TEST_F(PolicyMapTest, CloneIf) {
   PolicyMap a;
   a.Set(kTestPolicyName1, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
         POLICY_SOURCE_CLOUD, base::Value("google.com"), nullptr);
   a.Set(kTestPolicyName2, POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE,
         POLICY_SOURCE_CLOUD, base::Value(true), nullptr);
 
-  a.EraseNonmatching(base::BindRepeating(&IsMandatory));
+  PolicyMap clone = a.CloneIf(base::BindRepeating(&IsMandatory));
 
   PolicyMap b;
   b.Set(kTestPolicyName1, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
         POLICY_SOURCE_CLOUD, base::Value("google.com"), nullptr);
-  EXPECT_TRUE(a.Equals(b));
+  EXPECT_TRUE(clone.Equals(b));
 }
 
 TEST_F(PolicyMapTest, EntryAddConflict) {
-  std::vector<base::Value> ab = GetListStorage<std::string>({"a", "b"});
-  std::vector<base::Value> cd = GetListStorage<std::string>({"c", "d"});
-  std::vector<base::Value> ef = GetListStorage<std::string>({"e", "f"});
-  std::vector<base::Value> gh = GetListStorage<std::string>({"g", "h"});
+  base::Value::List ab = GetList<std::string>({"a", "b"});
+  base::Value::List cd = GetList<std::string>({"c", "d"});
+  base::Value::List ef = GetList<std::string>({"e", "f"});
+  base::Value::List gh = GetList<std::string>({"g", "h"});
 
   // Case 1: Non-nested conflicts
   PolicyMap::Entry case1(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                         POLICY_SOURCE_PLATFORM, base::Value(ab), nullptr);
+                         POLICY_SOURCE_PLATFORM, base::Value(ab.Clone()),
+                         nullptr);
   PolicyMap::Entry conflict11(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                              POLICY_SOURCE_PLATFORM, base::Value(cd), nullptr);
+                              POLICY_SOURCE_PLATFORM, base::Value(cd.Clone()),
+                              nullptr);
   PolicyMap::Entry conflict12(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                              POLICY_SOURCE_PLATFORM, base::Value(ef), nullptr);
+                              POLICY_SOURCE_PLATFORM, base::Value(ef.Clone()),
+                              nullptr);
   PolicyMap::Entry conflict13(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                              POLICY_SOURCE_PLATFORM, base::Value(gh), nullptr);
+                              POLICY_SOURCE_PLATFORM, base::Value(gh.Clone()),
+                              nullptr);
   PolicyMap::Entry conflict14(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                              POLICY_SOURCE_PLATFORM, base::Value(ab), nullptr);
+                              POLICY_SOURCE_PLATFORM, base::Value(ab.Clone()),
+                              nullptr);
 
   case1.AddConflictingPolicy(conflict11.DeepCopy());
   case1.AddConflictingPolicy(conflict12.DeepCopy());
@@ -1083,15 +1585,20 @@ TEST_F(PolicyMapTest, EntryAddConflict) {
 
   // Case 2: Nested conflicts
   PolicyMap::Entry case2(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                         POLICY_SOURCE_PLATFORM, base::Value(ab), nullptr);
+                         POLICY_SOURCE_PLATFORM, base::Value(ab.Clone()),
+                         nullptr);
   PolicyMap::Entry conflict21(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                              POLICY_SOURCE_PLATFORM, base::Value(cd), nullptr);
+                              POLICY_SOURCE_PLATFORM, base::Value(cd.Clone()),
+                              nullptr);
   PolicyMap::Entry conflict22(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                              POLICY_SOURCE_PLATFORM, base::Value(cd), nullptr);
+                              POLICY_SOURCE_PLATFORM, base::Value(cd.Clone()),
+                              nullptr);
   PolicyMap::Entry conflict23(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                              POLICY_SOURCE_PLATFORM, base::Value(ef), nullptr);
+                              POLICY_SOURCE_PLATFORM, base::Value(ef.Clone()),
+                              nullptr);
   PolicyMap::Entry conflict24(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                              POLICY_SOURCE_PLATFORM, base::Value(gh), nullptr);
+                              POLICY_SOURCE_PLATFORM, base::Value(gh.Clone()),
+                              nullptr);
 
   conflict21.AddConflictingPolicy(conflict22.DeepCopy());
   conflict21.AddConflictingPolicy(conflict23.DeepCopy());
@@ -1263,6 +1770,7 @@ TEST_F(PolicyMapTest, Affiliation) {
   EXPECT_TRUE(policies.IsUserAffiliated());
 }
 
+#if !BUILDFLAG(IS_CHROMEOS)
 class PolicyMapMergeTest
     : public PolicyMapTestBase,
       public testing::TestWithParam<
@@ -1443,12 +1951,11 @@ class PolicyMapMergeTest
 #endif  // !BUILDFLAG(IS_CHROMEOS)
   }
 
-  void PopulateExpectedMetapolicyMap(
-      PolicyMap& policy_map_expected,
-      const PolicyMap& policy_map_1,
-      const PolicyMap& policy_map_2,
-      std::unique_ptr<base::ListValue> merge_list_1,
-      std::unique_ptr<base::ListValue> merge_list_2) {
+  void PopulateExpectedMetapolicyMap(PolicyMap& policy_map_expected,
+                                     const PolicyMap& policy_map_1,
+                                     const PolicyMap& policy_map_2,
+                                     base::Value::List merge_list_1,
+                                     base::Value::List merge_list_2) {
     // Platform machine overrides cloud machine because modified priorities
     // don't apply to precedence metapolicies.
     policy_map_expected.Set(
@@ -1489,8 +1996,8 @@ class PolicyMapMergeTest
       // apply to merging metapolicies.
       policy_map_expected.Set(key::kPolicyListMultipleSourceMergeList,
                               POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                              POLICY_SOURCE_CLOUD, merge_list_2->Clone(),
-                              nullptr);
+                              POLICY_SOURCE_CLOUD,
+                              base::Value(std::move(merge_list_2)), nullptr);
       policy_map_expected.GetMutable(key::kPolicyListMultipleSourceMergeList)
           ->AddMessage(PolicyMap::MessageType::kWarning,
                        IDS_POLICY_CONFLICT_DIFF_VALUE);
@@ -1503,8 +2010,8 @@ class PolicyMapMergeTest
       // Platform machine overrides cloud machine with default precedence.
       policy_map_expected.Set(key::kPolicyListMultipleSourceMergeList,
                               POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                              POLICY_SOURCE_PLATFORM, merge_list_1->Clone(),
-                              nullptr);
+                              POLICY_SOURCE_PLATFORM,
+                              base::Value(std::move(merge_list_1)), nullptr);
       policy_map_expected.GetMutable(key::kPolicyListMultipleSourceMergeList)
           ->AddMessage(PolicyMap::MessageType::kWarning,
                        IDS_POLICY_CONFLICT_DIFF_VALUE);
@@ -1608,12 +2115,10 @@ TEST_P(PolicyMapMergeTest, MergeFrom) {
 
 TEST_P(PolicyMapMergeTest, MergeFrom_Metapolicies) {
   // Define the lists of policies that will be used by the merging metapolicies.
-  std::unique_ptr<base::ListValue> merge_list_1 =
-      std::make_unique<base::ListValue>();
-  merge_list_1->Append(base::Value(kTestPolicyName1));
-  std::unique_ptr<base::ListValue> merge_list_2 =
-      std::make_unique<base::ListValue>();
-  merge_list_2->Append(base::Value(kTestPolicyName2));
+  base::Value::List merge_list_1;
+  merge_list_1.Append(kTestPolicyName1);
+  base::Value::List merge_list_2;
+  merge_list_2.Append(kTestPolicyName2);
 
   PolicyMap policy_map_1;
   if (IsUserAffiliated()) {
@@ -1631,7 +2136,8 @@ TEST_P(PolicyMapMergeTest, MergeFrom_Metapolicies) {
                    POLICY_SOURCE_CLOUD, base::Value(false), nullptr);
   policy_map_1.Set(key::kPolicyListMultipleSourceMergeList,
                    POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                   POLICY_SOURCE_PLATFORM, merge_list_1->Clone(), nullptr);
+                   POLICY_SOURCE_PLATFORM, base::Value(merge_list_1.Clone()),
+                   nullptr);
 
   PolicyMap policy_map_2;
   policy_map_2.Set(key::kCloudPolicyOverridesPlatformPolicy,
@@ -1643,7 +2149,8 @@ TEST_P(PolicyMapMergeTest, MergeFrom_Metapolicies) {
       base::Value(CloudUserPolicyOverridesCloudMachinePolicy()), nullptr);
   policy_map_2.Set(key::kPolicyListMultipleSourceMergeList,
                    POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-                   POLICY_SOURCE_CLOUD, merge_list_2->Clone(), nullptr);
+                   POLICY_SOURCE_CLOUD, base::Value(merge_list_2.Clone()),
+                   nullptr);
 
   PolicyMap policy_map_expected;
   PopulateExpectedMetapolicyMap(policy_map_expected, policy_map_1, policy_map_2,
@@ -1662,7 +2169,6 @@ INSTANTIATE_TEST_SUITE_P(PolicyMapMergeTestInstance,
                                           testing::Values(false, true),
                                           testing::Values(false, true)));
 
-#if !BUILDFLAG(IS_CHROMEOS)
 class PolicyMapPriorityTest
     : public testing::TestWithParam<
           std::tuple</*cloud_policy_overrides_platform_policy=*/bool,

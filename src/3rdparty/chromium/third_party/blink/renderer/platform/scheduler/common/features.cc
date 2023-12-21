@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -63,7 +63,7 @@ bool IsIntensiveWakeUpThrottlingEnabled() {
 // that admins get consistent behaviour that clients can't override. Otherwise
 // use the base::FeatureParams.
 
-base::TimeDelta GetIntensiveWakeUpThrottlingGracePeriod() {
+base::TimeDelta GetIntensiveWakeUpThrottlingGracePeriod(bool loading) {
   // Controls the time that elapses after a page is backgrounded before the
   // throttling policy takes effect.
   static const base::FeatureParam<int>
@@ -72,10 +72,20 @@ base::TimeDelta GetIntensiveWakeUpThrottlingGracePeriod() {
           features::kIntensiveWakeUpThrottling_GracePeriodSeconds_Name,
           kIntensiveWakeUpThrottling_GracePeriodSeconds_Default};
 
+  // Controls the grace period for loaded pages.
+  static const base::FeatureParam<int>
+      kIntensiveWakeUpThrottling_GracePeriodSeconds_Loaded{
+          &features::kQuickIntensiveWakeUpThrottlingAfterLoading,
+          "grace_period_seconds_loaded",
+          kIntensiveWakeUpThrottling_GracePeriodSecondsLoaded_Default};
+
   int seconds = kIntensiveWakeUpThrottling_GracePeriodSeconds_Default;
   if (GetIntensiveWakeUpThrottlingPolicyOverride() ==
       PolicyOverride::kNoOverride) {
     seconds = kIntensiveWakeUpThrottling_GracePeriodSeconds.Get();
+    if (!loading && base::FeatureList::IsEnabled(
+                        features::kQuickIntensiveWakeUpThrottlingAfterLoading))
+      seconds = kIntensiveWakeUpThrottling_GracePeriodSeconds_Loaded.Get();
   }
   return base::Seconds(seconds);
 }
@@ -91,20 +101,29 @@ base::TimeDelta GetForegroundTimersThrottledWakeUpInterval() {
       kForegroundTimersThrottledWakeUpIntervalMills.Get());
 }
 
-const base::Feature kDeprioritizeDOMTimersDuringPageLoading{
-    "DeprioritizeDOMTimersDuringPageLoading",
-    base::FEATURE_DISABLED_BY_DEFAULT};
+BASE_FEATURE(kThreadedScrollPreventRenderingStarvation,
+             "ThreadedScrollPreventRenderingStarvation",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
-const base::FeatureParam<DeprioritizeDOMTimersPhase>::Option
-    kDeprioritizeDOMTimersPhaseOptions[] = {
-        {DeprioritizeDOMTimersPhase::kOnDOMContentLoaded, "ondomcontentloaded"},
-        {DeprioritizeDOMTimersPhase::kFirstContentfulPaint, "fcp"},
-        {DeprioritizeDOMTimersPhase::kOnLoad, "onload"}};
+BASE_FEATURE(kPrioritizeCompositingAfterDelayTrials,
+             "PrioritizeCompositingAfterDelayTrials",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
-const base::FeatureParam<DeprioritizeDOMTimersPhase>
-    kDeprioritizeDOMTimersPhase{&kDeprioritizeDOMTimersDuringPageLoading,
-                                "phase",
-                                DeprioritizeDOMTimersPhase::kOnDOMContentLoaded,
-                                &kDeprioritizeDOMTimersPhaseOptions};
+const base::FeatureParam<CompositorTQPolicyDuringThreadedScroll>::Option
+    kCompositorTQPolicyDuringThreadedScrollOptions[] = {
+        {CompositorTQPolicyDuringThreadedScroll::kLowPriorityWithAntiStarvation,
+         "low-priority-with-anti-starvation"},
+        {CompositorTQPolicyDuringThreadedScroll::
+             kNormalPriorityWithAntiStarvation,
+         "normal-priority-with-anti-starvation"},
+        {CompositorTQPolicyDuringThreadedScroll::kVeryHighPriorityAlways,
+         "very-high-priority-always"}};
+
+const base::FeatureParam<CompositorTQPolicyDuringThreadedScroll>
+    kCompositorTQPolicyDuringThreadedScroll{
+        &kThreadedScrollPreventRenderingStarvation, "policy",
+        CompositorTQPolicyDuringThreadedScroll::kLowPriorityWithAntiStarvation,
+        &kCompositorTQPolicyDuringThreadedScrollOptions};
+
 }  // namespace scheduler
 }  // namespace blink

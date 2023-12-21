@@ -1,4 +1,4 @@
-// Copyright 2020 PDFium Authors. All rights reserved.
+// Copyright 2020 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 #include <memory>
 #include <utility>
 
-#include "core/fpdfapi/render/cpdf_pagerendercache.h"
+#include "core/fpdfapi/page/cpdf_pageimagecache.h"
 #include "core/fpdfapi/render/cpdf_pagerendercontext.h"
 #include "core/fpdfapi/render/cpdf_progressiverenderer.h"
 #include "core/fpdfapi/render/cpdf_renderoptions.h"
@@ -59,8 +59,8 @@ void RenderPageImpl(CPDF_PageRenderContext* pContext,
   pContext->m_pDevice->SetBaseClip(clipping_rect);
   pContext->m_pDevice->SetClip_Rect(clipping_rect);
   pContext->m_pContext = std::make_unique<CPDF_RenderContext>(
-      pPage->GetDocument(), pPage->GetPageResources(),
-      static_cast<CPDF_PageRenderCache*>(pPage->GetRenderCache()));
+      pPage->GetDocument(), pPage->GetMutablePageResources(),
+      pPage->GetPageImageCache());
 
   pContext->m_pContext->AppendLayer(pPage, matrix);
 

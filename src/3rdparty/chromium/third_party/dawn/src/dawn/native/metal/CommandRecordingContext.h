@@ -22,37 +22,53 @@
 
 namespace dawn::native::metal {
 
-    // This class wraps a MTLCommandBuffer and tracks which Metal encoder is open.
-    // Only one encoder may be open at a time.
-    class CommandRecordingContext : NonMovable {
-      public:
-        CommandRecordingContext();
-        ~CommandRecordingContext();
+struct MTLSharedEventAndSignalValue {
+    NSPRef<id> sharedEvent;
+    uint64_t signaledValue;
+};
 
-        id<MTLCommandBuffer> GetCommands();
-        void MarkUsed();
-        bool WasUsed() const;
+// This class wraps a MTLCommandBuffer and tracks which Metal encoder is open.
+// Only one encoder may be open at a time.
+class CommandRecordingContext : NonMovable {
+  public:
+    CommandRecordingContext();
+    ~CommandRecordingContext();
 
-        MaybeError PrepareNextCommandBuffer(id<MTLCommandQueue> queue);
-        NSPRef<id<MTLCommandBuffer>> AcquireCommands();
+    id<MTLCommandBuffer> GetCommands();
+    void SetNeedsSubmit();
+    bool NeedsSubmit() const;
+    void MarkUsed();
+    bool WasUsed() const;
 
-        id<MTLBlitCommandEncoder> EnsureBlit();
-        void EndBlit();
+    MaybeError PrepareNextCommandBuffer(id<MTLCommandQueue> queue);
+    NSPRef<id<MTLCommandBuffer>> AcquireCommands();
 
-        id<MTLComputeCommandEncoder> BeginCompute();
-        void EndCompute();
+    // Create blit pass encoder from blit pass descriptor
+    id<MTLBlitCommandEncoder> BeginBlit(MTLBlitPassDescriptor* descriptor)
+        API_AVAILABLE(macos(11.0), ios(14.0));
+    id<MTLBlitCommandEncoder> EnsureBlit();
+    void EndBlit();
 
-        id<MTLRenderCommandEncoder> BeginRender(MTLRenderPassDescriptor* descriptor);
-        void EndRender();
+    // Create a sequential compute pass by default.
+    id<MTLComputeCommandEncoder> BeginCompute();
+    // Create configurable compute pass from a descriptor with serial dispatch type which commands
+    // are executed sequentially.
+    id<MTLComputeCommandEncoder> BeginCompute(MTLComputePassDescriptor* descriptor)
+        API_AVAILABLE(macos(11.0), ios(14.0));
+    void EndCompute();
 
-      private:
-        NSPRef<id<MTLCommandBuffer>> mCommands;
-        NSPRef<id<MTLBlitCommandEncoder>> mBlit;
-        NSPRef<id<MTLComputeCommandEncoder>> mCompute;
-        NSPRef<id<MTLRenderCommandEncoder>> mRender;
-        bool mInEncoder = false;
-        bool mUsed = false;
-    };
+    id<MTLRenderCommandEncoder> BeginRender(MTLRenderPassDescriptor* descriptor);
+    void EndRender();
+
+  private:
+    NSPRef<id<MTLCommandBuffer>> mCommands;
+    NSPRef<id<MTLBlitCommandEncoder>> mBlit;
+    NSPRef<id<MTLComputeCommandEncoder>> mCompute;
+    NSPRef<id<MTLRenderCommandEncoder>> mRender;
+    bool mInEncoder = false;
+    bool mNeedsSubmit = false;
+    bool mUsed = false;
+};
 
 }  // namespace dawn::native::metal
 

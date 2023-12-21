@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/strings/strcat.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/views/border.h"
@@ -22,8 +22,7 @@
 using l10n_util::GetStringUTF16;
 using l10n_util::GetStringUTF8;
 
-namespace views {
-namespace examples {
+namespace views::examples {
 
 namespace {
 
@@ -163,5 +162,4 @@ void LoginBubbleDialogExample::OnSubmit(std::u16string username,
   password_input_->SetText(password);
 }
 
-}  // namespace examples
-}  // namespace views
+}  // namespace views::examples

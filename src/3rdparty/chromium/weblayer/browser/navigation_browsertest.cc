@@ -1,16 +1,19 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <memory>
 #include "weblayer/test/weblayer_browser_test.h"
 
-#include "base/callback.h"
-#include "base/callback_helpers.h"
+#include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
@@ -308,8 +311,8 @@ IN_PROC_BROWSER_TEST_F(NavigationBrowserTest, DestroyTabInNavigation) {
         shell()->browser()->DestroyTab(new_tab);
         // Destroying the tab posts a task to delete the WebContents, which must
         // be run before the test shuts down lest it access deleted state.
-        base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                      run_loop.QuitClosure());
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+            FROM_HERE, run_loop.QuitClosure());
       }));
   new_tab->GetNavigationController()->Navigate(
       embedded_test_server()->GetURL("/simple_pageX.html"));
@@ -568,10 +571,8 @@ class NavigationBrowserTestUserAgentOverrideSubstring
     : public NavigationBrowserTest {
  public:
   void SetUp() override {
-    scoped_feature_list_.InitWithFeatures(
-        {blink::features::kUserAgentOverrideExperiment,
-         blink::features::kUACHOverrideBlank},
-        {});
+    scoped_feature_list_.InitWithFeatures({blink::features::kUACHOverrideBlank},
+                                          {});
     NavigationBrowserTest::SetUp();
   }
 
@@ -594,14 +595,9 @@ IN_PROC_BROWSER_TEST_F(NavigationBrowserTestUserAgentOverrideSubstring,
       base::BindLambdaForTesting([&](Navigation* navigation) {
         navigation->SetUserAgentString(custom_ua);
       }));
-  base::HistogramTester histogram;
   OneShotNavigationObserver navigation_observer(shell());
   shell()->LoadURL(https_server.GetURL("/simple_page.html"));
   navigation_observer.WaitForNavigation();
-
-  histogram.ExpectBucketCount(
-      blink::UserAgentOverride::kUserAgentOverrideHistogram,
-      blink::UserAgentOverride::UserAgentOverriden, 1);
 
   base::RunLoop run_loop;
   shell()->tab()->ExecuteScript(
@@ -662,7 +658,6 @@ IN_PROC_BROWSER_TEST_F(NavigationBrowserTestUserAgentOverrideSubstring,
         navigation->SetUserAgentString(custom_ua);
       }));
 
-  base::HistogramTester histogram;
   shell()->LoadURL(https_server->GetURL("/simple_page.html"));
   response_1.WaitForRequest();
 
@@ -678,9 +673,6 @@ IN_PROC_BROWSER_TEST_F(NavigationBrowserTestUserAgentOverrideSubstring,
       response_1.http_request()->headers.at("Sec-CH-UA");
   EXPECT_EQ("", new_ch_header);
   content::FetchHistogramsFromChildProcesses();
-  histogram.ExpectBucketCount(
-      blink::UserAgentOverride::kUserAgentOverrideHistogram,
-      blink::UserAgentOverride::UserAgentOverriden, 1);
 
   // Header should carry through to redirect.
   response_1.Send(
@@ -952,10 +944,11 @@ class NavigationBrowserTest2 : public NavigationBrowserTest {
 
 // This test verifies the embedder can replace the X-Client-Data header that
 // is also set by //components/variations.
-IN_PROC_BROWSER_TEST_F(NavigationBrowserTest2, ReplaceXClientDataHeader) {
+IN_PROC_BROWSER_TEST_F(NavigationBrowserTest2,
+                       DISABLED_ReplaceXClientDataHeader) {
   std::unique_ptr<base::RunLoop> run_loop = std::make_unique<base::RunLoop>();
   std::string last_header_value;
-  auto main_task_runner = base::SequencedTaskRunnerHandle::Get();
+  auto main_task_runner = base::SequencedTaskRunner::GetCurrentDefault();
   https_server()->RegisterRequestHandler(base::BindLambdaForTesting(
       [&, main_task_runner](const net::test_server::HttpRequest& request)
           -> std::unique_ptr<net::test_server::HttpResponse> {
@@ -1001,7 +994,7 @@ IN_PROC_BROWSER_TEST_F(NavigationBrowserTest2,
   std::unique_ptr<base::RunLoop> run_loop = std::make_unique<base::RunLoop>();
   std::string last_header_value;
   bool should_redirect = true;
-  auto main_task_runner = base::SequencedTaskRunnerHandle::Get();
+  auto main_task_runner = base::SequencedTaskRunner::GetCurrentDefault();
   https_server()->RegisterRequestHandler(base::BindLambdaForTesting(
       [&, main_task_runner](const net::test_server::HttpRequest& request)
           -> std::unique_ptr<net::test_server::HttpResponse> {
@@ -1044,7 +1037,7 @@ IN_PROC_BROWSER_TEST_F(NavigationBrowserTest2, SetXClientDataHeaderInRedirect) {
   std::unique_ptr<base::RunLoop> run_loop = std::make_unique<base::RunLoop>();
   std::string last_header_value;
   bool should_redirect = true;
-  auto main_task_runner = base::SequencedTaskRunnerHandle::Get();
+  auto main_task_runner = base::SequencedTaskRunner::GetCurrentDefault();
   https_server()->RegisterRequestHandler(base::BindLambdaForTesting(
       [&, main_task_runner](const net::test_server::HttpRequest& request)
           -> std::unique_ptr<net::test_server::HttpResponse> {

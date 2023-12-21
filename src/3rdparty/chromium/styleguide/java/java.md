@@ -15,52 +15,65 @@ get to decide.
 
 [TOC]
 
+## Java 10 Language Features
+
+### Type deduction using `var`
+
+A variable declaration can use the `var` keyword in place of the type (similar
+to the `auto` keyword in C++). In line with the [guidance for
+C++](https://google.github.io/styleguide/cppguide.html#Type_deduction), the
+`var` keyword may be used when it aids readability and the type of the value is
+already clear (ex. `var bundle = new Bundle()` is OK, but `var something =
+returnValueIsNotObvious()` may be unclear to readers who are new to this part of
+the code).
+
+The `var` keyword may also be used in try-with-resources when the resource is
+not directly accessed (or when it falls under the previous guidance), such as:
+
+```java
+try (var ignored = StrictModeContext.allowDiskWrites()) {
+    // 'var' is permitted so long as the 'ignored' variable is not used directly
+    // in the code.
+}
+```
+
 ## Java 8 Language Features
-[Desugar](https://github.com/bazelbuild/bazel/blob/master/src/tools/android/java/com/google/devtools/build/android/desugar/Desugar.java)
-is used to rewrite some Java 7 & 8 language constructs in a way that is
-compatible with Java 6 (and thus all Android versions). Use of
-[these features](https://developer.android.com/studio/write/java8-support)
-is encouraged, but there are some gotchas:
+[D8] is used to rewrite some Java 7 & 8 language constructs in a way that is
+compatible with Java 6 (and thus all Android versions). Use of [these features]
+is encouraged.
 
-### Default Interface Methods
- * Desugar makes default interface methods work by copy & pasting the default
-   implementations into all implementing classes.
- * This technique is fine for infrequently-used interfaces, but should be
-   avoided (e.g. via a base class) if it noticeably increases method count.
+[D8]: https://developer.android.com/studio/command-line/d8
+[these features]: https://developer.android.com/studio/write/java8-support
 
-### Lambdas and Method References
- * These are syntactic sugar for creating anonymous inner classes.
- * Use them only where the cost of an extra class & method definition is
-   justified.
+## Java Library APIs
 
-### try-with-resources
- * Some library classes do not implement Closeable on older platform APIs.
-   Runtime exceptions are thrown if you use them with a try-with-resources.
-   Do not use the following classes in a try-with-resources:
-   * java.util.zip.ZipFile (implemented in API 19)
-   * java.net.Socket (implemented in API 19)
+Android provides the ability to bundle copies of `java.` APIs alongside
+application code, known as [Java Library Desugaring]. However, since this
+bundling comes with a performance cost, Chrome does not use it. Treat `java.`
+APIs the same as you would `android.` ones and guard them with
+`Build.VERSION.SDK_INT` checks [when necessary]. The one exception is if the
+method is [directly backported by D8] (these are okay to use, since they are
+lightweight). Android Lint will fail if you try to use an API without a
+corresponding `Build.VERSION.SDK_INT` guard or `@RequiresApi` annotation.
+
+[Java Library Desugaring]: https://developer.android.com/studio/write/java8-support-table
+[when necessary]: https://developer.android.com/reference/packages
+[directly backported by D8]: https://source.chromium.org/chromium/chromium/src/+/main:third_party/r8/backported_methods.txt
 
 ## Other Language Features & APIs
 
 ### Exceptions
-* As with the Android style guide, we discourage overly broad catches via
-`Exception` / `Throwable` / `RuntimeException`.
-  * If you need to have a broad catch expression, use a comment to explain why.
-* Catching multiple exceptions in one line is fine.
+We discourage overly broad catches via `Throwable`, `Exception`, or
+`RuntimeException`, except when dealing with `RemoteException` or similar
+system APIs.
+ * There have been many cases of crashes caused by `IllegalStateException` /
+   `IllegalArgumentException` / `SecurityException` being thrown where only
+   `RemoteException` was being caught. In these cases, use
+   `catch (RemoteException | RuntimeException e)`.
+ * For all broad catch expressions, add a comment to explain why.
 
-It is OK to do:
-```java
-try {
-  somethingThatThrowsIOException(filePath);
-  somethingThatThrowsParseException(filePath);
-} catch (IOException | ParseException e) {
-  Log.w(TAG, "Failed to read: %s", filePath, e);
-}
-```
+Avoid adding messages to exceptions that do not aid in debugging. For example:
 
-* Avoid adding messages to exceptions that do not aid in debugging.
-
-For example:
 ```java
 try {
   somethingThatThrowsIOException();
@@ -255,6 +268,11 @@ with the testing suffixes supported [PRESUMBIT.py](https://chromium.googlesource
 `ForTesting` is the conventional suffix although similar patterns, such as
 `ForTest`, are also accepted. These suffixes are checked at presubmit time
 to ensure the functions are called only by test files.
+
+It's generally bad practice to directly call test-only methods from
+non-test-only code. However, occasionally it has to be done, and if so, you
+should guard the check with an `if (BuildConfig.IS_FOR_TEST)` so that our Java
+optimizer can still remove the call in non-test builds.
 
 ## Location
 "Top level directories" are defined as directories with a GN file, such as

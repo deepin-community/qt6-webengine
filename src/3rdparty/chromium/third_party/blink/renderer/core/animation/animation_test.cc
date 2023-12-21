@@ -53,21 +53,24 @@
 #include "third_party/blink/renderer/core/animation/scroll_timeline.h"
 #include "third_party/blink/renderer/core/animation/timing.h"
 #include "third_party/blink/renderer/core/css/cssom/css_unit_values.h"
+#include "third_party/blink/renderer/core/css/properties/longhands.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_node_ids.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/dom/events/native_event_listener.h"
 #include "third_party/blink/renderer/core/dom/qualified_name.h"
+#include "third_party/blink/renderer/core/execution_context/agent.h"
+#include "third_party/blink/renderer/core/execution_context/security_context.h"
 #include "third_party/blink/renderer/core/page/page_animator.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 #include "third_party/blink/renderer/platform/animation/compositor_animation.h"
-#include "third_party/blink/renderer/platform/bindings/microtask.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/thread_state.h"
+#include "third_party/blink/renderer/platform/scheduler/public/event_loop.h"
 #include "third_party/blink/renderer/platform/testing/histogram_tester.h"
 #include "third_party/blink/renderer/platform/testing/paint_test_configurations.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
@@ -106,11 +109,11 @@ class AnimationAnimationTestNoCompositing : public PaintTestConfigurations,
 
   KeyframeEffectModelBase* MakeSimpleEffectModel() {
     PropertyHandle PropertyHandleOpacity(GetCSSPropertyOpacity());
+    static CSSNumberInterpolationType opacity_type(PropertyHandleOpacity);
     TransitionKeyframe* start_keyframe =
         MakeGarbageCollected<TransitionKeyframe>(PropertyHandleOpacity);
     start_keyframe->SetValue(std::make_unique<TypedInterpolationValue>(
-        CSSNumberInterpolationType(PropertyHandleOpacity),
-        std::make_unique<InterpolableNumber>(1.0)));
+        opacity_type, std::make_unique<InterpolableNumber>(1.0)));
     start_keyframe->SetOffset(0.0);
     // Egregious hack: Sideload the compositor value.
     // This is usually set in a part of the rendering process SimulateFrame
@@ -120,8 +123,7 @@ class AnimationAnimationTestNoCompositing : public PaintTestConfigurations,
     TransitionKeyframe* end_keyframe =
         MakeGarbageCollected<TransitionKeyframe>(PropertyHandleOpacity);
     end_keyframe->SetValue(std::make_unique<TypedInterpolationValue>(
-        CSSNumberInterpolationType(PropertyHandleOpacity),
-        std::make_unique<InterpolableNumber>(0.0)));
+        opacity_type, std::make_unique<InterpolableNumber>(0.0)));
     end_keyframe->SetOffset(1.0);
     // Egregious hack: Sideload the compositor value.
     end_keyframe->SetCompositorValue(
@@ -215,7 +217,7 @@ class AnimationAnimationTestNoCompositing : public PaintTestConfigurations,
   void SimulateAwaitReady() { SimulateFrame(last_frame_time); }
 
   void SimulateMicrotask() {
-    Microtask::PerformCheckpoint(V8PerIsolateData::MainThreadIsolate());
+    GetDocument().GetAgent().event_loop()->PerformMicrotaskCheckpoint();
   }
 
   void SimulateFrameForScrollAnimations() {
@@ -1034,9 +1036,9 @@ TEST_P(AnimationAnimationTestNoCompositing, AnimationsDisassociateFromEffect) {
 
 TEST_P(AnimationAnimationTestNoCompositing, AnimationsReturnTimeToNextEffect) {
   Timing timing;
-  timing.start_delay = ANIMATION_TIME_DELTA_FROM_SECONDS(1);
+  timing.start_delay = Timing::Delay(ANIMATION_TIME_DELTA_FROM_SECONDS(1));
   timing.iteration_duration = ANIMATION_TIME_DELTA_FROM_SECONDS(1);
-  timing.end_delay = ANIMATION_TIME_DELTA_FROM_SECONDS(1);
+  timing.end_delay = Timing::Delay(ANIMATION_TIME_DELTA_FROM_SECONDS(1));
   auto* keyframe_effect = MakeGarbageCollected<KeyframeEffect>(
       nullptr, MakeEmptyEffectModel(), timing);
   animation = timeline->Play(keyframe_effect);
@@ -1177,7 +1179,7 @@ TEST_P(AnimationAnimationTestNoCompositing, AttachedAnimations) {
       1U, element->GetElementAnimations()->Animations().find(animation)->value);
 
   ThreadState::Current()->CollectAllGarbageForTesting();
-  EXPECT_TRUE(element->GetElementAnimations()->Animations().IsEmpty());
+  EXPECT_TRUE(element->GetElementAnimations()->Animations().empty());
 }
 
 TEST_P(AnimationAnimationTestNoCompositing, HasLowerCompositeOrdering) {
@@ -1399,6 +1401,16 @@ TEST_P(AnimationAnimationTestCompositing, PreCommitWithUnresolvedStartTimes) {
   EXPECT_FALSE(animation->PreCommit(0, nullptr, true));
 }
 
+TEST_P(AnimationAnimationTestCompositing, SynchronousCancel) {
+  // Start with a composited animation.
+  ResetWithCompositedAnimation();
+  ASSERT_TRUE(animation->HasActiveAnimationsOnCompositor());
+
+  animation->cancel();
+  ASSERT_FALSE(animation->HasActiveAnimationsOnCompositor());
+  EXPECT_FALSE(animation->CompositorPending());
+}
+
 namespace {
 int GenerateHistogramValue(CompositorAnimations::FailureReason reason) {
   // The enum values in CompositorAnimations::FailureReasons are stored as 2^i
@@ -1542,9 +1554,6 @@ TEST_P(AnimationAnimationTestCompositing, InfiniteDurationAnimation) {
 // of the animation if running.
 TEST_P(AnimationAnimationTestCompositing,
        RestartCompositedAnimationOnSizeChange) {
-  // TODO(crbug.com/389359): Remove forced feature enabling once on by
-  // default.
-  ScopedCompositeRelativeKeyframesForTest composite_relative_keyframes(true);
   SetBodyInnerHTML(R"HTML(
     <div id="target" style="width: 100px; height: 200px; background: blue;
                             will-change: transform">
@@ -1595,9 +1604,6 @@ TEST_P(AnimationAnimationTestCompositing,
 // depends on width and a change to the height does not trigger a restart.
 TEST_P(AnimationAnimationTestCompositing,
        RestartCompositedAnimationOnWidthChange) {
-  // TODO(crbug.com/389359): Remove forced feature enabling once on by
-  // default.
-  ScopedCompositeRelativeKeyframesForTest composite_relative_keyframes(true);
   SetBodyInnerHTML(R"HTML(
     <div id="target" style="width: 100px; height: 200px; background: blue;
                             will-change: transform">
@@ -1638,9 +1644,6 @@ TEST_P(AnimationAnimationTestCompositing,
 // affects height and a change to the width does not trigger a restart.
 TEST_P(AnimationAnimationTestCompositing,
        RestartCompositedAnimationOnHeightChange) {
-  // TODO(crbug.com/389359): Remove forced feature enabling once on by
-  // default.
-  ScopedCompositeRelativeKeyframesForTest composite_relative_keyframes(true);
   SetBodyInnerHTML(R"HTML(
     <div id="target" style="width: 100px; height: 200px; background: blue;
                             will-change: transform">
@@ -1732,8 +1735,7 @@ TEST_P(AnimationAnimationTestCompositing,
       scroll_timeline, exception_state);
 
   model->SnapshotAllCompositorKeyframesIfNecessary(
-      *element, *GetDocument().GetStyleResolver().CreateComputedStyle(),
-      nullptr);
+      *element, GetDocument().GetStyleResolver().InitialStyle(), nullptr);
 
   UpdateAllLifecyclePhasesForTest();
   scroll_animation->play();
@@ -1800,8 +1802,7 @@ TEST_P(AnimationAnimationTestCompositing,
       Animation::Create(keyframe_effect, scroll_timeline, exception_state);
 
   model->SnapshotAllCompositorKeyframesIfNecessary(
-      *element, *GetDocument().GetStyleResolver().CreateComputedStyle(),
-      nullptr);
+      *element, GetDocument().GetStyleResolver().InitialStyle(), nullptr);
 
   UpdateAllLifecyclePhasesForTest();
   const double TEST_START_PERCENT = 10;
@@ -1812,6 +1813,7 @@ TEST_P(AnimationAnimationTestCompositing,
   scroll_animation->play();
   EXPECT_EQ(scroll_animation->CheckCanStartAnimationOnCompositor(nullptr),
             CompositorAnimations::kNoFailure);
+  UpdateAllLifecyclePhasesForTest();
   // Start the animation on compositor. The time offset of the compositor
   // keyframe should be unset if we start the animation with its start time.
   scroll_animation->PreCommit(1, nullptr, true);
@@ -1928,12 +1930,12 @@ TEST_P(AnimationAnimationTestCompositing,
   Animation* scroll_animation =
       Animation::Create(keyframe_effect, scroll_timeline, exception_state);
   model->SnapshotAllCompositorKeyframesIfNecessary(
-      *element, *GetDocument().GetStyleResolver().CreateComputedStyle(),
-      nullptr);
+      *element, GetDocument().GetStyleResolver().InitialStyle(), nullptr);
   UpdateAllLifecyclePhasesForTest();
 
   scroll_animation->play();
   EXPECT_EQ(scroll_animation->playState(), "running");
+  UpdateAllLifecyclePhasesForTest();
   GetDocument().GetPendingAnimations().Update(nullptr, true);
   EXPECT_TRUE(scroll_animation->HasActiveAnimationsOnCompositor());
 
@@ -2290,8 +2292,7 @@ TEST_P(AnimationAnimationTestCompositing,
       scroll_timeline, exception_state);
 
   model->SnapshotAllCompositorKeyframesIfNecessary(
-      *element, *GetDocument().GetStyleResolver().CreateComputedStyle(),
-      nullptr);
+      *element, GetDocument().GetStyleResolver().InitialStyle(), nullptr);
 
   UpdateAllLifecyclePhasesForTest();
   scroll_animation->play();
@@ -2470,6 +2471,24 @@ TEST_P(AnimationAnimationTestCompositing, HiddenAnimationsTickWhenVisible) {
   // running on the compositor.
   EXPECT_TIMEDELTA(ANIMATION_TIME_DELTA_FROM_SECONDS(30),
                    animation->TimeToEffectChange().value());
+}
+
+TEST_P(AnimationAnimationTestNoCompositing,
+       GetEffectTimingDelayZeroUseCounter) {
+  animation->setEffect(MakeAnimation(/* duration */ 1.0));
+  EXPECT_FALSE(
+      GetDocument().IsUseCounted(WebFeature::kGetEffectTimingDelayZero));
+  EXPECT_TRUE(animation->effect()->getTiming());
+  EXPECT_FALSE(
+      GetDocument().IsUseCounted(WebFeature::kGetEffectTimingDelayZero));
+
+  animation->setEffect(MakeAnimation(/* duration */ 0.0));
+  // Should remain uncounted until getTiming is called.
+  EXPECT_FALSE(
+      GetDocument().IsUseCounted(WebFeature::kGetEffectTimingDelayZero));
+  EXPECT_TRUE(animation->effect()->getTiming());
+  EXPECT_TRUE(
+      GetDocument().IsUseCounted(WebFeature::kGetEffectTimingDelayZero));
 }
 
 }  // namespace blink

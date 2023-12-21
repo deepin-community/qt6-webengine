@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,10 +8,10 @@
 
 #include <set>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/check_op.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/i18n/rtl.h"
 #include "base/i18n/time_formatting.h"
 #include "base/notreached.h"
@@ -43,6 +43,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/query_parser/snippet.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/supervised_user/core/common/buildflags.h"
 #include "components/sync/driver/sync_service.h"
 #include "components/sync/protocol/sync_enums.pb.h"
 #include "components/sync_device_info/device_info.h"
@@ -88,14 +89,16 @@ void GetDeviceNameAndType(const syncer::DeviceInfoTracker* tracker,
       tracker->GetDeviceInfo(client_id);
   if (device_info.get()) {
     *name = device_info->client_name();
-    switch (device_info->device_type()) {
-      case sync_pb::SyncEnums::TYPE_PHONE:
+    switch (device_info->form_factor()) {
+      case syncer::DeviceInfo::FormFactor::kPhone:
         *type = kDeviceTypePhone;
         break;
-      case sync_pb::SyncEnums::TYPE_TABLET:
+      case syncer::DeviceInfo::FormFactor::kTablet:
         *type = kDeviceTypeTablet;
         break;
-      default:
+      case syncer::DeviceInfo::FormFactor::kUnknown:
+        [[fallthrough]];  // return the laptop icon as default.
+      case syncer::DeviceInfo::FormFactor::kDesktop:
         *type = kDeviceTypeLaptop;
     }
     return;
@@ -169,7 +172,7 @@ bool IsEntryInRemoteUserData(
 }
 
 // Converts `entry` to a base::Value::Dict to be owned by the caller.
-base::Value HistoryEntryToValue(
+base::Value::Dict HistoryEntryToValue(
     const BrowsingHistoryService::HistoryEntry& entry,
     BookmarkModel* bookmark_model,
     Profile* profile,
@@ -196,7 +199,7 @@ base::Value HistoryEntryToValue(
   result.Set("time", entry.time.ToJsTime());
 
   // Pass the timestamps in a list.
-  base::Value timestamps(base::Value::Type::LIST);
+  base::Value::List timestamps;
   for (int64_t timestamp : entry.all_timestamps) {
     timestamps.Append(base::Time::FromInternalValue(timestamp).ToJsTime());
   }
@@ -246,7 +249,7 @@ base::Value HistoryEntryToValue(
         SupervisedUserServiceFactory::GetForProfile(profile);
   }
   if (supervised_user_service) {
-    const SupervisedUserURLFilter* url_filter =
+    SupervisedUserURLFilter* url_filter =
         supervised_user_service->GetURLFilter();
     int filtering_behavior =
         url_filter->GetFilteringBehaviorForURL(entry.url.GetWithEmptyPath());
@@ -273,7 +276,7 @@ base::Value HistoryEntryToValue(
     result.Set("debug", std::move(debug));
   }
 
-  return base::Value(std::move(result));
+  return result;
 }
 
 }  // namespace
@@ -285,7 +288,7 @@ BrowsingHistoryHandler::BrowsingHistoryHandler()
 BrowsingHistoryHandler::~BrowsingHistoryHandler() = default;
 
 void BrowsingHistoryHandler::OnJavascriptAllowed() {
-  if (!browsing_history_service_ && initial_results_.is_none()) {
+  if (!browsing_history_service_ && !initial_results_) {
     // Page was refreshed, so need to call StartQueryHistory here
     StartQueryHistory();
   }
@@ -299,7 +302,7 @@ void BrowsingHistoryHandler::OnJavascriptAllowed() {
 void BrowsingHistoryHandler::OnJavascriptDisallowed() {
   weak_factory_.InvalidateWeakPtrs();
   browsing_history_service_ = nullptr;
-  initial_results_ = base::Value();
+  initial_results_ = absl::nullopt;
   deferred_callbacks_.clear();
   query_history_callback_id_.clear();
   remove_visits_callback_.clear();
@@ -312,20 +315,20 @@ void BrowsingHistoryHandler::RegisterMessages() {
       profile, std::make_unique<FaviconSource>(
                    profile, chrome::FaviconUrlFormat::kFavicon2));
 
-  web_ui()->RegisterDeprecatedMessageCallback(
+  web_ui()->RegisterMessageCallback(
       "queryHistory",
       base::BindRepeating(&BrowsingHistoryHandler::HandleQueryHistory,
                           base::Unretained(this)));
-  web_ui()->RegisterDeprecatedMessageCallback(
+  web_ui()->RegisterMessageCallback(
       "queryHistoryContinuation",
       base::BindRepeating(
           &BrowsingHistoryHandler::HandleQueryHistoryContinuation,
           base::Unretained(this)));
-  web_ui()->RegisterDeprecatedMessageCallback(
+  web_ui()->RegisterMessageCallback(
       "removeVisits",
       base::BindRepeating(&BrowsingHistoryHandler::HandleRemoveVisits,
                           base::Unretained(this)));
-  web_ui()->RegisterDeprecatedMessageCallback(
+  web_ui()->RegisterMessageCallback(
       "clearBrowsingData",
       base::BindRepeating(&BrowsingHistoryHandler::HandleClearBrowsingData,
                           base::Unretained(this)));
@@ -348,12 +351,12 @@ void BrowsingHistoryHandler::StartQueryHistory() {
   SendHistoryQuery(150, std::u16string());
 }
 
-void BrowsingHistoryHandler::HandleQueryHistory(const base::ListValue* args) {
+void BrowsingHistoryHandler::HandleQueryHistory(const base::Value::List& args) {
   AllowJavascript();
-  const base::Value& callback_id = args->GetListDeprecated()[0];
-  if (!initial_results_.is_none()) {
-    ResolveJavascriptCallback(callback_id, std::move(initial_results_));
-    initial_results_ = base::Value();
+  const base::Value& callback_id = args[0];
+  if (initial_results_.has_value()) {
+    ResolveJavascriptCallback(callback_id, *initial_results_);
+    initial_results_ = absl::nullopt;
     return;
   }
 
@@ -373,9 +376,9 @@ void BrowsingHistoryHandler::HandleQueryHistory(const base::ListValue* args) {
   // - the text to search for (may be empty)
   // - the maximum number of results to return (may be 0, meaning that there
   //   is no maximum).
-  const base::Value& search_text = args->GetListDeprecated()[1];
+  const base::Value& search_text = args[1];
 
-  const base::Value& count = args->GetListDeprecated()[2];
+  const base::Value& count = args[2];
   if (!count.is_int()) {
     NOTREACHED() << "Failed to convert argument 2.";
     return;
@@ -401,9 +404,9 @@ void BrowsingHistoryHandler::SendHistoryQuery(int max_count,
 }
 
 void BrowsingHistoryHandler::HandleQueryHistoryContinuation(
-    const base::ListValue* args) {
-  CHECK_EQ(args->GetListDeprecated().size(), 1U);
-  const base::Value& callback_id = args->GetListDeprecated()[0];
+    const base::Value::List& args) {
+  CHECK_EQ(args.size(), 1U);
+  const base::Value& callback_id = args[0];
   // Cancel the previous query if it is still in flight.
   if (!query_history_callback_id_.empty()) {
     RejectJavascriptCallback(base::Value(query_history_callback_id_),
@@ -415,15 +418,15 @@ void BrowsingHistoryHandler::HandleQueryHistoryContinuation(
   std::move(query_history_continuation_).Run();
 }
 
-void BrowsingHistoryHandler::HandleRemoveVisits(const base::ListValue* args) {
-  CHECK_EQ(args->GetListDeprecated().size(), 2U);
-  const base::Value& callback_id = args->GetListDeprecated()[0];
+void BrowsingHistoryHandler::HandleRemoveVisits(const base::Value::List& args) {
+  CHECK_EQ(args.size(), 2U);
+  const base::Value& callback_id = args[0];
   CHECK(remove_visits_callback_.empty());
   remove_visits_callback_ = callback_id.GetString();
 
   std::vector<BrowsingHistoryService::HistoryEntry> items_to_remove;
-  const base::Value& items = args->GetListDeprecated()[1];
-  base::Value::ConstListView list = items.GetListDeprecated();
+  const base::Value& items = args[1];
+  const base::Value::List& list = items.GetList();
   items_to_remove.reserve(list.size());
   for (size_t i = 0; i < list.size(); ++i) {
     // Each argument is a dictionary with properties "url" and "timestamps".
@@ -461,7 +464,7 @@ void BrowsingHistoryHandler::HandleRemoveVisits(const base::ListValue* args) {
 }
 
 void BrowsingHistoryHandler::HandleClearBrowsingData(
-    const base::ListValue* args) {
+    const base::Value::List& args) {
   // TODO(beng): This is an improper direct dependency on Browser. Route this
   // through some sort of delegate.
   Browser* browser =
@@ -491,25 +494,25 @@ void BrowsingHistoryHandler::OnQueryComplete(
       DeviceInfoSyncServiceFactory::GetForProfile(profile)
           ->GetDeviceInfoTracker();
 
-  // Convert the result vector into a ListValue.
+  // Convert the result vector into a base::Value::List
   DCHECK(tracker);
-  base::Value results_value(base::Value::Type::LIST);
+  base::Value::List results_value;
   for (const BrowsingHistoryService::HistoryEntry& entry : results) {
     results_value.Append(
         HistoryEntryToValue(entry, bookmark_model, profile, tracker, clock_));
   }
 
-  base::Value results_info(base::Value::Type::DICTIONARY);
+  base::Value::Dict results_info;
   // The items which are to be written into results_info_value_ are also
   // described in chrome/browser/resources/history/history.js in @typedef for
   // HistoryQuery. Please update it whenever you add or remove any keys in
   // results_info_value_.
-  results_info.GetDict().Set("term", query_results_info.search_text);
-  results_info.GetDict().Set("finished", query_results_info.reached_beginning);
+  results_info.Set("term", query_results_info.search_text);
+  results_info.Set("finished", query_results_info.reached_beginning);
 
-  base::Value final_results(base::Value::Type::DICTIONARY);
-  final_results.GetDict().Set("info", std::move(results_info));
-  final_results.GetDict().Set("value", std::move(results_value));
+  base::Value::Dict final_results;
+  final_results.Set("info", std::move(results_info));
+  final_results.Set("value", std::move(results_value));
 
   if (query_history_callback_id_.empty()) {
     // This can happen if JS isn't ready yet when the first query comes back.
@@ -518,7 +521,7 @@ void BrowsingHistoryHandler::OnQueryComplete(
   }
 
   ResolveJavascriptCallback(base::Value(query_history_callback_id_),
-                            std::move(final_results));
+                            final_results);
   query_history_callback_id_.clear();
 }
 

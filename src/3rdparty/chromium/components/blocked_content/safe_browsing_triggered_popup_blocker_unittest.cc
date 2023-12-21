@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -33,6 +33,7 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/navigation_throttle.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/public/test/mock_navigation_handle.h"
 #include "content/public/test/navigation_simulator.h"
 #include "content/public/test/test_navigation_throttle_inserter.h"
@@ -46,8 +47,6 @@
 #include "url/gurl.h"
 
 namespace blocked_content {
-const char kNumBlockedHistogram[] =
-    "ContentSettings.Popups.StrongBlocker.NumBlocked";
 
 class SafeBrowsingTriggeredPopupBlockerTestBase
     : public content::RenderViewHostTestHarness {
@@ -76,7 +75,8 @@ class SafeBrowsingTriggeredPopupBlockerTestBase
     HostContentSettingsMap::RegisterProfilePrefs(pref_service_.registry());
     settings_map_ = base::MakeRefCounted<HostContentSettingsMap>(
         &pref_service_, false /* is_off_the_record */,
-        false /* store_last_modified */, false /* restore_session*/);
+        false /* store_last_modified */, false /* restore_session*/,
+        false /* should_record_metrics */);
 
     subresource_filter::SubresourceFilterObserverManager::CreateForWebContents(
         web_contents());
@@ -192,7 +192,7 @@ TEST_F(SafeBrowsingTriggeredPopupBlockerTest,
   for (const auto& test_case : kTestCases) {
     std::unique_ptr<content::NavigationSimulator> simulator =
         content::NavigationSimulator::CreateRendererInitiated(
-            test_case.initial_url, web_contents()->GetMainFrame());
+            test_case.initial_url, web_contents()->GetPrimaryMainFrame());
     simulator->Start();
     simulator->Redirect(test_case.redirect_url);
     simulator->Commit();
@@ -387,12 +387,8 @@ TEST_F(SafeBrowsingTriggeredPopupBlockerTest, LogActions) {
   check_histogram(SafeBrowsingTriggeredPopupBlocker::Action::kBlocked, 2);
   histogram_tester.ExpectTotalCount(kActionHistogram, total_count);
 
-  // Only log the num blocked histogram after navigation.
-  histogram_tester.ExpectTotalCount(kNumBlockedHistogram, 0);
-
   // Navigate to a warn site.
   NavigateAndCommit(url_warn);
-  histogram_tester.ExpectBucketCount(kNumBlockedHistogram, 2, 1);
 
   check_histogram(SafeBrowsingTriggeredPopupBlocker::Action::kNavigation, 2);
   check_histogram(SafeBrowsingTriggeredPopupBlocker::Action::kWarningSite, 1);
@@ -414,23 +410,6 @@ TEST_F(SafeBrowsingTriggeredPopupBlockerTest, LogActions) {
       web_contents()->GetPrimaryPage()));
   check_histogram(SafeBrowsingTriggeredPopupBlocker::Action::kConsidered, 4);
   histogram_tester.ExpectTotalCount(kActionHistogram, total_count);
-
-  histogram_tester.ExpectTotalCount(kNumBlockedHistogram, 1);
-}
-
-TEST_F(SafeBrowsingTriggeredPopupBlockerTest, LogBlockMetricsOnClose) {
-  base::HistogramTester histogram_tester;
-  const GURL url_enforce("https://example.enforce/");
-  MarkUrlAsAbusiveEnforce(url_enforce);
-
-  NavigateAndCommit(url_enforce);
-  EXPECT_TRUE(popup_blocker()->ShouldApplyAbusivePopupBlocker(
-      web_contents()->GetPrimaryPage()));
-
-  histogram_tester.ExpectTotalCount(kNumBlockedHistogram, 0);
-  // Simulate deleting the web contents.
-  SimulateDeleteContents();
-  histogram_tester.ExpectUniqueSample(kNumBlockedHistogram, 1, 1);
 }
 
 class SafeBrowsingTriggeredPopupBlockerFilterAdsDisabledTest
@@ -587,9 +566,10 @@ TEST_F(SafeBrowsingTriggeredPopupBlockerFencedFrameTest,
   const GURL fenced_frame_url("https://fencedframe.test");
   MarkUrlAsAbusiveEnforce(fenced_frame_url);
   std::unique_ptr<content::NavigationSimulator> navigation_simulator =
-      content::NavigationSimulator::CreateForFencedFrame(fenced_frame_url,
-                                                         fenced_frame_root);
+      content::NavigationSimulator::CreateRendererInitiated(fenced_frame_url,
+                                                            fenced_frame_root);
   navigation_simulator->Commit();
+  fenced_frame_root = navigation_simulator->GetFinalRenderFrameHost();
 
   // The popup blocker is not triggered for a fenced frame.
   EXPECT_FALSE(popup_blocker()->ShouldApplyAbusivePopupBlocker(

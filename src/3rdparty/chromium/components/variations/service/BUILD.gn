@@ -1,4 +1,4 @@
-# Copyright 2015 The Chromium Authors. All rights reserved.
+# Copyright 2015 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -13,10 +13,19 @@ declare_args() {
   # true (see below). This is done to avoid the binary size impact (~40 KiB) on
   # Android.
   disable_fieldtrial_testing_config = false
+
+  # Set to true to make a build that force enables activation of field trial
+  # tests specified in testing/variations/fieldtrial_testing_config.json.
+  force_enable_fieldtrial_testing_config = false
 }
 
+assert(!(disable_fieldtrial_testing_config &&
+             force_enable_fieldtrial_testing_config),
+       "Cannot enable and disable field trial testing at the same time.")
+
 fieldtrial_testing_enabled =
-    !disable_fieldtrial_testing_config && !(is_android && is_chrome_branded)
+    force_enable_fieldtrial_testing_config ||
+    (!disable_fieldtrial_testing_config && !(is_android && is_chrome_branded))
 
 buildflag_header("buildflags") {
   header = "buildflags.h"
@@ -35,11 +44,12 @@ static_library("service") {
     "variations_service.h",
     "variations_service_client.cc",
     "variations_service_client.h",
+    "variations_service_utils.cc",
+    "variations_service_utils.h",
   ]
 
   deps = [
     ":buildflags",
-    ":constants",
     "//base",
     "//build:branding_buildflags",
     "//build:chromeos_buildflags",
@@ -58,7 +68,7 @@ static_library("service") {
     "//services/network/public/cpp",
     "//ui/base",
   ]
-  if (use_qt) {
+  if (is_qtwebengine) {
     sources -= [
       "variations_field_trial_creator.cc",
       "variations_field_trial_creator.h",
@@ -76,11 +86,11 @@ source_set("unit_tests") {
     "ui_string_overrider_unittest.cc",
     "variations_field_trial_creator_unittest.cc",
     "variations_service_unittest.cc",
+    "variations_service_utils_unittest.cc",
   ]
 
   deps = [
     ":buildflags",
-    ":constants",
     ":service",
     "//base",
     "//base/test:test_support",
@@ -100,13 +110,4 @@ source_set("unit_tests") {
     "//services/network/public/cpp",
     "//testing/gtest",
   ]
-}
-
-static_library("constants") {
-  sources = [
-    "variations_safe_mode_constants.cc",
-    "variations_safe_mode_constants.h",
-  ]
-
-  deps = [ "//base" ]
 }

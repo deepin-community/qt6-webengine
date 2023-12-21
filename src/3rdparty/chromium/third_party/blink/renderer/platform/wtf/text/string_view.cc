@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include "third_party/blink/renderer/platform/wtf/text/ascii_fast_path.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_names.h"
+#include "third_party/blink/renderer/platform/wtf/text/code_point_iterator.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_impl.h"
 #include "third_party/blink/renderer/platform/wtf/text/utf8.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -149,7 +150,7 @@ std::string StringView::Utf8(UTF8ConversionMode mode) const {
 bool StringView::ContainsOnlyASCIIOrEmpty() const {
   if (StringImpl* impl = SharedImpl())
     return impl->ContainsOnlyASCIIOrEmpty();
-  if (IsEmpty())
+  if (empty())
     return true;
   ASCIIStringAttributes attrs =
       Is8Bit() ? CharacterAttributes(Characters8(), length())
@@ -157,10 +158,33 @@ bool StringView::ContainsOnlyASCIIOrEmpty() const {
   return attrs.contains_only_ascii;
 }
 
+bool StringView::SubstringContainsOnlyWhitespaceOrEmpty(unsigned from,
+                                                        unsigned to) const {
+  SECURITY_DCHECK(from <= length());
+  SECURITY_DCHECK(to <= length());
+  DCHECK(from <= to);
+
+  if (Is8Bit()) {
+    for (wtf_size_t i = from; i < to; ++i) {
+      if (!IsASCIISpace(Characters8()[i]))
+        return false;
+    }
+
+    return true;
+  }
+
+  for (wtf_size_t i = from; i < to; ++i) {
+    if (!IsASCIISpace(Characters16()[i]))
+      return false;
+  }
+
+  return true;
+}
+
 String StringView::ToString() const {
   if (IsNull())
     return String();
-  if (IsEmpty())
+  if (empty())
     return g_empty_string;
   if (StringImpl* impl = SharedImpl())
     return impl;
@@ -172,7 +196,7 @@ String StringView::ToString() const {
 AtomicString StringView::ToAtomicString() const {
   if (IsNull())
     return g_null_atom;
-  if (IsEmpty())
+  if (empty())
     return g_empty_atom;
   if (StringImpl* impl = SharedImpl())
     return AtomicString(impl);
@@ -260,7 +284,7 @@ UChar32 StringView::CodepointAt(unsigned i) const {
 }
 
 unsigned StringView::NextCodePointOffset(unsigned i) const {
-  SECURITY_DCHECK(i < length());
+  DCHECK_LT(i, length());
   if (Is8Bit())
     return i + 1;
   const UChar* str = Characters16() + i;
@@ -268,6 +292,14 @@ unsigned StringView::NextCodePointOffset(unsigned i) const {
   if (i < length() && U16_IS_LEAD(*str++) && U16_IS_TRAIL(*str))
     ++i;
   return i;
+}
+
+CodePointIterator StringView::begin() const {
+  return CodePointIterator(*this, 0u);
+}
+
+CodePointIterator StringView::end() const {
+  return CodePointIterator(*this, length_);
 }
 
 }  // namespace WTF

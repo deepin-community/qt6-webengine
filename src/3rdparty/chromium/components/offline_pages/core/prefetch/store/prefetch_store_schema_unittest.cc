@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -252,7 +252,7 @@ TEST(PrefetchStoreSchemaTest, TestInvalidMetaTable) {
   sql::Database db;
   ASSERT_TRUE(db.OpenInMemory());
   sql::MetaTable meta;
-  meta.Init(&db, 100, 99);  // Some future version.
+  ASSERT_TRUE(meta.Init(&db, 100, 99));  // Some future version.
   ASSERT_TRUE(db.Execute("CREATE TABLE prefetch_items (x INTEGER DEFAULT 1);"));
   ASSERT_TRUE(PrefetchStoreSchema::CreateOrUpgradeIfNeeded(&db));
 

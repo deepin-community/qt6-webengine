@@ -16,10 +16,10 @@
   white-space: nowrap;
   height: var(--toolbar-height);
   overflow: hidden;
-  z-index: 12;
   display: flex;
   flex: none;
   align-items: center;
+  z-index: 0;
 }
 
 .toolbar-shadow.wrappable {
@@ -48,11 +48,17 @@
   height: var(--toolbar-height);
   border: none;
   white-space: pre;
+  overflow: hidden;
 }
 
 .toolbar-item,
 .toolbar-item .devtools-link {
   color: var(--color-text-secondary);
+}
+
+.toolbar-item:last-child {
+  flex-shrink: 1;
+  justify-content: left;
 }
 
 .toolbar-shadow.vertical .toolbar-item {
@@ -165,7 +171,7 @@ select.toolbar-item:disabled + .toolbar-dropdown-arrow {
 .toolbar-button.copied-to-clipboard::after {
   content: attr(data-content);
   position: fixed;
-  top: var(--toolbar-height);
+  margin-top: calc(2 * var(--toolbar-height));
   padding: 3px 5px;
   color: var(--color-text-secondary);
   background: var(--color-background-elevation-1);
@@ -417,6 +423,7 @@ select.toolbar-item:focus-visible > * {
 }
 
 input[is="history-input"] {
+  margin: 0 1px;
   border: 1px solid transparent;
   line-height: 16px;
   padding: 1px;
@@ -444,8 +451,12 @@ input[is="history-input"]:not(:placeholder-shown) {
   z-index: -1;
 }
 
-.toolbar-item.highlight {
+.toolbar-item.highlight > .title {
   color: var(--color-button-primary-text);
+}
+
+.toolbar-item.highlight:hover:not(:active) > .title {
+  color: var(--color-button-primary-text-hover);
 }
 
 .toolbar-item.highlight:focus-visible {

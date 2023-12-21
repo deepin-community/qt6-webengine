@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,10 +6,10 @@
 
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/no_destructor.h"
 #include "base/system/sys_info.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "cc/raster/single_thread_task_graph_runner.h"
 #include "components/viz/client/frame_eviction_manager.h"
@@ -41,7 +41,7 @@ void BrowserGpuChannelHostFactorySetApplicationVisible(bool is_visible) {
 // These functions are called based on application visibility status.
 void SendOnBackgroundedToGpuService() {
   content::GpuProcessHost::CallOnIO(
-      content::GPU_PROCESS_KIND_SANDBOXED, false /* force_create */,
+      FROM_HERE, content::GPU_PROCESS_KIND_SANDBOXED, false /* force_create */,
       base::BindOnce([](content::GpuProcessHost* host) {
         if (host) {
           host->gpu_service()->OnBackgrounded();
@@ -51,7 +51,7 @@ void SendOnBackgroundedToGpuService() {
 
 void SendOnForegroundedToGpuService() {
   content::GpuProcessHost::CallOnIO(
-      content::GPU_PROCESS_KIND_SANDBOXED, false /* force_create */,
+      FROM_HERE, content::GPU_PROCESS_KIND_SANDBOXED, false /* force_create */,
       base::BindOnce([](content::GpuProcessHost* host) {
         if (host) {
           host->gpu_service()->OnForegrounded();
@@ -105,7 +105,8 @@ void CompositorDependenciesAndroid::CreateVizFrameSinkManager() {
   // Setup HostFrameSinkManager with interface endpoints.
   host_frame_sink_manager_.BindAndSetManager(
       std::move(frame_sink_manager_client_receiver),
-      base::ThreadTaskRunnerHandle::Get(), std::move(frame_sink_manager));
+      base::SingleThreadTaskRunner::GetCurrentDefault(),
+      std::move(frame_sink_manager));
 
   // Set up a pending request which will be run once we've successfully
   // connected to the GPU process.
@@ -154,7 +155,7 @@ void CompositorDependenciesAndroid::EnqueueLowEndBackgroundCleanup() {
     low_end_background_cleanup_task_.Reset(base::BindOnce(
         &CompositorDependenciesAndroid::DoLowEndBackgroundCleanup,
         base::Unretained(this)));
-    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE, low_end_background_cleanup_task_.callback(),
         base::Seconds(5));
   }
@@ -169,7 +170,7 @@ void CompositorDependenciesAndroid::DoLowEndBackgroundCleanup() {
   // Next, notify the GPU process to do background processing, which will
   // lose all renderer contexts.
   content::GpuProcessHost::CallOnIO(
-      content::GPU_PROCESS_KIND_SANDBOXED, false /* force_create */,
+      FROM_HERE, content::GPU_PROCESS_KIND_SANDBOXED, false /* force_create */,
       base::BindOnce([](content::GpuProcessHost* host) {
         if (host) {
           host->gpu_service()->OnBackgroundCleanup();

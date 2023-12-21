@@ -33,7 +33,15 @@ extern "C" {
  * This interface provides the capability to encode raw VP8 streams.
  * @{
  */
+
+/*!\brief A single instance of the VP8 encoder.
+ *\deprecated This access mechanism is provided for backwards compatibility;
+ * prefer vpx_codec_vp8_cx().
+ */
 extern vpx_codec_iface_t vpx_codec_vp8_cx_algo;
+
+/*!\brief The interface to the VP8 encoder.
+ */
 extern vpx_codec_iface_t *vpx_codec_vp8_cx(void);
 /*!@} - end algorithm interface member group*/
 
@@ -42,7 +50,15 @@ extern vpx_codec_iface_t *vpx_codec_vp8_cx(void);
  * This interface provides the capability to encode raw VP9 streams.
  * @{
  */
+
+/*!\brief A single instance of the VP9 encoder.
+ *\deprecated This access mechanism is provided for backwards compatibility;
+ * prefer vpx_codec_vp9_cx().
+ */
 extern vpx_codec_iface_t vpx_codec_vp9_cx_algo;
+
+/*!\brief The interface to the VP9 encoder.
+ */
 extern vpx_codec_iface_t *vpx_codec_vp9_cx(void);
 /*!@} - end algorithm interface member group*/
 
@@ -500,7 +516,7 @@ enum vp8e_enc_control_id {
    *
    * Supported in codecs: VP9
    */
-  VP9E_SET_MIN_GF_INTERVAL,
+  VP9E_SET_MIN_GF_INTERVAL = 48,
 
   /*!\brief Codec control function to set minimum interval between GF/ARF frames
    *
@@ -741,6 +757,16 @@ enum vp8e_enc_control_id {
    * Supported in codecs: VP8
    */
   VP8E_SET_RTC_EXTERNAL_RATECTRL,
+
+  /*!\brief Codec control to set quantizer for the next frame.
+   *
+   * This will turn off cyclic refresh. Only applicable to 1-pass without
+   * spatial layers.
+   *
+   * Supported in codecs: VP9
+   *
+   */
+  VP9E_SET_QUANTIZER_ONE_PASS,
 };
 
 /*!\brief vpx 1-D scaling mode
@@ -1069,6 +1095,8 @@ VPX_CTRL_USE_TYPE(VP9E_GET_LAST_QUANTIZER_SVC_LAYERS, int *)
 #define VPX_CTRL_VP9E_GET_LAST_QUANTIZER_SVC_LAYERS
 VPX_CTRL_USE_TYPE(VP8E_SET_RTC_EXTERNAL_RATECTRL, int)
 #define VPX_CTRL_VP8E_SET_RTC_EXTERNAL_RATECTRL
+VPX_CTRL_USE_TYPE(VP9E_SET_QUANTIZER_ONE_PASS, int)
+#define VPX_CTRL_VP9E_SET_QUANTIZER_ONE_PASS
 
 /*!\endcond */
 /*! @} - end defgroup vp8_encoder */

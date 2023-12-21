@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,10 +6,13 @@
 
 #include <inttypes.h>
 
+#include <type_traits>
+
 #include "base/bits.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/numerics/checked_math.h"
 #include "base/rand_util.h"
 #include "base/strings/stringprintf.h"
 #include "components/crash/core/common/crash_key.h"
@@ -27,8 +30,7 @@ class Deserializer {
 
   template <typename T>
   bool Read(T* val) {
-    static_assert(base::is_trivially_copyable<T>::value,
-                  "Not trivially copyable");
+    static_assert(std::is_trivially_copyable_v<T>);
     if (!AlignMemory(sizeof(T), alignof(T)))
       return false;
 
@@ -108,17 +110,21 @@ class ServiceFontManager::SkiaDiscardableManager
     // In general, Skia analysis of glyphs should find all cases.
     // If this is not happening, please file a bug with a repro so
     // it can be fixed.
+    static crash_reporter::CrashKeyString<64> crash_key("oop_cache_miss");
+    const char* kFormatString = "type: %" PRIu32 ", fontSize: %d";
+#if DCHECK_IS_ON()
+    crash_reporter::ScopedCrashKeyString auto_clear(
+        &crash_key, base::StringPrintf(kFormatString, type, fontSize));
     NOTREACHED();
-
+#else
     if (dump_count_ < kMaxDumps && base::RandInt(1, 100) == 1 &&
         !font_manager_->disable_oopr_debug_crash_dump()) {
-      static crash_reporter::CrashKeyString<64> crash_key("oop_cache_miss");
       crash_reporter::ScopedCrashKeyString auto_clear(
-          &crash_key, base::StringPrintf("type: %" PRIu32 ", fontSize: %d",
-                                         type, fontSize));
+          &crash_key, base::StringPrintf(kFormatString, type, fontSize));
       base::debug::DumpWithoutCrashing();
       ++dump_count_;
     }
+#endif
   }
 
   void notifyReadFailure(

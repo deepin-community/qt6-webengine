@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,17 +8,18 @@
 #include <d3d11_1.h>
 #include <initguid.h>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include <memory>
+#include <utility>
+
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/win/scoped_com_initializer.h"
-#include "base/win/windows_version.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/media_log.h"
 #include "media/base/media_switches.h"
@@ -204,7 +205,7 @@ class D3D11VideoDecoderTest : public ::testing::Test {
             gpu_task_runner_, std::make_unique<NullMediaLog>(),
             gpu_preferences_, gpu_workarounds_, std::move(impl),
             base::RepeatingCallback<scoped_refptr<CommandBufferHelper>()>(),
-            get_device_cb, *supported_configs, is_hdr_supported_));
+            get_device_cb, *supported_configs, system_hdr_enabled_));
   }
 
   void InitializeDecoder(const VideoDecoderConfig& config, bool expectSuccess) {
@@ -250,8 +251,8 @@ class D3D11VideoDecoderTest : public ::testing::Test {
   Microsoft::WRL::ComPtr<DXGIDeviceMock> mock_dxgi_device_;
   Microsoft::WRL::ComPtr<DXGIAdapterMock> mock_dxgi_adapter_;
 
-  // Used by CreateDecoder() to tell D3D11VideoDecoder about HDR support.
-  bool is_hdr_supported_ = true;
+  // Used by CreateDecoder() to tell D3D11VideoDecoder about if HDR is enabled.
+  bool system_hdr_enabled_ = true;
 
   DXGI_ADAPTER_DESC mock_adapter_desc_;
 
@@ -265,12 +266,7 @@ TEST_F(D3D11VideoDecoderTest, SupportsVP9Profile0WithDecoderEnabled) {
 
   EnableDecoder(D3D11_DECODER_PROFILE_VP9_VLD_PROFILE0);
   CreateDecoder();
-  // We don't support vp9 on windows 7 and below.
-  if (base::win::GetVersion() <= base::win::Version::WIN7) {
-    InitializeDecoder(configuration, false);
-  } else {
-    InitializeDecoder(configuration, true);
-  }
+  InitializeDecoder(configuration, /*expectSuccess=*/true);
 }
 
 TEST_F(D3D11VideoDecoderTest, DoesNotSupportVP9WithGPUWorkaroundDisableVPX) {
@@ -280,7 +276,7 @@ TEST_F(D3D11VideoDecoderTest, DoesNotSupportVP9WithGPUWorkaroundDisableVPX) {
 
   EnableDecoder(D3D11_DECODER_PROFILE_VP9_VLD_PROFILE0);
   CreateDecoder();
-  InitializeDecoder(configuration, false);
+  InitializeDecoder(configuration, /*expectSuccess=*/false);
 }
 
 TEST_F(D3D11VideoDecoderTest, DoesNotSupportVP9WithoutDecoderEnabled) {
@@ -344,6 +340,18 @@ TEST_F(D3D11VideoDecoderTest, WorkaroundTurnsOffDecoder) {
   InitializeDecoder(
       TestVideoConfig::NormalCodecProfile(VideoCodec::kH264, H264PROFILE_MAIN),
       false);
+}
+
+TEST_F(D3D11VideoDecoderTest, CanReadWithoutStalling) {
+  CreateDecoder();
+
+  VideoDecoderConfig normal =
+      TestVideoConfig::NormalCodecProfile(VideoCodec::kH264, H264PROFILE_MAIN);
+
+  InitializeDecoder(normal, true);
+
+  // Should be true prior to picture buffers being assigned.
+  EXPECT_TRUE(decoder_->CanReadWithoutStalling());
 }
 
 }  // namespace media

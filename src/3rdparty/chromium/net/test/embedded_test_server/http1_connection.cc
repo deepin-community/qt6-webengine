@@ -1,4 +1,4 @@
-// Copyright (c) 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,9 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_forward.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_forward.h"
+#include "base/functional/callback_helpers.h"
 #include "base/strings/stringprintf.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/net_errors.h"
@@ -18,8 +18,7 @@
 #include "net/test/embedded_test_server/http_response.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 
-namespace net {
-namespace test_server {
+namespace net::test_server {
 
 Http1Connection::Http1Connection(
     std::unique_ptr<StreamSocket> socket,
@@ -186,5 +185,4 @@ void Http1Connection::OnSendInternalDone(base::OnceClosure callback,
   SendInternal(std::move(callback), buf);
 }
 
-}  // namespace test_server
-}  // namespace net
+}  // namespace net::test_server

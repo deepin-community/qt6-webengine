@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include <CoreGraphics/CoreGraphics.h>
 
+#include "base/task/single_thread_task_runner.h"
 #include "content/browser/media/capture/io_surface_capture_device_base_mac.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_capture_types.h"
 #include "ui/gfx/native_widget_types.h"
@@ -18,7 +19,7 @@ class DesktopCaptureDeviceMac : public IOSurfaceCaptureDeviceBase {
  public:
   DesktopCaptureDeviceMac(CGDirectDisplayID display_id)
       : display_id_(display_id),
-        device_task_runner_(base::ThreadTaskRunnerHandle::Get()),
+        device_task_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()),
         weak_factory_(this) {}
 
   DesktopCaptureDeviceMac(const DesktopCaptureDeviceMac&) = delete;
@@ -127,7 +128,8 @@ class DesktopCaptureDeviceMac : public IOSurfaceCaptureDeviceBase {
 
  private:
   void OnFrame(gfx::ScopedInUseIOSurface io_surface) {
-    OnReceivedIOSurfaceFromStream(io_surface, requested_format_);
+    OnReceivedIOSurfaceFromStream(io_surface, requested_format_,
+                                  gfx::Rect(requested_format_.frame_size));
   }
 
   const CGDirectDisplayID display_id_;

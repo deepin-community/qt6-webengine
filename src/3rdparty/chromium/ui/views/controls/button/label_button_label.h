@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 
 #include <string>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/metadata/metadata_header_macros.h"
@@ -15,9 +15,7 @@
 #include "ui/views/controls/label.h"
 #include "ui/views/views_export.h"
 
-namespace views {
-
-namespace internal {
+namespace views::internal {
 
 // A Label subclass that can be disabled. This is only used internally for
 // views::LabelButton.
@@ -52,8 +50,6 @@ class VIEWS_EXPORT LabelButtonLabel : public Label {
                               base::Unretained(this)));
 };
 
-}  // namespace internal
-
-}  // namespace views
+}  // namespace views::internal
 
 #endif  // UI_VIEWS_CONTROLS_BUTTON_LABEL_BUTTON_LABEL_H_

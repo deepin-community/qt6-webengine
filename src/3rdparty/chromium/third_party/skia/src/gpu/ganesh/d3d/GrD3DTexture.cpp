@@ -15,7 +15,7 @@
 
 // Because this class is virtually derived from GrSurface we must explicitly call its constructor.
 GrD3DTexture::GrD3DTexture(GrD3DGpu* gpu,
-                           SkBudgeted budgeted,
+                           skgpu::Budgeted budgeted,
                            SkISize dimensions,
                            const GrD3DTextureResourceInfo& info,
                            sk_sp<GrD3DResourceState> state,
@@ -65,11 +65,13 @@ GrD3DTexture::GrD3DTexture(GrD3DGpu* gpu,
     SkASSERT((GrMipmapStatus::kNotAllocated == mipmapStatus) == (1 == info.fLevelCount));
 }
 
-sk_sp<GrD3DTexture> GrD3DTexture::MakeNewTexture(GrD3DGpu* gpu, SkBudgeted budgeted,
+sk_sp<GrD3DTexture> GrD3DTexture::MakeNewTexture(GrD3DGpu* gpu,
+                                                 skgpu::Budgeted budgeted,
                                                  SkISize dimensions,
                                                  const D3D12_RESOURCE_DESC& desc,
                                                  GrProtected isProtected,
-                                                 GrMipmapStatus mipmapStatus) {
+                                                 GrMipmapStatus mipmapStatus,
+                                                 std::string_view label) {
     GrD3DTextureResourceInfo info;
     if (!GrD3DTextureResource::InitTextureResourceInfo(gpu, desc,
                                                        D3D12_RESOURCE_STATE_COPY_DEST,
@@ -86,7 +88,7 @@ sk_sp<GrD3DTexture> GrD3DTexture::MakeNewTexture(GrD3DGpu* gpu, SkBudgeted budge
     GrD3DTexture* tex = new GrD3DTexture(gpu, budgeted, dimensions, info, std::move(state),
                                          shaderResourceView,
                                          mipmapStatus,
-                                         /*label=*/{});
+                                         label);
 
     return sk_sp<GrD3DTexture>(tex);
 }
@@ -111,7 +113,7 @@ sk_sp<GrD3DTexture> GrD3DTexture::MakeWrappedTexture(GrD3DGpu* gpu,
     return sk_sp<GrD3DTexture>(new GrD3DTexture(gpu, dimensions, info, std::move(state),
                                                 shaderResourceView, mipmapStatus, cacheable,
                                                 ioType,
-                                                /*label=*/{}));
+                                                /*label=*/"D3DWrappedTexture"));
 }
 
 sk_sp<GrD3DTexture> GrD3DTexture::MakeAliasingTexture(GrD3DGpu* gpu,
@@ -122,7 +124,7 @@ sk_sp<GrD3DTexture> GrD3DTexture::MakeAliasingTexture(GrD3DGpu* gpu,
     info.fResource = gpu->memoryAllocator()->createAliasingResource(info.fAlloc, 0, &newDesc,
                                                                     resourceState, nullptr);
     if (!info.fResource) {
-        return false;
+        return nullptr;
     }
     info.fResourceState = resourceState;
 
@@ -132,10 +134,14 @@ sk_sp<GrD3DTexture> GrD3DTexture::MakeAliasingTexture(GrD3DGpu* gpu,
     GrD3DDescriptorHeap::CPUHandle shaderResourceView =
         gpu->resourceProvider().createShaderResourceView(info.fResource.get());
 
-    GrD3DTexture* tex = new GrD3DTexture(gpu, SkBudgeted::kNo, originalTexture->dimensions(),
-                                         info, std::move(state), shaderResourceView,
+    GrD3DTexture* tex = new GrD3DTexture(gpu,
+                                         skgpu::Budgeted::kNo,
+                                         originalTexture->dimensions(),
+                                         info,
+                                         std::move(state),
+                                         shaderResourceView,
                                          originalTexture->mipmapStatus(),
-                                         /*label=*/{});
+                                         /*label=*/"AliasingTexture");
     return sk_sp<GrD3DTexture>(tex);
 }
 
@@ -161,4 +167,12 @@ GrBackendTexture GrD3DTexture::getBackendTexture() const {
 GrD3DGpu* GrD3DTexture::getD3DGpu() const {
     SkASSERT(!this->wasDestroyed());
     return static_cast<GrD3DGpu*>(this->getGpu());
+}
+
+void GrD3DTexture::onSetLabel() {
+    SkASSERT(this->d3dResource());
+    if (!this->getLabel().empty()) {
+        const std::wstring label = L"_Skia_" + GrD3DMultiByteToWide(this->getLabel());
+        this->d3dResource()->SetName(label.c_str());
+    }
 }

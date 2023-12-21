@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,7 @@
 #include "ui/gfx/linux/native_pixmap_dmabuf.h"
 #include "ui/gfx/native_pixmap.h"
 #include "ui/gl/gl_bindings.h"
-#include "ui/gl/gl_image_native_pixmap.h"
+#include "ui/gl/gl_image_gl_texture.h"
 #include "ui/gl/scoped_binders.h"
 
 namespace media {
@@ -44,9 +44,16 @@ VaapiPictureNativePixmapEgl::VaapiPictureNativePixmapEgl(
 VaapiPictureNativePixmapEgl::~VaapiPictureNativePixmapEgl() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (gl_image_ && make_context_current_cb_.Run()) {
-    gl_image_->ReleaseTexImage(texture_target_);
     DCHECK_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
   }
+
+  // Reset |va_surface_| before |gl_image_| to preserve the order of destruction
+  // before the refactoring done in
+  // https://chromium-review.googlesource.com/c/chromium/src/+/4025005.
+  // TODO(crbug.com/1366367): Determine whether preserving this order matters
+  // and remove these calls if not.
+  va_surface_.reset();
+  gl_image_.reset();
 }
 
 VaapiStatus VaapiPictureNativePixmapEgl::Initialize(
@@ -63,8 +70,7 @@ VaapiStatus VaapiPictureNativePixmapEgl::Initialize(
   }
 
   if (bind_image_cb_ &&
-      !bind_image_cb_.Run(client_texture_id_, texture_target_, gl_image_,
-                          true /* can_bind_to_sampler */)) {
+      !bind_image_cb_.Run(client_texture_id_, texture_target_, gl_image_)) {
     LOG(ERROR) << "Failed to bind client_texture_id";
     return VaapiStatus::Codes::kFailedToBindImage;
   }
@@ -78,10 +84,11 @@ VaapiStatus VaapiPictureNativePixmapEgl::Allocate(gfx::BufferFormat format) {
   if (make_context_current_cb_ && !make_context_current_cb_.Run())
     return VaapiStatus::Codes::kBadContext;
 
-  auto image =
-      base::MakeRefCounted<gl::GLImageNativePixmap>(visible_size_, format);
+  // TODO(b/220336463): plumb the right color space.
+  auto image = gl::GLImageGLTexture::CreateFromTexture(visible_size_, format,
+                                                       texture_id_);
   // Create an EGLImage from a gl texture
-  if (!image->InitializeFromTexture(texture_id_)) {
+  if (!image) {
     DLOG(ERROR) << "Failed to initialize eglimage from texture id: "
                 << texture_id_;
     return VaapiStatus::Codes::kFailedToInitializeImage;
@@ -111,10 +118,7 @@ VaapiStatus VaapiPictureNativePixmapEgl::Allocate(gfx::BufferFormat format) {
     return VaapiStatus::Codes::kNoBufferHandle;
   }
 
-  if (!image->BindTexImage(texture_target_)) {
-    DLOG(ERROR) << "Failed to bind texture to GLImage";
-    return VaapiStatus::Codes::kFailedToBindImage;
-  }
+  image->BindTexImage(texture_target_);
 
   // The |va_surface_| created from |native_pixmap_dmabuf| shares the ownership
   // of the buffer. So the only reason to keep a reference on the image is

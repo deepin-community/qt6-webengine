@@ -1,16 +1,13 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ui/accessibility/ax_node.h"
 
-#include <string.h>
-
 #include <algorithm>
 
-#include "base/debug/crash_logging.h"
-#include "base/debug/dump_without_crashing.h"
 #include "base/no_destructor.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -20,10 +17,10 @@
 #include "ui/accessibility/ax_hypertext.h"
 #include "ui/accessibility/ax_language_detection.h"
 #include "ui/accessibility/ax_role_properties.h"
+#include "ui/accessibility/ax_selection.h"
 #include "ui/accessibility/ax_table_info.h"
 #include "ui/accessibility/ax_tree.h"
 #include "ui/accessibility/ax_tree_manager.h"
-#include "ui/accessibility/ax_tree_manager_map.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/geometry/transform.h"
 
@@ -35,7 +32,7 @@ constexpr char16_t AXNode::kEmbeddedObjectCharacterUTF16[];
 constexpr int AXNode::kEmbeddedObjectCharacterLengthUTF8;
 constexpr int AXNode::kEmbeddedObjectCharacterLengthUTF16;
 
-AXNode::AXNode(AXNode::OwnerTree* tree,
+AXNode::AXNode(AXTree* tree,
                AXNode* parent,
                AXNodeID id,
                size_t index_in_parent,
@@ -50,7 +47,6 @@ AXNode::AXNode(AXNode::OwnerTree* tree,
 AXNode::~AXNode() = default;
 
 AXNodeData&& AXNode::TakeData() {
-  has_data_been_taken_ = true;
   return std::move(data_);
 }
 
@@ -67,8 +63,7 @@ size_t AXNode::GetChildCount() const {
 size_t AXNode::GetChildCountCrossingTreeBoundary() const {
   DCHECK(!tree_->GetTreeUpdateInProgressState());
 
-  const AXTreeManager* child_tree_manager =
-      AXTreeManagerMap::GetInstance().GetManagerForChildTree(*this);
+  const AXTreeManager* child_tree_manager = AXTreeManager::ForChildTree(*this);
   if (child_tree_manager)
     return 1u;
 
@@ -76,7 +71,7 @@ size_t AXNode::GetChildCountCrossingTreeBoundary() const {
 }
 
 size_t AXNode::GetUnignoredChildCount() const {
-  // TODO(nektar): Should DCHECK that this node is not ignored.
+  DCHECK(!IsIgnored()) << "Called unignored method on ignored node: " << *this;
   DCHECK(!tree_->GetTreeUpdateInProgressState());
   return unignored_child_count_;
 }
@@ -85,8 +80,7 @@ size_t AXNode::GetUnignoredChildCountCrossingTreeBoundary() const {
   // TODO(nektar): Should DCHECK that this node is not ignored.
   DCHECK(!tree_->GetTreeUpdateInProgressState());
 
-  const AXTreeManager* child_tree_manager =
-      AXTreeManagerMap::GetInstance().GetManagerForChildTree(*this);
+  const AXTreeManager* child_tree_manager = AXTreeManager::ForChildTree(*this);
   if (child_tree_manager) {
     DCHECK_EQ(unignored_child_count_, 0u)
         << "A node cannot be hosting both a child tree and other nodes as "
@@ -107,13 +101,12 @@ AXNode* AXNode::GetChildAtIndex(size_t index) const {
 AXNode* AXNode::GetChildAtIndexCrossingTreeBoundary(size_t index) const {
   DCHECK(!tree_->GetTreeUpdateInProgressState());
 
-  const AXTreeManager* child_tree_manager =
-      AXTreeManagerMap::GetInstance().GetManagerForChildTree(*this);
+  const AXTreeManager* child_tree_manager = AXTreeManager::ForChildTree(*this);
   if (child_tree_manager) {
     DCHECK_EQ(index, 0u)
         << "A node cannot be hosting both a child tree and other nodes as "
            "children.";
-    return child_tree_manager->GetRootAsAXNode();
+    return child_tree_manager->GetRoot();
   }
 
   return GetChildAtIndex(index);
@@ -137,14 +130,13 @@ AXNode* AXNode::GetUnignoredChildAtIndexCrossingTreeBoundary(
   // TODO(nektar): Should DCHECK that this node is not ignored.
   DCHECK(!tree_->GetTreeUpdateInProgressState());
 
-  const AXTreeManager* child_tree_manager =
-      AXTreeManagerMap::GetInstance().GetManagerForChildTree(*this);
+  const AXTreeManager* child_tree_manager = AXTreeManager::ForChildTree(*this);
   if (child_tree_manager) {
     DCHECK_EQ(index, 0u)
         << "A node cannot be hosting both a child tree and other nodes as "
            "children.";
     // A child tree is never ignored.
-    return child_tree_manager->GetRootAsAXNode();
+    return child_tree_manager->GetRoot();
   }
 
   return GetUnignoredChildAtIndex(index);
@@ -159,36 +151,17 @@ AXNode* AXNode::GetParentCrossingTreeBoundary() const {
   DCHECK(!tree_->GetTreeUpdateInProgressState());
   if (parent_)
     return parent_;
-  const AXTreeManager* manager =
-      AXTreeManagerMap::GetInstance().GetManager(tree_->GetAXTreeID());
+  const AXTreeManager* manager = GetManager();
   if (manager)
-    return manager->GetParentNodeFromParentTreeAsAXNode();
+    return manager->GetParentNodeFromParentTree();
   return nullptr;
 }
 
 AXNode* AXNode::GetUnignoredParent() const {
-  // TODO(crbug.com/1237353): The following bailout is to test a hypothesis that
-  // this function is sometimes called while a tree update is in progress or
-  // when data_ isn't valid, which may be the cause of the crash detailed in
-  // crbug.com/1237353. Once this hypothesis has been verified, replace the
-  // bailout with a fix, which ideally should not call this function under
-  // the circumstances hypothesized. Also, add back in the following line:
-  // DCHECK(!tree_->GetTreeUpdateInProgressState());
-  if (tree_->GetTreeUpdateInProgressState() || !IsDataValid()) {
-    static auto* const crash_key = base::debug::AllocateCrashKeyString(
-        "ax_node_err", base::debug::CrashKeySize::Size64);
-    std::ostringstream error;
-    error << "dataUninitialized=" << is_data_still_uninitialized_
-          << " dataTaken=" << has_data_been_taken_
-          << " treeUpdating=" << tree_->GetTreeUpdateInProgressState();
-    base::debug::SetCrashKeyString(crash_key, error.str());
-    base::debug::DumpWithoutCrashing();
-    return nullptr;
-  }
+  DCHECK(!tree_->GetTreeUpdateInProgressState());
   AXNode* unignored_parent = GetParent();
   while (unignored_parent && unignored_parent->IsIgnored())
     unignored_parent = unignored_parent->GetParent();
-
   return unignored_parent;
 }
 
@@ -196,15 +169,24 @@ AXNode* AXNode::GetUnignoredParentCrossingTreeBoundary() const {
   DCHECK(!tree_->GetTreeUpdateInProgressState());
   AXNode* unignored_parent = GetUnignoredParent();
   if (!unignored_parent) {
-    const AXTreeManager* manager =
-        AXTreeManagerMap::GetInstance().GetManager(tree_->GetAXTreeID());
+    const AXTreeManager* manager = GetManager();
     if (manager)
-      unignored_parent = manager->GetParentNodeFromParentTreeAsAXNode();
+      unignored_parent = manager->GetParentNodeFromParentTree();
   }
   return unignored_parent;
 }
 
-base::stack<AXNode*> AXNode::GetAncestorsCrossingTreeBoundary() const {
+base::queue<AXNode*> AXNode::GetAncestorsCrossingTreeBoundaryAsQueue() const {
+  base::queue<AXNode*> ancestors;
+  AXNode* ancestor = const_cast<AXNode*>(this);
+  while (ancestor) {
+    ancestors.push(ancestor);
+    ancestor = ancestor->GetParentCrossingTreeBoundary();
+  }
+  return ancestors;
+}
+
+base::stack<AXNode*> AXNode::GetAncestorsCrossingTreeBoundaryAsStack() const {
   base::stack<AXNode*> ancestors;
   AXNode* ancestor = const_cast<AXNode*>(this);
   while (ancestor) {
@@ -242,10 +224,9 @@ AXNode* AXNode::GetFirstUnignoredChild() const {
 AXNode* AXNode::GetFirstUnignoredChildCrossingTreeBoundary() const {
   DCHECK(!tree_->GetTreeUpdateInProgressState());
 
-  const AXTreeManager* child_tree_manager =
-      AXTreeManagerMap::GetInstance().GetManagerForChildTree(*this);
+  const AXTreeManager* child_tree_manager = AXTreeManager::ForChildTree(*this);
   if (child_tree_manager)
-    return child_tree_manager->GetRootAsAXNode();
+    return child_tree_manager->GetRoot();
 
   return ComputeFirstUnignoredChildRecursive();
 }
@@ -274,10 +255,9 @@ AXNode* AXNode::GetLastUnignoredChild() const {
 AXNode* AXNode::GetLastUnignoredChildCrossingTreeBoundary() const {
   DCHECK(!tree_->GetTreeUpdateInProgressState());
 
-  const AXTreeManager* child_tree_manager =
-      AXTreeManagerMap::GetInstance().GetManagerForChildTree(*this);
+  const AXTreeManager* child_tree_manager = AXTreeManager::ForChildTree(*this);
   if (child_tree_manager)
-    return child_tree_manager->GetRootAsAXNode();
+    return child_tree_manager->GetRoot();
 
   return ComputeLastUnignoredChildRecursive();
 }
@@ -288,20 +268,58 @@ AXNode* AXNode::GetDeepestFirstChild() const {
     return nullptr;
 
   AXNode* deepest_child = GetFirstChild();
-  while (deepest_child->GetChildCount())
+  DCHECK(deepest_child);
+  while (deepest_child->GetChildCount()) {
     deepest_child = deepest_child->GetFirstChild();
+    DCHECK(deepest_child);
+  }
+
+  return deepest_child;
+}
+
+AXNode* AXNode::GetDeepestFirstChildCrossingTreeBoundary() const {
+  DCHECK(!tree_->GetTreeUpdateInProgressState());
+  if (!GetChildCountCrossingTreeBoundary())
+    return nullptr;
+
+  AXNode* deepest_child = GetFirstChildCrossingTreeBoundary();
+  DCHECK(deepest_child);
+  while (deepest_child->GetChildCountCrossingTreeBoundary()) {
+    deepest_child = deepest_child->GetFirstChildCrossingTreeBoundary();
+    DCHECK(deepest_child);
+  }
 
   return deepest_child;
 }
 
 AXNode* AXNode::GetDeepestFirstUnignoredChild() const {
   DCHECK(!tree_->GetTreeUpdateInProgressState());
+  DCHECK(!IsIgnored()) << "Called unignored method on ignored node: " << *this;
   if (!GetUnignoredChildCount())
     return nullptr;
 
   AXNode* deepest_child = GetFirstUnignoredChild();
-  while (deepest_child->GetUnignoredChildCount())
+  DCHECK(deepest_child);
+  while (deepest_child->GetUnignoredChildCount()) {
     deepest_child = deepest_child->GetFirstUnignoredChild();
+    DCHECK(deepest_child);
+  }
+
+  return deepest_child;
+}
+
+AXNode* AXNode::GetDeepestFirstUnignoredChildCrossingTreeBoundary() const {
+  DCHECK(!tree_->GetTreeUpdateInProgressState());
+  DCHECK(!IsIgnored()) << "Called unignored method on ignored node: " << *this;
+  if (!GetUnignoredChildCountCrossingTreeBoundary())
+    return nullptr;
+
+  AXNode* deepest_child = GetFirstUnignoredChildCrossingTreeBoundary();
+  DCHECK(deepest_child);
+  while (deepest_child->GetUnignoredChildCountCrossingTreeBoundary()) {
+    deepest_child = deepest_child->GetFirstUnignoredChildCrossingTreeBoundary();
+    DCHECK(deepest_child);
+  }
 
   return deepest_child;
 }
@@ -312,20 +330,59 @@ AXNode* AXNode::GetDeepestLastChild() const {
     return nullptr;
 
   AXNode* deepest_child = GetLastChild();
-  while (deepest_child->GetChildCount())
+  DCHECK(deepest_child);
+  while (deepest_child->GetChildCount()) {
     deepest_child = deepest_child->GetLastChild();
+    DCHECK(deepest_child);
+  }
+
+  return deepest_child;
+}
+
+AXNode* AXNode::GetDeepestLastChildCrossingTreeBoundary() const {
+  DCHECK(!tree_->GetTreeUpdateInProgressState());
+  DCHECK(!IsIgnored()) << "Called unignored method on ignored node: " << *this;
+  if (!GetChildCountCrossingTreeBoundary())
+    return nullptr;
+
+  AXNode* deepest_child = GetLastChildCrossingTreeBoundary();
+  DCHECK(deepest_child);
+  while (deepest_child->GetChildCountCrossingTreeBoundary()) {
+    deepest_child = deepest_child->GetLastChildCrossingTreeBoundary();
+    DCHECK(deepest_child);
+  }
 
   return deepest_child;
 }
 
 AXNode* AXNode::GetDeepestLastUnignoredChild() const {
   DCHECK(!tree_->GetTreeUpdateInProgressState());
+  DCHECK(!IsIgnored()) << "Called unignored method on ignored node: " << *this;
   if (!GetUnignoredChildCount())
     return nullptr;
 
   AXNode* deepest_child = GetLastUnignoredChild();
-  while (deepest_child->GetUnignoredChildCount())
+  DCHECK(deepest_child);
+  while (deepest_child->GetUnignoredChildCount()) {
     deepest_child = deepest_child->GetLastUnignoredChild();
+    DCHECK(deepest_child);
+  }
+
+  return deepest_child;
+}
+
+AXNode* AXNode::GetDeepestLastUnignoredChildCrossingTreeBoundary() const {
+  DCHECK(!tree_->GetTreeUpdateInProgressState());
+  DCHECK(!IsIgnored()) << "Called unignored method on ignored node: " << *this;
+  if (!GetUnignoredChildCountCrossingTreeBoundary())
+    return nullptr;
+
+  AXNode* deepest_child = GetLastUnignoredChildCrossingTreeBoundary();
+  DCHECK(deepest_child);
+  while (deepest_child->GetUnignoredChildCountCrossingTreeBoundary()) {
+    deepest_child = deepest_child->GetLastUnignoredChildCrossingTreeBoundary();
+    DCHECK(deepest_child);
+  }
 
   return deepest_child;
 }
@@ -602,14 +659,38 @@ AXNode::UnignoredChildrenCrossingTreeBoundaryEnd() const {
   return UnignoredChildCrossingTreeBoundaryIterator(this, nullptr);
 }
 
+bool AXNode::CanFireEvents() const {
+  // TODO(nektar): Cache the `IsChildOfLeaf` state in `AXComputedNodeData`.
+  return !IsChildOfLeaf();
+}
+
+AXNode* AXNode::GetLowestCommonAncestor(const AXNode& other) {
+  if (this == &other)
+    return this;
+
+  AXNode* common_ancestor = nullptr;
+  base::stack<AXNode*> our_ancestors =
+      GetAncestorsCrossingTreeBoundaryAsStack();
+  base::stack<AXNode*> other_ancestors =
+      other.GetAncestorsCrossingTreeBoundaryAsStack();
+  while (!our_ancestors.empty() && !other_ancestors.empty() &&
+         our_ancestors.top() == other_ancestors.top()) {
+    common_ancestor = our_ancestors.top();
+    our_ancestors.pop();
+    other_ancestors.pop();
+  }
+  return common_ancestor;
+}
+
 absl::optional<int> AXNode::CompareTo(const AXNode& other) const {
   if (this == &other)
     return 0;
 
   AXNode* common_ancestor = nullptr;
-  base::stack<AXNode*> our_ancestors = GetAncestorsCrossingTreeBoundary();
+  base::stack<AXNode*> our_ancestors =
+      GetAncestorsCrossingTreeBoundaryAsStack();
   base::stack<AXNode*> other_ancestors =
-      other.GetAncestorsCrossingTreeBoundary();
+      other.GetAncestorsCrossingTreeBoundaryAsStack();
   while (!our_ancestors.empty() && !other_ancestors.empty() &&
          our_ancestors.top() == other_ancestors.top()) {
     common_ancestor = our_ancestors.top();
@@ -663,8 +744,6 @@ bool AXNode::IsLineBreak() const {
 
 void AXNode::SetData(const AXNodeData& src) {
   data_ = src;
-  is_data_still_uninitialized_ = false;
-  has_data_been_taken_ = false;
 }
 
 void AXNode::SetLocation(AXNodeID offset_container_id,
@@ -735,6 +814,78 @@ SkColor AXNode::ComputeColorAttribute(ax::mojom::IntAttribute attr) const {
   }
 
   return color;
+}
+
+AXTreeManager* AXNode::GetManager() const {
+  return AXTreeManager::FromID(tree_->GetAXTreeID());
+}
+
+bool AXNode::HasVisibleCaretOrSelection() const {
+  const AXSelection selection = GetSelection();
+  const AXNode* focus = tree()->GetFromId(selection.focus_object_id);
+  if (!focus || !focus->IsDescendantOf(this))
+    return false;
+
+  // A selection or the caret will be visible in a focused text field (including
+  // a content editable).
+  const AXNode* text_field = GetTextFieldAncestor();
+  if (text_field)
+    return true;
+
+  // The selection will be visible in non-editable content only if it is not
+  // collapsed.
+  return !selection.IsCollapsed();
+}
+
+AXSelection AXNode::GetSelection() const {
+  DCHECK(tree()) << "Cannot retrieve the current selection if the node is not "
+                    "attached to an accessibility tree.\n"
+                 << *this;
+  return tree()->GetSelection();
+}
+
+AXSelection AXNode::GetUnignoredSelection() const {
+  DCHECK(tree()) << "Cannot retrieve the current selection if the node is not "
+                    "attached to an accessibility tree.\n"
+                 << *this;
+  AXSelection selection = tree()->GetUnignoredSelection();
+
+  // "selection.anchor_offset" and "selection.focus_ofset" might need to be
+  // adjusted if the anchor or the focus nodes include ignored children.
+  //
+  // TODO(nektar): Move this logic into its own "AXSelection" class and cache
+  // the result for faster reuse.
+  const AXNode* anchor = tree()->GetFromId(selection.anchor_object_id);
+  if (anchor && !anchor->IsLeaf()) {
+    DCHECK_GE(selection.anchor_offset, 0);
+    if (static_cast<size_t>(selection.anchor_offset) <
+        anchor->GetChildCount()) {
+      const AXNode* anchor_child =
+          anchor->GetChildAtIndex(selection.anchor_offset);
+      DCHECK(anchor_child);
+      selection.anchor_offset =
+          static_cast<int>(anchor_child->GetUnignoredIndexInParent());
+    } else {
+      selection.anchor_offset =
+          static_cast<int>(anchor->GetUnignoredChildCount());
+    }
+  }
+
+  const AXNode* focus = tree()->GetFromId(selection.focus_object_id);
+  if (focus && !focus->IsLeaf()) {
+    DCHECK_GE(selection.focus_offset, 0);
+    if (static_cast<size_t>(selection.focus_offset) < focus->GetChildCount()) {
+      const AXNode* focus_child =
+          focus->GetChildAtIndex(selection.focus_offset);
+      DCHECK(focus_child);
+      selection.focus_offset =
+          static_cast<int>(focus_child->GetUnignoredIndexInParent());
+    } else {
+      selection.focus_offset =
+          static_cast<int>(focus->GetUnignoredChildCount());
+    }
+  }
+  return selection;
 }
 
 bool AXNode::HasStringAttribute(ax::mojom::StringAttribute attribute) const {
@@ -840,9 +991,9 @@ const std::string& AXNode::GetNameUTF8() const {
   if (GetRole() == ax::mojom::Role::kPortal &&
       GetNameFrom() == ax::mojom::NameFrom::kNone) {
     const AXTreeManager* child_tree_manager =
-        AXTreeManagerMap::GetInstance().GetManagerForChildTree(*this);
+        AXTreeManager::ForChildTree(*this);
     if (child_tree_manager)
-      node = child_tree_manager->GetRootAsAXNode();
+      node = child_tree_manager->GetRoot();
   }
 
   return node->GetStringAttribute(ax::mojom::StringAttribute::kName);
@@ -955,6 +1106,110 @@ int AXNode::GetTextContentLengthUTF16() const {
   return GetComputedNodeData().GetOrComputeTextContentLengthUTF16();
 }
 
+gfx::RectF AXNode::GetTextContentRangeBoundsUTF8(int start_offset,
+                                                 int end_offset) const {
+  DCHECK(!tree_->GetTreeUpdateInProgressState());
+  DCHECK_LE(start_offset, end_offset)
+      << "Invalid `start_offset` and `end_offset`.\n"
+      << start_offset << ' ' << end_offset << "\nin\n"
+      << *this;
+  // Since we DCHECK that `start_offset` <= `end_offset`, there is no need to
+  // check whether `start_offset` is also in range.
+  if (end_offset > GetTextContentLengthUTF8())
+    return gfx::RectF();
+
+  // TODO(nektar): Update this to use
+  // "base/strings/utf_offset_string_conversions.h" which provides caching of
+  // offsets.
+  std::u16string out_trancated_string_utf16;
+  if (!base::UTF8ToUTF16(GetTextContentUTF8().data(),
+                         base::checked_cast<size_t>(start_offset),
+                         &out_trancated_string_utf16)) {
+    return gfx::RectF();
+  }
+  start_offset = base::checked_cast<int>(out_trancated_string_utf16.length());
+  if (!base::UTF8ToUTF16(GetTextContentUTF8().data(),
+                         base::checked_cast<size_t>(end_offset),
+                         &out_trancated_string_utf16)) {
+    return gfx::RectF();
+  }
+  end_offset = base::checked_cast<int>(out_trancated_string_utf16.length());
+  return GetTextContentRangeBoundsUTF16(start_offset, end_offset);
+}
+
+gfx::RectF AXNode::GetTextContentRangeBoundsUTF16(int start_offset,
+                                                  int end_offset) const {
+  DCHECK(!tree_->GetTreeUpdateInProgressState());
+  DCHECK_LE(start_offset, end_offset)
+      << "Invalid `start_offset` and `end_offset`.\n"
+      << start_offset << ' ' << end_offset << "\nin\n"
+      << *this;
+  // Since we DCHECK that `start_offset` <= `end_offset`, there is no need to
+  // check whether `start_offset` is also in range.
+  if (end_offset > GetTextContentLengthUTF16())
+    return gfx::RectF();
+
+  const std::vector<int32_t>& character_offsets =
+      GetIntListAttribute(ax::mojom::IntListAttribute::kCharacterOffsets);
+  int character_offsets_length =
+      base::checked_cast<int>(character_offsets.size());
+  // Charactger offsets are always based on the UTF-16 representation of the
+  // text.
+  if (character_offsets_length < GetTextContentLengthUTF16()) {
+    // Blink might not return pixel offsets for all characters. Clamp the
+    // character range to be within the number of provided pixels. Note that the
+    // first character always starts at pixel 0, so an offset for that character
+    // is not provided.
+    //
+    // TODO(accessibility): We need to fix this bug in Blink.
+    start_offset = std::min(start_offset, character_offsets_length);
+    end_offset = std::min(end_offset, character_offsets_length);
+  }
+
+  // TODO(nektar): Remove all this code and fix up the character offsets vector
+  // itself.
+  int start_pixel_offset =
+      start_offset > 0
+          ? character_offsets[base::checked_cast<size_t>(start_offset - 1)]
+          : 0;
+  int end_pixel_offset =
+      end_offset > 0
+          ? character_offsets[base::checked_cast<size_t>(end_offset - 1)]
+          : 0;
+  int max_pixel_offset = character_offsets_length > 0
+                             ? character_offsets[character_offsets_length - 1]
+                             : 0;
+  const gfx::RectF& node_bounds = data().relative_bounds.bounds;
+
+  gfx::RectF out_bounds;
+  switch (static_cast<ax::mojom::WritingDirection>(
+      GetIntAttribute(ax::mojom::IntAttribute::kTextDirection))) {
+    case ax::mojom::WritingDirection::kNone:
+    case ax::mojom::WritingDirection::kLtr:
+      out_bounds = gfx::RectF(start_pixel_offset, 0,
+                              end_pixel_offset - start_pixel_offset,
+                              node_bounds.height());
+      break;
+    case ax::mojom::WritingDirection::kRtl: {
+      int left = max_pixel_offset - end_pixel_offset;
+      int right = max_pixel_offset - start_pixel_offset;
+      out_bounds = gfx::RectF(left, 0, right - left, node_bounds.height());
+      break;
+    }
+    case ax::mojom::WritingDirection::kTtb:
+      out_bounds = gfx::RectF(0, start_pixel_offset, node_bounds.width(),
+                              end_pixel_offset - start_pixel_offset);
+      break;
+    case ax::mojom::WritingDirection::kBtt: {
+      int top = max_pixel_offset - end_pixel_offset;
+      int bottom = max_pixel_offset - start_pixel_offset;
+      out_bounds = gfx::RectF(0, top, node_bounds.width(), bottom - top);
+      break;
+    }
+  }
+  return out_bounds;
+}
+
 std::string AXNode::GetLanguage() const {
   DCHECK(!tree_->GetTreeUpdateInProgressState());
   // Walk up tree considering both detected and author declared languages.
@@ -993,7 +1248,29 @@ std::string AXNode::GetValueForControl() const {
 }
 
 std::ostream& operator<<(std::ostream& stream, const AXNode& node) {
-  return stream << node.data().ToString();
+  stream << node.data().ToString(/*verbose*/ false);
+  if (node.GetUnignoredChildCountCrossingTreeBoundary()) {
+    stream << " unignored_child_ids=";
+    bool needs_comma = false;
+    for (auto it = node.UnignoredChildrenBegin();
+         it != node.UnignoredChildrenEnd(); ++it) {
+      if (needs_comma) {
+        stream << ",";
+      } else {
+        needs_comma = true;
+      }
+      stream << it.get()->data().id;
+    }
+  }
+  return stream;
+}
+
+std::ostream& operator<<(std::ostream& stream, const AXNode* node) {
+  if (!node) {
+    return stream << "null";
+  }
+
+  return stream << *node;
 }
 
 bool AXNode::IsTable() const {
@@ -1039,15 +1316,6 @@ absl::optional<int> AXNode::GetTableCellCount() const {
     return absl::nullopt;
 
   return static_cast<int>(table_info->unique_cell_ids.size());
-}
-
-absl::optional<bool> AXNode::GetTableHasColumnOrRowHeaderNode() const {
-  DCHECK(!tree_->GetTreeUpdateInProgressState());
-  const AXTableInfo* table_info = GetAncestorTableInfo();
-  if (!table_info)
-    return absl::nullopt;
-
-  return !table_info->all_headers.empty();
 }
 
 AXNode* AXNode::GetTableCellFromIndex(int index) const {
@@ -1152,6 +1420,20 @@ const std::vector<AXNode*>* AXNode::GetExtraMacNodes() const {
     return nullptr;
 
   return &table_info->extra_mac_nodes;
+}
+
+bool AXNode::IsGenerated() const {
+  bool is_generated_node = id() < 0;
+#if DCHECK_IS_ON()
+  // Currently, the only generated nodes are columns and table header
+  // containers, and when those roles occur, they are always extra mac nodes.
+  // This could change in the future.
+  bool is_extra_mac_node_role =
+      GetRole() == ax::mojom::Role::kColumn ||
+      GetRole() == ax::mojom::Role::kTableHeaderContainer;
+  DCHECK_EQ(is_generated_node, is_extra_mac_node_role);
+#endif
+  return is_generated_node;
 }
 
 //
@@ -1426,12 +1708,12 @@ bool AXNode::IsOrderedSet() const {
 }
 
 // Uses AXTree's cache to calculate node's PosInSet.
-absl::optional<int> AXNode::GetPosInSet() {
+absl::optional<int> AXNode::GetPosInSet() const {
   return tree_->GetPosInSet(*this);
 }
 
 // Uses AXTree's cache to calculate node's SetSize.
-absl::optional<int> AXNode::GetSetSize() {
+absl::optional<int> AXNode::GetSetSize() const {
   return tree_->GetSetSize(*this);
 }
 
@@ -1483,8 +1765,8 @@ bool AXNode::SetRoleMatchesItemRole(const AXNode* ordered_set) const {
       // and setsize.
       return item_role == ax::mojom::Role::kDescriptionListTerm ||
              item_role == ax::mojom::Role::kTerm;
-    case ax::mojom::Role::kPopUpButton:
-      // kPopUpButtons can wrap a kMenuListPopUp.
+    case ax::mojom::Role::kComboBoxSelect:
+      // kComboBoxSelect wraps a kMenuListPopUp.
       return item_role == ax::mojom::Role::kMenuListPopup;
     default:
       return false;
@@ -1496,16 +1778,15 @@ bool AXNode::IsIgnoredContainerForOrderedSet() const {
          GetRole() == ax::mojom::Role::kLabelText ||
          GetRole() == ax::mojom::Role::kListItem ||
          GetRole() == ax::mojom::Role::kGenericContainer ||
+         GetRole() == ax::mojom::Role::kScrollView ||
          GetRole() == ax::mojom::Role::kUnknown;
 }
 
 bool AXNode::IsRowInTreeGrid(const AXNode* ordered_set) const {
   // Tree grid rows have the requirement of being focusable, so we use it to
   // avoid iterating over rows that clearly aren't part of a tree grid.
-  if (GetRole() != ax::mojom::Role::kRow ||
-      !HasState(ax::mojom::State::kFocusable) || !ordered_set) {
+  if (GetRole() != ax::mojom::Role::kRow || !ordered_set || !IsFocusable())
     return false;
-  }
 
   if (ordered_set->GetRole() == ax::mojom::Role::kTreeGrid)
     return true;
@@ -1555,8 +1836,34 @@ AXNode* AXNode::GetOrderedSet() const {
   return result;
 }
 
-bool AXNode::IsDataValid() const {
-  return !is_data_still_uninitialized_ && !has_data_been_taken_;
+bool AXNode::IsReadOnlySupported() const {
+  // Grid cells and headers can't be derived solely from the role (need to check
+  // the ancestor chain) so check this first.
+  if (IsCellOrHeaderOfAriaGrid())
+    return true;
+
+  return ui::IsReadOnlySupported(GetRole());
+}
+
+bool AXNode::IsReadOnlyOrDisabled() const {
+  switch (data().GetRestriction()) {
+    case ax::mojom::Restriction::kReadOnly:
+    case ax::mojom::Restriction::kDisabled:
+      return true;
+    case ax::mojom::Restriction::kNone: {
+      if (HasState(ax::mojom::State::kEditable) ||
+          HasState(ax::mojom::State::kRichlyEditable)) {
+        return false;
+      }
+
+      if (ShouldHaveReadonlyStateByDefault(GetRole()))
+        return true;
+
+      // When readonly is not supported, we assume that the node is always
+      // read-only and mark it as such since this is the default behavior.
+      return !IsReadOnlySupported();
+    }
+  }
 }
 
 AXNode* AXNode::ComputeLastUnignoredChildRecursive() const {
@@ -1650,6 +1957,7 @@ bool AXNode::IsInvisibleOrIgnored() const {
 }
 
 bool AXNode::IsChildOfLeaf() const {
+  // TODO(nektar): Cache this state in `AXComputedNodeData`.
   for (const AXNode* ancestor = GetUnignoredParent(); ancestor;
        ancestor = ancestor->GetUnignoredParent()) {
     if (ancestor->IsLeaf())
@@ -1691,9 +1999,9 @@ bool AXNode::IsLeaf() const {
   // On Windows, we want to hide the subtree of a collapsed <select> element.
   // Otherwise, ATs are always going to announce its options whether it's
   // collapsed or expanded. In the AXTree, this element corresponds to a node
-  // with role ax::mojom::Role::kPopUpButton that is the parent of a node with
-  // role ax::mojom::Role::kMenuListPopup.
-  if (IsCollapsedMenuListPopUpButton())
+  // with role ax::mojom::Role::kComboBoxSelect that is the parent of a node
+  // with // role ax::mojom::Role::kMenuListPopup.
+  if (IsCollapsedMenuListSelect())
     return true;
 #endif  // BUILDFLAG(IS_WIN)
 
@@ -1701,12 +2009,14 @@ bool AXNode::IsLeaf() const {
   // implementation details, but we want to expose them as leaves to platform
   // accessibility APIs because screen readers might be confused if they find
   // any children.
-  // TODO(kschmi): <input type="search" contenteditable="true"> will cause
-  // different return values here, even though 'contenteditable' has no effect.
-  // This needs to be modified from the Blink side, so 'kRichlyEditable' isn't
-  // added in this case.
   if (data().IsAtomicTextField() || IsText())
     return true;
+
+  // Non atomic text fields may have children that we want to expose.
+  // For example, a <div contenteditable> may have child elements such as
+  // more <div>s that we want to expose.
+  if (data().IsNonAtomicTextField())
+    return false;
 
   // Roles whose children are only presentational according to the ARIA and
   // HTML5 Specs should be hidden from screen readers.
@@ -1783,6 +2093,76 @@ bool AXNode::IsLeaf() const {
   }
 }
 
+bool AXNode::IsFocusable() const {
+  return HasState(ax::mojom::State::kFocusable) ||
+         IsLikelyARIAActiveDescendant();
+}
+
+bool AXNode::IsLikelyARIAActiveDescendant() const {
+  // Should be menu item, option, etc.
+  if (!ui::IsLikelyActiveDescendantRole(GetRole()))
+    return false;
+
+  // False if invisible, ignored or disabled.
+  if (IsInvisibleOrIgnored() ||
+      GetIntAttribute(ax::mojom::IntAttribute::kRestriction) ==
+          static_cast<int>(ax::mojom::Restriction::kDisabled)) {
+    return false;
+  }
+
+  // False if no ARIA role -- not a perfect rule, but a reasonable heuristic.
+  if (!HasStringAttribute(ax::mojom::StringAttribute::kRole))
+    return false;
+
+  // False if no id attribute -- nothing to point to.
+  // This requirement may need to be removed if ARIA element reflection is
+  // implemented. HTML attribute serialization must currently be turned on in
+  // order to pass this requirement.
+  if (!HasHtmlAttribute("id"))
+    return false;
+
+  // Finally, check for the required ancestor.
+  for (AXNode* ancestor_node = GetUnignoredParent(); ancestor_node;
+       ancestor_node = ancestor_node->GetUnignoredParent()) {
+    // Check for an ancestor with aria-activedescendant.
+    if (ancestor_node->HasIntAttribute(
+            ax::mojom::IntAttribute::kActivedescendantId)) {
+      return true;
+    }
+    // Check for an ancestor listbox that is controlled by a textfield combobox
+    // that also has an aria-activedescendant.
+    // Note: blink will map aria-owns to aria-controls in the textfield combobox
+    // case as it was the older technique, but treating as an actual aria-owns
+    // makes no sense as a textfield cannot have children.
+    if (ancestor_node->GetRole() == ax::mojom::Role::kListBox) {
+      std::set<AXNodeID> nodes_that_control_this_list =
+          tree()->GetReverseRelations(ax::mojom::IntListAttribute::kControlsIds,
+                                      ancestor_node->id());
+      for (AXNodeID id : nodes_that_control_this_list) {
+        if (AXNode* node = tree()->GetFromId(id)) {
+          if (ui::IsTextField(node->GetRole())) {
+            return node->HasIntAttribute(
+                ax::mojom::IntAttribute::kActivedescendantId);
+          }
+        }
+      }
+    }
+    // TODO(aleventhal) Re-add this once Google Slides no longer needs
+    // special hack where the aria-activedescendant is on a containing
+    // contenteditable, which is currently done in the slides thumb strip for
+    // copy/paste reasons. See matching code in AXPlatformNode win which clears
+    // IA2_STATE_EDITABLE for this case, but requires the descendant tree items
+    // to have the FOCUSABLE state. See also the related dump tree test
+    // aria-focusable-subwidget-not-editable.html.
+    // (IsContainerWithSelectableChildren(ancestor_node->GetRole())) {
+    //   // No need to check more ancestors.
+    //   break;
+    // }
+  }
+
+  return false;
+}
+
 bool AXNode::IsInListMarker() const {
   if (GetRole() == ax::mojom::Role::kListMarker)
     return true;
@@ -1808,37 +2188,36 @@ bool AXNode::IsInListMarker() const {
          grandparent_node->GetRole() == ax::mojom::Role::kListMarker;
 }
 
-bool AXNode::IsCollapsedMenuListPopUpButton() const {
-  if (GetRole() != ax::mojom::Role::kPopUpButton ||
-      !HasState(ax::mojom::State::kCollapsed)) {
-    return false;
-  }
-
-  // When a popup button contains a menu list popup, its only child is unignored
-  // and is a menu list popup.
-  AXNode* node = GetFirstUnignoredChild();
-  if (!node)
-    return false;
-
-  return node->GetRole() == ax::mojom::Role::kMenuListPopup;
+bool AXNode::IsCollapsedMenuListSelect() const {
+  return HasState(ax::mojom::State::kCollapsed) &&
+         GetRole() == ax::mojom::Role::kComboBoxSelect;
 }
 
-AXNode* AXNode::GetCollapsedMenuListPopUpButtonAncestor() const {
+bool AXNode::IsRootWebAreaForPresentationalIframe() const {
+  if (!ui::IsPlatformDocument(GetRole()))
+    return false;
+  const AXNode* parent = GetUnignoredParentCrossingTreeBoundary();
+  if (!parent)
+    return false;
+  return parent->GetRole() == ax::mojom::Role::kIframePresentational;
+}
+
+AXNode* AXNode::GetCollapsedMenuListSelectAncestor() const {
   AXNode* node = GetOrderedSet();
 
   if (!node)
     return nullptr;
 
-  // The ordered set returned is either the popup element child of the popup
-  // button (e.g., the AXMenuListPopup) or the popup button itself. We need
-  // |node| to point to the popup button itself.
-  if (node->GetRole() != ax::mojom::Role::kPopUpButton) {
+  // The ordered set returned is either the popup element child of the select
+  // combobox or the select combobox itself. We need |node| to point to the
+  // select combobox.
+  if (node->GetRole() != ax::mojom::Role::kComboBoxSelect) {
     node = node->GetParent();
     if (!node)
       return nullptr;
   }
 
-  return node->IsCollapsedMenuListPopUpButton() ? node : nullptr;
+  return node->IsCollapsedMenuListSelect() ? node : nullptr;
 }
 
 bool AXNode::IsEmbeddedGroup() const {
@@ -1890,10 +2269,63 @@ AXNode* AXNode::GetTextFieldAncestor() const {
   return nullptr;
 }
 
+AXNode* AXNode::GetTextFieldInnerEditorElement() const {
+  if (!data().IsAtomicTextField() || !GetUnignoredChildCount())
+    return nullptr;
+
+  // Text fields wrap their static text and inline text boxes in generic
+  // containers, and some, like <input type="search">, wrap the wrapper as well.
+  // There are several incarnations of this structure.
+  // 1. An empty atomic text field:
+  // -- Generic container <-- there can be any number of these in a chain.
+  //    However, some empty text fields have the below structure, with empty
+  //    text boxes.
+  // 2. A single line, an atomic text field with some text in it:
+  // -- Generic container <-- there can be any number of these in a chain.
+  // ---- Static text
+  // ------ Inline text box children (zero or more)
+  // ---- Line Break (optional,  a placeholder break element if the text data
+  //                    ends with '\n' or '\r')
+  // 3. A multiline textarea with some text in it:
+  //    Similar to #2, but can repeat the static text, line break children
+  //    multiple times.
+
+  AXNode* text_container = GetDeepestFirstUnignoredChild();
+  DCHECK(text_container) << "Unable to retrieve deepest unignored child on\n"
+                         << *this;
+  // Non-empty text fields expose a set of static text objects with one or more
+  // inline text boxes each. On some platforms, such as Android, we don't enable
+  // inline text boxes, and only the static text objects are exposed.
+  if (text_container->GetRole() == ax::mojom::Role::kInlineTextBox)
+    text_container = text_container->GetUnignoredParent();
+
+  // Get the parent of the static text or the line break, if any; a line break
+  // is possible when the field contains a line break as its first character.
+  if (text_container->GetRole() == ax::mojom::Role::kStaticText ||
+      text_container->GetRole() == ax::mojom::Role::kLineBreak) {
+    text_container = text_container->GetUnignoredParent();
+  }
+
+  DCHECK(text_container) << "Unexpected unignored parent while computing text "
+                            "field inner editor element on\n"
+                         << *this;
+  if (text_container->GetRole() == ax::mojom::Role::kGenericContainer)
+    return text_container;
+  return nullptr;
+}
+
 AXNode* AXNode::GetSelectionContainer() const {
+  // Avoid walking ancestors if the role cannot support the selectable state.
+  if (!IsSelectSupported(GetRole()))
+    return nullptr;
+  if (IsInvisibleOrIgnored() ||
+      GetIntAttribute(ax::mojom::IntAttribute::kRestriction) ==
+          static_cast<int>(ax::mojom::Restriction::kDisabled)) {
+    return nullptr;
+  }
   for (AXNode* ancestor = const_cast<AXNode*>(this); ancestor;
        ancestor = ancestor->GetUnignoredParent()) {
-    if (IsContainerWithSelectableChildren(ancestor->GetRole()))
+    if (ui::IsContainerWithSelectableChildren(ancestor->GetRole()))
       return ancestor;
   }
   return nullptr;

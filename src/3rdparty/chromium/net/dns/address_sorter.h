@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <memory>
 #include <vector>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_export.h"
 
@@ -28,7 +28,7 @@ class NET_EXPORT AddressSorter {
   AddressSorter(const AddressSorter&) = delete;
   AddressSorter& operator=(const AddressSorter&) = delete;
 
-  virtual ~AddressSorter() {}
+  virtual ~AddressSorter() = default;
 
   // Sorts `endpoints`, which must include at least one IPv6 address.
   // Calls `callback` upon completion. Could complete synchronously. Could
@@ -40,7 +40,7 @@ class NET_EXPORT AddressSorter {
   static std::unique_ptr<AddressSorter> CreateAddressSorter();
 
  protected:
-  AddressSorter() {}
+  AddressSorter() = default;
 };
 
 }  // namespace net

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,15 +15,14 @@
 #include <unordered_set>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
+#include "base/functional/callback.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/strings/string_piece_forward.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "device/bluetooth/bluetooth_common.h"
 #include "device/bluetooth/bluetooth_export.h"
 #include "device/bluetooth/bluetooth_remote_gatt_service.h"
@@ -103,6 +102,12 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
     ERROR_INPROGRESS = 5,
     ERROR_UNKNOWN = 6,
     ERROR_UNSUPPORTED_DEVICE = 7,
+    ERROR_DEVICE_NOT_READY = 8,
+    ERROR_ALREADY_CONNECTED = 9,
+    ERROR_DEVICE_ALREADY_EXISTS = 10,
+    ERROR_DEVICE_UNCONNECTED = 11,
+    ERROR_DOES_NOT_EXIST = 12,
+    ERROR_INVALID_ARGS = 13,
     NUM_CONNECT_ERROR_CODES,  // Keep as last enum.
   };
 
@@ -149,7 +154,8 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
                              BluetoothUUIDHash>
       ServiceDataMap;
   typedef uint16_t ManufacturerId;
-  typedef std::unordered_map<ManufacturerId, std::vector<uint8_t>>
+  typedef std::vector<uint8_t> ManufacturerData;
+  typedef std::unordered_map<ManufacturerId, ManufacturerData>
       ManufacturerDataMap;
   typedef std::unordered_set<ManufacturerId> ManufacturerIDSet;
 
@@ -267,6 +273,10 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   // Returns the Bluetooth address of the device. This should be used as
   // a unique key to identify the device and copied where needed.
   virtual std::string GetAddress() const = 0;
+
+  // Returns the OUI portion of the Bluetooth address, which refers to the
+  // device's vendor.
+  std::string GetOuiPortionOfBluetoothAddress() const;
 
   // Returns the Bluetooth address type of the device. Currently available on
   // Linux and Chrome OS.
@@ -657,7 +667,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   std::vector<BluetoothRemoteGattService*> GetPrimaryServicesByUUID(
       const BluetoothUUID& service_uuid);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS)
   using ExecuteWriteErrorCallback =
       base::OnceCallback<void(device::BluetoothGattService::GattErrorCode)>;
   using AbortWriteErrorCallback =
@@ -668,7 +678,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   // Aborts all the previous prepare writes in a reliable write session.
   virtual void AbortWrite(base::OnceClosure callback,
                           AbortWriteErrorCallback error_callback) = 0;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
   // Set the battery information for the battery type |info.type|. Overrides
@@ -691,6 +701,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
  protected:
   // BluetoothGattConnection is a friend to call Add/RemoveGattConnection.
   friend BluetoothGattConnection;
+  FRIEND_TEST_ALL_PREFIXES(BluetoothDeviceTest, GattConnectionErrorReentrancy);
   FRIEND_TEST_ALL_PREFIXES(
       BluetoothTest,
       BluetoothGattConnection_DisconnectGatt_SimulateConnect);
@@ -706,14 +717,14 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   FRIEND_TEST_ALL_PREFIXES(BluetoothTest, RemoveOutdatedDeviceGattConnect);
 
   FRIEND_TEST_ALL_PREFIXES(
-      BluetoothTestWinrtOnly,
+      BluetoothTestWinrt,
       BluetoothGattConnection_DisconnectGatt_SimulateConnect);
   FRIEND_TEST_ALL_PREFIXES(
-      BluetoothTestWinrtOnly,
+      BluetoothTestWinrt,
       BluetoothGattConnection_DisconnectGatt_SimulateDisconnect);
-  FRIEND_TEST_ALL_PREFIXES(BluetoothTestWinrtOnly,
+  FRIEND_TEST_ALL_PREFIXES(BluetoothTestWinrt,
                            BluetoothGattConnection_ErrorAfterConnection);
-  FRIEND_TEST_ALL_PREFIXES(BluetoothTestWinrtOnly,
+  FRIEND_TEST_ALL_PREFIXES(BluetoothTestWinrt,
                            BluetoothGattConnection_DisconnectGatt_Cleanup);
 
   // Helper class to easily update the sets of UUIDs and keep them in sync with

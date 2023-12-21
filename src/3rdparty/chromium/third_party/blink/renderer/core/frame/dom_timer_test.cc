@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -88,18 +88,18 @@ class DOMTimerTest : public RenderingTest {
   }
 };
 
-class DOMTimerTestWithSetTimeoutWithout1MsClampPolicyOverride
+class DOMTimerTestWithMaxUnthrottledTimeoutNestingLevelPolicyOverride
     : public DOMTimerTest {
  public:
-  DOMTimerTestWithSetTimeoutWithout1MsClampPolicyOverride() = default;
+  DOMTimerTestWithMaxUnthrottledTimeoutNestingLevelPolicyOverride() = default;
 
   void SetUp() override {
     DOMTimerTest::SetUp();
-    features::ClearSetTimeoutWithout1MsClampPolicyOverrideCacheForTesting();
+    features::ClearUnthrottledNestedTimeoutOverrideCacheForTesting();
   }
 
   void TearDown() override {
-    features::ClearSetTimeoutWithout1MsClampPolicyOverrideCacheForTesting();
+    features::ClearUnthrottledNestedTimeoutOverrideCacheForTesting();
     DOMTimerTest::TearDown();
   }
 
@@ -107,27 +107,27 @@ class DOMTimerTestWithSetTimeoutWithout1MsClampPolicyOverride
   // DomTimer logic actually parsing the policy switch.
   void SetPolicyOverride(bool enabled) {
     DCHECK(!scoped_command_line_.GetProcessCommandLine()->HasSwitch(
-        switches::kSetTimeoutWithout1MsClampPolicy));
+        switches::kUnthrottledNestedTimeoutPolicy));
     scoped_command_line_.GetProcessCommandLine()->AppendSwitchASCII(
-        switches::kSetTimeoutWithout1MsClampPolicy,
-        enabled ? switches::kSetTimeoutWithout1MsClampPolicy_ForceEnable
-                : switches::kSetTimeoutWithout1MsClampPolicy_ForceDisable);
+        switches::kUnthrottledNestedTimeoutPolicy,
+        enabled ? switches::kUnthrottledNestedTimeoutPolicy_ForceEnable
+                : switches::kUnthrottledNestedTimeoutPolicy_ForceDisable);
   }
 
  private:
   base::test::ScopedCommandLine scoped_command_line_;
 };
 
-TEST_F(DOMTimerTestWithSetTimeoutWithout1MsClampPolicyOverride,
+TEST_F(DOMTimerTestWithMaxUnthrottledTimeoutNestingLevelPolicyOverride,
        PolicyForceEnable) {
   SetPolicyOverride(/* enabled = */ true);
-  EXPECT_TRUE(blink::features::IsSetTimeoutWithoutClampEnabled());
+  EXPECT_TRUE(blink::features::IsMaxUnthrottledTimeoutNestingLevelEnabled());
 }
 
-TEST_F(DOMTimerTestWithSetTimeoutWithout1MsClampPolicyOverride,
+TEST_F(DOMTimerTestWithMaxUnthrottledTimeoutNestingLevelPolicyOverride,
        PolicyForceDisable) {
   SetPolicyOverride(/* enabled = */ false);
-  EXPECT_FALSE(blink::features::IsSetTimeoutWithoutClampEnabled());
+  EXPECT_FALSE(blink::features::IsMaxUnthrottledTimeoutNestingLevelEnabled());
 }
 
 const char* const kSetTimeout0ScriptText =
@@ -140,7 +140,7 @@ const char* const kSetTimeout0ScriptText =
     "setTimeout(setTimeoutCallback, 0);";
 
 TEST_F(DOMTimerTest, setTimeout_ZeroIsNotClampedToOne) {
-  v8::HandleScope scope(v8::Isolate::GetCurrent());
+  v8::HandleScope scope(GetPage().GetAgentGroupScheduler().Isolate());
 
   base::test::ScopedFeatureList feature_list;
   feature_list.InitAndEnableFeature(features::kSetTimeoutWithoutClamp);
@@ -153,7 +153,7 @@ TEST_F(DOMTimerTest, setTimeout_ZeroIsNotClampedToOne) {
 }
 
 TEST_F(DOMTimerTest, setTimeout_ZeroIsClampedToOne) {
-  v8::HandleScope scope(v8::Isolate::GetCurrent());
+  v8::HandleScope scope(GetPage().GetAgentGroupScheduler().Isolate());
 
   base::test::ScopedFeatureList feature_list;
   feature_list.InitAndDisableFeature(features::kSetTimeoutWithoutClamp);
@@ -180,7 +180,7 @@ const char* const kSetTimeoutNestedScriptText =
     "setTimeout(nestSetTimeouts, 1);";
 
 TEST_F(DOMTimerTest, setTimeout_ClampsAfter4Nestings) {
-  v8::HandleScope scope(v8::Isolate::GetCurrent());
+  v8::HandleScope scope(GetPage().GetAgentGroupScheduler().Isolate());
 
   base::test::ScopedFeatureList feature_list;
   feature_list.InitAndDisableFeature(
@@ -194,7 +194,7 @@ TEST_F(DOMTimerTest, setTimeout_ClampsAfter4Nestings) {
 }
 
 TEST_F(DOMTimerTest, setTimeout_ClampsAfter5Nestings) {
-  v8::HandleScope scope(v8::Isolate::GetCurrent());
+  v8::HandleScope scope(GetPage().GetAgentGroupScheduler().Isolate());
 
   base::test::ScopedFeatureList feature_list;
   feature_list.InitAndEnableFeatureWithParameters(
@@ -228,7 +228,7 @@ const char* const kSetIntervalScriptText =
     "}, 1);";
 
 TEST_F(DOMTimerTest, setInterval_ClampsAfter4Iterations) {
-  v8::HandleScope scope(v8::Isolate::GetCurrent());
+  v8::HandleScope scope(GetPage().GetAgentGroupScheduler().Isolate());
 
   base::test::ScopedFeatureList feature_list;
   feature_list.InitAndDisableFeature(
@@ -242,7 +242,7 @@ TEST_F(DOMTimerTest, setInterval_ClampsAfter4Iterations) {
 }
 
 TEST_F(DOMTimerTest, setInterval_ClampsAfter5Iterations) {
-  v8::HandleScope scope(v8::Isolate::GetCurrent());
+  v8::HandleScope scope(GetPage().GetAgentGroupScheduler().Isolate());
 
   base::test::ScopedFeatureList feature_list;
   feature_list.InitAndEnableFeatureWithParameters(
@@ -263,7 +263,7 @@ TEST_F(DOMTimerTest, setInterval_ClampsAfter5Iterations) {
 }
 
 TEST_F(DOMTimerTest, setInterval_NestingResetsForLaterCalls) {
-  v8::HandleScope scope(v8::Isolate::GetCurrent());
+  v8::HandleScope scope(GetPage().GetAgentGroupScheduler().Isolate());
 
   base::test::ScopedFeatureList feature_list;
   feature_list.InitAndDisableFeature(

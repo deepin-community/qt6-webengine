@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,20 +9,22 @@
 #include <algorithm>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/containers/contains.h"
 #include "base/containers/flat_set.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/observer_list.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "components/policy/core/common/features.h"
 #include "components/policy/core/common/policy_bundle.h"
+#include "components/policy/core/common/policy_logger.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_merger.h"
 #include "components/policy/core/common/policy_types.h"
@@ -36,7 +38,7 @@
 #include "components/policy/core/common/android/policy_service_android.h"
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "components/policy/core/common/default_chrome_apps_migrator.h"
 #endif
 
@@ -66,8 +68,12 @@ void IgnoreUserCloudPrecedencePolicies(PolicyMap* policies) {
 void DowngradeMetricsReportingToRecommendedPolicy(PolicyMap* policies) {
   // Capture both the Chrome-only and device-level policies on Chrome OS.
   const std::vector<const char*> metrics_keys = {
-      policy::key::kMetricsReportingEnabled,
-      policy::key::kDeviceMetricsReportingEnabled};
+#if BUILDFLAG(IS_CHROMEOS)
+    policy::key::kDeviceMetricsReportingEnabled,
+#else
+    policy::key::kMetricsReportingEnabled,
+#endif
+  };
   for (const char* policy_key : metrics_keys) {
     PolicyMap::Entry* policy = policies->GetMutable(policy_key);
     if (policy && policy->level != POLICY_LEVEL_RECOMMENDED &&
@@ -88,6 +94,42 @@ base::flat_set<std::string> GetStringListPolicyItems(
     const std::string& policy) {
   return ValueToStringSet(
       bundle.Get(space).GetValue(policy, base::Value::Type::LIST));
+}
+
+bool IsUserCloudMergingAllowed(const PolicyMap& policies) {
+#if BUILDFLAG(IS_CHROMEOS)
+  return false;
+#else
+  const base::Value* cloud_user_policy_merge_value =
+      policies.GetValue(key::kCloudUserPolicyMerge, base::Value::Type::BOOLEAN);
+  return cloud_user_policy_merge_value &&
+         cloud_user_policy_merge_value->GetBool();
+#endif
+}
+
+void AddPolicyMessages(PolicyMap& policies) {
+#if !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_IOS)
+  // Add warning to inform users that these policies are ignored when the user
+  // is unaffiliated.
+  if (policies.IsUserAffiliated())
+    return;
+
+  auto* cloud_user_precedence_entry =
+      policies.GetMutable(key::kCloudUserPolicyOverridesCloudMachinePolicy);
+  if (cloud_user_precedence_entry &&
+      cloud_user_precedence_entry->value(base::Value::Type::BOOLEAN) &&
+      cloud_user_precedence_entry->value(base::Value::Type::BOOLEAN)
+          ->GetBool()) {
+    cloud_user_precedence_entry->AddMessage(PolicyMap::MessageType::kError,
+                                            IDS_POLICY_IGNORED_UNAFFILIATED);
+  }
+
+  if (IsUserCloudMergingAllowed(policies)) {
+    policies.GetMutable(key::kCloudUserPolicyMerge)
+        ->AddMessage(PolicyMap::MessageType::kError,
+                     IDS_POLICY_IGNORED_UNAFFILIATED);
+  }
+#endif  // !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_IOS)
 }
 
 }  // namespace
@@ -187,7 +229,7 @@ bool PolicyServiceImpl::IsFirstPolicyLoadComplete(PolicyDomain domain) const {
 void PolicyServiceImpl::RefreshPolicies(base::OnceClosure callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  VLOG(2) << "Policy refresh starting";
+  VLOG_POLICY(2, POLICY_PROCESSING) << "Policy refresh starting";
 
   if (!callback.is_null())
     refresh_callbacks_.push_back(std::move(callback));
@@ -196,11 +238,11 @@ void PolicyServiceImpl::RefreshPolicies(base::OnceClosure callback) {
     // Refresh is immediately complete if there are no providers. See the note
     // on OnUpdatePolicy() about why this is a posted task.
     update_task_ptr_factory_.InvalidateWeakPtrs();
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&PolicyServiceImpl::MergeAndTriggerUpdates,
                                   update_task_ptr_factory_.GetWeakPtr()));
 
-    VLOG(2) << "Policy refresh has no providers";
+    VLOG_POLICY(2, POLICY_PROCESSING) << "Policy refresh has no providers";
   } else {
     // Some providers might invoke OnUpdatePolicy synchronously while handling
     // RefreshPolicies. Mark all as pending before refreshing.
@@ -233,7 +275,7 @@ void PolicyServiceImpl::UnthrottleInitialization() {
 }
 
 void PolicyServiceImpl::OnUpdatePolicy(ConfigurationPolicyProvider* provider) {
-  DCHECK_EQ(1, std::count(providers_.begin(), providers_.end(), provider));
+  DCHECK_EQ(1, base::ranges::count(providers_, provider));
   refresh_pending_.erase(provider);
   provider_update_pending_.insert(provider);
 
@@ -246,7 +288,7 @@ void PolicyServiceImpl::OnUpdatePolicy(ConfigurationPolicyProvider* provider) {
   // MergeAndTriggerUpdates. Also, cancel a pending update if there is any,
   // since both will produce the same PolicyBundle.
   update_task_ptr_factory_.InvalidateWeakPtrs();
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&PolicyServiceImpl::MergeAndTriggerUpdates,
                                 update_task_ptr_factory_.GetWeakPtr()));
 }
@@ -278,21 +320,20 @@ void PolicyServiceImpl::MergeAndTriggerUpdates() {
   // Merge from each provider in their order of priority.
   const PolicyNamespace chrome_namespace(POLICY_DOMAIN_CHROME, std::string());
   PolicyBundle bundle;
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   DefaultChromeAppsMigrator chrome_apps_migrator;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
   for (auto* provider : providers_) {
-    PolicyBundle provided_bundle;
-    provided_bundle.CopyFrom(provider->policies());
+    PolicyBundle provided_bundle = provider->policies().Clone();
     IgnoreUserCloudPrecedencePolicies(&provided_bundle.Get(chrome_namespace));
     DowngradeMetricsReportingToRecommendedPolicy(
         &provided_bundle.Get(chrome_namespace));
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     if (base::FeatureList::IsEnabled(
             policy::features::kDefaultChromeAppsMigration)) {
       chrome_apps_migrator.Migrate(&provided_bundle.Get(chrome_namespace));
     }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
     bundle.MergeFrom(provided_bundle);
   }
 
@@ -325,10 +366,8 @@ void PolicyServiceImpl::MergeAndTriggerUpdates() {
 
   // Pass affiliation and CloudUserPolicyMerge values to both mergers.
   const bool is_user_affiliated = chrome_policies.IsUserAffiliated();
-  const base::Value* cloud_user_policy_merge_value = chrome_policies.GetValue(
-      key::kCloudUserPolicyMerge, base::Value::Type::BOOLEAN);
   const bool is_user_cloud_merging_enabled =
-      cloud_user_policy_merge_value && cloud_user_policy_merge_value->GetBool();
+      IsUserCloudMergingAllowed(chrome_policies);
   policy_list_merger.SetAllowUserCloudPolicyMerging(
       is_user_affiliated && is_user_cloud_merging_enabled);
   policy_dictionary_merger.SetAllowUserCloudPolicyMerging(
@@ -347,9 +386,12 @@ void PolicyServiceImpl::MergeAndTriggerUpdates() {
   for (auto& migrator : migrators_)
     migrator->Migrate(&bundle);
 
+  // Add informational messages to specific policies.
+  AddPolicyMessages(chrome_policies);
+
   // Swap first, so that observers that call GetPolicies() see the current
   // values.
-  policy_bundle_.Swap(&bundle);
+  std::swap(policy_bundle_, bundle);
 
   // Only notify observers of namespaces that have been modified.
   const PolicyMap kEmpty;
@@ -446,7 +488,8 @@ void PolicyServiceImpl::MaybeNotifyPolicyDomainStatusChange(
     for (auto& observer : iter->second) {
       observer.OnPolicyServiceInitialized(policy_domain);
       if (!weak_this) {
-        VLOG(1) << "PolicyService destroyed while notifying observers.";
+        VLOG_POLICY(1, POLICY_PROCESSING)
+            << "PolicyService destroyed while notifying observers.";
         return;
       }
       if (policy_domain_status_[policy_domain] ==

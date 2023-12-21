@@ -14,20 +14,23 @@
 
 #include "src/tint/writer/msl/test_helper.h"
 
+using namespace tint::number_suffixes;  // NOLINT
+
 namespace tint::writer::msl {
 namespace {
 
 using MslGeneratorImplTest = TestHelper;
 
 TEST_F(MslGeneratorImplTest, EmitExpression_Bitcast) {
-  auto* bitcast = create<ast::BitcastExpression>(ty.f32(), Expr(1));
-  WrapInFunction(bitcast);
+    auto* a = Let("a", Expr(1_i));
+    auto* bitcast = Bitcast<f32>(Expr("a"));
+    WrapInFunction(a, bitcast);
 
-  GeneratorImpl& gen = Build();
+    GeneratorImpl& gen = Build();
 
-  std::stringstream out;
-  ASSERT_TRUE(gen.EmitExpression(out, bitcast)) << gen.error();
-  EXPECT_EQ(out.str(), "as_type<float>(1)");
+    std::stringstream out;
+    ASSERT_TRUE(gen.EmitExpression(out, bitcast)) << gen.error();
+    EXPECT_EQ(out.str(), "as_type<float>(a)");
 }
 
 }  // namespace

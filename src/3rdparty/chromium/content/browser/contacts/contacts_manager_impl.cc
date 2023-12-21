@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "build/build_config.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/public/browser/contacts_picker_properties_requested.h"
@@ -25,11 +25,11 @@ namespace content {
 namespace {
 
 std::unique_ptr<ContactsProvider> CreateProvider(
-    RenderFrameHostImpl* render_frame_host) {
-  if (render_frame_host->GetParentOrOuterDocument())
+    RenderFrameHostImpl& render_frame_host) {
+  if (render_frame_host.GetParentOrOuterDocument())
     return nullptr;  // This API is only supported on the main frame.
 #if BUILDFLAG(IS_ANDROID)
-  return std::make_unique<ContactsProviderAndroid>(render_frame_host);
+  return std::make_unique<ContactsProviderAndroid>(&render_frame_host);
 #else
   return nullptr;
 #endif
@@ -55,11 +55,11 @@ void OnContactsSelected(
 }  // namespace
 
 ContactsManagerImpl::ContactsManagerImpl(
-    RenderFrameHostImpl* render_frame_host,
+    RenderFrameHostImpl& render_frame_host,
     mojo::PendingReceiver<blink::mojom::ContactsManager> receiver)
     : DocumentService(render_frame_host, std::move(receiver)),
       contacts_provider_(CreateProvider(render_frame_host)),
-      source_id_(render_frame_host->GetPageUkmSourceId()) {}
+      source_id_(render_frame_host.GetPageUkmSourceId()) {}
 
 ContactsManagerImpl::~ContactsManagerImpl() = default;
 

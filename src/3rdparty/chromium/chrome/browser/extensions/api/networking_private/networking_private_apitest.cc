@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,9 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "components/keyed_service/core/keyed_service.h"
@@ -69,7 +69,7 @@ class TestNetworkingPrivateDelegate : public NetworkingPrivateDelegate {
   }
 
   void SetProperties(const std::string& guid,
-                     base::Value properties,
+                     base::Value::Dict properties,
                      bool allow_set_shared_config,
                      VoidCallback success_callback,
                      FailureCallback failure_callback) override {
@@ -100,15 +100,13 @@ class TestNetworkingPrivateDelegate : public NetworkingPrivateDelegate {
     if (fail_) {
       std::move(failure_callback).Run(kFailure);
     } else {
-      base::Value result(base::Value::Type::LIST);
-      base::Value network(base::Value::Type::DICTIONARY);
-      network.SetStringPath(::onc::network_config::kType,
-                            ::onc::network_config::kEthernet);
-      network.SetStringPath(::onc::network_config::kGUID, kGuid);
+      base::Value::List result;
+      base::Value::Dict network;
+      network.Set(::onc::network_config::kType,
+                  ::onc::network_config::kEthernet);
+      network.Set(::onc::network_config::kGUID, kGuid);
       result.Append(std::move(network));
-      std::move(success_callback)
-          .Run(base::ListValue::From(
-              base::Value::ToUniquePtrValue(std::move(result))));
+      std::move(success_callback).Run(std::move(result));
     }
   }
 
@@ -162,49 +160,51 @@ class TestNetworkingPrivateDelegate : public NetworkingPrivateDelegate {
     VoidResult(std::move(success_callback), std::move(failure_callback));
   }
 
-  // Synchronous methods
-  base::Value GetEnabledNetworkTypes() override {
-    base::Value result(base::Value::Type::LIST);
+  void GetEnabledNetworkTypes(EnabledNetworkTypesCallback callback) override {
+    base::Value::List result;
     if (!fail_) {
       result.Append(::onc::network_config::kEthernet);
     }
-    return result;
+    std::move(callback).Run(std::move(result));
   }
 
-  std::unique_ptr<DeviceStateList> GetDeviceStateList() override {
+  void GetDeviceStateList(DeviceStateListCallback callback) override {
     std::unique_ptr<DeviceStateList> result;
-    if (fail_)
-      return result;
-    result = std::make_unique<DeviceStateList>();
-    std::unique_ptr<api::networking_private::DeviceStateProperties> properties(
-        new api::networking_private::DeviceStateProperties);
-    properties->type = api::networking_private::NETWORK_TYPE_ETHERNET;
-    properties->state = api::networking_private::DEVICE_STATE_TYPE_ENABLED;
-    result->push_back(std::move(properties));
-    return result;
+    if (!fail_) {
+      result = std::make_unique<DeviceStateList>();
+      std::unique_ptr<api::networking_private::DeviceStateProperties>
+          properties(new api::networking_private::DeviceStateProperties);
+      properties->type = api::networking_private::NETWORK_TYPE_ETHERNET;
+      properties->state = api::networking_private::DEVICE_STATE_TYPE_ENABLED;
+      result->push_back(std::move(properties));
+    }
+    std::move(callback).Run(std::move(result));
   }
 
-  base::Value GetGlobalPolicy() override {
-    return base::Value(base::Value::Type::DICTIONARY);
+  void GetGlobalPolicy(GetGlobalPolicyCallback callback) override {
+    std::move(callback).Run(base::Value::Dict());
   }
 
-  base::Value GetCertificateLists() override {
-    return base::Value(base::Value::Type::DICTIONARY);
+  void GetCertificateLists(GetCertificateListsCallback callback) override {
+    std::move(callback).Run(base::Value::Dict());
   }
 
-  bool EnableNetworkType(const std::string& type) override {
+  // Synchronous methods
+  void EnableNetworkType(const std::string& type,
+                         BoolCallback callback) override {
     enabled_[type] = true;
-    return !fail_;
+    std::move(callback).Run(!fail_);
   }
 
-  bool DisableNetworkType(const std::string& type) override {
+  void DisableNetworkType(const std::string& type,
+                          BoolCallback callback) override {
     disabled_[type] = true;
-    return !fail_;
+    std::move(callback).Run(!fail_);
   }
 
-  bool RequestScan(const std::string& type) override {
+  void RequestScan(const std::string& type, BoolCallback callback) override {
     scan_requested_.push_back(type);
-    return !fail_;
+    std::move(callback).Run(!fail_);
   }
 
   void set_fail(bool fail) { fail_ = fail; }
@@ -218,10 +218,9 @@ class TestNetworkingPrivateDelegate : public NetworkingPrivateDelegate {
     if (fail_) {
       std::move(failure_callback).Run(kFailure);
     } else {
-      base::Value result(base::Value::Type::DICTIONARY);
-      result.SetStringPath(::onc::network_config::kGUID, guid);
-      result.SetStringPath(::onc::network_config::kType,
-                           ::onc::network_config::kWiFi);
+      base::Value::Dict result;
+      result.Set(::onc::network_config::kGUID, guid);
+      result.Set(::onc::network_config::kType, ::onc::network_config::kWiFi);
       std::move(success_callback).Run(std::move(result));
     }
   }
@@ -259,10 +258,9 @@ class TestNetworkingPrivateDelegate : public NetworkingPrivateDelegate {
       std::move(callback).Run(absl::nullopt, kFailure);
       return;
     }
-    base::Value result(base::Value::Type::DICTIONARY);
-    result.SetStringKey(::onc::network_config::kGUID, guid);
-    result.SetStringKey(::onc::network_config::kType,
-                        ::onc::network_config::kWiFi);
+    base::Value::Dict result;
+    result.Set(::onc::network_config::kGUID, guid);
+    result.Set(::onc::network_config::kType, ::onc::network_config::kWiFi);
     std::move(callback).Run(std::move(result), absl::nullopt);
   }
 
@@ -313,9 +311,9 @@ class NetworkingPrivateApiTest : public ExtensionApiTest {
 
  protected:
   bool RunNetworkingSubtest(const std::string& subtest) {
-    const std::string page_url = "main.html?" + subtest;
+    const std::string extension_url = "main.html?" + subtest;
     return RunExtensionTest("networking_private",
-                            {.page_url = page_url.c_str()},
+                            {.extension_url = extension_url.c_str()},
                             {.load_as_component = true});
   }
 

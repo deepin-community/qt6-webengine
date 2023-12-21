@@ -96,7 +96,7 @@ class DataListIndicatorElement final : public HTMLDivElement {
   void InitializeInShadowTree() {
     DCHECK(ContainingShadowRoot());
     DCHECK(ContainingShadowRoot()->IsUserAgent());
-    SetShadowPseudoId(AtomicString("-webkit-calendar-picker-indicator"));
+    SetShadowPseudoId(shadow_element_names::kPseudoCalendarPickerIndicator);
     setAttribute(html_names::kIdAttr, shadow_element_names::kIdPickerIndicator);
     setAttribute(html_names::kStyleAttr,
                  "display:list-item; "
@@ -108,8 +108,8 @@ class DataListIndicatorElement final : public HTMLDivElement {
   }
 };
 
-TextFieldInputType::TextFieldInputType(HTMLInputElement& element)
-    : InputType(element), InputTypeView(element) {}
+TextFieldInputType::TextFieldInputType(Type type, HTMLInputElement& element)
+    : InputType(type, element), InputTypeView(element) {}
 
 TextFieldInputType::~TextFieldInputType() = default;
 
@@ -144,7 +144,7 @@ bool TextFieldInputType::IsTextField() const {
 bool TextFieldInputType::ValueMissing(const String& value) const {
   // For text-mode input elements, the value is missing only if it is mutable.
   // https://html.spec.whatwg.org/multipage/input.html#the-required-attribute
-  return GetElement().IsRequired() && value.IsEmpty() &&
+  return GetElement().IsRequired() && value.empty() &&
          !GetElement().IsDisabledOrReadOnly();
 }
 
@@ -280,16 +280,19 @@ void TextFieldInputType::HandleBlurEvent() {
 }
 
 bool TextFieldInputType::ShouldSubmitImplicitly(const Event& event) {
-  return (event.type() == event_type_names::kTextInput &&
-          event.HasInterface(event_interface_names::kTextEvent) &&
-          To<TextEvent>(event).data() == "\n") ||
-         InputTypeView::ShouldSubmitImplicitly(event);
+  if (const TextEvent* text_event = DynamicTo<TextEvent>(event)) {
+    if (!text_event->IsPaste() && !text_event->IsDrop() &&
+        text_event->data() == "\n") {
+      return true;
+    }
+  }
+  return InputTypeView::ShouldSubmitImplicitly(event);
 }
 
-void TextFieldInputType::CustomStyleForLayoutObject(ComputedStyle& style) {
+void TextFieldInputType::AdjustStyle(ComputedStyleBuilder& builder) {
   // The flag is necessary in order that a text field <input> with non-'visible'
   // overflow property doesn't change its baseline.
-  style.SetShouldIgnoreOverflowPropertyForInlineBlockBaseline();
+  builder.SetShouldIgnoreOverflowPropertyForInlineBlockBaseline();
 }
 
 LayoutObject* TextFieldInputType::CreateLayoutObject(
@@ -297,6 +300,10 @@ LayoutObject* TextFieldInputType::CreateLayoutObject(
     LegacyLayout legacy) const {
   return LayoutObjectFactory::CreateTextControlSingleLine(GetElement(), style,
                                                           legacy);
+}
+
+ControlPart TextFieldInputType::AutoAppearance() const {
+  return kTextFieldPart;
 }
 
 void TextFieldInputType::CreateShadowSubtree() {
@@ -425,6 +432,13 @@ static bool IsASCIILineBreak(UChar c) {
   return c == '\r' || c == '\n';
 }
 
+// Returns true if `c` may contain a line break. This is an inexact comparison.
+// This is used as the common case is the text does not contain a newline.
+static bool MayBeASCIILineBreak(UChar c) {
+  static_assert('\n' < '\r');
+  return c <= '\r';
+}
+
 static String LimitLength(const String& string, unsigned max_length) {
   unsigned new_length = std::min(max_length, string.length());
   if (new_length == string.length())
@@ -435,6 +449,13 @@ static String LimitLength(const String& string, unsigned max_length) {
 }
 
 String TextFieldInputType::SanitizeValue(const String& proposed_value) const {
+  // Typical case is the string doesn't contain a break and fits. The Find()
+  // is not exact (meaning it'll match many other characters), but is a good
+  // approximation for a fast path.
+  if (proposed_value.Find(MayBeASCIILineBreak) == kNotFound &&
+      proposed_value.length() < std::numeric_limits<int>::max()) {
+    return proposed_value;
+  }
   return LimitLength(proposed_value.RemoveCharacters(IsASCIILineBreak),
                      std::numeric_limits<int>::max());
 }
@@ -502,7 +523,7 @@ void TextFieldInputType::UpdatePlaceholderText(bool is_suggested_value) {
     return;
   HTMLElement* placeholder = GetElement().PlaceholderElement();
   String placeholder_text = GetElement().GetPlaceholderValue();
-  if (placeholder_text.IsEmpty()) {
+  if (placeholder_text.empty()) {
     if (placeholder)
       placeholder->remove(ASSERT_NO_EXCEPTION);
     return;
@@ -584,7 +605,7 @@ void TextFieldInputType::SpinButtonStepUp() {
 }
 
 void TextFieldInputType::UpdateView() {
-  if (GetElement().SuggestedValue().IsEmpty() &&
+  if (GetElement().SuggestedValue().empty() &&
       GetElement().NeedsToUpdateViewValue()) {
     // Update the view only if needsToUpdateViewValue is true. It protects
     // an unacceptable view value from being overwritten with the DOM value.
@@ -598,7 +619,7 @@ void TextFieldInputType::UpdateView() {
 }
 
 void TextFieldInputType::FocusAndSelectSpinButtonOwner() {
-  GetElement().focus();
+  GetElement().Focus();
   GetElement().SetSelectionRange(0, std::numeric_limits<int>::max());
 }
 

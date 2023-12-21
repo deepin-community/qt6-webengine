@@ -40,7 +40,7 @@ AXMenuList::AXMenuList(LayoutObject* layout_object,
 }
 
 ax::mojom::blink::Role AXMenuList::NativeRoleIgnoringAria() const {
-  return ax::mojom::blink::Role::kPopUpButton;
+  return ax::mojom::blink::Role::kComboBoxSelect;
 }
 
 bool AXMenuList::OnNativeClickAction() {
@@ -60,30 +60,39 @@ bool AXMenuList::OnNativeClickAction() {
 }
 
 void AXMenuList::Detach() {
-  // Detach() calls ClearChildren(), but AXMenuList::ClearChildren()
-  // detaches the grandchild options, not the child option.
-  AXLayoutObject::Detach();
+  // The default implementation of Detach() calls ClearChildren(), but
+  // that is not enough. The popup child needs to be specially removed
+  // from the AXObjectCache.
   DCHECK_LE(children_.size(), 1U);
 
   // Clear the popup.
   if (children_.size()) {
     children_[0]->DetachFromParent();
-    // Unfortunately, the popup will be left hanging around until
-    // AXObjectCacheImpl() is reset. We cannot remove it here because
-    // this can be called while AXObjectCacheImpl() is detaching all objects,
-    // and the hash map of objects does not allow similtaneous iteration and
+    // Do not call Remove() while AXObjectCacheImpl() is detaching all objects,
+    // because the hash map of objects does not allow simultaneous iteration and
     // removal of objects.
-    // TODO(accessibility) Consider something like this, or something that
-    // marks the object for imminent diposal.
-    // if (!AXObjectCache().IsDisposing()
-    //   children_[0]->AXObjectCache().Remove(children_[0]);
-    children_[0]->Detach();
+    if (!AXObjectCache().HasBeenDisposed())
+      children_[0]->AXObjectCache().Remove(children_[0]);
     children_.clear();
   }
+
+  AXLayoutObject::Detach();
+}
+
+void AXMenuList::SetNeedsToUpdateChildren() const {
+  if (!children_.empty()) {
+    if (AXObject* child_popup = children_[0]) {
+      // If we have a child popup, update its children at the same time.
+      DCHECK(IsA<AXMenuListPopup>(child_popup));
+      child_popup->SetNeedsToUpdateChildren();
+    }
+  }
+
+  AXObject::SetNeedsToUpdateChildren();
 }
 
 void AXMenuList::ClearChildren() const {
-  if (children_.IsEmpty())
+  if (children_.empty())
     return;
 
   // Unless the menu list is detached, there's no reason to clear our
@@ -99,7 +108,7 @@ void AXMenuList::ClearChildren() const {
 }
 
 void AXMenuList::AddChildren() {
-#if DCHECK_IS_ON()
+#if defined(AX_FAIL_FAST_BUILD)
   DCHECK(!IsDetached());
   DCHECK(!is_adding_children_) << " Reentering method on " << GetNode();
   base::AutoReset<bool> reentrancy_protector(&is_adding_children_, true);
@@ -125,7 +134,7 @@ AXObject* AXMenuList::GetOrCreateMockPopupChild() {
     return nullptr;
 
   // Ensure mock AXMenuListPopup exists as first and only child.
-  if (children_.IsEmpty()) {
+  if (children_.empty()) {
     AXObjectCacheImpl& cache = AXObjectCache();
     AXObject* popup =
         cache.CreateAndInit(ax::mojom::blink::Role::kMenuListPopup, this);
@@ -165,7 +174,7 @@ void AXMenuList::DidUpdateActiveOption() {
   // time by AXObjectCacheImpl(). Look into calling with clean layout.
   if (!NeedsToUpdateChildren()) {
     const auto& child_objects = ChildrenIncludingIgnored();
-    if (!child_objects.IsEmpty()) {
+    if (!child_objects.empty()) {
       DCHECK_EQ(child_objects.size(), 1ul);
       DCHECK(IsA<AXMenuListPopup>(child_objects[0].Get()));
       HTMLSelectElement* select = To<HTMLSelectElement>(GetNode());

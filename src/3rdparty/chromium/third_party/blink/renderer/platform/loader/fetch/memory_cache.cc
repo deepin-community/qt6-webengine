@@ -25,14 +25,17 @@
 #include <utility>
 
 #include "base/auto_reset.h"
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
+#include "base/task/single_thread_task_runner.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/visitor.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loading_log.h"
+#include "third_party/blink/renderer/platform/scheduler/public/main_thread.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 
 namespace blink {
@@ -48,18 +51,8 @@ static const base::TimeDelta kCMaxPruneDeferralDelay = base::Milliseconds(500);
 // again.
 static const float kCTargetPrunePercentage = .95f;
 
-MemoryCache* GetMemoryCache() {
-  DCHECK(WTF::IsMainThread());
-  if (!g_memory_cache) {
-    g_memory_cache =
-        new Persistent<MemoryCache>(MakeGarbageCollected<MemoryCache>(
-            Thread::MainThread()->GetTaskRunner()));
-  }
-  return g_memory_cache->Get();
-}
-
 MemoryCache* ReplaceMemoryCacheForTesting(MemoryCache* cache) {
-  GetMemoryCache();
+  MemoryCache::Get();
   MemoryCache* old_cache = g_memory_cache->Release();
   *g_memory_cache = cache;
   MemoryCacheDumpProvider::Instance()->SetMemoryCache(cache);
@@ -74,8 +67,19 @@ void MemoryCacheEntry::Trace(Visitor* visitor) const {
 void MemoryCacheEntry::ClearResourceWeak(const LivenessBroker& info) {
   if (!resource_ || info.IsHeapObjectAlive(resource_))
     return;
-  GetMemoryCache()->Remove(resource_.Get());
+  MemoryCache::Get()->Remove(resource_.Get());
   resource_.Clear();
+}
+
+// static
+MemoryCache* MemoryCache::Get() {
+  DCHECK(WTF::IsMainThread());
+  if (!g_memory_cache) {
+    g_memory_cache = new Persistent<MemoryCache>(
+        MakeGarbageCollected<MemoryCache>(Thread::MainThread()->GetTaskRunner(
+            MainThreadTaskRunnerRestricted())));
+  }
+  return g_memory_cache->Get();
 }
 
 MemoryCache::MemoryCache(
@@ -384,8 +388,8 @@ void MemoryCache::Prune() {
     } else {
       // Defer.
       task_runner_->PostTask(
-          FROM_HERE, base::BindOnce(&MemoryCache::PruneNow,
-                                    base::Unretained(this), kAutomaticPrune));
+          FROM_HERE, WTF::BindOnce(&MemoryCache::PruneNow,
+                                   WrapWeakPersistent(this), kAutomaticPrune));
       prune_pending_ = true;
     }
   }

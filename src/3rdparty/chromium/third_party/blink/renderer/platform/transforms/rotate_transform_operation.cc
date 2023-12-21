@@ -39,10 +39,8 @@ TransformOperation::OperationType GetTypeForRotation(const Rotation& rotation) {
 }
 }  // namespace
 
-bool RotateTransformOperation::operator==(
+bool RotateTransformOperation::IsEqualAssumingSameType(
     const TransformOperation& other) const {
-  if (!IsSameType(other))
-    return false;
   const auto& other_rotation = To<RotateTransformOperation>(other).rotation_;
   return rotation_.axis == other_rotation.axis &&
          rotation_.angle == other_rotation.angle;
@@ -105,17 +103,15 @@ RotateAroundOriginTransformOperation::RotateAroundOriginTransformOperation(
       origin_y_(origin_y) {}
 
 void RotateAroundOriginTransformOperation::Apply(
-    TransformationMatrix& transform,
+    gfx::Transform& transform,
     const gfx::SizeF& box_size) const {
   transform.Translate(origin_x_, origin_y_);
   RotateTransformOperation::Apply(transform, box_size);
   transform.Translate(-origin_x_, -origin_y_);
 }
 
-bool RotateAroundOriginTransformOperation::operator==(
+bool RotateAroundOriginTransformOperation::IsEqualAssumingSameType(
     const TransformOperation& other) const {
-  if (!IsSameType(other))
-    return false;
   const auto& other_rotate = To<RotateAroundOriginTransformOperation>(other);
   const Rotation& other_rotation = other_rotate.rotation_;
   return rotation_.axis == other_rotation.axis &&

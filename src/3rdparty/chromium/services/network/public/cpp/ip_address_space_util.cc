@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -252,6 +252,15 @@ const AddressSpaceMap& NonPublicAddressSpaceMap() {
   return *kMap;
 }
 
+}  // namespace
+
+IPAddressSpace IPAddressToIPAddressSpace(const IPAddress& address) {
+  return NonPublicAddressSpaceMap().Apply(address).value_or(
+      IPAddressSpace::kPublic);
+}
+
+namespace {
+
 IPAddressSpace IPEndPointToIPAddressSpace(const IPEndPoint& endpoint) {
   if (!endpoint.address().IsValid()) {
     return IPAddressSpace::kUnknown;
@@ -262,9 +271,7 @@ IPAddressSpace IPEndPointToIPAddressSpace(const IPEndPoint& endpoint) {
     return *space;
   }
 
-  return NonPublicAddressSpaceMap()
-      .Apply(endpoint.address())
-      .value_or(IPAddressSpace::kPublic);
+  return IPAddressToIPAddressSpace(endpoint.address());
 }
 
 }  // namespace
@@ -288,6 +295,7 @@ IPAddressSpace TransportInfoToIPAddressSpace(const net::TransportInfo& info) {
     case net::TransportType::kCached:
       return IPEndPointToIPAddressSpace(info.endpoint);
     case net::TransportType::kProxied:
+    case net::TransportType::kCachedFromProxy:
       return mojom::IPAddressSpace::kUnknown;
   }
 }

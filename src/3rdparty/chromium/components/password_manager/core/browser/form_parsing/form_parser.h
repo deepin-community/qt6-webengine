@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "components/password_manager/core/browser/form_parsing/password_field_prediction.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
@@ -27,7 +28,6 @@ enum class AutocompleteFlag {
   kUsername,
   kCurrentPassword,
   kNewPassword,
-  kWebAuthn,
   // Represents the whole family of cc-* flags + OTP flag.
   kNonPassword
 };
@@ -48,7 +48,7 @@ enum class Interactability {
 // parsing.
 struct ProcessedField {
   // This points to the wrapped FormFieldData.
-  const autofill::FormFieldData* field;
+  raw_ptr<const autofill::FormFieldData> field;
 
   // The flag derived from field->autocomplete_attribute.
   AutocompleteFlag autocomplete_flag = AutocompleteFlag::kNone;
@@ -64,6 +64,9 @@ struct ProcessedField {
 
   // True if the server predicts that this field is not a username field.
   bool server_hints_not_username = false;
+
+  // True if the field accepts WebAuthn credentials, false otherwise.
+  bool accepts_webauthn_credentials = false;
 
   Interactability interactability = Interactability::kUnlikely;
 };

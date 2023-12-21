@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,10 +9,10 @@
 #include "base/memory/raw_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/test/metrics/histogram_tester.h"
 #include "base/time/time.h"
 #include "build/chromeos_buildflags.h"
 #include "cc/animation/animation_host.h"
+#include "cc/metrics/custom_metrics_recorder.h"
 #include "cc/test/fake_content_layer_client.h"
 #include "cc/test/fake_frame_info.h"
 #include "cc/test/fake_picture_layer.h"
@@ -28,6 +28,36 @@ FrameInfo CreateStubFrameInfo(bool is_dropped) {
                                  ? FrameInfo::FrameFinalState::kDropped
                                  : FrameInfo::FrameFinalState::kPresentedAll);
 }
+
+class TestCustomMetricsRecorder : public CustomMetricRecorder {
+ public:
+  TestCustomMetricsRecorder() = default;
+  ~TestCustomMetricsRecorder() override = default;
+
+  // CustomMetricRecorder:
+  void ReportPercentDroppedFramesInOneSecondWindow(double percent) override {}
+  void ReportPercentDroppedFramesInOneSecondWindow2(double percent) override {
+    ++report_count_;
+    last_percent_dropped_frames_ = percent;
+  }
+  void ReportEventLatency(
+      std::vector<EventLatencyTracker::LatencyData> latencies) override {}
+
+  void Reset() {
+    report_count_ = 0u;
+    last_percent_dropped_frames_ = 0;
+  }
+
+  int report_count() const { return report_count_; }
+
+  double last_percent_dropped_frames() const {
+    return last_percent_dropped_frames_;
+  }
+
+ private:
+  int report_count_ = 0u;
+  double last_percent_dropped_frames_ = 0;
+};
 
 class DroppedFrameCounterTestBase : public LayerTreeTest {
  public:
@@ -560,7 +590,7 @@ TEST_P(SmoothnessStrategyDroppedFrameCounterTest, Percentile95WithIdleFrames) {
 
   // Set an interval that rounds up nicely with 1 second.
   constexpr auto kInterval = base::Milliseconds(10);
-  constexpr size_t kFps = base::Seconds(1) / kInterval;
+  constexpr int kFps = base::Seconds(1).IntDiv(kInterval);
   static_assert(
       kFps % 5 == 0,
       "kFps must be a multiple of 5 because this test depends on it.");
@@ -595,7 +625,7 @@ TEST_P(SmoothnessStrategyDroppedFrameCounterTest,
 
   // Set an interval that rounds up nicely with 1 second.
   constexpr auto kInterval = base::Milliseconds(10);
-  constexpr size_t kFps = base::Seconds(1) / kInterval;
+  constexpr int kFps = base::Seconds(1).IntDiv(kInterval);
   static_assert(
       kFps % 5 == 0,
       "kFps must be a multiple of 5 because this test depends on it.");
@@ -629,7 +659,7 @@ TEST_P(SmoothnessStrategyDroppedFrameCounterTest,
 
   // Set an interval that rounds up nicely with 1 second.
   constexpr auto kInterval = base::Milliseconds(10);
-  constexpr size_t kFps = base::Seconds(1) / kInterval;
+  constexpr int kFps = base::Seconds(1).IntDiv(kInterval);
   static_assert(
       kFps % 5 == 0,
       "kFps must be a multiple of 5 because this test depends on it.");
@@ -670,7 +700,7 @@ TEST_P(SmoothnessStrategyDroppedFrameCounterTest,
 
   // Set an interval that rounds up nicely with 1 second.
   constexpr auto kInterval = base::Milliseconds(10);
-  constexpr size_t kFps = base::Seconds(1) / kInterval;
+  constexpr int kFps = base::Seconds(1).IntDiv(kInterval);
   SetInterval(kInterval);
 
   // One good frame
@@ -701,7 +731,7 @@ TEST_P(SmoothnessStrategyDroppedFrameCounterTest,
 TEST_F(DroppedFrameCounterTest, ResetPendingFramesAccountingForPendingFrames) {
   // Set an interval that rounds up nicely with 1 second.
   constexpr auto kInterval = base::Milliseconds(10);
-  constexpr size_t kFps = base::Seconds(1) / kInterval;
+  constexpr int kFps = base::Seconds(1).IntDiv(kInterval);
   SetInterval(kInterval);
 
   // First 2 seconds with 20% dropped frames.
@@ -725,7 +755,7 @@ TEST_F(DroppedFrameCounterTest, ResetPendingFramesAccountingForPendingFrames) {
 TEST_F(DroppedFrameCounterTest, Reset) {
   // Set an interval that rounds up nicely with 1 second.
   constexpr auto kInterval = base::Milliseconds(10);
-  constexpr size_t kFps = base::Seconds(1) / kInterval;
+  constexpr int kFps = base::Seconds(1).IntDiv(kInterval);
   SetInterval(kInterval);
 
   // First 2 seconds with 20% dropped frames.
@@ -749,7 +779,7 @@ TEST_F(DroppedFrameCounterTest, Reset) {
 TEST_F(DroppedFrameCounterTest, ConsistentSmoothnessRatings) {
   // Set an interval that rounds up nicely with 1 second.
   constexpr auto kInterval = base::Milliseconds(10);
-  constexpr size_t kFps = base::Seconds(1) / kInterval;
+  constexpr int kFps = base::Seconds(1).IntDiv(kInterval);
   static_assert(kFps == 100,
                 "kFps must be 100 because this test depends on it.");
   SetInterval(kInterval);
@@ -798,7 +828,7 @@ TEST_F(DroppedFrameCounterTest, ConsistentSmoothnessRatings) {
 TEST_F(DroppedFrameCounterTest, MovingSmoothnessRatings) {
   // Set an interval that rounds up nicely with 1 second.
   constexpr auto kInterval = base::Milliseconds(10);
-  constexpr size_t kFps = base::Seconds(1) / kInterval;
+  constexpr int kFps = base::Seconds(1).IntDiv(kInterval);
   static_assert(kFps == 100,
                 "kFps must be 100 because this test depends on it.");
   SetInterval(kInterval);
@@ -871,7 +901,7 @@ TEST_F(DroppedFrameCounterTest, ForkedCompositorFrameReporter) {
 TEST_F(DroppedFrameCounterTest, WorstSmoothnessTiming) {
   // Set an interval that rounds up nicely with 1 second.
   constexpr auto kInterval = base::Milliseconds(10);
-  constexpr size_t kFps = base::Seconds(1) / kInterval;
+  constexpr int kFps = base::Seconds(1).IntDiv(kInterval);
   static_assert(
       kFps % 5 == 0,
       "kFps must be a multiple of 5 because this test depends on it.");
@@ -917,27 +947,34 @@ TEST_F(DroppedFrameCounterTest, WorstSmoothnessTiming) {
   EXPECT_FLOAT_EQ(MaxPercentDroppedFrameAfter5Sec(), 100);
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-TEST_F(DroppedFrameCounterTest, ReportForUI) {
+TEST_F(DroppedFrameCounterTest, ReportOnEveryFrameForUI) {
   constexpr auto kInterval = base::Milliseconds(10);
-  constexpr size_t kFps = base::Seconds(1) / kInterval;
+  constexpr int kFps = base::Seconds(1).IntDiv(kInterval);
   static_assert(
       kFps % 5 == 0,
       "kFps must be a multiple of 5 because this test depends on it.");
   SetInterval(kInterval);
 
   dropped_frame_counter_.EnableReporForUI();
-  base::HistogramTester histogram_tester;
+  TestCustomMetricsRecorder recorder;
 
   // 4 seconds with 20% dropped frames.
   SimulateFrameSequence({false, false, false, false, true}, (kFps / 5) * 4);
 
-  // Recorded more than 1 samples of 20% dropped frame percentage.
-  EXPECT_GE(histogram_tester.GetBucketCount(
-                "Ash.Smoothness.PercentDroppedFrames_1sWindow", 20),
-            1);
+  // Recorded (kFps * 3) samples of 20% dropped frame percentage. Only 3 seconds
+  // of frames reported because there is no reports for the very 1st second.
+  EXPECT_EQ(recorder.report_count(), kFps * 3);
+  EXPECT_FLOAT_EQ(recorder.last_percent_dropped_frames(), 20.0f);
+
+  recorder.Reset();
+
+  // 4 seconds with 0 dropped frames.
+  SimulateFrameSequence({false, false, false, false, false}, (kFps / 5) * 4);
+
+  // Recorded (kFps * 4) samples of 0% dropped frame percentage.
+  EXPECT_EQ(recorder.report_count(), kFps * 4);
+  EXPECT_FLOAT_EQ(recorder.last_percent_dropped_frames(), 0.0f);
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 }  // namespace
 }  // namespace cc

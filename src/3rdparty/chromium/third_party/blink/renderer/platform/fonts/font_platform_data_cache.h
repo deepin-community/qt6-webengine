@@ -32,7 +32,6 @@
 
 #include "third_party/blink/renderer/platform/fonts/font_cache_key.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
-#include "third_party/blink/renderer/platform/wtf/thread_safe_ref_counted.h"
 
 namespace blink {
 
@@ -100,8 +99,7 @@ class FontPlatformDataCache final {
    private:
     using SizeToDataMap = HashMap<unsigned,
                                   std::unique_ptr<FontPlatformData>,
-                                  WTF::IntHash<unsigned>,
-                                  WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
+                                  IntWithZeroKeyHashTraits<unsigned>>;
 
     SizedFontPlatformDataSet();
 

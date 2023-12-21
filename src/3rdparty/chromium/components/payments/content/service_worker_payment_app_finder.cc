@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,17 +8,17 @@
 #include <vector>
 
 #include "base/base64.h"
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/check.h"
 #include "base/containers/contains.h"
 #include "base/containers/cxx20_erase.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/stl_util.h"
 #include "base/supports_user_data.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "components/payments/content/developer_console_logger.h"
 #include "components/payments/content/installable_payment_app_crawler.h"
 #include "components/payments/content/manifest_verifier.h"
@@ -43,34 +43,6 @@
 namespace payments {
 namespace {
 
-// Returns true if |requested| is empty or contains at least one of the items in
-// |capabilities|.
-template <typename T>
-bool CapabilityMatches(const std::vector<T>& requested,
-                       const std::vector<int32_t>& capabilities) {
-  if (requested.empty())
-    return true;
-  for (const auto& request : requested) {
-    if (base::Contains(capabilities, static_cast<int32_t>(request)))
-      return true;
-  }
-  return false;
-}
-
-// Returns true if the basic-card |capabilities| of the payment app match the
-// |request|.
-bool BasicCardCapabilitiesMatch(
-    const std::vector<content::StoredCapabilities>& capabilities,
-    const mojom::PaymentMethodDataPtr& request) {
-  for (const auto& capability : capabilities) {
-    if (CapabilityMatches(request->supported_networks,
-                          capability.supported_card_networks)) {
-      return true;
-    }
-  }
-  return capabilities.empty() && request->supported_networks.empty();
-}
-
 // Returns true if |app| supports at least one of the |requests|.
 bool AppSupportsAtLeastOneRequestedMethodData(
     const content::StoredPaymentApp& app,
@@ -78,12 +50,7 @@ bool AppSupportsAtLeastOneRequestedMethodData(
   for (const auto& enabled_method : app.enabled_methods) {
     for (const auto& request : requests) {
       if (enabled_method == request->supported_method) {
-        if (!base::FeatureList::IsEnabled(::features::kPaymentRequestBasicCard))
-          return true;
-        if (enabled_method != methods::kBasicCard ||
-            BasicCardCapabilitiesMatch(app.capabilities, request)) {
-          return true;
-        }
+        return true;
       }
     }
   }
@@ -133,7 +100,6 @@ class SelfDeletingServiceWorkerPaymentAppFinder
       std::unique_ptr<PaymentManifestDownloader> downloader,
       scoped_refptr<PaymentManifestWebDataService> cache,
       const std::vector<mojom::PaymentMethodDataPtr>& requested_method_data,
-      bool may_crawl_for_installable_payment_apps,
       ServiceWorkerPaymentAppFinder::GetAllPaymentAppsCallback callback,
       base::OnceClosure finished_using_resources_callback) {
     DCHECK(!verifier_);
@@ -150,8 +116,7 @@ class SelfDeletingServiceWorkerPaymentAppFinder
     verifier_ = std::make_unique<ManifestVerifier>(
         merchant_origin, web_contents, downloader_.get(), parser_.get(),
         cache_.get());
-    if (may_crawl_for_installable_payment_apps &&
-        base::FeatureList::IsEnabled(
+    if (base::FeatureList::IsEnabled(
             features::kWebPaymentsJustInTimePaymentApp)) {
       crawler_ = std::make_unique<InstallablePaymentAppCrawler>(
           merchant_origin, initiator_render_frame_host, downloader_.get(),
@@ -363,7 +328,7 @@ class SelfDeletingServiceWorkerPaymentAppFinder
       parser_.reset();
       std::move(finished_using_resources_callback_).Run();
 
-      base::ThreadTaskRunnerHandle::Get()->PostNonNestableTask(
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostNonNestableTask(
           FROM_HERE,
           base::BindOnce(&SelfDeletingServiceWorkerPaymentAppFinder::DeleteSelf,
                          weak_ptr_factory_.GetWeakPtr()));
@@ -408,7 +373,7 @@ void ServiceWorkerPaymentAppFinder::GetAllPaymentApps(
     const url::Origin& merchant_origin,
     scoped_refptr<PaymentManifestWebDataService> cache,
     std::vector<mojom::PaymentMethodDataPtr> requested_method_data,
-    bool may_crawl_for_installable_payment_apps,
+    base::WeakPtr<CSPChecker> csp_checker,
     GetAllPaymentAppsCallback callback,
     base::OnceClosure finished_writing_cache_callback_for_testing) {
   DCHECK(!requested_method_data.empty());
@@ -438,11 +403,12 @@ void ServiceWorkerPaymentAppFinder::GetAllPaymentApps(
 
   std::unique_ptr<PaymentManifestDownloader> downloader;
   if (test_downloader_ != nullptr) {
+    test_downloader_->SetCSPCheckerForTesting(csp_checker);  // IN-TEST
     downloader = std::move(test_downloader_);
     self_delete_factory->IgnorePortInOriginComparisonForTesting();
   } else {
     downloader = std::make_unique<payments::PaymentManifestDownloader>(
-        std::make_unique<DeveloperConsoleLogger>(web_contents),
+        std::make_unique<DeveloperConsoleLogger>(web_contents), csp_checker,
         render_frame_host()
             .GetBrowserContext()
             ->GetDefaultStoragePartition()
@@ -451,8 +417,7 @@ void ServiceWorkerPaymentAppFinder::GetAllPaymentApps(
 
   self_delete_factory->GetAllPaymentApps(
       merchant_origin, &render_frame_host(), std::move(downloader), cache,
-      requested_method_data, may_crawl_for_installable_payment_apps,
-      std::move(callback),
+      requested_method_data, std::move(callback),
       std::move(finished_writing_cache_callback_for_testing));
 }
 

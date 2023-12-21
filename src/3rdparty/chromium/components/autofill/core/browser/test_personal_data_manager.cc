@@ -1,11 +1,14 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/autofill/core/browser/test_personal_data_manager.h"
 
+#include "base/ranges/algorithm.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/personal_data_manager_observer.h"
+#include "components/autofill/core/browser/strike_databases/autofill_profile_migration_strike_database.h"
+#include "components/autofill/core/common/autofill_features.h"
 
 namespace autofill {
 
@@ -64,13 +67,12 @@ void TestPersonalDataManager::AddProfile(const AutofillProfile& profile) {
   std::unique_ptr<AutofillProfile> profile_ptr =
       std::make_unique<AutofillProfile>(profile);
   profile_ptr->FinalizeAfterImport();
-  web_profiles_.push_back(std::move(profile_ptr));
+  GetProfileStorage(profile.source()).push_back(std::move(profile_ptr));
   NotifyPersonalDataObserver();
 }
 
 void TestPersonalDataManager::UpdateProfile(const AutofillProfile& profile) {
-  AutofillProfile* existing_profile =
-      GetProfileWithGUID(profile.guid().c_str());
+  AutofillProfile* existing_profile = GetProfileByGUID(profile.guid());
   if (existing_profile) {
     RemoveByGUID(existing_profile->guid());
     AddProfile(profile);
@@ -78,22 +80,18 @@ void TestPersonalDataManager::UpdateProfile(const AutofillProfile& profile) {
 }
 
 void TestPersonalDataManager::RemoveByGUID(const std::string& guid) {
-  CreditCard* credit_card = GetCreditCardWithGUID(guid.c_str());
+  CreditCard* credit_card = GetCreditCardByGUID(guid);
   if (credit_card) {
-    local_credit_cards_.erase(
-        std::find_if(local_credit_cards_.begin(), local_credit_cards_.end(),
-                     [credit_card](const std::unique_ptr<CreditCard>& ptr) {
-                       return ptr.get() == credit_card;
-                     }));
+    local_credit_cards_.erase(base::ranges::find(
+        local_credit_cards_, credit_card, &std::unique_ptr<CreditCard>::get));
   }
 
-  AutofillProfile* profile = GetProfileWithGUID(guid.c_str());
+  AutofillProfile* profile = GetProfileByGUID(guid);
   if (profile) {
-    web_profiles_.erase(
-        std::find_if(web_profiles_.begin(), web_profiles_.end(),
-                     [profile](const std::unique_ptr<AutofillProfile>& ptr) {
-                       return ptr.get() == profile;
-                     }));
+    std::vector<std::unique_ptr<AutofillProfile>>& profiles =
+        GetProfileStorage(profile->source());
+    profiles.erase(base::ranges::find(profiles, profile,
+                                      &std::unique_ptr<AutofillProfile>::get));
   }
 }
 
@@ -102,6 +100,13 @@ void TestPersonalDataManager::AddCreditCard(const CreditCard& credit_card) {
       std::make_unique<CreditCard>(credit_card);
   local_credit_cards_.push_back(std::move(local_credit_card));
   NotifyPersonalDataObserver();
+}
+
+std::string TestPersonalDataManager::AddIBAN(const IBAN& iban) {
+  std::unique_ptr<IBAN> local_iban = std::make_unique<IBAN>(iban);
+  local_ibans_.push_back(std::move(local_iban));
+  NotifyPersonalDataObserver();
+  return iban.guid();
 }
 
 void TestPersonalDataManager::DeleteLocalCreditCards(
@@ -113,8 +118,7 @@ void TestPersonalDataManager::DeleteLocalCreditCards(
 }
 
 void TestPersonalDataManager::UpdateCreditCard(const CreditCard& credit_card) {
-  CreditCard* existing_credit_card =
-      GetCreditCardWithGUID(credit_card.guid().c_str());
+  CreditCard* existing_credit_card = GetCreditCardByGUID(credit_card.guid());
   if (existing_credit_card) {
     RemoveByGUID(existing_credit_card->guid());
     AddCreditCard(credit_card);
@@ -129,14 +133,6 @@ void TestPersonalDataManager::AddFullServerCreditCard(
   AddServerCreditCard(credit_card);
 }
 
-std::vector<AutofillProfile*> TestPersonalDataManager::GetProfiles() const {
-  std::vector<AutofillProfile*> result;
-  result.reserve(web_profiles_.size());
-  for (const auto& profile : web_profiles_)
-    result.push_back(profile.get());
-  return result;
-}
-
 const std::string& TestPersonalDataManager::GetDefaultCountryCodeForNewAddress()
     const {
   if (default_country_code_.empty())
@@ -145,7 +141,7 @@ const std::string& TestPersonalDataManager::GetDefaultCountryCodeForNewAddress()
   return default_country_code_;
 }
 
-void TestPersonalDataManager::SetProfiles(
+void TestPersonalDataManager::SetProfilesForAllSources(
     std::vector<AutofillProfile>* profiles) {
   // Copy all the profiles. Called by functions like
   // PersonalDataManager::SaveImportedProfile, which impact metrics.
@@ -154,26 +150,47 @@ void TestPersonalDataManager::SetProfiles(
     AddProfile(profile);
 }
 
+bool TestPersonalDataManager::SetProfilesForSource(
+    base::span<const AutofillProfile> new_profiles,
+    AutofillProfile::Source source) {
+  GetProfileStorage(source).clear();
+  for (const AutofillProfile& profile : new_profiles)
+    AddProfile(profile);
+  return true;
+}
+
 void TestPersonalDataManager::LoadProfiles() {
   // Overridden to avoid a trip to the database. This should be a no-op except
   // for the side-effect of logging the profile count.
-  pending_profiles_query_ = 123;
-  pending_server_profiles_query_ = 124;
+  pending_synced_local_profiles_query_ = 123;
+  pending_account_profiles_query_ = 124;
+  pending_creditcard_billing_addresses_query_ = 125;
   {
     std::vector<std::unique_ptr<AutofillProfile>> profiles;
-    web_profiles_.swap(profiles);
-    std::unique_ptr<WDTypedResult> result = std::make_unique<
+    synced_local_profiles_.swap(profiles);
+    auto result = std::make_unique<
         WDResult<std::vector<std::unique_ptr<AutofillProfile>>>>(
         AUTOFILL_PROFILES_RESULT, std::move(profiles));
-    OnWebDataServiceRequestDone(pending_profiles_query_, std::move(result));
+    OnWebDataServiceRequestDone(pending_synced_local_profiles_query_,
+                                std::move(result));
+  }
+  if (base::FeatureList::IsEnabled(
+          features::kAutofillAccountProfilesUnionView)) {
+    std::vector<std::unique_ptr<AutofillProfile>> profiles;
+    account_profiles_.swap(profiles);
+    auto result = std::make_unique<
+        WDResult<std::vector<std::unique_ptr<AutofillProfile>>>>(
+        AUTOFILL_PROFILES_RESULT, std::move(profiles));
+    OnWebDataServiceRequestDone(pending_account_profiles_query_,
+                                std::move(result));
   }
   {
     std::vector<std::unique_ptr<AutofillProfile>> profiles;
-    server_profiles_.swap(profiles);
-    std::unique_ptr<WDTypedResult> result = std::make_unique<
+    credit_card_billing_addresses_.swap(profiles);
+    auto result = std::make_unique<
         WDResult<std::vector<std::unique_ptr<AutofillProfile>>>>(
         AUTOFILL_PROFILES_RESULT, std::move(profiles));
-    OnWebDataServiceRequestDone(pending_server_profiles_query_,
+    OnWebDataServiceRequestDone(pending_creditcard_billing_addresses_query_,
                                 std::move(result));
   }
 }
@@ -214,8 +231,20 @@ void TestPersonalDataManager::LoadCreditCardCloudTokenData() {
   }
 }
 
+void TestPersonalDataManager::LoadIBANs() {
+  pending_ibans_query_ = 128;
+  {
+    std::vector<std::unique_ptr<IBAN>> ibans;
+    local_ibans_.swap(ibans);
+    std::unique_ptr<WDTypedResult> result =
+        std::make_unique<WDResult<std::vector<std::unique_ptr<IBAN>>>>(
+            AUTOFILL_IBANS_RESULT, std::move(ibans));
+    OnWebDataServiceRequestDone(pending_ibans_query_, std::move(result));
+  }
+}
+
 void TestPersonalDataManager::LoadUpiIds() {
-  pending_upi_ids_query_ = 128;
+  pending_upi_ids_query_ = 129;
   {
     std::vector<std::string> upi_ids = {"vpa@indianbank"};
     std::unique_ptr<WDTypedResult> result =
@@ -223,10 +252,6 @@ void TestPersonalDataManager::LoadUpiIds() {
             AUTOFILL_UPI_RESULT, std::move(upi_ids));
     OnWebDataServiceRequestDone(pending_upi_ids_query_, std::move(result));
   }
-}
-
-bool TestPersonalDataManager::IsAutofillEnabled() const {
-  return IsAutofillProfileEnabled() || IsAutofillCreditCardEnabled();
 }
 
 bool TestPersonalDataManager::IsAutofillProfileEnabled() const {
@@ -262,7 +287,7 @@ std::string TestPersonalDataManager::CountryCodeForCurrentTimezone() const {
 }
 
 void TestPersonalDataManager::ClearAllLocalData() {
-  web_profiles_.clear();
+  ClearProfiles();
   local_credit_cards_.clear();
 }
 
@@ -291,6 +316,11 @@ CoreAccountInfo TestPersonalDataManager::GetAccountInfoForPaymentsServer()
   return account_info_;
 }
 
+const AutofillProfileMigrationStrikeDatabase*
+TestPersonalDataManager::GetProfileMigrationStrikeDatabase() const {
+  return &inmemory_profile_migration_strike_database_;
+}
+
 const AutofillProfileSaveStrikeDatabase*
 TestPersonalDataManager::GetProfileSaveStrikeDatabase() const {
   return &inmemory_profile_save_strike_database_;
@@ -302,7 +332,8 @@ TestPersonalDataManager::GetProfileUpdateStrikeDatabase() const {
 }
 
 void TestPersonalDataManager::ClearProfiles() {
-  web_profiles_.clear();
+  synced_local_profiles_.clear();
+  account_profiles_.clear();
 }
 
 void TestPersonalDataManager::ClearCreditCards() {
@@ -316,22 +347,6 @@ void TestPersonalDataManager::ClearCloudTokenData() {
 
 void TestPersonalDataManager::ClearCreditCardOfferData() {
   autofill_offer_data_.clear();
-}
-
-AutofillProfile* TestPersonalDataManager::GetProfileWithGUID(const char* guid) {
-  for (AutofillProfile* profile : GetProfiles()) {
-    if (!profile->guid().compare(guid))
-      return profile;
-  }
-  return nullptr;
-}
-
-CreditCard* TestPersonalDataManager::GetCreditCardWithGUID(const char* guid) {
-  for (CreditCard* card : GetCreditCards()) {
-    if (!card->guid().compare(guid))
-      return card;
-  }
-  return nullptr;
 }
 
 void TestPersonalDataManager::AddServerCreditCard(
@@ -355,6 +370,12 @@ void TestPersonalDataManager::AddAutofillOfferData(
   std::unique_ptr<AutofillOfferData> data =
       std::make_unique<AutofillOfferData>(offer_data);
   autofill_offer_data_.emplace_back(std::move(data));
+  NotifyPersonalDataObserver();
+}
+
+void TestPersonalDataManager::AddCardArtImage(const GURL& url,
+                                              const gfx::Image& image) {
+  credit_card_art_images_[url] = std::make_unique<gfx::Image>(image);
   NotifyPersonalDataObserver();
 }
 

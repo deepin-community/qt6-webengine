@@ -1,10 +1,13 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+
+#include <memory>
 
 #include "content/browser/xr/metrics/session_metrics_helper.h"
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "content/browser/xr/metrics/session_timer.h"
@@ -20,32 +23,24 @@ namespace {
 
 const void* const kSessionMetricsHelperDataKey = &kSessionMetricsHelperDataKey;
 
-// minimum duration: 7 seconds for video, no minimum for headset/vr modes
-// maximum gap: 7 seconds between videos.  no gap for headset/vr-modes
-constexpr base::TimeDelta kMinimumVideoSessionDuration(base::Seconds(7));
-constexpr base::TimeDelta kMaximumVideoSessionGap(base::Seconds(7));
-
-constexpr base::TimeDelta kMinimumHeadsetSessionDuration(base::Seconds(0));
-constexpr base::TimeDelta kMaximumHeadsetSessionGap(base::Seconds(0));
-
 // Handles the lifetime of the helper which is attached to a WebContents.
 class SessionMetricsHelperData : public base::SupportsUserData::Data {
  public:
   SessionMetricsHelperData() = delete;
 
   explicit SessionMetricsHelperData(
-      SessionMetricsHelper* session_metrics_helper)
-      : session_metrics_helper_(session_metrics_helper) {}
+      std::unique_ptr<SessionMetricsHelper> session_metrics_helper)
+      : session_metrics_helper_(std::move(session_metrics_helper)) {}
 
   SessionMetricsHelperData(const SessionMetricsHelperData&) = delete;
   SessionMetricsHelperData& operator=(const SessionMetricsHelperData&) = delete;
 
-  ~SessionMetricsHelperData() override { delete session_metrics_helper_; }
+  ~SessionMetricsHelperData() override = default;
 
-  SessionMetricsHelper* get() const { return session_metrics_helper_; }
+  SessionMetricsHelper* get() const { return session_metrics_helper_.get(); }
 
  private:
-  raw_ptr<SessionMetricsHelper> session_metrics_helper_;
+  std::unique_ptr<SessionMetricsHelper> session_metrics_helper_;
 };
 
 // Helper method to log out both the mode and the initially requested features
@@ -83,7 +78,12 @@ SessionMetricsHelper* SessionMetricsHelper::CreateForWebContents(
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   // This is not leaked as the SessionMetricsHelperData will clean it up.
-  return new SessionMetricsHelper(contents);
+  std::unique_ptr<SessionMetricsHelper> helper =
+      base::WrapUnique(new SessionMetricsHelper(contents));
+  contents->SetUserData(
+      kSessionMetricsHelperDataKey,
+      std::make_unique<SessionMetricsHelperData>(std::move(helper)));
+  return FromWebContents(contents);
 }
 
 SessionMetricsHelper::SessionMetricsHelper(content::WebContents* contents) {
@@ -91,11 +91,7 @@ SessionMetricsHelper::SessionMetricsHelper(content::WebContents* contents) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(contents);
 
-  num_videos_playing_ = contents->GetCurrentlyPlayingVideoCount();
-
   Observe(contents);
-  contents->SetUserData(kSessionMetricsHelperDataKey,
-                        std::make_unique<SessionMetricsHelperData>(this));
 }
 
 SessionMetricsHelper::~SessionMetricsHelper() {
@@ -120,7 +116,7 @@ SessionMetricsHelper::StartInlineSession(
       session_id,
       std::make_unique<WebXRSessionTracker>(
           std::make_unique<ukm::builders::XR_WebXR_Session>(
-              web_contents()->GetMainFrame()->GetPageUkmSourceId())));
+              web_contents()->GetPrimaryMainFrame()->GetPageUkmSourceId())));
   auto* tracker = result.first->second.get();
 
   ReportInitialSessionData(tracker, session_options, enabled_features);
@@ -152,32 +148,16 @@ SessionMetricsHelper::StartImmersiveSession(
         enabled_features) {
   DVLOG(1) << __func__;
   DCHECK(!webxr_immersive_session_tracker_);
-  base::Time start_time = base::Time::Now();
+
+  session_timer_ = std::make_unique<SessionTimer>();
+  session_timer_->StartSession();
 
   // TODO(crbug.com/1061899): The code here assumes that it's called on
   // behalf of the active frame, which is not always true.
   // Plumb explicit RenderFrameHost reference from VRSessionImpl.
   webxr_immersive_session_tracker_ = std::make_unique<WebXRSessionTracker>(
       std::make_unique<ukm::builders::XR_WebXR_Session>(
-          web_contents()->GetMainFrame()->GetPageUkmSourceId()));
-
-  // TODO(https://crbug.com/1056930): Consider renaming the timers to something
-  // that indicates both that these also record AR, and that these are no longer
-  // "suffixed" histograms.
-  session_timer_ = std::make_unique<SessionTimer>(
-      "VRSessionTime.WebVR", kMaximumHeadsetSessionGap,
-      kMinimumHeadsetSessionDuration);
-  session_timer_->StartSession(start_time);
-
-  session_video_timer_ = std::make_unique<SessionTimer>(
-      "VRSessionVideoTime.WebVR", kMaximumVideoSessionGap,
-      kMinimumVideoSessionDuration);
-
-  num_session_video_playback_ = num_videos_playing_;
-
-  if (num_videos_playing_ > 0) {
-    session_video_timer_->StartSession(start_time);
-  }
+          web_contents()->GetPrimaryMainFrame()->GetPageUkmSourceId()));
 
   ReportInitialSessionData(webxr_immersive_session_tracker_.get(),
                            session_options, enabled_features);
@@ -201,54 +181,8 @@ void SessionMetricsHelper::StopAndRecordImmersiveSession() {
   webxr_immersive_session_tracker_->RecordEntry();
   webxr_immersive_session_tracker_ = nullptr;
 
-  // Destroyig the timers will both stop the session and force them to log their
-  // metrics.
+  // Destroying the timer will force the session to log metrics.
   session_timer_ = nullptr;
-  session_video_timer_ = nullptr;
-
-  UMA_HISTOGRAM_COUNTS_100("VRSessionVideoCount", num_session_video_playback_);
-}
-
-void SessionMetricsHelper::MediaStartedPlaying(
-    const MediaPlayerInfo& media_info,
-    const content::MediaPlayerId&) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-
-  if (!media_info.has_video)
-    return;
-
-  if (num_videos_playing_ == 0) {
-    // started playing video - start sessions
-    base::Time start_time = base::Time::Now();
-
-    if (session_video_timer_) {
-      session_video_timer_->StartSession(start_time);
-    }
-  }
-
-  num_videos_playing_++;
-  num_session_video_playback_++;
-}
-
-void SessionMetricsHelper::MediaStoppedPlaying(
-    const MediaPlayerInfo& media_info,
-    const content::MediaPlayerId&,
-    WebContentsObserver::MediaStoppedReason reason) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-
-  if (!media_info.has_video)
-    return;
-
-  num_videos_playing_--;
-
-  if (num_videos_playing_ == 0) {
-    // stopped playing video - update existing video sessions
-    base::Time stop_time = base::Time::Now();
-
-    if (session_video_timer_) {
-      session_video_timer_->StopSession(true, stop_time);
-    }
-  }
 }
 
 void SessionMetricsHelper::PrimaryPageChanged(content::Page& page) {

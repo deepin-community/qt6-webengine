@@ -1,16 +1,16 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "net/base/isolation_info.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/canonical_cookie_test_helpers.h"
@@ -80,7 +80,8 @@ class WebSocketStreamClientUseCookieTest
                                       CookieAccessResult access_result) {
     *weak_is_called = true;
     *weak_result = access_result.status.IsInclude();
-    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, task);
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+                                                                task);
   }
 };
 
@@ -114,7 +115,8 @@ class WebSocketStreamServerSetCookieTest
       const CookieAccessResultList& excluded_cookies) {
     *weak_is_called = true;
     *weak_result = cookie_util::StripAccessResults(cookie_list);
-    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, std::move(task));
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, std::move(task));
   }
 };
 

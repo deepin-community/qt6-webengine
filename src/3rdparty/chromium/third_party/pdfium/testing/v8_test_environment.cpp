@@ -1,4 +1,4 @@
-// Copyright 2020 PDFium Authors. All rights reserved.
+// Copyright 2020 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,8 +11,9 @@
 #include "testing/v8_initializer.h"
 #include "third_party/base/check.h"
 #include "v8/include/libplatform/libplatform.h"
+#include "v8/include/v8-isolate.h"
 #include "v8/include/v8-platform.h"
-#include "v8/include/v8.h"
+#include "v8/include/v8-snapshot.h"
 
 namespace {
 

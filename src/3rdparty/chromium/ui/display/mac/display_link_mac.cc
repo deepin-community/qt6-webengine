@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,16 +6,13 @@
 
 #include <stdint.h>
 
-#include "base/bind.h"
-#include "base/command_line.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/no_destructor.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
-#include "ui/display/display_features.h"
 
 namespace base {
 
@@ -40,13 +37,13 @@ namespace {
 // is initialized with the very first DisplayLinkMac instance, and is never
 // changed (even, e.g, in tests that re-initialize the main thread task runner).
 // https://885329
-// TODO(ccameron): crbug.com/969157 - Save this ask_runner to DisaplayLinkMac.
+// TODO(ccameron): crbug.com/969157 - Save this ask_runner to DisplayLinkMac.
 // configs += [ "//build/config/compiler:wexit_time_destructors" ] in
 // ui/display/BUILD.gn has to be removed because GetMainThreadTaskRunner()
 // causes a compiler error.
 scoped_refptr<base::SingleThreadTaskRunner> GetMainThreadTaskRunner() {
   static scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-      base::ThreadTaskRunnerHandle::Get();
+      base::SingleThreadTaskRunner::GetCurrentDefault();
   return task_runner;
 }
 
@@ -162,9 +159,7 @@ bool DisplayLinkMac::IsVSyncPotentiallyStale() const {
 DisplayLinkMac::DisplayLinkMac(
     CGDirectDisplayID display_id,
     base::ScopedTypeRef<CVDisplayLinkRef> display_link)
-    : display_id_(display_id),
-      display_link_(display_link),
-      force_60hz_(base::FeatureList::IsEnabled(display::features::kForce60Hz)) {
+    : display_id_(display_id), display_link_(display_link) {
   DisplayLinkMap& all_display_links = GetAllDisplayLinks();
   DCHECK(all_display_links.find(display_id) == all_display_links.end());
   if (all_display_links.empty()) {
@@ -236,11 +231,6 @@ void DisplayLinkMac::UpdateVSyncParameters(const CVTimeStamp& cv_time) {
 
   timebase_ = base::TimeTicks::FromMachAbsoluteTime(cv_time.hostTime);
   interval_ = base::Microseconds(int64_t{interval_us.ValueOrDie()});
-  // Use a range as interval is not always exactly 120.
-  if (force_60hz_ && interval_ <= base::Hertz(115) &&
-      interval_ >= base::Hertz(125)) {
-    interval_ *= 2;
-  }
   timebase_and_interval_valid_ = true;
 
   // Don't restart the display link for 10 seconds.

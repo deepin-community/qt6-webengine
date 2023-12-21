@@ -20,16 +20,16 @@
 
 namespace {
 
-class SSLPlatformKeyOverride : public net::ThreadedSSLPrivateKey::Delegate
+class SSLPlatformKeyQt : public net::ThreadedSSLPrivateKey::Delegate
 {
 public:
-    SSLPlatformKeyOverride(const QByteArray &sslKeyInBytes)
+    SSLPlatformKeyQt(const QByteArray &sslKeyInBytes)
     {
         m_mem = BIO_new_mem_buf(sslKeyInBytes, -1);
         m_key = PEM_read_bio_PrivateKey(m_mem, nullptr, nullptr, nullptr);
     }
 
-    ~SSLPlatformKeyOverride() override
+    ~SSLPlatformKeyQt() override
     {
         if (m_key)
             EVP_PKEY_free(m_key);
@@ -82,7 +82,7 @@ scoped_refptr<net::SSLPrivateKey> wrapOpenSSLPrivateKey(const QByteArray &sslKey
         return nullptr;
 
     return base::MakeRefCounted<net::ThreadedSSLPrivateKey>(
-                std::make_unique<SSLPlatformKeyOverride>(sslKeyInBytes),
+                std::make_unique<SSLPlatformKeyQt>(sslKeyInBytes),
                 net::GetSSLPlatformKeyTaskRunner());
 }
 
@@ -97,7 +97,8 @@ void ClientCertificateStoreData::add(const QSslCertificate &certificate, const Q
 
     Entry *data = new Entry;
     data->keyPtr = wrapOpenSSLPrivateKey(sslKeyInBytes);
-    data->certPtr = net::X509Certificate::CreateFromBytes(base::make_span((const unsigned char *)certInBytes.data(), certInBytes.length()));
+    data->certPtr = net::X509Certificate::CreateFromBytes(base::make_span((const unsigned char *)certInBytes.data(),
+                                                                          (unsigned long)certInBytes.length()));
     data->key = privateKey;
     data->certificate = certificate;
     extraCerts.append(data);

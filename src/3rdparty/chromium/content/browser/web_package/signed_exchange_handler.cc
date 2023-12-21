@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,11 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "content/browser/loader/merkle_integrity_source_stream.h"
@@ -86,7 +87,7 @@ using VerifyCallback = base::OnceCallback<
 
 void VerifyCert(const scoped_refptr<net::X509Certificate>& certificate,
                 const GURL& url,
-                const net::NetworkIsolationKey& network_isolation_key,
+                const net::NetworkAnonymizationKey& network_anonymization_key,
                 const std::string& ocsp_result,
                 const std::string& sct_list,
                 int frame_tree_node_id,
@@ -109,7 +110,7 @@ void VerifyCert(const scoped_refptr<net::X509Certificate>& certificate,
   }
 
   network_context->VerifyCertForSignedExchange(
-      certificate, url, network_isolation_key, ocsp_result, sct_list,
+      certificate, url, network_anonymization_key, ocsp_result, sct_list,
       std::move(wrapped_callback));
 }
 
@@ -173,7 +174,7 @@ SignedExchangeHandler::SignedExchangeHandler(
     std::unique_ptr<net::SourceStream> body,
     ExchangeHeadersCallback headers_callback,
     std::unique_ptr<SignedExchangeCertFetcherFactory> cert_fetcher_factory,
-    const net::NetworkIsolationKey& network_isolation_key,
+    const net::NetworkAnonymizationKey& network_anonymization_key,
     const absl::optional<net::IsolationInfo> outer_request_isolation_info,
     int load_flags,
     const net::IPEndPoint& remote_endpoint,
@@ -186,12 +187,12 @@ SignedExchangeHandler::SignedExchangeHandler(
       headers_callback_(std::move(headers_callback)),
       source_(std::move(body)),
       cert_fetcher_factory_(std::move(cert_fetcher_factory)),
-      network_isolation_key_(network_isolation_key),
+      devtools_proxy_(std::move(devtools_proxy)),
+      network_anonymization_key_(network_anonymization_key),
       outer_request_isolation_info_(std::move(outer_request_isolation_info)),
       load_flags_(load_flags),
       remote_endpoint_(remote_endpoint),
       request_matcher_(std::move(request_matcher)),
-      devtools_proxy_(std::move(devtools_proxy)),
       reporter_(reporter),
       frame_tree_node_id_(frame_tree_node_id) {
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("loading"),
@@ -234,7 +235,7 @@ SignedExchangeHandler::SignedExchangeHandler(
   // Triggering the read (asynchronously) for the prologue bytes.
   SetupBuffers(
       signed_exchange_prologue::BeforeFallbackUrl::kEncodedSizeInBytes);
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&SignedExchangeHandler::DoHeaderLoop,
                                 weak_factory_.GetWeakPtr()));
 }
@@ -331,7 +332,7 @@ void SignedExchangeHandler::DidReadHeader(bool completed_syncly,
          state_ == State::kReadingPrologueFallbackUrlAndAfter ||
          state_ == State::kReadingHeaders);
   if (completed_syncly) {
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&SignedExchangeHandler::DoHeaderLoop,
                                   weak_factory_.GetWeakPtr()));
   } else {
@@ -531,8 +532,9 @@ void SignedExchangeHandler::OnCertReceived(
   //   property, or
   const std::string& stapled_ocsp_response = unverified_cert_chain_->ocsp();
 
-  VerifyCert(certificate, url, network_isolation_key_, stapled_ocsp_response,
-             sct_list_from_cert_cbor, frame_tree_node_id_,
+  VerifyCert(certificate, url, network_anonymization_key_,
+             stapled_ocsp_response, sct_list_from_cert_cbor,
+             frame_tree_node_id_,
              base::BindOnce(&SignedExchangeHandler::OnVerifyCert,
                             weak_factory_.GetWeakPtr()));
 }
@@ -731,10 +733,15 @@ void SignedExchangeHandler::CheckAbsenceOfCookies(base::OnceClosure callback) {
   auto match_options = network::mojom::CookieManagerGetOptions::New();
   match_options->name = "";
   match_options->match_type = network::mojom::CookieMatchType::STARTS_WITH;
+  // We set `has_storage_access` to true below in order to use any Storage
+  // Access grant that exists, since a frame might go through this code path and
+  // then obtain storage access in order to access cookies. Using true instead
+  // of false here means we are being conservative, since this runs an error
+  // callback if any cookies were retrieved.
   cookie_manager_->GetAllForUrl(
       envelope_->request_url().url, isolation_info.site_for_cookies(),
-      *isolation_info.top_frame_origin(), std::move(match_options),
-      /*partitioned_cookies_runtime_feature_enabled=*/false,
+      *isolation_info.top_frame_origin(), /*has_storage_access=*/true,
+      std::move(match_options),
       base::BindOnce(&SignedExchangeHandler::OnGetCookies,
                      weak_factory_.GetWeakPtr(), std::move(callback)));
 }
@@ -812,8 +819,8 @@ SignedExchangeHandler::CreateResponseBodyStream() {
         "Signed exchange has no Content-Encoding: header");
     return nullptr;
   }
-  if (!base::LowerCaseEqualsASCII(content_encoding_iter->second,
-                                  "mi-sha256-03")) {
+  if (!base::EqualsCaseInsensitiveASCII(content_encoding_iter->second,
+                                        "mi-sha256-03")) {
     signed_exchange_utils::ReportErrorAndTraceEvent(
         devtools_proxy_.get(),
         "Exchange's Content-Encoding must be \"mi-sha256-03\".");

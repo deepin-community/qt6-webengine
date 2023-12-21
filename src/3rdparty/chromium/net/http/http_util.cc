@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -114,14 +114,14 @@ void HttpUtil::ParseContentType(const std::string& content_type_str,
     // Trim LWS from param value, ParseMimeType() leaves WS for quoted-string.
     // TODO(mmenke): Check that name has only valid characters.
     if (!type_has_charset &&
-        base::LowerCaseEqualsASCII(param.first, "charset")) {
+        base::EqualsCaseInsensitiveASCII(param.first, "charset")) {
       type_has_charset = true;
       charset_value = std::string(HttpUtil::TrimLWS(param.second));
       continue;
     }
 
     if (boundary && !type_has_boundary &&
-        base::LowerCaseEqualsASCII(param.first, "boundary")) {
+        base::EqualsCaseInsensitiveASCII(param.first, "boundary")) {
       type_has_boundary = true;
       *boundary = std::string(HttpUtil::TrimLWS(param.second));
       continue;
@@ -131,7 +131,7 @@ void HttpUtil::ParseContentType(const std::string& content_type_str,
   // If `mime_type_value` is the same as `mime_type`, then just update
   // `charset`. However, if `charset` is empty and `mime_type` hasn't changed,
   // then don't wipe-out an existing `charset`.
-  bool eq = base::LowerCaseEqualsASCII(mime_type->data(), mime_type_value);
+  bool eq = base::EqualsCaseInsensitiveASCII(mime_type_value, *mime_type);
   if (!eq) {
     *mime_type = base::ToLowerASCII(mime_type_value);
   }
@@ -154,7 +154,7 @@ bool HttpUtil::ParseRangeHeader(const std::string& ranges_specifier,
 
   // "bytes" unit identifier is not found.
   bytes_unit = TrimLWS(bytes_unit);
-  if (!base::LowerCaseEqualsASCII(bytes_unit, "bytes")) {
+  if (!base::EqualsCaseInsensitiveASCII(bytes_unit, "bytes")) {
     return false;
   }
 
@@ -227,7 +227,7 @@ bool HttpUtil::ParseContentRangeHeaderFor206(
     return false;
 
   // Invalid header if it doesn't contain "bytes-unit".
-  if (!base::LowerCaseEqualsASCII(
+  if (!base::EqualsCaseInsensitiveASCII(
           TrimLWS(content_range_spec.substr(0, space_position)), "bytes")) {
     return false;
   }
@@ -291,6 +291,7 @@ const char* const kForbiddenHeaderFields[] = {
     "accept-encoding",
     "access-control-request-headers",
     "access-control-request-method",
+    "access-control-request-private-network",
     "connection",
     "content-length",
     "cookie",
@@ -312,6 +313,23 @@ const char* const kForbiddenHeaderFields[] = {
     "via",
 };
 
+// A header string containing any of the following fields with a forbidden
+// method name in the value will cause an error. The list comes from the fetch
+// standard.
+const char* const kForbiddenHeaderFieldsWithForbiddenMethod[] = {
+    "x-http-method",
+    "x-http-method-override",
+    "x-method-override",
+};
+
+// The forbidden method names that is defined in the fetch standard, and used
+// to check the kForbiddenHeaderFileWithForbiddenMethod above.
+const char* const kForbiddenMethods[] = {
+    "connect",
+    "trace",
+    "track",
+};
+
 }  // namespace
 
 // static
@@ -326,14 +344,41 @@ bool HttpUtil::IsMethodIdempotent(base::StringPiece method) {
 }
 
 // static
-bool HttpUtil::IsSafeHeader(base::StringPiece name) {
+bool HttpUtil::IsSafeHeader(base::StringPiece name, base::StringPiece value) {
   if (base::StartsWith(name, "proxy-", base::CompareCase::INSENSITIVE_ASCII) ||
       base::StartsWith(name, "sec-", base::CompareCase::INSENSITIVE_ASCII))
     return false;
 
   for (const char* field : kForbiddenHeaderFields) {
-    if (base::LowerCaseEqualsASCII(name, field))
+    if (base::EqualsCaseInsensitiveASCII(name, field))
       return false;
+  }
+
+  if (base::FeatureList::IsEnabled(features::kBlockSetCookieHeader) &&
+      base::EqualsCaseInsensitiveASCII(name, "set-cookie")) {
+    return false;
+  }
+
+  if (base::FeatureList::IsEnabled(features::kBlockNewForbiddenHeaders)) {
+    bool is_forbidden_header_fields_with_forbidden_method = false;
+    for (const char* field : kForbiddenHeaderFieldsWithForbiddenMethod) {
+      if (base::EqualsCaseInsensitiveASCII(name, field)) {
+        is_forbidden_header_fields_with_forbidden_method = true;
+        break;
+      }
+    }
+    if (is_forbidden_header_fields_with_forbidden_method) {
+      std::string value_string(value);
+      ValuesIterator method_iterator(value_string.begin(), value_string.end(),
+                                     ',');
+      while (method_iterator.GetNext()) {
+        base::StringPiece method = method_iterator.value_piece();
+        for (const char* forbidden_method : kForbiddenMethods) {
+          if (base::EqualsCaseInsensitiveASCII(method, forbidden_method))
+            return false;
+        }
+      }
+    }
   }
   return true;
 }
@@ -375,7 +420,7 @@ bool HttpUtil::IsNonCoalescingHeader(base::StringPiece name) {
   };
 
   for (const char* header : kNonCoalescingHeaders) {
-    if (base::LowerCaseEqualsASCII(name, header)) {
+    if (base::EqualsCaseInsensitiveASCII(name, header)) {
       return true;
     }
   }
@@ -394,7 +439,7 @@ void HttpUtil::TrimLWS(std::string::const_iterator* begin,
 }
 
 // static
-base::StringPiece HttpUtil::TrimLWS(const base::StringPiece& string) {
+base::StringPiece HttpUtil::TrimLWS(base::StringPiece string) {
   const char* begin = string.data();
   const char* end = string.data() + string.size();
   TrimLWSImplementation(&begin, &end);
@@ -518,8 +563,8 @@ size_t HttpUtil::LocateStartOfStatusLine(const char* buf, size_t buf_len) {
   if (buf_len >= http_len) {
     size_t i_max = std::min(buf_len - http_len, slop);
     for (size_t i = 0; i <= i_max; ++i) {
-      if (base::LowerCaseEqualsASCII(base::StringPiece(buf + i, http_len),
-                                     "http"))
+      if (base::EqualsCaseInsensitiveASCII(base::StringPiece(buf + i, http_len),
+                                           "http"))
         return i;
     }
   }
@@ -751,7 +796,7 @@ bool HttpUtil::HasStrongValidators(HttpVersion version,
     std::string::const_iterator i = etag_header.begin();
     std::string::const_iterator j = etag_header.begin() + slash;
     TrimLWS(&i, &j);
-    if (!base::LowerCaseEqualsASCII(base::MakeStringPiece(i, j), "w"))
+    if (!base::EqualsCaseInsensitiveASCII(base::MakeStringPiece(i, j), "w"))
       return true;
   }
 
@@ -870,7 +915,7 @@ bool HttpUtil::HeadersIterator::AdvanceTo(const char* name) {
       << "the header name must be in all lower case";
 
   while (GetNext()) {
-    if (base::LowerCaseEqualsASCII(
+    if (base::EqualsCaseInsensitiveASCII(
             base::MakeStringPiece(name_begin_, name_end_), name)) {
       return true;
     }
@@ -917,12 +962,10 @@ HttpUtil::NameValuePairsIterator::NameValuePairsIterator(
     Values optional_values,
     Quotes strict_quotes)
     : props_(begin, end, delimiter),
-      valid_(true),
       name_begin_(end),
       name_end_(end),
       value_begin_(end),
       value_end_(end),
-      value_is_quoted_(false),
       values_optional_(optional_values == Values::NOT_REQUIRED),
       strict_quotes_(strict_quotes == Quotes::STRICT_QUOTES) {}
 
@@ -1049,7 +1092,7 @@ bool HttpUtil::ParseAcceptEncoding(const std::string& accept_encoding,
       return false;
     base::StringPiece param_name = params.substr(0, equals_pos);
     param_name = TrimLWS(param_name);
-    if (!base::LowerCaseEqualsASCII(param_name, "q"))
+    if (!base::EqualsCaseInsensitiveASCII(param_name, "q"))
       return false;
     base::StringPiece qvalue = params.substr(equals_pos + 1);
     qvalue = TrimLWS(qvalue);

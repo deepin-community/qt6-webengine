@@ -28,8 +28,11 @@
 #include <memory>
 #include <utility>
 
+#include "base/feature_list.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/dom/events/event_queue.h"
+#include "third_party/blink/renderer/core/execution_context/agent.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/modules/indexed_db_names.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_database.h"
@@ -42,6 +45,7 @@
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
+#include "third_party/blink/renderer/platform/scheduler/public/event_loop.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
@@ -55,8 +59,8 @@ IDBTransaction* IDBTransaction::CreateNonVersionChange(
     mojom::IDBTransactionDurability durability,
     IDBDatabase* db) {
   DCHECK_NE(mode, mojom::IDBTransactionMode::VersionChange);
-  DCHECK(!scope.IsEmpty()) << "Non-version transactions should operate on a "
-                              "well-defined set of stores";
+  DCHECK(!scope.empty()) << "Non-version transactions should operate on a "
+                            "well-defined set of stores";
   return MakeGarbageCollected<IDBTransaction>(script_state,
                                               std::move(transaction_backend),
                                               id, scope, mode, durability, db);
@@ -91,24 +95,29 @@ IDBTransaction::IDBTransaction(
       scope_(scope),
       event_queue_(
           MakeGarbageCollected<EventQueue>(ExecutionContext::From(script_state),
-                                           TaskType::kDatabaseAccess)),
-      feature_handle_for_scheduler_(
-          ExecutionContext::From(script_state)
-              ->GetScheduler()
-              ->RegisterFeature(
-                  SchedulingPolicy::Feature::kOutstandingIndexedDBTransaction,
-                  {SchedulingPolicy::DisableBackForwardCache()})) {
+                                           TaskType::kDatabaseAccess)) {
+  if (!features::IsAllowPageWithIDBConnectionAndTransactionInBFCacheEnabled()) {
+    feature_handle_for_scheduler_ =
+        ExecutionContext::From(script_state)
+            ->GetScheduler()
+            ->RegisterFeature(
+                SchedulingPolicy::Feature::kOutstandingIndexedDBTransaction,
+                {SchedulingPolicy::DisableBackForwardCache()});
+  }
+
   DCHECK(database_);
-  DCHECK(!scope_.IsEmpty()) << "Non-versionchange transactions must operate "
-                               "on a well-defined set of stores";
+  DCHECK(!scope_.empty()) << "Non-versionchange transactions must operate "
+                             "on a well-defined set of stores";
   DCHECK(mode_ == mojom::IDBTransactionMode::ReadOnly ||
          mode_ == mojom::IDBTransactionMode::ReadWrite)
       << "Invalid transaction mode";
 
   DCHECK_EQ(state_, kActive);
-  V8PerIsolateData::From(script_state->GetIsolate())
-      ->AddEndOfScopeTask(
-          WTF::Bind(&IDBTransaction::SetActive, WrapPersistent(this), false));
+  ExecutionContext::From(script_state)
+      ->GetAgent()
+      ->event_loop()
+      ->EnqueueEndOfMicrotaskCheckpointTask(WTF::BindOnce(
+          &IDBTransaction::SetActive, WrapPersistent(this), false));
 
   database_->TransactionCreated(this);
 }
@@ -135,7 +144,7 @@ IDBTransaction::IDBTransaction(
                                            TaskType::kDatabaseAccess)) {
   DCHECK(database_);
   DCHECK(open_db_request_);
-  DCHECK(scope_.IsEmpty());
+  DCHECK(scope_.empty());
 
   database_->TransactionCreated(this);
 }
@@ -145,7 +154,7 @@ IDBTransaction::~IDBTransaction() {
   // ContextClient) only in order to be able call upon GetExecutionContext()
   // during this destructor.
   DCHECK(state_ == kFinished || !GetExecutionContext());
-  DCHECK(request_list_.IsEmpty() || !GetExecutionContext());
+  DCHECK(request_list_.empty() || !GetExecutionContext());
 }
 
 void IDBTransaction::Trace(Visitor* visitor) const {
@@ -329,7 +338,7 @@ void IDBTransaction::SetActive(bool new_is_active) {
   DCHECK_NE(new_is_active, (state_ == kActive));
   state_ = new_is_active ? kActive : kInactive;
 
-  if (!new_is_active && request_list_.IsEmpty() && transaction_backend())
+  if (!new_is_active && request_list_.empty() && transaction_backend())
     transaction_backend()->Commit(num_errors_handled_);
 }
 
@@ -388,10 +397,12 @@ void IDBTransaction::commit(ExceptionState& exception_state) {
   if (transaction_backend())
     transaction_backend()->Commit(num_errors_handled_);
 
-  // Once IDBtransaction.commit() is called, the page should no longer be
-  // prevented from entering back/forward cache for having outstanding IDB
-  // connections. Commit ends the inflight IDB transactions.
-  feature_handle_for_scheduler_.reset();
+  if (!features::IsAllowPageWithIDBConnectionAndTransactionInBFCacheEnabled()) {
+    // Once IDBtransaction.commit() is called, the page should no longer be
+    // prevented from entering back/forward cache for having outstanding IDB
+    // connections. Commit ends the inflight IDB transactions.
+    feature_handle_for_scheduler_.reset();
+  }
 }
 
 void IDBTransaction::RegisterRequest(IDBRequest* request) {

@@ -14,12 +14,13 @@
 class GrMtlTextureRenderTarget: public GrMtlTexture, public GrMtlRenderTarget {
 public:
     static sk_sp<GrMtlTextureRenderTarget> MakeNewTextureRenderTarget(GrMtlGpu*,
-                                                                      SkBudgeted,
+                                                                      skgpu::Budgeted,
                                                                       SkISize,
                                                                       int sampleCnt,
                                                                       MTLPixelFormat,
                                                                       uint32_t mipLevels,
-                                                                      GrMipmapStatus);
+                                                                      GrMipmapStatus,
+                                                                      std::string_view label);
 
     static sk_sp<GrMtlTextureRenderTarget> MakeWrappedTextureRenderTarget(GrMtlGpu*,
                                                                           SkISize,
@@ -43,7 +44,7 @@ protected:
 
 private:
     GrMtlTextureRenderTarget(GrMtlGpu* gpu,
-                             SkBudgeted budgeted,
+                             skgpu::Budgeted budgeted,
                              SkISize,
                              sk_sp<GrMtlAttachment> texture,
                              sk_sp<GrMtlAttachment> colorAttachment,
@@ -61,6 +62,8 @@ private:
                              std::string_view label);
 
     size_t onGpuMemorySize() const override;
+
+    void onSetLabel() override;
 };
 
 #endif

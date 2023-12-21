@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -234,6 +234,27 @@ void Statement::BindTime(int param_index, base::Time val) {
   DCHECK_EQ(sqlite_result_code, SQLITE_OK);
 }
 
+void Statement::BindTimeDelta(int param_index, base::TimeDelta delta) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+#if DCHECK_IS_ON()
+  DCHECK(!run_called_) << __func__ << " must not be called after Run()";
+  DCHECK(!step_called_) << __func__ << " must not be called after Step()";
+#endif  // DCHECK_IS_ON()
+
+  if (!is_valid()) {
+    return;
+  }
+
+  DCHECK_GE(param_index, 0);
+  DCHECK_LT(param_index, sqlite3_bind_parameter_count(ref_->stmt()))
+      << "Invalid parameter index";
+  int64_t int_value = delta.InMicroseconds();
+  int sqlite_result_code =
+      sqlite3_bind_int64(ref_->stmt(), param_index + 1, int_value);
+  DCHECK_EQ(sqlite_result_code, SQLITE_OK);
+}
+
 void Statement::BindCString(int param_index, const char* val) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
@@ -449,6 +470,25 @@ base::Time Statement::ColumnTime(int column_index) {
   return base::Time::FromDeltaSinceWindowsEpoch(base::Microseconds(int_value));
 }
 
+base::TimeDelta Statement::ColumnTimeDelta(int column_index) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+#if DCHECK_IS_ON()
+  DCHECK(!run_called_) << __func__ << " can be used after Step(), not Run()";
+  DCHECK(step_called_) << __func__ << " can only be used after Step()";
+#endif  // DCHECK_IS_ON()
+
+  if (!CheckValid()) {
+    return base::TimeDelta();
+  }
+  DCHECK_GE(column_index, 0);
+  DCHECK_LT(column_index, sqlite3_data_count(ref_->stmt()))
+      << "Invalid column index";
+
+  int64_t int_value = sqlite3_column_int64(ref_->stmt(), column_index);
+  return base::Microseconds(int_value);
+}
+
 std::string Statement::ColumnString(int column_index) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
@@ -511,7 +551,7 @@ base::span<const uint8_t> Statement::ColumnBlob(int column_index) {
       << "sqlite3_column_blob() returned a null buffer for a non-empty BLOB";
 
   return base::make_span(static_cast<const uint8_t*>(result_buffer),
-                         result_size);
+                         base::checked_cast<size_t>(result_size));
 }
 
 bool Statement::ColumnBlobAsString(int column_index, std::string* result) {
@@ -583,11 +623,17 @@ std::string Statement::GetSQLStatement() {
   // acceptable because this method should only be invoked for logging details
   // about SQLite errors.
   //
-  // It may be tempting to consider using sqlite3_expanded_sql() here. We
-  // currently prefer sqlite3_sql() because the returned SQL string matches the
-  // source code (making it easy to search for), and because we don't need to
-  // worry about SQL statements that work with large data, such as BLOBS storing
-  // images.
+  // We use sqlite3_sql() instead of sqlite3_expanded_sql() because:
+  //  - The returned SQL string matches the source code, making it easy to
+  //    search.
+  //  - This works with SQL statements that work with large data, such as BLOBS
+  //    storing images.
+  //  - The returned string is free of bound values, so it does not contain any
+  //    PII that would raise privacy concerns around logging.
+  //
+  // Do not change this to use sqlite3_expanded_sql(). If that need ever arises
+  // in the future, make a new function instead listing the above caveats.
+  //
   // See https://www.sqlite.org/c3ref/expanded_sql.html for more details on the
   // difference between sqlite3_sql() and sqlite3_expanded_sql().
   return sqlite3_sql(ref_->stmt());

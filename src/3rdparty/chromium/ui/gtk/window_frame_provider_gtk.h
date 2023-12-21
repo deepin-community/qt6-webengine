@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,12 +7,12 @@
 
 #include "base/containers/flat_map.h"
 #include "third_party/skia/include/core/SkBitmap.h"
-#include "ui/views/linux_ui/linux_ui.h"
-#include "ui/views/linux_ui/window_frame_provider.h"
+#include "ui/gfx/geometry/insets.h"
+#include "ui/linux/window_frame_provider.h"
 
 namespace gtk {
 
-class WindowFrameProviderGtk : public views::WindowFrameProvider {
+class WindowFrameProviderGtk : public ui::WindowFrameProvider {
  public:
   explicit WindowFrameProviderGtk(bool solid_frame);
 
@@ -21,13 +21,15 @@ class WindowFrameProviderGtk : public views::WindowFrameProvider {
 
   ~WindowFrameProviderGtk() override;
 
-  // views::WindowFrameProvider:
+  // ui::WindowFrameProvider:
   int GetTopCornerRadiusDip() override;
+  bool IsTopFrameTranslucent() override;
   gfx::Insets GetFrameThicknessDip() override;
   void PaintWindowFrame(gfx::Canvas* canvas,
                         const gfx::Rect& rect,
                         int top_area_height,
-                        bool focused) override;
+                        bool focused,
+                        ui::WindowTiledEdges tiled_edges) override;
 
  private:
   // Data and metrics that depend on the scale.
@@ -66,6 +68,7 @@ class WindowFrameProviderGtk : public views::WindowFrameProvider {
   // Scale-independent metric calculated based on the bitmaps.
   gfx::Insets frame_thickness_dip_;
   int top_corner_radius_dip_ = 0;
+  bool top_frame_is_translucent_ = false;
 
   // Cached bitmaps and metrics.  The scale is rounded to percent.
   base::flat_map<int, Asset> assets_;

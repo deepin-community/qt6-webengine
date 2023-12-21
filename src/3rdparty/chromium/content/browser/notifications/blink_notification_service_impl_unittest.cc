@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,26 +8,27 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "content/browser/notifications/blink_notification_service_impl.h"
 #include "content/browser/notifications/platform_notification_context_impl.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
-#include "content/public/browser/permission_type.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_features.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/mock_permission_manager.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/test_browser_context.h"
+#include "content/public/test/test_renderer_host.h"
 #include "content/public/test/test_utils.h"
+#include "content/public/test/web_contents_tester.h"
 #include "content/test/mock_platform_notification_service.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -37,14 +38,15 @@
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/notifications/notification_constants.h"
 #include "third_party/blink/public/common/notifications/notification_resources.h"
+#include "third_party/blink/public/common/permissions/permission_utils.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/mojom/notifications/notification_service.mojom.h"
 #include "third_party/blink/public/mojom/permissions/permission_status.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_registration_options.mojom.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
-using ::testing::Return;
 using ::testing::_;
+using ::testing::Return;
 
 namespace content {
 
@@ -126,11 +128,18 @@ class BlinkNotificationServiceImplTest : public ::testing::Test {
     // will be initialized long before it is read from so this is fine.
     RunAllTasksUntilIdle();
 
+    contents_ = CreateTestWebContents();
+
+    storage_key_ = blink::StorageKey::CreateFirstParty(
+        url::Origin::Create(GURL(kTestOrigin)));
+
     notification_service_ = std::make_unique<BlinkNotificationServiceImpl>(
         notification_context_.get(), &browser_context_,
         embedded_worker_helper_->context_wrapper(), &render_process_host_,
-        url::Origin::Create(GURL(kTestOrigin)),
+        storage_key_,
         /*document_url=*/GURL(),
+        contents_.get()->GetPrimaryMainFrame()->GetWeakDocumentPtr(),
+        RenderProcessHost::NotificationServiceCreatorType::kDocument,
         notification_service_remote_.BindNewPipeAndPassReceiver());
 
     // Provide a mock permission manager to the |browser_context_|.
@@ -159,18 +168,17 @@ class BlinkNotificationServiceImplTest : public ::testing::Test {
     blink::mojom::ServiceWorkerRegistrationOptions options;
     options.scope = GURL(kTestOrigin);
 
-    blink::StorageKey key(url::Origin::Create(GURL(kTestOrigin)));
-
     {
       base::RunLoop run_loop;
       embedded_worker_helper_->context()->RegisterServiceWorker(
-          GURL(kTestServiceWorkerUrl), key, options,
+          GURL(kTestServiceWorkerUrl), storage_key_, options,
           blink::mojom::FetchClientSettingsObject::New(),
           base::BindOnce(
               &BlinkNotificationServiceImplTest::DidRegisterServiceWorker,
               base::Unretained(this), &service_worker_registration_id,
               run_loop.QuitClosure()),
-          /*requesting_frame_id=*/GlobalRenderFrameHostId());
+          /*requesting_frame_id=*/GlobalRenderFrameHostId(),
+          PolicyContainerPolicies());
       run_loop.Run();
     }
 
@@ -182,7 +190,7 @@ class BlinkNotificationServiceImplTest : public ::testing::Test {
     {
       base::RunLoop run_loop;
       embedded_worker_helper_->context()->registry()->FindRegistrationForId(
-          service_worker_registration_id, key,
+          service_worker_registration_id, storage_key_,
           base::BindOnce(&BlinkNotificationServiceImplTest::
                              DidFindServiceWorkerRegistration,
                          base::Unretained(this), service_worker_registration,
@@ -405,10 +413,12 @@ class BlinkNotificationServiceImplTest : public ::testing::Test {
             browser_context_.GetPermissionControllerDelegate());
 
     ON_CALL(*mock_permission_manager,
-            GetPermissionStatus(PermissionType::NOTIFICATIONS, _, _))
+            GetPermissionStatusForCurrentDocument(
+                blink::PermissionType::NOTIFICATIONS, _))
         .WillByDefault(Return(permission_status));
     ON_CALL(*mock_permission_manager,
-            GetPermissionStatusForWorker(PermissionType::NOTIFICATIONS, _, _))
+            GetPermissionStatusForWorker(blink::PermissionType::NOTIFICATIONS,
+                                         _, _))
         .WillByDefault(Return(permission_status));
   }
 
@@ -416,6 +426,8 @@ class BlinkNotificationServiceImplTest : public ::testing::Test {
   void OnMojoError(const std::string& error) { bad_messages_.push_back(error); }
 
   BrowserTaskEnvironment task_environment_;  // Must be first member.
+
+  blink::StorageKey storage_key_;
 
   std::unique_ptr<EmbeddedWorkerTestHelper> embedded_worker_helper_;
 
@@ -436,6 +448,12 @@ class BlinkNotificationServiceImplTest : public ::testing::Test {
   std::vector<std::string> bad_messages_;
 
  private:
+  std::unique_ptr<content::WebContents> CreateTestWebContents() {
+    auto site_instance = content::SiteInstance::Create(&browser_context_);
+    return content::WebContentsTester::CreateTestWebContents(
+        &browser_context_, std::move(site_instance));
+  }
+
   blink::mojom::PermissionStatus permission_callback_result_ =
       blink::mojom::PermissionStatus::ASK;
 
@@ -448,6 +466,10 @@ class BlinkNotificationServiceImplTest : public ::testing::Test {
   absl::optional<blink::NotificationResources> get_notification_resources_;
 
   bool read_notification_data_callback_result_ = false;
+
+  RenderViewHostTestEnabler rvh_enabler_;
+
+  std::unique_ptr<WebContents> contents_;
 };
 
 TEST_F(BlinkNotificationServiceImplTest, GetPermissionStatus) {

@@ -1,10 +1,10 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ui/base/cocoa/bubble_closer.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #import "ui/base/test/cocoa_helper.h"
 #import "ui/base/test/menu_test_observer.h"
 #import "ui/events/test/cocoa_test_event_utils.h"
@@ -25,7 +25,7 @@ class BubbleCloserTest : public CocoaTest {
     CocoaTest::SetUp();
     bubble_window_.reset([[NSWindow alloc]
         initWithContentRect:NSMakeRect(100, 100, 320, 200)
-                  styleMask:NSBorderlessWindowMask
+                  styleMask:NSWindowStyleMaskBorderless
                     backing:NSBackingStoreBuffered
                       defer:NO]);
     [bubble_window_ setReleasedWhenClosed:NO];  // Owned by scoped_nsobject.

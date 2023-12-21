@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,7 @@
  * Autofill keyboard accessory.
  */
 
-goog.provide('__crWeb.formHandlers');
-
-// Requires __crWeb.fill and __crWeb.form.
+// Requires functions from fill.js and form.js.
 
 /**
  * Namespace for this file. It depends on |__gCrWeb| having already been
@@ -19,17 +17,10 @@ goog.provide('__crWeb.formHandlers');
  */
 __gCrWeb.formHandlers = {};
 
-/** Beginning of anonymous object */
-(function() {
 /**
  * The MutationObserver tracking form related changes.
  */
 let formMutationObserver = null;
-
-/**
- * The MutationObserver tracking the latest password field that had user input.
- */
-let passwordFieldsObserver = null;
 
 /**
  * The form mutation message scheduled to be sent to browser.
@@ -89,78 +80,6 @@ function isPasswordField_(element) {
 }
 
 /**
- * Installs a MutationObserver to track the last password field that had
- * user input.
- * @param {Element} A password field that should be observed.
- * @suppress {checkTypes} Required for for...of loop on mutations.
- */
-function trackPasswordField_(field) {
-  if (passwordFieldsObserver) {
-    passwordFieldsObserver.disconnect();
-  }
-
-  passwordFieldsObserver = new MutationObserver(function(mutations) {
-    for (let i = 0; i < mutations.length; i++) {
-      const mutation = mutations[i];
-      if (mutation.attributeName !== 'value') {
-        return;
-      }
-      const target = mutation.target;
-      const form = target.form;
-      let shouldNotifyPasswordManager = true;
-      if (form) {
-        // Verify that all password fields are cleared.
-        for (let i = 0; i < form.elements.length; i++) {
-          if (isPasswordField_(form.elements[i]) &&
-              form.elements[i].value !== '') {
-            shouldNotifyPasswordManager = false;
-          }
-        }
-      }
-      if (!shouldNotifyPasswordManager) {
-        return;
-      }
-      const formData = form ?
-          __gCrWeb.passwords.getPasswordFormData(form, window) :
-          __gCrWeb.passwords.getPasswordFormDataFromUnownedElements(window);
-      if (target.value === '') {
-        const msg = {
-          'command': 'form.activity',
-          'frameID': __gCrWeb.message.getFrameId(),
-          'formName': '',
-          'uniqueFormID': '',
-          'fieldIdentifier': '',
-          'uniqueFieldID': '',
-          'fieldType': '',
-          'type': 'password_form_cleared',
-          'value': __gCrWeb.stringify(formData),
-          'hasUserGesture': false
-        };
-        sendMessageOnNextLoop_(msg);
-      }
-    }
-  });
-  passwordFieldsObserver.observe(field, {attributes: true});
-}
-
-
-/**
- * @param {Element} A form that was reset.
- * @return {boolean} Whether the form contains password fields that had user
- * typed or manually filled input.
- */
-function shouldNotifyAboutFormReset_(form) {
-  for (let i = 0; i < form.elements.length; i++) {
-    const element = form.elements[i];
-    if (isPasswordField_(element) &&
-        __gCrWeb.form.wasEditedByUser.get(element)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
  * Focus, input, change, keyup, blur and reset events for form elements (form
  * and input elements) are messaged to the main application for broadcast to
  * WebStateObservers.
@@ -179,10 +98,27 @@ function shouldNotifyAboutFormReset_(form) {
  * @private
  */
 function formActivity_(evt) {
-  const target = evt.target;
-  if (!['FORM', 'INPUT', 'OPTION', 'SELECT', 'TEXTAREA'].includes(
-          target.tagName)) {
-    return;
+  const validTagNames = ['FORM', 'INPUT', 'OPTION', 'SELECT', 'TEXTAREA'];
+  let target = evt.target;
+
+  if (!validTagNames.includes(target.tagName)) {
+    const path = evt.composedPath();
+    let foundValidTagName = false;
+
+    // Checks if a valid tag name is found in the event path when the tag name
+    // of the event target is not valid itself.
+    if (path) {
+      for (const htmlElement of path) {
+        if (validTagNames.includes(htmlElement.tagName)) {
+          target = htmlElement;
+          foundValidTagName = true;
+          break;
+        }
+      }
+    }
+    if (!foundValidTagName) {
+      return;
+    }
   }
   if (evt.type !== 'blur') {
     lastFocusedElement = document.activeElement;
@@ -192,12 +128,7 @@ function formActivity_(evt) {
     __gCrWeb.form.wasEditedByUser.set(target, evt.isTrusted);
   }
 
-  // Notify FormActivityTabHelper about form reset if the form contains
-  // password fields that had user typed or manually filled input.
-  const isPasswordFormReset = target.tagName === 'FORM' &&
-      evt.type === 'reset' && shouldNotifyAboutFormReset_(target);
-
-  if (target !== lastFocusedElement && !isPasswordFormReset) {
+  if (evt.target !== lastFocusedElement) {
     return;
   }
   const form = target.tagName === 'FORM' ? target : target.form;
@@ -210,15 +141,6 @@ function formActivity_(evt) {
 
   const fieldType = target.type || '';
   const fieldValue = target.value || '';
-  const value = isPasswordFormReset ?
-      __gCrWeb.stringify(__gCrWeb.passwords.getPasswordFormData(form, window)) :
-      fieldValue;
-  const type = isPasswordFormReset ? 'password_form_cleared' : evt.type;
-
-  if ((evt.type === 'change' || evt.type === 'input') &&
-      isPasswordField_(target)) {
-    trackPasswordField_(evt.target);
-  }
 
   const msg = {
     'command': 'form.activity',
@@ -228,9 +150,9 @@ function formActivity_(evt) {
     'fieldIdentifier': __gCrWeb.form.getFieldIdentifier(field),
     'uniqueFieldID': fieldUniqueId,
     'fieldType': fieldType,
-    'type': type,
-    'value': value,
-    'hasUserGesture': evt.isTrusted
+    'type': evt.type,
+    'value': fieldValue,
+    'hasUserGesture': evt.isTrusted,
   };
   sendMessageOnNextLoop_(msg);
 }
@@ -257,7 +179,7 @@ function formSubmitted_(form) {
     'frameID': __gCrWeb.message.getFrameId(),
     'formName': __gCrWeb.form.getFormIdentifier(form),
     'href': getFullyQualifiedUrl_(action),
-    'formData': __gCrWeb.fill.autofillSubmissionData(form)
+    'formData': __gCrWeb.fill.autofillSubmissionData(form),
   });
 }
 
@@ -398,7 +320,6 @@ function extractRemovedFormlessPasswordFieldsIds_(removedElements) {
  * milliseconds before sending a message to browser. A delay is used because
  * form mutations are likely to come in batches. An undefined or zero value for
  * |delay| would stop the MutationObserver, if any.
- * @suppress {checkTypes} Required for for...of loop on mutations.
  */
 __gCrWeb.formHandlers['trackFormMutations'] = function(delay) {
   if (formMutationObserver) {
@@ -427,7 +348,7 @@ __gCrWeb.formHandlers['trackFormMutations'] = function(delay) {
           'fieldType': '',
           'type': 'form_changed',
           'value': '',
-          'hasUserGesture': false
+          'hasUserGesture': false,
         };
         return sendFormMutationMessageAfterDelay_(msg, delay);
       }
@@ -474,5 +395,3 @@ __gCrWeb.formHandlers['toggleTrackingUserEditedFields'] = function(track) {
     __gCrWeb.form.wasEditedByUser = null;
   }
 };
-
-}());  // End of anonymous object

@@ -20,7 +20,7 @@ template<typename Scalar_, int Rows_, int Cols_, int Options_, int MaxRows_, int
 struct traits<Matrix<Scalar_, Rows_, Cols_, Options_, MaxRows_, MaxCols_> >
 {
 private:
-  enum { size = internal::size_at_compile_time<Rows_,Cols_>::ret };
+  constexpr static int size = internal::size_at_compile_time(Rows_,Cols_);
   typedef typename find_best_packet<Scalar_,size>::type PacketScalar;
   enum {
       row_major_bit = Options_&RowMajor ? RowMajorBit : 0,
@@ -42,7 +42,7 @@ public:
     ColsAtCompileTime = Cols_,
     MaxRowsAtCompileTime = MaxRows_,
     MaxColsAtCompileTime = MaxCols_,
-    Flags = compute_matrix_flags<Scalar_, Rows_, Cols_, Options_, MaxRows_, MaxCols_>::ret,
+    Flags = compute_matrix_flags(Options_),
     Options = Options_,
     InnerStrideAtCompileTime = 1,
     OuterStrideAtCompileTime = (Options&RowMajor) ? ColsAtCompileTime : RowsAtCompileTime,
@@ -312,8 +312,9 @@ class Matrix
       *
       * \sa Matrix(const Scalar& a0, const Scalar& a1, const Scalar& a2,  const Scalar& a3, const ArgTypes&... args)
       */
-    EIGEN_DEVICE_FUNC
-    explicit EIGEN_STRONG_INLINE Matrix(const std::initializer_list<std::initializer_list<Scalar>>& list) : Base(list) {}
+    EIGEN_DEVICE_FUNC explicit constexpr EIGEN_STRONG_INLINE Matrix(
+        const std::initializer_list<std::initializer_list<Scalar>>& list)
+        : Base(list) {}
 
 #ifndef EIGEN_PARSED_BY_DOXYGEN
 

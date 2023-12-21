@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,11 +11,9 @@
 
 namespace blink {
 
-class HTMLTextAreaElementTest : public testing::WithParamInterface<bool>,
-                                private ScopedLayoutNGForTest,
-                                public RenderingTest {
+class HTMLTextAreaElementTest : public RenderingTest {
  public:
-  HTMLTextAreaElementTest() : ScopedLayoutNGForTest(GetParam()) {}
+  HTMLTextAreaElementTest() = default;
 
  protected:
   HTMLTextAreaElement& TestElement() {
@@ -25,9 +23,7 @@ class HTMLTextAreaElementTest : public testing::WithParamInterface<bool>,
   }
 };
 
-INSTANTIATE_TEST_SUITE_P(All, HTMLTextAreaElementTest, testing::Bool());
-
-TEST_P(HTMLTextAreaElementTest, SanitizeUserInputValue) {
+TEST_F(HTMLTextAreaElementTest, SanitizeUserInputValue) {
   UChar kLeadSurrogate = 0xD800;
   EXPECT_EQ("", HTMLTextAreaElement::SanitizeUserInputValue("", 0));
   EXPECT_EQ("", HTMLTextAreaElement::SanitizeUserInputValue("a", 0));
@@ -51,7 +47,7 @@ TEST_P(HTMLTextAreaElementTest, SanitizeUserInputValue) {
             HTMLTextAreaElement::SanitizeUserInputValue("a\r\ncdef", 4));
 }
 
-TEST_P(HTMLTextAreaElementTest, ValueWithHardLineBreaks) {
+TEST_F(HTMLTextAreaElementTest, ValueWithHardLineBreaks) {
   LoadAhem();
 
   // The textarea can contain four letters in each of lines.
@@ -61,13 +57,13 @@ TEST_P(HTMLTextAreaElementTest, ValueWithHardLineBreaks) {
   )HTML");
   HTMLTextAreaElement& textarea = TestElement();
   RunDocumentLifecycle();
-  EXPECT_TRUE(textarea.ValueWithHardLineBreaks().IsEmpty());
+  EXPECT_TRUE(textarea.ValueWithHardLineBreaks().empty());
 
-  textarea.setValue("12345678");
+  textarea.SetValue("12345678");
   RunDocumentLifecycle();
   EXPECT_EQ("1234\n5678", textarea.ValueWithHardLineBreaks());
 
-  textarea.setValue("1234567890\n");
+  textarea.SetValue("1234567890\n");
   RunDocumentLifecycle();
   EXPECT_EQ("1234\n5678\n90\n", textarea.ValueWithHardLineBreaks());
 
@@ -82,13 +78,10 @@ TEST_P(HTMLTextAreaElementTest, ValueWithHardLineBreaks) {
   inner_editor->appendChild(Text::Create(doc, "90"));
   inner_editor->appendChild(doc.CreateRawElement(html_names::kBrTag));
   RunDocumentLifecycle();
-  // Should be "1234\n5678\n90".  The legacy behavior is wrong.
-  EXPECT_EQ(textarea.GetLayoutBox()->IsLayoutNGObject() ? "1234\n5678\n90"
-                                                        : "1234567890",
-            textarea.ValueWithHardLineBreaks());
+  EXPECT_EQ("1234\n5678\n90", textarea.ValueWithHardLineBreaks());
 }
 
-TEST_P(HTMLTextAreaElementTest, ValueWithHardLineBreaksRtl) {
+TEST_F(HTMLTextAreaElementTest, ValueWithHardLineBreaksRtl) {
   LoadAhem();
 
   SetBodyContent(R"HTML(
@@ -98,7 +91,7 @@ TEST_P(HTMLTextAreaElementTest, ValueWithHardLineBreaksRtl) {
 
 #define LTO "\xE2\x80\xAD"
 #define RTO "\xE2\x80\xAE"
-  textarea.setValue(
+  textarea.SetValue(
       String::FromUTF8(RTO "Hebrew" LTO " English " RTO "Arabic" LTO));
   // This textarea is rendered as:
   //    -----------------
@@ -110,6 +103,25 @@ TEST_P(HTMLTextAreaElementTest, ValueWithHardLineBreaksRtl) {
             textarea.ValueWithHardLineBreaks());
 #undef LTO
 #undef RTO
+}
+
+TEST_F(HTMLTextAreaElementTest, DefaultToolTip) {
+  LoadAhem();
+
+  SetBodyContent(R"HTML(
+    <textarea id=test></textarea>
+  )HTML");
+  HTMLTextAreaElement& textarea = TestElement();
+
+  textarea.SetBooleanAttribute(html_names::kRequiredAttr, true);
+  EXPECT_EQ("<<ValidationValueMissing>>", textarea.DefaultToolTip());
+
+  textarea.SetBooleanAttribute(html_names::kNovalidateAttr, true);
+  EXPECT_EQ(String(), textarea.DefaultToolTip());
+
+  textarea.removeAttribute(html_names::kNovalidateAttr);
+  textarea.SetValue("1234567890\n");
+  EXPECT_EQ(String(), textarea.DefaultToolTip());
 }
 
 }  // namespace blink

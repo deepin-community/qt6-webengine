@@ -35,6 +35,7 @@
 #include "quiche/quic/core/quic_path_validator.h"
 #include "quiche/quic/core/quic_stream.h"
 #include "quiche/quic/core/quic_stream_frame_data_producer.h"
+#include "quiche/quic/core/quic_stream_priority.h"
 #include "quiche/quic/core/quic_types.h"
 #include "quiche/quic/core/quic_write_blocked_list.h"
 #include "quiche/quic/core/session_notifier_interface.h"
@@ -67,8 +68,11 @@ class QUIC_EXPORT_PRIVATE QuicSession
       public QuicControlFrameManager::DelegateInterface {
  public:
   // An interface from the session to the entity owning the session.
-  // This lets the session notify its owner (the Dispatcher) when the connection
-  // is closed, blocked, or added/removed from the time-wait list.
+  // This lets the session notify its owner when the connection
+  // is closed, blocked, etc.
+  // TODO(danzh): split this visitor to separate visitors for client and server
+  // respectively as not all methods in this class are interesting to both
+  // perspectives.
   class QUIC_EXPORT_PRIVATE Visitor {
    public:
     virtual ~Visitor() {}
@@ -89,14 +93,17 @@ class QUIC_EXPORT_PRIVATE QuicSession
     // peer.
     virtual void OnStopSendingReceived(const QuicStopSendingFrame& frame) = 0;
 
-    // Called when a NewConnectionId frame has been sent.
-    virtual void OnNewConnectionIdSent(
+    // Called when on whether a NewConnectionId frame can been sent.
+    virtual bool TryAddNewConnectionId(
         const QuicConnectionId& server_connection_id,
         const QuicConnectionId& new_connection_id) = 0;
 
     // Called when a ConnectionId has been retired.
     virtual void OnConnectionIdRetired(
         const QuicConnectionId& server_connection_id) = 0;
+
+    virtual void OnServerPreferredAddressAvailable(
+        const QuicSocketAddress& /*server_preferred_address*/) = 0;
   };
 
   // Does not take ownership of |connection| or |visitor|.
@@ -138,7 +145,6 @@ class QUIC_EXPORT_PRIVATE QuicSession
                         const QuicSocketAddress& peer_address,
                         bool is_connectivity_probe) override;
   void OnCanWrite() override;
-  bool SendProbingData() override;
   void OnCongestionWindowChange(QuicTime /*now*/) override {}
   void OnConnectionMigration(AddressChangeType /*type*/) override {}
   // Adds a connection level WINDOW_UPDATE frame.
@@ -146,7 +152,12 @@ class QUIC_EXPORT_PRIVATE QuicSession
   void SendAckFrequency(const QuicAckFrequencyFrame& frame) override;
   void SendNewConnectionId(const QuicNewConnectionIdFrame& frame) override;
   void SendRetireConnectionId(uint64_t sequence_number) override;
-  void OnServerConnectionIdIssued(
+  // Returns true if server_connection_id can be issued. If returns true,
+  // |visitor_| may establish a mapping from |server_connection_id| to this
+  // session, if that's not desired,
+  // OnServerConnectionIdRetired(server_connection_id) can be used to remove the
+  // mapping.
+  bool MaybeReserveConnectionId(
       const QuicConnectionId& server_connection_id) override;
   void OnServerConnectionIdRetired(
       const QuicConnectionId& server_connection_id) override;
@@ -169,10 +180,13 @@ class QUIC_EXPORT_PRIVATE QuicSession
   void BeforeConnectionCloseSent() override {}
   bool ValidateToken(absl::string_view token) override;
   bool MaybeSendAddressToken() override;
-  bool IsKnownServerAddress(
-      const QuicSocketAddress& /*address*/) const override {
-    return false;
+  void OnBandwidthUpdateTimeout() override {}
+  std::unique_ptr<QuicPathValidationContext> CreateContextForMultiPortPath()
+      override {
+    return nullptr;
   }
+  void OnServerPreferredAddressAvailable(
+      const QuicSocketAddress& /*server_preferred_address*/) override;
 
   // QuicStreamFrameDataProducer
   WriteStreamDataResult WriteStreamData(QuicStreamId id,
@@ -265,7 +279,7 @@ class QUIC_EXPORT_PRIVATE QuicSession
   virtual void SendGoAway(QuicErrorCode error_code, const std::string& reason);
 
   // Sends a BLOCKED frame.
-  virtual void SendBlocked(QuicStreamId id);
+  virtual void SendBlocked(QuicStreamId id, QuicStreamOffset byte_offset);
 
   // Sends a WINDOW_UPDATE frame.
   virtual void SendWindowUpdate(QuicStreamId id, QuicStreamOffset byte_offset);
@@ -317,15 +331,13 @@ class QUIC_EXPORT_PRIVATE QuicSession
                      QuicIetfTransportErrorCodes ietf_error,
                      std::string error_details) override;
   // Sets priority in the write blocked list.
-  void RegisterStreamPriority(
-      QuicStreamId id, bool is_static,
-      const spdy::SpdyStreamPrecedence& precedence) override;
+  void RegisterStreamPriority(QuicStreamId id, bool is_static,
+                              const QuicStreamPriority& priority) override;
   // Clears priority from the write blocked list.
-  void UnregisterStreamPriority(QuicStreamId id, bool is_static) override;
+  void UnregisterStreamPriority(QuicStreamId id) override;
   // Updates priority on the write blocked list.
-  void UpdateStreamPriority(
-      QuicStreamId id,
-      const spdy::SpdyStreamPrecedence& new_precedence) override;
+  void UpdateStreamPriority(QuicStreamId id,
+                            const QuicStreamPriority& new_priority) override;
 
   // Called by streams when they want to write data to the peer.
   // Returns a pair with the number of bytes consumed from data, and a boolean
@@ -351,7 +363,8 @@ class QUIC_EXPORT_PRIVATE QuicSession
 
   // Returns mutable config for this session. Returned config is owned
   // by QuicSession.
-  QuicConfig* config();
+  QuicConfig* config() { return &config_; }
+  const QuicConfig* config() const { return &config_; }
 
   // Returns true if the stream existed previously and has been closed.
   // Returns false if the stream is still active or if the stream has
@@ -451,7 +464,8 @@ class QUIC_EXPORT_PRIVATE QuicSession
   //  };
   void ValidatePath(
       std::unique_ptr<QuicPathValidationContext> context,
-      std::unique_ptr<QuicPathValidator::ResultDelegate> result_delegate);
+      std::unique_ptr<QuicPathValidator::ResultDelegate> result_delegate,
+      PathValidationReason reason);
 
   // Return true if there is a path being validated.
   bool HasPendingPathValidation() const;
@@ -612,12 +626,7 @@ class QUIC_EXPORT_PRIVATE QuicSession
     return liveness_testing_in_progress_;
   }
 
-  bool permutes_tls_extensions() const { return permutes_tls_extensions_; }
-
   virtual QuicSSLConfig GetSSLConfig() const { return QuicSSLConfig(); }
-
-  // Latched value of flag --quic_tls_server_support_client_cert.
-  bool support_client_cert() const { return support_client_cert_; }
 
   // Try converting all pending streams to normal streams.
   void ProcessAllPendingStreams();
@@ -632,6 +641,14 @@ class QUIC_EXPORT_PRIVATE QuicSession
     client_original_supported_versions_ = client_original_supported_versions;
   }
 
+  // Controls whether the default datagram queue used by the session actually
+  // queues the datagram.  If set to true, the datagrams in the default queue
+  // will be forcefully flushed, potentially bypassing congestion control and
+  // other limitations.
+  void SetForceFlushForDefaultQueue(bool force_flush) {
+    datagram_queue_.SetForceFlush(force_flush);
+  }
+
  protected:
   using StreamMap =
       absl::flat_hash_map<QuicStreamId, std::unique_ptr<QuicStream>>;
@@ -643,6 +660,8 @@ class QUIC_EXPORT_PRIVATE QuicSession
 
   using ZombieStreamMap =
       absl::flat_hash_map<QuicStreamId, std::unique_ptr<QuicStream>>;
+
+  std::string on_closed_frame_string() const;
 
   // Creates a new stream to handle a peer-initiated stream.
   // Caller does not own the returned stream.
@@ -697,7 +716,7 @@ class QUIC_EXPORT_PRIVATE QuicSession
   virtual bool ShouldProcessPendingStreamImmediately() const { return true; }
 
   spdy::SpdyPriority GetSpdyPriorityofStream(QuicStreamId stream_id) const {
-    return write_blocked_streams_.GetSpdyPriorityofStream(stream_id);
+    return write_blocked_streams_.GetPriorityofStream(stream_id).urgency;
   }
 
   size_t pending_streams_size() const { return pending_stream_map_.size(); }
@@ -784,7 +803,7 @@ class QUIC_EXPORT_PRIVATE QuicSession
 
   // Call SetPriority() on stream id |id| and return true if stream is active.
   bool MaybeSetStreamPriority(QuicStreamId stream_id,
-                              const spdy::SpdyStreamPrecedence& precedence);
+                              const QuicStreamPriority& priority);
 
   void SetLossDetectionTuner(
       std::unique_ptr<LossDetectionTunerInterface> tuner) {
@@ -946,6 +965,7 @@ class QUIC_EXPORT_PRIVATE QuicSession
 
   // Received information for a connection close.
   QuicConnectionCloseFrame on_closed_frame_;
+  absl::optional<ConnectionCloseSource> source_;
 
   // Used for connection-level flow control.
   QuicFlowController flow_controller_;
@@ -1002,12 +1022,6 @@ class QUIC_EXPORT_PRIVATE QuicSession
   // This indicates a liveness testing is in progress, and push back the
   // creation of new outgoing bidirectional streams.
   bool liveness_testing_in_progress_;
-
-  // Whether BoringSSL randomizes the order of TLS extensions.
-  bool permutes_tls_extensions_ = true;
-
-  const bool support_client_cert_ =
-      GetQuicRestartFlag(quic_tls_server_support_client_cert);
 };
 
 }  // namespace quic

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,8 +15,7 @@
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 
-namespace net {
-namespace test_server {
+namespace net::test_server {
 
 // The C++ side of the Java EmbeddedTestServer.
 class EmbeddedTestServerAndroid {
@@ -31,54 +30,41 @@ class EmbeddedTestServerAndroid {
 
   ~EmbeddedTestServerAndroid();
 
-  void Destroy(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
+  void Destroy(JNIEnv* env);
 
-  jboolean Start(JNIEnv* env,
-                 const base::android::JavaParamRef<jobject>& jobj,
-                 jint port);
+  jboolean Start(JNIEnv* env, jint port);
 
   base::android::ScopedJavaLocalRef<jstring> GetRootCertPemPath(
-      JNIEnv* jenv,
-      const base::android::JavaParamRef<jobject>& jobj) const;
+      JNIEnv* jenv) const;
 
-  jboolean ShutdownAndWaitUntilComplete(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jobj);
+  jboolean ShutdownAndWaitUntilComplete(JNIEnv* env);
 
   base::android::ScopedJavaLocalRef<jstring> GetURL(
       JNIEnv* jenv,
-      const base::android::JavaParamRef<jobject>& jobj,
       const base::android::JavaParamRef<jstring>& jrelative_url) const;
 
   base::android::ScopedJavaLocalRef<jstring> GetURLWithHostName(
       JNIEnv* jenv,
-      const base::android::JavaParamRef<jobject>& jobj,
       const base::android::JavaParamRef<jstring>& jhostname,
       const base::android::JavaParamRef<jstring>& jrelative_url) const;
 
   void AddDefaultHandlers(
       JNIEnv* jenv,
-      const base::android::JavaParamRef<jobject>& jobj,
       const base::android::JavaParamRef<jstring>& jdirectory_path);
 
-  void SetSSLConfig(JNIEnv* jenv,
-                    const base::android::JavaParamRef<jobject>& jobj,
-                    jint jserver_certificate);
+  void SetSSLConfig(JNIEnv* jenv, jint jserver_certificate);
 
-  void RegisterRequestHandler(JNIEnv* jenv,
-                              const base::android::JavaParamRef<jobject>& jobj,
-                              jlong handler);
+  void RegisterRequestHandler(JNIEnv* jenv, jlong handler);
 
   void ServeFilesFromDirectory(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jobj,
       const base::android::JavaParamRef<jstring>& jdirectory_path);
 
  private:
   // Connection listener forwarding notifications to EmbeddedTestServerAndroid.
   class ConnectionListener : public EmbeddedTestServerConnectionListener {
    public:
-    ConnectionListener(EmbeddedTestServerAndroid* test_server_android);
+    explicit ConnectionListener(EmbeddedTestServerAndroid* test_server_android);
     ~ConnectionListener() override;
 
     std::unique_ptr<StreamSocket> AcceptedSocket(
@@ -101,7 +87,6 @@ class EmbeddedTestServerAndroid {
   ConnectionListener connection_listener_;
 };
 
-}  // namespace test_server
-}  // namespace net
+}  // namespace net::test_server
 
 #endif  // NET_TEST_EMBEDDED_TEST_SERVER_ANDROID_EMBEDDED_TEST_SERVER_ANDROID_H_

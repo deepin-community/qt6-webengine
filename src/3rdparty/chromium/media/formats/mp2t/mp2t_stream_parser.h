@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,7 +13,7 @@
 #include <set>
 
 #include "base/containers/span.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/byte_queue.h"
 #include "media/base/decrypt_config.h"
@@ -45,16 +45,18 @@ class MEDIA_EXPORT Mp2tStreamParser : public StreamParser {
 
   // StreamParser implementation.
   void Init(InitCB init_cb,
-            const NewConfigCB& config_cb,
-            const NewBuffersCB& new_buffers_cb,
+            NewConfigCB config_cb,
+            NewBuffersCB new_buffers_cb,
             bool ignore_text_tracks,
-            const EncryptedMediaInitDataCB& encrypted_media_init_data_cb,
-            const NewMediaSegmentCB& new_segment_cb,
-            const EndMediaSegmentCB& end_of_segment_cb,
+            EncryptedMediaInitDataCB encrypted_media_init_data_cb,
+            NewMediaSegmentCB new_segment_cb,
+            EndMediaSegmentCB end_of_segment_cb,
             MediaLog* media_log) override;
   void Flush() override;
   bool GetGenerateTimestampsFlag() const override;
-  bool Parse(const uint8_t* buf, int size) override;
+  [[nodiscard]] bool AppendToParseBuffer(const uint8_t* buf,
+                                         size_t size) override;
+  [[nodiscard]] ParseStatus Parse(int max_pending_bytes_to_inspect) override;
 
  private:
   struct BufferQueueWithConfig {
@@ -158,6 +160,15 @@ class MEDIA_EXPORT Mp2tStreamParser : public StreamParser {
   bool sbr_in_mimetype_;
 
   // Bytes of the TS stream.
+  // `uninspected_pending_bytes_` tracks how much data has not yet been
+  // attempted to be parsed from `ts_byte_queue_` between calls to Parse().
+  // AppendToParseBuffer() increases this from 0 as more data is added. Parse()
+  // incrementally reduces this and Flush() zeroes this. Note that Parse() may
+  // have inspected some data at the front of `ts_byte_queue_` but not yet been
+  // able to pop it from the queue. So this value may be lower than the actual
+  // amount of bytes in `ts_byte_queue_`, since more data is needed to complete
+  // the parse.
+  int uninspected_pending_bytes_ = 0;
   ByteQueue ts_byte_queue_;
 
   // List of PIDs and their state.

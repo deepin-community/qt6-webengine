@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -29,7 +29,7 @@ class WebPrescientNetworkingImpl : public blink::WebPrescientNetworking {
   ~WebPrescientNetworkingImpl() override;
 
   // blink::WebPrescientNetworking methods:
-  void PrefetchDNS(const blink::WebString& hostname) override;
+  void PrefetchDNS(const blink::WebURL& url) override;
   void Preconnect(const blink::WebURL& url, bool allow_credentials) override;
 
  private:

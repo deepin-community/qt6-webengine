@@ -9,16 +9,14 @@
 #define SKSL_METALCODEGENERATOR
 
 #include "include/private/SkSLDefines.h"
-#include "include/private/SkTArray.h"
-#include "include/private/SkTHash.h"
-#include "include/sksl/SkSLOperator.h"
+#include "include/private/base/SkTArray.h"
+#include "src/core/SkTHash.h"
 #include "src/sksl/SkSLStringStream.h"
 #include "src/sksl/codegen/SkSLCodeGenerator.h"
 #include "src/sksl/ir/SkSLType.h"
 
-#include <stdint.h>
+#include <cstdint>
 #include <initializer_list>
-#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -45,13 +43,13 @@ class FunctionPrototype;
 class IfStatement;
 class InterfaceBlock;
 class Literal;
+class Operator;
 class OutputStream;
 class Position;
 class PostfixExpression;
 class PrefixExpression;
 class ProgramElement;
 class ReturnStatement;
-class Setting;
 class Statement;
 class StructDefinition;
 class SwitchStatement;
@@ -59,6 +57,7 @@ class TernaryExpression;
 class VarDeclaration;
 class Variable;
 class VariableReference;
+enum class OperatorPrecedence : uint8_t;
 enum IntrinsicKind : int8_t;
 struct IndexExpression;
 struct Layout;
@@ -71,9 +70,6 @@ struct Swizzle;
  */
 class MetalCodeGenerator : public CodeGenerator {
 public:
-    inline static constexpr const char* SAMPLER_SUFFIX = "Smplr";
-    inline static constexpr const char* PACKED_PREFIX = "packed_";
-
     MetalCodeGenerator(const Context* context, const Program* program, OutputStream* out)
     : INHERITED(context, program, out)
     , fReservedWords({"atan2", "rsqrt", "rint", "dfdx", "dfdy", "vertex", "fragment"})
@@ -82,18 +78,22 @@ public:
     bool generateCode() override;
 
 protected:
-    using Precedence = Operator::Precedence;
+    using Precedence = OperatorPrecedence;
 
     typedef int Requirements;
-    inline static constexpr Requirements kNo_Requirements       = 0;
-    inline static constexpr Requirements kInputs_Requirement    = 1 << 0;
-    inline static constexpr Requirements kOutputs_Requirement   = 1 << 1;
-    inline static constexpr Requirements kUniforms_Requirement  = 1 << 2;
-    inline static constexpr Requirements kGlobals_Requirement   = 1 << 3;
-    inline static constexpr Requirements kFragCoord_Requirement = 1 << 4;
+    inline static constexpr Requirements kNo_Requirements          = 0;
+    inline static constexpr Requirements kInputs_Requirement       = 1 << 0;
+    inline static constexpr Requirements kOutputs_Requirement      = 1 << 1;
+    inline static constexpr Requirements kUniforms_Requirement     = 1 << 2;
+    inline static constexpr Requirements kGlobals_Requirement      = 1 << 3;
+    inline static constexpr Requirements kFragCoord_Requirement    = 1 << 4;
+    inline static constexpr Requirements kThreadgroups_Requirement = 1 << 5;
 
     class GlobalStructVisitor;
     void visitGlobalStruct(GlobalStructVisitor* visitor);
+
+    class ThreadgroupStructVisitor;
+    void visitThreadgroupStruct(ThreadgroupStructVisitor* visitor);
 
     void write(std::string_view s);
 
@@ -102,6 +102,8 @@ protected:
     void finishLine();
 
     void writeHeader();
+
+    void writeSampler2DPolyfill();
 
     void writeUniformStruct();
 
@@ -113,6 +115,8 @@ protected:
 
     void writeStructDefinitions();
 
+    void writeConstantVariables();
+
     void writeFields(const std::vector<Type::Field>& fields, Position pos,
                      const InterfaceBlock* parentIntf = nullptr);
 
@@ -123,6 +127,10 @@ protected:
     void writeGlobalStruct();
 
     void writeGlobalInit();
+
+    void writeThreadgroupStruct();
+
+    void writeThreadgroupInit();
 
     void writePrecisionModifier();
 
@@ -166,8 +174,8 @@ protected:
     void writeMinAbsHack(Expression& absExpr, Expression& otherExpr);
 
     std::string getOutParamHelper(const FunctionCall& c,
-                             const ExpressionArray& arguments,
-                             const SkTArray<VariableReference*>& outVars);
+                                  const ExpressionArray& arguments,
+                                  const SkTArray<VariableReference*>& outVars);
 
     std::string getInversePolyfill(const ExpressionArray& arguments);
 
@@ -234,6 +242,11 @@ protected:
     // Splats a scalar expression across a matrix of arbitrary size.
     void writeNumberAsMatrix(const Expression& expr, const Type& matrixType);
 
+    void writeBinaryExpressionElement(const Expression& expr,
+                                      Operator op,
+                                      const Expression& other,
+                                      Precedence precedence);
+
     void writeBinaryExpression(const BinaryExpression& b, Precedence parentPrecedence);
 
     void writeTernaryExpression(const TernaryExpression& t, Precedence parentPrecedence);
@@ -245,8 +258,6 @@ protected:
     void writePostfixExpression(const PostfixExpression& p, Precedence parentPrecedence);
 
     void writeLiteral(const Literal& f);
-
-    void writeSetting(const Setting& s);
 
     void writeStatement(const Statement& s);
 
@@ -272,9 +283,11 @@ protected:
 
     Requirements requirements(const FunctionDeclaration& f);
 
-    Requirements requirements(const Expression* e);
-
     Requirements requirements(const Statement* s);
+
+    // For compute shader main functions, writes and initializes the _in and _out structs (the
+    // instances, not the types themselves)
+    void writeComputeMainInputs();
 
     int getUniformBinding(const Modifiers& m);
 
@@ -292,7 +305,6 @@ protected:
     int fVarCount = 0;
     int fIndentation = 0;
     bool fAtLineStart = false;
-    std::set<std::string> fWrittenIntrinsics;
     // true if we have run into usages of dFdx / dFdy
     bool fFoundDerivatives = false;
     SkTHashMap<const FunctionDeclaration*, Requirements> fRequirements;
@@ -302,6 +314,13 @@ protected:
     const FunctionDeclaration* fCurrentFunction = nullptr;
     int fSwizzleHelperCount = 0;
     bool fIgnoreVariableReferenceModifiers = false;
+    static constexpr char kTextureSuffix[] = "_Tex";
+    static constexpr char kSamplerSuffix[] = "_Smplr";
+
+    // Workaround/polyfill flags
+    bool fWrittenInverse2 = false, fWrittenInverse3 = false, fWrittenInverse4 = false;
+    bool fWrittenMatrixCompMult = false;
+    bool fWrittenOuterProduct = false;
 
     using INHERITED = CodeGenerator;
 };

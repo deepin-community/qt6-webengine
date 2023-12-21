@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright 2021 The Chromium Authors. All rights reserved.
+# Copyright 2021 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Objects for describing template code to be generated from structured.xml."""
@@ -62,7 +62,9 @@ class FileInfo:
   def __init__(self, dirname, basename):
     self.dirname = dirname
     self.basename = basename
+    self.rootname = os.path.splitext(self.basename)[0]
     self.filepath = os.path.join(dirname, basename)
+
 
     # This takes the last three components of the filepath for use in the
     # header guard, ie. METRICS_STRUCTURED_STRUCTURED_EVENTS_H_
@@ -109,6 +111,16 @@ class ProjectInfo:
           self.event_type = 'RAW_STRING'
           break
 
+    # Check if event is part of an event sequence. Note that this goes after the
+    # raw string check since the type has higher priority.
+    if project.is_event_sequence_project:
+      self.is_event_sequence = 'true'
+      self.event_type = 'SEQUENCE'
+    else:
+      self.is_event_sequence = 'false'
+
+    self.key_rotation_period = project.key_rotation_period
+
   def build_event_map(self) -> str:
     event_infos = (EventInfo(event, self) for event in self.events)
 
@@ -139,6 +151,7 @@ class EventInfo:
     self.validator_name = '{}EventValidator'.format(self.name)
     self.validator_snake_name = Util.camel_to_snake(self.validator_name)
     self.project_name = project_info.name
+    self.is_event_sequence = project_info.is_event_sequence
     self.metrics = event.metrics
 
   def build_metric_hash_map(self) -> str:
@@ -153,8 +166,13 @@ class EventInfo:
                                     self.validator_snake_name)
 
   def build_validator_code(self) -> str:
+    if len(self.metrics) > 0:
+      metadata_impl = validator_tmpl.IMPL_GET_METRICS_METADATA.format(
+          metric_hash_map=self.build_metric_hash_map())
+    else:
+      metadata_impl = "  return absl::nullopt;"
     return validator_tmpl.IMPL_EVENT_VALIDATOR_TEMPLATE.format(
-        event=self, metric_hash_map=self.build_metric_hash_map())
+        event=self, get_metrics_metadata_impl=metadata_impl)
 
 
 class MetricInfo:
@@ -178,6 +196,11 @@ class MetricInfo:
       self.type = 'std::string&'
       self.setter = 'AddRawStringMetric'
       self.type_enum = 'kRawString'
+      self.base_value = 'base::Value(value)'
+    elif metric.type == 'double':
+      self.type = 'double'
+      self.setter = 'AddDoubleMetric'
+      self.type_enum = 'kDouble'
       self.base_value = 'base::Value(value)'
     else:
       raise ValueError('Invalid metric type.')
@@ -235,8 +258,7 @@ class Template:
 class ValidatorHeaderTemplate:
   """Template for generating header validator code from structured.xml."""
 
-  def __init__(self, model, dirname, basename):
-    self.model = model
+  def __init__(self, dirname, basename):
     self.dirname = dirname
     self.basename = basename
 
@@ -267,10 +289,11 @@ class ValidatorImplTemplate:
     6) Map initialization mapping project name to ProjectValidator.
   """
 
-  def __init__(self, model, dirname, basename):
-    self.model = model
+  def __init__(self, structured_model, dirname, basename):
+    self.structured_model = structured_model
     self.dirname = dirname
     self.basename = basename
+    self.projects = self.structured_model.projects
 
   def write_file(self) -> None:
     file_info = FileInfo(self.dirname, self.basename)
@@ -284,7 +307,7 @@ class ValidatorImplTemplate:
     project_code = []
     project_validators = []
 
-    for project in self.model.projects:
+    for project in self.projects:
       project_info = ProjectInfo(project)
       event_infos = (EventInfo(event, project_info) for event in project.events)
       project_event_code = '\n'.join(event_info.build_validator_code()
@@ -313,7 +336,7 @@ class ValidatorImplTemplate:
         project_map=self._build_project_map())
 
   def _build_project_map(self) -> str:
-    project_infos = (ProjectInfo(project) for project in self.model.projects)
+    project_infos = (ProjectInfo(project) for project in self.projects)
     project_map = ',\n  '.join(
         '{{"{}", &{}}}'.format(project.name, project.validator_snake_name)
         for project in project_infos)

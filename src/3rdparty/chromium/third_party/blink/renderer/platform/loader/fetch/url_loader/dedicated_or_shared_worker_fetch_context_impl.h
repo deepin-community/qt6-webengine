@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 
 #include "base/strings/string_piece.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/task/single_thread_task_runner.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -18,12 +19,13 @@
 #include "third_party/blink/public/mojom/service_worker/service_worker_container.mojom-shared.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_worker_client.mojom-blink.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_worker_client_registry.mojom-blink.h"
-#include "third_party/blink/public/mojom/timing/worker_timing_container.mojom.h"
 #include "third_party/blink/public/mojom/worker/subresource_loader_updater.mojom-blink.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "third_party/blink/public/platform/web_dedicated_or_shared_worker_fetch_context.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
+#include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
+#include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
 
@@ -70,7 +72,7 @@ class BLINK_PLATFORM_EXPORT DedicatedOrSharedWorkerFetchContextImpl final
       std::unique_ptr<URLLoaderThrottleProvider> throttle_provider,
       std::unique_ptr<WebSocketHandshakeThrottleProvider>
           websocket_handshake_throttle_provider,
-      const WebVector<WebString>& cors_exempt_header_list,
+      Vector<String> cors_exempt_header_list,
       mojo::PendingRemote<mojom::ResourceLoadInfoNotifier>
           pending_resource_load_info_notifier);
 
@@ -112,8 +114,8 @@ class BLINK_PLATFORM_EXPORT DedicatedOrSharedWorkerFetchContextImpl final
   // WebWorkerFetchContext implementation:
   void SetTerminateSyncLoadEvent(base::WaitableEvent*) override;
   void InitializeOnWorkerThread(AcceptLanguagesWatcher*) override;
-  WebURLLoaderFactory* GetURLLoaderFactory() override;
-  std::unique_ptr<WebURLLoaderFactory> WrapURLLoaderFactory(
+  URLLoaderFactory* GetURLLoaderFactory() override;
+  std::unique_ptr<URLLoaderFactory> WrapURLLoaderFactory(
       CrossVariantMojoRemote<network::mojom::URLLoaderFactoryInterfaceBase>
           url_loader_factory) override;
   std::unique_ptr<WebCodeCacheLoader> CreateCodeCacheLoader(
@@ -131,8 +133,6 @@ class BLINK_PLATFORM_EXPORT DedicatedOrSharedWorkerFetchContextImpl final
       override;
   std::unique_ptr<WebSocketHandshakeThrottle> CreateWebSocketHandshakeThrottle(
       scoped_refptr<base::SingleThreadTaskRunner> task_runner) override;
-  CrossVariantMojoReceiver<mojom::WorkerTimingContainerInterfaceBase>
-  TakePendingWorkerTimingReceiver(int request_id) override;
   void SetIsOfflineMode(bool is_offline_mode) override;
   bool IsDedicatedWorkerOrSharedWorkerFetchContext() const override {
     return true;
@@ -156,21 +156,11 @@ class BLINK_PLATFORM_EXPORT DedicatedOrSharedWorkerFetchContextImpl final
 
   WebString GetAcceptLanguages() const override;
 
-  // Sets up |receiver| to receive resource performance timings for the given
-  // |request_id|. This receiver will be taken later by
-  // TakePendingWorkerTimingReceiver().
-  void AddPendingWorkerTimingReceiver(
-      int request_id,
-      mojo::PendingReceiver<mojom::WorkerTimingContainer> receiver);
-
   std::unique_ptr<ResourceLoadInfoNotifierWrapper>
   CreateResourceLoadInfoNotifierWrapper() override;
 
  private:
   class Factory;
-  using WorkerTimingContainerReceiverMap =
-      std::map<int /* request_id */,
-               mojo::PendingReceiver<mojom::WorkerTimingContainer>>;
 
   ~DedicatedOrSharedWorkerFetchContextImpl() override;
 
@@ -295,7 +285,7 @@ class BLINK_PLATFORM_EXPORT DedicatedOrSharedWorkerFetchContextImpl final
   // This is owned by ThreadedMessagingProxyBase on the main thread.
   base::WaitableEvent* terminate_sync_load_event_ = nullptr;
 
-  // The WebURLLoaderFactory which was created and passed to
+  // The URLLoaderFactory which was created and passed to
   // Blink by GetURLLoaderFactory().
   std::unique_ptr<Factory> web_loader_factory_;
 
@@ -303,7 +293,7 @@ class BLINK_PLATFORM_EXPORT DedicatedOrSharedWorkerFetchContextImpl final
   std::unique_ptr<WebSocketHandshakeThrottleProvider>
       websocket_handshake_throttle_provider_;
 
-  WebVector<WebString> cors_exempt_header_list_;
+  Vector<String> cors_exempt_header_list_;
 
   mojo::PendingRemote<mojom::ResourceLoadInfoNotifier>
       pending_resource_load_info_notifier_;
@@ -318,14 +308,6 @@ class BLINK_PLATFORM_EXPORT DedicatedOrSharedWorkerFetchContextImpl final
       weak_wrapper_resource_load_info_notifier_;
 
   AcceptLanguagesWatcher* accept_languages_watcher_ = nullptr;
-
-  // Contains pending receivers whose corresponding requests are still
-  // in-flight. The pending receivers are taken by
-  // TakePendingWorkerTimingReceiver() when the request is completed.
-  WorkerTimingContainerReceiverMap worker_timing_container_receivers_;
-
-  base::WeakPtrFactory<DedicatedOrSharedWorkerFetchContextImpl> weak_factory_{
-      this};
 };
 
 template <>

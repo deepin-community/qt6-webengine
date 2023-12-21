@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,17 +8,12 @@
 
 #include <memory>
 
-#include "ash/components/cryptohome/system_salt_getter.h"
-#include "ash/components/login/auth/fake_extended_authenticator.h"
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
-#include "ash/services/device_sync/public/cpp/fake_device_sync_client.h"
-#include "ash/services/multidevice_setup/public/cpp/fake_multidevice_setup_client.h"
-#include "ash/services/secure_channel/public/cpp/client/fake_secure_channel_client.h"
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/contains.h"
-#include "base/memory/ptr_util.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/no_destructor.h"
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
@@ -26,7 +21,7 @@
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/test/test_future.h"
 #include "chrome/browser/ash/login/easy_unlock/easy_unlock_service_factory.h"
 #include "chrome/browser/ash/login/easy_unlock/easy_unlock_service_regular.h"
 #include "chrome/browser/ash/login/quick_unlock/auth_token.h"
@@ -43,8 +38,14 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "chromeos/dbus/userdataauth/fake_cryptohome_misc_client.h"
-#include "chromeos/dbus/userdataauth/fake_userdataauth_client.h"
+#include "chromeos/ash/components/cryptohome/system_salt_getter.h"
+#include "chromeos/ash/components/dbus/userdataauth/fake_cryptohome_misc_client.h"
+#include "chromeos/ash/components/dbus/userdataauth/fake_userdataauth_client.h"
+#include "chromeos/ash/components/login/auth/fake_extended_authenticator.h"
+#include "chromeos/ash/components/login/auth/public/cryptohome_key_constants.h"
+#include "chromeos/ash/services/device_sync/public/cpp/fake_device_sync_client.h"
+#include "chromeos/ash/services/multidevice_setup/public/cpp/fake_multidevice_setup_client.h"
+#include "chromeos/ash/services/secure_channel/public/cpp/client/fake_secure_channel_client.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
@@ -121,19 +122,6 @@ std::unique_ptr<KeyedService> CreateEasyUnlockServiceForTest(
       fake_secure_channel_client.get(), fake_multidevice_setup_client.get());
 }
 
-ash::ExtendedAuthenticator* CreateFakeAuthenticator(
-    ash::AuthStatusConsumer* auth_status_consumer) {
-  const AccountId account_id =
-      AccountId::FromUserEmailGaiaId(kTestUserEmail, kTestUserGaiaId);
-  ash::UserContext expected_context(user_manager::USER_TYPE_REGULAR,
-                                    account_id);
-  expected_context.SetKey(ash::Key(kValidPassword));
-
-  auto* authenticator = new ash::FakeExtendedAuthenticator(auth_status_consumer,
-                                                           expected_context);
-  return authenticator;
-}
-
 void FailIfCalled(const QuickUnlockModeList& modes) {
   FAIL();
 }
@@ -170,25 +158,53 @@ class QuickUnlockPrivateUnitTest
 
  protected:
   void SetUp() override {
+    const auto param = GetParam();
+
+    std::vector<base::test::FeatureRef> enabled_features;
+    std::vector<base::test::FeatureRef> disabled_features;
+
     // Enable/disable PIN auto submit
-    auto param = GetParam();
-    feature_list_.InitWithFeatureState(ash::features::kQuickUnlockPinAutosubmit,
-                                       std::get<1>(param));
+    if (std::get<1>(param)) {
+      enabled_features.push_back(ash::features::kQuickUnlockPinAutosubmit);
+    } else {
+      disabled_features.push_back(ash::features::kQuickUnlockPinAutosubmit);
+    }
+
+    feature_list_.InitWithFeatures(enabled_features, disabled_features);
 
     ash::CryptohomeMiscClient::InitializeFake();
     ash::UserDataAuthClient::InitializeFake();
+    auto* fake_userdataauth_client_testapi =
+        ash::FakeUserDataAuthClient::TestApi::Get();
+    fake_userdataauth_client_testapi->set_enable_auth_check(true);
+
     if (std::get<0>(param) == TestType::kCryptohome) {
-      auto* fake_userdataauth_client_testapi =
-          chromeos::FakeUserDataAuthClient::TestApi::Get();
       fake_userdataauth_client_testapi->set_supports_low_entropy_credentials(
           true);
-      fake_userdataauth_client_testapi->set_enable_auth_check(true);
     }
+
+    const cryptohome::AccountIdentifier account_id =
+        cryptohome::CreateAccountIdentifierFromAccountId(
+            AccountId::FromUserEmailGaiaId(kTestUserEmail, kTestUserGaiaId));
+
+    ash::Key key{kValidPassword};
+    key.Transform(ash::Key::KEY_TYPE_SALTED_SHA256_TOP_HALF,
+                  ash::SystemSaltGetter::ConvertRawSaltToHexString(
+                      ash::FakeCryptohomeMiscClient::GetStubSystemSalt()));
+
+    cryptohome::Key cryptohome_key;
+    cryptohome_key.mutable_data()->set_label(ash::kCryptohomeGaiaKeyLabel);
+    cryptohome_key.set_secret(key.GetSecret());
+
+    fake_userdataauth_client_testapi->AddExistingUser(account_id);
+    fake_userdataauth_client_testapi->AddKey(account_id, cryptohome_key);
+
     ash::SystemSaltGetter::Initialize();
 
-    fake_user_manager_ = new ash::FakeChromeUserManager();
+    auto fake_user_manager = std::make_unique<ash::FakeChromeUserManager>();
+    fake_user_manager_ = fake_user_manager.get();
     scoped_user_manager_ = std::make_unique<user_manager::ScopedUserManager>(
-        base::WrapUnique(fake_user_manager_));
+        std::move(fake_user_manager));
 
     ExtensionApiUnittest::SetUp();
 
@@ -225,12 +241,30 @@ class QuickUnlockPrivateUnitTest
     fake_user_manager_->AddUser(test_account);
     fake_user_manager_->UserLoggedIn(test_account, kTestUserEmailHash, false,
                                      false);
+    fake_user_manager_->SimulateUserProfileLoad(test_account);
     ash::ProfileHelper::Get()->SetUserToProfileMappingForTesting(
         fake_user_manager_->GetPrimaryUser(), profile);
 
     // Generate an auth token.
     auth_token_user_context_.SetAccountId(test_account);
     auth_token_user_context_.SetUserIDHash(kTestUserEmailHash);
+    if (std::get<0>(GetParam()) == TestType::kCryptohome) {
+      auto* fake_userdataauth_client_testapi =
+          ash::FakeUserDataAuthClient::TestApi::Get();
+
+      const cryptohome::AccountIdentifier account_id =
+          cryptohome::CreateAccountIdentifierFromAccountId(
+              AccountId::FromUserEmailGaiaId(kTestUserEmail, kTestUserGaiaId));
+
+      auth_token_user_context_.SetAuthSessionId(
+          fake_userdataauth_client_testapi->AddSession(account_id,
+                                                       /*authenticated=*/true));
+      // Technically configuration should contain password as factor, but
+      // it is not checked anywhere.
+      auth_token_user_context_.SetAuthFactorsConfiguration(
+          ash::AuthFactorsConfiguration());
+    }
+
     token_ = ash::quick_unlock::QuickUnlockFactory::GetForProfile(profile)
                  ->CreateAuthToken(auth_token_user_context_);
     base::RunLoop().RunUntilIdle();
@@ -274,14 +308,12 @@ class QuickUnlockPrivateUnitTest
   // to succeed and returns the result.
   std::unique_ptr<quick_unlock_private::TokenInfo> GetAuthToken(
       const std::string& password) {
-    // Setup a fake authenticator to avoid calling cryptohome methods.
-    auto* func = new QuickUnlockPrivateGetAuthTokenFunction();
-    func->SetAuthenticatorAllocatorForTesting(
-        base::BindRepeating(&CreateFakeAuthenticator));
+    auto func = base::MakeRefCounted<QuickUnlockPrivateGetAuthTokenFunction>();
 
-    auto params = std::make_unique<base::ListValue>();
-    params->Append(base::Value(password));
-    std::unique_ptr<base::Value> result = RunFunction(func, std::move(params));
+    base::Value::List params;
+    params.Append(base::Value(password));
+    absl::optional<base::Value> result =
+        RunFunction(std::move(func), std::move(params));
     EXPECT_TRUE(result);
     auto token_info = quick_unlock_private::TokenInfo::FromValue(*result);
     EXPECT_TRUE(token_info);
@@ -291,47 +323,45 @@ class QuickUnlockPrivateUnitTest
   // Wrapper for chrome.quickUnlockPrivate.getAuthToken with an invalid
   // password. Expects the function to fail and returns the error.
   std::string RunAuthTokenWithInvalidPassword() {
-    // Setup a fake authenticator to avoid calling cryptohome methods.
-    auto* func = new QuickUnlockPrivateGetAuthTokenFunction();
-    func->SetAuthenticatorAllocatorForTesting(
-        base::BindRepeating(&CreateFakeAuthenticator));
+    auto func = base::MakeRefCounted<QuickUnlockPrivateGetAuthTokenFunction>();
 
-    auto params = std::make_unique<base::ListValue>();
-    params->Append(base::Value(kInvalidPassword));
-    return RunFunctionAndReturnError(func, std::move(params));
+    base::Value::List params;
+    params.Append(base::Value(kInvalidPassword));
+    return RunFunctionAndReturnError(std::move(func), std::move(params));
   }
 
   // Wrapper for chrome.quickUnlockPrivate.setLockScreenEnabled.
   void SetLockScreenEnabled(const std::string& token, bool enabled) {
-    auto params = std::make_unique<base::ListValue>();
-    params->Append(token);
-    params->Append(enabled);
-    RunFunction(new QuickUnlockPrivateSetLockScreenEnabledFunction(),
-                std::move(params));
+    base::Value::List params;
+    params.Append(token);
+    params.Append(enabled);
+    RunFunction(
+        base::MakeRefCounted<QuickUnlockPrivateSetLockScreenEnabledFunction>(),
+        std::move(params));
   }
 
   // Wrapper for chrome.quickUnlockPrivate.setLockScreenEnabled.
   std::string SetLockScreenEnabledWithInvalidToken(bool enabled) {
-    auto params = std::make_unique<base::ListValue>();
-    params->Append(kInvalidToken);
-    params->Append(enabled);
+    base::Value::List params;
+    params.Append(kInvalidToken);
+    params.Append(enabled);
     return RunFunctionAndReturnError(
-        new QuickUnlockPrivateSetLockScreenEnabledFunction(),
+        base::MakeRefCounted<QuickUnlockPrivateSetLockScreenEnabledFunction>(),
         std::move(params));
   }
 
   // Wrapper for chrome.quickUnlockPrivate.getAvailableModes.
   QuickUnlockModeList GetAvailableModes() {
     // Run the function.
-    std::unique_ptr<base::Value> result =
-        RunFunction(new QuickUnlockPrivateGetAvailableModesFunction(),
-                    std::make_unique<base::ListValue>());
+    absl::optional<base::Value> result = RunFunction(
+        base::MakeRefCounted<QuickUnlockPrivateGetAvailableModesFunction>(),
+        base::Value::List());
 
     // Extract the results.
     QuickUnlockModeList modes;
 
     EXPECT_TRUE(result->is_list());
-    for (const base::Value& value : result->GetListDeprecated()) {
+    for (const base::Value& value : result->GetList()) {
       EXPECT_TRUE(value.is_string());
       modes.push_back(
           quick_unlock_private::ParseQuickUnlockMode(value.GetString()));
@@ -342,14 +372,14 @@ class QuickUnlockPrivateUnitTest
 
   // Wrapper for chrome.quickUnlockPrivate.getActiveModes.
   QuickUnlockModeList GetActiveModes() {
-    std::unique_ptr<base::Value> result =
-        RunFunction(new QuickUnlockPrivateGetActiveModesFunction(),
-                    std::make_unique<base::ListValue>());
+    absl::optional<base::Value> result = RunFunction(
+        base::MakeRefCounted<QuickUnlockPrivateGetActiveModesFunction>(),
+        base::Value::List());
 
     QuickUnlockModeList modes;
 
     EXPECT_TRUE(result->is_list());
-    for (const base::Value& value : result->GetListDeprecated()) {
+    for (const base::Value& value : result->GetList()) {
       EXPECT_TRUE(value.is_string());
       modes.push_back(
           quick_unlock_private::ParseQuickUnlockMode(value.GetString()));
@@ -389,12 +419,13 @@ class QuickUnlockPrivateUnitTest
   }
 
   CredentialCheck CheckCredentialUsingPin(const std::string& pin) {
-    auto params = std::make_unique<base::ListValue>();
-    params->Append(ToString(QuickUnlockMode::QUICK_UNLOCK_MODE_PIN));
-    params->Append(pin);
+    base::Value::List params;
+    params.Append(ToString(QuickUnlockMode::QUICK_UNLOCK_MODE_PIN));
+    params.Append(pin);
 
-    std::unique_ptr<base::Value> result = RunFunction(
-        new QuickUnlockPrivateCheckCredentialFunction(), std::move(params));
+    absl::optional<base::Value> result = RunFunction(
+        base::MakeRefCounted<QuickUnlockPrivateCheckCredentialFunction>(),
+        std::move(params));
 
     CredentialCheck function_result;
     EXPECT_TRUE(CredentialCheck::Populate(*result, &function_result));
@@ -403,11 +434,12 @@ class QuickUnlockPrivateUnitTest
 
   void CheckGetCredentialRequirements(int expected_pin_min_length,
                                       int expected_pin_max_length) {
-    auto params = std::make_unique<base::ListValue>();
-    params->Append(ToString(QuickUnlockMode::QUICK_UNLOCK_MODE_PIN));
+    base::Value::List params;
+    params.Append(ToString(QuickUnlockMode::QUICK_UNLOCK_MODE_PIN));
 
-    std::unique_ptr<base::Value> result =
-        RunFunction(new QuickUnlockPrivateGetCredentialRequirementsFunction(),
+    absl::optional<base::Value> result =
+        RunFunction(base::MakeRefCounted<
+                        QuickUnlockPrivateGetCredentialRequirementsFunction>(),
                     std::move(params));
 
     CredentialRequirements function_result;
@@ -417,22 +449,21 @@ class QuickUnlockPrivateUnitTest
     EXPECT_EQ(function_result.max_length, expected_pin_max_length);
   }
 
-  std::unique_ptr<base::ListValue> GetSetModesParams(
-      const std::string& token,
-      const QuickUnlockModeList& modes,
-      const CredentialList& passwords) {
-    auto params = std::make_unique<base::ListValue>();
-    params->Append(token);
+  base::Value::List GetSetModesParams(const std::string& token,
+                                      const QuickUnlockModeList& modes,
+                                      const CredentialList& passwords) {
+    base::Value::List params;
+    params.Append(token);
 
     base::Value::List serialized_modes;
     for (QuickUnlockMode mode : modes)
       serialized_modes.Append(quick_unlock_private::ToString(mode));
-    params->Append(base::Value(std::move(serialized_modes)));
+    params.Append(base::Value(std::move(serialized_modes)));
 
     base::Value::List serialized_passwords;
     for (const std::string& password : passwords)
       serialized_passwords.Append(password);
-    params->Append(base::Value(std::move(serialized_passwords)));
+    params.Append(base::Value(std::move(serialized_passwords)));
 
     return params;
   }
@@ -441,15 +472,14 @@ class QuickUnlockPrivateUnitTest
   // function to succeed.
   void RunSetModes(const QuickUnlockModeList& modes,
                    const CredentialList& passwords) {
-    std::unique_ptr<base::ListValue> params =
-        GetSetModesParams(token_, modes, passwords);
-    auto* func = new QuickUnlockPrivateSetModesFunction();
+    base::Value::List params = GetSetModesParams(token_, modes, passwords);
+    auto func = base::MakeRefCounted<QuickUnlockPrivateSetModesFunction>();
 
     // Stub out event handling since we are not setting up an event router.
     func->SetModesChangedEventHandlerForTesting(modes_changed_handler_);
 
     // Run the function. Expect a non null result.
-    RunFunction(func, std::move(params));
+    RunFunction(std::move(func), std::move(params));
 
     // Verify that the mode change event handler was run if it was registered.
     // ExpectModesChanged will set expect_modes_changed_ to true and the event
@@ -461,22 +491,23 @@ class QuickUnlockPrivateUnitTest
   // Runs chrome.quickUnlockPrivate.setModes using an invalid token. Expects the
   // function to fail and returns the error.
   std::string RunSetModesWithInvalidToken() {
-    std::unique_ptr<base::ListValue> params = GetSetModesParams(
+    base::Value::List params = GetSetModesParams(
         kInvalidToken, {QuickUnlockMode::QUICK_UNLOCK_MODE_PIN}, {"111111"});
-    auto* func = new QuickUnlockPrivateSetModesFunction();
+    auto func = base::MakeRefCounted<QuickUnlockPrivateSetModesFunction>();
 
     // Stub out event handling since we are not setting up an event router.
     func->SetModesChangedEventHandlerForTesting(modes_changed_handler_);
 
     // Run function, expecting it to fail.
-    return RunFunctionAndReturnError(func, std::move(params));
+    return RunFunctionAndReturnError(std::move(func), std::move(params));
   }
 
   std::string SetModesWithError(const std::string& args) {
-    auto* func = new QuickUnlockPrivateSetModesFunction();
+    auto func = base::MakeRefCounted<QuickUnlockPrivateSetModesFunction>();
     func->SetModesChangedEventHandlerForTesting(base::DoNothing());
 
-    return api_test_utils::RunFunctionAndReturnError(func, args, profile());
+    return api_test_utils::RunFunctionAndReturnError(func.get(), args,
+                                                     profile());
   }
 
   std::string token() { return token_; }
@@ -486,18 +517,10 @@ class QuickUnlockPrivateUnitTest
     const AccountId account_id =
         AccountId::FromUserEmailGaiaId(kTestUserEmail, kTestUserGaiaId);
 
-    bool called = false;
-    bool is_set = false;
+    base::test::TestFuture<bool> is_pin_set_future;
     ash::quick_unlock::PinBackend::GetInstance()->IsSet(
-        account_id, base::BindOnce(
-                        [](bool* out_called, bool* out_is_set, bool is_set) {
-                          *out_called = true;
-                          *out_is_set = is_set;
-                        },
-                        &called, &is_set));
-    base::RunLoop().RunUntilIdle();
-    CHECK(called);
-    return is_set;
+        account_id, is_pin_set_future.GetCallback());
+    return is_pin_set_future.Get();
   }
 
   // Checks whether there is a user value set for the PIN auto submit
@@ -583,35 +606,27 @@ class QuickUnlockPrivateUnitTest
   bool TryAuthenticate(const std::string& password) {
     const AccountId account_id =
         AccountId::FromUserEmailGaiaId(kTestUserEmail, kTestUserGaiaId);
-    bool called = false;
-    bool success = false;
-    base::RunLoop loop;
+    auto user_context = std::make_unique<ash::UserContext>(
+        user_manager::USER_TYPE_REGULAR, account_id);
+    user_context->SetIsUsingPin(true);
+
+    base::test::TestFuture<std::unique_ptr<ash::UserContext>,
+                           absl::optional<ash::AuthenticationError>>
+        auth_future;
     ash::quick_unlock::PinBackend::GetInstance()->TryAuthenticate(
-        account_id, ash::Key(password), ash::quick_unlock::Purpose::kAny,
-        base::BindLambdaForTesting([&](bool auth_success) {
-          called = true;
-          success = auth_success;
-          loop.Quit();
-        }));
-    loop.Run();
-    return success;
+        std::move(user_context), ash::Key(password),
+        ash::quick_unlock::Purpose::kAny, auth_future.GetCallback());
+    return !auth_future.Get<absl::optional<ash::AuthenticationError>>()
+                .has_value();
   }
 
   bool SetPinAutosubmitEnabled(const std::string& pin, const bool enabled) {
     const AccountId account_id =
         AccountId::FromUserEmailGaiaId(kTestUserEmail, kTestUserGaiaId);
-    bool called = false;
-    bool success = false;
-    base::RunLoop loop;
+    base::test::TestFuture<bool> set_pin_future;
     ash::quick_unlock::PinBackend::GetInstance()->SetPinAutoSubmitEnabled(
-        account_id, pin, enabled,
-        base::BindLambdaForTesting([&](bool autosubmit_success) {
-          called = true;
-          success = autosubmit_success;
-          loop.Quit();
-        }));
-    loop.Run();
-    return success;
+        account_id, pin, enabled, set_pin_future.GetCallback());
+    return set_pin_future.Get();
   }
 
   bool IsAutosubmitFeatureEnabled() { return std::get<1>(GetParam()); }
@@ -627,13 +642,12 @@ class QuickUnlockPrivateUnitTest
 
  private:
   // Runs the given |func| with the given |params|.
-  std::unique_ptr<base::Value> RunFunction(
-      scoped_refptr<ExtensionFunction> func,
-      std::unique_ptr<base::ListValue> params) {
+  absl::optional<base::Value> RunFunction(scoped_refptr<ExtensionFunction> func,
+                                          base::Value::List params) {
     base::RunLoop().RunUntilIdle();
-    std::unique_ptr<base::Value> result =
+    absl::optional<base::Value> result =
         api_test_utils::RunFunctionWithDelegateAndReturnSingleResult(
-            func, std::move(params),
+            std::move(func), std::move(params),
             std::make_unique<ExtensionFunctionDispatcher>(profile()),
             api_test_utils::NONE);
     base::RunLoop().RunUntilIdle();
@@ -641,14 +655,13 @@ class QuickUnlockPrivateUnitTest
   }
 
   // Runs |func| with |params|. Expects and returns an error result.
-  std::string RunFunctionAndReturnError(
-      scoped_refptr<ExtensionFunction> func,
-      std::unique_ptr<base::ListValue> params) {
+  std::string RunFunctionAndReturnError(scoped_refptr<ExtensionFunction> func,
+                                        base::Value::List params) {
     base::RunLoop().RunUntilIdle();
     auto dispatcher = std::make_unique<ExtensionFunctionDispatcher>(profile());
     api_test_utils::RunFunction(func.get(), std::move(params),
                                 std::move(dispatcher), api_test_utils::NONE);
-    EXPECT_TRUE(func->GetResultList()->GetListDeprecated().empty());
+    EXPECT_TRUE(func->GetResultListForTest()->empty());
     base::RunLoop().RunUntilIdle();
     return func->GetError();
   }
@@ -681,7 +694,7 @@ TEST_P(QuickUnlockPrivateUnitTest, GetAuthTokenValid) {
   EXPECT_EQ(token_info->token,
             quick_unlock_storage->GetAuthToken()->Identifier());
   EXPECT_EQ(token_info->lifetime_seconds,
-            ash::quick_unlock::AuthToken::kTokenExpirationSeconds);
+            ash::quick_unlock::AuthToken::kTokenExpiration.InSeconds());
 }
 
 // Verifies that GetAuthTokenValid fails when an invalid password is provided.

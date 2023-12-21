@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,10 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "components/account_id/account_id.h"
@@ -74,7 +74,8 @@ std::unique_ptr<UserCloudPolicyManager> UserCloudPolicyManager::Create(
   auto policy_manager = std::make_unique<UserCloudPolicyManager>(
       std::move(store), component_policy_cache_dir,
       std::unique_ptr<CloudExternalDataManager>(),
-      base::ThreadTaskRunnerHandle::Get(), network_connection_tracker_getter);
+      base::SingleThreadTaskRunner::GetCurrentDefault(),
+      network_connection_tracker_getter);
   policy_manager->Init(schema_registry);
   return policy_manager;
 }
@@ -92,6 +93,10 @@ void UserCloudPolicyManager::SetSigninAccountId(const AccountId& account_id) {
 void UserCloudPolicyManager::SetPoliciesRequired(bool required) {
   policies_required_ = required;
   RefreshPolicies();
+}
+
+bool UserCloudPolicyManager::ArePoliciesRequired() const {
+  return policies_required_;
 }
 
 void UserCloudPolicyManager::Connect(

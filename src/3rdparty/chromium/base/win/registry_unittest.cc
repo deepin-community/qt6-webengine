@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,17 +10,25 @@
 
 #include <cstring>
 #include <iterator>
+#include <utility>
 
-#include "base/bind.h"
 #include "base/compiler_specific.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/location.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
+#include "base/test/bind.h"
+#include "base/test/mock_callback.h"
 #include "base/test/task_environment.h"
+#include "base/test/test_mock_time_task_runner.h"
 #include "base/test/test_reg_util_win.h"
+#include "base/threading/simple_thread.h"
 #include "base/win/windows_version.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace base {
-namespace win {
+namespace base::win {
 
 namespace {
 
@@ -317,6 +325,70 @@ TEST_F(RegistryTest, ChangeCallback) {
   EXPECT_FALSE(delegate.WasCalled());
 }
 
+namespace {
+
+// A thread that runs tasks from a TestMockTimeTaskRunner.
+class RegistryWatcherThread : public SimpleThread {
+ public:
+  explicit RegistryWatcherThread(
+      scoped_refptr<base::TestMockTimeTaskRunner> task_runner)
+      : SimpleThread("RegistryWatcherThread"),
+        task_runner_(std::move(task_runner)) {}
+
+ private:
+  void Run() override {
+    task_runner_->DetachFromThread();
+    task_runner_->RunUntilIdle();
+  }
+  const scoped_refptr<base::TestMockTimeTaskRunner> task_runner_;
+};
+
+}  // namespace
+
+TEST_F(RegistryTest, WatcherNotSignaledOnInitiatingThreadExit) {
+  RegKey key;
+
+  ASSERT_EQ(key.Open(HKEY_CURRENT_USER, root_key().c_str(), KEY_READ),
+            ERROR_SUCCESS);
+
+  auto test_task_runner = base::MakeRefCounted<base::TestMockTimeTaskRunner>(
+      base::TestMockTimeTaskRunner::Type::kBoundToThread);
+  ::testing::StrictMock<base::MockCallback<base::win::RegKey::ChangeCallback>>
+      change_cb;
+
+  test_task_runner->PostTask(FROM_HERE,
+                             BindOnce(IgnoreResult(&RegKey::StartWatching),
+                                      Unretained(&key), change_cb.Get()));
+
+  {
+    // Start the watch on a thread that then goes away.
+    RegistryWatcherThread watcher_thread(test_task_runner);
+    watcher_thread.Start();
+    watcher_thread.Join();
+  }
+
+  // Termination of the thread should not cause a notification to get sent.
+  ASSERT_TRUE(::testing::Mock::VerifyAndClearExpectations(&change_cb));
+  test_task_runner->DetachFromThread();
+  ASSERT_FALSE(test_task_runner->HasPendingTask());
+
+  // Expect that a notification is sent when a change is made. Exit the run loop
+  // when this happens.
+  base::RunLoop run_loop;
+  EXPECT_CALL(change_cb, Run).WillOnce([&run_loop]() { run_loop.Quit(); });
+
+  // Make some change.
+  RegKey key2;
+  ASSERT_EQ(key2.Open(HKEY_CURRENT_USER, root_key().c_str(),
+                      KEY_READ | KEY_SET_VALUE),
+            ERROR_SUCCESS);
+  ASSERT_TRUE(key2.Valid());
+  ASSERT_EQ(key2.WriteValue(L"name", L"data"), ERROR_SUCCESS);
+
+  // Wait for the watcher to be signaled.
+  run_loop.Run();
+}
+
 TEST_F(RegistryTest, TestMoveConstruct) {
   RegKey key;
 
@@ -354,6 +426,18 @@ TEST_F(RegistryTest, TestMoveAssign) {
   DWORD foo = 0;
   ASSERT_EQ(key2.ReadValueDW(kFooValueName, &foo), ERROR_SUCCESS);
   EXPECT_EQ(foo, 1U);
+}
+
+// Verify that either the platform, or the API-integration, causes deletion
+// attempts via an invalid handle to fail with the expected error code.
+TEST_F(RegistryTest, DeleteWithInvalidRegKey) {
+  RegKey key;
+
+  static const wchar_t kFooName[] = L"foo";
+
+  EXPECT_EQ(key.DeleteKey(kFooName), ERROR_INVALID_HANDLE);
+  EXPECT_EQ(key.DeleteEmptyKey(kFooName), ERROR_INVALID_HANDLE);
+  EXPECT_EQ(key.DeleteValue(kFooName), ERROR_INVALID_HANDLE);
 }
 
 // A test harness for tests that use HKLM to test WoW redirection and such.
@@ -461,5 +545,4 @@ TEST_F(RegistryTestHKLM, DISABLED_Wow64NativeFromRedirected) {
 
 }  // namespace
 
-}  // namespace win
-}  // namespace base
+}  // namespace base::win

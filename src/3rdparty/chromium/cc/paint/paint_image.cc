@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,7 @@
 #include "base/atomic_sequence_num.h"
 #include "base/hash/hash.h"
 #include "base/logging.h"
+#include "base/types/optional_util.h"
 #include "cc/paint/paint_image_builder.h"
 #include "cc/paint/paint_image_generator.h"
 #include "cc/paint/paint_record.h"
@@ -48,30 +49,21 @@ PaintImage::~PaintImage() = default;
 PaintImage& PaintImage::operator=(const PaintImage& other) = default;
 PaintImage& PaintImage::operator=(PaintImage&& other) = default;
 
-bool PaintImage::operator==(const PaintImage& other) const {
-  if (sk_image_ != other.sk_image_)
-    return false;
-  if (paint_record_ != other.paint_record_)
-    return false;
-  if (paint_record_rect_ != other.paint_record_rect_)
-    return false;
-  if (content_id_ != other.content_id_)
-    return false;
-  if (paint_image_generator_ != other.paint_image_generator_)
-    return false;
-  if (id_ != other.id_)
-    return false;
-  if (animation_type_ != other.animation_type_)
-    return false;
-  if (completion_state_ != other.completion_state_)
-    return false;
-  if (is_multipart_ != other.is_multipart_)
-    return false;
-  if (texture_backing_ != other.texture_backing_)
-    return false;
-  if (paint_worklet_input_ != other.paint_worklet_input_)
-    return false;
-  return true;
+bool PaintImage::IsSameForTesting(const PaintImage& other) const {
+  return sk_image_ == other.sk_image_ &&
+         !!paint_record_ == !!other.paint_record_ &&
+         (!paint_record_ ||
+          &paint_record_->GetFirstOp() == &other.paint_record_->GetFirstOp()) &&
+         paint_record_rect_ == other.paint_record_rect_ &&
+         content_id_ == other.content_id_ &&
+         paint_image_generator_ == other.paint_image_generator_ &&
+         id_ == other.id_ && animation_type_ == other.animation_type_ &&
+         completion_state_ == other.completion_state_ &&
+         is_multipart_ == other.is_multipart_ &&
+         texture_backing_ == other.texture_backing_ &&
+         paint_worklet_input_ == other.paint_worklet_input_;
+  // Do not check may_be_lcp_candidate_ as it should not affect any rendering
+  // operation, only metrics collection.
 }
 
 // static
@@ -158,8 +150,8 @@ SkImageInfo PaintImage::GetSkImageInfo() const {
     return cached_sk_image_->imageInfo();
   } else if (paint_worklet_input_) {
     auto size = paint_worklet_input_->GetSize();
-    return SkImageInfo::MakeUnknown(static_cast<int>(size.width()),
-                                    static_cast<int>(size.height()));
+    return SkImageInfo::MakeUnknown(base::ClampCeil(size.width()),
+                                    base::ClampCeil(size.height()));
   } else {
     return SkImageInfo::MakeUnknown();
   }
@@ -183,7 +175,7 @@ void PaintImage::CreateSkImage() {
     cached_sk_image_ = sk_image_;
   } else if (paint_record_) {
     cached_sk_image_ = SkImage::MakeFromPicture(
-        ToSkPicture(paint_record_, gfx::RectToSkRect(paint_record_rect_)),
+        paint_record_->ToSkPicture(gfx::RectToSkRect(paint_record_rect_)),
         SkISize::Make(paint_record_rect_.width(), paint_record_rect_.height()),
         nullptr, nullptr, SkImage::BitDepth::kU8, SkColorSpace::MakeSRGB());
   } else if (paint_image_generator_) {
@@ -203,24 +195,16 @@ SkISize PaintImage::GetSupportedDecodeSize(
   return SkISize::Make(width(), height());
 }
 
-bool PaintImage::Decode(void* memory,
-                        SkImageInfo* info,
-                        sk_sp<SkColorSpace> color_space,
+bool PaintImage::Decode(SkPixmap pixmap,
                         size_t frame_index,
                         GeneratorClientId client_id) const {
-  // We don't support SkImageInfo's with color spaces on them. Color spaces
-  // should always be passed via the |color_space| arg.
-  DCHECK(!info->colorSpace());
-
   // We only support decode to supported decode size.
-  DCHECK(info->dimensions() == GetSupportedDecodeSize(info->dimensions()));
+  DCHECK(pixmap.dimensions() == GetSupportedDecodeSize(pixmap.dimensions()));
 
   if (paint_image_generator_) {
-    return DecodeFromGenerator(memory, info, std::move(color_space),
-                               frame_index, client_id);
+    return DecodeFromGenerator(pixmap, frame_index, client_id);
   }
-  return DecodeFromSkImage(memory, info, std::move(color_space), frame_index,
-                           client_id);
+  return DecodeFromSkImage(pixmap, frame_index, client_id);
 }
 
 bool PaintImage::DecodeYuv(const SkYUVAPixmaps& pixmaps,
@@ -230,29 +214,22 @@ bool PaintImage::DecodeYuv(const SkYUVAPixmaps& pixmaps,
   DCHECK(paint_image_generator_);
   const uint32_t lazy_pixel_ref = stable_id();
   return paint_image_generator_->GetYUVAPlanes(pixmaps, frame_index,
-                                               lazy_pixel_ref);
+                                               lazy_pixel_ref, client_id);
 }
 
-bool PaintImage::DecodeFromGenerator(void* memory,
-                                     SkImageInfo* info,
-                                     sk_sp<SkColorSpace> color_space,
+bool PaintImage::DecodeFromGenerator(SkPixmap pixmap,
                                      size_t frame_index,
                                      GeneratorClientId client_id) const {
   DCHECK(paint_image_generator_);
-  // First convert the info to have the requested color space, since the decoder
-  // will convert this for us.
-  *info = info->makeColorSpace(std::move(color_space));
   const uint32_t lazy_pixel_ref = stable_id();
-  return paint_image_generator_->GetPixels(*info, memory, info->minRowBytes(),
-                                           frame_index, client_id,
+  return paint_image_generator_->GetPixels(pixmap, frame_index, client_id,
                                            lazy_pixel_ref);
 }
 
-bool PaintImage::DecodeFromSkImage(void* memory,
-                                   SkImageInfo* info,
-                                   sk_sp<SkColorSpace> color_space,
+bool PaintImage::DecodeFromSkImage(SkPixmap pixmap,
                                    size_t frame_index,
                                    GeneratorClientId client_id) const {
+  sk_sp<SkColorSpace> color_space = pixmap.refColorSpace();
   auto image = GetSkImageForFrame(frame_index, client_id);
   DCHECK(image);
   if (color_space) {
@@ -260,12 +237,7 @@ bool PaintImage::DecodeFromSkImage(void* memory,
     if (!image)
       return false;
   }
-  // Note that the readPixels has to happen before converting the info to the
-  // given color space, since it can produce incorrect results.
-  bool result = image->readPixels(*info, memory, info->minRowBytes(), 0, 0,
-                                  SkImage::kDisallow_CachingHint);
-  *info = info->makeColorSpace(std::move(color_space));
-  return result;
+  return image->readPixels(pixmap, 0, 0, SkImage::kDisallow_CachingHint);
 }
 
 bool PaintImage::ShouldAnimate() const {
@@ -390,13 +362,15 @@ sk_sp<SkImage> PaintImage::GetSkImageForFrame(
 
 std::string PaintImage::ToString() const {
   std::ostringstream str;
-  str << "sk_image_: " << sk_image_ << " paint_record_: " << paint_record_
+  str << "sk_image_: " << sk_image_
+      << " paint_record_: " << base::OptionalToPtr(paint_record_)
       << " paint_record_rect_: " << paint_record_rect_.ToString()
       << " paint_image_generator_: " << paint_image_generator_
       << " id_: " << id_
       << " animation_type_: " << static_cast<int>(animation_type_)
       << " completion_state_: " << static_cast<int>(completion_state_)
       << " is_multipart_: " << is_multipart_
+      << " may_be_lcp_candidate_: " << may_be_lcp_candidate_
       << " is YUV: " << IsYuv(SkYUVAPixmapInfo::SupportedDataTypes::All());
   return str.str();
 }

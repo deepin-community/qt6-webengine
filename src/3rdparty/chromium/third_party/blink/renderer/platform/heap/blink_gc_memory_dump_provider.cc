@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,7 @@
 
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/memory_allocator_dump.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "third_party/blink/renderer/platform/heap/thread_state.h"
@@ -205,7 +206,8 @@ bool BlinkGCMemoryDumpProvider::OnMemoryDump(
       dump_base_name_ + "/allocated_objects");
   for (size_t i = 0; i < global_object_stats.size(); i++) {
     auto* details = process_memory_dump->CreateAllocatorDump(
-        "blink_objects/blink_gc/" + GetUniqueName(stats.type_names[i], i));
+        "blink_objects/" + dump_base_name_ + "/" +
+        GetUniqueName(stats.type_names[i], i));
     details->AddScalar("allocated_objects_size",
                        base::trace_event::MemoryAllocatorDump::kUnitsBytes,
                        global_object_stats[i].allocated_bytes);

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,6 +14,7 @@
 #include "base/containers/contains.h"
 #include "base/guid.h"
 #include "base/json/json_string_value_serializer.h"
+#include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -45,9 +46,11 @@ const char BookmarkCodec::kURLKey[] = "url";
 const char BookmarkCodec::kDateModifiedKey[] = "date_modified";
 const char BookmarkCodec::kChildrenKey[] = "children";
 const char BookmarkCodec::kMetaInfo[] = "meta_info";
+const char BookmarkCodec::kUnsyncedMetaInfo[] = "unsynced_meta_info";
 const char BookmarkCodec::kTypeURL[] = "url";
 const char BookmarkCodec::kTypeFolder[] = "folder";
 const char BookmarkCodec::kSyncMetadata[] = "sync_metadata";
+const char BookmarkCodec::kDateLastUsed[] = "date_last_used";
 
 // Current version of the file.
 static const int kCurrentVersion = 1;
@@ -72,51 +75,56 @@ BookmarkCodec::BookmarkCodec()
 
 BookmarkCodec::~BookmarkCodec() = default;
 
-base::Value BookmarkCodec::Encode(BookmarkModel* model,
-                                  std::string sync_metadata_str) {
+base::Value::Dict BookmarkCodec::Encode(BookmarkModel* model,
+                                        std::string sync_metadata_str) {
   return Encode(model->bookmark_bar_node(), model->other_node(),
                 model->mobile_node(), model->root_node()->GetMetaInfoMap(),
+                model->root_node()->GetUnsyncedMetaInfoMap(),
                 std::move(sync_metadata_str));
 }
 
-base::Value BookmarkCodec::Encode(
+base::Value::Dict BookmarkCodec::Encode(
     const BookmarkNode* bookmark_bar_node,
     const BookmarkNode* other_folder_node,
     const BookmarkNode* mobile_folder_node,
     const BookmarkNode::MetaInfoMap* model_meta_info_map,
+    const BookmarkNode::MetaInfoMap* model_unsynced_meta_info_map,
     std::string sync_metadata_str) {
   ids_reassigned_ = false;
   guids_reassigned_ = false;
 
-  base::Value main(base::Value::Type::DICTIONARY);
-  main.SetIntKey(kVersionKey, kCurrentVersion);
+  base::Value::Dict main;
+  main.Set(kVersionKey, kCurrentVersion);
 
   // Encode Sync metadata before encoding other fields to reduce peak memory
   // usage.
   if (!sync_metadata_str.empty()) {
-    main.SetKey(kSyncMetadata,
-                EncodeSyncMetadata(std::move(sync_metadata_str)));
+    main.Set(kSyncMetadata, EncodeSyncMetadata(std::move(sync_metadata_str)));
     sync_metadata_str.clear();
   }
 
   InitializeChecksum();
-  base::Value roots(base::Value::Type::DICTIONARY);
-  roots.SetKey(kBookmarkBarFolderNameKey, EncodeNode(bookmark_bar_node));
-  roots.SetKey(kOtherBookmarkFolderNameKey, EncodeNode(other_folder_node));
-  roots.SetKey(kMobileBookmarkFolderNameKey, EncodeNode(mobile_folder_node));
+  base::Value::Dict roots;
+  roots.Set(kBookmarkBarFolderNameKey, EncodeNode(bookmark_bar_node));
+  roots.Set(kOtherBookmarkFolderNameKey, EncodeNode(other_folder_node));
+  roots.Set(kMobileBookmarkFolderNameKey, EncodeNode(mobile_folder_node));
   if (model_meta_info_map)
-    roots.SetKey(kMetaInfo, EncodeMetaInfo(*model_meta_info_map));
+    roots.Set(kMetaInfo, EncodeMetaInfo(*model_meta_info_map));
+  if (model_unsynced_meta_info_map) {
+    roots.Set(kUnsyncedMetaInfo, EncodeMetaInfo(*model_unsynced_meta_info_map));
+  }
+
   FinalizeChecksum();
   // We are going to store the computed checksum. So set stored checksum to be
   // the same as computed checksum.
   stored_checksum_ = computed_checksum_;
-  main.SetStringKey(kChecksumKey, computed_checksum_);
+  main.Set(kChecksumKey, computed_checksum_);
 
-  main.SetKey(kRootsKey, std::move(roots));
+  main.Set(kRootsKey, std::move(roots));
   return main;
 }
 
-bool BookmarkCodec::Decode(const base::Value& value,
+bool BookmarkCodec::Decode(const base::Value::Dict& value,
                            BookmarkNode* bb_node,
                            BookmarkNode* other_folder_node,
                            BookmarkNode* mobile_folder_node,
@@ -145,61 +153,64 @@ bool BookmarkCodec::Decode(const base::Value& value,
   return success;
 }
 
-base::Value BookmarkCodec::EncodeNode(const BookmarkNode* node) {
-  base::Value value(base::Value::Type::DICTIONARY);
+base::Value::Dict BookmarkCodec::EncodeNode(const BookmarkNode* node) {
+  base::Value::Dict value;
   std::string id = base::NumberToString(node->id());
-  value.SetStringKey(kIdKey, id);
+  value.Set(kIdKey, id);
   const std::u16string& title = node->GetTitle();
-  value.SetStringKey(kNameKey, title);
+  value.Set(kNameKey, title);
   const std::string& guid = node->guid().AsLowercaseString();
-  value.SetStringKey(kGuidKey, guid);
+  value.Set(kGuidKey, guid);
   // TODO(crbug.com/634507): Avoid ToInternalValue().
-  value.SetStringKey(kDateAddedKey, base::NumberToString(
-                                        node->date_added().ToInternalValue()));
+  value.Set(kDateAddedKey,
+            base::NumberToString(node->date_added().ToInternalValue()));
+  value.Set(kDateLastUsed,
+            base::NumberToString(node->date_last_used().ToInternalValue()));
   if (node->is_url()) {
-    value.SetStringKey(kTypeKey, kTypeURL);
+    value.Set(kTypeKey, kTypeURL);
     std::string url = node->url().possibly_invalid_spec();
-    value.SetStringKey(kURLKey, url);
+    value.Set(kURLKey, url);
     UpdateChecksumWithUrlNode(id, title, url);
   } else {
-    value.SetStringKey(kTypeKey, kTypeFolder);
-    value.SetStringKey(
+    value.Set(kTypeKey, kTypeFolder);
+    value.Set(
         kDateModifiedKey,
         base::NumberToString(node->date_folder_modified().ToInternalValue()));
     UpdateChecksumWithFolderNode(id, title);
 
-    base::Value child_values(base::Value::Type::LIST);
+    base::Value::List child_values;
     for (const auto& child : node->children())
       child_values.Append(EncodeNode(child.get()));
-    value.SetKey(kChildrenKey, std::move(child_values));
+    value.Set(kChildrenKey, base::Value(std::move(child_values)));
   }
   const BookmarkNode::MetaInfoMap* meta_info_map = node->GetMetaInfoMap();
   if (meta_info_map)
-    value.SetKey(kMetaInfo, EncodeMetaInfo(*meta_info_map));
+    value.Set(kMetaInfo, EncodeMetaInfo(*meta_info_map));
+  const BookmarkNode::MetaInfoMap* unsynced_meta_info_map =
+      node->GetUnsyncedMetaInfoMap();
+  if (unsynced_meta_info_map)
+    value.Set(kUnsyncedMetaInfo, EncodeMetaInfo(*unsynced_meta_info_map));
   return value;
 }
 
-base::Value BookmarkCodec::EncodeMetaInfo(
+base::Value::Dict BookmarkCodec::EncodeMetaInfo(
     const BookmarkNode::MetaInfoMap& meta_info_map) {
-  base::Value meta_info(base::Value::Type::DICTIONARY);
+  base::Value::Dict meta_info;
   for (const auto& item : meta_info_map)
-    meta_info.SetKey(item.first, base::Value(item.second));
+    meta_info.Set(item.first, base::Value(item.second));
   return meta_info;
 }
 
 bool BookmarkCodec::DecodeHelper(BookmarkNode* bb_node,
                                  BookmarkNode* other_folder_node,
                                  BookmarkNode* mobile_folder_node,
-                                 const base::Value& value,
+                                 const base::Value::Dict& value,
                                  std::string* sync_metadata_str) {
-  if (!value.is_dict())
-    return false;  // Unexpected type.
-
-  absl::optional<int> version = value.FindIntKey(kVersionKey);
+  absl::optional<int> version = value.FindInt(kVersionKey);
   if (!version || *version != kCurrentVersion)
     return false;  // Unknown version.
 
-  const base::Value* checksum_value = value.FindKey(kChecksumKey);
+  const base::Value* checksum_value = value.Find(kChecksumKey);
   if (checksum_value) {
     const std::string* checksum = checksum_value->GetIfString();
     if (checksum)
@@ -208,14 +219,15 @@ bool BookmarkCodec::DecodeHelper(BookmarkNode* bb_node,
       return false;
   }
 
-  const base::Value* roots = value.FindDictKey(kRootsKey);
+  const base::Value::Dict* roots = value.FindDict(kRootsKey);
   if (!roots)
     return false;  // No roots, or invalid type for roots.
-  const base::Value* bb_value = roots->FindDictKey(kBookmarkBarFolderNameKey);
-  const base::Value* other_folder_value =
-      roots->FindDictKey(kOtherBookmarkFolderNameKey);
-  const base::Value* mobile_folder_value =
-      roots->FindDictKey(kMobileBookmarkFolderNameKey);
+  const base::Value::Dict* bb_value =
+      roots->FindDict(kBookmarkBarFolderNameKey);
+  const base::Value::Dict* other_folder_value =
+      roots->FindDict(kOtherBookmarkFolderNameKey);
+  const base::Value::Dict* mobile_folder_value =
+      roots->FindDict(kMobileBookmarkFolderNameKey);
 
   if (!bb_value || !other_folder_value || !mobile_folder_value)
     return false;
@@ -226,10 +238,12 @@ bool BookmarkCodec::DecodeHelper(BookmarkNode* bb_node,
 
   if (!DecodeMetaInfo(*roots, &model_meta_info_map_))
     return false;
+  if (!DecodeUnsyncedMetaInfo(*roots, &model_unsynced_meta_info_map_))
+    return false;
 
   if (sync_metadata_str) {
     const std::string* sync_metadata_str_base64 =
-        value.FindStringKey(kSyncMetadata);
+        value.FindString(kSyncMetadata);
     if (sync_metadata_str_base64)
       base::Base64Decode(*sync_metadata_str_base64, sync_metadata_str);
   }
@@ -245,21 +259,19 @@ bool BookmarkCodec::DecodeHelper(BookmarkNode* bb_node,
   return true;
 }
 
-bool BookmarkCodec::DecodeChildren(const base::Value& child_value_list,
+bool BookmarkCodec::DecodeChildren(const base::Value::List& child_value_list,
                                    BookmarkNode* parent) {
-  DCHECK(child_value_list.is_list());
-  for (const base::Value& child_value : child_value_list.GetListDeprecated()) {
+  for (const base::Value& child_value : child_value_list) {
     if (!child_value.is_dict())
       return false;
-    DecodeNode(child_value, parent, nullptr);
+    DecodeNode(child_value.GetDict(), parent, nullptr);
   }
   return true;
 }
 
-bool BookmarkCodec::DecodeNode(const base::Value& value,
+bool BookmarkCodec::DecodeNode(const base::Value::Dict& value,
                                BookmarkNode* parent,
                                BookmarkNode* node) {
-  DCHECK(value.is_dict());
   // If no |node| is specified, we'll create one and add it to the |parent|.
   // Therefore, in that case, |parent| must be non-NULL.
   if (!node && !parent) {
@@ -276,7 +288,7 @@ bool BookmarkCodec::DecodeNode(const base::Value& value,
   std::string id_string;
   int64_t id = 0;
   if (ids_valid_) {
-    const std::string* string = value.FindStringKey(kIdKey);
+    const std::string* string = value.FindString(kIdKey);
     if (!string || !base::StringToInt64(*string, &id) || ids_.count(id) != 0) {
       ids_valid_ = false;
     } else {
@@ -288,7 +300,7 @@ bool BookmarkCodec::DecodeNode(const base::Value& value,
   maximum_id_ = std::max(maximum_id_, id);
 
   std::u16string title;
-  const std::string* string_value = value.FindStringKey(kNameKey);
+  const std::string* string_value = value.FindString(kNameKey);
   if (string_value)
     title = base::UTF8ToUTF16(*string_value);
 
@@ -300,7 +312,7 @@ bool BookmarkCodec::DecodeNode(const base::Value& value,
     // GUIDs can be empty for bookmarks that were created before GUIDs were
     // required. When encountering one such bookmark we thus assign to it a new
     // GUID. The same applies if the stored GUID is invalid or a duplicate.
-    const std::string* guid_str = value.FindStringKey(kGuidKey);
+    const std::string* guid_str = value.FindString(kGuidKey);
     if (guid_str && !guid_str->empty()) {
       guid = base::GUID::ParseCaseInsensitive(*guid_str);
     }
@@ -326,7 +338,7 @@ bool BookmarkCodec::DecodeNode(const base::Value& value,
   }
 
   std::string date_added_string;
-  string_value = value.FindStringKey(kDateAddedKey);
+  string_value = value.FindString(kDateAddedKey);
   if (string_value)
     date_added_string = *string_value;
   else
@@ -334,7 +346,16 @@ bool BookmarkCodec::DecodeNode(const base::Value& value,
   int64_t date_added_time;
   base::StringToInt64(date_added_string, &date_added_time);
 
-  const std::string* type_string = value.FindStringKey(kTypeKey);
+  std::string date_last_used_string;
+  string_value = value.FindString(kDateLastUsed);
+  if (string_value)
+    date_last_used_string = *string_value;
+  else
+    date_last_used_string = base::NumberToString(0);
+  int64_t date_last_used;
+  base::StringToInt64(date_last_used_string, &date_last_used);
+
+  const std::string* type_string = value.FindString(kTypeKey);
   if (!type_string)
     return false;
 
@@ -342,7 +363,7 @@ bool BookmarkCodec::DecodeNode(const base::Value& value,
     return false;  // Unknown type.
 
   if (*type_string == kTypeURL) {
-    const std::string* url_string = value.FindStringKey(kURLKey);
+    const std::string* url_string = value.FindString(kURLKey);
     if (!url_string)
       return false;
 
@@ -359,13 +380,13 @@ bool BookmarkCodec::DecodeNode(const base::Value& value,
     UpdateChecksumWithUrlNode(id_string, title, *url_string);
   } else {
     std::string last_modified_date;
-    string_value = value.FindStringKey(kDateModifiedKey);
+    string_value = value.FindString(kDateModifiedKey);
     if (string_value)
       last_modified_date = *string_value;
     else
       last_modified_date = base::NumberToString(Time::Now().ToInternalValue());
 
-    const base::Value* child_values = value.FindListKey(kChildrenKey);
+    const base::Value::List* child_values = value.FindList(kChildrenKey);
     if (!child_values)
       return false;
 
@@ -392,22 +413,27 @@ bool BookmarkCodec::DecodeNode(const base::Value& value,
 
   node->SetTitle(title);
   node->set_date_added(Time::FromInternalValue(date_added_time));
+  node->set_date_last_used(Time::FromInternalValue(date_last_used));
 
   BookmarkNode::MetaInfoMap meta_info_map;
   if (!DecodeMetaInfo(value, &meta_info_map))
     return false;
   node->SetMetaInfoMap(meta_info_map);
 
+  BookmarkNode::MetaInfoMap unsynced_meta_info_map;
+  if (!DecodeUnsyncedMetaInfo(value, &unsynced_meta_info_map))
+    return false;
+  node->SetUnsyncedMetaInfoMap(unsynced_meta_info_map);
+
   return true;
 }
 
-bool BookmarkCodec::DecodeMetaInfo(const base::Value& value,
+bool BookmarkCodec::DecodeMetaInfo(const base::Value::Dict& value,
                                    BookmarkNode::MetaInfoMap* meta_info_map) {
-  DCHECK(value.is_dict());
   DCHECK(meta_info_map);
   meta_info_map->clear();
 
-  const base::Value* meta_info = value.FindKey(kMetaInfo);
+  const base::Value* meta_info = value.Find(kMetaInfo);
   if (!meta_info)
     return true;
 
@@ -428,24 +454,42 @@ bool BookmarkCodec::DecodeMetaInfo(const base::Value& value,
   // dictionary of meta info values.
   if (!meta_info->is_dict())
     return false;
-  DecodeMetaInfoHelper(*meta_info, std::string(), meta_info_map);
+  DecodeMetaInfoHelper(meta_info->GetDict(), std::string(), meta_info_map);
+
+  return true;
+}
+
+bool BookmarkCodec::DecodeUnsyncedMetaInfo(
+    const base::Value::Dict& value,
+    BookmarkNode::MetaInfoMap* meta_info_map) {
+  DCHECK(meta_info_map);
+  meta_info_map->clear();
+
+  const base::Value* meta_info = value.Find(kUnsyncedMetaInfo);
+  if (!meta_info)
+    return true;
+  if (!meta_info->is_dict())
+    return false;
+
+  DecodeMetaInfoHelper(meta_info->GetDict(), std::string(), meta_info_map);
 
   return true;
 }
 
 void BookmarkCodec::DecodeMetaInfoHelper(
-    const base::Value& dict,
+    const base::Value::Dict& dict,
     const std::string& prefix,
     BookmarkNode::MetaInfoMap* meta_info_map) {
-  DCHECK(dict.is_dict());
-  for (const auto it : dict.DictItems()) {
+  for (const auto it : dict) {
     // Deprecated keys should be excluded after removing enhanced bookmarks
     // feature crrev.com/1638413003.
-    if (base::StartsWith(it.first, "stars.", base::CompareCase::SENSITIVE))
+    if (base::StartsWith(it.first, "stars.", base::CompareCase::SENSITIVE)) {
       continue;
+    }
 
     if (it.second.is_dict()) {
-      DecodeMetaInfoHelper(it.second, prefix + it.first + ".", meta_info_map);
+      DecodeMetaInfoHelper(it.second.GetDict(), prefix + it.first + ".",
+                           meta_info_map);
     } else {
       const std::string* str = it.second.GetIfString();
       if (str)

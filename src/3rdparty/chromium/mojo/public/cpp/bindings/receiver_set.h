@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,11 +10,14 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/compiler_specific.h"
 #include "base/component_export.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr_exclusion.h"
+#include "base/task/sequenced_task_runner.h"
 #include "mojo/public/cpp/bindings/connection_error_callback.h"
 #include "mojo/public/cpp/bindings/message.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -73,7 +76,8 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) ReceiverSetState {
    public:
     Entry(ReceiverSetState& state,
           ReceiverId id,
-          std::unique_ptr<ReceiverState> receiver);
+          std::unique_ptr<ReceiverState> receiver,
+          std::unique_ptr<MessageFilter> filter);
     ~Entry();
 
     ReceiverState& receiver() { return *receiver_; }
@@ -86,7 +90,8 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) ReceiverSetState {
     void OnDisconnect(uint32_t custom_reason_code,
                       const std::string& description);
 
-    ReceiverSetState& state_;
+    // `state_` is not a raw_ref<...> as that leads to a binary size increase.
+    RAW_PTR_EXCLUSION ReceiverSetState& state_;
     const ReceiverId id_;
     const std::unique_ptr<ReceiverState> receiver_;
   };
@@ -121,7 +126,8 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) ReceiverSetState {
       RepeatingConnectionErrorWithReasonCallback handler);
 
   ReportBadMessageCallback GetBadMessageCallback();
-  ReceiverId Add(std::unique_ptr<ReceiverState> receiver);
+  ReceiverId Add(std::unique_ptr<ReceiverState> receiver,
+                 std::unique_ptr<MessageFilter> filter);
   bool Remove(ReceiverId id);
   bool RemoveWithReason(ReceiverId id,
                         uint32_t custom_reason_code,
@@ -137,7 +143,9 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) ReceiverSetState {
   RepeatingConnectionErrorWithReasonCallback disconnect_with_reason_handler_;
   ReceiverId next_receiver_id_ = 0;
   EntryMap entries_;
-  void* current_context_ = nullptr;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #union
+  RAW_PTR_EXCLUSION void* current_context_ = nullptr;
   ReceiverId current_receiver_;
   base::WeakPtrFactory<ReceiverSetState> weak_ptr_factory_{this};
 };
@@ -208,8 +216,8 @@ class ReceiverSetBase {
   // will be dispatched to |impl| on that |task_runner|. |task_runner| must run
   // messages on the same sequence that owns this ReceiverSetBase. If
   // |task_runner| is null, the value of
-  // |base::SequencedTaskRunnerHandle::Get()| at the time of the |Add()| call
-  // will be used to run scheduled tasks for the receiver.
+  // |base::SequencedTaskRunner::GetCurrentDefault()| at the time of the |Add()|
+  // call will be used to run scheduled tasks for the receiver.
   ReceiverId Add(
       ImplPointerType impl,
       PendingType receiver,
@@ -217,7 +225,7 @@ class ReceiverSetBase {
     static_assert(!ContextTraits::SupportsContext(),
                   "Context value required for non-void context type.");
     return AddImpl(std::move(impl), std::move(receiver), false,
-                   std::move(task_runner));
+                   std::move(task_runner), /*filter=*/nullptr);
   }
 
   // Adds a new receiver associated with |context|. See above method for all
@@ -230,7 +238,21 @@ class ReceiverSetBase {
     static_assert(ContextTraits::SupportsContext(),
                   "Context value unsupported for void context type.");
     return AddImpl(std::move(impl), std::move(receiver), std::move(context),
-                   std::move(task_runner));
+                   std::move(task_runner), /*filter=*/nullptr);
+  }
+
+  // Adds a new receiver associated with |context| and which uses the
+  // MessageFilter |filter|. See above for all other details.
+  ReceiverId Add(
+      ImplPointerType impl,
+      PendingType receiver,
+      Context context,
+      std::unique_ptr<MessageFilter> filter,
+      scoped_refptr<base::SequencedTaskRunner> task_runner = nullptr) {
+    static_assert(ContextTraits::SupportsContext(),
+                  "Context value unsupported for void context type.");
+    return AddImpl(std::move(impl), std::move(receiver), std::move(context),
+                   std::move(task_runner), std::move(filter));
   }
 
   // Removes a receiver from the set. Note that this is safe to call even if the
@@ -326,7 +348,7 @@ class ReceiverSetBase {
   // asynchronous work before you can determine the legitimacy of a message, use
   // GetBadMessageCallback() and retain its result until you're ready to invoke
   // or discard it.
-  void ReportBadMessage(const std::string& error) {
+  NOT_TAIL_CALLED void ReportBadMessage(const std::string& error) {
     GetBadMessageCallback().Run(error);
   }
 
@@ -414,11 +436,13 @@ class ReceiverSetBase {
   ReceiverId AddImpl(ImplPointerType impl,
                      PendingType receiver,
                      Context context,
-                     scoped_refptr<base::SequencedTaskRunner> task_runner) {
+                     scoped_refptr<base::SequencedTaskRunner> task_runner,
+                     std::unique_ptr<MessageFilter> filter) {
     DCHECK(receiver.is_valid());
     return state_.Add(std::make_unique<ReceiverEntry>(
-        std::move(impl), std::move(receiver), std::move(context),
-        std::move(task_runner)));
+                          std::move(impl), std::move(receiver),
+                          std::move(context), std::move(task_runner)),
+                      std::move(filter));
   }
 
   ReceiverSetState state_;

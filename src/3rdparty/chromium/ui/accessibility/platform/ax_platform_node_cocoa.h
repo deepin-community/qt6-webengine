@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,11 +7,12 @@
 
 #include <memory>
 
+#import <Accessibility/Accessibility.h>
 #import <Cocoa/Cocoa.h>
 
+#include "base/component_export.h"
 #include "base/mac/scoped_nsobject.h"
 #include "ui/accessibility/ax_enums.mojom-forward.h"
-#include "ui/accessibility/ax_export.h"
 
 namespace ui {
 
@@ -29,8 +30,11 @@ struct AXAnnouncementSpec {
 
 }  // namespace ui
 
-AX_EXPORT
-@interface AXPlatformNodeCocoa : NSAccessibilityElement <NSAccessibility>
+COMPONENT_EXPORT(AX_PLATFORM)
+@interface AXPlatformNodeCocoa
+    : NSAccessibilityElement <NSAccessibility, AXCustomContentProvider>
+
+- (NSArray*)accessibilityCustomContent;
 
 // Determines if this object is alive, i.e. it hasn't been detached.
 - (BOOL)instanceActive;
@@ -61,6 +65,10 @@ AX_EXPORT
 
 - (instancetype)initWithNode:(ui::AXPlatformNodeBase*)node;
 - (void)detach;
+
+// Returns this node's internal role, i.e. the one that is stored in
+// the internal accessibility tree as opposed to the platform tree.
+- (ax::mojom::Role)internalRole;
 
 @property(nonatomic, readonly) NSRect boundsInScreen;
 @property(nonatomic, readonly) ui::AXPlatformNodeBase* node;

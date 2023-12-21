@@ -1,7 +1,8 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/cfi_buildflags.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "build/build_config.h"
@@ -10,6 +11,7 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/common/content_features.h"
 #include "content/public/test/browser_test.h"
+#include "extensions/common/utils/content_script_utils.h"
 #include "net/base/filename_util.h"
 #include "net/dns/mock_host_resolver.h"
 #include "third_party/blink/public/common/features.h"
@@ -132,6 +134,14 @@ IN_PROC_BROWSER_TEST_P(ExecuteScriptApiTest, RemovedFrames) {
   ASSERT_TRUE(RunExtensionTest("executescript/removed_frames")) << message_;
 }
 
+// Tests that tabs.executeScript called with files exceeding the max size limit
+// will return an error and not execute.
+IN_PROC_BROWSER_TEST_P(ExecuteScriptApiTest, ExecuteScriptSizeLimit) {
+  auto single_scripts_limit_reset =
+      script_parsing::CreateScopedMaxScriptLengthForTesting(700u);
+  ASSERT_TRUE(RunExtensionTest("executescript/script_size_limit")) << message_;
+}
+
 // Ensure that an extension can inject a script in a file frame provided it has
 // access to file urls enabled and the necessary host permissions.
 IN_PROC_BROWSER_TEST_P(ExecuteScriptApiTest, InjectScriptInFileFrameAllowed) {
@@ -172,12 +182,12 @@ class DestructiveScriptTest : public ExecuteScriptApiTestBase,
  protected:
   // The test extension selects the sub test based on the host name.
   bool RunSubtest(const std::string& test_host) {
-    const std::string page_url =
+    const std::string extension_url =
         "test.html?" + test_host + "#bucketcount=" +
         base::NumberToString(kDestructiveScriptTestBucketCount) +
         "&bucketindex=" + base::NumberToString(GetParam());
     return RunExtensionTest("executescript/destructive",
-                            {.page_url = page_url.c_str()});
+                            {.extension_url = extension_url.c_str()});
   }
 };
 
@@ -196,8 +206,9 @@ class BackForwardCacheDisabledDestructiveScriptTest
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-// Flaky on ASAN and -dbg. crbug.com/1293865
-#if defined(ADDRESS_SANITIZER) || !defined(NDEBUG)
+// Flaky on ASAN and -dbg, and Linux CFI bots. crbug.com/1293865
+#if defined(ADDRESS_SANITIZER) || !defined(NDEBUG) || \
+    (BUILDFLAG(CFI_ICALL_CHECK) && BUILDFLAG(IS_LINUX))
 #define MAYBE_SynchronousRemoval DISABLED_SynchronousRemoval
 #else
 #define MAYBE_SynchronousRemoval SynchronousRemoval
@@ -208,8 +219,9 @@ IN_PROC_BROWSER_TEST_P(BackForwardCacheDisabledDestructiveScriptTest,
   ASSERT_TRUE(RunSubtest("synchronous")) << message_;
 }
 
-// Flaky on ASAN and -dbg. crbug.com/1293865
-#if defined(ADDRESS_SANITIZER) || !defined(NDEBUG)
+// Flaky on ASAN and -dbg and Linux CFI. crbug.com/1293865
+#if defined(ADDRESS_SANITIZER) || !defined(NDEBUG) || \
+    (BUILDFLAG(CFI_ICALL_CHECK) && BUILDFLAG(IS_LINUX))
 #define MAYBE_MicrotaskRemoval DISABLED_MicrotaskRemoval
 #else
 #define MAYBE_MicrotaskRemoval MicrotaskRemoval

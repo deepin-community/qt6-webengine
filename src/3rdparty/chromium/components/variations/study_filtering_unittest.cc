@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,8 @@
 
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -671,6 +671,53 @@ TEST(VariationsStudyFilteringTest, CheckStudyCountry) {
   }
 }
 
+TEST(VariationsStudyFilteringTest, CheckStudyGoogleGroupFilterNotSet) {
+  Study::Filter filter;
+
+  // Check that if the filter is not set, the study always applies.
+  EXPECT_TRUE(internal::CheckStudyGoogleGroup(filter, {}));
+  EXPECT_TRUE(internal::CheckStudyGoogleGroup(filter, {1}));
+}
+
+TEST(VariationsStudyFilteringTest, CheckStudyGoogleGroupFilterSet) {
+  Study::Filter filter;
+
+  // Check that if a google_group filter is set, then only members of that group
+  // match.
+  filter.add_google_group(1);
+  filter.add_google_group(2);
+  EXPECT_FALSE(internal::CheckStudyGoogleGroup(filter, {}));
+  EXPECT_TRUE(internal::CheckStudyGoogleGroup(filter, {1}));
+  EXPECT_FALSE(internal::CheckStudyGoogleGroup(filter, {3}));
+  EXPECT_TRUE(internal::CheckStudyGoogleGroup(filter, {1, 3}));
+}
+
+TEST(VariationsStudyFilteringTest, CheckStudyExcludeGoogleGroupFilterSet) {
+  Study::Filter filter;
+
+  // Check that if an exclude_google_group filter is set, then only non-members
+  // of that group match.
+  filter.add_exclude_google_group(1);
+  filter.add_exclude_google_group(2);
+  EXPECT_TRUE(internal::CheckStudyGoogleGroup(filter, {}));
+  EXPECT_FALSE(internal::CheckStudyGoogleGroup(filter, {1}));
+  EXPECT_TRUE(internal::CheckStudyGoogleGroup(filter, {3}));
+  EXPECT_FALSE(internal::CheckStudyGoogleGroup(filter, {1, 3}));
+}
+
+TEST(VariationsStudyFilteringTest, CheckStudyBothGoogleGroupFiltersSet) {
+  Study::Filter filter;
+
+  // Check that both google_group and exclude_google_group filter is set, the
+  // study is filtered out.
+  filter.add_google_group(1);
+  filter.add_exclude_google_group(2);
+  EXPECT_FALSE(internal::CheckStudyGoogleGroup(filter, {}));
+  EXPECT_FALSE(internal::CheckStudyGoogleGroup(filter, {1}));
+  EXPECT_FALSE(internal::CheckStudyGoogleGroup(filter, {2}));
+  EXPECT_FALSE(internal::CheckStudyGoogleGroup(filter, {1, 2}));
+}
+
 TEST(VariationsStudyFilteringTest, FilterAndValidateStudies) {
   const std::string kTrial1Name = "A";
   const std::string kGroup1Name = "Group1";
@@ -702,9 +749,8 @@ TEST(VariationsStudyFilteringTest, FilterAndValidateStudies) {
   client_state.form_factor = Study::DESKTOP;
   client_state.platform = Study::PLATFORM_ANDROID;
 
-  std::vector<ProcessedStudy> processed_studies;
-  FilterAndValidateStudies(seed, client_state, VariationsLayers(),
-                           &processed_studies);
+  std::vector<ProcessedStudy> processed_studies =
+      FilterAndValidateStudies(seed, client_state, VariationsLayers());
 
   // Check that only the first kTrial1Name study was kept.
   ASSERT_EQ(2U, processed_studies.size());
@@ -773,9 +819,8 @@ TEST(VariationsStudyFilteringTest, FilterAndValidateStudiesWithBadFilters) {
   client_state.os_version = base::Version("1.2.3");
 
   base::HistogramTester histogram_tester;
-  std::vector<ProcessedStudy> processed_studies;
-  FilterAndValidateStudies(seed, client_state, VariationsLayers(),
-                           &processed_studies);
+  std::vector<ProcessedStudy> processed_studies =
+      FilterAndValidateStudies(seed, client_state, VariationsLayers());
 
   ASSERT_EQ(0U, processed_studies.size());
   histogram_tester.ExpectTotalCount("Variations.InvalidStudyReason",
@@ -809,9 +854,8 @@ TEST(VariationsStudyFilteringTest, FilterAndValidateStudiesWithBlankStudyName) {
   client_state.platform = Study::PLATFORM_ANDROID;
 
   base::HistogramTester histogram_tester;
-  std::vector<ProcessedStudy> processed_studies;
-  FilterAndValidateStudies(seed, client_state, VariationsLayers(),
-                           &processed_studies);
+  std::vector<ProcessedStudy> processed_studies =
+      FilterAndValidateStudies(seed, client_state, VariationsLayers());
 
   ASSERT_EQ(0U, processed_studies.size());
   histogram_tester.ExpectUniqueSample("Variations.InvalidStudyReason", 8, 1);
@@ -868,9 +912,8 @@ TEST(VariationsStudyFilteringTest, FilterAndValidateStudiesWithCountry) {
     client_state.session_consistency_country = kSessionCountry;
     client_state.permanent_consistency_country = kPermanentCountry;
 
-    std::vector<ProcessedStudy> processed_studies;
-    FilterAndValidateStudies(seed, client_state, VariationsLayers(),
-                             &processed_studies);
+    std::vector<ProcessedStudy> processed_studies =
+        FilterAndValidateStudies(seed, client_state, VariationsLayers());
 
     EXPECT_EQ(test.expect_study_kept, !processed_studies.empty());
   }
@@ -898,31 +941,6 @@ TEST(VariationsStudyFilteringTest, GetClientCountryForStudy_Permanent) {
             internal::GetClientCountryForStudy(study, client_state));
 }
 
-TEST(VariationsStudyFilteringTest, IsStudyExpired) {
-  const base::Time now = base::Time::Now();
-  const base::TimeDelta delta = base::Hours(1);
-  const struct {
-    const base::Time expiry_date;
-    bool expected_result;
-  } expiry_test_cases[] = {
-    { now - delta, true },
-    { now, true },
-    { now + delta, false },
-  };
-
-  Study study;
-
-  // Expiry date not set should result in false.
-  EXPECT_FALSE(internal::IsStudyExpired(study, now));
-
-  for (size_t i = 0; i < std::size(expiry_test_cases); ++i) {
-    study.set_expiry_date(TimeToProtoTime(expiry_test_cases[i].expiry_date));
-    const bool result = internal::IsStudyExpired(study, now);
-    EXPECT_EQ(expiry_test_cases[i].expected_result, result)
-        << "Case " << i << " failed!";
-  }
-}
-
 TEST(VariationsStudyFilteringTest, ValidateStudy) {
   Study study;
   study.set_name("study");
@@ -931,42 +949,42 @@ TEST(VariationsStudyFilteringTest, ValidateStudy) {
   Study::Experiment* default_group = AddExperiment("def", 200, &study);
 
   ProcessedStudy processed_study;
-  EXPECT_TRUE(processed_study.Init(&study, false));
+  EXPECT_TRUE(processed_study.Init(&study));
   EXPECT_EQ(300, processed_study.total_probability());
 
   // Min version checks.
   study.mutable_filter()->set_min_version("1.2.3.*");
-  EXPECT_TRUE(processed_study.Init(&study, false));
+  EXPECT_TRUE(processed_study.Init(&study));
   study.mutable_filter()->set_min_version("1.*.3");
-  EXPECT_FALSE(processed_study.Init(&study, false));
+  EXPECT_FALSE(processed_study.Init(&study));
   study.mutable_filter()->set_min_version("1.2.3");
-  EXPECT_TRUE(processed_study.Init(&study, false));
+  EXPECT_TRUE(processed_study.Init(&study));
 
   // Max version checks.
   study.mutable_filter()->set_max_version("2.3.4.*");
-  EXPECT_TRUE(processed_study.Init(&study, false));
+  EXPECT_TRUE(processed_study.Init(&study));
   study.mutable_filter()->set_max_version("*.3");
-  EXPECT_FALSE(processed_study.Init(&study, false));
+  EXPECT_FALSE(processed_study.Init(&study));
   study.mutable_filter()->set_max_version("2.3.4");
-  EXPECT_TRUE(processed_study.Init(&study, false));
+  EXPECT_TRUE(processed_study.Init(&study));
 
   // A blank default study is allowed.
   study.clear_default_experiment_name();
-  EXPECT_TRUE(processed_study.Init(&study, false));
+  EXPECT_TRUE(processed_study.Init(&study));
 
   study.set_default_experiment_name("xyz");
-  EXPECT_FALSE(processed_study.Init(&study, false));
+  EXPECT_FALSE(processed_study.Init(&study));
 
   study.set_default_experiment_name("def");
   default_group->clear_name();
-  EXPECT_FALSE(processed_study.Init(&study, false));
+  EXPECT_FALSE(processed_study.Init(&study));
 
   default_group->set_name("def");
-  EXPECT_TRUE(processed_study.Init(&study, false));
+  EXPECT_TRUE(processed_study.Init(&study));
   Study::Experiment* repeated_group = study.add_experiment();
   repeated_group->set_name("abc");
   repeated_group->set_probability_weight(1);
-  EXPECT_FALSE(processed_study.Init(&study, false));
+  EXPECT_FALSE(processed_study.Init(&study));
 }
 
 }  // namespace variations

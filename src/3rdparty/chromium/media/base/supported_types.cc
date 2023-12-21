@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,6 +16,7 @@
 #include "media/base/media_switches.h"
 #include "media/media_buildflags.h"
 #include "ui/display/display_switches.h"
+#include "ui/gfx/hdr_metadata.h"
 
 #if BUILDFLAG(ENABLE_LIBVPX)
 // TODO(dalecurtis): This technically should not be allowed in media/base. See
@@ -64,6 +65,8 @@ bool IsSupportedHdrMetadata(const gfx::HdrMetadataType& hdr_metadata_type) {
       return true;
 
     case gfx::HdrMetadataType::kSmpteSt2086:
+      return base::FeatureList::IsEnabled(kSupportSmpteSt2086HdrMetadata);
+
     case gfx::HdrMetadataType::kSmpteSt2094_10:
     case gfx::HdrMetadataType::kSmpteSt2094_40:
       return false;
@@ -183,6 +186,7 @@ bool IsAudioCodecProprietary(AudioCodec codec) {
     case AudioCodec::kMpegHAudio:
     case AudioCodec::kDTS:
     case AudioCodec::kDTSXP2:
+    case AudioCodec::kDTSE:
       return true;
 
     case AudioCodec::kFLAC:
@@ -205,23 +209,24 @@ bool IsHevcProfileSupported(const VideoType& type) {
     return false;
 
 #if BUILDFLAG(ENABLE_PLATFORM_HEVC)
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
+#if BUILDFLAG(PLATFORM_HAS_OPTIONAL_HEVC_SUPPORT)
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  // TODO(b/171813538): For Lacros, the supplemental profile cache will be
+  // asking lacros-gpu, but we will be doing decoding in ash-gpu. Until the
+  // codec detection is plumbed through to ash-gpu we can do this extra check
+  // for HEVC support.
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kLacrosEnablePlatformHevc)) {
+    return true;
+  }
+#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
   return GetSupplementalProfileCache()->IsProfileSupported(type.profile);
 #else
   return true;
-#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
-#elif BUILDFLAG(ENABLE_PLATFORM_ENCRYPTED_HEVC)
-  // Only encrypted HEVC content is supported, and normally MSE.isTypeSupported
-  // returns false for HEVC. The kEnableClearHevcForTesting flag allows it to
-  // return true to enable a wider array of test scenarios to function properly.
-  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableClearHevcForTesting)) {
-    return false;
-  }
-  return type.profile == HEVCPROFILE_MAIN || type.profile == HEVCPROFILE_MAIN10;
+#endif  // BUIDFLAG(PLATFORM_HAS_OPTIONAL_HEVC_SUPPORT)
 #else
   return false;
-#endif
+#endif  // BUILDFLAG(ENABLE_PLATFORM_HEVC)
 }
 
 bool IsVp9ProfileSupported(const VideoType& type) {
@@ -294,14 +299,6 @@ bool IsAACSupported(const AudioType& type) {
 #endif
 }
 
-bool HasOldVoiceCodecSupport() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  return true;
-#else
-  return false;
-#endif
-}
-
 }  // namespace
 
 bool IsSupportedAudioType(const AudioType& type) {
@@ -360,10 +357,6 @@ bool IsDefaultSupportedAudioType(const AudioType& type) {
   switch (type.codec) {
     case AudioCodec::kAAC:
       return IsAACSupported(type);
-    case AudioCodec::kAMR_NB:
-    case AudioCodec::kAMR_WB:
-    case AudioCodec::kGSM_MS:
-      return HasOldVoiceCodecSupport();
     case AudioCodec::kFLAC:
     case AudioCodec::kMP3:
     case AudioCodec::kOpus:
@@ -374,6 +367,9 @@ bool IsDefaultSupportedAudioType(const AudioType& type) {
     case AudioCodec::kPCM_ALAW:
     case AudioCodec::kVorbis:
       return true;
+    case AudioCodec::kAMR_NB:
+    case AudioCodec::kAMR_WB:
+    case AudioCodec::kGSM_MS:
     case AudioCodec::kEAC3:
     case AudioCodec::kALAC:
     case AudioCodec::kAC3:
@@ -382,12 +378,35 @@ bool IsDefaultSupportedAudioType(const AudioType& type) {
       return false;
     case AudioCodec::kDTS:
     case AudioCodec::kDTSXP2:
+    case AudioCodec::kDTSE:
 #if BUILDFLAG(ENABLE_PLATFORM_DTS_AUDIO)
       return true;
 #else
       return false;
 #endif
   }
+}
+
+bool IsBuiltInVideoCodec(VideoCodec codec) {
+#if BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
+  if (codec == VideoCodec::kTheora)
+    return true;
+  if (codec == VideoCodec::kVP8)
+    return true;
+#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+  if (codec == VideoCodec::kH264)
+    return true;
+#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+#endif  // BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
+#if BUILDFLAG(ENABLE_LIBVPX)
+  if (codec == VideoCodec::kVP8 || codec == VideoCodec::kVP9)
+    return true;
+#endif  // BUILDFLAG(ENABLE_LIBVPX)
+#if BUILDFLAG(ENABLE_AV1_DECODER)
+  if (codec == VideoCodec::kAV1)
+    return true;
+#endif  // BUILDFLAG(ENABLE_AV1_DECODER)
+  return false;
 }
 
 void UpdateDefaultSupportedVideoProfiles(

@@ -19,7 +19,6 @@
 
 #include "absl/strings/string_view.h"
 
-namespace location {
 namespace nearby {
 namespace api {
 
@@ -63,6 +62,7 @@ class BluetoothAdapter {
   virtual std::string GetName() const = 0;
   // https://developer.android.com/reference/android/bluetooth/BluetoothAdapter.html#setName(java.lang.String)
   virtual bool SetName(absl::string_view name) = 0;
+  virtual bool SetName(absl::string_view name, bool persist) = 0;
 
   // Returns BT MAC address assigned to this adapter.
   virtual std::string GetMacAddress() const = 0;
@@ -70,6 +70,5 @@ class BluetoothAdapter {
 
 }  // namespace api
 }  // namespace nearby
-}  // namespace location
 
 #endif  // PLATFORM_API_BLUETOOTH_ADAPTER_H_

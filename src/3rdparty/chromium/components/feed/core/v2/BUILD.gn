@@ -1,4 +1,4 @@
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -14,6 +14,7 @@ source_set("feed_core_v2") {
     "public/feed_service.h",
     "public/feed_stream_surface.h",
     "public/logging_parameters.h",
+    "public/ntp_feed_content_fetcher.h",
     "public/persistent_key_value_store.h",
     "public/persistent_key_value_store.h",
     "public/refresh_task_scheduler.h",
@@ -64,16 +65,19 @@ source_set("feed_core_v2") {
     "public/feed_service.cc",
     "public/feed_stream_surface.cc",
     "public/logging_parameters.cc",
+    "public/ntp_feed_content_fetcher.cc",
+    "public/ntp_feed_content_fetcher.h",
     "public/persistent_key_value_store.cc",
     "public/public_types.cc",
     "public/stream_type.cc",
     "public/unread_content_observer.cc",
+    "public/web_feed_subscriptions.cc",
     "request_throttler.cc",
     "request_throttler.h",
     "scheduling.cc",
     "scheduling.h",
-    "stream/notice_card_tracker.cc",
-    "stream/notice_card_tracker.h",
+    "stream/info_card_tracker.cc",
+    "stream/info_card_tracker.h",
     "stream/privacy_notice_card_tracker.cc",
     "stream/privacy_notice_card_tracker.h",
     "stream/unread_content_notifier.cc",
@@ -90,6 +94,8 @@ source_set("feed_core_v2") {
     "surface_updater.h",
     "tasks/clear_all_task.cc",
     "tasks/clear_all_task.h",
+    "tasks/clear_stream_task.cc",
+    "tasks/clear_stream_task.h",
     "tasks/load_more_task.cc",
     "tasks/load_more_task.h",
     "tasks/load_stream_from_store_task.cc",
@@ -102,6 +108,8 @@ source_set("feed_core_v2") {
     "tasks/upload_actions_task.h",
     "tasks/wait_for_store_initialize_task.cc",
     "tasks/wait_for_store_initialize_task.h",
+    "test/proto_printer.cc",
+    "test/proto_printer.h",
     "types.cc",
     "types.h",
     "user_actions_collector.cc",
@@ -112,6 +120,8 @@ source_set("feed_core_v2") {
     "web_feed_subscriptions/fetch_recommended_web_feeds_task.h",
     "web_feed_subscriptions/fetch_subscribed_web_feeds_task.cc",
     "web_feed_subscriptions/fetch_subscribed_web_feeds_task.h",
+    "web_feed_subscriptions/query_web_feed_task.cc",
+    "web_feed_subscriptions/query_web_feed_task.h",
     "web_feed_subscriptions/subscribe_to_web_feed_task.cc",
     "web_feed_subscriptions/subscribe_to_web_feed_task.h",
     "web_feed_subscriptions/subscription_datastore_provider.cc",
@@ -163,6 +173,7 @@ source_set("feed_core_v2") {
     ":ios_shared",
     "//base",
     "//components/feed/core/common:feed_core_common",
+    "//components/feed/core/proto:proto_ios_shared_v2",
     "//components/feed/core/proto:proto_v2",
   ]
 }
@@ -170,12 +181,15 @@ source_set("feed_core_v2") {
 # This smaller source set is used by Chrome for iOS.
 source_set("ios_shared") {
   sources = [
+    "ios_shared_experiments_translator.cc",
+    "ios_shared_experiments_translator.h",
     "ios_shared_prefs.cc",
     "ios_shared_prefs.h",
   ]
   deps = [
     "//base",
     "//components/feed/core/common:feed_core_common",
+    "//components/feed/core/proto:proto_ios_shared_v2",
     "//components/prefs",
   ]
 }
@@ -198,6 +212,7 @@ source_set("core_unit_tests") {
     "algorithm_unittest.cc",
     "api_test/feed_api_notice_card_unittest.cc",
     "api_test/feed_api_reliability_logging_unittest.cc",
+    "api_test/feed_api_single_web_feed_unittest.cc",
     "api_test/feed_api_stream_unittest.cc",
     "api_test/feed_api_subscriptions_unittest.cc",
     "api_test/feed_api_test.cc",
@@ -206,6 +221,8 @@ source_set("core_unit_tests") {
     "feed_store_unittest.cc",
     "feedstore_util_unittest.cc",
     "image_fetcher_unittest.cc",
+    "ios_shared_experiments_translator_unittest.cc",
+    "ios_shared_prefs_unittest.cc",
     "metrics_reporter_unittest.cc",
     "operation_token_unittest.cc",
     "persistent_key_value_store_impl_unittest.cc",
@@ -213,15 +230,15 @@ source_set("core_unit_tests") {
     "protocol_translator_unittest.cc",
     "public/feed_service_unittest.cc",
     "public/logging_parameters_unittest.cc",
+    "public/ntp_feed_content_fetcher_unittest.cc",
     "public/public_types_unittest.cc",
+    "public/stream_type_unittest.cc",
     "request_throttler_unittest.cc",
     "scheduling_unittest.cc",
-    "stream/notice_card_tracker_unittest.cc",
+    "stream/info_card_tracker_unittest.cc",
     "stream/privacy_notice_card_tracker_unittest.cc",
     "stream_model_unittest.cc",
     "test/callback_receiver_unittest.cc",
-    "test/proto_printer.cc",
-    "test/proto_printer.h",
     "test/stream_builder.cc",
     "test/stream_builder.h",
     "test/test_util.cc",
@@ -251,6 +268,7 @@ source_set("core_unit_tests") {
     "//components/reading_list/features:flags",
     "//components/signin/public/identity_manager",
     "//components/signin/public/identity_manager:test_support",
+    "//components/sync/base",
     "//components/variations:test_support",
     "//components/version_info:channel",
     "//net:test_support",

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -44,7 +44,8 @@ class IdentityGetAuthTokenError {
     kSetAccountsInCookieFailure = 25,
     kInvalidConsentResult = 26,
     kCanceled = 27,
-    kMaxValue = kCanceled,
+    kInteractivityDenied = 28,
+    kMaxValue = kInteractivityDenied,
   };
 
   // Constructs a |State::kMintTokenAuthFailure| error with an

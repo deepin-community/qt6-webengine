@@ -1,44 +1,45 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import '../shared_vars_css.m.js';
+import '../cr_shared_vars.css.js';
 
-import {FlattenedNodesObserver, html, PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {assert} from '//resources/js/assert_ts.js';
+import {FocusOutlineManager} from '//resources/js/focus_outline_manager.js';
+import {FocusRow} from '//resources/js/focus_row.js';
+import {focusWithoutInk} from '//resources/js/focus_without_ink.js';
+import {isMac, isWindows} from '//resources/js/platform.js';
+import {getDeepActiveElement} from '//resources/js/util_ts.js';
+import {FlattenedNodesObserver, PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {assert} from '../../js/assert.m.js';
-import {isMac, isWindows} from '../../js/cr.m.js';
-import {FocusOutlineManager} from '../../js/cr/ui/focus_outline_manager.m.js';
-import {FocusRow} from '../../js/cr/ui/focus_row.m.js';
-import {focusWithoutInk} from '../../js/cr/ui/focus_without_ink.m.js';
-import {getDeepActiveElement} from '../../js/util.m.js';
+import {getTemplate} from './cr_action_menu.html.js';
 
-type ShowAtConfig = {
-  top?: number,
-  left?: number,
-  width?: number,
-  height?: number,
-  anchorAlignmentX?: number,
-  anchorAlignmentY?: number,
-  minX?: number,
-  minY?: number,
-  maxX?: number,
-  maxY?: number,
-  noOffset?: boolean,
-};
+interface ShowAtConfig {
+  top?: number;
+  left?: number;
+  width?: number;
+  height?: number;
+  anchorAlignmentX?: number;
+  anchorAlignmentY?: number;
+  minX?: number;
+  minY?: number;
+  maxX?: number;
+  maxY?: number;
+  noOffset?: boolean;
+}
 
-export type ShowAtPositionConfig = {
-  top: number,
-  left: number,
-  width?: number,
-  height?: number,
-  anchorAlignmentX?: number,
-  anchorAlignmentY?: number,
-  minX?: number,
-  minY?: number,
-  maxX?: number,
-  maxY?: number,
-};
+export interface ShowAtPositionConfig {
+  top: number;
+  left: number;
+  width?: number;
+  height?: number;
+  anchorAlignmentX?: number;
+  anchorAlignmentY?: number;
+  minX?: number;
+  minY?: number;
+  maxX?: number;
+  maxY?: number;
+}
 
 export enum AnchorAlignment {
   BEFORE_START = -2,
@@ -121,6 +122,10 @@ export interface CrActionMenuElement {
 export class CrActionMenuElement extends PolymerElement {
   static get is() {
     return 'cr-action-menu';
+  }
+
+  static get template() {
+    return getTemplate();
   }
 
   static get properties() {
@@ -296,7 +301,8 @@ export class CrActionMenuElement extends PolymerElement {
     this.$.dialog.close();
     this.open = false;
     if (this.anchorElement_) {
-      focusWithoutInk(assert(this.anchorElement_));
+      assert(this.anchorElement_);
+      focusWithoutInk(this.anchorElement_);
       this.anchorElement_ = null;
     }
     if (this.lastConfig_) {
@@ -480,10 +486,6 @@ export class CrActionMenuElement extends PolymerElement {
 
       this.resizeObserver_.observe(this.$.dialog);
     }
-  }
-
-  static get template() {
-    return html`{__html_template__}`;
   }
 }
 

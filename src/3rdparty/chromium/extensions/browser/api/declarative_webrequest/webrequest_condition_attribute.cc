@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,6 +14,7 @@
 #include "base/lazy_instance.h"
 #include "base/memory/ptr_util.h"
 #include "base/notreached.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "extensions/browser/api/declarative/deduping_factory.h"
@@ -31,8 +32,6 @@
 #include "net/http/http_util.h"
 
 using base::CaseInsensitiveCompareASCII;
-using base::DictionaryValue;
-using base::ListValue;
 using base::Value;
 
 namespace helpers = extension_web_request_api_helpers;
@@ -45,45 +44,38 @@ namespace {
 const char kInvalidValue[] = "Condition '*' has an invalid value";
 
 struct WebRequestConditionAttributeFactory {
-  DedupingFactory<WebRequestConditionAttribute> factory;
+  using FactoryT =
+      DedupingFactory<WebRequestConditionAttribute, const base::Value*>;
+  FactoryT factory;
 
   WebRequestConditionAttributeFactory() : factory(5) {
     factory.RegisterFactoryMethod(
-        keys_wrca::kResourceTypeKey,
-        DedupingFactory<WebRequestConditionAttribute>::IS_PARAMETERIZED,
+        keys_wrca::kResourceTypeKey, FactoryT::IS_PARAMETERIZED,
         &WebRequestConditionAttributeResourceType::Create);
 
     factory.RegisterFactoryMethod(
-        keys_wrca::kContentTypeKey,
-        DedupingFactory<WebRequestConditionAttribute>::IS_PARAMETERIZED,
+        keys_wrca::kContentTypeKey, FactoryT::IS_PARAMETERIZED,
         &WebRequestConditionAttributeContentType::Create);
     factory.RegisterFactoryMethod(
-        keys_wrca::kExcludeContentTypeKey,
-        DedupingFactory<WebRequestConditionAttribute>::IS_PARAMETERIZED,
+        keys_wrca::kExcludeContentTypeKey, FactoryT::IS_PARAMETERIZED,
         &WebRequestConditionAttributeContentType::Create);
 
     factory.RegisterFactoryMethod(
-        keys_wrca::kRequestHeadersKey,
-        DedupingFactory<WebRequestConditionAttribute>::IS_PARAMETERIZED,
+        keys_wrca::kRequestHeadersKey, FactoryT::IS_PARAMETERIZED,
         &WebRequestConditionAttributeRequestHeaders::Create);
     factory.RegisterFactoryMethod(
-        keys_wrca::kExcludeRequestHeadersKey,
-        DedupingFactory<WebRequestConditionAttribute>::IS_PARAMETERIZED,
+        keys_wrca::kExcludeRequestHeadersKey, FactoryT::IS_PARAMETERIZED,
         &WebRequestConditionAttributeRequestHeaders::Create);
 
     factory.RegisterFactoryMethod(
-        keys_wrca::kResponseHeadersKey,
-        DedupingFactory<WebRequestConditionAttribute>::IS_PARAMETERIZED,
+        keys_wrca::kResponseHeadersKey, FactoryT::IS_PARAMETERIZED,
         &WebRequestConditionAttributeResponseHeaders::Create);
     factory.RegisterFactoryMethod(
-        keys_wrca::kExcludeResponseHeadersKey,
-        DedupingFactory<WebRequestConditionAttribute>::IS_PARAMETERIZED,
+        keys_wrca::kExcludeResponseHeadersKey, FactoryT::IS_PARAMETERIZED,
         &WebRequestConditionAttributeResponseHeaders::Create);
 
-    factory.RegisterFactoryMethod(
-        keys_wrca::kStagesKey,
-        DedupingFactory<WebRequestConditionAttribute>::IS_PARAMETERIZED,
-        &WebRequestConditionAttributeStages::Create);
+    factory.RegisterFactoryMethod(keys_wrca::kStagesKey, FactoryT::IS_PARAMETERIZED,
+                                  &WebRequestConditionAttributeStages::Create);
   }
 };
 
@@ -96,9 +88,9 @@ base::LazyInstance<WebRequestConditionAttributeFactory>::Leaky
 // WebRequestConditionAttribute
 //
 
-WebRequestConditionAttribute::WebRequestConditionAttribute() {}
+WebRequestConditionAttribute::WebRequestConditionAttribute() = default;
 
-WebRequestConditionAttribute::~WebRequestConditionAttribute() {}
+WebRequestConditionAttribute::~WebRequestConditionAttribute() = default;
 
 bool WebRequestConditionAttribute::Equals(
     const WebRequestConditionAttribute* other) const {
@@ -142,7 +134,7 @@ WebRequestConditionAttributeResourceType::Create(
                                             keys_wrca::kResourceTypeKey);
     return nullptr;
   }
-  base::Value::ConstListView list = value->GetListDeprecated();
+  const base::Value::List& list = value->GetList();
 
   std::vector<WebRequestResourceType> passed_types;
   passed_types.reserve(list.size());
@@ -223,7 +215,7 @@ WebRequestConditionAttributeContentType::Create(
     return nullptr;
   }
   std::vector<std::string> content_types;
-  for (const auto& entry : value->GetListDeprecated()) {
+  for (const auto& entry : value->GetList()) {
     if (!entry.is_string()) {
       *error = ErrorUtils::FormatErrorMessage(kInvalidValue, name);
       return nullptr;
@@ -295,7 +287,7 @@ class HeaderMatcher {
   // dictionaries of the type declarativeWebRequest.HeaderFilter (see
   // declarative_web_request.json).
   static std::unique_ptr<const HeaderMatcher> Create(
-      const base::Value::ConstListView tests);
+      const base::Value::List& tests);
 
   // Does |this| match the header "|name|: |value|"?
   bool TestNameValue(const std::string& name, const std::string& value) const;
@@ -342,7 +334,7 @@ class HeaderMatcher {
     // Gets the test group description in |tests| and creates the corresponding
     // HeaderMatchTest. On failure returns null.
     static std::unique_ptr<const HeaderMatchTest> Create(
-        const base::DictionaryValue* tests);
+        const base::Value::Dict& tests);
 
     // Does the header "|name|: |value|" match all tests in |this|?
     bool Matches(const std::string& name, const std::string& value) const;
@@ -371,15 +363,15 @@ HeaderMatcher::~HeaderMatcher() = default;
 
 // static
 std::unique_ptr<const HeaderMatcher> HeaderMatcher::Create(
-    const base::Value::ConstListView tests) {
+    const base::Value::List& tests) {
   std::vector<std::unique_ptr<const HeaderMatchTest>> header_tests;
   for (const auto& entry : tests) {
-    const base::DictionaryValue* tests_dict = nullptr;
-    if (!entry.GetAsDictionary(&tests_dict))
+    const base::Value::Dict* tests_dict = entry.GetIfDict();
+    if (!tests_dict)
       return nullptr;
 
     std::unique_ptr<const HeaderMatchTest> header_test(
-        HeaderMatchTest::Create(tests_dict));
+        HeaderMatchTest::Create(*tests_dict));
     if (header_test.get() == nullptr)
       return nullptr;
     header_tests.push_back(std::move(header_test));
@@ -413,7 +405,7 @@ HeaderMatcher::StringMatchTest::Create(const base::Value& data,
       new StringMatchTest(data.GetString(), type, case_sensitive));
 }
 
-HeaderMatcher::StringMatchTest::~StringMatchTest() {}
+HeaderMatcher::StringMatchTest::~StringMatchTest() = default;
 
 bool HeaderMatcher::StringMatchTest::Matches(
     const std::string& str) const {
@@ -427,8 +419,9 @@ bool HeaderMatcher::StringMatchTest::Matches(
              base::StartsWith(str, data_, case_sensitive_);
     case kContains:
       if (case_sensitive_ == base::CompareCase::INSENSITIVE_ASCII) {
-        return std::search(str.begin(), str.end(), data_.begin(), data_.end(),
-                           CaseInsensitiveCompareASCII<char>()) != str.end();
+        return base::ranges::search(str, data_,
+                                    CaseInsensitiveCompareASCII<char>()) !=
+               str.end();
       } else {
         return str.find(data_) != std::string::npos;
       }
@@ -454,50 +447,49 @@ HeaderMatcher::HeaderMatchTest::HeaderMatchTest(
     : name_match_(std::move(name_match)),
       value_match_(std::move(value_match)) {}
 
-HeaderMatcher::HeaderMatchTest::~HeaderMatchTest() {}
+HeaderMatcher::HeaderMatchTest::~HeaderMatchTest() = default;
 
 // static
 std::unique_ptr<const HeaderMatcher::HeaderMatchTest>
-HeaderMatcher::HeaderMatchTest::Create(const base::DictionaryValue* tests) {
+HeaderMatcher::HeaderMatchTest::Create(const base::Value::Dict& tests) {
   std::vector<std::unique_ptr<const StringMatchTest>> name_match;
   std::vector<std::unique_ptr<const StringMatchTest>> value_match;
 
-  for (base::DictionaryValue::Iterator it(*tests);
-       !it.IsAtEnd(); it.Advance()) {
+  for (const auto entry : tests) {
     bool is_name = false;  // Is this test for header name?
     StringMatchTest::MatchType match_type;
-    if (it.key() == keys_wrca::kNamePrefixKey) {
+    if (entry.first == keys_wrca::kNamePrefixKey) {
       is_name = true;
       match_type = StringMatchTest::kPrefix;
-    } else if (it.key() == keys_wrca::kNameSuffixKey) {
+    } else if (entry.first == keys_wrca::kNameSuffixKey) {
       is_name = true;
       match_type = StringMatchTest::kSuffix;
-    } else if (it.key() == keys_wrca::kNameContainsKey) {
+    } else if (entry.first == keys_wrca::kNameContainsKey) {
       is_name = true;
       match_type = StringMatchTest::kContains;
-    } else if (it.key() == keys_wrca::kNameEqualsKey) {
+    } else if (entry.first == keys_wrca::kNameEqualsKey) {
       is_name = true;
       match_type = StringMatchTest::kEquals;
-    } else if (it.key() == keys_wrca::kValuePrefixKey) {
+    } else if (entry.first == keys_wrca::kValuePrefixKey) {
       match_type = StringMatchTest::kPrefix;
-    } else if (it.key() == keys_wrca::kValueSuffixKey) {
+    } else if (entry.first == keys_wrca::kValueSuffixKey) {
       match_type = StringMatchTest::kSuffix;
-    } else if (it.key() == keys_wrca::kValueContainsKey) {
+    } else if (entry.first == keys_wrca::kValueContainsKey) {
       match_type = StringMatchTest::kContains;
-    } else if (it.key() == keys_wrca::kValueEqualsKey) {
+    } else if (entry.first == keys_wrca::kValueEqualsKey) {
       match_type = StringMatchTest::kEquals;
     } else {
       NOTREACHED();  // JSON schema type checking should prevent this.
       return nullptr;
     }
-    const base::Value* content = &it.value();
+    const base::Value* content = &entry.second;
 
     std::vector<std::unique_ptr<const StringMatchTest>>* matching_tests =
         is_name ? &name_match : &value_match;
     switch (content->type()) {
       case base::Value::Type::LIST: {
         CHECK(content->is_list());
-        for (const auto& elem : content->GetListDeprecated()) {
+        for (const auto& elem : content->GetList()) {
           matching_tests->push_back(
               StringMatchTest::Create(elem, match_type, !is_name));
         }
@@ -559,7 +551,7 @@ std::unique_ptr<const HeaderMatcher> PrepareHeaderMatcher(
   }
 
   std::unique_ptr<const HeaderMatcher> header_matcher(
-      HeaderMatcher::Create(value->GetListDeprecated()));
+      HeaderMatcher::Create(value->GetList()));
   if (!header_matcher.get())
     *error = ErrorUtils::FormatErrorMessage(kInvalidValue, name);
   return header_matcher;
@@ -719,15 +711,15 @@ WebRequestConditionAttributeStages::
 
 namespace {
 
-// Reads strings stored in |value|, which is expected to be a ListValue, and
-// sets corresponding bits (see RequestStage) in |out_stages|. Returns true on
-// success, false otherwise.
+// Reads strings stored in |value|, which is expected to be a Value of type
+// LIST, and sets corresponding bits (see RequestStage) in |out_stages|.
+// Returns true on success, false otherwise.
 bool ParseListOfStages(const base::Value& value, int* out_stages) {
   if (!value.is_list())
     return false;
 
   int stages = 0;
-  for (const auto& entry : value.GetListDeprecated()) {
+  for (const auto& entry : value.GetList()) {
     if (!entry.is_string())
       return false;
     const std::string& stage_name = entry.GetString();

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_WEBUI_TAB_SEARCH_TAB_SEARCH_PAGE_HANDLER_H_
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "chrome/browser/ui/browser_tab_strip_tracker.h"
 #include "chrome/browser/ui/browser_tab_strip_tracker_delegate.h"
 #include "chrome/browser/ui/tabs/tab_group.h"
@@ -23,6 +24,7 @@
 #include "url/gurl.h"
 
 class Browser;
+class MetricsReporter;
 
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
@@ -48,7 +50,8 @@ class TabSearchPageHandler : public tab_search::mojom::PageHandler,
       mojo::PendingReceiver<tab_search::mojom::PageHandler> receiver,
       mojo::PendingRemote<tab_search::mojom::Page> page,
       content::WebUI* web_ui,
-      ui::MojoBubbleWebUIController* webui_controller);
+      ui::MojoBubbleWebUIController* webui_controller,
+      MetricsReporter* metrics_reporter);
   TabSearchPageHandler(const TabSearchPageHandler&) = delete;
   TabSearchPageHandler& operator=(const TabSearchPageHandler&) = delete;
   ~TabSearchPageHandler() override;
@@ -93,8 +96,12 @@ class TabSearchPageHandler : public tab_search::mojom::PageHandler,
     TabDetails(Browser* browser, TabStripModel* tab_strip_model, int index)
         : browser(browser), tab_strip_model(tab_strip_model), index(index) {}
 
-    Browser* browser;
-    TabStripModel* tab_strip_model;
+    // This field is not a raw_ptr<> because it was filtered by the rewriter
+    // for: #union
+    RAW_PTR_EXCLUSION Browser* browser;
+    // This field is not a raw_ptr<> because it was filtered by the rewriter
+    // for: #union
+    RAW_PTR_EXCLUSION TabStripModel* tab_strip_model;
     int index;
   };
 
@@ -142,6 +149,7 @@ class TabSearchPageHandler : public tab_search::mojom::PageHandler,
   mojo::Remote<tab_search::mojom::Page> page_;
   const raw_ptr<content::WebUI> web_ui_;
   const raw_ptr<ui::MojoBubbleWebUIController> webui_controller_;
+  const raw_ptr<MetricsReporter> metrics_reporter_;
   BrowserTabStripTracker browser_tab_strip_tracker_{this, this};
   std::unique_ptr<base::RetainingOneShotTimer> debounce_timer_;
 

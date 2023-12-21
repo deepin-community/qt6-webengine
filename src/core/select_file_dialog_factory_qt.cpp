@@ -65,7 +65,8 @@ public:
     void SelectFileImpl(Type type, const std::u16string &title, const base::FilePath &default_path,
                         const FileTypeInfo *file_types, int file_type_index,
                         const base::FilePath::StringType &default_extension,
-                        gfx::NativeWindow owning_window, void *params) override;
+                        gfx::NativeWindow owning_window, void *params, const GURL *) override;
+
     bool HasMultipleFileTypeChoicesImpl() override;
 
 private:
@@ -105,13 +106,14 @@ void SelectFileDialogQt::SelectFileImpl(Type type, const std::u16string &title,
                                         const base::FilePath &default_path,
                                         const FileTypeInfo *file_types, int file_type_index,
                                         const base::FilePath::StringType &default_extension,
-                                        gfx::NativeWindow owning_window, void *params)
+                                        gfx::NativeWindow owning_window, void *params, const GURL *caller)
 {
     Q_UNUSED(title);
     Q_UNUSED(file_type_index);
     Q_UNUSED(default_extension);
     Q_UNUSED(owning_window);
     Q_UNUSED(params);
+    Q_UNUSED(caller);
 
     QStringList acceptedSuffixes;
     if (file_types) {
@@ -135,7 +137,7 @@ SelectFileDialogFactoryQt::Create(ui::SelectFileDialog::Listener *listener,
                                   std::unique_ptr<ui::SelectFilePolicy> policy)
 {
     content::WebContents *webContents =
-            static_cast<SelectFilePolicyQt *>(policy.get())->webContents();
+            static_cast<SelectFilePolicyQt *>(policy.get())->webContents()->GetOutermostWebContents();
     WebContentsAdapterClient *client =
             WebContentsViewQt::from(static_cast<content::WebContentsImpl *>(webContents)->GetView())
                     ->client();

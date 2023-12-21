@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -39,42 +39,13 @@
 #include "base/time/time.h"
 #endif
 
-#if BUILDFLAG(IS_WIN)
-#include "ui/base/win/shell.h"
-#endif
-
 namespace message_center {
 
 namespace {
 
-// Creates a text for spoken feedback from the data contained in the
-// notification.
-std::u16string CreateAccessibleName(const Notification& notification) {
-  if (!notification.accessible_name().empty())
-    return notification.accessible_name();
-
-  // Fall back to a text constructed from the notification.
-  // Add non-empty elements.
-
-  std::vector<std::u16string> accessible_lines;
-  if (!notification.title().empty())
-    accessible_lines.push_back(notification.title());
-
-  if (!notification.message().empty())
-    accessible_lines.push_back(notification.message());
-
-  if (!notification.context_message().empty())
-    accessible_lines.push_back(notification.context_message());
-  std::vector<NotificationItem> items = notification.items();
-  for (size_t i = 0; i < items.size() && i < kNotificationMaximumItems; ++i) {
-    accessible_lines.push_back(items[i].title + u" " + items[i].message);
-  }
-  return base::JoinString(accessible_lines, u"\n");
-}
-
 bool ShouldShowAeroShadowBorder() {
 #if BUILDFLAG(IS_WIN)
-  return ui::win::IsAeroGlassEnabled();
+  return true;
 #else
   return false;
 #endif
@@ -95,6 +66,7 @@ SkPath MessageView::HighlightPathGenerator::GetHighlightPath(
 MessageView::MessageView(const Notification& notification)
     : notification_id_(notification.id()),
       notifier_id_(notification.notifier_id()),
+      timestamp_(notification.timestamp()),
       slide_out_controller_(this, this) {
   SetFocusBehavior(FocusBehavior::ALWAYS);
   views::FocusRing::Install(this);
@@ -130,13 +102,35 @@ views::View* MessageView::FindGroupNotificationView(
   return nullptr;
 }
 
+// Creates text for spoken feedback from the data contained in the
+// notification.
+std::u16string MessageView::CreateAccessibleName(
+    const Notification& notification) {
+  if (!notification.accessible_name().empty())
+    return notification.accessible_name();
+
+  // Fall back to text constructed from the notification.
+  // Add non-empty elements.
+
+  std::vector<std::u16string> accessible_lines;
+  if (!notification.title().empty())
+    accessible_lines.push_back(notification.title());
+
+  if (!notification.message().empty())
+    accessible_lines.push_back(notification.message());
+
+  if (!notification.context_message().empty())
+    accessible_lines.push_back(notification.context_message());
+  std::vector<NotificationItem> items = notification.items();
+  for (size_t i = 0; i < items.size() && i < kNotificationMaximumItems; ++i) {
+    accessible_lines.push_back(items[i].title + u" " + items[i].message);
+  }
+  return base::JoinString(accessible_lines, u"\n");
+}
+
 void MessageView::UpdateWithNotification(const Notification& notification) {
   pinned_ = notification.pinned();
-  std::u16string new_accessible_name = CreateAccessibleName(notification);
-  if (new_accessible_name != accessible_name_) {
-    accessible_name_ = new_accessible_name;
-    NotifyAccessibilityEvent(ax::mojom::Event::kTextChanged, true);
-  }
+  SetAccessibleName(CreateAccessibleName(notification));
   slide_out_controller_.set_slide_mode(CalculateSlideMode());
 }
 
@@ -185,7 +179,7 @@ bool MessageView::IsManuallyExpandedOrCollapsed() const {
   return false;
 }
 
-void MessageView::SetManuallyExpandedOrCollapsed(bool value) {
+void MessageView::SetManuallyExpandedOrCollapsed(ExpandState state) {
   // Not implemented by default.
 }
 
@@ -230,10 +224,11 @@ void MessageView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
       ax::mojom::StringAttribute::kRoleDescription,
       l10n_util::GetStringUTF8(IDS_MESSAGE_NOTIFICATION_ACCESSIBLE_NAME));
 
-  if (accessible_name_.empty())
+  if (GetAccessibleName().empty()) {
     node_data->SetNameFrom(ax::mojom::NameFrom::kAttributeExplicitlyEmpty);
+  }
 
-  node_data->SetName(accessible_name_);
+  node_data->SetNameChecked(GetAccessibleName());
 }
 
 bool MessageView::OnMousePressed(const ui::MouseEvent& event) {
@@ -354,7 +349,16 @@ void MessageView::OnThemeChanged() {
 }
 
 ui::Layer* MessageView::GetSlideOutLayer() {
-  return is_nested_ ? layer() : GetWidget()->GetLayer();
+  // If a message view is contained in a parent message view it should give up
+  // slide behavior to the parent message view when the parent view is
+  // collapsed.
+  auto* nested_layer = (ShouldParentHandleSlide() && parent_message_view_)
+                           ? parent_message_view_->layer()
+                           : layer();
+  bool is_nested = (ShouldParentHandleSlide() && parent_message_view_)
+                       ? parent_message_view_->is_nested()
+                       : is_nested_;
+  return is_nested ? nested_layer : GetWidget()->GetLayer();
 }
 
 void MessageView::OnSlideStarted() {
@@ -364,6 +368,21 @@ void MessageView::OnSlideStarted() {
 }
 
 void MessageView::OnSlideChanged(bool in_progress) {
+  // crbug/1333664: We need to make sure to disable scrolling while a
+  // notification view is sliding. This is to ensure the notification view can
+  // only move horizontally or vertically at one time.
+  if (scroller_ && !is_sliding_ && slide_out_controller_.GetGestureAmount()) {
+    is_sliding_ = true;
+    scroller_->SetVerticalScrollBarMode(
+        views::ScrollView::ScrollBarMode::kDisabled);
+  }
+
+  if (scroller_ && !in_progress) {
+    is_sliding_ = false;
+    scroller_->SetVerticalScrollBarMode(
+        views::ScrollView::ScrollBarMode::kEnabled);
+  }
+
   for (auto& observer : observers_) {
     if (in_progress)
       observer.OnSlideChanged(notification_id_);
@@ -381,6 +400,9 @@ void MessageView::RemoveObserver(MessageView::Observer* observer) {
 }
 
 void MessageView::OnSlideOut() {
+  if (ShouldParentHandleSlide() && parent_message_view_)
+    return parent_message_view_->OnSlideOut();
+
   // The notification will be deleted after slide out, so give observers a
   // chance to handle the notification before fulling sliding out.
   for (auto& observer : observers_)
@@ -500,6 +522,13 @@ bool MessageView::ShouldShowControlButtons() const {
 #else
   return true;
 #endif
+}
+
+bool MessageView::ShouldParentHandleSlide() const {
+  if (!parent_message_view_)
+    return false;
+
+  return !parent_message_view_->IsExpanded();
 }
 
 void MessageView::UpdateBackgroundPainter() {

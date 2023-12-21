@@ -50,7 +50,10 @@ class MockBaseFetchContext final : public BaseFetchContext {
  public:
   MockBaseFetchContext(const DetachableResourceFetcherProperties& properties,
                        ExecutionContext* execution_context)
-      : BaseFetchContext(properties), execution_context_(execution_context) {}
+      : BaseFetchContext(
+            properties,
+            MakeGarbageCollected<DetachableConsoleLogger>(execution_context_)),
+        execution_context_(execution_context) {}
   ~MockBaseFetchContext() override = default;
 
   // BaseFetchContext overrides:
@@ -86,6 +89,7 @@ class MockBaseFetchContext final : public BaseFetchContext {
   }
   bool ShouldBlockFetchByMixedContentCheck(
       mojom::blink::RequestContextType,
+      network::mojom::blink::IPAddressSpace,
       const absl::optional<ResourceRequest::RedirectInfo>&,
       const KURL&,
       ReportingDisposition,
@@ -101,7 +105,6 @@ class MockBaseFetchContext final : public BaseFetchContext {
   ContentSecurityPolicy* GetContentSecurityPolicy() const override {
     return execution_context_->GetContentSecurityPolicy();
   }
-  void AddConsoleMessage(ConsoleMessage*) const override {}
 
   void Trace(Visitor* visitor) const override {
     visitor->Trace(execution_context_);

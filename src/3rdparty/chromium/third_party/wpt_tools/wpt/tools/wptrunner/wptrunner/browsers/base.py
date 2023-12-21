@@ -1,3 +1,5 @@
+# mypy: allow-untyped-defs
+
 import enum
 import errno
 import os
@@ -85,9 +87,7 @@ class Browser:
     """Abstract class serving as the basis for Browser implementations.
 
     The Browser is used in the TestRunnerManager to start and stop the browser
-    process, and to check the state of that process. This class also acts as a
-    context manager, enabling it to do browser-specific setup at the start of
-    the testrun and cleanup after the run is complete.
+    process, and to check the state of that process.
 
     :param logger: Structured logger to use for output.
     """
@@ -98,13 +98,6 @@ class Browser:
 
     def __init__(self, logger):
         self.logger = logger
-
-    def __enter__(self):
-        self.setup()
-        return self
-
-    def __exit__(self, *args, **kwargs):
-        self.cleanup()
 
     def setup(self):
         """Used for browser-specific setup that happens at the start of a test run"""
@@ -157,6 +150,9 @@ class Browser:
         log. Returns a boolean indicating whether a crash occured."""
         return False
 
+    @property
+    def pac(self):
+        return None
 
 class NullBrowser(Browser):
     def __init__(self, logger, **kwargs):
@@ -287,7 +283,7 @@ class WebDriverBrowser(Browser):
 
     def __init__(self, logger, binary=None, webdriver_binary=None,
                  webdriver_args=None, host="127.0.0.1", port=None, base_path="/",
-                 env=None, **kwargs):
+                 env=None, supports_pac=True, **kwargs):
         super().__init__(logger)
 
         if webdriver_binary is None:
@@ -300,6 +296,7 @@ class WebDriverBrowser(Browser):
 
         self.host = host
         self._port = port
+        self._supports_pac = supports_pac
 
         self.base_path = base_path
         self.env = os.environ.copy() if env is None else env
@@ -310,6 +307,7 @@ class WebDriverBrowser(Browser):
         self._output_handler = None
         self._cmd = None
         self._proc = None
+        self._pac = None
 
     def make_command(self):
         """Returns the full command for starting the server process as a list."""
@@ -349,7 +347,8 @@ class WebDriverBrowser(Browser):
         self._output_handler.after_process_start(self._proc.pid)
 
         try:
-            wait_for_service(self.logger, self.host, self.port)
+            wait_for_service(self.logger, self.host, self.port,
+                             timeout=self.init_timeout)
         except Exception:
             self.logger.error(
                 "WebDriver was not accessible "
@@ -398,4 +397,13 @@ class WebDriverBrowser(Browser):
     def executor_browser(self):
         return ExecutorBrowser, {"webdriver_url": self.url,
                                  "host": self.host,
-                                 "port": self.port}
+                                 "port": self.port,
+                                 "pac": self.pac}
+
+    def settings(self, test):
+        self._pac = test.environment.get("pac", None) if self._supports_pac else None
+        return {"pac": self._pac}
+
+    @property
+    def pac(self):
+        return self._pac

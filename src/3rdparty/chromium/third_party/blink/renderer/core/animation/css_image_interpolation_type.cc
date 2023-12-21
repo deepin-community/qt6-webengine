@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -271,13 +271,13 @@ void CSSImageInterpolationType::ApplyStandardPropertyValue(
                                         non_interpolable_value, state);
   switch (CssProperty().PropertyID()) {
     case CSSPropertyID::kBorderImageSource:
-      state.Style()->SetBorderImageSource(image);
+      state.StyleBuilder().SetBorderImageSource(image);
       break;
     case CSSPropertyID::kListStyleImage:
-      state.Style()->SetListStyleImage(image);
+      state.StyleBuilder().SetListStyleImage(image);
       break;
     case CSSPropertyID::kWebkitMaskBoxImageSource:
-      state.Style()->SetMaskBoxImageSource(image);
+      state.StyleBuilder().SetMaskBoxImageSource(image);
       break;
     default:
       NOTREACHED();

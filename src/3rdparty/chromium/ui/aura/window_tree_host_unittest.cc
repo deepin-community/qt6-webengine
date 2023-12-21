@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -31,6 +31,38 @@
 #endif
 
 namespace aura {
+
+namespace {
+
+// A convenient wrapper that makes it easy to invoke this method inside an
+// EXPECT_EQ statement.
+gfx::Point ConvertDIPToPixels(const WindowTreeHost* host, gfx::Point point) {
+  host->ConvertDIPToPixels(&point);
+  return point;
+}
+
+// A convenient wrapper that makes it easy to invoke this method inside an
+// EXPECT_EQ statement.
+gfx::PointF ConvertDIPToPixels(const WindowTreeHost* host, gfx::PointF point) {
+  host->ConvertDIPToPixels(&point);
+  return point;
+}
+
+// A convenient wrapper that makes it easy to invoke this method inside an
+// EXPECT_EQ statement.
+gfx::Point ConvertPixelsToDIP(const WindowTreeHost* host, gfx::Point point) {
+  host->ConvertPixelsToDIP(&point);
+  return point;
+}
+
+// A convenient wrapper that makes it easy to invoke this method inside an
+// EXPECT_EQ statement.
+gfx::PointF ConvertPixelsToDIP(const WindowTreeHost* host, gfx::PointF point) {
+  host->ConvertPixelsToDIP(&point);
+  return point;
+}
+
+}  // namespace
 
 using WindowTreeHostTest = test::AuraTestBase;
 
@@ -166,6 +198,103 @@ TEST_F(WindowTreeHostTest, NoRewritesPostIME) {
   host()->RemoveEventRewriter(&event_rewriter);
 }
 
+TEST_F(WindowTreeHostTest, ConvertDIPToPixelsShouldRespectScaleFactor) {
+  const int width_in_pixels = 400;
+  const int height_in_pixels = 300;
+  const int width_in_dip = 200;
+  const int height_in_dip = 150;
+
+  host()->SetBoundsInPixels(gfx::Rect(0, 0, width_in_pixels, height_in_pixels));
+  test_screen()->SetDisplayRotation(display::Display::ROTATE_0);
+
+  test_screen()->SetDeviceScaleFactor(2.f);
+
+  EXPECT_EQ(ConvertDIPToPixels(host(), gfx::Point(0, 0)), gfx::Point(0, 0));
+  EXPECT_EQ(ConvertDIPToPixels(host(), gfx::Point(width_in_dip, 0)),
+            gfx::Point(width_in_pixels, 0));
+  EXPECT_EQ(ConvertDIPToPixels(host(), gfx::Point(0, height_in_dip)),
+            gfx::Point(0, height_in_pixels));
+}
+
+TEST_F(WindowTreeHostTest, ConvertDIPToPixelsShouldRespectRotation) {
+  const int width_in_pixels = 400;
+  const int height_in_pixels = 300;
+  const int width_in_dip = 300;
+  const int height_in_dip = 400;
+
+  host()->SetBoundsInPixels(gfx::Rect(0, 0, width_in_pixels, height_in_pixels));
+  test_screen()->SetDeviceScaleFactor(1.f);
+
+  test_screen()->SetDisplayRotation(display::Display::ROTATE_90);
+
+  EXPECT_EQ(ConvertDIPToPixels(host(), gfx::Point(0, 0)),
+            gfx::Point(width_in_pixels, 0));
+  EXPECT_EQ(ConvertDIPToPixels(host(), gfx::Point(width_in_dip, 0)),
+            gfx::Point(width_in_pixels, height_in_pixels));
+  EXPECT_EQ(ConvertDIPToPixels(host(), gfx::Point(width_in_dip, height_in_dip)),
+            gfx::Point(0, height_in_pixels));
+  EXPECT_EQ(ConvertDIPToPixels(host(), gfx::Point(0, height_in_dip)),
+            gfx::Point(0, 0));
+}
+
+TEST_F(WindowTreeHostTest, ConvertDIPToPixelsShouldWorkWithPointF) {
+  host()->SetBoundsInPixels(gfx::Rect(0, 0, 400, 400));
+  test_screen()->SetDisplayRotation(display::Display::ROTATE_0);
+  test_screen()->SetDeviceScaleFactor(2.f);
+
+  EXPECT_EQ(ConvertDIPToPixels(host(), gfx::PointF(5.3f, 0)),
+            gfx::PointF(10.6f, 0));
+}
+
+TEST_F(WindowTreeHostTest, ConvertPixelsToDIPShouldRespectScaleFactor) {
+  const int width_in_pixels = 400;
+  const int height_in_pixels = 300;
+  const int width_in_dip = 200;
+  const int height_in_dip = 150;
+
+  host()->SetBoundsInPixels(gfx::Rect(0, 0, width_in_pixels, height_in_pixels));
+  test_screen()->SetDisplayRotation(display::Display::ROTATE_0);
+
+  test_screen()->SetDeviceScaleFactor(2.f);
+
+  EXPECT_EQ(ConvertPixelsToDIP(host(), gfx::Point(0, 0)), gfx::Point(0, 0));
+  EXPECT_EQ(ConvertPixelsToDIP(host(), gfx::Point(width_in_pixels, 0)),
+            gfx::Point(width_in_dip, 0));
+  EXPECT_EQ(ConvertPixelsToDIP(host(), gfx::Point(0, height_in_pixels)),
+            gfx::Point(0, height_in_dip));
+}
+
+TEST_F(WindowTreeHostTest, ConvertPixelsToDIPShouldRespectRotation) {
+  const int width_in_pixels = 400;
+  const int height_in_pixels = 300;
+  const int width_in_dip = 300;
+  const int height_in_dip = 400;
+
+  host()->SetBoundsInPixels(gfx::Rect(0, 0, width_in_pixels, height_in_pixels));
+  test_screen()->SetDeviceScaleFactor(1.f);
+
+  test_screen()->SetDisplayRotation(display::Display::ROTATE_90);
+
+  EXPECT_EQ(ConvertPixelsToDIP(host(), gfx::Point(0, 0)),
+            gfx::Point(0, height_in_dip));
+  EXPECT_EQ(ConvertPixelsToDIP(host(), gfx::Point(width_in_pixels, 0)),
+            gfx::Point(0, 0));
+  EXPECT_EQ(
+      ConvertPixelsToDIP(host(), gfx::Point(width_in_pixels, height_in_pixels)),
+      gfx::Point(width_in_dip, 0));
+  EXPECT_EQ(ConvertPixelsToDIP(host(), gfx::Point(0, height_in_pixels)),
+            gfx::Point(width_in_dip, height_in_dip));
+}
+
+TEST_F(WindowTreeHostTest, ConvertPixelsToDIPShouldWorkWithPointF) {
+  host()->SetBoundsInPixels(gfx::Rect(0, 0, 400, 400));
+  test_screen()->SetDisplayRotation(display::Display::ROTATE_0);
+  test_screen()->SetDeviceScaleFactor(2.f);
+
+  EXPECT_EQ(ConvertPixelsToDIP(host(), gfx::PointF(10.6f, 0)),
+            gfx::PointF(5.3f, 0));
+}
+
 class TestWindow : public ui::StubWindow {
  public:
   explicit TestWindow(ui::PlatformWindowDelegate* delegate)
@@ -194,6 +323,10 @@ class TestWindowTreeHost : public WindowTreeHostPlatform {
 
   TestWindowTreeHost(const TestWindowTreeHost&) = delete;
   TestWindowTreeHost& operator=(const TestWindowTreeHost&) = delete;
+
+  void OnVideoCaptureLockChanged() override { ++num_capture_lock_changes; }
+
+  int num_capture_lock_changes = 0;
 };
 
 TEST_F(WindowTreeHostTest, LostCaptureDuringTearDown) {
@@ -203,6 +336,20 @@ TEST_F(WindowTreeHostTest, LostCaptureDuringTearDown) {
       features::kApplyNativeOcclusionToCompositor);
 #endif
   TestWindowTreeHost host;
+}
+
+TEST_F(WindowTreeHostTest, VideoCaptureLockRecorded) {
+  TestWindowTreeHost host;
+  ASSERT_FALSE(host.HasVideoCaptureLocks());
+  ASSERT_EQ(host.num_capture_lock_changes, 0);
+
+  auto lock = host.CreateVideoCaptureLock();
+  EXPECT_TRUE(host.HasVideoCaptureLocks());
+  EXPECT_EQ(host.num_capture_lock_changes, 1);
+
+  lock.reset();
+  EXPECT_FALSE(host.HasVideoCaptureLocks());
+  EXPECT_EQ(host.num_capture_lock_changes, 2);
 }
 
 #if BUILDFLAG(IS_WIN)
@@ -239,12 +386,11 @@ cc::Layer* ccLayerFromUiLayer(ui::Layer* layer) {
 bool WaitForFrame(WindowTreeHost* host) {
   base::RunLoop run_loop;
   bool got_frame = false;
-  host->compositor()->RequestPresentationTimeForNextFrame(
-      base::BindLambdaForTesting(
-          [&](const gfx::PresentationFeedback& feedback) {
-            got_frame = true;
-            run_loop.Quit();
-          }));
+  host->compositor()->RequestSuccessfulPresentationTimeForNextFrame(
+      base::BindLambdaForTesting([&](base::TimeTicks presentation_timestamp) {
+        got_frame = true;
+        run_loop.Quit();
+      }));
   run_loop.Run();
   return got_frame;
 }
@@ -347,7 +493,7 @@ class WindowTreeHostWithThrottleTest : public test::AuraTestBase {
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-TEST_F(WindowTreeHostWithThrottleTest, Basic) {
+TEST_F(WindowTreeHostWithThrottleTest, DISABLED_Basic) {
   host()->Show();
   EXPECT_TRUE(host()->compositor()->IsVisible());
   EXPECT_TRUE(test::GetThrottledHosts().empty());
@@ -359,7 +505,7 @@ TEST_F(WindowTreeHostWithThrottleTest, Basic) {
   EXPECT_TRUE(host()->compositor()->IsVisible());
 }
 
-TEST_F(WindowTreeHostWithThrottleTest, CallHideDirectly) {
+TEST_F(WindowTreeHostWithThrottleTest, DISABLED_CallHideDirectly) {
   host()->Show();
   EXPECT_TRUE(host()->compositor()->IsVisible());
   EXPECT_TRUE(test::GetThrottledHosts().empty());
@@ -371,6 +517,6 @@ TEST_F(WindowTreeHostWithThrottleTest, CallHideDirectly) {
   EXPECT_FALSE(host()->compositor()->IsVisible());
 }
 
-#endif
+#endif  // BUILDFLAG(IS_WIN)
 
 }  // namespace aura

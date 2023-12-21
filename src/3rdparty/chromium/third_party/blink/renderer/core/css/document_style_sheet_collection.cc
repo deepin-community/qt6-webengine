@@ -50,34 +50,41 @@ DocumentStyleSheetCollection::DocumentStyleSheetCollection(
 void DocumentStyleSheetCollection::CollectStyleSheetsFromCandidates(
     StyleEngine& engine,
     DocumentStyleSheetCollector& collector) {
+  StyleEngine::RuleSetScope rule_set_scope;
+
   for (Node* n : style_sheet_candidate_nodes_) {
     StyleSheetCandidate candidate(*n);
 
     DCHECK(!candidate.IsXSL());
-    if (candidate.IsEnabledAndLoading())
+    if (candidate.IsEnabledAndLoading()) {
       continue;
+    }
 
     StyleSheet* sheet = candidate.Sheet();
-    if (!sheet)
+    if (!sheet) {
       continue;
+    }
 
     collector.AppendSheetForList(sheet);
     if (!candidate.CanBeActivated(
-            GetDocument().GetStyleEngine().PreferredStylesheetSetName()))
+            GetDocument().GetStyleEngine().PreferredStylesheetSetName())) {
       continue;
+    }
 
     CSSStyleSheet* css_sheet = To<CSSStyleSheet>(sheet);
-    collector.AppendActiveStyleSheet(
-        std::make_pair(css_sheet, engine.RuleSetForSheet(*css_sheet)));
+    collector.AppendActiveStyleSheet(std::make_pair(
+        css_sheet, rule_set_scope.RuleSetForSheet(engine, css_sheet)));
   }
-  if (!GetTreeScope().HasAdoptedStyleSheets())
+  if (!GetTreeScope().HasAdoptedStyleSheets()) {
     return;
+  }
 
   for (CSSStyleSheet* sheet : *GetTreeScope().AdoptedStyleSheets()) {
     if (!sheet ||
         !sheet->CanBeActivated(
-            GetDocument().GetStyleEngine().PreferredStylesheetSetName()))
+            GetDocument().GetStyleEngine().PreferredStylesheetSetName())) {
       continue;
+    }
     DCHECK_EQ(GetDocument(), sheet->ConstructorDocument());
     collector.AppendSheetForList(sheet);
     collector.AppendActiveStyleSheet(

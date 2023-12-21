@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,22 +8,28 @@
 #include "base/strings/sys_string_conversions.h"
 #include "components/remote_cocoa/app_shim/ns_view_ids.h"
 #include "content/app_shim_remote_cocoa/render_widget_host_ns_view_host_helper.h"
-#include "content/common/cursors/webcursor.h"
 #include "content/common/mac/attributed_string_type_converters.h"
 #import "skia/ext/skia_utils_mac.h"
+#include "third_party/blink/public/common/input/web_gesture_event.h"
 #include "ui/accelerated_widget_mac/window_resize_helper_mac.h"
 #import "ui/base/cocoa/animation_utils.h"
+#import "ui/base/cocoa/cursor_utils.h"
 #include "ui/base/mojom/attributed_string.mojom.h"
 #include "ui/display/screen.h"
+#include "ui/events/blink/did_overscroll_params.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/gfx/mac/coordinate_conversion.h"
+
+using blink::WebGestureEvent;
 
 namespace remote_cocoa {
 
 RenderWidgetHostNSViewBridge::RenderWidgetHostNSViewBridge(
     mojom::RenderWidgetHostNSViewHost* host,
-    RenderWidgetHostNSViewHostHelper* host_helper) {
-
+    RenderWidgetHostNSViewHostHelper* host_helper,
+    uint64_t ns_view_id,
+    base::OnceClosure destroy_callback)
+    : destroy_callback_(std::move(destroy_callback)) {
   cocoa_view_.reset([[RenderWidgetHostViewCocoa alloc]
         initWithHost:host
       withHostHelper:host_helper]);
@@ -33,6 +39,9 @@ RenderWidgetHostNSViewBridge::RenderWidgetHostNSViewBridge(
       std::make_unique<ui::DisplayCALayerTree>(background_layer_.get());
   [cocoa_view_ setLayer:background_layer_];
   [cocoa_view_ setWantsLayer:YES];
+
+  view_id_ = std::make_unique<remote_cocoa::ScopedNSViewIdMapping>(ns_view_id,
+                                                                   cocoa_view_);
 }
 
 RenderWidgetHostNSViewBridge::~RenderWidgetHostNSViewBridge() {
@@ -59,8 +68,12 @@ RenderWidgetHostViewCocoa* RenderWidgetHostNSViewBridge::GetNSView() {
   return cocoa_view_;
 }
 
-void RenderWidgetHostNSViewBridge::InitAsPopup(const gfx::Rect& content_rect) {
+void RenderWidgetHostNSViewBridge::InitAsPopup(
+    const gfx::Rect& content_rect,
+    uint64_t popup_parent_ns_view_id) {
   popup_window_ = std::make_unique<PopupWindowMac>(content_rect, cocoa_view_);
+
+  [cocoa_view_ setPopupParentNSViewId:popup_parent_ns_view_id];
 }
 
 void RenderWidgetHostNSViewBridge::SetParentWebContentsNSView(
@@ -144,8 +157,8 @@ void RenderWidgetHostNSViewBridge::SetBackgroundColor(SkColor color) {
   if (display_disabled_)
     return;
   ScopedCAActionDisabler disabler;
-  base::ScopedCFTypeRef<CGColorRef> cg_color(
-      skia::CGColorCreateFromSkColor(color));
+  base::ScopedCFTypeRef<CGColorRef> cg_color =
+      skia::CGColorCreateFromSkColor(color);
   [background_layer_ setBackgroundColor:cg_color];
 }
 
@@ -222,14 +235,14 @@ void RenderWidgetHostNSViewBridge::OnDisplayRemoved(const display::Display&) {
 void RenderWidgetHostNSViewBridge::OnDisplayMetricsChanged(
     const display::Display&,
     uint32_t) {
-  // Note that -updateScreenProperties is also be called by the notification
-  // NSWindowDidChangeBackingPropertiesNotification (some of these calls
-  // will be redundant).
+  // Note that -updateScreenProperties is also be called by the notifications
+  // NSWindowDidChangeScreen and NSWindowDidChangeBackingPropertiesNotification,
+  // so some of these calls will be redundant.
   [cocoa_view_ updateScreenProperties];
 }
 
 void RenderWidgetHostNSViewBridge::DisplayCursor(const ui::Cursor& cursor) {
-  [cocoa_view_ updateCursor:content::WebCursor(cursor).GetNativeCursor()];
+  [cocoa_view_ updateCursor:ui::GetNativeCursor(cursor)];
 }
 
 void RenderWidgetHostNSViewBridge::SetCursorLocked(bool locked) {
@@ -283,6 +296,39 @@ void RenderWidgetHostNSViewBridge::ShowSharingServicePicker(
     ShowSharingServicePickerCallback callback) {
   ShowSharingServicePickerForView(cocoa_view_, title, text, url, file_paths,
                                   std::move(callback));
+}
+
+void RenderWidgetHostNSViewBridge::Destroy() {
+  if (destroy_callback_)
+    std::move(destroy_callback_).Run();
+}
+
+void RenderWidgetHostNSViewBridge::GestureScrollEventAck(
+    std::unique_ptr<blink::WebCoalescedInputEvent> event,
+    bool consumed) {
+  if (!event ||
+      !blink::WebInputEvent::IsGestureEventType(event->Event().GetType())) {
+    DLOG(ERROR) << "Absent or non-GestureEventType event.";
+    return;
+  }
+
+  const blink::WebGestureEvent& gesture_event =
+      static_cast<const blink::WebGestureEvent&>(event->Event());
+  [cocoa_view_ processedGestureScrollEvent:gesture_event consumed:consumed];
+}
+
+void RenderWidgetHostNSViewBridge::DidOverscroll(
+    blink::mojom::DidOverscrollParamsPtr overscroll) {
+  if (!overscroll) {
+    DLOG(ERROR) << "Overscroll argument is nullptr.";
+    return;
+  }
+
+  ui::DidOverscrollParams params = {
+      overscroll->accumulated_overscroll, overscroll->latest_overscroll_delta,
+      overscroll->current_fling_velocity,
+      overscroll->causal_event_viewport_point, overscroll->overscroll_behavior};
+  [cocoa_view_ processedOverscroll:params];
 }
 
 }  // namespace remote_cocoa

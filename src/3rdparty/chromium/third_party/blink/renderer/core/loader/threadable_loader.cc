@@ -33,6 +33,8 @@
 
 #include <memory>
 
+#include "base/numerics/safe_conversions.h"
+#include "base/task/single_thread_task_runner.h"
 #include "services/network/public/cpp/cors/cors_error_status.h"
 #include "services/network/public/mojom/cors.mojom-blink.h"
 #include "services/network/public/mojom/fetch_api.mojom-blink.h"
@@ -96,10 +98,10 @@ ThreadableLoader::ThreadableLoader(
     ThreadableLoaderClient* client,
     const ResourceLoaderOptions& resource_loader_options,
     ResourceFetcher* resource_fetcher)
-    : client_(client),
+    : resource_loader_options_(resource_loader_options),
+      client_(client),
       execution_context_(execution_context),
       resource_fetcher_(resource_fetcher),
-      resource_loader_options_(resource_loader_options),
       request_mode_(network::mojom::RequestMode::kSameOrigin),
       timeout_timer_(execution_context_->GetTaskRunner(TaskType::kNetworking),
                      this,
@@ -111,6 +113,13 @@ ThreadableLoader::ThreadableLoader(
 }
 
 void ThreadableLoader::Start(ResourceRequest request) {
+  // Back/forward-cache is interested in use of the "Authorization" header.
+  if (request.HttpHeaderField("Authorization")) {
+    execution_context_->GetScheduler()->RegisterStickyFeature(
+        SchedulingPolicy::Feature::kAuthorizationHeader,
+        {SchedulingPolicy::DisableBackForwardCache()});
+  }
+
   const auto request_context = request.GetRequestContext();
   if (request.GetMode() == network::mojom::RequestMode::kNoCors) {
     SECURITY_CHECK(cors::IsNoCorsAllowedContext(request_context));
@@ -165,7 +174,7 @@ void ThreadableLoader::Start(ResourceRequest request) {
   }
 }
 
-ThreadableLoader::~ThreadableLoader() {}
+ThreadableLoader::~ThreadableLoader() = default;
 
 void ThreadableLoader::SetTimeout(const base::TimeDelta& timeout) {
   timeout_ = timeout;
@@ -323,7 +332,7 @@ void ThreadableLoader::DataReceived(Resource* resource,
 
   // TODO(junov): Fix the ThreadableLoader ecosystem to use size_t. Until then,
   // we use safeCast to trap potential overflows.
-  client_->DidReceiveData(data, SafeCast<unsigned>(data_length));
+  client_->DidReceiveData(data, base::checked_cast<unsigned>(data_length));
 }
 
 void ThreadableLoader::NotifyFinished(Resource* resource) {
@@ -376,6 +385,10 @@ void ThreadableLoader::Trace(Visitor* visitor) const {
   visitor->Trace(resource_fetcher_);
   visitor->Trace(timeout_timer_);
   RawResourceClient::Trace(visitor);
+}
+
+scoped_refptr<base::SingleThreadTaskRunner> ThreadableLoader::GetTaskRunner() {
+  return execution_context_->GetTaskRunner(TaskType::kNetworking);
 }
 
 }  // namespace blink

@@ -1,4 +1,4 @@
-# Copyright 2021 The Chromium Authors. All rights reserved.
+# Copyright 2021 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -10,7 +10,11 @@ static_library("storage_configuration") {
     "storage_configuration.h",
   ]
 
-  deps = [ "//base" ]
+  deps = [
+    "//base",
+    "//components/reporting/proto:record_constants",
+    "//components/reporting/resources:resource_manager",
+  ]
 }
 
 static_library("storage_uploader_interface") {
@@ -23,8 +27,9 @@ static_library("storage_uploader_interface") {
     "//base",
     "//components/reporting/proto:record_constants",
     "//components/reporting/proto:record_proto",
+    "//components/reporting/proto:status_proto",
+    "//components/reporting/resources:resource_manager",
     "//components/reporting/util:status",
-    "//components/reporting/util:status_proto",
   ]
 }
 
@@ -43,8 +48,10 @@ static_library("storage_queue") {
     "//components/reporting/encryption:verification",
     "//components/reporting/proto:record_constants",
     "//components/reporting/proto:record_proto",
-    "//components/reporting/resources:resource_interface",
+    "//components/reporting/resources:resource_managed_buffer",
+    "//components/reporting/resources:resource_manager",
     "//components/reporting/util:file",
+    "//components/reporting/util:refcounted_closure_list",
     "//components/reporting/util:status",
     "//components/reporting/util:status_macros",
     "//components/reporting/util:task_runner_context",
@@ -70,8 +77,10 @@ static_library("storage") {
     "//components/reporting/encryption:encryption_module_interface",
     "//components/reporting/encryption:primitives",
     "//components/reporting/encryption:verification",
+    "//components/reporting/health:health_module",
     "//components/reporting/proto:record_constants",
     "//components/reporting/proto:record_proto",
+    "//components/reporting/resources:resource_manager",
     "//components/reporting/util:file",
     "//components/reporting/util:status",
     "//components/reporting/util:status_macros",
@@ -144,13 +153,9 @@ static_library("test_support") {
     "test_storage_module.h",
   ]
   public_deps = [
-    ":storage",
-    ":storage_configuration",
-    ":storage_module",
-    ":storage_queue",
+    ":storage_module_interface",
     "//components/reporting/proto:record_constants",
     "//components/reporting/proto:record_proto",
-    "//components/reporting/storage:storage_module_interface",
     "//components/reporting/util:status",
   ]
   deps = [
@@ -188,7 +193,8 @@ source_set("unit_tests") {
     "//components/reporting/encryption:test_support",
     "//components/reporting/encryption:testing_primitives",
     "//components/reporting/proto:record_proto",
-    "//components/reporting/resources:resource_interface",
+    "//components/reporting/resources:resource_managed_buffer",
+    "//components/reporting/resources:resource_manager",
     "//components/reporting/util:file",
     "//components/reporting/util:status",
     "//components/reporting/util:status_macros",

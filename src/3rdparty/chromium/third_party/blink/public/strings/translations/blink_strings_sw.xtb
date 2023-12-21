@@ -7,14 +7,12 @@
 <translation id="1178581264944972037">Sitisha</translation>
 <translation id="1306460908038601864">Imezimwa</translation>
 <translation id="1311894908970423688">Ni lazima thamani iwe <ph name="VALUE_DATE_OR_TIME" />.</translation>
-<translation id="145015347812617860">Vipengee <ph name="COUNT" /></translation>
 <translation id="1480676835519562650">unaweza kuchagua wengi, umechagua <ph name="SELECTED" /> kati ya <ph name="COUNT" />.</translation>
 <translation id="1588438908519853928">Ya kawaida</translation>
 <translation id="1591562245178063882">Mwezi huu</translation>
 <translation id="1637811476055996098">Chagua Faili</translation>
 <translation id="1681022320378710418">saa za sasa</translation>
 <translation id="1727839386348365796">Kichagua rangi</translation>
-<translation id="1727886345390570319">kuficha menyu ya manukuu</translation>
 <translation id="1729654308190250600">Tafadhali jaza sehemu ya anwani ya barua pepe.</translation>
 <translation id="1758486001363313524">Nyingine...</translation>
 <translation id="1787192514241997742">muda wote uliotumika: <ph name="REMAINING_TIME" /></translation>
@@ -31,7 +29,6 @@
 <translation id="2246498165605549352">Faili ya Ndani</translation>
 <translation id="2247351761944213033">Wiki <ph name="WEEKNUMBER" />, <ph name="YEAR" /></translation>
 <translation id="2277199496770840904">Wimbo wa <ph name="NUMBER" /></translation>
-<translation id="2307576640803031502">kwenye orodha, kipengee cha <ph name="INDEX" /> kati ya <ph name="COUNT" /></translation>
 <translation id="2393030564806080191">Nambari ya rangi ya heksadesimali</translation>
 <translation id="2398813069815436052">kidirisha kimefunguliwa.</translation>
 <translation id="245932805758469625">idadi ya sekunde za video zilizosalia</translation>
@@ -63,7 +60,6 @@
 <translation id="4103419683916926126">nukta</translation>
 <translation id="4201051445878709314">Onyesha mwezi uliotangulia</translation>
 <translation id="4360991593054037559">Tafadhali ingiza thamani halali. Thamani mbili halali za karibu ni <ph name="VALID_VALUE_LOW" /> na <ph name="VALID_VALUE_HIGHER" />.</translation>
-<translation id="4371899966896349864">ficha menyu ya kasi ya uchezaji</translation>
 <translation id="4522570452068850558">Maelezo</translation>
 <translation id="4664250907885839816">Sehemu inayofuata '<ph name="ATSIGN" />' haipaswi kuwa na alama ya '<ph name="INVALIDCHARACTER" />'.</translation>
 <translation id="4718048029184481307">Inacheza katika hali ya picha ndani ya picha</translation>
@@ -83,6 +79,7 @@
 <translation id="5117590920725113268">Onyesha mwezi unaofuata</translation>
 <translation id="5164977714490026579">Lazima thamani iwe kubwa kuliko au sawa na <ph name="MINIMUM" />.</translation>
 <translation id="5196716972587102051">2</translation>
+<translation id="5199514351668672591">rudi kwenye chaguo</translation>
 <translation id="520299402983819650">PB <ph name="QUANTITY" /></translation>
 <translation id="5272594226096532950">Haijachaguliwa. Kwenye kikundi, chaguo la <ph name="INDEX" /> kati ya <ph name="COUNT" /></translation>
 <translation id="5307600278924710095">Tafadhali ingiza sehemu ikifuatiwa na '<ph name="ATSIGN" />'. '<ph name="INVALIDADDRESS" />' haijakamilika.</translation>

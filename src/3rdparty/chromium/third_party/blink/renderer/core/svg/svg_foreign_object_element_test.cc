@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -28,10 +28,9 @@ TEST_F(SVGForeignObjectElementTest, NoLayoutObjectInNonRendered) {
   Element* foreign_object = GetDocument().getElementById("fo");
   EXPECT_FALSE(foreign_object->GetLayoutObject());
 
-  scoped_refptr<ComputedStyle> style =
-      GetDocument().GetStyleResolver().CreateComputedStyle();
+  const ComputedStyle& style = GetDocument().GetStyleResolver().InitialStyle();
   LayoutObject* layout_object =
-      foreign_object->CreateLayoutObject(*style, LegacyLayout::kAuto);
+      foreign_object->CreateLayoutObject(style, LegacyLayout::kAuto);
   EXPECT_FALSE(layout_object);
 }
 

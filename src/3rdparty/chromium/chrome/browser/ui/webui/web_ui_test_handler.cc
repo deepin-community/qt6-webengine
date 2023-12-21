@@ -1,11 +1,11 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/webui/web_ui_test_handler.h"
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -50,7 +50,7 @@ bool WebUITestHandler::RunJavaScriptTestWithResult(
 }
 
 content::RenderFrameHost* WebUITestHandler::GetRenderFrameHostForTest() {
-  return GetWebUI()->GetWebContents()->GetMainFrame();
+  return GetWebUI()->GetWebContents()->GetPrimaryMainFrame();
 }
 
 void WebUITestHandler::TestComplete(
@@ -95,7 +95,7 @@ bool WebUITestHandler::WaitForResult() {
   {
     base::RunLoop run_loop;
     quit_closure_ = run_loop.QuitWhenIdleClosure();
-    content::RunThisRunLoop(&run_loop);
+    run_loop.Run();
   }
 
   // Run a second message loop when not |run_test_done_| so that the sync test
@@ -104,7 +104,7 @@ bool WebUITestHandler::WaitForResult() {
   if (!run_test_done_ || (run_test_succeeded_ && !test_done_)) {
     base::RunLoop run_loop;
     quit_closure_ = run_loop.QuitWhenIdleClosure();
-    content::RunThisRunLoop(&run_loop);
+    run_loop.Run();
   }
 
   // To succeed the test must execute as well as pass the test.

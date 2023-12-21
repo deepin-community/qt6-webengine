@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,7 +16,7 @@
 #include "net/http/http_request_headers.h"
 #include "net/http/http_stream_parser.h"
 #include "net/socket/client_socket_handle.h"
-#include "net/third_party/quiche/src/quiche/spdy/core/spdy_header_block.h"
+#include "net/third_party/quiche/src/quiche/spdy/core/http2_header_block.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request_test_util.h"
 #include "net/websockets/websocket_handshake_stream_create_helper.h"
@@ -223,6 +223,8 @@ class TestWebSocketStreamRequestAPI : public WebSocketStreamRequestAPI {
       WebSocketBasicHandshakeStream* handshake_stream) override;
   void OnHttp2HandshakeStreamCreated(
       WebSocketHttp2HandshakeStream* handshake_stream) override;
+  void OnHttp3HandshakeStreamCreated(
+      WebSocketHttp3HandshakeStream* handshake_stream) override;
   void OnFailure(const std::string& message,
                  int net_error,
                  absl::optional<int> response_code) override {}

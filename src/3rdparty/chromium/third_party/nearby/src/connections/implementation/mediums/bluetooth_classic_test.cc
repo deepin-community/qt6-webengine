@@ -21,13 +21,12 @@
 #include "gtest/gtest.h"
 #include "absl/time/time.h"
 #include "connections/implementation/mediums/bluetooth_radio.h"
-#include "internal/platform/medium_environment.h"
 #include "internal/platform/bluetooth_classic.h"
 #include "internal/platform/count_down_latch.h"
 #include "internal/platform/logging.h"
+#include "internal/platform/medium_environment.h"
 #include "internal/platform/system_clock.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 namespace {
@@ -51,7 +50,6 @@ class BluetoothClassicTest : public ::testing::TestWithParam<FeatureFlags> {
 
   BluetoothClassicTest() {
     env_.Start();
-    env_.Reset();
     radio_a_ = std::make_unique<BluetoothRadio>();
     radio_b_ = std::make_unique<BluetoothRadio>();
     bt_a_ = std::make_unique<BluetoothClassic>(*radio_a_);
@@ -72,7 +70,6 @@ class BluetoothClassicTest : public ::testing::TestWithParam<FeatureFlags> {
     env_.Sync(false);
     radio_a_.reset();
     radio_b_.reset();
-    env_.Reset();
     env_.Stop();
   }
 
@@ -122,7 +119,8 @@ TEST_P(BluetoothClassicTest, CanConnect) {
       std::string(kServiceName),
       {
           .accepted_cb =
-              [&socket_for_server, &accept_latch](BluetoothSocket socket) {
+              [&socket_for_server, &accept_latch](const std::string& service_id,
+                                                  BluetoothSocket socket) {
                 socket_for_server = std::move(socket);
                 accept_latch.CountDown();
               },
@@ -176,7 +174,8 @@ TEST_P(BluetoothClassicTest, CanCancelConnect) {
       std::string(kServiceName),
       {
           .accepted_cb =
-              [&socket_for_server, &accept_latch](BluetoothSocket socket) {
+              [&socket_for_server, &accept_latch](const std::string& service_id,
+                                                  BluetoothSocket socket) {
                 socket_for_server = std::move(socket);
                 accept_latch.CountDown();
               },
@@ -288,4 +287,3 @@ TEST_F(BluetoothClassicTest, CanStartAcceptingConnections) {
 }  // namespace
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location

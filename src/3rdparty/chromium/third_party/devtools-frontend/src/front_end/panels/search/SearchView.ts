@@ -9,73 +9,72 @@ import * as UI from '../../ui/legacy/legacy.js';
 
 import searchViewStyles from './searchView.css.js';
 
-import type {SearchResult, SearchScope} from './SearchConfig.js';
-import {SearchConfig} from './SearchConfig.js';
+import {SearchConfig, type SearchResult, type SearchScope} from './SearchConfig.js';
 import {SearchResultsPane} from './SearchResultsPane.js';
 
 const UIStrings = {
   /**
-  *@description Title of a search bar or tool
-  */
+   *@description Title of a search bar or tool
+   */
   search: 'Search',
   /**
-  *@description Accessibility label for search query text box
-  */
+   *@description Accessibility label for search query text box
+   */
   searchQuery: 'Search Query',
   /**
-  *@description Text to search by matching case of the input
-  */
+   *@description Text to search by matching case of the input
+   */
   matchCase: 'Match Case',
   /**
-  *@description Text for searching with regular expressinn
-  */
+   *@description Text for searching with regular expressinn
+   */
   useRegularExpression: 'Use Regular Expression',
   /**
-  *@description Text to refresh the page
-  */
+   *@description Text to refresh the page
+   */
   refresh: 'Refresh',
   /**
-  *@description Text to clear content
-  */
+   *@description Text to clear content
+   */
   clear: 'Clear',
   /**
-  *@description Search message element text content in Search View of the Search tab
-  */
+   *@description Search message element text content in Search View of the Search tab
+   */
   indexing: 'Indexing…',
   /**
-  *@description Text to indicate the searching is in progress
-  */
+   *@description Text to indicate the searching is in progress
+   */
   searching: 'Searching…',
   /**
-  *@description Text in Search View of the Search tab
-  */
+   *@description Text in Search View of the Search tab
+   */
   indexingInterrupted: 'Indexing interrupted.',
   /**
-  *@description Search results message element text content in Search View of the Search tab
-  */
+   *@description Search results message element text content in Search View of the Search tab
+   */
   foundMatchingLineInFile: 'Found 1 matching line in 1 file.',
   /**
-  *@description Search results message element text content in Search View of the Search tab
-  *@example {2} PH1
-  */
+   *@description Search results message element text content in Search View of the Search tab
+   *@example {2} PH1
+   */
   foundDMatchingLinesInFile: 'Found {PH1} matching lines in 1 file.',
   /**
-  *@description Search results message element text content in Search View of the Search tab
-  *@example {2} PH1
-  *@example {2} PH2
-  */
+   *@description Search results message element text content in Search View of the Search tab
+   *@example {2} PH1
+   *@example {2} PH2
+   */
   foundDMatchingLinesInDFiles: 'Found {PH1} matching lines in {PH2} files.',
   /**
-  *@description Search results message element text content in Search View of the Search tab
-  */
+   *@description Search results message element text content in Search View of the Search tab
+   */
   noMatchesFound: 'No matches found.',
   /**
-  *@description Text in Search View of the Search tab
-  */
+   *@description Text in Search View of the Search tab
+   */
   searchFinished: 'Search finished.',
   /**
-  *@description Text in Search View of the Search tab
-  */
+   *@description Text in Search View of the Search tab
+   */
   searchInterrupted: 'Search interrupted.',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/search/SearchView.ts', UIStrings);
@@ -140,6 +139,7 @@ export class SearchView extends UI.Widget.VBox {
     searchContainer.style.flex = 'auto';
     searchContainer.style.justifyContent = 'start';
     searchContainer.style.maxWidth = '300px';
+    searchContainer.style.overflow = 'revert';
     this.search = UI.HistoryInput.HistoryInput.create();
     this.search.addEventListener('keydown', event => {
       this.onKeyDown((event as KeyboardEvent));

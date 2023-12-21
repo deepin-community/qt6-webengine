@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -332,6 +332,15 @@ GURL GURL::GetWithoutFilename() const {
   return Resolve(".");
 }
 
+GURL GURL::GetWithoutRef() const {
+  if (!has_ref())
+    return GURL(*this);
+
+  Replacements replacements;
+  replacements.ClearRef();
+  return ReplaceComponents(replacements);
+}
+
 bool GURL::IsStandard() const {
   return url::IsStandard(spec_.data(), parsed_.scheme);
 }
@@ -358,7 +367,7 @@ bool GURL::SchemeIs(base::StringPiece lower_ascii_scheme) const {
 }
 
 bool GURL::SchemeIsHTTPOrHTTPS() const {
-  return SchemeIs(url::kHttpScheme) || SchemeIs(url::kHttpsScheme);
+  return SchemeIs(url::kHttpsScheme) || SchemeIs(url::kHttpScheme);
 }
 
 bool GURL::SchemeIsWSOrWSS() const {
@@ -407,13 +416,13 @@ std::string GURL::ExtractFileName() const {
 }
 
 base::StringPiece GURL::PathForRequestPiece() const {
-  DCHECK(parsed_.path.len > 0)
+  DCHECK(parsed_.path.is_nonempty())
       << "Canonical path for requests should be non-empty";
-  if (parsed_.ref.len >= 0) {
+  if (parsed_.ref.is_valid()) {
     // Clip off the reference when it exists. The reference starts after the
     // #-sign, so we have to subtract one to also remove it.
-    return base::StringPiece(&spec_[parsed_.path.begin],
-                             parsed_.ref.begin - parsed_.path.begin - 1);
+    return base::StringPiece(spec_).substr(
+        parsed_.path.begin, parsed_.ref.begin - parsed_.path.begin - 1);
   }
   // Compute the actual path length, rather than depending on the spec's
   // terminator. If we're an inner_url, our spec continues on into our outer
@@ -422,7 +431,7 @@ base::StringPiece GURL::PathForRequestPiece() const {
   if (parsed_.query.is_valid())
     path_len = parsed_.query.end() - parsed_.path.begin;
 
-  return base::StringPiece(&spec_[parsed_.path.begin], path_len);
+  return base::StringPiece(spec_).substr(parsed_.path.begin, path_len);
 }
 
 std::string GURL::PathForRequest() const {
@@ -444,12 +453,16 @@ base::StringPiece GURL::HostNoBracketsPiece() const {
 }
 
 std::string GURL::GetContent() const {
+  return std::string(GetContentPiece());
+}
+
+base::StringPiece GURL::GetContentPiece() const {
   if (!is_valid_)
-    return std::string();
-  std::string content = ComponentString(parsed_.GetContent());
-  if (!SchemeIs(url::kJavaScriptScheme) && parsed_.ref.len >= 0)
-    content.erase(content.size() - parsed_.ref.len - 1);
-  return content;
+    return base::StringPiece();
+  url::Component content_component = parsed_.GetContent();
+  if (!SchemeIs(url::kJavaScriptScheme) && parsed_.ref.is_valid())
+    content_component.len -= parsed_.ref.len + 1;
+  return ComponentStringPiece(content_component);
 }
 
 bool GURL::HostIsIPAddress() const {

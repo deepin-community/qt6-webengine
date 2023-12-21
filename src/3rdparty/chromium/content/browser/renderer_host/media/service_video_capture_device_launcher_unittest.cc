@@ -1,12 +1,13 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/renderer_host/media/service_video_capture_device_launcher.h"
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/mock_callback.h"
 #include "base/threading/thread.h"
 #include "content/browser/renderer_host/media/ref_counted_video_source_provider.h"
@@ -281,7 +282,7 @@ TEST_F(ServiceVideoCaptureDeviceLauncherTest,
                  callback) {
             // Note: We post this to the end of the message queue to make it
             // asynchronous.
-            base::ThreadTaskRunnerHandle::Get()->PostTask(
+            base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
                 FROM_HERE,
                 base::BindOnce(
                     [](mojo::PendingRemote<

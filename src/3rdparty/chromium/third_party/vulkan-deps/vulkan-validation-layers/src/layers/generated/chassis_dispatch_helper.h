@@ -2,10 +2,10 @@
 // This file is ***GENERATED***.  Do Not Edit.
 // See layer_chassis_generator.py for modifications.
 
-/* Copyright (c) 2015-2022 The Khronos Group Inc.
- * Copyright (c) 2015-2022 Valve Corporation
- * Copyright (c) 2015-2022 LunarG, Inc.
- * Copyright (c) 2015-2022 Google Inc.
+/* Copyright (c) 2015-2023 The Khronos Group Inc.
+ * Copyright (c) 2015-2023 Valve Corporation
+ * Copyright (c) 2015-2023 LunarG, Inc.
+ * Copyright (c) 2015-2023 Google Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,9 +18,6 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- *
- * Author: Mark Lobodzinski <mark@lunarg.com>
- * Author: Nadav Geva <nadav.geva@amd.com>
  */
 #pragma once
 
@@ -839,6 +836,9 @@ typedef enum InterceptId{
     InterceptIdPreCallValidateCmdResolveImage2KHR,
     InterceptIdPreCallRecordCmdResolveImage2KHR,
     InterceptIdPostCallRecordCmdResolveImage2KHR,
+    InterceptIdPreCallValidateCmdTraceRaysIndirect2KHR,
+    InterceptIdPreCallRecordCmdTraceRaysIndirect2KHR,
+    InterceptIdPostCallRecordCmdTraceRaysIndirect2KHR,
     InterceptIdPreCallValidateGetDeviceBufferMemoryRequirementsKHR,
     InterceptIdPreCallRecordGetDeviceBufferMemoryRequirementsKHR,
     InterceptIdPostCallRecordGetDeviceBufferMemoryRequirementsKHR,
@@ -1139,6 +1139,9 @@ typedef enum InterceptId{
     InterceptIdPreCallValidateCmdSetStencilOpEXT,
     InterceptIdPreCallRecordCmdSetStencilOpEXT,
     InterceptIdPostCallRecordCmdSetStencilOpEXT,
+    InterceptIdPreCallValidateReleaseSwapchainImagesEXT,
+    InterceptIdPreCallRecordReleaseSwapchainImagesEXT,
+    InterceptIdPostCallRecordReleaseSwapchainImagesEXT,
     InterceptIdPreCallValidateGetGeneratedCommandsMemoryRequirementsNV,
     InterceptIdPreCallRecordGetGeneratedCommandsMemoryRequirementsNV,
     InterceptIdPostCallRecordGetGeneratedCommandsMemoryRequirementsNV,
@@ -1169,9 +1172,51 @@ typedef enum InterceptId{
     InterceptIdPreCallValidateGetPrivateDataEXT,
     InterceptIdPreCallRecordGetPrivateDataEXT,
     InterceptIdPostCallRecordGetPrivateDataEXT,
+    InterceptIdPreCallValidateExportMetalObjectsEXT,
+    InterceptIdPreCallRecordExportMetalObjectsEXT,
+    InterceptIdPostCallRecordExportMetalObjectsEXT,
+    InterceptIdPreCallValidateGetDescriptorSetLayoutSizeEXT,
+    InterceptIdPreCallRecordGetDescriptorSetLayoutSizeEXT,
+    InterceptIdPostCallRecordGetDescriptorSetLayoutSizeEXT,
+    InterceptIdPreCallValidateGetDescriptorSetLayoutBindingOffsetEXT,
+    InterceptIdPreCallRecordGetDescriptorSetLayoutBindingOffsetEXT,
+    InterceptIdPostCallRecordGetDescriptorSetLayoutBindingOffsetEXT,
+    InterceptIdPreCallValidateGetDescriptorEXT,
+    InterceptIdPreCallRecordGetDescriptorEXT,
+    InterceptIdPostCallRecordGetDescriptorEXT,
+    InterceptIdPreCallValidateCmdBindDescriptorBuffersEXT,
+    InterceptIdPreCallRecordCmdBindDescriptorBuffersEXT,
+    InterceptIdPostCallRecordCmdBindDescriptorBuffersEXT,
+    InterceptIdPreCallValidateCmdSetDescriptorBufferOffsetsEXT,
+    InterceptIdPreCallRecordCmdSetDescriptorBufferOffsetsEXT,
+    InterceptIdPostCallRecordCmdSetDescriptorBufferOffsetsEXT,
+    InterceptIdPreCallValidateCmdBindDescriptorBufferEmbeddedSamplersEXT,
+    InterceptIdPreCallRecordCmdBindDescriptorBufferEmbeddedSamplersEXT,
+    InterceptIdPostCallRecordCmdBindDescriptorBufferEmbeddedSamplersEXT,
+    InterceptIdPreCallValidateGetBufferOpaqueCaptureDescriptorDataEXT,
+    InterceptIdPreCallRecordGetBufferOpaqueCaptureDescriptorDataEXT,
+    InterceptIdPostCallRecordGetBufferOpaqueCaptureDescriptorDataEXT,
+    InterceptIdPreCallValidateGetImageOpaqueCaptureDescriptorDataEXT,
+    InterceptIdPreCallRecordGetImageOpaqueCaptureDescriptorDataEXT,
+    InterceptIdPostCallRecordGetImageOpaqueCaptureDescriptorDataEXT,
+    InterceptIdPreCallValidateGetImageViewOpaqueCaptureDescriptorDataEXT,
+    InterceptIdPreCallRecordGetImageViewOpaqueCaptureDescriptorDataEXT,
+    InterceptIdPostCallRecordGetImageViewOpaqueCaptureDescriptorDataEXT,
+    InterceptIdPreCallValidateGetSamplerOpaqueCaptureDescriptorDataEXT,
+    InterceptIdPreCallRecordGetSamplerOpaqueCaptureDescriptorDataEXT,
+    InterceptIdPostCallRecordGetSamplerOpaqueCaptureDescriptorDataEXT,
+    InterceptIdPreCallValidateGetAccelerationStructureOpaqueCaptureDescriptorDataEXT,
+    InterceptIdPreCallRecordGetAccelerationStructureOpaqueCaptureDescriptorDataEXT,
+    InterceptIdPostCallRecordGetAccelerationStructureOpaqueCaptureDescriptorDataEXT,
     InterceptIdPreCallValidateCmdSetFragmentShadingRateEnumNV,
     InterceptIdPreCallRecordCmdSetFragmentShadingRateEnumNV,
     InterceptIdPostCallRecordCmdSetFragmentShadingRateEnumNV,
+    InterceptIdPreCallValidateGetImageSubresourceLayout2EXT,
+    InterceptIdPreCallRecordGetImageSubresourceLayout2EXT,
+    InterceptIdPostCallRecordGetImageSubresourceLayout2EXT,
+    InterceptIdPreCallValidateGetDeviceFaultInfoEXT,
+    InterceptIdPreCallRecordGetDeviceFaultInfoEXT,
+    InterceptIdPostCallRecordGetDeviceFaultInfoEXT,
     InterceptIdPreCallValidateCmdSetVertexInputEXT,
     InterceptIdPreCallRecordCmdSetVertexInputEXT,
     InterceptIdPostCallRecordCmdSetVertexInputEXT,
@@ -1214,6 +1259,9 @@ typedef enum InterceptId{
     InterceptIdPreCallValidateGetMemoryRemoteAddressNV,
     InterceptIdPreCallRecordGetMemoryRemoteAddressNV,
     InterceptIdPostCallRecordGetMemoryRemoteAddressNV,
+    InterceptIdPreCallValidateGetPipelinePropertiesEXT,
+    InterceptIdPreCallRecordGetPipelinePropertiesEXT,
+    InterceptIdPostCallRecordGetPipelinePropertiesEXT,
     InterceptIdPreCallValidateCmdSetPatchControlPointsEXT,
     InterceptIdPreCallRecordCmdSetPatchControlPointsEXT,
     InterceptIdPostCallRecordCmdSetPatchControlPointsEXT,
@@ -1238,6 +1286,54 @@ typedef enum InterceptId{
     InterceptIdPreCallValidateCmdDrawMultiIndexedEXT,
     InterceptIdPreCallRecordCmdDrawMultiIndexedEXT,
     InterceptIdPostCallRecordCmdDrawMultiIndexedEXT,
+    InterceptIdPreCallValidateCreateMicromapEXT,
+    InterceptIdPreCallRecordCreateMicromapEXT,
+    InterceptIdPostCallRecordCreateMicromapEXT,
+    InterceptIdPreCallValidateDestroyMicromapEXT,
+    InterceptIdPreCallRecordDestroyMicromapEXT,
+    InterceptIdPostCallRecordDestroyMicromapEXT,
+    InterceptIdPreCallValidateCmdBuildMicromapsEXT,
+    InterceptIdPreCallRecordCmdBuildMicromapsEXT,
+    InterceptIdPostCallRecordCmdBuildMicromapsEXT,
+    InterceptIdPreCallValidateBuildMicromapsEXT,
+    InterceptIdPreCallRecordBuildMicromapsEXT,
+    InterceptIdPostCallRecordBuildMicromapsEXT,
+    InterceptIdPreCallValidateCopyMicromapEXT,
+    InterceptIdPreCallRecordCopyMicromapEXT,
+    InterceptIdPostCallRecordCopyMicromapEXT,
+    InterceptIdPreCallValidateCopyMicromapToMemoryEXT,
+    InterceptIdPreCallRecordCopyMicromapToMemoryEXT,
+    InterceptIdPostCallRecordCopyMicromapToMemoryEXT,
+    InterceptIdPreCallValidateCopyMemoryToMicromapEXT,
+    InterceptIdPreCallRecordCopyMemoryToMicromapEXT,
+    InterceptIdPostCallRecordCopyMemoryToMicromapEXT,
+    InterceptIdPreCallValidateWriteMicromapsPropertiesEXT,
+    InterceptIdPreCallRecordWriteMicromapsPropertiesEXT,
+    InterceptIdPostCallRecordWriteMicromapsPropertiesEXT,
+    InterceptIdPreCallValidateCmdCopyMicromapEXT,
+    InterceptIdPreCallRecordCmdCopyMicromapEXT,
+    InterceptIdPostCallRecordCmdCopyMicromapEXT,
+    InterceptIdPreCallValidateCmdCopyMicromapToMemoryEXT,
+    InterceptIdPreCallRecordCmdCopyMicromapToMemoryEXT,
+    InterceptIdPostCallRecordCmdCopyMicromapToMemoryEXT,
+    InterceptIdPreCallValidateCmdCopyMemoryToMicromapEXT,
+    InterceptIdPreCallRecordCmdCopyMemoryToMicromapEXT,
+    InterceptIdPostCallRecordCmdCopyMemoryToMicromapEXT,
+    InterceptIdPreCallValidateCmdWriteMicromapsPropertiesEXT,
+    InterceptIdPreCallRecordCmdWriteMicromapsPropertiesEXT,
+    InterceptIdPostCallRecordCmdWriteMicromapsPropertiesEXT,
+    InterceptIdPreCallValidateGetDeviceMicromapCompatibilityEXT,
+    InterceptIdPreCallRecordGetDeviceMicromapCompatibilityEXT,
+    InterceptIdPostCallRecordGetDeviceMicromapCompatibilityEXT,
+    InterceptIdPreCallValidateGetMicromapBuildSizesEXT,
+    InterceptIdPreCallRecordGetMicromapBuildSizesEXT,
+    InterceptIdPostCallRecordGetMicromapBuildSizesEXT,
+    InterceptIdPreCallValidateCmdDrawClusterHUAWEI,
+    InterceptIdPreCallRecordCmdDrawClusterHUAWEI,
+    InterceptIdPostCallRecordCmdDrawClusterHUAWEI,
+    InterceptIdPreCallValidateCmdDrawClusterIndirectHUAWEI,
+    InterceptIdPreCallRecordCmdDrawClusterIndirectHUAWEI,
+    InterceptIdPostCallRecordCmdDrawClusterIndirectHUAWEI,
     InterceptIdPreCallValidateSetDeviceMemoryPriorityEXT,
     InterceptIdPreCallRecordSetDeviceMemoryPriorityEXT,
     InterceptIdPostCallRecordSetDeviceMemoryPriorityEXT,
@@ -1247,6 +1343,135 @@ typedef enum InterceptId{
     InterceptIdPreCallValidateGetDescriptorSetHostMappingVALVE,
     InterceptIdPreCallRecordGetDescriptorSetHostMappingVALVE,
     InterceptIdPostCallRecordGetDescriptorSetHostMappingVALVE,
+    InterceptIdPreCallValidateCmdCopyMemoryIndirectNV,
+    InterceptIdPreCallRecordCmdCopyMemoryIndirectNV,
+    InterceptIdPostCallRecordCmdCopyMemoryIndirectNV,
+    InterceptIdPreCallValidateCmdCopyMemoryToImageIndirectNV,
+    InterceptIdPreCallRecordCmdCopyMemoryToImageIndirectNV,
+    InterceptIdPostCallRecordCmdCopyMemoryToImageIndirectNV,
+    InterceptIdPreCallValidateCmdDecompressMemoryNV,
+    InterceptIdPreCallRecordCmdDecompressMemoryNV,
+    InterceptIdPostCallRecordCmdDecompressMemoryNV,
+    InterceptIdPreCallValidateCmdDecompressMemoryIndirectCountNV,
+    InterceptIdPreCallRecordCmdDecompressMemoryIndirectCountNV,
+    InterceptIdPostCallRecordCmdDecompressMemoryIndirectCountNV,
+    InterceptIdPreCallValidateCmdSetTessellationDomainOriginEXT,
+    InterceptIdPreCallRecordCmdSetTessellationDomainOriginEXT,
+    InterceptIdPostCallRecordCmdSetTessellationDomainOriginEXT,
+    InterceptIdPreCallValidateCmdSetDepthClampEnableEXT,
+    InterceptIdPreCallRecordCmdSetDepthClampEnableEXT,
+    InterceptIdPostCallRecordCmdSetDepthClampEnableEXT,
+    InterceptIdPreCallValidateCmdSetPolygonModeEXT,
+    InterceptIdPreCallRecordCmdSetPolygonModeEXT,
+    InterceptIdPostCallRecordCmdSetPolygonModeEXT,
+    InterceptIdPreCallValidateCmdSetRasterizationSamplesEXT,
+    InterceptIdPreCallRecordCmdSetRasterizationSamplesEXT,
+    InterceptIdPostCallRecordCmdSetRasterizationSamplesEXT,
+    InterceptIdPreCallValidateCmdSetSampleMaskEXT,
+    InterceptIdPreCallRecordCmdSetSampleMaskEXT,
+    InterceptIdPostCallRecordCmdSetSampleMaskEXT,
+    InterceptIdPreCallValidateCmdSetAlphaToCoverageEnableEXT,
+    InterceptIdPreCallRecordCmdSetAlphaToCoverageEnableEXT,
+    InterceptIdPostCallRecordCmdSetAlphaToCoverageEnableEXT,
+    InterceptIdPreCallValidateCmdSetAlphaToOneEnableEXT,
+    InterceptIdPreCallRecordCmdSetAlphaToOneEnableEXT,
+    InterceptIdPostCallRecordCmdSetAlphaToOneEnableEXT,
+    InterceptIdPreCallValidateCmdSetLogicOpEnableEXT,
+    InterceptIdPreCallRecordCmdSetLogicOpEnableEXT,
+    InterceptIdPostCallRecordCmdSetLogicOpEnableEXT,
+    InterceptIdPreCallValidateCmdSetColorBlendEnableEXT,
+    InterceptIdPreCallRecordCmdSetColorBlendEnableEXT,
+    InterceptIdPostCallRecordCmdSetColorBlendEnableEXT,
+    InterceptIdPreCallValidateCmdSetColorBlendEquationEXT,
+    InterceptIdPreCallRecordCmdSetColorBlendEquationEXT,
+    InterceptIdPostCallRecordCmdSetColorBlendEquationEXT,
+    InterceptIdPreCallValidateCmdSetColorWriteMaskEXT,
+    InterceptIdPreCallRecordCmdSetColorWriteMaskEXT,
+    InterceptIdPostCallRecordCmdSetColorWriteMaskEXT,
+    InterceptIdPreCallValidateCmdSetRasterizationStreamEXT,
+    InterceptIdPreCallRecordCmdSetRasterizationStreamEXT,
+    InterceptIdPostCallRecordCmdSetRasterizationStreamEXT,
+    InterceptIdPreCallValidateCmdSetConservativeRasterizationModeEXT,
+    InterceptIdPreCallRecordCmdSetConservativeRasterizationModeEXT,
+    InterceptIdPostCallRecordCmdSetConservativeRasterizationModeEXT,
+    InterceptIdPreCallValidateCmdSetExtraPrimitiveOverestimationSizeEXT,
+    InterceptIdPreCallRecordCmdSetExtraPrimitiveOverestimationSizeEXT,
+    InterceptIdPostCallRecordCmdSetExtraPrimitiveOverestimationSizeEXT,
+    InterceptIdPreCallValidateCmdSetDepthClipEnableEXT,
+    InterceptIdPreCallRecordCmdSetDepthClipEnableEXT,
+    InterceptIdPostCallRecordCmdSetDepthClipEnableEXT,
+    InterceptIdPreCallValidateCmdSetSampleLocationsEnableEXT,
+    InterceptIdPreCallRecordCmdSetSampleLocationsEnableEXT,
+    InterceptIdPostCallRecordCmdSetSampleLocationsEnableEXT,
+    InterceptIdPreCallValidateCmdSetColorBlendAdvancedEXT,
+    InterceptIdPreCallRecordCmdSetColorBlendAdvancedEXT,
+    InterceptIdPostCallRecordCmdSetColorBlendAdvancedEXT,
+    InterceptIdPreCallValidateCmdSetProvokingVertexModeEXT,
+    InterceptIdPreCallRecordCmdSetProvokingVertexModeEXT,
+    InterceptIdPostCallRecordCmdSetProvokingVertexModeEXT,
+    InterceptIdPreCallValidateCmdSetLineRasterizationModeEXT,
+    InterceptIdPreCallRecordCmdSetLineRasterizationModeEXT,
+    InterceptIdPostCallRecordCmdSetLineRasterizationModeEXT,
+    InterceptIdPreCallValidateCmdSetLineStippleEnableEXT,
+    InterceptIdPreCallRecordCmdSetLineStippleEnableEXT,
+    InterceptIdPostCallRecordCmdSetLineStippleEnableEXT,
+    InterceptIdPreCallValidateCmdSetDepthClipNegativeOneToOneEXT,
+    InterceptIdPreCallRecordCmdSetDepthClipNegativeOneToOneEXT,
+    InterceptIdPostCallRecordCmdSetDepthClipNegativeOneToOneEXT,
+    InterceptIdPreCallValidateCmdSetViewportWScalingEnableNV,
+    InterceptIdPreCallRecordCmdSetViewportWScalingEnableNV,
+    InterceptIdPostCallRecordCmdSetViewportWScalingEnableNV,
+    InterceptIdPreCallValidateCmdSetViewportSwizzleNV,
+    InterceptIdPreCallRecordCmdSetViewportSwizzleNV,
+    InterceptIdPostCallRecordCmdSetViewportSwizzleNV,
+    InterceptIdPreCallValidateCmdSetCoverageToColorEnableNV,
+    InterceptIdPreCallRecordCmdSetCoverageToColorEnableNV,
+    InterceptIdPostCallRecordCmdSetCoverageToColorEnableNV,
+    InterceptIdPreCallValidateCmdSetCoverageToColorLocationNV,
+    InterceptIdPreCallRecordCmdSetCoverageToColorLocationNV,
+    InterceptIdPostCallRecordCmdSetCoverageToColorLocationNV,
+    InterceptIdPreCallValidateCmdSetCoverageModulationModeNV,
+    InterceptIdPreCallRecordCmdSetCoverageModulationModeNV,
+    InterceptIdPostCallRecordCmdSetCoverageModulationModeNV,
+    InterceptIdPreCallValidateCmdSetCoverageModulationTableEnableNV,
+    InterceptIdPreCallRecordCmdSetCoverageModulationTableEnableNV,
+    InterceptIdPostCallRecordCmdSetCoverageModulationTableEnableNV,
+    InterceptIdPreCallValidateCmdSetCoverageModulationTableNV,
+    InterceptIdPreCallRecordCmdSetCoverageModulationTableNV,
+    InterceptIdPostCallRecordCmdSetCoverageModulationTableNV,
+    InterceptIdPreCallValidateCmdSetShadingRateImageEnableNV,
+    InterceptIdPreCallRecordCmdSetShadingRateImageEnableNV,
+    InterceptIdPostCallRecordCmdSetShadingRateImageEnableNV,
+    InterceptIdPreCallValidateCmdSetRepresentativeFragmentTestEnableNV,
+    InterceptIdPreCallRecordCmdSetRepresentativeFragmentTestEnableNV,
+    InterceptIdPostCallRecordCmdSetRepresentativeFragmentTestEnableNV,
+    InterceptIdPreCallValidateCmdSetCoverageReductionModeNV,
+    InterceptIdPreCallRecordCmdSetCoverageReductionModeNV,
+    InterceptIdPostCallRecordCmdSetCoverageReductionModeNV,
+    InterceptIdPreCallValidateGetShaderModuleIdentifierEXT,
+    InterceptIdPreCallRecordGetShaderModuleIdentifierEXT,
+    InterceptIdPostCallRecordGetShaderModuleIdentifierEXT,
+    InterceptIdPreCallValidateGetShaderModuleCreateInfoIdentifierEXT,
+    InterceptIdPreCallRecordGetShaderModuleCreateInfoIdentifierEXT,
+    InterceptIdPostCallRecordGetShaderModuleCreateInfoIdentifierEXT,
+    InterceptIdPreCallValidateCreateOpticalFlowSessionNV,
+    InterceptIdPreCallRecordCreateOpticalFlowSessionNV,
+    InterceptIdPostCallRecordCreateOpticalFlowSessionNV,
+    InterceptIdPreCallValidateDestroyOpticalFlowSessionNV,
+    InterceptIdPreCallRecordDestroyOpticalFlowSessionNV,
+    InterceptIdPostCallRecordDestroyOpticalFlowSessionNV,
+    InterceptIdPreCallValidateBindOpticalFlowSessionImageNV,
+    InterceptIdPreCallRecordBindOpticalFlowSessionImageNV,
+    InterceptIdPostCallRecordBindOpticalFlowSessionImageNV,
+    InterceptIdPreCallValidateCmdOpticalFlowExecuteNV,
+    InterceptIdPreCallRecordCmdOpticalFlowExecuteNV,
+    InterceptIdPostCallRecordCmdOpticalFlowExecuteNV,
+    InterceptIdPreCallValidateGetFramebufferTilePropertiesQCOM,
+    InterceptIdPreCallRecordGetFramebufferTilePropertiesQCOM,
+    InterceptIdPostCallRecordGetFramebufferTilePropertiesQCOM,
+    InterceptIdPreCallValidateGetDynamicRenderingTilePropertiesQCOM,
+    InterceptIdPreCallRecordGetDynamicRenderingTilePropertiesQCOM,
+    InterceptIdPostCallRecordGetDynamicRenderingTilePropertiesQCOM,
     InterceptIdPreCallValidateCreateAccelerationStructureKHR,
     InterceptIdPreCallRecordCreateAccelerationStructureKHR,
     InterceptIdPostCallRecordCreateAccelerationStructureKHR,
@@ -1310,6 +1535,15 @@ typedef enum InterceptId{
     InterceptIdPreCallValidateCmdSetRayTracingPipelineStackSizeKHR,
     InterceptIdPreCallRecordCmdSetRayTracingPipelineStackSizeKHR,
     InterceptIdPostCallRecordCmdSetRayTracingPipelineStackSizeKHR,
+    InterceptIdPreCallValidateCmdDrawMeshTasksEXT,
+    InterceptIdPreCallRecordCmdDrawMeshTasksEXT,
+    InterceptIdPostCallRecordCmdDrawMeshTasksEXT,
+    InterceptIdPreCallValidateCmdDrawMeshTasksIndirectEXT,
+    InterceptIdPreCallRecordCmdDrawMeshTasksIndirectEXT,
+    InterceptIdPostCallRecordCmdDrawMeshTasksIndirectEXT,
+    InterceptIdPreCallValidateCmdDrawMeshTasksIndirectCountEXT,
+    InterceptIdPreCallRecordCmdDrawMeshTasksIndirectCountEXT,
+    InterceptIdPostCallRecordCmdDrawMeshTasksIndirectCountEXT,
     InterceptIdCount,
 } InterceptId;
 
@@ -1955,65 +2189,39 @@ void ValidationObject::InitObjectDispatchVectors() {
 #endif
 #ifdef VK_USE_PLATFORM_WIN32_KHR
 #endif
-#ifdef VK_ENABLE_BETA_EXTENSIONS
-#endif
-#ifdef VK_ENABLE_BETA_EXTENSIONS
-#endif
-#ifdef VK_ENABLE_BETA_EXTENSIONS
     BUILD_DISPATCH_VECTOR(PreCallValidateCreateVideoSessionKHR);
     BUILD_DISPATCH_VECTOR(PreCallRecordCreateVideoSessionKHR);
     BUILD_DISPATCH_VECTOR(PostCallRecordCreateVideoSessionKHR);
-#endif
-#ifdef VK_ENABLE_BETA_EXTENSIONS
     BUILD_DISPATCH_VECTOR(PreCallValidateDestroyVideoSessionKHR);
     BUILD_DISPATCH_VECTOR(PreCallRecordDestroyVideoSessionKHR);
     BUILD_DISPATCH_VECTOR(PostCallRecordDestroyVideoSessionKHR);
-#endif
-#ifdef VK_ENABLE_BETA_EXTENSIONS
     BUILD_DISPATCH_VECTOR(PreCallValidateGetVideoSessionMemoryRequirementsKHR);
     BUILD_DISPATCH_VECTOR(PreCallRecordGetVideoSessionMemoryRequirementsKHR);
     BUILD_DISPATCH_VECTOR(PostCallRecordGetVideoSessionMemoryRequirementsKHR);
-#endif
-#ifdef VK_ENABLE_BETA_EXTENSIONS
     BUILD_DISPATCH_VECTOR(PreCallValidateBindVideoSessionMemoryKHR);
     BUILD_DISPATCH_VECTOR(PreCallRecordBindVideoSessionMemoryKHR);
     BUILD_DISPATCH_VECTOR(PostCallRecordBindVideoSessionMemoryKHR);
-#endif
-#ifdef VK_ENABLE_BETA_EXTENSIONS
     BUILD_DISPATCH_VECTOR(PreCallValidateCreateVideoSessionParametersKHR);
     BUILD_DISPATCH_VECTOR(PreCallRecordCreateVideoSessionParametersKHR);
     BUILD_DISPATCH_VECTOR(PostCallRecordCreateVideoSessionParametersKHR);
-#endif
-#ifdef VK_ENABLE_BETA_EXTENSIONS
     BUILD_DISPATCH_VECTOR(PreCallValidateUpdateVideoSessionParametersKHR);
     BUILD_DISPATCH_VECTOR(PreCallRecordUpdateVideoSessionParametersKHR);
     BUILD_DISPATCH_VECTOR(PostCallRecordUpdateVideoSessionParametersKHR);
-#endif
-#ifdef VK_ENABLE_BETA_EXTENSIONS
     BUILD_DISPATCH_VECTOR(PreCallValidateDestroyVideoSessionParametersKHR);
     BUILD_DISPATCH_VECTOR(PreCallRecordDestroyVideoSessionParametersKHR);
     BUILD_DISPATCH_VECTOR(PostCallRecordDestroyVideoSessionParametersKHR);
-#endif
-#ifdef VK_ENABLE_BETA_EXTENSIONS
     BUILD_DISPATCH_VECTOR(PreCallValidateCmdBeginVideoCodingKHR);
     BUILD_DISPATCH_VECTOR(PreCallRecordCmdBeginVideoCodingKHR);
     BUILD_DISPATCH_VECTOR(PostCallRecordCmdBeginVideoCodingKHR);
-#endif
-#ifdef VK_ENABLE_BETA_EXTENSIONS
     BUILD_DISPATCH_VECTOR(PreCallValidateCmdEndVideoCodingKHR);
     BUILD_DISPATCH_VECTOR(PreCallRecordCmdEndVideoCodingKHR);
     BUILD_DISPATCH_VECTOR(PostCallRecordCmdEndVideoCodingKHR);
-#endif
-#ifdef VK_ENABLE_BETA_EXTENSIONS
     BUILD_DISPATCH_VECTOR(PreCallValidateCmdControlVideoCodingKHR);
     BUILD_DISPATCH_VECTOR(PreCallRecordCmdControlVideoCodingKHR);
     BUILD_DISPATCH_VECTOR(PostCallRecordCmdControlVideoCodingKHR);
-#endif
-#ifdef VK_ENABLE_BETA_EXTENSIONS
     BUILD_DISPATCH_VECTOR(PreCallValidateCmdDecodeVideoKHR);
     BUILD_DISPATCH_VECTOR(PreCallRecordCmdDecodeVideoKHR);
     BUILD_DISPATCH_VECTOR(PostCallRecordCmdDecodeVideoKHR);
-#endif
     BUILD_DISPATCH_VECTOR(PreCallValidateCmdBeginRenderingKHR);
     BUILD_DISPATCH_VECTOR(PreCallRecordCmdBeginRenderingKHR);
     BUILD_DISPATCH_VECTOR(PostCallRecordCmdBeginRenderingKHR);
@@ -2241,6 +2449,9 @@ void ValidationObject::InitObjectDispatchVectors() {
     BUILD_DISPATCH_VECTOR(PreCallValidateCmdResolveImage2KHR);
     BUILD_DISPATCH_VECTOR(PreCallRecordCmdResolveImage2KHR);
     BUILD_DISPATCH_VECTOR(PostCallRecordCmdResolveImage2KHR);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdTraceRaysIndirect2KHR);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdTraceRaysIndirect2KHR);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdTraceRaysIndirect2KHR);
     BUILD_DISPATCH_VECTOR(PreCallValidateGetDeviceBufferMemoryRequirementsKHR);
     BUILD_DISPATCH_VECTOR(PreCallRecordGetDeviceBufferMemoryRequirementsKHR);
     BUILD_DISPATCH_VECTOR(PostCallRecordGetDeviceBufferMemoryRequirementsKHR);
@@ -2571,6 +2782,9 @@ void ValidationObject::InitObjectDispatchVectors() {
     BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetStencilOpEXT);
     BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetStencilOpEXT);
     BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetStencilOpEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateReleaseSwapchainImagesEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordReleaseSwapchainImagesEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordReleaseSwapchainImagesEXT);
     BUILD_DISPATCH_VECTOR(PreCallValidateGetGeneratedCommandsMemoryRequirementsNV);
     BUILD_DISPATCH_VECTOR(PreCallRecordGetGeneratedCommandsMemoryRequirementsNV);
     BUILD_DISPATCH_VECTOR(PostCallRecordGetGeneratedCommandsMemoryRequirementsNV);
@@ -2601,9 +2815,53 @@ void ValidationObject::InitObjectDispatchVectors() {
     BUILD_DISPATCH_VECTOR(PreCallValidateGetPrivateDataEXT);
     BUILD_DISPATCH_VECTOR(PreCallRecordGetPrivateDataEXT);
     BUILD_DISPATCH_VECTOR(PostCallRecordGetPrivateDataEXT);
+#ifdef VK_USE_PLATFORM_METAL_EXT
+    BUILD_DISPATCH_VECTOR(PreCallValidateExportMetalObjectsEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordExportMetalObjectsEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordExportMetalObjectsEXT);
+#endif
+    BUILD_DISPATCH_VECTOR(PreCallValidateGetDescriptorSetLayoutSizeEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordGetDescriptorSetLayoutSizeEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordGetDescriptorSetLayoutSizeEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateGetDescriptorSetLayoutBindingOffsetEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordGetDescriptorSetLayoutBindingOffsetEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordGetDescriptorSetLayoutBindingOffsetEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateGetDescriptorEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordGetDescriptorEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordGetDescriptorEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdBindDescriptorBuffersEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdBindDescriptorBuffersEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdBindDescriptorBuffersEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetDescriptorBufferOffsetsEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetDescriptorBufferOffsetsEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetDescriptorBufferOffsetsEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdBindDescriptorBufferEmbeddedSamplersEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdBindDescriptorBufferEmbeddedSamplersEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdBindDescriptorBufferEmbeddedSamplersEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateGetBufferOpaqueCaptureDescriptorDataEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordGetBufferOpaqueCaptureDescriptorDataEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordGetBufferOpaqueCaptureDescriptorDataEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateGetImageOpaqueCaptureDescriptorDataEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordGetImageOpaqueCaptureDescriptorDataEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordGetImageOpaqueCaptureDescriptorDataEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateGetImageViewOpaqueCaptureDescriptorDataEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordGetImageViewOpaqueCaptureDescriptorDataEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordGetImageViewOpaqueCaptureDescriptorDataEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateGetSamplerOpaqueCaptureDescriptorDataEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordGetSamplerOpaqueCaptureDescriptorDataEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordGetSamplerOpaqueCaptureDescriptorDataEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateGetAccelerationStructureOpaqueCaptureDescriptorDataEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordGetAccelerationStructureOpaqueCaptureDescriptorDataEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordGetAccelerationStructureOpaqueCaptureDescriptorDataEXT);
     BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetFragmentShadingRateEnumNV);
     BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetFragmentShadingRateEnumNV);
     BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetFragmentShadingRateEnumNV);
+    BUILD_DISPATCH_VECTOR(PreCallValidateGetImageSubresourceLayout2EXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordGetImageSubresourceLayout2EXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordGetImageSubresourceLayout2EXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateGetDeviceFaultInfoEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordGetDeviceFaultInfoEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordGetDeviceFaultInfoEXT);
 #ifdef VK_USE_PLATFORM_WIN32_KHR
 #endif
 #ifdef VK_USE_PLATFORM_WIN32_KHR
@@ -2672,6 +2930,9 @@ void ValidationObject::InitObjectDispatchVectors() {
     BUILD_DISPATCH_VECTOR(PreCallValidateGetMemoryRemoteAddressNV);
     BUILD_DISPATCH_VECTOR(PreCallRecordGetMemoryRemoteAddressNV);
     BUILD_DISPATCH_VECTOR(PostCallRecordGetMemoryRemoteAddressNV);
+    BUILD_DISPATCH_VECTOR(PreCallValidateGetPipelinePropertiesEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordGetPipelinePropertiesEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordGetPipelinePropertiesEXT);
     BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetPatchControlPointsEXT);
     BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetPatchControlPointsEXT);
     BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetPatchControlPointsEXT);
@@ -2700,6 +2961,54 @@ void ValidationObject::InitObjectDispatchVectors() {
     BUILD_DISPATCH_VECTOR(PreCallValidateCmdDrawMultiIndexedEXT);
     BUILD_DISPATCH_VECTOR(PreCallRecordCmdDrawMultiIndexedEXT);
     BUILD_DISPATCH_VECTOR(PostCallRecordCmdDrawMultiIndexedEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCreateMicromapEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCreateMicromapEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCreateMicromapEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateDestroyMicromapEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordDestroyMicromapEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordDestroyMicromapEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdBuildMicromapsEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdBuildMicromapsEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdBuildMicromapsEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateBuildMicromapsEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordBuildMicromapsEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordBuildMicromapsEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCopyMicromapEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCopyMicromapEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCopyMicromapEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCopyMicromapToMemoryEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCopyMicromapToMemoryEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCopyMicromapToMemoryEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCopyMemoryToMicromapEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCopyMemoryToMicromapEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCopyMemoryToMicromapEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateWriteMicromapsPropertiesEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordWriteMicromapsPropertiesEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordWriteMicromapsPropertiesEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdCopyMicromapEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdCopyMicromapEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdCopyMicromapEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdCopyMicromapToMemoryEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdCopyMicromapToMemoryEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdCopyMicromapToMemoryEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdCopyMemoryToMicromapEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdCopyMemoryToMicromapEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdCopyMemoryToMicromapEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdWriteMicromapsPropertiesEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdWriteMicromapsPropertiesEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdWriteMicromapsPropertiesEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateGetDeviceMicromapCompatibilityEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordGetDeviceMicromapCompatibilityEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordGetDeviceMicromapCompatibilityEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateGetMicromapBuildSizesEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordGetMicromapBuildSizesEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordGetMicromapBuildSizesEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdDrawClusterHUAWEI);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdDrawClusterHUAWEI);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdDrawClusterHUAWEI);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdDrawClusterIndirectHUAWEI);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdDrawClusterIndirectHUAWEI);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdDrawClusterIndirectHUAWEI);
     BUILD_DISPATCH_VECTOR(PreCallValidateSetDeviceMemoryPriorityEXT);
     BUILD_DISPATCH_VECTOR(PreCallRecordSetDeviceMemoryPriorityEXT);
     BUILD_DISPATCH_VECTOR(PostCallRecordSetDeviceMemoryPriorityEXT);
@@ -2709,6 +3018,135 @@ void ValidationObject::InitObjectDispatchVectors() {
     BUILD_DISPATCH_VECTOR(PreCallValidateGetDescriptorSetHostMappingVALVE);
     BUILD_DISPATCH_VECTOR(PreCallRecordGetDescriptorSetHostMappingVALVE);
     BUILD_DISPATCH_VECTOR(PostCallRecordGetDescriptorSetHostMappingVALVE);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdCopyMemoryIndirectNV);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdCopyMemoryIndirectNV);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdCopyMemoryIndirectNV);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdCopyMemoryToImageIndirectNV);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdCopyMemoryToImageIndirectNV);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdCopyMemoryToImageIndirectNV);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdDecompressMemoryNV);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdDecompressMemoryNV);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdDecompressMemoryNV);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdDecompressMemoryIndirectCountNV);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdDecompressMemoryIndirectCountNV);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdDecompressMemoryIndirectCountNV);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetTessellationDomainOriginEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetTessellationDomainOriginEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetTessellationDomainOriginEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetDepthClampEnableEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetDepthClampEnableEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetDepthClampEnableEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetPolygonModeEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetPolygonModeEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetPolygonModeEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetRasterizationSamplesEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetRasterizationSamplesEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetRasterizationSamplesEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetSampleMaskEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetSampleMaskEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetSampleMaskEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetAlphaToCoverageEnableEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetAlphaToCoverageEnableEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetAlphaToCoverageEnableEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetAlphaToOneEnableEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetAlphaToOneEnableEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetAlphaToOneEnableEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetLogicOpEnableEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetLogicOpEnableEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetLogicOpEnableEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetColorBlendEnableEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetColorBlendEnableEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetColorBlendEnableEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetColorBlendEquationEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetColorBlendEquationEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetColorBlendEquationEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetColorWriteMaskEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetColorWriteMaskEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetColorWriteMaskEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetRasterizationStreamEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetRasterizationStreamEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetRasterizationStreamEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetConservativeRasterizationModeEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetConservativeRasterizationModeEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetConservativeRasterizationModeEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetExtraPrimitiveOverestimationSizeEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetExtraPrimitiveOverestimationSizeEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetExtraPrimitiveOverestimationSizeEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetDepthClipEnableEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetDepthClipEnableEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetDepthClipEnableEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetSampleLocationsEnableEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetSampleLocationsEnableEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetSampleLocationsEnableEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetColorBlendAdvancedEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetColorBlendAdvancedEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetColorBlendAdvancedEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetProvokingVertexModeEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetProvokingVertexModeEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetProvokingVertexModeEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetLineRasterizationModeEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetLineRasterizationModeEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetLineRasterizationModeEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetLineStippleEnableEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetLineStippleEnableEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetLineStippleEnableEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetDepthClipNegativeOneToOneEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetDepthClipNegativeOneToOneEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetDepthClipNegativeOneToOneEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetViewportWScalingEnableNV);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetViewportWScalingEnableNV);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetViewportWScalingEnableNV);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetViewportSwizzleNV);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetViewportSwizzleNV);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetViewportSwizzleNV);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetCoverageToColorEnableNV);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetCoverageToColorEnableNV);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetCoverageToColorEnableNV);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetCoverageToColorLocationNV);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetCoverageToColorLocationNV);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetCoverageToColorLocationNV);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetCoverageModulationModeNV);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetCoverageModulationModeNV);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetCoverageModulationModeNV);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetCoverageModulationTableEnableNV);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetCoverageModulationTableEnableNV);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetCoverageModulationTableEnableNV);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetCoverageModulationTableNV);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetCoverageModulationTableNV);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetCoverageModulationTableNV);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetShadingRateImageEnableNV);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetShadingRateImageEnableNV);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetShadingRateImageEnableNV);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetRepresentativeFragmentTestEnableNV);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetRepresentativeFragmentTestEnableNV);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetRepresentativeFragmentTestEnableNV);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetCoverageReductionModeNV);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetCoverageReductionModeNV);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetCoverageReductionModeNV);
+    BUILD_DISPATCH_VECTOR(PreCallValidateGetShaderModuleIdentifierEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordGetShaderModuleIdentifierEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordGetShaderModuleIdentifierEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateGetShaderModuleCreateInfoIdentifierEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordGetShaderModuleCreateInfoIdentifierEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordGetShaderModuleCreateInfoIdentifierEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCreateOpticalFlowSessionNV);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCreateOpticalFlowSessionNV);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCreateOpticalFlowSessionNV);
+    BUILD_DISPATCH_VECTOR(PreCallValidateDestroyOpticalFlowSessionNV);
+    BUILD_DISPATCH_VECTOR(PreCallRecordDestroyOpticalFlowSessionNV);
+    BUILD_DISPATCH_VECTOR(PostCallRecordDestroyOpticalFlowSessionNV);
+    BUILD_DISPATCH_VECTOR(PreCallValidateBindOpticalFlowSessionImageNV);
+    BUILD_DISPATCH_VECTOR(PreCallRecordBindOpticalFlowSessionImageNV);
+    BUILD_DISPATCH_VECTOR(PostCallRecordBindOpticalFlowSessionImageNV);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdOpticalFlowExecuteNV);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdOpticalFlowExecuteNV);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdOpticalFlowExecuteNV);
+    BUILD_DISPATCH_VECTOR(PreCallValidateGetFramebufferTilePropertiesQCOM);
+    BUILD_DISPATCH_VECTOR(PreCallRecordGetFramebufferTilePropertiesQCOM);
+    BUILD_DISPATCH_VECTOR(PostCallRecordGetFramebufferTilePropertiesQCOM);
+    BUILD_DISPATCH_VECTOR(PreCallValidateGetDynamicRenderingTilePropertiesQCOM);
+    BUILD_DISPATCH_VECTOR(PreCallRecordGetDynamicRenderingTilePropertiesQCOM);
+    BUILD_DISPATCH_VECTOR(PostCallRecordGetDynamicRenderingTilePropertiesQCOM);
     BUILD_DISPATCH_VECTOR(PreCallValidateCreateAccelerationStructureKHR);
     BUILD_DISPATCH_VECTOR(PreCallRecordCreateAccelerationStructureKHR);
     BUILD_DISPATCH_VECTOR(PostCallRecordCreateAccelerationStructureKHR);
@@ -2772,5 +3210,14 @@ void ValidationObject::InitObjectDispatchVectors() {
     BUILD_DISPATCH_VECTOR(PreCallValidateCmdSetRayTracingPipelineStackSizeKHR);
     BUILD_DISPATCH_VECTOR(PreCallRecordCmdSetRayTracingPipelineStackSizeKHR);
     BUILD_DISPATCH_VECTOR(PostCallRecordCmdSetRayTracingPipelineStackSizeKHR);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdDrawMeshTasksEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdDrawMeshTasksEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdDrawMeshTasksEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdDrawMeshTasksIndirectEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdDrawMeshTasksIndirectEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdDrawMeshTasksIndirectEXT);
+    BUILD_DISPATCH_VECTOR(PreCallValidateCmdDrawMeshTasksIndirectCountEXT);
+    BUILD_DISPATCH_VECTOR(PreCallRecordCmdDrawMeshTasksIndirectCountEXT);
+    BUILD_DISPATCH_VECTOR(PostCallRecordCmdDrawMeshTasksIndirectCountEXT);
 };
 

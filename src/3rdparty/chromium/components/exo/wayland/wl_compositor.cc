@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,19 +8,15 @@
 
 #include <memory>
 
-#include "base/bind.h"
-#include "build/chromeos_buildflags.h"
+#include "base/functional/bind.h"
 #include "components/exo/buffer.h"
 #include "components/exo/display.h"
 #include "components/exo/surface.h"
 #include "components/exo/wayland/server.h"
 #include "components/exo/wayland/server_util.h"
+#include "components/exo/wayland/zwp_linux_explicit_synchronization.h"
 #include "third_party/skia/include/core/SkRegion.h"
 #include "ui/display/types/display_constants.h"
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "components/exo/wayland/zwp_linux_explicit_synchronization.h"
-#endif
 
 namespace exo {
 class Server;
@@ -133,10 +129,8 @@ void surface_set_input_region(wl_client* client,
 void surface_commit(wl_client* client, wl_resource* resource) {
   Surface* surface = GetUserDataAs<Surface>(resource);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   if (!linux_surface_synchronization_validate_commit(surface))
     return;
-#endif
 
   surface->Commit();
 }

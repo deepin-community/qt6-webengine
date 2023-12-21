@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -306,28 +306,6 @@ enum class CookieSourceSchemeName {
   kMaxValue = kChromeExtensionScheme
 };
 
-// This enum must match the numbering for FirstPartySetsContextType in
-// histograms/enums.xml. Do not reorder or remove items, only add new items at
-// the end.
-enum class FirstPartySetsContextType {
-  // Unknown context type.
-  kUnknown = 0,
-  // The top frame was ignored, and the rest of the context consisted of at
-  // least 2 different parties.
-  kTopFrameIgnoredMixed = 1,
-  // The top frame was ignored, and the rest of the context was a single party.
-  kTopFrameIgnoredHomogeneous = 2,
-  // The top frame and resource URL were of different parties.
-  kTopResourceMismatch = 3,
-  // The top frame and resource URL were both of the same party, and there was
-  // at least one intervening frame of a different party.
-  kTopResourceMatchMixed = 4,
-  // The top frame, resource URL, and all intervening frames were all from the
-  // same party.
-  kHomogeneous = 5,
-  kMaxValue = kHomogeneous,
-};
-
 // Returns the Set-Cookie header priority token corresponding to |priority|.
 NET_EXPORT std::string CookiePriorityToString(CookiePriority priority);
 
@@ -349,8 +327,7 @@ StringToCookieSameSite(const std::string& same_site,
                        CookieSameSiteString* samesite_string = nullptr);
 
 NET_EXPORT void RecordCookieSameSiteAttributeValueHistogram(
-    CookieSameSiteString value,
-    bool is_cookie_same_party = false);
+    CookieSameSiteString value);
 
 // This function reduces the 65535 available TCP port values down to a <100
 // potentially interesting values that cookies could be set by or sent to. This

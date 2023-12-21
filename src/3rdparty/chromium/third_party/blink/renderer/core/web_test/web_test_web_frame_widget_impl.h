@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/task/single_thread_task_runner.h"
 #include "third_party/blink/public/test/frame_widget_test_helper.h"
 #include "third_party/blink/renderer/core/frame/web_frame_widget_impl.h"
 
@@ -42,6 +43,7 @@ class WebTestWebFrameWidgetImpl : public WebFrameWidgetImpl,
       bool never_composited,
       bool is_for_child_local_root,
       bool is_for_nested_main_frame,
+      bool is_for_scalable_page,
       content::TestRunner* test_runner);
 
   ~WebTestWebFrameWidgetImpl() override;
@@ -49,10 +51,9 @@ class WebTestWebFrameWidgetImpl : public WebFrameWidgetImpl,
   // FrameWidgetTestHelper overrides.
   void Reset() override;
   content::EventSender* GetEventSender() override;
-  void SynchronouslyCompositeAfterTest() override;
+  void SynchronouslyCompositeAfterTest(base::OnceClosure callback) override;
   void UpdateAllLifecyclePhasesAndComposite(
       base::OnceClosure completion_callback) override;
-  void DisableEndDocumentTransition() override;
 
   // WebFrameWidget overrides.
   FrameWidgetTestHelper* GetFrameWidgetTestHelperForTesting() override;
@@ -67,12 +68,15 @@ class WebTestWebFrameWidgetImpl : public WebFrameWidgetImpl,
   void StartDragging(const WebDragData& drag_data,
                      DragOperationsMask operations_allowed,
                      const SkBitmap& drag_image,
-                     const gfx::Point& drag_image_offset) override;
+                     const gfx::Vector2d& cursor_offset,
+                     const gfx::Rect& drag_obj_rect) override;
+  void DidAutoResize(const gfx::Size& size) override;
 
   // WidgetBaseClient overrides:
   void ScheduleAnimation() override;
   void WillBeginMainFrame() override;
   void ScheduleAnimationForWebTests() override;
+  bool AllowsScrollResampling() override { return false; }
 
   content::TestRunner* GetTestRunner();
 
@@ -84,11 +88,12 @@ class WebTestWebFrameWidgetImpl : public WebFrameWidgetImpl,
   // display compositor if there is any damage.
   // Note that compositing has the potential to detach the current frame and
   // thus destroy |this| before returning.
-  void SynchronouslyComposite(bool do_raster);
+  void SynchronouslyComposite(base::OnceClosure callback, bool do_raster);
 
   // Perform the synchronous composite step for a given LayerTreeHost.
-  static void DoComposite(cc::LayerTreeHost* layer_tree_host, bool do_raster);
-
+  static void DoComposite(cc::LayerTreeHost* layer_tree_host,
+                          bool do_raster,
+                          base::OnceClosure callback);
   std::unique_ptr<content::EventSender> event_sender_;
 
   content::TestRunner* const test_runner_;

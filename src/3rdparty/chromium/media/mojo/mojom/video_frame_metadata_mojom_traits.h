@@ -1,11 +1,10 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef MEDIA_MOJO_MOJOM_VIDEO_FRAME_METADATA_MOJOM_TRAITS_H_
 #define MEDIA_MOJO_MOJOM_VIDEO_FRAME_METADATA_MOJOM_TRAITS_H_
 
-#include "base/memory/ref_counted.h"
 #include "media/base/ipc/media_param_traits_macros.h"
 #include "media/base/video_frame_metadata.h"
 #include "media/base/video_transformation.h"
@@ -33,6 +32,10 @@ struct StructTraits<media::mojom::VideoFrameMetadataDataView,
                     media::VideoFrameMetadata> {
   static bool allow_overlay(const media::VideoFrameMetadata& input) {
     return input.allow_overlay;
+  }
+
+  static bool copy_required(const media::VideoFrameMetadata& input) {
+    return input.copy_required;
   }
 
   static bool end_of_stream(const media::VideoFrameMetadata& input) {
@@ -82,11 +85,6 @@ struct StructTraits<media::mojom::VideoFrameMetadataDataView,
 
   GENERATE_OPT_SERIALIZATION(int, capture_counter, 0)
 
-  GENERATE_OPT_SERIALIZATION(
-      media::VideoFrameMetadata::CopyMode,
-      copy_mode,
-      media::VideoFrameMetadata::CopyMode::kCopyToNewTexture)
-
   static const absl::optional<media::VideoTransformation>& transformation(
       const media::VideoFrameMetadata& input) {
     return input.transformation;
@@ -103,6 +101,11 @@ struct StructTraits<media::mojom::VideoFrameMetadataDataView,
   static const absl::optional<gfx::Rect>& capture_update_rect(
       const media::VideoFrameMetadata& input) {
     return input.capture_update_rect;
+  }
+
+  static const absl::optional<gfx::Size>& source_size(
+      const media::VideoFrameMetadata& input) {
+    return input.source_size;
   }
 
   static const absl::optional<gfx::Rect>& region_capture_rect(

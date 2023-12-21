@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "base/test/gtest_util.h"
 #include "media/audio/audio_device_description.h"
@@ -26,6 +26,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/abseil-cpp/absl/utility/utility.h"
 
 using testing::_;
 using testing::AtLeast;
@@ -48,12 +49,12 @@ media::AudioParameters Params() {
 
 media::AudioSourceParameters SourceParams() {
   return media::AudioSourceParameters(
-      base::UnguessableToken::Deserialize(1234, 5678));
+      base::UnguessableToken::CreateForTesting(1234, 5678));
 }
 
 media::AudioSourceParameters SourceParamsWithProcessing() {
   media::AudioSourceParameters params(
-      base::UnguessableToken::Deserialize(1234, 5678));
+      base::UnguessableToken::CreateForTesting(1234, 5678));
   params.processing = media::AudioProcessingSettings();
   return params;
 }
@@ -127,7 +128,7 @@ class FakeStreamCreator {
     factory_client_->StreamCreated(
         receiver_.BindNewPipeAndPassRemote(),
         stream_client_.BindNewPipeAndPassReceiver(),
-        {base::in_place,
+        {absl::in_place,
          base::ReadOnlySharedMemoryRegion::Create(kMemoryLength).region,
          mojo::PlatformHandle(foreign_socket.Take())},
         initially_muted_, base::UnguessableToken::Create());

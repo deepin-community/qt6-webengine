@@ -55,7 +55,7 @@ class CORE_EXPORT StyleResolverState {
  public:
   StyleResolverState(Document&,
                      Element&,
-                     const StyleRecalcContext& = StyleRecalcContext(),
+                     const StyleRecalcContext* = nullptr,
                      const StyleRequest& = StyleRequest());
   StyleResolverState(const StyleResolverState&) = delete;
   StyleResolverState& operator=(const StyleResolverState&) = delete;
@@ -70,15 +70,19 @@ class CORE_EXPORT StyleResolverState {
   // grab the document from.  This is why we have to store the document
   // separately.
   Document& GetDocument() const { return *document_; }
+  // Returns the element we are computing style for. This returns the same as
+  // GetElement() unless this is a pseudo element request or we are resolving
+  // style for an SVG element instantiated in a <use> shadow tree. This method
+  // may return nullptr if it is a pseudo element request with no actual
+  // PseudoElement present.
+  Element* GetStyledElement() const { return styled_element_; }
   // These are all just pass-through methods to ElementResolveContext.
   Element& GetElement() const { return element_context_.GetElement(); }
   const ContainerNode* ParentNode() const {
     return element_context_.ParentNode();
   }
   const ComputedStyle* RootElementStyle() const {
-    if (const auto* root_element_style = element_context_.RootElementStyle())
-      return root_element_style;
-    return Style();
+    return element_context_.RootElementStyle();
   }
   EInsideLink ElementLinkState() const {
     return element_context_.ElementLinkState();
@@ -88,20 +92,26 @@ class CORE_EXPORT StyleResolverState {
     return element_context_;
   }
 
-  void SetStyle(scoped_refptr<ComputedStyle>);
-  const ComputedStyle* Style() const { return style_.get(); }
-  ComputedStyle* Style() { return style_.get(); }
-  ComputedStyle& StyleRef() {
-    DCHECK(style_);
-    return *style_;
+  void SetStyle(const ComputedStyle& style) {
+    // FIXME: Improve RAII of StyleResolverState to remove this function.
+    style_builder_ = ComputedStyleBuilder(style);
+    UpdateLengthConversionData();
   }
-  scoped_refptr<ComputedStyle> TakeStyle();
+  ComputedStyleBuilder& StyleBuilder() { return *style_builder_; }
+  const ComputedStyleBuilder& StyleBuilder() const { return *style_builder_; }
+  scoped_refptr<const ComputedStyle> TakeStyle();
 
   const CSSToLengthConversionData& CssToLengthConversionData() const {
     return css_to_length_conversion_data_;
   }
-  CSSToLengthConversionData FontSizeConversionData() const;
-  CSSToLengthConversionData UnzoomedLengthConversionData() const;
+  CSSToLengthConversionData FontSizeConversionData();
+  CSSToLengthConversionData UnzoomedLengthConversionData();
+
+  CSSToLengthConversionData::Flags TakeLengthConversionFlags() {
+    CSSToLengthConversionData::Flags flags = length_conversion_flags_;
+    length_conversion_flags_ = 0;
+    return flags;
+  }
 
   void SetConversionFontSizes(
       const CSSToLengthConversionData::FontSizes& font_sizes) {
@@ -118,6 +128,10 @@ class CORE_EXPORT StyleResolverState {
 
   Element* GetAnimatingElement() const;
 
+  // Returns the pseudo element if the style resolution is targeting a pseudo
+  // element, null otherwise.
+  PseudoElement* GetPseudoElement() const;
+
   void SetParentStyle(scoped_refptr<const ComputedStyle>);
   const ComputedStyle* ParentStyle() const { return parent_style_.get(); }
 
@@ -125,6 +139,11 @@ class CORE_EXPORT StyleResolverState {
   const ComputedStyle* LayoutParentStyle() const {
     return layout_parent_style_.get();
   }
+
+  void SetOldStyle(scoped_refptr<const ComputedStyle> old_style) {
+    old_style_ = std::move(old_style);
+  }
+  const ComputedStyle* OldStyle() const { return old_style_.get(); }
 
   ElementStyleResources& GetElementStyleResources() {
     return element_style_resources_;
@@ -164,6 +183,9 @@ class CORE_EXPORT StyleResolverState {
     return originating_element_style_.get();
   }
   bool IsForHighlight() const { return is_for_highlight_; }
+  bool UsesHighlightPseudoInheritance() const {
+    return uses_highlight_pseudo_inheritance_;
+  }
 
   bool CanCacheBaseStyle() const { return can_cache_base_style_; }
 
@@ -184,17 +206,30 @@ class CORE_EXPORT StyleResolverState {
   }
   void SetAffectsCompositorSnapshots() { affects_compositor_snapshots_ = true; }
 
- private:
+  bool RejectedLegacyOverlapping() const {
+    return rejected_legacy_overlapping_;
+  }
+  void SetRejectedLegacyOverlapping() { rejected_legacy_overlapping_ = true; }
+
+  // Update the Font object on the ComputedStyle and the CSSLengthResolver to
+  // reflect applied font properties.
+  void UpdateFont();
+
+  // Update computed line-height and font used for 'lh' unit resolution.
+  void UpdateLineHeight();
+
   void UpdateLengthConversionData();
-  CSSToLengthConversionData UnzoomedLengthConversionData(
-      const ComputedStyle* font_style) const;
+
+ private:
+  CSSToLengthConversionData UnzoomedLengthConversionData(const FontSizeStyle&);
 
   ElementResolveContext element_context_;
   Document* document_;
 
-  // style_ is the primary output for each element's style resolve.
-  scoped_refptr<ComputedStyle> style_;
+  // The primary output for each element's style resolve.
+  absl::optional<ComputedStyleBuilder> style_builder_;
 
+  CSSToLengthConversionData::Flags length_conversion_flags_ = 0;
   CSSToLengthConversionData css_to_length_conversion_data_;
 
   // parent_style_ is not always just ElementResolveContext::ParentStyle(),
@@ -204,22 +239,31 @@ class CORE_EXPORT StyleResolverState {
   // presence of display: contents. This is the style against which we have to
   // do adjustment.
   scoped_refptr<const ComputedStyle> layout_parent_style_;
+  // The ComputedStyle stored on the element before the current lifecycle update
+  // started.
+  scoped_refptr<const ComputedStyle> old_style_;
 
   CSSAnimationUpdate animation_update_;
   StyleRequest::RequestType pseudo_request_type_;
 
   FontBuilder font_builder_;
 
-  PseudoElement* pseudo_element_;
+  // May be different than GetElement() if the element being styled is a pseudo
+  // element or an instantiation via an SVG <use> element. In those cases,
+  // GetElement() returns the originating element, or the element instatiated
+  // from respectively.
+  Element* styled_element_;
+
   ElementStyleResources element_style_resources_;
   ElementType element_type_;
-  Element* nearest_container_;
+  Element* container_unit_context_;
 
   scoped_refptr<const ComputedStyle> originating_element_style_;
   // True if we are resolving styles for a highlight pseudo-element.
   const bool is_for_highlight_;
-  // True if we are resolving styles for a custom highlight pseudo-element.
-  const bool is_for_custom_highlight_;
+  // True if this is a highlight style request, and highlight inheritance
+  // should be used for this highlight pseudo.
+  const bool uses_highlight_pseudo_inheritance_;
 
   // True if the base style can be cached to optimize style recalculations for
   // animation updates or transition retargeting.
@@ -235,6 +279,10 @@ class CORE_EXPORT StyleResolverState {
 
   // True if snapshots of composited keyframes require re-validation.
   bool affects_compositor_snapshots_ = false;
+
+  // True if the cascade rejected any properties with the kLegacyOverlapping
+  // flag.
+  bool rejected_legacy_overlapping_ = false;
 };
 
 }  // namespace blink

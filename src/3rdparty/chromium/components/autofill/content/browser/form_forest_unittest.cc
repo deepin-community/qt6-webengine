@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,11 @@
 #include <utility>
 #include <vector>
 
+#include "base/containers/contains.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_piece.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "components/autofill/content/browser/form_forest.h"
 #include "components/autofill/content/browser/form_forest_test_api.h"
@@ -22,7 +25,9 @@
 #include "content/public/test/test_renderer_host.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/permissions_policy/origin_with_possible_wildcards.h"
 #include "third_party/blink/public/common/permissions_policy/permissions_policy.h"
+#include "third_party/blink/public/mojom/permissions_policy/permissions_policy.mojom-shared.h"
 
 using FrameData = autofill::internal::FormForest::FrameData;
 using FrameDataSet =
@@ -147,6 +152,7 @@ auto CreateFieldTypeMap(const FormData& form) {
 // A profile is a 6-bit integer, whose bits indicate different values of first
 // and last name, credit card number, expiration month, expiration year, CVC.
 using Profile = base::StrongAlias<struct ProfileTag, size_t>;
+using ::autofill::test::WithoutValues;
 
 // Fills the fields 0..5 of |form| with data according to |profile|, the
 // fields 6..11 with |profile|+1, etc.
@@ -163,13 +169,6 @@ FormData WithValues(FormData& form, Profile profile = Profile(0)) {
     form.fields[6 * i + 4].value = bitset.test(4) ? u"2083" : u"2087";
     form.fields[6 * i + 5].value = bitset.test(5) ? u"123" : u"456";
   }
-  return form;
-}
-
-// Clears the values of all fields in |form|.
-FormData WithoutValues(FormData form) {
-  for (FormFieldData& field : form.fields)
-    field.value.clear();
   return form;
 }
 
@@ -273,7 +272,7 @@ std::vector<std::vector<T>> FlattenedPermutations(
 class MockContentAutofillDriver : public ContentAutofillDriver {
  public:
   explicit MockContentAutofillDriver(content::RenderFrameHost* rfh)
-      : ContentAutofillDriver(rfh) {}
+      : ContentAutofillDriver(rfh, /*autofill_router=*/nullptr) {}
 
   LocalFrameToken token() { return Token(render_frame_host()); }
 
@@ -382,7 +381,9 @@ class FormForestTest : public content::RenderViewHostTestHarness {
   static blink::ParsedPermissionsPolicy AllowSharedAutofill(
       url::Origin origin) {
     return {blink::ParsedPermissionsPolicyDeclaration(
-        blink::mojom::PermissionsPolicyFeature::kSharedAutofill, {origin},
+        blink::mojom::PermissionsPolicyFeature::kSharedAutofill,
+        {blink::OriginWithPossibleWildcards(origin,
+                                            /*has_subdomain_wildcard=*/false)},
         false, false)};
   }
 
@@ -410,6 +411,7 @@ class FormForestTest : public content::RenderViewHostTestHarness {
   }
 
   base::test::ScopedFeatureList feature_list_;
+  test::AutofillEnvironment autofill_environment_;
   std::map<content::RenderFrameHost*,
            std::unique_ptr<MockContentAutofillDriver>>
       autofill_drivers_;
@@ -1650,7 +1652,7 @@ TEST(FormForestTest, FrameDataComparator) {
   auto x = std::make_unique<FrameData>(test::MakeLocalFrameToken());
   auto xx = std::make_unique<FrameData>(test::MakeLocalFrameToken());
   auto y = std::make_unique<FrameData>(
-      LocalFrameToken(base::UnguessableToken::Deserialize(
+      LocalFrameToken(base::UnguessableToken::CreateForTesting(
           x->frame_token->GetHighForSerialization() + 1,
           x->frame_token->GetLowForSerialization() + 1)));
   ASSERT_TRUE(x->frame_token < y->frame_token);
@@ -1682,7 +1684,7 @@ class ForEachInSetDifferenceTest
   class Dummy {
    public:
     size_t val = 0;
-    size_t* num_equals_calls = nullptr;
+    raw_ptr<size_t> num_equals_calls = nullptr;
   };
 
   std::vector<Dummy> ToDummies(const std::vector<size_t>& vec) {

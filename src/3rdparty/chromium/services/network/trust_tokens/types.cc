@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,16 +6,19 @@
 
 #include "base/json/values_util.h"
 #include "base/time/time.h"
+#include "services/network/trust_tokens/proto/public.pb.h"
 
-namespace network {
-namespace internal {
+namespace network::internal {
 
-absl::optional<base::Time> StringToTime(base::StringPiece my_string) {
-  return base::ValueToTime(base::Value(my_string));
+base::Time TimestampToTime(Timestamp timestamp) {
+  return base::Time::FromDeltaSinceWindowsEpoch(
+      base::Microseconds(timestamp.micros()));
 }
 
-std::string TimeToString(base::Time my_time) {
-  return base::TimeToValue(my_time).GetString();
+Timestamp TimeToTimestamp(base::Time time) {
+  Timestamp timestamp = Timestamp();
+  timestamp.set_micros(time.ToDeltaSinceWindowsEpoch().InMicroseconds());
+  return timestamp;
 }
 
 base::StringPiece TrustTokenOperationTypeToString(
@@ -43,5 +46,4 @@ std::string ProtocolVersionToString(
   }
 }
 
-}  // namespace internal
-}  // namespace network
+}  // namespace network::internal

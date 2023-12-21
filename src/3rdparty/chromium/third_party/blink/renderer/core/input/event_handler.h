@@ -27,12 +27,10 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_INPUT_EVENT_HANDLER_H_
 
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_refptr.h"
 #include "base/time/time.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/common/input/web_menu_source_type.h"
-#include "third_party/blink/public/mojom/input/focus_type.mojom-blink-forward.h"
 #include "third_party/blink/public/platform/web_input_event_result.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/events/text_event_input_type.h"
@@ -43,16 +41,9 @@
 #include "third_party/blink/renderer/core/input/pointer_event_manager.h"
 #include "third_party/blink/renderer/core/input/scroll_manager.h"
 #include "third_party/blink/renderer/core/layout/hit_test_request.h"
-#include "third_party/blink/renderer/core/page/drag_actions.h"
 #include "third_party/blink/renderer/core/page/event_with_hit_test_results.h"
-#include "third_party/blink/renderer/core/scroll/scroll_types.h"
-#include "third_party/blink/renderer/core/style/computed_style_constants.h"
-#include "third_party/blink/renderer/platform/geometry/layout_point.h"
+#include "third_party/blink/renderer/core/page/touch_adjustment.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
-#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
-#include "third_party/blink/renderer/platform/wtf/forward.h"
-#include "third_party/blink/renderer/platform/wtf/hash_traits.h"
-#include "ui/base/dragdrop/mojom/drag_drop_types.mojom-blink-forward.h"
 
 namespace ui {
 class Cursor;
@@ -207,6 +198,10 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
                                            const HitTestResult&,
                                            gfx::Point& target_point,
                                            Node*& target_node);
+  bool BestStylusWritableNodeForHitTestResult(const HitTestLocation& location,
+                                              const HitTestResult&,
+                                              gfx::Point& target_point,
+                                              Node*& target_node);
   void CacheTouchAdjustmentResult(uint32_t, gfx::PointF);
 
   // Dispatch a context menu event. If |override_target_element| is provided,
@@ -282,7 +277,16 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
 
   void UpdateCursor();
 
+  float cursor_accessibility_scale_factor() const {
+    return cursor_accessibility_scale_factor_;
+  }
+  void set_cursor_accessibility_scale_factor(float scale) {
+    cursor_accessibility_scale_factor_ = scale;
+  }
+
   Element* GetElementUnderMouse();
+
+  Element* CurrentTouchDownElement();
 
  private:
   WebInputEventResult HandleMouseMoveOrLeaveEvent(
@@ -348,12 +352,6 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
 
   bool PassMousePressEventToScrollbar(MouseEventWithHitTestResults&);
 
-  void DefaultSpaceEventHandler(KeyboardEvent*);
-  void DefaultBackspaceEventHandler(KeyboardEvent*);
-  void DefaultTabEventHandler(KeyboardEvent*);
-  void DefaultEscapeEventHandler(KeyboardEvent*);
-  void DefaultArrowEventHandler(mojom::blink::FocusType, KeyboardEvent*);
-
   // |last_scrollbar_under_mouse_| is set when the mouse moves off of a
   // scrollbar, and used to notify it of MouseUp events to release mouse
   // capture.
@@ -372,6 +370,7 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
       const HitTestRequest& request,
       const WebMouseEvent& mev);
 
+  // Returned rect is in local root frame coordinates.
   gfx::Rect GetFocusedElementRectForNonLocatedContextMenu(
       Element* focused_element);
 
@@ -418,6 +417,8 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
   Member<GestureManager> gesture_manager_;
 
   double max_mouse_moved_duration_;
+
+  float cursor_accessibility_scale_factor_ = 1.f;
 
   HeapTaskRunnerTimer<EventHandler> active_interval_timer_;
 

@@ -1,17 +1,24 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/platform/network/http_parsers.h"
 
+#include "base/strings/string_piece.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
+#include "net/base/features.h"
+#include "services/network/public/cpp/features.h"
 #include "services/network/public/mojom/content_security_policy.mojom-blink-forward.h"
 #include "services/network/public/mojom/content_security_policy.mojom-blink.h"
 #include "services/network/public/mojom/parsed_headers.mojom-blink.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_response.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
+#include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
+#include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
 
@@ -255,7 +262,7 @@ TEST(HTTPParsersTest, ParseHTTPRefresh) {
 
   EXPECT_TRUE(ParseHTTPRefresh("123 ", nullptr, delay, url));
   EXPECT_EQ(base::Seconds(123), delay);
-  EXPECT_TRUE(url.IsEmpty());
+  EXPECT_TRUE(url.empty());
 
   EXPECT_TRUE(ParseHTTPRefresh("1 ; url=dest", nullptr, delay, url));
   EXPECT_EQ(base::Seconds(1), delay);
@@ -557,8 +564,10 @@ TEST(HTTPParsersTest, ParseServerTimingHeader) {
                          {{"metric1", "0", "d1"}, {"metric2", "0", ""}});
 
   // nonsense - extraneous characters after entry name token
-  testServerTimingHeader("metric==   \"\"foo;dur=123.4", {{"metric", "0", ""}});
-  testServerTimingHeader("metric1==   \"\"foo,metric2", {{"metric1", "0", ""}});
+  testServerTimingHeader("metric==   \"\"foo;dur=123.4",
+                         {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric1==   \"\"foo,metric2",
+                         {{"metric1", "0", ""}, {"metric2", "0", ""}});
 
   // nonsense - extraneous characters after param name token
   testServerTimingHeader("metric;dur foo=12", {{"metric", "0", ""}});
@@ -588,7 +597,8 @@ TEST(HTTPParsersTest, ParseServerTimingHeader) {
   testServerTimingHeader("{", {{"{", "0", ""}});
   testServerTimingHeader("}", {{"}", "0", ""}});
   testServerTimingHeader("{}", {{"{}", "0", ""}});
-  testServerTimingHeader("{\"foo\":\"bar\"},metric", {{"{", "0", ""}});
+  testServerTimingHeader("{\"foo\":\"bar\"},metric",
+                         {{"{", "0", ""}, {"metric", "0", ""}});
 }
 
 TEST(HTTPParsersTest, ParseContentTypeOptionsTest) {
@@ -629,7 +639,7 @@ TEST(HTTPParsersTest, ParseContentSecurityPoliciesmpty) {
       "", network::mojom::blink::ContentSecurityPolicyType::kEnforce,
       network::mojom::blink::ContentSecurityPolicySource::kHTTP,
       KURL("http://example.com"));
-  EXPECT_TRUE(csp.IsEmpty());
+  EXPECT_TRUE(csp.empty());
 }
 
 TEST(HTTPParsersTest, ParseContentSecurityPoliciesMultiple) {
@@ -847,5 +857,148 @@ TEST(HTTPParsersTest, ParseContentSecurityPoliciesSourceBasic) {
     EXPECT_FALSE(source->is_port_wildcard);
   }
 }
+
+class NoVarySearchPrefetchDisabledTest
+    : public ::testing::Test,
+      public ::testing::WithParamInterface<base::StringPiece> {
+ public:
+  NoVarySearchPrefetchDisabledTest() {
+    scoped_feature_list_.InitAndDisableFeature(
+        network::features::kPrefetchNoVarySearch);
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+TEST_P(NoVarySearchPrefetchDisabledTest, ParsingNVSReturnsDefaultURLVariance) {
+  const auto parsed_headers =
+      ParseHeaders(WTF::String::FromUTF8(GetParam()), KURL("https://a.com"));
+
+  EXPECT_TRUE(parsed_headers);
+  EXPECT_FALSE(parsed_headers->no_vary_search);
+}
+
+constexpr base::StringPiece no_vary_search_prefetch_disabled_data[] = {
+    // No No-Vary-Search header.
+    "HTTP/1.1 200 OK\r\n"
+    "Set-Cookie: a\r\n"
+    "Set-Cookie: b\r\n\r\n",
+    // No-Vary-Search header present.
+    "HTTP/1.1 200 OK\r\n"
+    R"(No-Vary-Search: params=("a"))"
+    "\r\n\r\n",
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    NoVarySearchPrefetchDisabledTest,
+    NoVarySearchPrefetchDisabledTest,
+    testing::ValuesIn(no_vary_search_prefetch_disabled_data));
+
+TEST(NoVarySearchPrefetchEnabledTest, ParsingNVSReturnsDefaultURLVariance) {
+  base::test::ScopedFeatureList feature_list(
+      network::features::kPrefetchNoVarySearch);
+  const base::StringPiece headers =
+      "HTTP/1.1 200 OK\r\n"
+      "Set-Cookie: a\r\n"
+      "Set-Cookie: b\r\n\r\n";
+  const auto parsed_headers =
+      ParseHeaders(WTF::String::FromUTF8(headers), KURL("https://a.com"));
+
+  EXPECT_TRUE(parsed_headers);
+  EXPECT_FALSE(parsed_headers->no_vary_search);
+}
+
+struct NoVarySearchTestData {
+  const char* raw_headers;
+  const Vector<String> expected_no_vary_params;
+  const Vector<String> expected_vary_params;
+  const bool expected_vary_on_key_order;
+  const bool expected_vary_by_default;
+};
+
+class NoVarySearchPrefetchEnabledTest
+    : public ::testing::Test,
+      public ::testing::WithParamInterface<NoVarySearchTestData> {
+ public:
+  NoVarySearchPrefetchEnabledTest() {
+    feature_list_.InitAndEnableFeature(
+        network::features::kPrefetchNoVarySearch);
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+TEST_P(NoVarySearchPrefetchEnabledTest, ParsingSuccess) {
+  const auto& test_data = GetParam();
+  const auto parsed_headers =
+      ParseHeaders(test_data.raw_headers, KURL("https://a.com"));
+
+  EXPECT_TRUE(parsed_headers);
+  ASSERT_TRUE(parsed_headers->no_vary_search);
+  ASSERT_TRUE(parsed_headers->no_vary_search->search_variance);
+  if (test_data.expected_vary_by_default) {
+    EXPECT_THAT(
+        parsed_headers->no_vary_search->search_variance->get_no_vary_params(),
+        test_data.expected_no_vary_params);
+  } else {
+    EXPECT_THAT(
+        parsed_headers->no_vary_search->search_variance->get_vary_params(),
+        test_data.expected_vary_params);
+  }
+  EXPECT_EQ(parsed_headers->no_vary_search->vary_on_key_order,
+            test_data.expected_vary_on_key_order);
+}
+
+Vector<NoVarySearchTestData> GetNoVarySearchParsingSuccessTestData() {
+  static Vector<NoVarySearchTestData> test_data = {
+      // params set to a list of strings with one element.
+      {
+          "HTTP/1.1 200 OK\r\n"
+          R"(No-Vary-Search: params=("a"))"
+          "\r\n\r\n",             // raw_headers
+          Vector<String>({"a"}),  // expected_no_vary_params
+          {},                     // expected_vary_params
+          true,                   // expected_vary_on_key_order
+          true                    // expected_vary_by_default
+      },
+      // params set to true.
+      {
+          "HTTP/1.1 200 OK\r\n"
+          "No-Vary-Search: params\r\n\r\n",  // raw_headers
+          {},                                // expected_no_vary_params
+          {},                                // expected_vary_params
+          true,                              // expected_vary_on_key_order
+          false                              // expected_vary_by_default
+      },
+      // Vary on one search param.
+      {
+          "HTTP/1.1 200 OK\r\n"
+          "No-Vary-Search: params\r\n"
+          R"(No-Vary-Search: except=("a"))"
+          "\r\n\r\n",             // raw_headers
+          {},                     // expected_no_vary_params
+          Vector<String>({"a"}),  // expected_vary_params
+          true,                   // expected_vary_on_key_order
+          false                   // expected_vary_by_default
+      },
+      // Don't vary on search params order.
+      {
+          "HTTP/1.1 200 OK\r\n"
+          "No-Vary-Search: key-order\r\n\r\n",  // raw_headers
+          {},                                   // expected_no_vary_params
+          {},                                   // expected_vary_params
+          false,                                // expected_vary_on_key_order
+          true                                  // expected_vary_by_default
+      },
+  };
+  return test_data;
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    NoVarySearchPrefetchEnabledTest,
+    NoVarySearchPrefetchEnabledTest,
+    testing::ValuesIn(GetNoVarySearchParsingSuccessTestData()));
 
 }  // namespace blink

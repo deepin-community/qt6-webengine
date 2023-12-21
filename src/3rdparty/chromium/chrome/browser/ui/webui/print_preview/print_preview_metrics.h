@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -80,14 +80,6 @@ void ReportPrintDocumentTypeHistograms(PrintDocumentTypeBuckets doctype);
 void ReportPrintSettingsStats(const base::Value::Dict& print_settings,
                               const base::Value::Dict& preview_settings,
                               bool is_pdf);
-
-// Record the number of times the user requests to regenerate preview data
-// before cancelling.
-void ReportRegeneratePreviewRequestCountBeforeCancel(size_t count);
-
-// Record the number of times the user requests to regenerate preview data
-// before printing.
-void ReportRegeneratePreviewRequestCountBeforePrint(size_t count);
 
 void ReportUserActionHistogram(UserActionBuckets event);
 

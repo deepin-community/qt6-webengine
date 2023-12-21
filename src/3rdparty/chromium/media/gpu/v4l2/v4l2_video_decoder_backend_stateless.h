@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -53,11 +53,11 @@ class V4L2StatelessVideoDecoderBackend : public V4L2VideoDecoderBackend,
   void OnOutputBufferDequeued(V4L2ReadableBufferRef buffer) override;
   void OnStreamStopped(bool stop_input_queue) override;
   bool ApplyResolution(const gfx::Size& pic_size,
-                       const gfx::Rect& visible_rect,
-                       const size_t num_output_frames) override;
+                       const gfx::Rect& visible_rect) override;
   void OnChangeResolutionDone(CroStatus status) override;
   void ClearPendingRequests(DecoderStatus status) override;
   bool StopInputQueueOnResChange() const override;
+  size_t GetNumOUTPUTQueueBuffers() const override;
 
   // V4L2DecodeSurfaceHandler implementation.
   scoped_refptr<V4L2DecodeSurface> CreateSurface() override;
@@ -137,7 +137,7 @@ class V4L2StatelessVideoDecoderBackend : public V4L2VideoDecoderBackend,
   bool IsSupportedProfile(VideoCodecProfile profile);
 
   // Create codec-specific AcceleratedVideoDecoder and reset related variables.
-  bool CreateAvd();
+  bool CreateDecoder();
 
   // Video profile we are decoding.
   VideoCodecProfile profile_;
@@ -149,7 +149,7 @@ class V4L2StatelessVideoDecoderBackend : public V4L2VideoDecoderBackend,
   gfx::Size pic_size_;
 
   // Video decoder used to parse stream headers by software.
-  std::unique_ptr<AcceleratedVideoDecoder> avd_;
+  std::unique_ptr<AcceleratedVideoDecoder> decoder_;
 
   // The decode request which is currently processed.
   absl::optional<DecodeRequest> current_decode_request_;

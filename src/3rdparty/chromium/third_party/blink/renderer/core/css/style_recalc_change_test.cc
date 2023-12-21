@@ -1,10 +1,11 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/css/style_recalc_change.h"
 
 #include "third_party/blink/renderer/core/css/container_query_data.h"
+#include "third_party/blink/renderer/core/css/properties/longhands.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_token_list.h"
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
@@ -17,17 +18,7 @@ namespace blink {
 
 class StyleRecalcChangeTest : public PageTestBase {};
 
-class StyleRecalcChangeTestCQ
-    : public StyleRecalcChangeTest,
-      private ScopedCSSContainerQueriesForTest,
-      private ScopedCSSContainerSkipStyleRecalcForTest,
-      private ScopedLayoutNGForTest {
- public:
-  StyleRecalcChangeTestCQ()
-      : ScopedCSSContainerQueriesForTest(true),
-        ScopedCSSContainerSkipStyleRecalcForTest(true),
-        ScopedLayoutNGForTest(true) {}
-};
+class StyleRecalcChangeTestCQ : public StyleRecalcChangeTest {};
 
 TEST_F(StyleRecalcChangeTest, SuppressRecalc) {
   SetBodyInnerHTML(R"HTML(

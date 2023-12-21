@@ -1,20 +1,20 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef UI_VIEWS_TEST_TEST_DESKTOP_SCREEN_OZONE_H_
 #define UI_VIEWS_TEST_TEST_DESKTOP_SCREEN_OZONE_H_
 
+#include <memory>
+
 #include "ui/gfx/geometry/point.h"
 #include "ui/views/widget/desktop_aura/desktop_screen_ozone.h"
 
-namespace base {
-template <typename T>
-struct DefaultSingletonTraits;
+namespace display {
+class Screen;
 }
 
-namespace views {
-namespace test {
+namespace views::test {
 
 // Replaces the screen instance in Linux/Ozone (non-ChromeOS) tests.  Allows
 // aura tests to manually set the cursor screen point to be reported
@@ -26,6 +26,7 @@ class TestDesktopScreenOzone : public views::DesktopScreenOzone {
   TestDesktopScreenOzone(const TestDesktopScreenOzone&) = delete;
   TestDesktopScreenOzone& operator=(const TestDesktopScreenOzone&) = delete;
 
+  static std::unique_ptr<display::Screen> Create();
   static TestDesktopScreenOzone* GetInstance();
 
   // DesktopScreenOzone:
@@ -35,16 +36,13 @@ class TestDesktopScreenOzone : public views::DesktopScreenOzone {
     cursor_screen_point_ = point;
   }
 
- private:
-  friend struct base::DefaultSingletonTraits<TestDesktopScreenOzone>;
-
   TestDesktopScreenOzone();
   ~TestDesktopScreenOzone() override;
 
+ private:
   gfx::Point cursor_screen_point_;
 };
 
-}  // namespace test
-}  // namespace views
+}  // namespace views::test
 
 #endif  // UI_VIEWS_TEST_TEST_DESKTOP_SCREEN_OZONE_H_

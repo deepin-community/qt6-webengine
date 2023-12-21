@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,11 +8,13 @@
 #include <map>
 #include <string>
 
+#include "base/synchronization/lock.h"
+#include "media/base/video_frame.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
+#include "third_party/blink/renderer/platform/allow_discouraged_type.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/hash_traits.h"
-#include "third_party/blink/renderer/platform/wtf/threading_primitives.h"
 
 namespace blink {
 
@@ -47,37 +49,46 @@ class MODULES_EXPORT VideoFrameMonitor {
 
   // Report that a new frame with ID |frame_id| associated with the source with
   // ID |source_id| is being monitored.
-  void OnOpenFrame(const std::string& source_id, int frame_id);
+  void OnOpenFrame(const std::string& source_id,
+                   media::VideoFrame::ID frame_id);
   // Report that a new frame with ID |frame_id| associated with the source with
   // ID |source_id| is being monitored.
-  void OnCloseFrame(const std::string& source_id, int frame_id);
+  void OnCloseFrame(const std::string& source_id,
+                    media::VideoFrame::ID frame_id);
   // Reports the number of distinct monitored frames associated with
   // |source_id|.
   wtf_size_t NumFrames(const std::string& source_id);
   // Reports the reference count for the frame with ID |frame_id| associated
   // with the source with ID |source_id|.
-  int NumRefs(const std::string& source_id, int frame_id);
+  int NumRefs(const std::string& source_id, media::VideoFrame::ID frame_id);
 
   // Reports true if nothing is being monitored, false otherwise.
   bool IsEmpty();
 
-  // This function returns a mutex that can be used to lock the
+  // This function returns a lock that can be used to lock the
   // VideoFrameMonitor so that multiple invocations to the methods below
   // (suffixed with "Locked" can be done atomically, as a single update to
-  // the monitor. Locking the VideoFrameMonitor using GetMutex() must be done
-  // very carefully, as any invocation to any non-Locked method while the mutex
+  // the monitor. Locking the VideoFrameMonitor using GetLock() must be done
+  // very carefully, as any invocation to any non-Locked method while the lock
   // is acquired will result in deadlock.
   // For example, blink::VideoFrame objects may be automatically monitored, so
-  // they should not be created, cloned or closed while the mutex is acquired.
-  Mutex& GetMutex() { return mutex_; }
+  // they should not be created, cloned or closed while the lock is acquired.
+  base::Lock& GetLock() { return lock_; }
 
-  // The methods below can be called only when the mutex returned by GetMutex()
+  // The methods below can be called only when the mutex returned by GetLock()
   // has been acquired. Other than that, they are equivalent to their
   // corresponding non-locked version.
-  void OnOpenFrameLocked(const std::string& source_id, int frame_id);
-  void OnCloseFrameLocked(const std::string& source_id, int frame_id);
-  wtf_size_t NumFramesLocked(const std::string& source_id);
-  int NumRefsLocked(const std::string& source_id, int frame_id);
+  void OnOpenFrameLocked(const std::string& source_id,
+                         media::VideoFrame::ID frame_id)
+      EXCLUSIVE_LOCKS_REQUIRED(GetLock());
+  void OnCloseFrameLocked(const std::string& source_id,
+                          media::VideoFrame::ID frame_id)
+      EXCLUSIVE_LOCKS_REQUIRED(GetLock());
+  wtf_size_t NumFramesLocked(const std::string& source_id)
+      EXCLUSIVE_LOCKS_REQUIRED(GetLock());
+  int NumRefsLocked(const std::string& source_id,
+                    media::VideoFrame::ID frame_id)
+      EXCLUSIVE_LOCKS_REQUIRED(GetLock());
 
  private:
   VideoFrameMonitor() = default;
@@ -85,19 +96,34 @@ class MODULES_EXPORT VideoFrameMonitor {
   // key: unique ID of a frame.
   // value: reference count for the frame (among objects explicitly tracking
   //        the frame with VideoFrameMonitor).
-  using FrameMap = HashMap<int,
-                           int,
-                           WTF::IntHash<int>,
-                           WTF::UnsignedWithZeroKeyHashTraits<int>>;
+  struct VideoFrameIDHashTraits
+      : WTF::GenericHashTraits<media::VideoFrame::ID> {
+    static unsigned GetHash(media::VideoFrame::ID key) {
+      static_assert(std::is_same_v<decltype(key.GetUnsafeValue()), uint64_t>);
+      return WTF::HashInt(key.GetUnsafeValue());
+    }
+
+    static const bool kEmptyValueIsZero = false;
+
+    static media::VideoFrame::ID EmptyValue() {
+      return media::VideoFrame::ID();
+    }
+    static media::VideoFrame::ID DeletedValue() {
+      return media::VideoFrame::ID::FromUnsafeValue(
+          std::numeric_limits<media::VideoFrame::ID::underlying_type>::max());
+    }
+  };
+  using FrameMap = HashMap<media::VideoFrame::ID, int, VideoFrameIDHashTraits>;
 
   // key: ID of the source of the frames.
   // value: References to frames associated to that source.
   // Using std::map because HashMap does not directly support std::string.
-  using SourceMap = std::map<std::string, FrameMap>;
+  using SourceMap ALLOW_DISCOURAGED_TYPE("TODO(crbug.com/1404327)") =
+      std::map<std::string, FrameMap>;
 
-  Mutex mutex_;
+  base::Lock lock_;
   // Contains all data for VideoFrameMonitor.
-  SourceMap map_ GUARDED_BY(mutex_);
+  SourceMap map_ GUARDED_BY(GetLock());
 };
 
 }  // namespace blink

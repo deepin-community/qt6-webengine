@@ -1,9 +1,11 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/public/browser/webui_config_map.h"
 
+#include "base/containers/contains.h"
+#include "base/memory/raw_ref.h"
 #include "base/no_destructor.h"
 #include "base/strings/strcat.h"
 #include "content/public/browser/web_contents.h"
@@ -28,7 +30,7 @@ class WebUIConfigMapWebUIControllerFactory : public WebUIControllerFactory {
   WebUI::TypeID GetWebUIType(BrowserContext* browser_context,
                              const GURL& url) override {
     auto* config =
-        config_map_.GetConfig(browser_context, url::Origin::Create(url));
+        config_map_->GetConfig(browser_context, url::Origin::Create(url));
     if (!config)
       return WebUI::kNoWebUI;
 
@@ -37,7 +39,7 @@ class WebUIConfigMapWebUIControllerFactory : public WebUIControllerFactory {
 
   bool UseWebUIForURL(BrowserContext* browser_context,
                       const GURL& url) override {
-    return config_map_.GetConfig(browser_context, url::Origin::Create(url));
+    return config_map_->GetConfig(browser_context, url::Origin::Create(url));
   }
 
   std::unique_ptr<WebUIController> CreateWebUIControllerForURL(
@@ -45,7 +47,7 @@ class WebUIConfigMapWebUIControllerFactory : public WebUIControllerFactory {
       const GURL& url) override {
     auto* browser_context = web_ui->GetWebContents()->GetBrowserContext();
     auto* config =
-        config_map_.GetConfig(browser_context, url::Origin::Create(url));
+        config_map_->GetConfig(browser_context, url::Origin::Create(url));
     if (!config)
       return nullptr;
 
@@ -55,7 +57,7 @@ class WebUIConfigMapWebUIControllerFactory : public WebUIControllerFactory {
  private:
   // Keeping a reference should be safe since this class is owned by
   // WebUIConfigMap.
-  WebUIConfigMap& config_map_;
+  const raw_ref<WebUIConfigMap> config_map_;
 };
 
 }  // namespace
@@ -103,6 +105,17 @@ WebUIConfig* WebUIConfigMap::GetConfig(BrowserContext* browser_context,
     return nullptr;
 
   return config.get();
+}
+
+std::unique_ptr<WebUIConfig> WebUIConfigMap::RemoveConfig(
+    const url::Origin& origin) {
+  auto it = configs_map_.find(origin);
+  if (it == configs_map_.end())
+    return nullptr;
+
+  auto webui_config = std::move(it->second);
+  configs_map_.erase(it);
+  return webui_config;
 }
 
 }  // namespace content

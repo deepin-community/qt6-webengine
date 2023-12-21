@@ -1,4 +1,4 @@
-// Copyright 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,10 @@
 
 #include <memory>
 
-#include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 #include "cc/input/browser_controls_state.h"
 #include "cc/metrics/frame_sequence_tracker_collection.h"
+#include "cc/trees/paint_holding_commit_trigger.h"
 #include "cc/trees/paint_holding_reason.h"
 #include "cc/trees/property_tree.h"
 #include "ui/gfx/geometry/vector2d_f.h"
@@ -123,9 +123,19 @@ class LayerTreeHostClient {
   virtual void OnDeferMainFrameUpdatesChanged(bool) = 0;
 
   // Notification that the proxy started or stopped deferring commits. |reason|
-  // indicates why commits are/were deferred.
-  virtual void OnDeferCommitsChanged(bool defer_status,
-                                     PaintHoldingReason reason) = 0;
+  // indicates why commits are/were deferred. |trigger| indicates why the commit
+  // restarted. |trigger| is always provided on restarts, when |defer_status|
+  // switches to false.
+  virtual void OnDeferCommitsChanged(
+      bool defer_status,
+      PaintHoldingReason reason,
+      absl::optional<PaintHoldingCommitTrigger> trigger) = 0;
+
+  // Notification that rendering has been paused or resumed.
+  virtual void OnPauseRenderingChanged(bool) = 0;
+
+  // Notification that a compositing update has been requested.
+  virtual void OnCommitRequested() = 0;
 
   // Visual frame-based updates to the state of the LayerTreeHost are expected
   // to happen only in calls to LayerTreeHostClient::UpdateLayerTreeHost, which
@@ -203,9 +213,6 @@ class LayerTreeHostClient {
 // must be safe to use on both the compositor and main threads.
 class LayerTreeHostSchedulingClient {
  public:
-  // Indicates that the compositor thread scheduled a BeginMainFrame to run on
-  // the main thread.
-  virtual void DidScheduleBeginMainFrame() = 0;
   // Called unconditionally when BeginMainFrame runs on the main thread.
   virtual void DidRunBeginMainFrame() = 0;
 };

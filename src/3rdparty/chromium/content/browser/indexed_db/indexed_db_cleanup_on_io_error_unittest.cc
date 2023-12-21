@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,12 +10,13 @@
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/ptr_util.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/test/task_environment.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "components/services/storage/indexed_db/leveldb/fake_leveldb_factory.h"
 #include "components/services/storage/indexed_db/scopes/leveldb_scopes.h"
 #include "components/services/storage/indexed_db/transactional_leveldb/transactional_leveldb_database.h"
 #include "components/services/storage/indexed_db/transactional_leveldb/transactional_leveldb_factory.h"
+#include "components/services/storage/public/cpp/buckets/bucket_locator.h"
 #include "content/browser/indexed_db/indexed_db_backing_store.h"
 #include "content/browser/indexed_db/indexed_db_class_factory.h"
 #include "content/browser/indexed_db/indexed_db_leveldb_env.h"
@@ -36,16 +37,18 @@ TEST(IndexedDBIOErrorTest, CleanUpTest) {
   base::test::TaskEnvironment task_env;
   const blink::StorageKey storage_key =
       blink::StorageKey::CreateFromStringForTesting("http://localhost:81");
+  auto bucket_locator = storage::BucketLocator();
+  bucket_locator.storage_key = storage_key;
   base::ScopedTempDir temp_directory;
   ASSERT_TRUE(temp_directory.CreateUniqueTempDir());
   const base::FilePath path = temp_directory.GetPath();
 
   DefaultTransactionalLevelDBFactory transactional_leveldb_factory;
-  auto task_runner = base::SequencedTaskRunnerHandle::Get();
+  auto task_runner = base::SequencedTaskRunner::GetCurrentDefault();
   std::unique_ptr<IndexedDBBackingStore> backing_store = std::make_unique<
       IndexedDBBackingStore>(
       IndexedDBBackingStore::Mode::kInMemory, &transactional_leveldb_factory,
-      storage_key, path,
+      bucket_locator, path,
       transactional_leveldb_factory.CreateLevelDBDatabase(
           FakeLevelDBFactory::GetBrokenLevelDB(
               leveldb::Status::IOError("It's broken!"), path),
@@ -65,10 +68,12 @@ TEST(IndexedDBNonRecoverableIOErrorTest, NuancedCleanupTest) {
   base::test::TaskEnvironment task_env;
   const blink::StorageKey storage_key =
       blink::StorageKey::CreateFromStringForTesting("http://localhost:81");
+  auto bucket_locator = storage::BucketLocator();
+  bucket_locator.storage_key = storage_key;
   base::ScopedTempDir temp_directory;
   ASSERT_TRUE(temp_directory.CreateUniqueTempDir());
   const base::FilePath path = temp_directory.GetPath();
-  auto task_runner = base::SequencedTaskRunnerHandle::Get();
+  auto task_runner = base::SequencedTaskRunner::GetCurrentDefault();
 
   DefaultTransactionalLevelDBFactory transactional_leveldb_factory;
   std::array<leveldb::Status, 4> errors = {
@@ -84,7 +89,7 @@ TEST(IndexedDBNonRecoverableIOErrorTest, NuancedCleanupTest) {
     std::unique_ptr<IndexedDBBackingStore> backing_store = std::make_unique<
         IndexedDBBackingStore>(
         IndexedDBBackingStore::Mode::kInMemory, &transactional_leveldb_factory,
-        storage_key, path,
+        bucket_locator, path,
         transactional_leveldb_factory.CreateLevelDBDatabase(
             FakeLevelDBFactory::GetBrokenLevelDB(error_status, path), nullptr,
             task_runner.get(),

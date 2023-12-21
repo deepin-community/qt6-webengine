@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,15 +7,16 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/files/file_path.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/observer_list.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "components/offline_pages/core/archive_manager.h"
 #include "components/offline_pages/core/client_namespace_constants.h"
@@ -32,8 +33,8 @@
 #include "components/offline_pages/core/model/update_publish_id_task.h"
 #include "components/offline_pages/core/model/visuals_availability_task.h"
 #include "components/offline_pages/core/offline_clock.h"
+#include "components/offline_pages/core/offline_page_archive_publisher.h"
 #include "components/offline_pages/core/offline_page_client_policy.h"
-#include "components/offline_pages/core/offline_page_feature.h"
 #include "components/offline_pages/core/offline_page_metadata_store.h"
 #include "components/offline_pages/core/offline_page_model.h"
 #include "components/offline_pages/core/offline_store_utils.h"
@@ -186,7 +187,7 @@ OfflinePageModelTaskified::OfflinePageModelTaskified(
   CreateArchivesDirectoryIfNeeded();
 }
 
-OfflinePageModelTaskified::~OfflinePageModelTaskified() {}
+OfflinePageModelTaskified::~OfflinePageModelTaskified() = default;
 
 void OfflinePageModelTaskified::AddObserver(Observer* observer) {
   observers_.AddObserver(observer);
@@ -228,8 +229,6 @@ void OfflinePageModelTaskified::SavePage(
   // If the page is being saved in the background, we should try to remove the
   // popup overlay that obstructs viewing the normal content.
   create_archive_params.remove_popup_overlay = save_page_params.is_background;
-  create_archive_params.use_page_problem_detectors =
-      save_page_params.use_page_problem_detectors;
 
   // Save directly to public location if on-the-fly enabled.
   //
@@ -582,9 +581,9 @@ void OfflinePageModelTaskified::OnDeleteDone(
 
   // Remove the page from the system download manager. We don't need to wait for
   // completion before calling the delete page callback.
-  task_runner_->PostTask(FROM_HERE,
-                         base::BindOnce(&OfflinePageModelTaskified::Unpublish,
-                                        archive_publisher_.get(), publish_ids));
+  task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&OfflinePageModelTaskified::Unpublish,
+                                archive_publisher_->GetWeakPtr(), publish_ids));
 
   if (!callback.is_null())
     std::move(callback).Run(result);
@@ -609,9 +608,9 @@ void OfflinePageModelTaskified::OnStoreFaviconDone(int64_t offline_id,
 }
 
 void OfflinePageModelTaskified::Unpublish(
-    OfflinePageArchivePublisher* publisher,
+    base::WeakPtr<OfflinePageArchivePublisher> publisher,
     const std::vector<PublishedArchiveId>& publish_ids) {
-  if (!publish_ids.empty())
+  if (publisher && !publish_ids.empty())
     publisher->UnpublishArchives(publish_ids);
 }
 
@@ -624,7 +623,7 @@ void OfflinePageModelTaskified::ScheduleMaintenanceTasks() {
     return;
 
   bool first_run = last_maintenance_tasks_schedule_time_.is_null();
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE,
       base::BindOnce(&OfflinePageModelTaskified::RunMaintenanceTasks,
                      weak_ptr_factory_.GetWeakPtr(), now, first_run),
@@ -663,7 +662,7 @@ void OfflinePageModelTaskified::RunMaintenanceTasks(base::Time now,
 void OfflinePageModelTaskified::OnPersistentPageConsistencyCheckDone(
     bool success,
     const std::vector<PublishedArchiveId>& ids_of_deleted_pages) {
-  Unpublish(archive_publisher_.get(), ids_of_deleted_pages);
+  Unpublish(archive_publisher_->GetWeakPtr(), ids_of_deleted_pages);
 }
 
 void OfflinePageModelTaskified::OnClearCachedPagesDone(

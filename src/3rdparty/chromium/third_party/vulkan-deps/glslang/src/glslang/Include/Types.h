@@ -429,6 +429,12 @@ enum TLayoutFormat {
     ElfR16ui,
     ElfR8ui,
     ElfR64ui,
+    ElfExtSizeGuard,   // to help with comparisons
+    ElfSize1x8,
+    ElfSize1x16,
+    ElfSize1x32,
+    ElfSize2x32,
+    ElfSize4x32,
 
     ElfCount
 };
@@ -441,6 +447,18 @@ enum TLayoutDepth {
     EldUnchanged,
 
     EldCount
+};
+
+enum TLayoutStencil {
+    ElsNone,
+    ElsRefUnchangedFrontAMD,
+    ElsRefGreaterFrontAMD,
+    ElsRefLessFrontAMD,
+    ElsRefUnchangedBackAMD,
+    ElsRefGreaterBackAMD,
+    ElsRefLessBackAMD,
+
+    ElsCount
 };
 
 enum TBlendEquationShift {
@@ -552,6 +570,7 @@ public:
         perViewNV = false;
         perTaskNV = false;
 #endif
+        pervertexEXT = false;
     }
 
     void clearMemory()
@@ -604,7 +623,8 @@ public:
     bool isNoContraction() const { return false; }
     void setNoContraction() { }
     bool isPervertexNV() const { return false; }
-    void setNullInit() { }
+    bool isPervertexEXT() const { return pervertexEXT; }
+    void setNullInit() {}
     bool isNullInit() const { return false; }
     void setSpirvByReference() { }
     bool isSpirvByReference() { return false; }
@@ -615,6 +635,7 @@ public:
     bool nopersp      : 1;
     bool explicitInterp : 1;
     bool pervertexNV  : 1;
+    bool pervertexEXT : 1;
     bool perPrimitiveNV : 1;
     bool perViewNV : 1;
     bool perTaskNV : 1;
@@ -663,12 +684,13 @@ public:
     }
     bool isAuxiliary() const
     {
-        return centroid || patch || sample || pervertexNV;
+        return centroid || patch || sample || pervertexNV || pervertexEXT;
     }
     bool isPatch() const { return patch; }
     bool isNoContraction() const { return noContraction; }
     void setNoContraction() { noContraction = true; }
     bool isPervertexNV() const { return pervertexNV; }
+    bool isPervertexEXT() const { return pervertexEXT; }
     void setNullInit() { nullInit = true; }
     bool isNullInit() const { return nullInit; }
     void setSpirvByReference() { spirvByReference = true; }
@@ -701,6 +723,7 @@ public:
         case EvqVaryingOut:
         case EvqFragColor:
         case EvqFragDepth:
+        case EvqFragStencil:
             return true;
         default:
             return false;
@@ -768,6 +791,7 @@ public:
         case EvqVaryingOut:
         case EvqFragColor:
         case EvqFragDepth:
+        case EvqFragStencil:
             return true;
         default:
             return false;
@@ -815,7 +839,7 @@ public:
             }
             storage = EvqUniform;
             break;
-        case EbsStorageBuffer : 
+        case EbsStorageBuffer :
             storage = EvqBuffer;
             break;
 #ifndef GLSLANG_WEB
@@ -838,11 +862,15 @@ public:
     bool isPerPrimitive() const { return perPrimitiveNV; }
     bool isPerView() const { return perViewNV; }
     bool isTaskMemory() const { return perTaskNV; }
+    bool isTaskPayload() const { return storage == EvqtaskPayloadSharedEXT; }
     bool isAnyPayload() const {
         return storage == EvqPayload || storage == EvqPayloadIn;
     }
     bool isAnyCallable() const {
         return storage == EvqCallableData || storage == EvqCallableDataIn;
+    }
+    bool isHitObjectAttrNV() const {
+        return storage == EvqHitObjectAttrNV;
     }
 
     // True if this type of IO is supposed to be arrayed with extra level for per-vertex data
@@ -856,8 +884,8 @@ public:
         case EShLangTessEvaluation:
             return ! patch && isPipeInput();
         case EShLangFragment:
-            return pervertexNV && isPipeInput();
-        case EShLangMeshNV:
+            return (pervertexNV || pervertexEXT) && isPipeInput();
+        case EShLangMesh:
             return ! perTaskNV && isPipeOutput();
 
         default:
@@ -879,6 +907,9 @@ public:
         // -2048 as the default value indicating layoutSecondaryViewportRelative is not set
         layoutSecondaryViewportRelativeOffset = -2048;
         layoutShaderRecord = false;
+        layoutHitObjectShaderRecordNV = false;
+        layoutBindlessSampler = false;
+        layoutBindlessImage = false;
         layoutBufferReferenceAlign = layoutBufferReferenceAlignEnd;
         layoutFormat = ElfNone;
 #endif
@@ -978,10 +1009,14 @@ public:
     bool layoutViewportRelative;
     int layoutSecondaryViewportRelativeOffset;
     bool layoutShaderRecord;
+    bool layoutHitObjectShaderRecordNV;
 
     // GL_EXT_spirv_intrinsics
     int spirvStorageClass;
     TSpirvDecorate* spirvDecorate;
+
+    bool layoutBindlessSampler;
+    bool layoutBindlessImage;
 #endif
 
     bool hasUniformLayout() const
@@ -1104,6 +1139,7 @@ public:
     TLayoutFormat getFormat() const { return layoutFormat; }
     bool isPushConstant() const { return layoutPushConstant; }
     bool isShaderRecord() const { return layoutShaderRecord; }
+    bool hasHitObjectShaderRecordNV() const { return layoutHitObjectShaderRecordNV; }
     bool hasBufferReference() const { return layoutBufferReference; }
     bool hasBufferReferenceAlign() const
     {
@@ -1112,6 +1148,14 @@ public:
     bool isNonUniform() const
     {
         return nonUniform;
+    }
+    bool isBindlessSampler() const
+    {
+        return layoutBindlessSampler;
+    }
+    bool isBindlessImage() const
+    {
+        return layoutBindlessImage;
     }
 
     // GL_EXT_spirv_intrinsics
@@ -1222,6 +1266,11 @@ public:
         case ElfR8ui:         return "r8ui";
         case ElfR64ui:        return "r64ui";
         case ElfR64i:         return "r64i";
+        case ElfSize1x8:      return "size1x8";
+        case ElfSize1x16:     return "size1x16";
+        case ElfSize1x32:     return "size1x32";
+        case ElfSize2x32:     return "size2x32";
+        case ElfSize4x32:     return "size4x32";
         default:              return "none";
         }
     }
@@ -1233,6 +1282,18 @@ public:
         case EldLess:      return "depth_less";
         case EldUnchanged: return "depth_unchanged";
         default:           return "none";
+        }
+    }
+    static const char* getLayoutStencilString(TLayoutStencil s)
+    {
+        switch (s) {
+        case ElsRefUnchangedFrontAMD: return "stencil_ref_unchanged_front_amd";
+        case ElsRefGreaterFrontAMD:   return "stencil_ref_greater_front_amd";
+        case ElsRefLessFrontAMD:      return "stencil_ref_less_front_amd";
+        case ElsRefUnchangedBackAMD:  return "stencil_ref_unchanged_back_amd";
+        case ElsRefGreaterBackAMD:    return "stencil_ref_greater_back_amd";
+        case ElsRefLessBackAMD:       return "stencil_ref_less_back_amd";
+        default:                      return "none";
         }
     }
     static const char* getBlendEquationString(TBlendEquationShift e)
@@ -1332,7 +1393,9 @@ struct TShaderQualifiers {
 #ifndef GLSLANG_WEB
     bool earlyFragmentTests;  // fragment input
     bool postDepthCoverage;   // fragment input
+    bool earlyAndLateFragmentTestsAMD; //fragment input
     TLayoutDepth layoutDepth;
+    TLayoutStencil layoutStencil;
     bool blendEquation;       // true if any blend equation was specified
     int numViews;             // multiview extenstions
     TInterlockOrdering interlockOrdering;
@@ -1342,6 +1405,7 @@ struct TShaderQualifiers {
     int primitives;                     // mesh shader "max_primitives"DerivativeGroupLinear;   // true if layout derivative_group_linearNV set
     bool layoutPrimitiveCulling;        // true if layout primitive_culling set
     TLayoutDepth getDepth() const { return layoutDepth; }
+    TLayoutStencil getStencil() const { return layoutStencil; }
 #else
     TLayoutDepth getDepth() const { return EldNone; }
 #endif
@@ -1367,8 +1431,10 @@ struct TShaderQualifiers {
         localSizeSpecId[2] = TQualifier::layoutNotSet;
 #ifndef GLSLANG_WEB
         earlyFragmentTests = false;
+        earlyAndLateFragmentTestsAMD = false;
         postDepthCoverage = false;
         layoutDepth = EldNone;
+        layoutStencil = ElsNone;
         blendEquation = false;
         numViews = TQualifier::layoutNotSet;
         layoutOverrideCoverage      = false;
@@ -1420,10 +1486,14 @@ struct TShaderQualifiers {
 #ifndef GLSLANG_WEB
         if (src.earlyFragmentTests)
             earlyFragmentTests = true;
+        if (src.earlyAndLateFragmentTestsAMD)
+            earlyAndLateFragmentTestsAMD = true;
         if (src.postDepthCoverage)
             postDepthCoverage = true;
         if (src.layoutDepth)
             layoutDepth = src.layoutDepth;
+        if (src.layoutStencil)
+            layoutStencil = src.layoutStencil;
         if (src.blendEquation)
             blendEquation = src.blendEquation;
         if (src.numViews != TQualifier::layoutNotSet)
@@ -1824,9 +1894,11 @@ public:
     virtual bool isArray()  const { return arraySizes != nullptr; }
     virtual bool isSizedArray() const { return isArray() && arraySizes->isSized(); }
     virtual bool isUnsizedArray() const { return isArray() && !arraySizes->isSized(); }
+    virtual bool isImplicitlySizedArray() const { return isArray() && arraySizes->isImplicitlySized(); }
     virtual bool isArrayVariablyIndexed() const { assert(isArray()); return arraySizes->isVariablyIndexed(); }
     virtual void setArrayVariablyIndexed() { assert(isArray()); arraySizes->setVariablyIndexed(); }
     virtual void updateImplicitArraySize(int size) { assert(isArray()); arraySizes->updateImplicitSize(size); }
+    virtual void setImplicitlySized(bool isImplicitSized) { arraySizes->setImplicitlySized(isImplicitSized); }
     virtual bool isStruct() const { return basicType == EbtStruct || basicType == EbtBlock; }
     virtual bool isFloatingDomain() const { return basicType == EbtFloat || basicType == EbtDouble || basicType == EbtFloat16; }
     virtual bool isIntegerDomain() const
@@ -1849,7 +1921,8 @@ public:
     }
     virtual bool isOpaque() const { return basicType == EbtSampler
 #ifndef GLSLANG_WEB
-            || basicType == EbtAtomicUint || basicType == EbtAccStruct || basicType == EbtRayQuery
+            || basicType == EbtAtomicUint || basicType == EbtAccStruct || basicType == EbtRayQuery 
+            || basicType == EbtHitObjectNV
 #endif
         ; }
     virtual bool isBuiltIn() const { return getQualifier().builtIn != EbvNone; }
@@ -1858,6 +1931,8 @@ public:
     virtual bool isImage()   const { return basicType == EbtSampler && getSampler().isImage(); }
     virtual bool isSubpass() const { return basicType == EbtSampler && getSampler().isSubpass(); }
     virtual bool isTexture() const { return basicType == EbtSampler && getSampler().isTexture(); }
+    virtual bool isBindlessImage() const { return isImage() && qualifier.layoutBindlessImage; }
+    virtual bool isBindlessTexture() const { return isTexture() && qualifier.layoutBindlessSampler; }
     // Check the block-name convention of creating a block without populating it's members:
     virtual bool isUnusableName() const { return isStruct() && structure == nullptr; }
     virtual bool isParameterized()  const { return typeParameters != nullptr; }
@@ -1912,6 +1987,11 @@ public:
     virtual bool containsOpaque() const
     {
         return contains([](const TType* t) { return t->isOpaque(); } );
+    }
+
+    virtual bool containsSampler() const
+    {
+        return contains([](const TType* t) { return t->isTexture() || t->isImage(); });
     }
 
     // Recursively checks if the type contains a built-in variable
@@ -2047,8 +2127,12 @@ public:
     // an explicit array.
     void adoptImplicitArraySizes(bool skipNonvariablyIndexed)
     {
-        if (isUnsizedArray() && !(skipNonvariablyIndexed || isArrayVariablyIndexed()))
+        if (isUnsizedArray() &&
+            (qualifier.builtIn == EbvSampleMask ||
+                !(skipNonvariablyIndexed || isArrayVariablyIndexed()))) {
             changeOuterArraySize(getImplicitArraySize());
+            setImplicitlySized(true);
+        }
         // For multi-dim per-view arrays, set unsized inner dimension size to 1
         if (qualifier.isPerView() && arraySizes && arraySizes->isInnerUnsized())
             arraySizes->clearInnerUnsized();
@@ -2243,8 +2327,16 @@ public:
                 appendStr(" layoutSecondaryViewportRelativeOffset=");
                 appendInt(qualifier.layoutSecondaryViewportRelativeOffset);
               }
+              
               if (qualifier.layoutShaderRecord)
                 appendStr(" shaderRecordNV");
+              if (qualifier.layoutHitObjectShaderRecordNV)
+                appendStr(" hitobjectshaderrecordnv");
+
+              if (qualifier.layoutBindlessSampler)
+                  appendStr(" layoutBindlessSampler");
+              if (qualifier.layoutBindlessImage)
+                  appendStr(" layoutBindlessImage");
 
               appendStr(")");
             }
@@ -2266,6 +2358,8 @@ public:
             appendStr(" __explicitInterpAMD");
           if (qualifier.pervertexNV)
             appendStr(" pervertexNV");
+          if (qualifier.pervertexEXT)
+              appendStr(" pervertexEXT");
           if (qualifier.perPrimitiveNV)
             appendStr(" perprimitiveNV");
           if (qualifier.perViewNV)
@@ -2502,7 +2596,8 @@ public:
     void setStruct(TTypeList* s) { assert(isStruct()); structure = s; }
     TTypeList* getWritableStruct() const { assert(isStruct()); return structure; }  // This should only be used when known to not be sharing with other threads
     void setBasicType(const TBasicType& t) { basicType = t; }
-    
+    void setVectorSize(int s) { vectorSize = s; }
+
     int computeNumComponents() const
     {
         int components = 0;
@@ -2669,7 +2764,10 @@ public:
     bool sameArrayness(const TType& right) const
     {
         return ((arraySizes == nullptr && right.arraySizes == nullptr) ||
-                (arraySizes != nullptr && right.arraySizes != nullptr && *arraySizes == *right.arraySizes));
+                (arraySizes != nullptr && right.arraySizes != nullptr &&
+                 (*arraySizes == *right.arraySizes ||
+                  (arraySizes->isImplicitlySized() && right.arraySizes->isDefaultImplicitlySized()) ||
+                  (right.arraySizes->isImplicitlySized() && arraySizes->isDefaultImplicitlySized()))));
     }
 
     // See if two type's arrayness match in everything except their outer dimension

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_performance_mark_options.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/performance_entry_names.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
@@ -46,7 +47,7 @@ TEST(PerformanceMarkTest, Construction) {
 
   PerformanceMark* pm = MakeGarbageCollected<PerformanceMark>(
       "mark-name", 0, base::TimeTicks(), SerializedScriptValue::NullValue(),
-      exception_state, 1);
+      exception_state, LocalDOMWindow::From(script_state));
   ASSERT_EQ(pm->entryType(), performance_entry_names::kMark);
   ASSERT_EQ(pm->EntryTypeEnum(), PerformanceEntry::EntryType::kMark);
 
@@ -65,7 +66,8 @@ TEST(PerformanceMarkTest, ConstructionWithDetail) {
       SerializedScriptValue::Create(String("some-payload"));
 
   PerformanceMark* pm = MakeGarbageCollected<PerformanceMark>(
-      "mark-name", 0, base::TimeTicks(), payload_string, exception_state);
+      "mark-name", 0, base::TimeTicks(), payload_string, exception_state,
+      LocalDOMWindow::From(script_state));
   ASSERT_EQ(pm->entryType(), performance_entry_names::kMark);
   ASSERT_EQ(pm->EntryTypeEnum(), PerformanceEntry::EntryType::kMark);
 
@@ -80,13 +82,12 @@ TEST(PerformanceMarkTest, BuildJSONValue) {
   ScriptState* script_state = scope.GetScriptState();
 
   const AtomicString expected_name = "mark-name";
-  const uint32_t expected_navigation_count = 2;
   const double expected_start_time = 0;
   const double expected_duration = 0;
   const AtomicString expected_entry_type = "mark";
   PerformanceMark pm(expected_name, expected_start_time, base::TimeTicks(),
                      SerializedScriptValue::NullValue(), exception_state,
-                     expected_navigation_count);
+                     LocalDOMWindow::From(script_state));
 
   ScriptValue json_object = pm.toJSONForBinding(script_state);
   EXPECT_TRUE(json_object.IsObject());
@@ -97,23 +98,19 @@ TEST(PerformanceMarkTest, BuildJSONValue) {
           .ToLocalChecked(),
       kDoNotExternalize);
 
-  base::JSONReader::ValueWithError parsed_json =
+  auto parsed_json =
       base::JSONReader::ReadAndReturnValueWithError(json_string.Utf8());
-  EXPECT_TRUE(parsed_json.value->is_dict());
+  EXPECT_TRUE(parsed_json->is_dict());
 
-  EXPECT_EQ(expected_name,
-            parsed_json.value->GetDict().FindString("name")->c_str());
+  EXPECT_EQ(expected_name, parsed_json->GetDict().FindString("name")->c_str());
   EXPECT_EQ(expected_entry_type,
-            parsed_json.value->GetDict().FindString("entryType")->c_str());
+            parsed_json->GetDict().FindString("entryType")->c_str());
   EXPECT_EQ(expected_start_time,
-            parsed_json.value->GetDict().FindDouble("startTime").value());
+            parsed_json->GetDict().FindDouble("startTime").value());
   EXPECT_EQ(expected_duration,
-            parsed_json.value->GetDict().FindDouble("duration").value());
-  EXPECT_EQ(
-      expected_navigation_count,
-      (uint32_t)parsed_json.value->GetDict().FindInt("navigationId").value());
+            parsed_json->GetDict().FindDouble("duration").value());
 
-  EXPECT_EQ(5ul, parsed_json.value->GetDict().size());
+  EXPECT_EQ(5ul, parsed_json->GetDict().size());
 }
 
 }  // namespace blink

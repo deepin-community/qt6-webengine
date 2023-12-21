@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,27 +15,23 @@ namespace blink {
 
 template <typename KeyArg,
           typename MappedArg,
-          typename HashArg = typename DefaultHash<KeyArg>::Hash,
           typename KeyTraitsArg = HashTraits<KeyArg>,
           typename MappedTraitsArg = HashTraits<MappedArg>>
-class HeapHashMap final : public GarbageCollected<HeapHashMap<KeyArg,
-                                                              MappedArg,
-                                                              HashArg,
-                                                              KeyTraitsArg,
-                                                              MappedTraitsArg>>,
-                          public HashMap<KeyArg,
-                                         MappedArg,
-                                         HashArg,
-                                         KeyTraitsArg,
-                                         MappedTraitsArg,
-                                         HeapAllocator> {
+class HeapHashMap final
+    : public GarbageCollected<
+          HeapHashMap<KeyArg, MappedArg, KeyTraitsArg, MappedTraitsArg>>,
+      public HashMap<KeyArg,
+                     MappedArg,
+                     KeyTraitsArg,
+                     MappedTraitsArg,
+                     HeapAllocator> {
   DISALLOW_NEW();
 
  public:
   HeapHashMap() { CheckType(); }
 
   void Trace(Visitor* visitor) const {
-    HashMap<KeyArg, MappedArg, HashArg, KeyTraitsArg, MappedTraitsArg,
+    HashMap<KeyArg, MappedArg, KeyTraitsArg, MappedTraitsArg,
             HeapAllocator>::Trace(visitor);
   }
 

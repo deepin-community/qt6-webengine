@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,9 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/containers/contains.h"
 #include "base/containers/flat_set.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
@@ -22,7 +22,6 @@
 #include "mojo/public/cpp/bindings/interface_endpoint_client.h"
 #include "mojo/public/cpp/bindings/interface_endpoint_controller.h"
 #include "mojo/public/cpp/bindings/lib/may_auto_lock.h"
-#include "mojo/public/cpp/bindings/lib/message_quota_checker.h"
 #include "mojo/public/cpp/bindings/sequence_local_sync_event_watcher.h"
 
 namespace mojo {
@@ -303,7 +302,7 @@ class MultiplexRouter::MessageWrapper {
  private:
   // `router_` is not a raw_ptr<...> for performance reasons (based on analysis
   // of sampling profiler data and tab_search:top100:2020).
-  MultiplexRouter* router_ = nullptr;
+  RAW_PTR_EXCLUSION MultiplexRouter* router_ = nullptr;
 
   Message value_;
 };
@@ -387,11 +386,6 @@ MultiplexRouter::MultiplexRouter(
     lock_.emplace();
 
   connector_.set_incoming_receiver(&dispatcher_);
-
-  scoped_refptr<internal::MessageQuotaChecker> quota_checker =
-      internal::MessageQuotaChecker::MaybeCreate();
-  if (quota_checker)
-    connector_.SetMessageQuotaChecker(std::move(quota_checker));
 
   if (primary_interface_name) {
     control_message_handler_.SetDescription(base::JoinString(

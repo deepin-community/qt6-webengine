@@ -1,4 +1,4 @@
-// Copyright (c) 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,10 +9,10 @@
 #include <utility>
 
 #include "base/auto_reset.h"
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "cc/paint/image_transfer_cache_entry.h"
 #include "gpu/command_buffer/service/service_discardable_manager.h"
@@ -135,11 +135,12 @@ ServiceTransferCache::ServiceTransferCache(const GpuPreferences& preferences)
                             ? preferences.force_gpu_mem_discardable_limit_bytes
                             : DiscardableCacheSizeLimit()),
       max_cache_entries_(kMaxCacheEntries) {
-  // In certain cases, ThreadTaskRunnerHandle isn't set (Android Webview).
-  // Don't register a dump provider in these cases.
-  if (base::ThreadTaskRunnerHandle::IsSet()) {
+  // In certain cases, SingleThreadTaskRunner::CurrentDefaultHandle isn't set
+  // (Android Webview).  Don't register a dump provider in these cases.
+  if (base::SingleThreadTaskRunner::HasCurrentDefault()) {
     base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
-        this, "gpu::ServiceTransferCache", base::ThreadTaskRunnerHandle::Get());
+        this, "gpu::ServiceTransferCache",
+        base::SingleThreadTaskRunner::GetCurrentDefault());
   }
 }
 

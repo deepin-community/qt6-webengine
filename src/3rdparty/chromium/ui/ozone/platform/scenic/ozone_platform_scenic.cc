@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,6 +18,7 @@
 #include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/task/current_thread.h"
+#include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "ui/base/cursor/cursor_factory.h"
@@ -150,11 +151,12 @@ class OzonePlatformScenic : public OzonePlatform,
   void InitScreen(PlatformScreen* screen) override {}
 
   std::unique_ptr<InputMethod> CreateInputMethod(
-      internal::InputMethodDelegate* delegate,
+      ImeKeyEventDispatcher* ime_key_event_dispatcher,
       gfx::AcceleratedWidget widget) override {
     return std::make_unique<InputMethodFuchsia>(
         window_manager_->GetWindow(widget)->is_virtual_keyboard_enabled(),
-        delegate, window_manager_->GetWindow(widget)->CloneViewRef());
+        ime_key_event_dispatcher,
+        window_manager_->GetWindow(widget)->CloneViewRef());
   }
 
   bool InitializeUI(const InitParams& params) override {
@@ -176,7 +178,7 @@ class OzonePlatformScenic : public OzonePlatform,
     if (!surface_factory_)
       surface_factory_ = std::make_unique<ScenicSurfaceFactory>();
 
-    if (base::ThreadTaskRunnerHandle::IsSet())
+    if (base::SingleThreadTaskRunner::HasCurrentDefault())
       BindInMainProcessIfNecessary();
 
     return true;
@@ -215,7 +217,7 @@ class OzonePlatformScenic : public OzonePlatform,
   void AddInterfaces(mojo::BinderMap* binders) override {
     binders->Add<mojom::ScenicGpuService>(
         scenic_gpu_service_->GetBinderCallback(),
-        base::ThreadTaskRunnerHandle::Get());
+        base::SingleThreadTaskRunner::GetCurrentDefault());
   }
 
   bool IsNativePixmapConfigSupported(gfx::BufferFormat format,

@@ -1,10 +1,11 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/accessibility/browser_accessibility_cocoa.h"
 
 #include "base/check.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/sys_string_conversions.h"
 #include "content/browser/accessibility/browser_accessibility.h"
 #include "content/browser/accessibility/browser_accessibility_mac.h"
@@ -34,7 +35,7 @@ class BrowserAccessibilityCocoaBrowserTest : public ContentBrowserTest {
 
  protected:
   BrowserAccessibility* FindNode(ax::mojom::Role role) {
-    BrowserAccessibility* root = GetManager()->GetRoot();
+    BrowserAccessibility* root = GetManager()->GetBrowserAccessibilityRoot();
     CHECK(root);
     return FindNodeInSubtree(*root, role);
   }
@@ -107,7 +108,7 @@ IN_PROC_BROWSER_TEST_F(BrowserAccessibilityCocoaBrowserTest,
              <input />)HTML");
 
   EXPECT_TRUE(NavigateToURL(shell(), url));
-  waiter.WaitForNotification();
+  ASSERT_TRUE(waiter.WaitForNotification());
 
   BrowserAccessibility* text_field = FindNode(ax::mojom::Role::kTextField);
   ASSERT_NE(nullptr, text_field);
@@ -122,14 +123,15 @@ IN_PROC_BROWSER_TEST_F(BrowserAccessibilityCocoaBrowserTest,
   AccessibilityNotificationWaiter value_waiter(shell()->web_contents(),
                                                ui::kAXModeComplete,
                                                ax::mojom::Event::kValueChanged);
-  value_waiter.WaitForNotification();
+  ASSERT_TRUE(value_waiter.WaitForNotification());
   AXTextEdit text_edit = [cocoa_text_field computeTextEdit];
   EXPECT_NE(text_edit.edit_text_marker, nil);
 
-  EXPECT_EQ(
-      ui::AXTextMarkerToAXPosition(text_edit.edit_text_marker)->ToString(),
-      "TextPosition anchor_id=4 text_offset=1 affinity=downstream "
-      "annotated_text=B<>");
+  auto ax_position = ui::AXTextMarkerToAXPosition(text_edit.edit_text_marker);
+  std::string expected_string = "TextPosition anchor_id=";
+  expected_string += base::NumberToString(ax_position->anchor_id());
+  expected_string += " text_offset=1 affinity=downstream annotated_text=B<>";
+  EXPECT_EQ(ax_position->ToString(), expected_string);
 }
 
 IN_PROC_BROWSER_TEST_F(BrowserAccessibilityCocoaBrowserTest,
@@ -160,7 +162,7 @@ IN_PROC_BROWSER_TEST_F(BrowserAccessibilityCocoaBrowserTest,
              </table>)HTML");
 
   EXPECT_TRUE(NavigateToURL(shell(), url));
-  waiter.WaitForNotification();
+  ASSERT_TRUE(waiter.WaitForNotification());
 
   BrowserAccessibility* table = FindNode(ax::mojom::Role::kTable);
   ASSERT_NE(nullptr, table);
@@ -195,7 +197,7 @@ IN_PROC_BROWSER_TEST_F(BrowserAccessibilityCocoaBrowserTest,
   GURL url(R"HTML(data:text/html, <p>Hello, world!</p>)HTML");
 
   EXPECT_TRUE(NavigateToURL(shell(), url));
-  waiter.WaitForNotification();
+  ASSERT_TRUE(waiter.WaitForNotification());
 
   BrowserAccessibility* text = FindNode(ax::mojom::Role::kStaticText);
   ASSERT_NE(nullptr, text);
@@ -204,7 +206,8 @@ IN_PROC_BROWSER_TEST_F(BrowserAccessibilityCocoaBrowserTest,
   ASSERT_NE(nil, cocoa_text);
 
   NSPoint position = [[cocoa_text position] pointValue];
-  NSSize size = [[cocoa_text size] sizeValue];
+
+  NSSize size = cocoa_text.accessibilityFrame.size;
   NSRect frame = NSMakeRect(position.x, position.y, size.width, size.height);
 
   NSPoint p0_before = position;
@@ -398,7 +401,7 @@ IN_PROC_BROWSER_TEST_F(BrowserAccessibilityCocoaBrowserTest,
 
   for (int child_index = 0; child_index < child_count; child_index++) {
     BrowserAccessibility* child =
-        manager->GetRoot()->PlatformGetChild(child_index);
+        manager->GetBrowserAccessibilityRoot()->PlatformGetChild(child_index);
     base::scoped_nsobject<BrowserAccessibilityCocoa> child_obj(
         [child->GetNativeViewAccessible() retain]);
 
@@ -485,10 +488,11 @@ IN_PROC_BROWSER_TEST_F(BrowserAccessibilityCocoaBrowserTest,
   std::unique_ptr<BrowserAccessibilityManagerMac> manager(
       new BrowserAccessibilityManagerMac(tree, nullptr));
 
-  BrowserAccessibility* table = manager->GetRoot()->PlatformGetChild(0);
+  BrowserAccessibility* table =
+      manager->GetBrowserAccessibilityRoot()->PlatformGetChild(0);
   base::scoped_nsobject<BrowserAccessibilityCocoa> table_obj(
       [table->GetNativeViewAccessible() retain]);
-  NSArray* row_nodes = [table_obj rows];
+  NSArray* row_nodes = [table_obj accessibilityRows];
 
   EXPECT_EQ(3U, [row_nodes count]);
   EXPECT_NSEQ(@"AXRow", [row_nodes[0] role]);
@@ -535,18 +539,69 @@ IN_PROC_BROWSER_TEST_F(BrowserAccessibilityCocoaBrowserTest,
   std::unique_ptr<BrowserAccessibilityManagerMac> manager(
       new BrowserAccessibilityManagerMac(tree, nullptr));
 
-  BrowserAccessibility* column = manager->GetRoot()->PlatformGetChild(0);
+  BrowserAccessibility* column =
+      manager->GetBrowserAccessibilityRoot()->PlatformGetChild(0);
   base::scoped_nsobject<BrowserAccessibilityCocoa> col_obj(
       [column->GetNativeViewAccessible() retain]);
   EXPECT_NSEQ(@"AXColumn", [col_obj role]);
   EXPECT_NSEQ(@"column1", [col_obj accessibilityLabel]);
 
-  NSArray* row_nodes = [col_obj rows];
+  NSArray* row_nodes = [col_obj accessibilityRows];
   EXPECT_NSEQ(@"AXRow", [row_nodes[0] role]);
   EXPECT_NSEQ(@"row1", [row_nodes[0] accessibilityLabel]);
 
   EXPECT_NSEQ(@"AXRow", [row_nodes[1] role]);
   EXPECT_NSEQ(@"row2", [row_nodes[1] accessibilityLabel]);
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserAccessibilityCocoaBrowserTest,
+                       TestAXHeadersShouldOnlyIncludeColHeaders) {
+  EXPECT_TRUE(NavigateToURL(shell(), GURL(url::kAboutBlankURL)));
+  AccessibilityNotificationWaiter waiter(shell()->web_contents(),
+                                         ui::kAXModeComplete,
+                                         ax::mojom::Event::kLoadComplete);
+
+  GURL url(
+      R"HTML(data:text/html,
+      <table aria-label="Population per country">
+        <thead style=display:block>
+          <tr>
+            <th aria-label="Country">Country</th>
+            <th aria-label="Population">Population</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td role=rowheader>Canada</td>
+            <td>37</td>
+          </tr>
+          <tr>
+            <td role=rowheader>USA</td>
+            <td>331</td>
+          </tr>
+        </tbody>
+      </table>
+  )HTML");
+  EXPECT_TRUE(NavigateToURL(shell(), url));
+  ASSERT_TRUE(waiter.WaitForNotification());
+
+  BrowserAccessibility* table = FindNode(ax::mojom::Role::kTable);
+  base::scoped_nsobject<BrowserAccessibilityCocoa> table_obj(
+      [table->GetNativeViewAccessible() retain]);
+
+  EXPECT_NSEQ(@"AXTable", [table_obj role]);
+  EXPECT_NSEQ(@"Population per country", [table_obj accessibilityLabel]);
+  base::scoped_nsobject<BrowserAccessibilityCocoa> table_header(
+      [[table_obj header] retain]);
+
+  NSArray* children = [table_header children];
+  EXPECT_EQ(2U, [children count]);
+
+  EXPECT_NSEQ(@"AXCell", [children[0] role]);
+  EXPECT_NSEQ(@"Country", [children[0] accessibilityLabel]);
+
+  EXPECT_NSEQ(@"AXCell", [children[1] role]);
+  EXPECT_NSEQ(@"Population", [children[1] accessibilityLabel]);
 }
 
 IN_PROC_BROWSER_TEST_F(BrowserAccessibilityCocoaBrowserTest,
@@ -562,7 +617,7 @@ IN_PROC_BROWSER_TEST_F(BrowserAccessibilityCocoaBrowserTest,
              </div>)HTML");
 
   ASSERT_TRUE(NavigateToURL(shell(), url));
-  waiter.WaitForNotification();
+  ASSERT_TRUE(waiter.WaitForNotification());
 
   BrowserAccessibility* tree = FindNode(ax::mojom::Role::kTree);
   base::scoped_nsobject<BrowserAccessibilityCocoa> cocoa_tree(
@@ -573,7 +628,7 @@ IN_PROC_BROWSER_TEST_F(BrowserAccessibilityCocoaBrowserTest,
   ASSERT_NSEQ(@"AXRow", [tree_children[1] role]);
 
   auto menu_interceptor = std::make_unique<ContextMenuInterceptor>(
-      shell()->web_contents()->GetMainFrame(),
+      shell()->web_contents()->GetPrimaryMainFrame(),
       ContextMenuInterceptor::ShowBehavior::kPreventShow);
 
   gfx::Point tree_point =
@@ -626,7 +681,7 @@ IN_PROC_BROWSER_TEST_F(BrowserAccessibilityCocoaBrowserTest,
              </div>)HTML");
 
   EXPECT_TRUE(NavigateToURL(shell(), url));
-  waiter.WaitForNotification();
+  ASSERT_TRUE(waiter.WaitForNotification());
 
   std::pair<ax::mojom::Role, bool> tests[] = {
       std::make_pair(ax::mojom::Role::kTree, true),
@@ -679,7 +734,7 @@ IN_PROC_BROWSER_TEST_F(BrowserAccessibilityCocoaBrowserTest,
              </div>)HTML");
 
   EXPECT_TRUE(NavigateToURL(shell(), url));
-  waiter.WaitForNotification();
+  ASSERT_TRUE(waiter.WaitForNotification());
 
   std::pair<ax::mojom::Role, bool> tests[] = {
       std::make_pair(ax::mojom::Role::kTree, true),
@@ -722,11 +777,13 @@ IN_PROC_BROWSER_TEST_F(BrowserAccessibilityCocoaBrowserTest,
                   </div>)HTML");
 
   ASSERT_TRUE(NavigateToURL(shell(), url));
-  waiter.WaitForNotification();
+  ASSERT_TRUE(waiter.WaitForNotification());
 
   base::scoped_nsobject<BrowserAccessibilityCocoa> content_editable(
-      [GetManager()->GetRoot()->PlatformGetChild(0)->GetNativeViewAccessible()
-          retain]);
+      [GetManager()
+              ->GetBrowserAccessibilityRoot()
+              ->PlatformGetChild(0)
+              ->GetNativeViewAccessible() retain]);
   EXPECT_EQ([[content_editable children] count], 5ul);
 
   WebContents* web_contents = shell()->web_contents();
@@ -734,9 +791,9 @@ IN_PROC_BROWSER_TEST_F(BrowserAccessibilityCocoaBrowserTest,
       [web_contents](const char* script) {
         AccessibilityNotificationWaiter waiter(
             web_contents, ui::kAXModeComplete,
-            ax::mojom::Event::kTextSelectionChanged);
+            ui::AXEventGenerator::Event::TEXT_SELECTION_CHANGED);
         ASSERT_TRUE(ExecJs(web_contents, script));
-        waiter.WaitForNotification();
+        ASSERT_TRUE(waiter.WaitForNotification());
       };
 
   FocusAccessibilityElementAndWaitForFocusChange(content_editable);
@@ -754,7 +811,7 @@ IN_PROC_BROWSER_TEST_F(BrowserAccessibilityCocoaBrowserTest,
 
   AccessibilityNotificationWaiter waiter2(
       web_contents, ui::kAXModeComplete,
-      ax::mojom::Event::kTextSelectionChanged);
+      ui::AXEventGenerator::Event::TEXT_SELECTION_CHANGED);
   run_script_and_wait_for_selection_change(R"script(
       let editable = document.getElementById('editable');
       const selection = window.getSelection();

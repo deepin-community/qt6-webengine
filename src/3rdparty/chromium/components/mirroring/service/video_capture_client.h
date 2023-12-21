@@ -1,14 +1,14 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_MIRRORING_SERVICE_VIDEO_CAPTURE_CLIENT_H_
 #define COMPONENTS_MIRRORING_SERVICE_VIDEO_CAPTURE_CLIENT_H_
 
-#include "base/callback.h"
 #include "base/component_export.h"
 #include "base/containers/flat_map.h"
-#include "base/memory/read_only_shared_memory_region.h"
+#include "base/functional/callback.h"
+#include "base/memory/shared_memory_mapping.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
 #include "base/time/time.h"
@@ -16,7 +16,7 @@
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
-#include "mojo/public/cpp/system/buffer.h"
+#include "third_party/abseil-cpp/absl/types/variant.h"
 
 namespace media {
 class VideoFrame;
@@ -68,18 +68,25 @@ class COMPONENT_EXPORT(MIRRORING_SERVICE) VideoCaptureClient
       media::mojom::ReadyBufferPtr buffer,
       std::vector<media::mojom::ReadyBufferPtr> scaled_buffers) override;
   void OnBufferDestroyed(int32_t buffer_id) override;
+  void OnNewCropVersion(uint32_t crop_version) override;
+
+  void SwitchVideoCaptureHost(
+      mojo::PendingRemote<media::mojom::VideoCaptureHost> host);
 
  private:
   using BufferFinishedCallback = base::OnceCallback<void()>;
   // Called by the VideoFrame destructor.
   static void DidFinishConsumingFrame(BufferFinishedCallback callback);
 
-  // Reports the utilization, unmaps the shared memory, and returns the buffer.
+  // Reports the utilization to release the buffer for potential reuse.
+  using MappingKeepAlive = absl::variant<absl::monostate,
+                                         base::WritableSharedMemoryMapping,
+                                         base::ReadOnlySharedMemoryMapping>;
   void OnClientBufferFinished(int buffer_id,
-                              base::ReadOnlySharedMemoryMapping mapping);
+                              MappingKeepAlive mapping_keep_alive);
 
   const media::VideoCaptureParams params_;
-  const mojo::Remote<media::mojom::VideoCaptureHost> video_capture_host_;
+  mojo::Remote<media::mojom::VideoCaptureHost> video_capture_host_;
 
   // Called when capturing failed to start.
   base::OnceClosure error_callback_;
@@ -101,15 +108,6 @@ class COMPONENT_EXPORT(MIRRORING_SERVICE) VideoCaptureClient
   // The callback to deliver the received frame.
   FrameDeliverCallback frame_deliver_callback_;
 
-  // TODO(crbug.com/843117): Remove the MappingMap after migrating
-  // media::VideoCaptureDeviceClient to the new shared memory API.
-  using MappingAndSize = std::pair<mojo::ScopedSharedBufferMapping, uint32_t>;
-  using MappingMap = base::flat_map<int32_t, MappingAndSize>;
-  // Stores the mapped buffers and their size. Each buffer is added the first
-  // time the mapping is done or a larger size is requested.
-  // |buffer_id| is the key to this map.
-  MappingMap mapped_buffers_;
-
   // Latest received feedback.
   media::VideoCaptureFeedback feedback_;
 
@@ -118,6 +116,18 @@ class COMPONENT_EXPORT(MIRRORING_SERVICE) VideoCaptureClient
   // https://crbug.com/1206325
   std::unique_ptr<media::VideoFramePool> nv12_to_i420_pool_;
   std::vector<uint8_t> nv12_to_i420_tmp_buf_;
+
+  // Indicates whether we're in the middle of switching video capture host.
+  bool switching_video_capture_host_ = false;
+
+  // Represents the timestamp for the last frame sent to be delivered through
+  // `frame_deliver_callback_`.
+  base::TimeDelta last_timestamp_;
+
+  // When capturing stops, it gets assigned the value of the `last_timestamp_`.
+  // Added to frame timestamps when capturing restarts, since frame
+  // timestamps are expected to always increase.
+  base::TimeDelta accumulated_time_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 

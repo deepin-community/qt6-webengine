@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -177,7 +177,7 @@ export enum ZoomBehavior {
  * @return A promise to a BrowserApi instance constructed using the
  *     mimeHandlerPrivate API.
  */
-function createBrowserApiForMimeHandlerView(): Promise<BrowserApi> {
+export function createBrowserApi(): Promise<BrowserApi> {
   return new Promise<chrome.mimeHandlerPrivate.StreamInfo>(function(resolve) {
            chrome.mimeHandlerPrivate.getStreamInfo(resolve);
          })
@@ -201,7 +201,7 @@ function createBrowserApiForMimeHandlerView(): Promise<BrowserApi> {
             chrome.tabs.setZoomSettings(
                 streamInfo.tabId, {
                   mode: chrome.tabs.ZoomSettingsMode.MANUAL,
-                  scope: chrome.tabs.ZoomSettingsScope.PER_TAB
+                  scope: chrome.tabs.ZoomSettingsScope.PER_TAB,
                 },
                 resolve);
           }));
@@ -217,7 +217,7 @@ function createBrowserApiForMimeHandlerView(): Promise<BrowserApi> {
  * Creates a BrowserApi instance for an extension not running as a mime handler.
  * @return A promise to a BrowserApi instance constructed from the URL.
  */
-function createBrowserApiForPrintPreview(): Promise<BrowserApi> {
+export function createBrowserApiForPrintPreview(): Promise<BrowserApi> {
   const url = window.location.search.substring(1);
   const streamInfo: StreamInfoWithExtras = {
     streamUrl: url,
@@ -235,15 +235,4 @@ function createBrowserApiForPrintPreview(): Promise<BrowserApi> {
       .then(function() {
         return BrowserApi.create(streamInfo, ZoomBehavior.NONE);
       });
-}
-
-/**
- * @return A promise to a BrowserApi instance for the current environment.
- */
-export function createBrowserApi(): Promise<BrowserApi> {
-  if (location.origin === 'chrome://print') {
-    return createBrowserApiForPrintPreview();
-  }
-
-  return createBrowserApiForMimeHandlerView();
 }

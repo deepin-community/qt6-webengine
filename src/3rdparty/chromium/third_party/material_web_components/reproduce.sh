@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Copyright 2021 The Chromium Authors. All rights reserved.
+# Copyright 2021 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -21,21 +21,6 @@ check_dep "which npm" "npm" "visiting https://nodejs.org/en/"
 check_dep "which rsync" "rsync" "installing rsync"
 check_dep "which egrep" "egrep" "installing egrep"
 
-INSTALLED_PACKAGES=`npm ls -g`
-
-check_npm_dep() {
-  echo "$INSTALLED_PACKAGES" | grep " $1@" > /dev/null
-  if [ $? -ne 0 ]; then
-    echo >&2 "This script requires $1."
-    echo >&2 "Have you tried sudo npm install -g $1?"
-    echo >&2 "You will also need to set your NODE_PATH"
-    exit 1
-  fi
-}
-
-check_npm_dep "resolve"
-check_npm_dep "argparse"
-
 pushd "$(dirname "$0")" > /dev/null
 
 rm -rf node_modules
@@ -43,15 +28,19 @@ rm -rf node_modules
 npm install --only=prod
 
 rsync -c --delete --delete-excluded -r -v --prune-empty-dirs \
-    --include-from="rsync_include.txt" \
     --exclude-from="rsync_exclude.txt" \
     "node_modules/" \
     "components-chromium/node_modules/"
 
-# Rewrite imports to relative paths for rollup.
+npm install
+
+# Replace tslib.js with its ES6 version.
+mv components-chromium/node_modules/tslib/tslib.{es6.,}js
+
+# Resolve imports as relative paths so we can load them in chrome://resources/.
 find components-chromium/ \
-   \( -name "*.js" -or -name "*.d.ts" \) \
-   -exec node rewrite_imports.js {} +
+   \( -name "*.js"  \) -type f \
+   -exec node resolve_imports.js {} +
 
 new=$(git status --porcelain components-chromium | grep '^??' | \
       cut -d' ' -f2 | egrep '\.(js|css)$' || true)
@@ -74,5 +63,16 @@ fi
 if [[ ! -z "${new}${deleted}" ]]; then
   echo
 fi
+
+# In our BUILD file we have a ts_library rule which exposes all lit type
+# definitions. The following bit of code discovers and outputs all lit type
+# definitions so an engineer can manually update the afformentioned rule.
+echo 'Please update the ts_library("library") rule in BUILD to contain these'
+echo 'definitions:'
+echo 'definitions = ['
+for x in `find components-chromium/node_modules -type f  | grep d.ts$`; do
+  echo "    \"$x\","
+done
+echo ']'
 
 popd > /dev/null

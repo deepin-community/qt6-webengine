@@ -1,14 +1,15 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "extensions/browser/api/networking_private/networking_private_api.h"
 
+#include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "build/chromeos_buildflags.h"
@@ -20,6 +21,8 @@
 #include "extensions/common/api/networking_private.h"
 #include "extensions/common/extension_api.h"
 #include "extensions/common/features/feature_provider.h"
+
+#include "base/logging.h"
 
 namespace extensions {
 
@@ -67,7 +70,7 @@ enum class PropertiesType { GET, SET };
 // Filters out all properties that are not allowed for the extension in the
 // provided context.
 // Returns list of removed keys.
-std::vector<std::string> FilterProperties(base::Value* properties,
+std::vector<std::string> FilterProperties(base::Value::Dict& properties,
                                           PropertiesType type,
                                           const Extension* extension,
                                           Feature::Context context,
@@ -89,8 +92,8 @@ std::vector<std::string> FilterProperties(base::Value* properties,
   std::vector<std::string> removed_properties;
   for (size_t i = 0; i < filter_size; ++i) {
     // networkingPrivate uses sub dictionaries for Shill properties with a
-    // '.' separator, so we use RemovePath here, not RemoveKey.
-    if (properties->RemovePath(filter[i])) {
+    // '.' separator, so we use `RemoveByDottedPath` here, not `Remove`.
+    if (properties.RemoveByDottedPath(filter[i])) {
       removed_properties.push_back(filter[i]);
     }
   }
@@ -135,8 +138,7 @@ const char kErrorUnconfiguredNetwork[] = "Error.UnconfiguredNetwork";
 // NetworkingPrivateGetPropertiesFunction
 
 NetworkingPrivateGetPropertiesFunction::
-    ~NetworkingPrivateGetPropertiesFunction() {
-}
+    ~NetworkingPrivateGetPropertiesFunction() = default;
 
 ExtensionFunction::ResponseAction
 NetworkingPrivateGetPropertiesFunction::Run() {
@@ -156,23 +158,22 @@ NetworkingPrivateGetPropertiesFunction::Run() {
 }
 
 void NetworkingPrivateGetPropertiesFunction::Result(
-    absl::optional<base::Value> result,
-    absl::optional<std::string> error) {
+    absl::optional<base::Value::Dict> result,
+    const absl::optional<std::string>& error) {
   if (!result) {
     Respond(Error(error.value_or("Failed")));
     return;
   }
-  FilterProperties(&result.value(), PropertiesType::GET, extension(),
+  FilterProperties(result.value(), PropertiesType::GET, extension(),
                    source_context_type(), source_url(), context_id());
-  Respond(OneArgument(std::move(*result)));
+  Respond(OneArgument(base::Value(std::move(*result))));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // NetworkingPrivateGetManagedPropertiesFunction
 
 NetworkingPrivateGetManagedPropertiesFunction::
-    ~NetworkingPrivateGetManagedPropertiesFunction() {
-}
+    ~NetworkingPrivateGetManagedPropertiesFunction() = default;
 
 ExtensionFunction::ResponseAction
 NetworkingPrivateGetManagedPropertiesFunction::Run() {
@@ -192,22 +193,22 @@ NetworkingPrivateGetManagedPropertiesFunction::Run() {
 }
 
 void NetworkingPrivateGetManagedPropertiesFunction::Result(
-    absl::optional<base::Value> result,
-    absl::optional<std::string> error) {
+    absl::optional<base::Value::Dict> result,
+    const absl::optional<std::string>& error) {
   if (!result) {
     Respond(Error(error.value_or("Failed")));
     return;
   }
-  FilterProperties(&result.value(), PropertiesType::GET, extension(),
+  FilterProperties(result.value(), PropertiesType::GET, extension(),
                    source_context_type(), source_url(), context_id());
-  Respond(OneArgument(std::move(*result)));
+  Respond(OneArgument(base::Value(std::move(*result))));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // NetworkingPrivateGetStateFunction
 
-NetworkingPrivateGetStateFunction::~NetworkingPrivateGetStateFunction() {
-}
+NetworkingPrivateGetStateFunction::~NetworkingPrivateGetStateFunction() =
+    default;
 
 ExtensionFunction::ResponseAction NetworkingPrivateGetStateFunction::Run() {
   std::unique_ptr<private_api::GetState::Params> params =
@@ -225,10 +226,10 @@ ExtensionFunction::ResponseAction NetworkingPrivateGetStateFunction::Run() {
   return did_respond() ? AlreadyResponded() : RespondLater();
 }
 
-void NetworkingPrivateGetStateFunction::Success(base::Value result) {
-  FilterProperties(&result, PropertiesType::GET, extension(),
+void NetworkingPrivateGetStateFunction::Success(base::Value::Dict result) {
+  FilterProperties(result, PropertiesType::GET, extension(),
                    source_context_type(), source_url(), context_id());
-  Respond(OneArgument(std::move(result)));
+  Respond(OneArgument(base::Value(std::move(result))));
 }
 
 void NetworkingPrivateGetStateFunction::Failure(const std::string& error) {
@@ -239,8 +240,7 @@ void NetworkingPrivateGetStateFunction::Failure(const std::string& error) {
 // NetworkingPrivateSetPropertiesFunction
 
 NetworkingPrivateSetPropertiesFunction::
-    ~NetworkingPrivateSetPropertiesFunction() {
-}
+    ~NetworkingPrivateSetPropertiesFunction() = default;
 
 ExtensionFunction::ResponseAction
 NetworkingPrivateSetPropertiesFunction::Run() {
@@ -248,17 +248,17 @@ NetworkingPrivateSetPropertiesFunction::Run() {
       private_api::SetProperties::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
-  base::Value properties_dict(std::move(*params->properties.ToValue()));
+  base::Value::Dict properties = params->properties.ToValue();
 
   std::vector<std::string> not_allowed_properties =
-      FilterProperties(&properties_dict, PropertiesType::SET, extension(),
+      FilterProperties(properties, PropertiesType::SET, extension(),
                        source_context_type(), source_url(), context_id());
   if (!not_allowed_properties.empty())
     return RespondNow(Error(InvalidPropertiesError(not_allowed_properties)));
 
   GetDelegate(browser_context())
       ->SetProperties(
-          params->network_guid, std::move(properties_dict),
+          params->network_guid, std::move(properties),
           CanChangeSharedConfig(extension(), source_context_type()),
           base::BindOnce(&NetworkingPrivateSetPropertiesFunction::Success,
                          this),
@@ -282,8 +282,7 @@ void NetworkingPrivateSetPropertiesFunction::Failure(const std::string& error) {
 // NetworkingPrivateCreateNetworkFunction
 
 NetworkingPrivateCreateNetworkFunction::
-    ~NetworkingPrivateCreateNetworkFunction() {
-}
+    ~NetworkingPrivateCreateNetworkFunction() = default;
 
 ExtensionFunction::ResponseAction
 NetworkingPrivateCreateNetworkFunction::Run() {
@@ -296,17 +295,17 @@ NetworkingPrivateCreateNetworkFunction::Run() {
     return RespondNow(Error(networking_private::kErrorAccessToSharedConfig));
   }
 
-  base::Value properties_dict(std::move(*params->properties.ToValue()));
+  base::Value::Dict properties_dict = params->properties.ToValue();
 
   std::vector<std::string> not_allowed_properties =
-      FilterProperties(&properties_dict, PropertiesType::SET, extension(),
+      FilterProperties(properties_dict, PropertiesType::SET, extension(),
                        source_context_type(), source_url(), context_id());
   if (!not_allowed_properties.empty())
     return RespondNow(Error(InvalidPropertiesError(not_allowed_properties)));
 
   GetDelegate(browser_context())
       ->CreateNetwork(
-          params->shared, std::move(properties_dict),
+          params->shared, base::Value(std::move(properties_dict)),
           base::BindOnce(&NetworkingPrivateCreateNetworkFunction::Success,
                          this),
           base::BindOnce(&NetworkingPrivateCreateNetworkFunction::Failure,
@@ -329,8 +328,7 @@ void NetworkingPrivateCreateNetworkFunction::Failure(const std::string& error) {
 // NetworkingPrivateForgetNetworkFunction
 
 NetworkingPrivateForgetNetworkFunction::
-    ~NetworkingPrivateForgetNetworkFunction() {
-}
+    ~NetworkingPrivateForgetNetworkFunction() = default;
 
 ExtensionFunction::ResponseAction
 NetworkingPrivateForgetNetworkFunction::Run() {
@@ -363,8 +361,8 @@ void NetworkingPrivateForgetNetworkFunction::Failure(const std::string& error) {
 ////////////////////////////////////////////////////////////////////////////////
 // NetworkingPrivateGetNetworksFunction
 
-NetworkingPrivateGetNetworksFunction::~NetworkingPrivateGetNetworksFunction() {
-}
+NetworkingPrivateGetNetworksFunction::~NetworkingPrivateGetNetworksFunction() =
+    default;
 
 ExtensionFunction::ResponseAction NetworkingPrivateGetNetworksFunction::Run() {
   std::unique_ptr<private_api::GetNetworks::Params> params =
@@ -391,9 +389,8 @@ ExtensionFunction::ResponseAction NetworkingPrivateGetNetworksFunction::Run() {
 }
 
 void NetworkingPrivateGetNetworksFunction::Success(
-    std::unique_ptr<base::ListValue> network_list) {
-  return Respond(
-      OneArgument(base::Value::FromUniquePtrValue(std::move(network_list))));
+    base::Value::List network_list) {
+  return Respond(OneArgument(base::Value(std::move(network_list))));
 }
 
 void NetworkingPrivateGetNetworksFunction::Failure(const std::string& error) {
@@ -404,8 +401,7 @@ void NetworkingPrivateGetNetworksFunction::Failure(const std::string& error) {
 // NetworkingPrivateGetVisibleNetworksFunction
 
 NetworkingPrivateGetVisibleNetworksFunction::
-    ~NetworkingPrivateGetVisibleNetworksFunction() {
-}
+    ~NetworkingPrivateGetVisibleNetworksFunction() = default;
 
 ExtensionFunction::ResponseAction
 NetworkingPrivateGetVisibleNetworksFunction::Run() {
@@ -439,9 +435,8 @@ NetworkingPrivateGetVisibleNetworksFunction::Run() {
 }
 
 void NetworkingPrivateGetVisibleNetworksFunction::Success(
-    std::unique_ptr<base::ListValue> network_properties_list) {
-  Respond(OneArgument(
-      base::Value::FromUniquePtrValue(std::move(network_properties_list))));
+    base::Value::List network_properties_list) {
+  Respond(OneArgument(base::Value(std::move(network_properties_list))));
 }
 
 void NetworkingPrivateGetVisibleNetworksFunction::Failure(
@@ -453,8 +448,7 @@ void NetworkingPrivateGetVisibleNetworksFunction::Failure(
 // NetworkingPrivateGetEnabledNetworkTypesFunction
 
 NetworkingPrivateGetEnabledNetworkTypesFunction::
-    ~NetworkingPrivateGetEnabledNetworkTypesFunction() {
-}
+    ~NetworkingPrivateGetEnabledNetworkTypesFunction() = default;
 
 ExtensionFunction::ResponseAction
 NetworkingPrivateGetEnabledNetworkTypesFunction::Run() {
@@ -466,12 +460,19 @@ NetworkingPrivateGetEnabledNetworkTypesFunction::Run() {
     return RespondNow(Error(kPrivateOnlyError));
   }
 
-  base::Value enabled_networks_onc_types(
-      GetDelegate(browser_context())->GetEnabledNetworkTypes());
-  if (enabled_networks_onc_types.GetListDeprecated().empty())
-    return RespondNow(Error(networking_private::kErrorNotSupported));
-  base::Value enabled_networks_list(base::Value::Type::LIST);
-  for (const auto& entry : enabled_networks_onc_types.GetListDeprecated()) {
+  GetDelegate(browser_context())
+      ->GetEnabledNetworkTypes(base::BindOnce(
+          &NetworkingPrivateGetEnabledNetworkTypesFunction::Result, this));
+  return did_respond() ? AlreadyResponded() : RespondLater();
+}
+
+void NetworkingPrivateGetEnabledNetworkTypesFunction::Result(
+    base::Value::List enabled_networks_onc_types) {
+  if (enabled_networks_onc_types.empty()) {
+    return Respond(Error(networking_private::kErrorNotSupported));
+  }
+  base::Value::List enabled_networks_list;
+  for (const auto& entry : enabled_networks_onc_types) {
     const std::string& type = entry.GetString();
     if (type == ::onc::network_type::kEthernet) {
       enabled_networks_list.Append(
@@ -486,36 +487,39 @@ NetworkingPrivateGetEnabledNetworkTypesFunction::Run() {
       LOG(ERROR) << "networkingPrivate: Unexpected type: " << type;
     }
   }
-  return RespondNow(OneArgument(std::move(enabled_networks_list)));
+  return Respond(OneArgument(base::Value(std::move(enabled_networks_list))));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // NetworkingPrivateGetDeviceStatesFunction
 
 NetworkingPrivateGetDeviceStatesFunction::
-    ~NetworkingPrivateGetDeviceStatesFunction() {
-}
+    ~NetworkingPrivateGetDeviceStatesFunction() = default;
 
 ExtensionFunction::ResponseAction
 NetworkingPrivateGetDeviceStatesFunction::Run() {
-  std::unique_ptr<NetworkingPrivateDelegate::DeviceStateList> device_states(
-      GetDelegate(browser_context())->GetDeviceStateList());
-  if (!device_states)
-    return RespondNow(Error(networking_private::kErrorNotSupported));
+  GetDelegate(browser_context())
+      ->GetDeviceStateList(base::BindOnce(
+          &NetworkingPrivateGetDeviceStatesFunction::Result, this));
+  return did_respond() ? AlreadyResponded() : RespondLater();
+}
 
-  std::unique_ptr<base::ListValue> device_state_list(new base::ListValue);
+void NetworkingPrivateGetDeviceStatesFunction::Result(
+    std::unique_ptr<NetworkingPrivateDelegate::DeviceStateList> device_states) {
+  if (!device_states)
+    return Respond(Error(networking_private::kErrorNotSupported));
+
+  base::Value::List device_state_list;
   for (const auto& properties : *device_states)
-    device_state_list->Append(properties->ToValue());
-  return RespondNow(OneArgument(
-      base::Value::FromUniquePtrValue(std::move(device_state_list))));
+    device_state_list.Append(properties->ToValue());
+  return Respond(OneArgument(base::Value(std::move(device_state_list))));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // NetworkingPrivateEnableNetworkTypeFunction
 
 NetworkingPrivateEnableNetworkTypeFunction::
-    ~NetworkingPrivateEnableNetworkTypeFunction() {
-}
+    ~NetworkingPrivateEnableNetworkTypeFunction() = default;
 
 ExtensionFunction::ResponseAction
 NetworkingPrivateEnableNetworkTypeFunction::Run() {
@@ -523,38 +527,50 @@ NetworkingPrivateEnableNetworkTypeFunction::Run() {
       private_api::EnableNetworkType::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
-  if (!GetDelegate(browser_context())
-           ->EnableNetworkType(private_api::ToString(params->network_type))) {
-    return RespondNow(Error(networking_private::kErrorNotSupported));
-  }
-  return RespondNow(NoArguments());
+  GetDelegate(browser_context())
+      ->EnableNetworkType(
+          private_api::ToString(params->network_type),
+          base::BindOnce(&NetworkingPrivateEnableNetworkTypeFunction::Result,
+                         this));
+
+  return did_respond() ? AlreadyResponded() : RespondLater();
+}
+void NetworkingPrivateEnableNetworkTypeFunction::Result(bool success) {
+  if (!success)
+    return Respond(Error(networking_private::kErrorNotSupported));
+  return Respond(NoArguments());
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // NetworkingPrivateDisableNetworkTypeFunction
 
 NetworkingPrivateDisableNetworkTypeFunction::
-    ~NetworkingPrivateDisableNetworkTypeFunction() {
-}
+    ~NetworkingPrivateDisableNetworkTypeFunction() = default;
 
 ExtensionFunction::ResponseAction
 NetworkingPrivateDisableNetworkTypeFunction::Run() {
   std::unique_ptr<private_api::DisableNetworkType::Params> params =
       private_api::DisableNetworkType::Params::Create(args());
 
-  if (!GetDelegate(browser_context())
-           ->DisableNetworkType(private_api::ToString(params->network_type))) {
-    return RespondNow(Error(networking_private::kErrorNotSupported));
-  }
-  return RespondNow(NoArguments());
+  GetDelegate(browser_context())
+      ->DisableNetworkType(
+          private_api::ToString(params->network_type),
+          base::BindOnce(&NetworkingPrivateDisableNetworkTypeFunction::Result,
+                         this));
+  return did_respond() ? AlreadyResponded() : RespondLater();
+}
+
+void NetworkingPrivateDisableNetworkTypeFunction::Result(bool success) {
+  if (!success)
+    return Respond(Error(networking_private::kErrorNotSupported));
+  return Respond(NoArguments());
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // NetworkingPrivateRequestNetworkScanFunction
 
 NetworkingPrivateRequestNetworkScanFunction::
-    ~NetworkingPrivateRequestNetworkScanFunction() {
-}
+    ~NetworkingPrivateRequestNetworkScanFunction() = default;
 
 ExtensionFunction::ResponseAction
 NetworkingPrivateRequestNetworkScanFunction::Run() {
@@ -562,17 +578,25 @@ NetworkingPrivateRequestNetworkScanFunction::Run() {
       private_api::RequestNetworkScan::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
   std::string network_type = private_api::ToString(params->network_type);
-  if (!GetDelegate(browser_context())->RequestScan(network_type))
-    return RespondNow(Error(networking_private::kErrorNotSupported));
-  return RespondNow(NoArguments());
+  GetDelegate(browser_context())
+      ->RequestScan(
+          network_type,
+          base::BindOnce(&NetworkingPrivateRequestNetworkScanFunction::Result,
+                         this));
+  return did_respond() ? AlreadyResponded() : RespondLater();
+}
+
+void NetworkingPrivateRequestNetworkScanFunction::Result(bool success) {
+  if (!success)
+    return Respond(Error(networking_private::kErrorNotSupported));
+  return Respond(NoArguments());
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // NetworkingPrivateStartConnectFunction
 
 NetworkingPrivateStartConnectFunction::
-    ~NetworkingPrivateStartConnectFunction() {
-}
+    ~NetworkingPrivateStartConnectFunction() = default;
 
 ExtensionFunction::ResponseAction NetworkingPrivateStartConnectFunction::Run() {
   std::unique_ptr<private_api::StartConnect::Params> params =
@@ -604,8 +628,7 @@ void NetworkingPrivateStartConnectFunction::Failure(const std::string& guid,
 // NetworkingPrivateStartDisconnectFunction
 
 NetworkingPrivateStartDisconnectFunction::
-    ~NetworkingPrivateStartDisconnectFunction() {
-}
+    ~NetworkingPrivateStartDisconnectFunction() = default;
 
 ExtensionFunction::ResponseAction
 NetworkingPrivateStartDisconnectFunction::Run() {
@@ -639,8 +662,7 @@ void NetworkingPrivateStartDisconnectFunction::Failure(
 // NetworkingPrivateStartActivateFunction
 
 NetworkingPrivateStartActivateFunction::
-    ~NetworkingPrivateStartActivateFunction() {
-}
+    ~NetworkingPrivateStartActivateFunction() = default;
 
 ExtensionFunction::ResponseAction
 NetworkingPrivateStartActivateFunction::Run() {
@@ -678,8 +700,7 @@ void NetworkingPrivateStartActivateFunction::Failure(const std::string& error) {
 // NetworkingPrivateGetCaptivePortalStatusFunction
 
 NetworkingPrivateGetCaptivePortalStatusFunction::
-    ~NetworkingPrivateGetCaptivePortalStatusFunction() {
-}
+    ~NetworkingPrivateGetCaptivePortalStatusFunction() = default;
 
 ExtensionFunction::ResponseAction
 NetworkingPrivateGetCaptivePortalStatusFunction::Run() {
@@ -715,7 +736,7 @@ void NetworkingPrivateGetCaptivePortalStatusFunction::Failure(
 // NetworkingPrivateUnlockCellularSimFunction
 
 NetworkingPrivateUnlockCellularSimFunction::
-    ~NetworkingPrivateUnlockCellularSimFunction() {}
+    ~NetworkingPrivateUnlockCellularSimFunction() = default;
 
 ExtensionFunction::ResponseAction
 NetworkingPrivateUnlockCellularSimFunction::Run() {
@@ -754,7 +775,7 @@ void NetworkingPrivateUnlockCellularSimFunction::Failure(
 // NetworkingPrivateSetCellularSimStateFunction
 
 NetworkingPrivateSetCellularSimStateFunction::
-    ~NetworkingPrivateSetCellularSimStateFunction() {}
+    ~NetworkingPrivateSetCellularSimStateFunction() = default;
 
 ExtensionFunction::ResponseAction
 NetworkingPrivateSetCellularSimStateFunction::Run() {
@@ -795,7 +816,7 @@ void NetworkingPrivateSetCellularSimStateFunction::Failure(
 // NetworkingPrivateSelectCellularMobileNetworkFunction
 
 NetworkingPrivateSelectCellularMobileNetworkFunction::
-    ~NetworkingPrivateSelectCellularMobileNetworkFunction() {}
+    ~NetworkingPrivateSelectCellularMobileNetworkFunction() = default;
 
 ExtensionFunction::ResponseAction
 NetworkingPrivateSelectCellularMobileNetworkFunction::Run() {
@@ -836,17 +857,26 @@ void NetworkingPrivateSelectCellularMobileNetworkFunction::Failure(
 // NetworkingPrivateGetGlobalPolicyFunction
 
 NetworkingPrivateGetGlobalPolicyFunction::
-    ~NetworkingPrivateGetGlobalPolicyFunction() {}
+    ~NetworkingPrivateGetGlobalPolicyFunction() = default;
 
 ExtensionFunction::ResponseAction
 NetworkingPrivateGetGlobalPolicyFunction::Run() {
-  base::Value policy_dict(GetDelegate(browser_context())->GetGlobalPolicy());
+  GetDelegate(browser_context())
+      ->GetGlobalPolicy(base::BindOnce(
+          &NetworkingPrivateGetGlobalPolicyFunction::Result, this));
+
+  return did_respond() ? AlreadyResponded() : RespondLater();
+}
+
+void NetworkingPrivateGetGlobalPolicyFunction::Result(
+    absl::optional<base::Value::Dict> policy_dict) {
   // private_api::GlobalPolicy is a subset of the global policy dictionary
   // (by definition), so use the api setter/getter to generate the subset.
   std::unique_ptr<private_api::GlobalPolicy> policy(
-      private_api::GlobalPolicy::FromValue(policy_dict));
+      private_api::GlobalPolicy::FromValue(
+          base::Value(std::move(policy_dict.value()))));
   DCHECK(policy);
-  return RespondNow(
+  return Respond(
       ArgumentList(private_api::GetGlobalPolicy::Results::Create(*policy)));
 }
 
@@ -854,7 +884,7 @@ NetworkingPrivateGetGlobalPolicyFunction::Run() {
 // NetworkingPrivateGetCertificateListsFunction
 
 NetworkingPrivateGetCertificateListsFunction::
-    ~NetworkingPrivateGetCertificateListsFunction() {}
+    ~NetworkingPrivateGetCertificateListsFunction() = default;
 
 ExtensionFunction::ResponseAction
 NetworkingPrivateGetCertificateListsFunction::Run() {
@@ -863,9 +893,16 @@ NetworkingPrivateGetCertificateListsFunction::Run() {
     return RespondNow(Error(kPrivateOnlyError));
   }
 
-  base::Value certificate_lists(
-      GetDelegate(browser_context())->GetCertificateLists());
-  return RespondNow(OneArgument(std::move(certificate_lists)));
+  GetDelegate(browser_context())
+      ->GetCertificateLists(base::BindOnce(
+          &NetworkingPrivateGetCertificateListsFunction::Result, this));
+  return did_respond() ? AlreadyResponded() : RespondLater();
+}
+
+void NetworkingPrivateGetCertificateListsFunction::Result(
+    absl::optional<base::Value::Dict> certificate_lists) {
+  return Respond(
+      OneArgument(base::Value(std::move(certificate_lists.value()))));
 }
 
 }  // namespace extensions

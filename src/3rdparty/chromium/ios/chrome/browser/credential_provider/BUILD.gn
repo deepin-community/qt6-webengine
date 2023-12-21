@@ -1,4 +1,4 @@
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -47,13 +47,13 @@ if (ios_enable_credential_provider_extension) {
       "//ios/chrome/browser/favicon",
       "//ios/chrome/browser/passwords",
       "//ios/chrome/browser/signin",
+      "//ios/chrome/browser/signin:system_identity",
       "//ios/chrome/browser/sync",
       "//ios/chrome/common/app_group",
       "//ios/chrome/common/credential_provider",
       "//ios/chrome/common/credential_provider:ui",
       "//ios/chrome/common/ui/favicon:favicon",
       "//ios/chrome/common/ui/favicon:favicon_constants",
-      "//ios/public/provider/chrome/browser/signin",
       "//url",
     ]
     frameworks = [
@@ -79,15 +79,19 @@ if (ios_enable_credential_provider_extension) {
       "//components/password_manager/core/common",
       "//components/prefs",
       "//components/prefs:test_support",
+      "//components/variations:test_support",
+      "//ios/chrome/browser/application_context",
       "//ios/chrome/browser/browser_state:test_support",
+      "//ios/chrome/browser/favicon",
+      "//ios/chrome/browser/history",
       "//ios/chrome/browser/signin",
+      "//ios/chrome/browser/signin:fake_system_identity",
+      "//ios/chrome/browser/signin:fake_system_identity_manager",
       "//ios/chrome/browser/signin:test_support",
       "//ios/chrome/common/app_group",
       "//ios/chrome/common/credential_provider",
       "//ios/chrome/common/credential_provider:ui",
       "//ios/chrome/test:test_support",
-      "//ios/public/provider/chrome/browser/signin:fake_chrome_identity",
-      "//ios/public/provider/chrome/browser/signin:test_support",
       "//ios/web/public/test",
       "//testing/gtest",
       "//url",

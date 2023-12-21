@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,13 +14,14 @@ namespace style_change_reason {
 const char kActiveStylesheetsUpdate[] = "ActiveStylesheetsUpdate";
 const char kAnimation[] = "Animation";
 const char kAttribute[] = "Attribute";
-const char kControlValue[] = "ControlValue";
+const char kConditionalBackdrop[] = "Conditional ::backdrop";
 const char kControl[] = "Control";
+const char kControlValue[] = "ControlValue";
 const char kDeclarativeContent[] = "Extension declarativeContent.css";
 const char kDesignMode[] = "DesignMode";
 const char kDialog[] = "Dialog";
 const char kDisplayLock[] = "DisplayLock";
-const char kDocumentTransition[] = "DocumentTransition";
+const char kViewTransition[] = "ViewTransition";
 const char kFlatTreeChange[] = "FlatTreeChange";
 const char kFonts[] = "Fonts";
 const char kFrame[] = "Frame";
@@ -35,7 +36,7 @@ const char kLinkColorChange[] = "LinkColorChange";
 const char kPictureSourceChanged[] = "PictureSourceChange";
 const char kPlatformColorChange[] = "PlatformColorChange";
 const char kPluginChanged[] = "Plugin Changed";
-const char kPopupVisibilityChange[] = "Popup Visibility Change";
+const char kPopoverVisibilityChange[] = "Popover Visibility Change";
 const char kPropertyRegistration[] = "PropertyRegistration";
 const char kPseudoClass[] = "PseudoClass";
 const char kScrollTimeline[] = "ScrollTimeline";
@@ -44,6 +45,7 @@ const char kSettings[] = "Settings";
 const char kShadow[] = "Shadow";
 const char kStyleInvalidator[] = "StyleInvalidator";
 const char kStyleSheetChange[] = "StyleSheetChange";
+const char kTopLayer[] = "TopLayer";
 const char kUseFallback[] = "UseFallback";
 const char kViewportDefiningElement[] = "ViewportDefiningElement";
 const char kViewportUnits[] = "ViewportUnits";
@@ -61,6 +63,7 @@ DEFINE_GLOBAL(AtomicString, g_focus_visible);
 DEFINE_GLOBAL(AtomicString, g_focus_within);
 DEFINE_GLOBAL(AtomicString, g_hover);
 DEFINE_GLOBAL(AtomicString, g_past);
+DEFINE_GLOBAL(AtomicString, g_toggle);
 DEFINE_GLOBAL(AtomicString, g_unresolved);
 
 void Init() {
@@ -76,6 +79,7 @@ void Init() {
       AtomicString(":focus-within");
   new (NotNullTag::kNotNull, (void*)&g_hover) AtomicString(":hover");
   new (NotNullTag::kNotNull, (void*)&g_past) AtomicString(":past");
+  new (NotNullTag::kNotNull, (void*)&g_toggle) AtomicString(":toggle");
   new (NotNullTag::kNotNull, (void*)&g_unresolved) AtomicString(":unresolved");
 }
 

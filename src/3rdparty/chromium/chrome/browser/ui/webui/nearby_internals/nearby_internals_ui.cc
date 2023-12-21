@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -28,16 +28,15 @@
 
 NearbyInternalsUI::NearbyInternalsUI(content::WebUI* web_ui)
     : ui::MojoWebUIController(web_ui, /*enable_chrome_send=*/true) {
-  Profile* profile = Profile::FromWebUI(web_ui);
   content::WebUIDataSource* html_source =
-      content::WebUIDataSource::Create(chrome::kChromeUINearbyInternalsHost);
+      content::WebUIDataSource::CreateAndAdd(
+          Profile::FromWebUI(web_ui), chrome::kChromeUINearbyInternalsHost);
 
   webui::SetupWebUIDataSource(
       html_source,
       base::make_span(kNearbyInternalsResources, kNearbyInternalsResourcesSize),
       IDR_NEARBY_INTERNALS_INDEX_HTML);
 
-  content::WebUIDataSource::Add(profile, html_source);
   content::BrowserContext* context =
       web_ui->GetWebContents()->GetBrowserContext();
 

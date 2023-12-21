@@ -1,28 +1,29 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "net/http/transport_security_persister.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "base/base64.h"
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/location.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/task/task_runner_util.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/values.h"
-#include "crypto/sha2.h"
 #include "net/base/features.h"
-#include "net/base/network_isolation_key.h"
+#include "net/base/network_anonymization_key.h"
 #include "net/cert/x509_certificate.h"
 #include "net/http/transport_security_state.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
@@ -33,21 +34,22 @@ namespace {
 
 // This function converts the binary hashes to a base64 string which we can
 // include in a JSON file.
-std::string HashedDomainToExternalString(const std::string& hashed) {
-  std::string out;
-  base::Base64Encode(hashed, &out);
-  return out;
+std::string HashedDomainToExternalString(
+    const TransportSecurityState::HashedHost& hashed) {
+  return base::Base64Encode(hashed);
 }
 
 // This inverts |HashedDomainToExternalString|, above. It turns an external
-// string (from a JSON file) into an internal (binary) string.
-std::string ExternalStringToHashedDomain(const std::string& external) {
-  std::string out;
-  if (!base::Base64Decode(external, &out) ||
-      out.size() != crypto::kSHA256Length) {
-    return std::string();
+// string (from a JSON file) into an internal (binary) array.
+absl::optional<TransportSecurityState::HashedHost> ExternalStringToHashedDomain(
+    const std::string& external) {
+  TransportSecurityState::HashedHost out;
+  absl::optional<std::vector<uint8_t>> hashed = base::Base64Decode(external);
+  if (!hashed.has_value() || hashed.value().size() != out.size()) {
+    return absl::nullopt;
   }
 
+  std::copy_n(hashed.value().begin(), out.size(), out.begin());
   return out;
 }
 
@@ -62,13 +64,12 @@ const char kVersionKey[] = "version";
 const int kCurrentVersionValue = 2;
 
 // Keys in top level serialized dictionary, for lists of STS and Expect-CT
-// entries, respectively.
+// entries, respectively. The Expect-CT key is legacy and deleted when read.
 const char kSTSKey[] = "sts";
 const char kExpectCTKey[] = "expect_ct";
 
-// Hostname entry, used in serialized STS and Expect-CT dictionaries. Value is
-// produced by passing hashed hostname strings to
-// HashedDomainToExternalString().
+// Hostname entry, used in serialized STS dictionaries. Value is produced by
+// passing hashed hostname strings to HashedDomainToExternalString().
 const char kHostname[] = "host";
 
 // Key values in serialized STS entries.
@@ -81,13 +82,6 @@ const char kMode[] = "mode";
 const char kForceHTTPS[] = "force-https";
 const char kDefault[] = "default";
 
-// Key names in serialized Expect-CT entries.
-const char kNetworkIsolationKey[] = "nik";
-const char kExpectCTObserved[] = "expect_ct_observed";
-const char kExpectCTExpiry[] = "expect_ct_expiry";
-const char kExpectCTEnforce[] = "expect_ct_enforce";
-const char kExpectCTReportUri[] = "expect_ct_report_uri";
-
 std::string LoadState(const base::FilePath& path) {
   std::string result;
   if (!base::ReadFileToString(path, &result)) {
@@ -96,33 +90,28 @@ std::string LoadState(const base::FilePath& path) {
   return result;
 }
 
-bool IsDynamicExpectCTEnabled() {
-  return base::FeatureList::IsEnabled(
-      TransportSecurityState::kDynamicExpectCTFeature);
-}
-
 // Serializes STS data from |state| to a Value.
-base::Value SerializeSTSData(const TransportSecurityState* state) {
-  base::Value sts_list(base::Value::Type::LIST);
+base::Value::List SerializeSTSData(const TransportSecurityState* state) {
+  base::Value::List sts_list;
 
   TransportSecurityState::STSStateIterator sts_iterator(*state);
   for (; sts_iterator.HasNext(); sts_iterator.Advance()) {
     const TransportSecurityState::STSState& sts_state =
         sts_iterator.domain_state();
 
-    base::Value serialized(base::Value::Type::DICTIONARY);
-    serialized.SetStringKey(
-        kHostname, HashedDomainToExternalString(sts_iterator.hostname()));
-    serialized.SetBoolKey(kStsIncludeSubdomains, sts_state.include_subdomains);
-    serialized.SetDoubleKey(kStsObserved, sts_state.last_observed.ToDoubleT());
-    serialized.SetDoubleKey(kExpiry, sts_state.expiry.ToDoubleT());
+    base::Value::Dict serialized;
+    serialized.Set(kHostname,
+                   HashedDomainToExternalString(sts_iterator.hostname()));
+    serialized.Set(kStsIncludeSubdomains, sts_state.include_subdomains);
+    serialized.Set(kStsObserved, sts_state.last_observed.ToDoubleT());
+    serialized.Set(kExpiry, sts_state.expiry.ToDoubleT());
 
     switch (sts_state.upgrade_mode) {
       case TransportSecurityState::STSState::MODE_FORCE_HTTPS:
-        serialized.SetStringKey(kMode, kForceHTTPS);
+        serialized.Set(kMode, kForceHTTPS);
         break;
       case TransportSecurityState::STSState::MODE_DEFAULT:
-        serialized.SetStringKey(kMode, kDefault);
+        serialized.Set(kMode, kDefault);
         break;
     }
 
@@ -139,16 +128,17 @@ void DeserializeSTSData(const base::Value& sts_list,
 
   base::Time current_time(base::Time::Now());
 
-  for (const base::Value& sts_entry : sts_list.GetListDeprecated()) {
-    if (!sts_entry.is_dict())
+  for (const base::Value& sts_entry : sts_list.GetList()) {
+    const base::Value::Dict* sts_dict = sts_entry.GetIfDict();
+    if (!sts_dict)
       continue;
 
-    const std::string* hostname = sts_entry.FindStringKey(kHostname);
+    const std::string* hostname = sts_dict->FindString(kHostname);
     absl::optional<bool> sts_include_subdomains =
-        sts_entry.FindBoolKey(kStsIncludeSubdomains);
-    absl::optional<double> sts_observed = sts_entry.FindDoubleKey(kStsObserved);
-    absl::optional<double> expiry = sts_entry.FindDoubleKey(kExpiry);
-    const std::string* mode = sts_entry.FindStringKey(kMode);
+        sts_dict->FindBool(kStsIncludeSubdomains);
+    absl::optional<double> sts_observed = sts_dict->FindDouble(kStsObserved);
+    absl::optional<double> expiry = sts_dict->FindDouble(kExpiry);
+    const std::string* mode = sts_dict->FindString(kMode);
 
     if (!hostname || !sts_include_subdomains.has_value() ||
         !sts_observed.has_value() || !expiry.has_value() || !mode) {
@@ -172,117 +162,12 @@ void DeserializeSTSData(const base::Value& sts_list,
     if (sts_state.expiry < current_time || !sts_state.ShouldUpgradeToSSL())
       continue;
 
-    std::string hashed = ExternalStringToHashedDomain(*hostname);
-    if (hashed.empty())
+    absl::optional<TransportSecurityState::HashedHost> hashed =
+        ExternalStringToHashedDomain(*hostname);
+    if (!hashed.has_value())
       continue;
 
-    state->AddOrUpdateEnabledSTSHosts(hashed, sts_state);
-  }
-}
-
-// Serializes Expect-CT data from |state| to a Value.
-base::Value SerializeExpectCTData(TransportSecurityState* state) {
-  base::Value ct_list(base::Value::Type::LIST);
-
-  if (!IsDynamicExpectCTEnabled())
-    return ct_list;
-
-  TransportSecurityState::ExpectCTStateIterator expect_ct_iterator(*state);
-  for (; expect_ct_iterator.HasNext(); expect_ct_iterator.Advance()) {
-    const TransportSecurityState::ExpectCTState& expect_ct_state =
-        expect_ct_iterator.domain_state();
-
-    base::Value ct_entry(base::Value::Type::DICTIONARY);
-
-    base::Value network_isolation_key_value;
-    // Don't serialize entries with transient NetworkIsolationKeys.
-    if (!expect_ct_iterator.network_isolation_key().ToValue(
-            &network_isolation_key_value)) {
-      continue;
-    }
-    ct_entry.SetKey(kNetworkIsolationKey,
-                    std::move(network_isolation_key_value));
-
-    ct_entry.SetStringKey(
-        kHostname, HashedDomainToExternalString(expect_ct_iterator.hostname()));
-    ct_entry.SetDoubleKey(kExpectCTObserved,
-                          expect_ct_state.last_observed.ToDoubleT());
-    ct_entry.SetDoubleKey(kExpectCTExpiry, expect_ct_state.expiry.ToDoubleT());
-    ct_entry.SetBoolKey(kExpectCTEnforce, expect_ct_state.enforce);
-    ct_entry.SetStringKey(kExpectCTReportUri,
-                          expect_ct_state.report_uri.spec());
-
-    ct_list.Append(std::move(ct_entry));
-  }
-
-  return ct_list;
-}
-
-// Deserializes Expect-CT data from a Value created by the above method.
-void DeserializeExpectCTData(const base::Value& ct_list,
-                             TransportSecurityState* state) {
-  if (!ct_list.is_list())
-    return;
-  bool partition_by_nik = base::FeatureList::IsEnabled(
-      features::kPartitionExpectCTStateByNetworkIsolationKey);
-
-  const base::Time current_time(base::Time::Now());
-
-  for (const base::Value& ct_entry : ct_list.GetListDeprecated()) {
-    if (!ct_entry.is_dict())
-      continue;
-
-    const std::string* hostname = ct_entry.FindStringKey(kHostname);
-    const base::Value* network_isolation_key_value =
-        ct_entry.FindKey(kNetworkIsolationKey);
-    absl::optional<double> expect_ct_last_observed =
-        ct_entry.FindDoubleKey(kExpectCTObserved);
-    absl::optional<double> expect_ct_expiry =
-        ct_entry.FindDoubleKey(kExpectCTExpiry);
-    absl::optional<bool> expect_ct_enforce =
-        ct_entry.FindBoolKey(kExpectCTEnforce);
-    const std::string* expect_ct_report_uri =
-        ct_entry.FindStringKey(kExpectCTReportUri);
-
-    if (!hostname || !network_isolation_key_value ||
-        !expect_ct_last_observed.has_value() || !expect_ct_expiry.has_value() ||
-        !expect_ct_enforce.has_value() || !expect_ct_report_uri) {
-      continue;
-    }
-
-    TransportSecurityState::ExpectCTState expect_ct_state;
-    expect_ct_state.last_observed =
-        base::Time::FromDoubleT(*expect_ct_last_observed);
-    expect_ct_state.expiry = base::Time::FromDoubleT(*expect_ct_expiry);
-    expect_ct_state.enforce = *expect_ct_enforce;
-
-    GURL report_uri(*expect_ct_report_uri);
-    if (report_uri.is_valid())
-      expect_ct_state.report_uri = report_uri;
-
-    if (expect_ct_state.expiry < current_time ||
-        (!expect_ct_state.enforce && expect_ct_state.report_uri.is_empty())) {
-      continue;
-    }
-
-    std::string hashed = ExternalStringToHashedDomain(*hostname);
-    if (hashed.empty())
-      continue;
-
-    NetworkIsolationKey network_isolation_key;
-    if (!NetworkIsolationKey::FromValue(*network_isolation_key_value,
-                                        &network_isolation_key)) {
-      continue;
-    }
-
-    // If Expect-CT is not being partitioned by NetworkIsolationKey, but
-    // |network_isolation_key| is not empty, drop the entry, to avoid ambiguity
-    // and favor entries that were saved with an empty NetworkIsolationKey.
-    if (!partition_by_nik && !network_isolation_key.IsEmpty())
-      continue;
-
-    state->AddOrUpdateEnabledExpectCTHosts(hashed, network_isolation_key,
-                                           expect_ct_state);
+    state->AddOrUpdateEnabledSTSHosts(hashed.value(), sts_state);
   }
 }
 
@@ -300,13 +185,12 @@ TransportSecurityPersister::TransportSecurityPersister(
     const base::FilePath& data_path)
     : transport_security_state_(state),
       writer_(data_path, background_runner),
-      foreground_runner_(base::ThreadTaskRunnerHandle::Get()),
+      foreground_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()),
       background_runner_(background_runner) {
   transport_security_state_->SetDelegate(this);
 
-  base::PostTaskAndReplyWithResult(
-      background_runner_.get(), FROM_HERE,
-      base::BindOnce(&LoadState, writer_.path()),
+  background_runner_->PostTaskAndReplyWithResult(
+      FROM_HERE, base::BindOnce(&LoadState, writer_.path()),
       base::BindOnce(&TransportSecurityPersister::CompleteLoad,
                      weak_ptr_factory_.GetWeakPtr()));
 }
@@ -351,11 +235,9 @@ void TransportSecurityPersister::OnWriteFinished(base::OnceClosure callback) {
 bool TransportSecurityPersister::SerializeData(std::string* output) {
   DCHECK(foreground_runner_->RunsTasksInCurrentSequence());
 
-  base::Value toplevel(base::Value::Type::DICTIONARY);
-  toplevel.SetIntKey(kVersionKey, kCurrentVersionValue);
-  toplevel.SetKey(kSTSKey, SerializeSTSData(transport_security_state_));
-  toplevel.SetKey(kExpectCTKey,
-                  SerializeExpectCTData(transport_security_state_));
+  base::Value::Dict toplevel;
+  toplevel.Set(kVersionKey, kCurrentVersionValue);
+  toplevel.Set(kSTSKey, SerializeSTSData(transport_security_state_));
 
   base::JSONWriter::Write(toplevel, output);
   return true;
@@ -365,29 +247,37 @@ void TransportSecurityPersister::LoadEntries(const std::string& serialized) {
   DCHECK(foreground_runner_->RunsTasksInCurrentSequence());
 
   transport_security_state_->ClearDynamicData();
-  Deserialize(serialized, transport_security_state_);
+  bool contains_legacy_expect_ct_data = false;
+  Deserialize(serialized, transport_security_state_,
+              contains_legacy_expect_ct_data);
+  if (contains_legacy_expect_ct_data) {
+    StateIsDirty(transport_security_state_);
+  }
 }
 
-void TransportSecurityPersister::Deserialize(const std::string& serialized,
-                                             TransportSecurityState* state) {
+void TransportSecurityPersister::Deserialize(
+    const std::string& serialized,
+    TransportSecurityState* state,
+    bool& contains_legacy_expect_ct_data) {
   absl::optional<base::Value> value = base::JSONReader::Read(serialized);
   if (!value || !value->is_dict())
     return;
 
-  absl::optional<int> version = value->FindIntKey(kVersionKey);
+  base::Value::Dict& dict = value->GetDict();
+  absl::optional<int> version = dict.FindInt(kVersionKey);
 
   // Stop if the data is out of date (or in the previous format that didn't have
   // a version number).
   if (!version || *version != kCurrentVersionValue)
     return;
 
-  base::Value* sts_value = value->FindKey(kSTSKey);
+  base::Value* sts_value = dict.Find(kSTSKey);
   if (sts_value)
     DeserializeSTSData(*sts_value, state);
 
-  base::Value* expect_ct_value = value->FindKey(kExpectCTKey);
-  if (expect_ct_value)
-    DeserializeExpectCTData(*expect_ct_value, state);
+  // If an Expect-CT key is found on deserialization, record this so that a
+  // write can be scheduled to clear it from disk.
+  contains_legacy_expect_ct_data = !!dict.Find(kExpectCTKey);
 }
 
 void TransportSecurityPersister::CompleteLoad(const std::string& state) {

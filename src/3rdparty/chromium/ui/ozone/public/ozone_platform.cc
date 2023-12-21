@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,12 +9,13 @@
 
 #include "base/check_op.h"
 #include "base/no_destructor.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/events/devices/device_data_manager.h"
-#include "ui/ozone/common/base_keyboard_hook.h"
 #include "ui/ozone/platform_object.h"
 #include "ui/ozone/platform_selection.h"
 #include "ui/ozone/public/platform_global_shortcut_listener.h"
+#include "ui/ozone/public/platform_keyboard_hook.h"
 #include "ui/ozone/public/platform_menu_utils.h"
 #include "ui/ozone/public/platform_screen.h"
 #include "ui/ozone/public/platform_user_input_monitor.h"
@@ -97,6 +98,11 @@ OzonePlatform* OzonePlatform::GetInstance() {
 }
 
 // static
+bool OzonePlatform::IsInitialized() {
+  return !!g_instance;
+}
+
+// static
 std::string OzonePlatform::GetPlatformNameForTest() {
   return GetOzonePlatformName();
 }
@@ -129,13 +135,7 @@ std::unique_ptr<PlatformKeyboardHook> OzonePlatform::CreateKeyboardHook(
     base::RepeatingCallback<void(KeyEvent* event)> callback,
     absl::optional<base::flat_set<DomCode>> dom_codes,
     gfx::AcceleratedWidget accelerated_widget) {
-  switch (type) {
-    case PlatformKeyboardHookTypes::kModifier:
-      return std::make_unique<BaseKeyboardHook>(std::move(dom_codes),
-                                                std::move(callback));
-    case PlatformKeyboardHookTypes::kMedia:
-      return nullptr;
-  }
+  return nullptr;
 }
 
 bool OzonePlatform::IsNativePixmapConfigSupported(
@@ -177,7 +177,8 @@ OzonePlatform::GetPlatformUserInputMonitor(
 }
 
 void OzonePlatform::PostCreateMainMessageLoop(
-    base::OnceCallback<void()> shutdown_cb) {}
+    base::OnceCallback<void()> shutdown_cb,
+    scoped_refptr<base::SingleThreadTaskRunner> input_event_task_runner) {}
 
 void OzonePlatform::PostMainMessageLoopRun() {}
 

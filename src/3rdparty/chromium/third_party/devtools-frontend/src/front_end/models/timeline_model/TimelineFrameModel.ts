@@ -35,8 +35,8 @@ import * as SDK from '../../core/sdk/sdk.js';
 import type * as Protocol from '../../generated/protocol.js';
 
 import {RecordType, TimelineData} from './TimelineModel.js';
-import type {TracingLayerPayload, TracingLayerTile} from './TracingLayerTree.js';
-import {TracingLayerTree} from './TracingLayerTree.js';
+
+import {TracingLayerTree, type TracingLayerPayload, type TracingLayerTile} from './TracingLayerTree.js';
 
 export class TimelineFrameModel {
   private readonly categoryMapper: (arg0: SDK.TracingModel.Event) => string;
@@ -212,7 +212,7 @@ export class TimelineFrameModel {
     this.mainFrameRequested = true;
   }
 
-  handleCompositeLayers(): void {
+  handleCommit(): void {
     if (!this.framePendingCommit) {
       return;
     }
@@ -348,8 +348,11 @@ export class TimelineFrameModel {
         this.target) {
       this.framePendingCommit.paints.push(new LayerPaintEvent(event, this.target));
     }
-    if (event.name === RecordType.CompositeLayers && event.args['layerTreeId'] === this.layerTreeId) {
-      this.handleCompositeLayers();
+    // Commit will be replacing CompositeLayers but CompositeLayers is kept
+    // around for backwards compatibility.
+    if ((event.name === RecordType.CompositeLayers || event.name === RecordType.Commit) &&
+        event.args['layerTreeId'] === this.layerTreeId) {
+      this.handleCommit();
     }
   }
 

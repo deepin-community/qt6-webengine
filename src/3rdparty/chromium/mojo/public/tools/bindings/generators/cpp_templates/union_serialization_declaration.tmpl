@@ -29,7 +29,7 @@ struct Serializer<{{data_view}}, MaybeConstUserType> {
 {%-   set name = field.name %}
 {%-   set kind = field.kind %}
 {%-   set serializer_type = kind|unmapped_type_for_serializer %}
-      case {{data_view}}::Tag::{{field.name|upper}}: {
+      case {{data_view}}::Tag::k{{field.name|under_to_camel}}: {
         decltype(Traits::{{name}}(input))
             in_{{name}} = Traits::{{name}}(input);
 {%-   if kind|is_object_kind %}
@@ -40,8 +40,8 @@ struct Serializer<{{data_view}}, MaybeConstUserType> {
         mojo::internal::Serialize<{{serializer_type}}>(
             in_{{name}}, value_fragment, false);
 {%-     elif kind|is_array_kind or kind|is_map_kind %}
-        const ContainerValidateParams {{name}}_validate_params(
-            {{kind|get_container_validate_params_ctor_args|indent(16)}});
+        constexpr const mojo::internal::ContainerValidateParams& {{name}}_validate_params =
+            {{kind|get_container_validate_params_ctor_args|indent(6)}};
         mojo::internal::Serialize<{{serializer_type}}>(
             in_{{name}}, value_fragment, &{{name}}_validate_params);
  {%-     else %}

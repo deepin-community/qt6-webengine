@@ -47,8 +47,13 @@ export namespace Chrome {
     }
 
     export interface ExtensionPanel extends ExtensionView {
+      show(): void;
       onSearch: EventSink<(action: string, queryString?: string) => unknown>;
       createStatusBarButton(iconPath: string, tooltipText: string, disabled: boolean): Button;
+    }
+
+    export interface RecorderView extends ExtensionView {
+      show(): void;
     }
 
     export interface ExtensionSidebarPane extends ExtensionView {
@@ -94,6 +99,7 @@ export namespace Chrome {
       panels: Panels;
       inspectedWindow: InspectedWindow;
       languageServices: LanguageExtensions;
+      recorder: RecorderExtensions;
     }
 
     export interface ExperimentalDevToolsAPI {
@@ -170,12 +176,43 @@ export namespace Chrome {
       payload: unknown;
     }
 
+    export type RecorderExtensionPlugin = RecorderExtensionExportPlugin|RecorderExtensionReplayPlugin;
+
+    export interface RecorderExtensionExportPlugin {
+      stringify(recording: Record<string, any>): Promise<string>;
+      stringifyStep(step: Record<string, any>): Promise<string>;
+    }
+    export interface RecorderExtensionReplayPlugin {
+      replay(recording: Record<string, any>): void;
+    }
+
+    export type RemoteObjectId = string;
+    export type RemoteObjectType = 'object'|'undefined'|'string'|'number'|'boolean'|'bigint'|'array'|'null';
+
+
+    export interface RemoteObject {
+      type: RemoteObjectType;
+      className?: string;
+      value?: any;
+      description?: string;
+      objectId?: RemoteObjectId;
+      linearMemoryAddress?: number;
+      linearMemorySize?: number;
+      hasChildren: boolean;
+    }
+
+    export interface PropertyDescriptor {
+      name: string;
+      value: RemoteObject;
+    }
+
     export interface LanguageExtensionPlugin {
       /**
        * A new raw module has been loaded. If the raw wasm module references an external debug info module, its URL will be
        * passed as symbolsURL.
        */
-      addRawModule(rawModuleId: string, symbolsURL: string|undefined, rawModule: RawModule): Promise<string[]>;
+      addRawModule(rawModuleId: string, symbolsURL: string|undefined, rawModule: RawModule):
+          Promise<string[]|{missingSymbolFiles: string[]}>;
 
       /**
        * Find locations in raw modules from a location in a source file.
@@ -203,8 +240,9 @@ export namespace Chrome {
       removeRawModule(rawModuleId: string): Promise<void>;
 
       /**
-       * Return type information for an expression. The result describes the type (and recursively its member types) of the
-       * result of the expression if it were evaluated in the given context.
+       * DEPRECATED. Return type information for an expression. The result describes the type (and recursively its
+       * member types) of the result of the expression if it were evaluated in the given context.
+       * TODO(crbug.com/1342848) Remove.
        */
       getTypeInfo(expression: string, context: RawLocation): Promise<{
         typeInfos: Array<TypeInfo>,
@@ -212,7 +250,9 @@ export namespace Chrome {
       }|null>;
 
       /**
-       * Returns a piece of JavaScript code that, if evaluated, produces a representation of the given expression or field.
+       * DEPRECATED. Returns a piece of JavaScript code that, if evaluated, produces a representation of the given
+       * expression or field.
+       * TODO(crbug.com/1342848) Remove.
        */
       getFormatter(
           expressionOrField: string|{
@@ -224,7 +264,16 @@ export namespace Chrome {
       }|null>;
 
       /**
-       * Returns a piece of JavaScript code that, if evaluated, produces the address of the given field in the wasm memory.
+       * Evaluate a source language expression in the context of a given raw location and a given stopId. stopId is an
+       * opaque key that should be passed to the APIs accessing wasm state, e.g., getWasmLinearMemory. A stopId is
+       * invalidated once the debugger resumes.
+       * TODO(crbug.com/1342848) Make non-optional.
+       */
+      evaluate?(expression: string, context: RawLocation, stopId: unknown): Promise<RemoteObject|null>;
+
+      /**
+       * DEPRECATED. Returns a piece of JavaScript code that, if evaluated, produces the address of the given field in the wasm memory.
+       * TODO(crbug.com/1342848) Remove.
        */
       getInspectableAddress(field: {
         base: EvalBase,
@@ -234,11 +283,11 @@ export namespace Chrome {
       }>;
 
       /**
-       * Find locations in source files from a location in a raw module
+       * Retrieve function name(s) for the function(s) containing the rawLocation. This returns more than one entry if
+       * the location is inside of an inlined function with the innermost function at index 0.
        */
-      getFunctionInfo(rawLocation: RawLocation): Promise<{
-        frames: Array<FunctionInfo>,
-      }>;
+      getFunctionInfo(rawLocation: RawLocation):
+          Promise<{frames: Array<FunctionInfo>}|{missingSymbolFiles: Array<string>}>;
 
       /**
        * Find locations in raw modules corresponding to the inline function
@@ -257,6 +306,17 @@ export namespace Chrome {
        * Retrieve a list of line numbers in a file for which line-to-raw-location mappings exist.
        */
       getMappedLines(rawModuleId: string, sourceFileURL: string): Promise<number[]|undefined>;
+
+      /**
+       * Retrieve properties of the remote object identified by the object id.
+       * TODO(crbug.com/1342848) Make non-optional.
+       */
+      getProperties?(objectId: RemoteObjectId): Promise<PropertyDescriptor[]>;
+      /**
+       * Permanently release the remote object identified by the object id.
+       * TODO(crbug.com/1342848) Make non-optional.
+       */
+      releaseObject?(objectId: RemoteObjectId): Promise<void>;
     }
 
 
@@ -265,11 +325,27 @@ export namespace Chrome {
       symbol_types: string[];
     }
 
+    export type WasmValue = {type: 'i32'|'f32'|'f64', value: number}|{type: 'i64', value: bigint}|
+        {type: 'v128', value: string};
+
     export interface LanguageExtensions {
       registerLanguageExtensionPlugin(
           plugin: LanguageExtensionPlugin, pluginName: string,
           supportedScriptTypes: SupportedScriptTypes): Promise<void>;
       unregisterLanguageExtensionPlugin(plugin: LanguageExtensionPlugin): Promise<void>;
+
+      getWasmLinearMemory(offset: number, length: number, stopId: unknown): Promise<ArrayBuffer>;
+      getWasmLocal(local: number, stopId: unknown): Promise<WasmValue>;
+      getWasmGlobal(global: number, stopId: unknown): Promise<WasmValue>;
+      getWasmOp(op: number, stopId: unknown): Promise<WasmValue>;
+    }
+
+
+    export interface RecorderExtensions {
+      registerRecorderExtensionPlugin(plugin: RecorderExtensionPlugin, pluginName: string, mediaType?: string):
+          Promise<void>;
+      unregisterRecorderExtensionPlugin(plugin: RecorderExtensionPlugin): Promise<void>;
+      createView(title: string, pagePath: string): Promise<RecorderView>;
     }
 
     export interface Chrome {

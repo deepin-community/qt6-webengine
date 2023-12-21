@@ -151,6 +151,11 @@ export function registerActionExtension(registration: ActionRegistration): void 
   registeredActionExtensions.push(new Action(registration));
 }
 
+export function reset(): void {
+  actionIdSet.clear();
+  registeredActionExtensions.length = 0;
+}
+
 export function getRegisteredActionExtensions(): Array<Action> {
   return registeredActionExtensions
       .filter(
@@ -212,6 +217,7 @@ export const ActionCategory = {
   SETTINGS: 'Settings',
   DEBUGGER: 'Debugger',
   SOURCES: 'Sources',
+  RENDERING: 'Rendering',
 };
 
 type ActionCategory = typeof ActionCategory[keyof typeof ActionCategory];

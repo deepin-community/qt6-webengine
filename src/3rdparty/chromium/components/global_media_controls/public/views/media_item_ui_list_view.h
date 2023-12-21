@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -32,7 +32,8 @@ class COMPONENT_EXPORT(GLOBAL_MEDIA_CONTROLS) MediaItemUIListView
   };
 
   explicit MediaItemUIListView(
-      const absl::optional<SeparatorStyle>& separator_style);
+      const absl::optional<SeparatorStyle>& separator_style,
+      bool should_clip_height);
   MediaItemUIListView();
   MediaItemUIListView(const MediaItemUIListView&) = delete;
   MediaItemUIListView& operator=(const MediaItemUIListView&) = delete;

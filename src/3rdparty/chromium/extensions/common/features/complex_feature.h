@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -54,11 +54,19 @@ class ComplexFeature : public Feature {
 
   bool IsInternal() const override;
 
+  bool RequiresDelegatedAvailabilityCheck() const override;
+
  private:
   FRIEND_TEST_ALL_PREFIXES(FeaturesGenerationTest, FeaturesTest);
+  FRIEND_TEST_ALL_PREFIXES(ComplexFeatureTest,
+                           RequiresDelegatedAvailabilityCheck);
 
   using FeatureList = std::vector<std::unique_ptr<Feature>>;
   FeatureList features_;
+
+  // If any of the Features comprising this class requires a delegated
+  // availability check, then this flag is set to true.
+  bool requires_delegated_availability_check_{false};
 };
 
 }  // namespace extensions

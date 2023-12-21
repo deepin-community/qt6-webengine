@@ -43,208 +43,226 @@ import * as PerfUI from '../../ui/legacy/components/perf_ui/perf_ui.js';
 import * as Components from '../../ui/legacy/components/utils/utils.js';
 import * as UI from '../../ui/legacy/legacy.js';
 
-import type {HeapSnapshotSortableDataGrid} from './HeapSnapshotDataGrids.js';
-import {AllocationDataGrid, HeapSnapshotSortableDataGridEvents, HeapSnapshotConstructorsDataGrid, HeapSnapshotDiffDataGrid, HeapSnapshotRetainmentDataGrid, HeapSnapshotContainmentDataGrid} from './HeapSnapshotDataGrids.js';
-import type {AllocationGridNode, HeapSnapshotGridNode} from './HeapSnapshotGridNodes.js';
-import {HeapSnapshotGenericObjectNode} from './HeapSnapshotGridNodes.js';
-import type {HeapSnapshotProxy} from './HeapSnapshotProxy.js';
-import {HeapSnapshotWorkerProxy} from './HeapSnapshotProxy.js';
-import type {IdsRangeChangedEvent} from './HeapTimelineOverview.js';
-import {HeapTimelineOverview, Events, Samples} from './HeapTimelineOverview.js';
+import {
+  AllocationDataGrid,
+  HeapSnapshotSortableDataGridEvents,
+  HeapSnapshotConstructorsDataGrid,
+  HeapSnapshotDiffDataGrid,
+  HeapSnapshotRetainmentDataGrid,
+  HeapSnapshotContainmentDataGrid,
+  type HeapSnapshotSortableDataGrid,
+} from './HeapSnapshotDataGrids.js';
+
+import {
+  HeapSnapshotGenericObjectNode,
+  type AllocationGridNode,
+  type HeapSnapshotGridNode,
+} from './HeapSnapshotGridNodes.js';
+
+import {HeapSnapshotWorkerProxy, type HeapSnapshotProxy} from './HeapSnapshotProxy.js';
+
+import {HeapTimelineOverview, Events, Samples, type IdsRangeChangedEvent} from './HeapTimelineOverview.js';
 import * as ModuleUIStrings from './ModuleUIStrings.js';
-import type {DataDisplayDelegate} from './ProfileHeader.js';
-import {Events as ProfileHeaderEvents, ProfileEvents as ProfileTypeEvents, ProfileHeader, ProfileType} from './ProfileHeader.js';
+
+import {
+  Events as ProfileHeaderEvents,
+  ProfileEvents as ProfileTypeEvents,
+  ProfileHeader,
+  ProfileType,
+  type DataDisplayDelegate,
+} from './ProfileHeader.js';
 import {ProfileSidebarTreeElement} from './ProfileSidebarTreeElement.js';
 import {instance} from './ProfileTypeRegistry.js';
 
 const UIStrings = {
   /**
-  *@description Text to find an item
-  */
+   *@description Text to find an item
+   */
   find: 'Find',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool
-  */
+   *@description Text in Heap Snapshot View of a profiler tool
+   */
   containment: 'Containment',
   /**
-  *@description Retaining paths title text content in Heap Snapshot View of a profiler tool
-  */
+   *@description Retaining paths title text content in Heap Snapshot View of a profiler tool
+   */
   retainers: 'Retainers',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool
-  */
+   *@description Text in Heap Snapshot View of a profiler tool
+   */
   allocationStack: 'Allocation stack',
   /**
-  *@description Screen reader label for a select box that chooses the perspective in the Memory panel when vieweing a Heap Snapshot
-  */
+   *@description Screen reader label for a select box that chooses the perspective in the Memory panel when vieweing a Heap Snapshot
+   */
   perspective: 'Perspective',
   /**
-  *@description Screen reader label for a select box that chooses the snapshot to use as a base in the Memory panel when vieweing a Heap Snapshot
-  */
+   *@description Screen reader label for a select box that chooses the snapshot to use as a base in the Memory panel when vieweing a Heap Snapshot
+   */
   baseSnapshot: 'Base snapshot',
   /**
-  *@description Text to filter result items
-  */
+   *@description Text to filter result items
+   */
   filter: 'Filter',
   /**
-  * @description Filter label text in the Memory tool to filter by JavaScript class names for a heap
-  * snapshot.
-  */
+   * @description Filter label text in the Memory tool to filter by JavaScript class names for a heap
+   * snapshot.
+   */
   classFilter: 'Class filter',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool
-  */
+   *@description Text in Heap Snapshot View of a profiler tool
+   */
   code: 'Code',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool
-  */
+   *@description Text in Heap Snapshot View of a profiler tool
+   */
   strings: 'Strings',
   /**
-  *@description Label on a pie chart in the statistics view for the Heap Snapshot tool
-  */
+   *@description Label on a pie chart in the statistics view for the Heap Snapshot tool
+   */
   jsArrays: 'JS arrays',
   /**
-  *@description Label on a pie chart in the statistics view for the Heap Snapshot tool
-  */
+   *@description Label on a pie chart in the statistics view for the Heap Snapshot tool
+   */
   typedArrays: 'Typed arrays',
   /**
-  *@description Label on a pie chart in the statistics view for the Heap Snapshot tool
-  */
+   *@description Label on a pie chart in the statistics view for the Heap Snapshot tool
+   */
   systemObjects: 'System objects',
   /**
-  *@description The reported total size used in the selected time frame of the allocation sampling profile
-  *@example {3 MB} PH1
-  */
+   *@description The reported total size used in the selected time frame of the allocation sampling profile
+   *@example {3 MB} PH1
+   */
   selectedSizeS: 'Selected size: {PH1}',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool
-  */
+   *@description Text in Heap Snapshot View of a profiler tool
+   */
   allObjects: 'All objects',
   /**
-  *@description Title in Heap Snapshot View of a profiler tool
-  *@example {Profile 2} PH1
-  */
+   *@description Title in Heap Snapshot View of a profiler tool
+   *@example {Profile 2} PH1
+   */
   objectsAllocatedBeforeS: 'Objects allocated before {PH1}',
   /**
-  *@description Title in Heap Snapshot View of a profiler tool
-  *@example {Profile 1} PH1
-  *@example {Profile 2} PH2
-  */
+   *@description Title in Heap Snapshot View of a profiler tool
+   *@example {Profile 1} PH1
+   *@example {Profile 2} PH2
+   */
   objectsAllocatedBetweenSAndS: 'Objects allocated between {PH1} and {PH2}',
   /**
-  *@description Text for the summary view
-  */
+   *@description Text for the summary view
+   */
   summary: 'Summary',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool
-  */
+   *@description Text in Heap Snapshot View of a profiler tool
+   */
   comparison: 'Comparison',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool
-  */
+   *@description Text in Heap Snapshot View of a profiler tool
+   */
   allocation: 'Allocation',
   /**
-  *@description Title text content in Heap Snapshot View of a profiler tool
-  */
+   *@description Title text content in Heap Snapshot View of a profiler tool
+   */
   liveObjects: 'Live objects',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool
-  */
+   *@description Text in Heap Snapshot View of a profiler tool
+   */
   statistics: 'Statistics',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool
-  */
+   *@description Text in Heap Snapshot View of a profiler tool
+   */
   heapSnapshot: 'Heap snapshot',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool
-  */
+   *@description Text in Heap Snapshot View of a profiler tool
+   */
   takeHeapSnapshot: 'Take heap snapshot',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool
-  */
+   *@description Text in Heap Snapshot View of a profiler tool
+   */
   heapSnapshots: 'HEAP SNAPSHOTS',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool
-  */
+   *@description Text in Heap Snapshot View of a profiler tool
+   */
   heapSnapshotProfilesShowMemory:
       'Heap snapshot profiles show memory distribution among your page\'s JavaScript objects and related DOM nodes.',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool
-  */
-  treatGlobalObjectsAsRoots:
-      'Treat global objects as roots (recommended, unchecking this exposes internal nodes and introduces excessive detail, but might help debugging cycles in retaining paths)',
+   *@description Label for a checkbox in the heap snapshot view of the profiler tool. The "heap snapshot" contains the
+   * current state of JavaScript memory. With this checkbox enabled, the snapshot also includes internal data that is
+   * specific to Chrome (hence implementation-specific).
+   */
+  exposeInternals: 'Expose internals (includes additional implementation-specific details)',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool
-  * This option turns on inclusion of numerical values in the heap snapshot.
-  */
+   *@description Text in Heap Snapshot View of a profiler tool
+   * This option turns on inclusion of numerical values in the heap snapshot.
+   */
   captureNumericValue: 'Include numerical values in capture',
   /**
-  *@description Progress update that the profiler is capturing a snapshot of the heap
-  */
+   *@description Progress update that the profiler is capturing a snapshot of the heap
+   */
   snapshotting: 'Snapshotting…',
   /**
-  *@description Profile title in Heap Snapshot View of a profiler tool
-  *@example {1} PH1
-  */
+   *@description Profile title in Heap Snapshot View of a profiler tool
+   *@example {1} PH1
+   */
   snapshotD: 'Snapshot {PH1}',
   /**
-  *@description Text for a percentage value
-  *@example {13.0} PH1
-  */
+   *@description Text for a percentage value
+   *@example {13.0} PH1
+   */
   percentagePlaceholder: '{PH1}%',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool
-  */
+   *@description Text in Heap Snapshot View of a profiler tool
+   */
   allocationInstrumentationOn: 'Allocation instrumentation on timeline',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool
-  */
+   *@description Text in Heap Snapshot View of a profiler tool
+   */
   stopRecordingHeapProfile: 'Stop recording heap profile',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool
-  */
+   *@description Text in Heap Snapshot View of a profiler tool
+   */
   startRecordingHeapProfile: 'Start recording heap profile',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool.
-  * A stack trace is a list of functions that were called.
-  * This option turns on recording of a stack trace at each allocation.
-  * The recording itself is a somewhat expensive operation, so turning this option on, the website's performance may be affected negatively (e.g. everything becomes slower).
-  */
+   *@description Text in Heap Snapshot View of a profiler tool.
+   * A stack trace is a list of functions that were called.
+   * This option turns on recording of a stack trace at each allocation.
+   * The recording itself is a somewhat expensive operation, so turning this option on, the website's performance may be affected negatively (e.g. everything becomes slower).
+   */
   recordAllocationStacksExtra: 'Record stack traces of allocations (extra performance overhead)',
   /**
-  *@description Text in CPUProfile View of a profiler tool
-  */
+   *@description Text in CPUProfile View of a profiler tool
+   */
   recording: 'Recording…',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool
-  */
+   *@description Text in Heap Snapshot View of a profiler tool
+   */
   allocationTimelines: 'ALLOCATION TIMELINES',
   /**
-  *@description Description for the 'Allocation timeline' tool in the Memory panel.
-  */
+   *@description Description for the 'Allocation timeline' tool in the Memory panel.
+   */
   AllocationTimelinesShowInstrumented:
       'Allocation timelines show instrumented JavaScript memory allocations over time. Once profile is recorded you can select a time interval to see objects that were allocated within it and still alive by the end of recording. Use this profile type to isolate memory leaks.',
   /**
-  *@description Text when something is loading
-  */
+   *@description Text when something is loading
+   */
   loading: 'Loading…',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool
-  *@example {30} PH1
-  */
+   *@description Text in Heap Snapshot View of a profiler tool
+   *@example {30} PH1
+   */
   savingD: 'Saving… {PH1}%',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool
-  *@example {1,021} PH1
-  */
+   *@description Text in Heap Snapshot View of a profiler tool
+   *@example {1,021} PH1
+   */
   sKb: '{PH1} kB',
   /**
-  *@description Text in Heap Snapshot View of a profiler tool
-  */
+   *@description Text in Heap Snapshot View of a profiler tool
+   */
   heapMemoryUsage: 'Heap memory usage',
   /**
-  *@description Text of a DOM element in Heap Snapshot View of a profiler tool
-  */
+   *@description Text of a DOM element in Heap Snapshot View of a profiler tool
+   */
   stackWasNotRecordedForThisObject:
       'Stack was not recorded for this object because it had been allocated before this profile recording started.',
 };
@@ -376,6 +394,7 @@ export class HeapSnapshotView extends UI.View.SimpleView implements DataDisplayD
       const retainmentViewHeader = document.createElement('div');
       retainmentViewHeader.classList.add('heap-snapshot-view-resizer');
       const retainingPathsTitleDiv = retainmentViewHeader.createChild('div', 'title');
+      retainmentViewHeader.createChild('div', 'verticalResizerIcon');
       const retainingPathsTitle = retainingPathsTitleDiv.createChild('span');
       retainingPathsTitle.textContent = i18nString(UIStrings.retainers);
 
@@ -583,7 +602,7 @@ export class HeapSnapshotView extends UI.View.SimpleView implements DataDisplayD
     return false;
   }
 
-  searchCanceled(): void {
+  onSearchCanceled(): void {
     this.currentSearchResultIndex = -1;
     this.searchResults = [];
   }
@@ -603,8 +622,8 @@ export class HeapSnapshotView extends UI.View.SimpleView implements DataDisplayD
   }
 
   async performSearchInternal(nextQuery: HeapSnapshotModel.HeapSnapshotModel.SearchConfig): Promise<void> {
-    // Call searchCanceled since it will reset everything we need before doing a new search.
-    this.searchCanceled();
+    // Call onSearchCanceled since it will reset everything we need before doing a new search.
+    this.onSearchCanceled();
 
     if (!this.currentPerspective.supportsSearch()) {
       return;
@@ -1123,6 +1142,7 @@ export class AllocationPerspective extends Perspective {
     const resizer = document.createElement('div');
     resizer.classList.add('heap-snapshot-view-resizer');
     const title = resizer.createChild('div', 'title').createChild('span');
+    resizer.createChild('div', 'verticalResizerIcon');
     title.textContent = i18nString(UIStrings.liveObjects);
     this.allocationSplitWidget.hideDefaultResizer();
     this.allocationSplitWidget.installResizer(resizer);
@@ -1168,7 +1188,7 @@ export class StatisticsPerspective extends Perspective {
 export class HeapSnapshotProfileType extends
     Common.ObjectWrapper.eventMixin<HeapSnapshotProfileTypeEventTypes, typeof ProfileType>(ProfileType)
         implements SDK.TargetManager.SDKModelObserver<SDK.HeapProfilerModel.HeapProfilerModel> {
-  readonly treatGlobalObjectsAsRoots: Common.Settings.Setting<boolean>;
+  readonly exposeInternals: Common.Settings.Setting<boolean>;
   readonly captureNumericValue: Common.Settings.Setting<boolean>;
   customContentInternal: HTMLElement|null;
   constructor(id?: string, title?: string) {
@@ -1182,8 +1202,7 @@ export class HeapSnapshotProfileType extends
     SDK.TargetManager.TargetManager.instance().addModelListener(
         SDK.HeapProfilerModel.HeapProfilerModel, SDK.HeapProfilerModel.Events.ReportHeapSnapshotProgress,
         this.reportHeapSnapshotProgress, this);
-    this.treatGlobalObjectsAsRoots =
-        Common.Settings.Settings.instance().createSetting('treatGlobalObjectsAsRoots', true);
+    this.exposeInternals = Common.Settings.Settings.instance().createSetting('exposeInternals', false);
     this.captureNumericValue = Common.Settings.Settings.instance().createSetting('captureNumericValue', false);
     this.customContentInternal = null;
   }
@@ -1227,16 +1246,16 @@ export class HeapSnapshotProfileType extends
 
   customContent(): Element|null {
     const optionsContainer = document.createElement('div');
-    const showOptionToNotTreatGlobalObjectsAsRoots =
-        Root.Runtime.experiments.isEnabled('showOptionToNotTreatGlobalObjectsAsRoots');
-    const omitParagraphElement = !showOptionToNotTreatGlobalObjectsAsRoots;
-    if (showOptionToNotTreatGlobalObjectsAsRoots) {
-      const treatGlobalObjectsAsRootsCheckbox = UI.SettingsUI.createSettingCheckbox(
-          i18nString(UIStrings.treatGlobalObjectsAsRoots), this.treatGlobalObjectsAsRoots, omitParagraphElement);
-      optionsContainer.appendChild(treatGlobalObjectsAsRootsCheckbox);
+    const showOptionToExposeInternalsInHeapSnapshot =
+        Root.Runtime.experiments.isEnabled('showOptionToExposeInternalsInHeapSnapshot');
+    const omitParagraphElement = !showOptionToExposeInternalsInHeapSnapshot;
+    if (showOptionToExposeInternalsInHeapSnapshot) {
+      const exposeInternalsInHeapSnapshotCheckbox = UI.SettingsUI.createSettingCheckbox(
+          i18nString(UIStrings.exposeInternals), this.exposeInternals, omitParagraphElement);
+      optionsContainer.appendChild(exposeInternalsInHeapSnapshotCheckbox);
     }
     const captureNumericValueCheckbox = UI.SettingsUI.createSettingCheckbox(
-        UIStrings.captureNumericValue, this.captureNumericValue, omitParagraphElement);
+        i18nString(UIStrings.captureNumericValue), this.captureNumericValue, omitParagraphElement);
     optionsContainer.appendChild(captureNumericValueCheckbox);
     this.customContentInternal = optionsContainer;
     return optionsContainer;
@@ -1270,8 +1289,8 @@ export class HeapSnapshotProfileType extends
 
     await heapProfilerModel.takeHeapSnapshot({
       reportProgress: true,
-      treatGlobalObjectsAsRoots: this.treatGlobalObjectsAsRoots.get(),
       captureNumericValue: this.captureNumericValue.get(),
+      exposeInternals: this.exposeInternals.get(),
     });
     profile = this.profileBeingRecorded() as HeapProfileHeader;
     if (!profile) {
@@ -1890,7 +1909,8 @@ export class HeapAllocationStackView extends UI.Widget.Widget {
       const target = this.heapProfilerModel ? this.heapProfilerModel.target() : null;
       const options = {columnNumber: frame.column - 1, inlineFrameIndex: 0};
       const urlElement = this.linkifier.linkifyScriptLocation(
-          target, String(frame.scriptId) as Protocol.Runtime.ScriptId, frame.scriptName, frame.line - 1, options);
+          target, String(frame.scriptId) as Protocol.Runtime.ScriptId,
+          frame.scriptName as Platform.DevToolsPath.UrlString, frame.line - 1, options);
       frameDiv.appendChild(urlElement);
       stackFrameToURLElement.set(frameDiv, urlElement);
       frameDiv.addEventListener('contextmenu', this.onContextMenu.bind(this, urlElement));

@@ -35,8 +35,7 @@ struct SameSizeAsCSSRule : public GarbageCollected<SameSizeAsCSSRule>,
   unsigned char bitfields;
   Member<ScriptWrappable> member;
   static_assert(kBlinkMemberGCHasDebugChecks ||
-                    ::WTF::internal::SizesEqual<sizeof(Member<ScriptWrappable>),
-                                                sizeof(void*)>::value,
+                    sizeof(Member<ScriptWrappable>) <= sizeof(void*),
                 "Member<ScriptWrappable> should stay small");
 };
 
@@ -57,8 +56,9 @@ const CSSParserContext* CSSRule::ParserContext(
 void CSSRule::CountUse(WebFeature feature) const {
   CSSStyleSheet* style_sheet = parentStyleSheet();
   Document* document = style_sheet ? style_sheet->OwnerDocument() : nullptr;
-  if (document)
+  if (document) {
     document->CountUse(feature);
+  }
 }
 
 void CSSRule::SetParentStyleSheet(CSSStyleSheet* style_sheet) {

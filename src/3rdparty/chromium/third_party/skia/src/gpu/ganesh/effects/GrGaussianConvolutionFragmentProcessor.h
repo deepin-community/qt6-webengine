@@ -8,7 +8,12 @@
 #ifndef GrGaussianConvolutionFragmentProcessor_DEFINED
 #define GrGaussianConvolutionFragmentProcessor_DEFINED
 
+#include "include/core/SkM44.h"
 #include "src/gpu/ganesh/GrFragmentProcessor.h"
+#include "src/gpu/ganesh/GrProcessorUnitTest.h"
+#include "src/gpu/ganesh/GrSamplerState.h"
+
+class GrSurfaceProxyView;
 
 /**
  * A 1D Gaussian convolution effect. The kernel is computed as an array of 2 * half-width weights.
@@ -76,12 +81,9 @@ private:
 
     GR_DECLARE_FRAGMENT_PROCESSOR_TEST
 
-    inline static constexpr int kMaxKernelWidth = kMaxKernelRadius + 1;
+    inline static const constexpr int kMaxKernelWidth = kMaxKernelRadius + 1;
 
-    // The array size must be a multiple of 4 because we pass it as an array of float4 uniform
-    // values.
-    float                 fKernel[SkAlign4(kMaxKernelWidth)];
-    float                 fOffsets[SkAlign4(kMaxKernelWidth)];
+    SkV2                  fOffsetsAndKernel[kMaxKernelWidth];
     int                   fRadius;
     Direction             fDirection;
 

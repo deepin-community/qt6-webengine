@@ -1,12 +1,12 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef DEVICE_VR_VR_DEVICE_BASE_H_
 #define DEVICE_VR_VR_DEVICE_BASE_H_
 
-#include "base/callback.h"
 #include "base/component_export.h"
+#include "base/functional/callback.h"
 #include "build/build_config.h"
 #include "device/vr/public/mojom/isolated_xr_service.mojom.h"
 #include "device/vr/public/mojom/vr_service.mojom.h"
@@ -33,9 +33,8 @@ class COMPONENT_EXPORT(DEVICE_VR_BASE) VRDeviceBase : public mojom::XRRuntime {
 
   // XRRuntime implementation
   void ListenToDeviceChanges(
-      mojo::PendingAssociatedRemote<mojom::XRRuntimeEventListener> listener,
-      mojom::XRRuntime::ListenToDeviceChangesCallback callback) final;
-  void ShutdownSession(mojom::XRRuntime::ShutdownSessionCallback) override;
+      mojo::PendingAssociatedRemote<mojom::XRRuntimeEventListener> listener)
+      final;
 
   device::mojom::XRDeviceId GetId() const;
   device::mojom::XRDeviceDataPtr GetDeviceData() const;
@@ -45,8 +44,6 @@ class COMPONENT_EXPORT(DEVICE_VR_BASE) VRDeviceBase : public mojom::XRRuntime {
   // Devices may be paused/resumed when focus changes by GVR delegate.
   virtual void PauseTracking();
   virtual void ResumeTracking();
-
-  mojom::VRDisplayInfoPtr GetVRDisplayInfo();
 
   // Used by providers to bind devices.
   mojo::PendingRemote<mojom::XRRuntime> BindXRRuntime();
@@ -63,7 +60,6 @@ class COMPONENT_EXPORT(DEVICE_VR_BASE) VRDeviceBase : public mojom::XRRuntime {
   // with an OnExitPresent when the device stops presenting.
   void OnStartPresenting();
   bool IsPresenting() { return presenting_; }  // Exposed for test.
-  void SetVRDisplayInfo(mojom::VRDisplayInfoPtr display_info);
   void OnVisibilityStateChanged(mojom::XRVisibilityState visibility_state);
   void SetArBlendModeSupported(bool is_ar_blend_mode_supported);
   void SetSupportedFeatures(
@@ -71,8 +67,6 @@ class COMPONENT_EXPORT(DEVICE_VR_BASE) VRDeviceBase : public mojom::XRRuntime {
 #if BUILDFLAG(IS_WIN)
   void SetLuid(const CHROME_LUID& luid);
 #endif
-
-  mojom::VRDisplayInfoPtr display_info_;
 
  private:
   mojo::AssociatedRemote<mojom::XRRuntimeEventListener> listener_;

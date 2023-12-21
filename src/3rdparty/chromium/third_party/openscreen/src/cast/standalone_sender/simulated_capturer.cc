@@ -4,6 +4,8 @@
 
 #include "cast/standalone_sender/simulated_capturer.h"
 
+#include <libavformat/version.h>
+
 #include <algorithm>
 #include <chrono>
 #include <ratio>
@@ -17,7 +19,7 @@
 namespace openscreen {
 namespace cast {
 
-using openscreen::operator<<;  // To pretty-print chrono values.
+using clock_operators::operator<<;
 
 namespace {
 // Threshold at which a warning about media pausing should be logged.
@@ -45,7 +47,12 @@ SimulatedCapturer::SimulatedCapturer(Environment* environment,
     return;  // Capturer is halted (unable to start).
   }
 
+#if LIBAVFORMAT_VERSION_MAJOR < 59
   AVCodec* codec;
+#else
+  const AVCodec* codec;
+#endif  // LIBAVFORMAT_VERSION_MAJOR < 59
+
   const int stream_result = av_find_best_stream(format_context_.get(),
                                                 media_type_, -1, -1, &codec, 0);
   if (stream_result < 0) {
@@ -260,7 +267,12 @@ bool SimulatedAudioCapturer::EnsureResamplerIsInitializedFor(
   if (swr_is_initialized(resampler_.get())) {
     if (input_sample_format_ == static_cast<AVSampleFormat>(frame.format) &&
         input_sample_rate_ == frame.sample_rate &&
-        input_channel_layout_ == frame.channel_layout) {
+#if _LIBAVUTIL_OLD_CHANNEL_LAYOUT
+        input_channel_layout_ == frame.channel_layout
+#else
+        input_channel_layout_.nb_channels == frame.ch_layout.nb_channels
+#endif  // _LIBAVUTIL_OLD_CHANNEL_LAYOUT
+    ) {
       return true;
     }
 
@@ -280,8 +292,13 @@ bool SimulatedAudioCapturer::EnsureResamplerIsInitializedFor(
   // Create a fake output frame to hold the output audio parameters, because the
   // resampler API is weird that way.
   const auto fake_output_frame = MakeUniqueAVFrame();
+#if _LIBAVUTIL_OLD_CHANNEL_LAYOUT
   fake_output_frame->channel_layout =
       av_get_default_channel_layout(num_channels_);
+#else
+  av_channel_layout_default(&fake_output_frame->ch_layout, num_channels_);
+#endif  // _LIBAVUTIL_OLD_CHANNEL_LAYOUT
+
   fake_output_frame->format = AV_SAMPLE_FMT_FLT;
   fake_output_frame->sample_rate = sample_rate_;
   const int config_result =
@@ -299,7 +316,12 @@ bool SimulatedAudioCapturer::EnsureResamplerIsInitializedFor(
 
   input_sample_format_ = static_cast<AVSampleFormat>(frame.format);
   input_sample_rate_ = frame.sample_rate;
-  input_channel_layout_ = frame.channel_layout;
+  input_channel_layout_ =
+#if _LIBAVUTIL_OLD_CHANNEL_LAYOUT
+      frame.channel_layout;
+#else
+      frame.ch_layout;
+#endif  // _LIBAVUTIL_OLD_CHANNEL_LAYOUT
   return true;
 }
 

@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,11 +9,15 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "base/allocator/partition_allocator/page_allocator.h"
 #include "base/allocator/partition_allocator/partition_address_space.h"
 #include "base/bits.h"
 #include "base/check.h"
+#include "base/check_op.h"
 #include "base/debug/alias.h"
 #include "base/debug/crash_logging.h"
 #include "base/feature_list.h"
@@ -29,19 +33,16 @@
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
-#include "base/strings/sys_string_conversions.h"
 #include "base/system/sys_info.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "gin/array_buffer.h"
 #include "gin/gin_features.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
+#include "tools/v8_context_snapshot/buildflags.h"
 #include "v8/include/v8-initialization.h"
 #include "v8/include/v8-snapshot.h"
-
-#if BUILDFLAG(IS_WIN)
-#include "base/win/windows_version.h"
-#endif
 
 #if defined(V8_USE_EXTERNAL_STARTUP_DATA) && BUILDFLAG(IS_ANDROID)
 #include "base/android/apk_assets.h"
@@ -93,8 +94,9 @@ const char kSnapshotFileName32[] = "snapshot_blob_32.bin";
 #endif
 
 #else  // BUILDFLAG(IS_ANDROID)
-#if defined(USE_V8_CONTEXT_SNAPSHOT)
-const char kV8ContextSnapshotFileName[] = V8_CONTEXT_SNAPSHOT_FILENAME;
+#if BUILDFLAG(USE_V8_CONTEXT_SNAPSHOT)
+const char kV8ContextSnapshotFileName[] =
+    BUILDFLAG(V8_CONTEXT_SNAPSHOT_FILENAME);
 #endif
 const char kSnapshotFileName[] = "snapshot_blob.bin";
 #endif  // BUILDFLAG(IS_ANDROID)
@@ -104,7 +106,7 @@ const char* GetSnapshotFileName(const V8SnapshotFileType file_type) {
     case V8SnapshotFileType::kDefault:
       return kSnapshotFileName;
     case V8SnapshotFileType::kWithAdditionalContext:
-#if defined(USE_V8_CONTEXT_SNAPSHOT)
+#if BUILDFLAG(USE_V8_CONTEXT_SNAPSHOT)
       return kV8ContextSnapshotFileName;
 #else
       NOTREACHED();
@@ -120,10 +122,8 @@ void GetV8FilePath(const char* file_name, base::FilePath* path_out) {
   // This is the path within the .apk.
   *path_out =
       base::FilePath(FILE_PATH_LITERAL("assets")).AppendASCII(file_name);
-#elif BUILDFLAG(IS_MAC)
-  base::ScopedCFTypeRef<CFStringRef> bundle_resource(
-      base::SysUTF8ToCFStringRef(file_name));
-  *path_out = base::mac::PathForFrameworkBundleResource(bundle_resource);
+#elif BUILDFLAG(IS_MAC) && !defined(TOOLKIT_QT)
+  *path_out = base::mac::PathForFrameworkBundleResource(file_name);
 #else
   base::FilePath data_path;
   bool r = base::PathService::Get(base::DIR_ASSETS, &data_path);
@@ -242,10 +242,6 @@ void SetFlags(IsolateHolder::ScriptMode mode,
                          "--no-compact-code-space-with-stack");
   SetV8FlagsIfOverridden(features::kV8CompactWithStack, "--compact-with-stack",
                          "--no-compact-with-stack");
-  SetV8FlagsIfOverridden(features::kV8CompactMaps, "--compact-maps",
-                         "--no-compact-maps");
-  SetV8FlagsIfOverridden(features::kV8UseMapSpace, "--use-map-space",
-                         "--no-use-map-space");
   SetV8FlagsIfOverridden(features::kV8CrashOnEvacuationFailure,
                          "--crash-on-aborted-evacuation",
                          "--no-crash-on-aborted-evacuation");
@@ -257,6 +253,12 @@ void SetFlags(IsolateHolder::ScriptMode mode,
   SetV8FlagsIfOverridden(features::kV8OffThreadFinalization,
                          "--finalize-streaming-on-background",
                          "--no-finalize-streaming-on-background");
+  if (base::FeatureList::IsEnabled(features::kV8DelayMemoryReducer)) {
+    SetV8FlagsFormatted(
+        "--gc-memory-reducer-start-delay-ms=%i",
+        static_cast<int>(
+            features::kV8MemoryReducerStartDelay.Get().InMilliseconds()));
+  }
   SetV8FlagsIfOverridden(features::kV8LazyFeedbackAllocation,
                          "--lazy-feedback-allocation",
                          "--no-lazy-feedback-allocation");
@@ -278,10 +280,12 @@ void SetFlags(IsolateHolder::ScriptMode mode,
       "--no-enable-experimental-regexp-engine-on-excessive-backtracks");
   SetV8FlagsIfOverridden(features::kV8TurboFastApiCalls,
                          "--turbo-fast-api-calls", "--no-turbo-fast-api-calls");
-  SetV8FlagsIfOverridden(features::kV8Turboprop, "--turboprop",
-                         "--no-turboprop");
+  SetV8FlagsIfOverridden(features::kV8MegaDomIC, "--mega-dom-ic",
+                         "--no-mega-dom-ic");
+  SetV8FlagsIfOverridden(features::kV8Maglev, "--maglev", "--no-maglev");
   SetV8FlagsIfOverridden(features::kV8Sparkplug, "--sparkplug",
                          "--no-sparkplug");
+  SetV8FlagsIfOverridden(features::kV8Turbofan, "--turbofan", "--no-turbofan");
   SetV8FlagsIfOverridden(features::kV8ConcurrentSparkplug,
                          "--concurrent-sparkplug", "--no-concurrent-sparkplug");
   SetV8FlagsIfOverridden(features::kV8SparkplugNeedsShortBuiltinCalls,
@@ -299,17 +303,14 @@ void SetFlags(IsolateHolder::ScriptMode mode,
     if (int max_threads = features::kV8ConcurrentSparkplugMaxThreads.Get()) {
       SetV8FlagsFormatted("--concurrent-sparkplug-max-threads=%i", max_threads);
     }
+    SetV8FlagsIfOverridden(features::kV8ConcurrentSparkplugHighPriorityThreads,
+                           "--concurrent-sparkplug-high-priority-threads",
+                           "--no-concurrent-sparkplug-high-priority-threads");
   }
 
-  if (base::FeatureList::IsEnabled(features::kV8ScriptAblation)) {
-    if (int delay = features::kV8ScriptDelayMs.Get()) {
-      SetV8FlagsFormatted("--script-delay=%i", delay);
-    }
-    if (int delay = features::kV8ScriptDelayOnceMs.Get()) {
-      SetV8FlagsFormatted("--script-delay-once=%i", delay);
-    }
-    if (double fraction = features::kV8ScriptDelayFraction.Get()) {
-      SetV8FlagsFormatted("--script-delay-fraction=%f", fraction);
+  if (base::FeatureList::IsEnabled(features::kV8FlushBytecode)) {
+    if (int old_age = features::kV8FlushBytecodeOldAge.Get()) {
+      SetV8FlagsFormatted("--bytecode-old-age=%i", old_age);
     }
   }
 
@@ -321,7 +322,7 @@ void SetFlags(IsolateHolder::ScriptMode mode,
       base::FeatureList::IsEnabled(features::kV8SlowHistogramsSparkplug) ||
       base::FeatureList::IsEnabled(
           features::kV8SlowHistogramsSparkplugAndroid) ||
-      base::FeatureList::IsEnabled(features::kV8SlowHistogramsScriptAblation);
+      base::FeatureList::IsEnabled(features::kV8SlowHistogramsNoTurbofan);
   if (any_slow_histograms_alias) {
     SetV8Flags("--slow-histograms");
   } else {
@@ -329,9 +330,38 @@ void SetFlags(IsolateHolder::ScriptMode mode,
                            "--no-slow-histograms");
   }
 
+  // JavaScript language features.
+  SetV8FlagsIfOverridden(features::kJavaScriptSymbolAsWeakMapKey,
+                         "--harmony-symbol-as-weakmap-key",
+                         "--no-harmony-symbol-as-weakmap-key");
+  SetV8FlagsIfOverridden(features::kJavaScriptChangeArrayByCopy,
+                         "--harmony-change-array-by-copy",
+                         "--no-harmony-change-array-by-copy");
+  if (base::FeatureList::IsEnabled(features::kJavaScriptRabGsab)) {
+    SetV8Flags("--harmony-rab-gsab");
+  } else {
+    SetV8Flags("--no-harmony-rab-gsab");
+  }
+  SetV8FlagsIfOverridden(features::kJavaScriptStringIsWellFormed,
+                         "--harmony-string-is-well-formed",
+                         "--no-harmony-string-is-well-formed");
+  SetV8FlagsIfOverridden(features::kJavaScriptRegExpUnicodeSets,
+                         "--harmony-regexp-unicode-sets",
+                         "--no-harmony-regexp-unicode-sets");
+
   if (IsolateHolder::kStrictMode == mode) {
     SetV8Flags("--use_strict");
   }
+
+  SetV8FlagsIfOverridden(features::kV8UseLibmTrigFunctions,
+                         "--use-libm-trig-functions",
+                         "--no-use-libm-trig-functions");
+
+  // WebAssembly features.
+
+  SetV8FlagsIfOverridden(features::kWebAssemblyTailCall,
+                         "--experimental-wasm-return-call",
+                         "--no-experimental-wasm-return-call");
 
   if (js_command_line_flags.empty())
     return;
@@ -370,41 +400,6 @@ void V8Initializer::Initialize(IsolateHolder::ScriptMode mode,
   // of the virtual memory cage, already use V8's random number generator.
   v8::V8::SetEntropySource(&GenerateEntropy);
 
-#if defined(V8_SANDBOX)
-  static_assert(ARCH_CPU_64_BITS, "V8 sandbox can only work in 64-bit builds");
-  // For now, initializing the sandbox is optional, and we only do it if the
-  // correpsonding feature is enabled. In the future, it will be mandatory when
-  // compiling with V8_SANDBOX.
-  // However, if V8 uses sandboxed pointers, then the sandbox must be
-  // initialized as sandboxed pointers are simply offsets inside the sandbox.
-#if defined(V8_SANDBOXED_POINTERS)
-  bool must_initialize_sandbox = true;
-#else
-  bool must_initialize_sandbox = false;
-#endif
-
-  bool v8_sandbox_is_initialized = false;
-  if (must_initialize_sandbox ||
-      base::FeatureList::IsEnabled(features::kV8VirtualMemoryCage)) {
-    v8_sandbox_is_initialized = v8::V8::InitializeSandbox();
-    CHECK(!must_initialize_sandbox || v8_sandbox_is_initialized);
-
-    // Record the size of the sandbox, in GB. The size will always be a power
-    // of two, so we use a sparse histogram to capture it. If the
-    // initialization failed, this API will return zero. The main reason for
-    // capturing this histogram here instead of having V8 do it is that there
-    // are no Isolates available yet, which are required for recording
-    // histograms in V8.
-    size_t size = v8::V8::GetSandboxSizeInBytes();
-    int sizeInGB = size >> 30;
-    DCHECK(base::bits::IsPowerOfTwo(size));
-    DCHECK(size == 0 || sizeInGB > 0);
-    // This uses the term "cage" instead of "sandbox" for historical reasons.
-    // TODO(1218005) remove this once the finch trial has ended.
-    base::UmaHistogramSparse("V8.VirtualMemoryCageSizeGB", sizeInGB);
-  }
-#endif  // V8_SANDBOX
-
 #if defined(V8_USE_EXTERNAL_STARTUP_DATA)
   if (g_mapped_snapshot) {
     v8::StartupData snapshot;
@@ -417,66 +412,66 @@ void V8Initializer::Initialize(IsolateHolder::ScriptMode mode,
 
   v8_is_initialized = true;
 
-#if defined(V8_SANDBOX)
-  if (v8_sandbox_is_initialized) {
-    // These values are persisted to logs. Entries should not be renumbered and
-    // numeric values should never be reused. This should match enum
-    // V8VirtualMemoryCageMode in \tools\metrics\histograms\enums.xml
-    // This uses the term "cage" instead of "sandbox" for historical reasons.
-    // TODO(1218005) remove this once the finch trial has ended.
-    enum class VirtualMemoryCageMode {
-      kSecure = 0,
-      kInsecure = 1,
-      kMaxValue = kInsecure,
-    };
-    base::UmaHistogramEnumeration("V8.VirtualMemoryCageMode",
-                                  v8::V8::IsSandboxConfiguredSecurely()
-                                      ? VirtualMemoryCageMode::kSecure
-                                      : VirtualMemoryCageMode::kInsecure);
+#if defined(V8_ENABLE_SANDBOX)
+  // Record some sandbox statistics into UMA.
+  // The main reason for capturing these histograms here instead of having V8
+  // do it is that there are no Isolates available yet, which are required
+  // for recording histograms in V8.
 
-    // When the sandbox is enabled, ArrayBuffers must be allocated inside of
-    // it. To achieve that, PA's ConfigurablePool is created inside the sandbox
-    // and Blink then creates the ArrayBuffer partition in that Pool.
-    v8::VirtualAddressSpace* sandbox_address_space =
-        v8::V8::GetSandboxAddressSpace();
-    const size_t max_pool_size =
-        base::internal::PartitionAddressSpace::ConfigurablePoolMaxSize();
-    const size_t min_pool_size =
-        base::internal::PartitionAddressSpace::ConfigurablePoolMinSize();
-    size_t pool_size = max_pool_size;
-#if BUILDFLAG(IS_WIN)
-    // On Windows prior to 8.1 we allocate a smaller Pool since reserving
-    // virtual memory is expensive on these OSes.
-    if (base::win::GetVersion() < base::win::Version::WIN8_1) {
-      // The size chosen here should be synchronized with the size of the
-      // virtual memory reservation for the V8 sandbox on these platforms.
-      // Currently, that is 8GB, of which 4GB are used for V8's pointer
-      // compression region.
-      // TODO(saelo) give this constant a proper name and maybe move it
-      // somewhere else.
-      constexpr size_t kGB = 1ULL << 30;
-      pool_size = 4ULL * kGB;
-      DCHECK_LE(pool_size, max_pool_size);
-      DCHECK_GE(pool_size, min_pool_size);
+  // Record the mode of the sandbox.
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused. This should match enum
+  // V8SandboxMode in tools/metrics/histograms/enums.xml.
+  enum class V8SandboxMode {
+    kSecure = 0,
+    kInsecure = 1,
+    kMaxValue = kInsecure,
+  };
+  base::UmaHistogramEnumeration("V8.SandboxMode",
+                                v8::V8::IsSandboxConfiguredSecurely()
+                                    ? V8SandboxMode::kSecure
+                                    : V8SandboxMode::kInsecure);
+
+  // Record the size of the address space reservation backing the sandbox.
+  // The size will always be one of a handful of values, so use a sparse
+  // histogram to capture it.
+  size_t size = v8::V8::GetSandboxReservationSizeInBytes();
+  DCHECK_GT(size, 0U);
+  size_t sizeInGB = size >> 30;
+  DCHECK_EQ(sizeInGB << 30, size);
+  base::UmaHistogramSparse("V8.SandboxReservationSizeGB", sizeInGB);
+
+  // When the sandbox is enabled, ArrayBuffers must be allocated inside of
+  // it. To achieve that, PA's ConfigurablePool is created inside the sandbox
+  // and Blink then creates the ArrayBuffer partition in that Pool.
+  v8::VirtualAddressSpace* sandbox_address_space =
+      v8::V8::GetSandboxAddressSpace();
+  const size_t max_pool_size = partition_alloc::internal::
+      PartitionAddressSpace::ConfigurablePoolMaxSize();
+  const size_t min_pool_size = partition_alloc::internal::
+      PartitionAddressSpace::ConfigurablePoolMinSize();
+  size_t pool_size = max_pool_size;
+  // Try to reserve the maximum size of the pool at first, then keep halving
+  // the size on failure until it succeeds.
+  uintptr_t pool_base = 0;
+  while (!pool_base && pool_size >= min_pool_size) {
+    pool_base = sandbox_address_space->AllocatePages(
+        0, pool_size, pool_size, v8::PagePermissions::kNoAccess);
+    if (!pool_base) {
+      pool_size /= 2;
     }
-#endif
-    // Try to reserve the maximum size of the pool at first, then keep halving
-    // the size on failure until it succeeds.
-    uintptr_t pool_base = 0;
-    while (!pool_base && pool_size >= min_pool_size) {
-      pool_base = sandbox_address_space->AllocatePages(
-          0, pool_size, pool_size, v8::PagePermissions::kNoAccess);
-      if (!pool_base) {
-        pool_size /= 2;
-      }
-    }
-    // The V8 sandbox is guaranteed to be large enough to host the pool.
-    CHECK(pool_base);
-    base::internal::PartitionAddressSpace::InitConfigurablePool(pool_base,
-                                                                pool_size);
-    // TODO(saelo) maybe record the size of the Pool into UMA.
   }
-#endif  // V8_SANDBOX
+  // The V8 sandbox is guaranteed to be large enough to host the pool.
+  CHECK(pool_base);
+  partition_alloc::internal::PartitionAddressSpace::InitConfigurablePool(
+      pool_base, pool_size);
+  // TODO(saelo) maybe record the size of the Pool into UMA.
+#endif  // V8_ENABLE_SANDBOX
+
+  // Initialize the partition used by gin::ArrayBufferAllocator instances. This
+  // needs to happen now, after the V8 sandbox has been initialized, so that
+  // the partition is placed inside the configurable pool initialized above.
+  ArrayBufferAllocator::InitializePartition();
 }
 
 // static

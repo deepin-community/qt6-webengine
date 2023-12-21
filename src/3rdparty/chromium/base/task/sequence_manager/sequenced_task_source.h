@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,11 @@
 #define BASE_TASK_SEQUENCE_MANAGER_SEQUENCED_TASK_SOURCE_H_
 
 #include "base/base_export.h"
-#include "base/callback_helpers.h"
+#include "base/functional/callback_helpers.h"
+#include "base/memory/raw_ref.h"
 #include "base/pending_task.h"
-#include "base/task/sequence_manager/lazy_now.h"
+#include "base/task/common/lazy_now.h"
+#include "base/task/sequence_manager/task_queue.h"
 #include "base/task/sequence_manager/tasks.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
@@ -31,14 +33,19 @@ class SequencedTaskSource {
   struct BASE_EXPORT SelectedTask {
     SelectedTask(const SelectedTask&);
     SelectedTask(Task& task,
-                 TaskExecutionTraceLogger task_execution_trace_logger);
+                 TaskExecutionTraceLogger task_execution_trace_logger,
+                 TaskQueue::QueuePriority priority,
+                 QueueName task_queue_name);
     ~SelectedTask();
 
-    Task& task;
+    // TODO(crbug.com/1409100): breaks base_unittests.
+    const raw_ref<Task, DisableDanglingPtrDetection> task;
     // Callback to fill trace event arguments associated with the task
     // execution. Can be null
     TaskExecutionTraceLogger task_execution_trace_logger =
         TaskExecutionTraceLogger();
+    TaskQueue::QueuePriority priority;
+    QueueName task_queue_name;
   };
 
   virtual ~SequencedTaskSource() = default;
@@ -48,11 +55,12 @@ class SequencedTaskSource {
   // DidRunTask() must be invoked before the next call to SelectNextTask().
   // |option| allows control on which kind of tasks can be selected.
   virtual absl::optional<SelectedTask> SelectNextTask(
+      LazyNow& lazy_now,
       SelectTaskOption option = SelectTaskOption::kDefault) = 0;
 
   // Notifies this source that the task previously obtained
   // from SelectNextTask() has been completed.
-  virtual void DidRunTask() = 0;
+  virtual void DidRunTask(LazyNow& lazy_now) = 0;
 
   // Removes all canceled delayed tasks from the front of the queue. After
   // calling this, GetPendingWakeUp() is guaranteed to return a ready time for a
@@ -75,6 +83,11 @@ class SequencedTaskSource {
   // becomes available as a result of any processing done by this callback,
   // return true to schedule a future DoWork.
   virtual bool OnSystemIdle() = 0;
+
+  // Called prior to running `selected_task` to emit trace event data for it.
+  virtual void MaybeEmitTaskDetails(
+      perfetto::EventContext& ctx,
+      const SelectedTask& selected_task) const = 0;
 };
 
 }  // namespace internal

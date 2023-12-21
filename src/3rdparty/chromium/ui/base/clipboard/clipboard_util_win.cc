@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,12 +8,12 @@
 #include <wininet.h>  // For INTERNET_MAX_URL_LENGTH.
 #include <wrl/client.h>
 
-#include <algorithm>
 #include <limits>
 #include <utility>
 
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
@@ -101,12 +101,11 @@ void SplitUrlAndTitle(const std::u16string& str,
 bool ContainsFilePathCaseInsensitive(
     const std::vector<base::FilePath>& existing_filenames,
     const base::FilePath& candidate_path) {
-  return std::find_if(std::begin(existing_filenames),
-                      std::end(existing_filenames),
-                      [&candidate_path](const base::FilePath& elem) {
-                        return base::FilePath::CompareEqualIgnoreCase(
-                            elem.value(), candidate_path.value());
-                      }) != std::end(existing_filenames);
+  return base::ranges::any_of(existing_filenames,
+                              [&candidate_path](const base::FilePath& elem) {
+                                return base::FilePath::CompareEqualIgnoreCase(
+                                    elem.value(), candidate_path.value());
+                              });
 }
 
 // Returns a unique display name for a virtual file, as it is possible that the
@@ -843,14 +842,18 @@ bool ClipboardUtil::GetWebCustomData(
 // Documentation for the CF_HTML format is available at
 // http://msdn.microsoft.com/en-us/library/aa767917(VS.85).aspx
 std::string ClipboardUtil::HtmlToCFHtml(const std::string& html,
-                                        const std::string& base_url) {
-  if (html.empty())
+                                        const std::string& base_url,
+                                        ClipboardContentType content_type) {
+  // TODO(ansollan): Implement changes to correctly convert unsanitized
+  // text/html to MS CF_HTML.
+  if (html.empty() || content_type == ClipboardContentType::kUnsanitized) {
     return std::string();
+  }
 
-  #define MAX_DIGITS 10
-  #define MAKE_NUMBER_FORMAT_1(digits) MAKE_NUMBER_FORMAT_2(digits)
-  #define MAKE_NUMBER_FORMAT_2(digits) "%0" #digits "u"
-  #define NUMBER_FORMAT MAKE_NUMBER_FORMAT_1(MAX_DIGITS)
+#define MAX_DIGITS 10
+#define MAKE_NUMBER_FORMAT_1(digits) MAKE_NUMBER_FORMAT_2(digits)
+#define MAKE_NUMBER_FORMAT_2(digits) "%0" #digits "u"
+#define NUMBER_FORMAT MAKE_NUMBER_FORMAT_1(MAX_DIGITS)
 
   static const char* header = "Version:0.9\r\n"
       "StartHTML:" NUMBER_FORMAT "\r\n"

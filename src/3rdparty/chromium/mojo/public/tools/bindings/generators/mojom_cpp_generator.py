@@ -1,4 +1,4 @@
-# Copyright 2013 The Chromium Authors. All rights reserved.
+# Copyright 2013 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -129,10 +129,6 @@ class _NameFormatter(object):
 def NamespaceToArray(namespace):
   return namespace.split(".") if namespace else []
 
-
-def GetWtfHashFnNameForEnum(enum):
-  return _NameFormatter(enum, None).Format("_", internal=True,
-                                           flatten_nested_kind=True) + "HashFn"
 
 def GetEnumNameWithoutNamespace(enum):
   full_enum_name = _NameFormatter(enum, None).Format(
@@ -375,6 +371,7 @@ class Generator(generator.Generator):
 
   def GetFilters(self):
     cpp_filters = {
+        "append_space_if_nonempty": self._AppendSpaceIfNonEmpty,
         "all_enum_values": AllEnumValues,
         "constant_value": self._ConstantValue,
         "contains_handles_or_interfaces": mojom.ContainsHandlesOrInterfaces,
@@ -437,7 +434,6 @@ class Generator(generator.Generator):
         "under_to_camel": self._UnderToCamel,
         "unmapped_type_for_serializer": self._GetUnmappedTypeForSerializer,
         "use_custom_serializer": UseCustomSerializer,
-        "wtf_hash_fn_name_for_enum": GetWtfHashFnNameForEnum,
     }
     return cpp_filters
 
@@ -527,6 +523,11 @@ class Generator(generator.Generator):
                                                      filename), "%s%s-%s" %
             (self.module.path, suffix, filename_without_tmpl_suffix))
 
+  def _AppendSpaceIfNonEmpty(self, statement):
+    if len(statement) == 0:
+      return ""
+    return statement + " "
+
   def _ConstantValue(self, constant):
     return self._ExpressionToText(constant.value, kind=constant.kind)
 
@@ -538,6 +539,9 @@ class Generator(generator.Generator):
 
   def _DefaultValue(self, field):
     if not field.default:
+      if self._IsTypemappedKind(field.kind):
+        return "mojo::DefaultConstructTraits::CreateInstance<%s>()" % (
+            self._GetCppWrapperType(field.kind))
       return ""
 
     if mojom.IsStructKind(field.kind):
@@ -981,48 +985,35 @@ class Generator(generator.Generator):
 
   def _GetContainerValidateParamsCtorArgs(self, kind):
     if mojom.IsStringKind(kind):
-      expected_num_elements = 0
-      element_is_nullable = False
-      key_validate_params = "nullptr"
-      element_validate_params = "nullptr"
-      enum_validate_func = "nullptr"
+      return 'mojo::internal::GetArrayValidator<0, false, nullptr>()'
     elif mojom.IsMapKind(kind):
-      expected_num_elements = 0
-      element_is_nullable = False
       key_validate_params = self._GetNewContainerValidateParams(mojom.Array(
           kind=kind.key_kind))
       element_validate_params = self._GetNewContainerValidateParams(mojom.Array(
           kind=kind.value_kind))
-      enum_validate_func = "nullptr"
+      return (f'mojo::internal::GetMapValidator<*{key_validate_params}, '
+              f'*{element_validate_params}>()')
     else:  # mojom.IsArrayKind(kind)
       expected_num_elements = generator.ExpectedArraySize(kind) or 0
-      element_is_nullable = mojom.IsNullableKind(kind.kind)
-      key_validate_params = "nullptr"
       element_validate_params = self._GetNewContainerValidateParams(kind.kind)
       if mojom.IsEnumKind(kind.kind):
         enum_validate_func = ("%s::Validate" %
             self._GetQualifiedNameForKind(kind.kind, internal=True,
                                           flatten_nested_kind=True))
+        return (f'mojo::internal::GetArrayOfEnumsValidator<'
+                f'{expected_num_elements}, {enum_validate_func}>()')
       else:
-        enum_validate_func = "nullptr"
-
-    if enum_validate_func == "nullptr":
-      if key_validate_params == "nullptr":
-        return "%d, %s, %s" % (expected_num_elements,
-                               "true" if element_is_nullable else "false",
-                               element_validate_params)
-      else:
-        return "%s, %s" % (key_validate_params, element_validate_params)
-    else:
-      return "%d, %s" % (expected_num_elements, enum_validate_func)
+        element_is_nullable = ('true'
+                               if mojom.IsNullableKind(kind.kind) else 'false')
+        return (f'mojo::internal::GetArrayValidator<{expected_num_elements}, '
+                f'{element_is_nullable}, {element_validate_params}>()')
 
   def _GetNewContainerValidateParams(self, kind):
     if (not mojom.IsArrayKind(kind) and not mojom.IsMapKind(kind) and
         not mojom.IsStringKind(kind)):
       return "nullptr"
 
-    return "new mojo::internal::ContainerValidateParams(%s)" % (
-        self._GetContainerValidateParamsCtorArgs(kind))
+    return f'&{self._GetContainerValidateParamsCtorArgs(kind)}'
 
   def _GetCppDataViewType(self, kind, qualified=False):
     def _GetName(input_kind):

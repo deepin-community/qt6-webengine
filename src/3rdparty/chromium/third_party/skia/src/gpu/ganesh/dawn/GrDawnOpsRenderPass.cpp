@@ -7,6 +7,7 @@
 
 #include "src/gpu/ganesh/dawn/GrDawnOpsRenderPass.h"
 
+#include "src/gpu/ganesh/GrNativeRect.h"
 #include "src/gpu/ganesh/GrOpFlushState.h"
 #include "src/gpu/ganesh/GrPipeline.h"
 #include "src/gpu/ganesh/GrRenderTarget.h"
@@ -65,26 +66,28 @@ wgpu::RenderPassEncoder GrDawnOpsRenderPass::beginRenderPass(wgpu::LoadOp colorO
     wgpu::RenderPassColorAttachment colorAttachment;
     colorAttachment.view = static_cast<GrDawnRenderTarget*>(fRenderTarget)->textureView();
     colorAttachment.resolveTarget = nullptr;
-    colorAttachment.clearColor = { c[0], c[1], c[2], c[3] };
+    colorAttachment.clearValue = {c[0], c[1], c[2], c[3]};
     colorAttachment.loadOp = colorOp;
     colorAttachment.storeOp = wgpu::StoreOp::Store;
     wgpu::RenderPassColorAttachment* colorAttachments = { &colorAttachment };
     wgpu::RenderPassDescriptor renderPassDescriptor;
     renderPassDescriptor.colorAttachmentCount = 1;
     renderPassDescriptor.colorAttachments = colorAttachments;
+
+    wgpu::RenderPassDepthStencilAttachment depthStencilAttachment;
     if (stencilAttachment) {
-        wgpu::RenderPassDepthStencilAttachment depthStencilAttachment;
         depthStencilAttachment.view = stencilAttachment->view();
         depthStencilAttachment.depthLoadOp = stencilOp;
         depthStencilAttachment.stencilLoadOp = stencilOp;
-        depthStencilAttachment.clearDepth = 1.0f;
-        depthStencilAttachment.clearStencil = 0;
+        depthStencilAttachment.depthClearValue = 1.0f;
+        depthStencilAttachment.stencilClearValue = 0;
         depthStencilAttachment.depthStoreOp = wgpu::StoreOp::Store;
         depthStencilAttachment.stencilStoreOp = wgpu::StoreOp::Store;
         renderPassDescriptor.depthStencilAttachment = &depthStencilAttachment;
     } else {
         renderPassDescriptor.depthStencilAttachment = nullptr;
     }
+
     return fEncoder.BeginRenderPass(&renderPassDescriptor);
 }
 
@@ -100,13 +103,13 @@ void GrDawnOpsRenderPass::submit() {
 void GrDawnOpsRenderPass::onClearStencilClip(const GrScissorState& scissor,
                                              bool insideStencilMask) {
     SkASSERT(!scissor.enabled());
-    fPassEncoder.EndPass();
+    fPassEncoder.End();
     fPassEncoder = beginRenderPass(wgpu::LoadOp::Load, wgpu::LoadOp::Clear);
 }
 
 void GrDawnOpsRenderPass::onClear(const GrScissorState& scissor, std::array<float, 4> color) {
     SkASSERT(!scissor.enabled());
-    fPassEncoder.EndPass();
+    fPassEncoder.End();
     fPassEncoder = beginRenderPass(wgpu::LoadOp::Clear, wgpu::LoadOp::Load);
 }
 
@@ -141,7 +144,7 @@ void GrDawnOpsRenderPass::applyState(GrDawnProgram* program, const GrProgramInfo
         fPassEncoder.SetStencilReference(get_stencil_ref(programInfo));
     }
     const GrPipeline& pipeline = programInfo.pipeline();
-    GrXferProcessor::BlendInfo blendInfo = pipeline.getXferProcessor().getBlendInfo();
+    skgpu::BlendInfo blendInfo = pipeline.getXferProcessor().getBlendInfo();
     const float* c = blendInfo.fBlendConstant.vec();
     wgpu::Color color{c[0], c[1], c[2], c[3]};
     fPassEncoder.SetBlendConstant(&color);
@@ -152,9 +155,7 @@ void GrDawnOpsRenderPass::applyState(GrDawnProgram* program, const GrProgramInfo
     }
 }
 
-void GrDawnOpsRenderPass::onEnd() {
-    fPassEncoder.EndPass();
-}
+void GrDawnOpsRenderPass::onEnd() { fPassEncoder.End(); }
 
 bool GrDawnOpsRenderPass::onBindPipeline(const GrProgramInfo& programInfo,
                                          const SkRect& drawBounds) {

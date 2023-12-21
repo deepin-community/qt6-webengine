@@ -5,25 +5,39 @@
  * found in the LICENSE file.
  */
 
+#include "src/sksl/ir/SkSLIndexExpression.h"
+
+#include "include/core/SkTypes.h"
+#include "include/private/SkSLDefines.h"
+#include "include/private/base/SkTArray.h"
+#include "include/sksl/SkSLErrorReporter.h"
+#include "include/sksl/SkSLOperator.h"
+#include "src/sksl/SkSLAnalysis.h"
+#include "src/sksl/SkSLBuiltinTypes.h"
 #include "src/sksl/SkSLConstantFolder.h"
-#include "src/sksl/SkSLProgramSettings.h"
-#include "src/sksl/ir/SkSLBinaryExpression.h"
+#include "src/sksl/SkSLContext.h"
 #include "src/sksl/ir/SkSLConstructorArray.h"
 #include "src/sksl/ir/SkSLConstructorCompound.h"
-#include "src/sksl/ir/SkSLIndexExpression.h"
 #include "src/sksl/ir/SkSLLiteral.h"
 #include "src/sksl/ir/SkSLSwizzle.h"
 #include "src/sksl/ir/SkSLSymbolTable.h"
+#include "src/sksl/ir/SkSLType.h"
 #include "src/sksl/ir/SkSLTypeReference.h"
+
+#include <cstdint>
+#include <optional>
 
 namespace SkSL {
 
 static bool index_out_of_range(const Context& context, Position pos, SKSL_INT index,
         const Expression& base) {
-    if (index >= 0 && index < base.type().columns()) {
-        return false;
+    if (index >= 0) {
+        if (base.type().columns() == Type::kUnsizedArray) {
+            return false;
+        } else if (index < base.type().columns()) {
+            return false;
+        }
     }
-
     context.fErrors->error(pos, "index " + std::to_string(index) + " out of range for '" +
             base.type().displayName() + "'");
     return true;
@@ -108,22 +122,20 @@ std::unique_ptr<Expression> IndexExpression::Make(const Context& context,
                         ComponentArray{(int8_t)indexValue});
             }
 
-            if (baseType.isArray() && !base->hasSideEffects()) {
+            if (baseType.isArray() && !Analysis::HasSideEffects(*base)) {
                 // Indexing an constant array constructor with a constant index can just pluck out
                 // the requested value from the array.
                 const Expression* baseExpr = ConstantFolder::GetConstantValueForVariable(*base);
                 if (baseExpr->is<ConstructorArray>()) {
                     const ConstructorArray& arrayCtor = baseExpr->as<ConstructorArray>();
                     const ExpressionArray& arguments = arrayCtor.arguments();
-                    SkASSERT(arguments.count() == baseType.columns());
+                    SkASSERT(arguments.size() == baseType.columns());
 
-                    std::unique_ptr<Expression> result = arguments[indexValue]->clone();
-                    result->fPosition = pos;
-                    return result;
+                    return arguments[indexValue]->clone(pos);
                 }
             }
 
-            if (baseType.isMatrix() && !base->hasSideEffects()) {
+            if (baseType.isMatrix() && !Analysis::HasSideEffects(*base)) {
                 // Matrices can be constructed with vectors that don't line up on column boundaries,
                 // so extracting out the values from the constructor can be tricky. Fortunately, we
                 // can reconstruct an equivalent vector using `getConstantValue`. If we
@@ -143,7 +155,7 @@ std::unique_ptr<Expression> IndexExpression::Make(const Context& context,
                         ctorArgs.push_back(Literal::Make(baseExpr->fPosition, *slotVal,
                                 &scalarType));
                     } else {
-                        ctorArgs.reset();
+                        ctorArgs.clear();
                         break;
                     }
                 }
@@ -156,6 +168,11 @@ std::unique_ptr<Expression> IndexExpression::Make(const Context& context,
     }
 
     return std::make_unique<IndexExpression>(context, pos, std::move(base), std::move(index));
+}
+
+std::string IndexExpression::description(OperatorPrecedence) const {
+    return this->base()->description(OperatorPrecedence::kPostfix) + "[" +
+           this->index()->description(OperatorPrecedence::kTopLevel) + "]";
 }
 
 }  // namespace SkSL

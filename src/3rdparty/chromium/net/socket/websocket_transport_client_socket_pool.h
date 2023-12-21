@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,7 +13,7 @@
 #include <utility>
 
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
 #include "net/base/net_export.h"
@@ -28,7 +28,13 @@ namespace net {
 
 struct CommonConnectJobParams;
 struct NetworkTrafficAnnotationTag;
-class WebSocketTransportConnectJob;
+
+// Identifier for a ClientSocketHandle to scope the lifetime of references.
+// ClientSocketHandleID are derived from ClientSocketHandle*, used in
+// comparison only, and are never dereferenced. We use an std::uintptr_t here to
+// match the size of a pointer, and to prevent dereferencing. Also, our
+// tooling complains about dangling pointers if we pass around a raw ptr.
+using ClientSocketHandleID = std::uintptr_t;
 
 class NET_EXPORT_PRIVATE WebSocketTransportClientSocketPool
     : public ClientSocketPool {
@@ -67,11 +73,12 @@ class NET_EXPORT_PRIVATE WebSocketTransportClientSocketPool
       CompletionOnceCallback callback,
       const ProxyAuthCallback& proxy_auth_callback,
       const NetLogWithSource& net_log) override;
-  void RequestSockets(
+  int RequestSockets(
       const GroupId& group_id,
       scoped_refptr<SocketParams> params,
       const absl::optional<NetworkTrafficAnnotationTag>& proxy_annotation_tag,
       int num_sockets,
+      CompletionOnceCallback callback,
       const NetLogWithSource& net_log) override;
   void SetPriority(const GroupId& group_id,
                    ClientSocketHandle* handle,
@@ -92,6 +99,7 @@ class NET_EXPORT_PRIVATE WebSocketTransportClientSocketPool
                          const ClientSocketHandle* handle) const override;
   base::Value GetInfoAsValue(const std::string& name,
                              const std::string& type) const override;
+  bool HasActiveSocket(const GroupId& group_id) const override;
 
   // HigherLayeredPool implementation.
   bool IsStalled() const override;
@@ -174,15 +182,15 @@ class NET_EXPORT_PRIVATE WebSocketTransportClientSocketPool
       StalledRequestMap;
 
   // Tries to hand out the socket connected by |job|. |result| must be (async)
-  // result of WebSocketTransportConnectJob::Connect(). Returns true iff it has
-  // handed out a socket.
+  // result of TransportConnectJob::Connect(). Returns true iff it has handed
+  // out a socket.
   bool TryHandOutSocket(int result, ConnectJobDelegate* connect_job_delegate);
   void OnConnectJobComplete(int result,
                             ConnectJobDelegate* connect_job_delegate);
   void InvokeUserCallbackLater(ClientSocketHandle* handle,
                                CompletionOnceCallback callback,
                                int rv);
-  void InvokeUserCallback(ClientSocketHandle* handle,
+  void InvokeUserCallback(ClientSocketHandleID handle_id,
                           CompletionOnceCallback callback,
                           int rv);
   bool ReachedMaxSocketsLimit() const;
@@ -198,13 +206,13 @@ class NET_EXPORT_PRIVATE WebSocketTransportClientSocketPool
   bool DeleteStalledRequest(ClientSocketHandle* handle);
 
   const ProxyServer proxy_server_;
-  std::set<const ClientSocketHandle*> pending_callbacks_;
+  std::set<ClientSocketHandleID> pending_callbacks_;
   PendingConnectsMap pending_connects_;
   StalledRequestQueue stalled_request_queue_;
   StalledRequestMap stalled_request_map_;
   const int max_sockets_;
-  int handed_out_socket_count_;
-  bool flushing_;
+  int handed_out_socket_count_ = 0;
+  bool flushing_ = false;
 
   base::WeakPtrFactory<WebSocketTransportClientSocketPool> weak_factory_{this};
 };

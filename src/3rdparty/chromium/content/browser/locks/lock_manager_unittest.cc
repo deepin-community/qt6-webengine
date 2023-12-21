@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
@@ -57,25 +58,17 @@ class TestLockRequest : public blink::mojom::LockRequest {
     run_loop_.Quit();
   }
 
-  void Abort(const std::string& reason) override {
-    aborted_ = true;
-    run_loop_.Quit();
-    return;
-  }
-
   void WaitForCallback() { run_loop_.Run(); }
 
   bool FailureCalled() const { return failed_; }
   bool GrantedCalled() const { return granted_; }
-  bool AbortCalled() const { return aborted_; }
 
  private:
-  mojo::PendingAssociatedRemote<blink::mojom::LockHandle>* remote_;
+  raw_ptr<mojo::PendingAssociatedRemote<blink::mojom::LockHandle>> remote_;
   mojo::AssociatedReceiver<blink::mojom::LockRequest> receiver_;
   base::RunLoop run_loop_;
   bool failed_ = false;
   bool granted_ = false;
-  bool aborted_ = false;
 };
 
 TEST_F(LockManagerInvalidBucketTest, RequestLock) {
@@ -91,7 +84,6 @@ TEST_F(LockManagerInvalidBucketTest, RequestLock) {
   request.WaitForCallback();
   EXPECT_TRUE(request.FailureCalled());
   EXPECT_FALSE(request.GrantedCalled());
-  EXPECT_FALSE(request.AbortCalled());
 }
 
 TEST_F(LockManagerInvalidBucketTest, QueryState) {

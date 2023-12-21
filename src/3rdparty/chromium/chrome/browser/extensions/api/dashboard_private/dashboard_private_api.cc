@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,9 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/values.h"
 #include "chrome/browser/bitmap_fetcher/bitmap_fetcher.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/crx_file/id_util.h"
@@ -99,19 +99,17 @@ DashboardPrivateShowPermissionPromptForDelegatedInstallFunction::Run() {
 }
 
 void DashboardPrivateShowPermissionPromptForDelegatedInstallFunction::
-    OnWebstoreParseSuccess(
-        const std::string& id,
-        const SkBitmap& icon,
-        std::unique_ptr<base::DictionaryValue> parsed_manifest) {
+    OnWebstoreParseSuccess(const std::string& id,
+                           const SkBitmap& icon,
+                           base::Value::Dict parsed_manifest) {
   CHECK_EQ(params_->details.id, id);
-  CHECK(parsed_manifest);
 
   std::string localized_name = params_->details.localized_name ?
       *params_->details.localized_name : std::string();
 
   std::string error;
   dummy_extension_ = ExtensionInstallPrompt::GetLocalizedExtensionForDisplay(
-      parsed_manifest.get(), Extension::FROM_WEBSTORE, id, localized_name,
+      parsed_manifest, Extension::FROM_WEBSTORE, id, localized_name,
       std::string(), &error);
 
   if (!dummy_extension_.get()) {
@@ -162,6 +160,10 @@ void DashboardPrivateShowPermissionPromptForDelegatedInstallFunction::
 
 void DashboardPrivateShowPermissionPromptForDelegatedInstallFunction::
     OnInstallPromptDone(ExtensionInstallPrompt::DoneCallbackPayload payload) {
+  // TODO(crbug.com/984069): Handle `ACCEPTED_WITH_WITHHELD_PERMISSIONS` when it
+  // is supported for this case.
+  DCHECK_NE(payload.result,
+            ExtensionInstallPrompt::Result::ACCEPTED_WITH_WITHHELD_PERMISSIONS);
   bool accepted = (payload.result == ExtensionInstallPrompt::Result::ACCEPTED);
   Respond(
       BuildResponse(accepted ? api::dashboard_private::RESULT_EMPTY_STRING
@@ -175,8 +177,7 @@ ExtensionFunction::ResponseValue
 DashboardPrivateShowPermissionPromptForDelegatedInstallFunction::BuildResponse(
     api::dashboard_private::Result result, const std::string& error) {
   // The web store expects an empty string on success.
-  std::vector<base::Value> args =
-      ShowPermissionPromptForDelegatedInstall::Results::Create(result);
+  auto args = ShowPermissionPromptForDelegatedInstall::Results::Create(result);
   if (result == api::dashboard_private::RESULT_EMPTY_STRING)
     return ArgumentList(std::move(args));
   return ErrorWithArguments(std::move(args), error);

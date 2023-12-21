@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,9 +26,6 @@ const char kInvalidView[] =
     "XRView passed in to the method did not originate from current XRFrame.";
 
 const char kSessionMismatch[] = "XRSpace and XRFrame sessions do not match.";
-
-const char kCannotReportPoses[] =
-    "Poses cannot be given out for the current state.";
 
 const char kHitTestSourceUnavailable[] =
     "Unable to obtain hit test results for specified hit test source. Ensure "
@@ -86,22 +83,22 @@ XRViewerPose* XRFrame::getViewerPose(XRReferenceSpace* reference_space,
   }
 
   if (!session_->CanReportPoses()) {
-    exception_state.ThrowSecurityError(kCannotReportPoses);
+    exception_state.ThrowSecurityError(XRSession::kCannotReportPoses);
     return nullptr;
   }
 
   session_->LogGetPose();
 
-  absl::optional<TransformationMatrix> native_from_mojo =
+  absl::optional<gfx::Transform> native_from_mojo =
       reference_space->NativeFromMojo();
   if (!native_from_mojo) {
     DVLOG(1) << __func__ << ": native_from_mojo is invalid";
     return nullptr;
   }
 
-  TransformationMatrix ref_space_from_mojo =
+  gfx::Transform ref_space_from_mojo =
       reference_space->OffsetFromNativeMatrix();
-  ref_space_from_mojo.Multiply(*native_from_mojo);
+  ref_space_from_mojo.PreConcat(*native_from_mojo);
 
   // Can only update an XRViewerPose's views with an invertible matrix.
   if (!ref_space_from_mojo.IsInvertible()) {
@@ -109,7 +106,7 @@ XRViewerPose* XRFrame::getViewerPose(XRReferenceSpace* reference_space,
     return nullptr;
   }
 
-  absl::optional<TransformationMatrix> offset_space_from_viewer =
+  absl::optional<gfx::Transform> offset_space_from_viewer =
       reference_space->OffsetFromViewer();
 
   // Can only update an XRViewerPose's views with an invertible matrix.
@@ -237,7 +234,7 @@ XRPose* XRFrame::getPose(XRSpace* space,
   }
 
   if (!session_->CanReportPoses()) {
-    exception_state.ThrowSecurityError(kCannotReportPoses);
+    exception_state.ThrowSecurityError(XRSession::kCannotReportPoses);
     return nullptr;
   }
 
@@ -245,7 +242,7 @@ XRPose* XRFrame::getPose(XRSpace* space,
   // identity & we can skip the rest of the logic. The pose is not emulated.
   if (space == basespace) {
     DVLOG(3) << __func__ << ": addresses match, returning identity";
-    return MakeGarbageCollected<XRPose>(TransformationMatrix{}, false);
+    return MakeGarbageCollected<XRPose>(gfx::Transform{}, false);
   }
 
   // If the native origins match, the pose between the spaces is fixed and
@@ -378,7 +375,7 @@ ScriptPromise XRFrame::createAnchor(ScriptState* script_state,
 
 ScriptPromise XRFrame::CreateAnchorFromNonStationarySpace(
     ScriptState* script_state,
-    const blink::TransformationMatrix& native_origin_from_anchor,
+    const gfx::Transform& native_origin_from_anchor,
     XRSpace* space,
     absl::optional<uint64_t> maybe_plane_id,
     ExceptionState& exception_state) {
@@ -395,11 +392,8 @@ ScriptPromise XRFrame::CreateAnchorFromNonStationarySpace(
     return {};
   }
 
-  const TransformationMatrix& mojo_from_stationary_space =
-      reference_space_information->mojo_from_space;
-
-  DCHECK(mojo_from_stationary_space.IsInvertible());
-  auto stationary_space_from_mojo = mojo_from_stationary_space.Inverse();
+  auto stationary_space_from_mojo =
+      reference_space_information->mojo_from_space.GetCheckedInverse();
 
   // We now have 2 spaces - the dynamic one passed in to create anchor
   // call, and the stationary one. We also have a rigid transform
@@ -455,7 +449,7 @@ XRJointPose* XRFrame::getJointPose(XRJointSpace* joint,
   }
 
   if (!session_->CanReportPoses()) {
-    exception_state.ThrowSecurityError(kCannotReportPoses);
+    exception_state.ThrowSecurityError(XRSession::kCannotReportPoses);
     return nullptr;
   }
 
@@ -533,7 +527,7 @@ bool XRFrame::fillPoses(HeapVector<Member<XRSpace>>& spaces,
   }
 
   if (!session_->CanReportPoses()) {
-    exception_state.ThrowSecurityError(kCannotReportPoses);
+    exception_state.ThrowSecurityError(XRSession::kCannotReportPoses);
     return false;
   }
 

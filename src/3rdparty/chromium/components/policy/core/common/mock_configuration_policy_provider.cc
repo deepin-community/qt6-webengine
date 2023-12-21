@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,8 +27,8 @@ MockConfigurationPolicyProvider::~MockConfigurationPolicyProvider() {
 
 void MockConfigurationPolicyProvider::UpdateChromePolicy(
     const PolicyMap& policy) {
-  std::unique_ptr<PolicyBundle> bundle = std::make_unique<PolicyBundle>();
-  bundle->Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string())) =
+  PolicyBundle bundle;
+  bundle.Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string())) =
       policy.Clone();
   UpdatePolicy(std::move(bundle));
   bool spin_run_loop = base::CurrentThread::IsSet();
@@ -43,8 +43,8 @@ void MockConfigurationPolicyProvider::UpdateChromePolicy(
 void MockConfigurationPolicyProvider::UpdateExtensionPolicy(
     const PolicyMap& policy,
     const std::string& extension_id) {
-  std::unique_ptr<PolicyBundle> bundle = std::make_unique<PolicyBundle>();
-  bundle->Get(PolicyNamespace(POLICY_DOMAIN_EXTENSIONS, extension_id)) =
+  PolicyBundle bundle;
+  bundle.Get(PolicyNamespace(POLICY_DOMAIN_EXTENSIONS, extension_id)) =
       policy.Clone();
   UpdatePolicy(std::move(bundle));
   if (base::CurrentThread::IsSet())
@@ -57,9 +57,7 @@ void MockConfigurationPolicyProvider::SetAutoRefresh() {
 }
 
 void MockConfigurationPolicyProvider::RefreshWithSamePolicies() {
-  std::unique_ptr<PolicyBundle> bundle = std::make_unique<PolicyBundle>();
-  bundle->CopyFrom(policies());
-  UpdatePolicy(std::move(bundle));
+  UpdatePolicy(policies().Clone());
 }
 
 MockConfigurationPolicyObserver::MockConfigurationPolicyObserver() {}

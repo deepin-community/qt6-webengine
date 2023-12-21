@@ -706,7 +706,7 @@ void QuicCryptoServerConfig::ProcessClientHello(
         params,
     quiche::QuicheReferenceCountedPointer<QuicSignedServerConfig> signed_config,
     QuicByteCount total_framing_overhead, QuicByteCount chlo_packet_size,
-    std::unique_ptr<ProcessClientHelloResultCallback> done_cb) const {
+    std::shared_ptr<ProcessClientHelloResultCallback> done_cb) const {
   QUICHE_DCHECK(done_cb);
   auto context = std::make_unique<ProcessClientHelloContext>(
       validate_chlo_result, reject_only, connection_id, server_address,
@@ -1610,7 +1610,10 @@ QuicCryptoServerConfig::ParseConfigProtobuf(
     QUIC_LOG(WARNING) << "Server config message is missing SCID";
     return nullptr;
   }
-  QUICHE_DCHECK(!scid.empty());
+  if (scid.empty()) {
+    QUIC_LOG(WARNING) << "Server config message contains an empty SCID";
+    return nullptr;
+  }
   config->id = std::string(scid);
 
   if (msg->GetTaglist(kAEAD, &config->aead) != QUIC_NO_ERROR) {

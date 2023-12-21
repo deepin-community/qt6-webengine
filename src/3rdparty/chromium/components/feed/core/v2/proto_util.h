@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -53,7 +53,8 @@ feedwire::Request CreateFeedQueryRefreshRequest(
     const StreamType& stream_type,
     feedwire::FeedQuery::RequestReason request_reason,
     const RequestMetadata& request_metadata,
-    const std::string& consistency_token);
+    const std::string& consistency_token,
+    const SingleWebFeedEntryPoint single_feed_entry_point);
 
 feedwire::Request CreateFeedQueryLoadMoreRequest(
     const RequestMetadata& request_metadata,

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,9 @@
 #include <algorithm>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/check_op.h"
+#include "base/functional/bind.h"
+#include "base/task/sequenced_task_runner.h"
 #include "net/base/io_buffer.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
 #include "third_party/blink/public/common/blob/blob_utils.h"
@@ -23,7 +24,7 @@ CacheStorageBlobToDiskCache::CacheStorageBlobToDiskCache(
     const blink::StorageKey& storage_key)
     : handle_watcher_(FROM_HERE,
                       mojo::SimpleWatcher::ArmingPolicy::MANUAL,
-                      base::SequencedTaskRunnerHandle::Get()),
+                      base::SequencedTaskRunner::GetCurrentDefault()),
       quota_manager_proxy_(std::move(quota_manager_proxy)),
       storage_key_(storage_key) {}
 

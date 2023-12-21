@@ -19,7 +19,6 @@
 #include "internal/platform/ble.h"
 #include "internal/platform/logging.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 
@@ -37,14 +36,17 @@ InputStream* GetInputStreamOrNull(BleSocket& socket) {
 
 }  // namespace
 
-BleEndpointChannel::BleEndpointChannel(const std::string& channel_name,
+BleEndpointChannel::BleEndpointChannel(const std::string& service_id,
+                                       const std::string& channel_name,
                                        BleSocket socket)
-    : BaseEndpointChannel(channel_name, GetInputStreamOrNull(socket),
+    : BaseEndpointChannel(service_id, channel_name,
+                          GetInputStreamOrNull(socket),
                           GetOutputStreamOrNull(socket)),
       ble_socket_(std::move(socket)) {}
 
-proto::connections::Medium BleEndpointChannel::GetMedium() const {
-  return proto::connections::Medium::BLE;
+location::nearby::proto::connections::Medium BleEndpointChannel::GetMedium()
+    const {
+  return location::nearby::proto::connections::Medium::BLE;
 }
 
 int BleEndpointChannel::GetMaxTransmitPacketSize() const {
@@ -62,4 +64,3 @@ void BleEndpointChannel::CloseImpl() {
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location

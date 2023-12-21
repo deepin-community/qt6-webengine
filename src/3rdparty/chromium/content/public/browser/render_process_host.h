@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,6 +19,7 @@
 #include "base/supports_user_data.h"
 #include "base/tracing/protos/chrome_track_event.pbzero.h"
 #include "build/build_config.h"
+#include "components/attribution_reporting/os_support.mojom-forward.h"
 #include "content/common/content_export.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_sender.h"
@@ -35,11 +36,10 @@
 #include "third_party/blink/public/mojom/background_sync/background_sync.mojom.h"
 #include "third_party/blink/public/mojom/buckets/bucket_manager_host.mojom-forward.h"
 #include "third_party/blink/public/mojom/cache_storage/cache_storage.mojom-forward.h"
-#include "third_party/blink/public/mojom/file_system_access/file_system_access_manager.mojom-forward.h"
+#include "third_party/blink/public/mojom/file_system_access/file_system_access_manager.mojom.h"
 #include "third_party/blink/public/mojom/filesystem/file_system.mojom-forward.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom-forward.h"
 #include "third_party/blink/public/mojom/locks/lock_manager.mojom-forward.h"
-#include "third_party/blink/public/mojom/native_io/native_io.mojom-forward.h"
 #include "third_party/blink/public/mojom/notifications/notification_service.mojom-forward.h"
 #include "third_party/blink/public/mojom/payments/payment_app.mojom-forward.h"
 #include "third_party/blink/public/mojom/permissions/permission.mojom-forward.h"
@@ -53,12 +53,25 @@
 #include "content/public/browser/android/child_process_importance.h"
 #endif
 
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#include "media/mojo/mojom/stable/stable_video_decoder.mojom-forward.h"
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+
+#if BUILDFLAG(IS_FUCHSIA)
+#include "media/mojo/mojom/fuchsia_media.mojom-forward.h"
+#endif
+
 class GURL;
 
 namespace base {
 class PersistentMemoryAllocator;
 class TimeDelta;
 class Token;
+#if BUILDFLAG(IS_ANDROID)
+namespace android {
+enum class ChildBindingState;
+}
+#endif
 }  // namespace base
 
 namespace blink {
@@ -73,6 +86,10 @@ namespace network {
 struct CrossOriginEmbedderPolicy;
 }  // namespace network
 
+namespace storage {
+struct BucketLocator;
+}
+
 namespace url {
 class Origin;
 }  // namespace url
@@ -80,10 +97,13 @@ class Origin;
 namespace content {
 class BrowserContext;
 class BrowserMessageFilter;
+class BucketContext;
 class IsolationContext;
 class ProcessLock;
 class RenderFrameHost;
 class RenderProcessHostObserver;
+class RenderProcessHostPriorityClient;
+class SiteInfo;
 class StoragePartition;
 struct GlobalRenderFrameHostId;
 #if BUILDFLAG(IS_ANDROID)
@@ -103,33 +123,17 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
  public:
   using iterator = base::IDMap<RenderProcessHost*>::iterator;
 
-  // Priority (or on Android, the importance) that a client contributes to this
-  // RenderProcessHost. Eg a RenderProcessHost with a visible client has higher
-  // priority / importance than a RenderProcessHost with hidden clients only.
-  struct Priority {
-    bool is_hidden;
-    unsigned int frame_depth;
-    bool intersects_viewport;
-#if BUILDFLAG(IS_ANDROID)
-    ChildProcessImportance importance;
-#endif
-  };
-
-  // Interface for a client that contributes Priority to this
-  // RenderProcessHost. Clients can call UpdateClientPriority when their
-  // Priority changes.
-  class PriorityClient {
-   public:
-    virtual Priority GetPriority() = 0;
-
-   protected:
-    virtual ~PriorityClient() {}
-  };
-
   // Crash reporting mode for ShutdownForBadMessage.
   enum class CrashReportMode {
     NO_CRASH_DUMP,
     GENERATE_CRASH_DUMP,
+  };
+
+  enum class NotificationServiceCreatorType {
+    kDocument,
+    kDedicatedWorker,
+    kSharedWorker,
+    kServiceWorker
   };
 
   // General functions ---------------------------------------------------------
@@ -173,17 +177,19 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // will be reported as well.
   virtual void ShutdownForBadMessage(CrashReportMode crash_report_mode) = 0;
 
-  // Recompute Priority state. PriorityClient should call this when their
-  // individual priority changes.
-  virtual void UpdateClientPriority(PriorityClient* client) = 0;
+  // Recompute Priority state. RenderProcessHostPriorityClient should call this
+  // when their individual priority changes.
+  virtual void UpdateClientPriority(
+      RenderProcessHostPriorityClient* client) = 0;
 
-  // Number of visible (ie |!is_hidden|) PriorityClients.
+  // Number of visible (ie |!is_hidden|) RenderProcessHostPriorityClients.
   virtual int VisibleClientCount() = 0;
 
-  // Get computed frame depth from PriorityClients.
+  // Get computed frame depth from RenderProcessHostPriorityClients.
   virtual unsigned int GetFrameDepth() = 0;
 
-  // Get computed viewport intersection state from PriorityClients.
+  // Get computed viewport intersection state from
+  // RenderProcessHostPriorityClients.
   virtual bool GetIntersectsViewport() = 0;
 
   // Called when a video capture stream or an audio stream is added or removed
@@ -275,6 +281,13 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // This will never return ChildProcessHost::kInvalidUniqueID.
   virtual int GetID() const = 0;
 
+  // Returns a SafeRef to `this`. It should only be used in non-owning cases,
+  // where the caller is not expected to outlive `this`.
+  // This method is public so that it can be called from within //content, and
+  // used by MockRenderProcessHost. It isn't meant to be called outside of
+  // //content.
+  virtual base::SafeRef<RenderProcessHost> GetSafeRef() const = 0;
+
   // Returns true iff the Init() was called and the process hasn't died yet.
   //
   // Note that even if IsInitializedAndNotDead() returns true, then (for a short
@@ -309,8 +322,10 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   virtual void RemovePendingView() = 0;
 
   // Adds and removes priority clients.
-  virtual void AddPriorityClient(PriorityClient* priority_client) = 0;
-  virtual void RemovePriorityClient(PriorityClient* priority_client) = 0;
+  virtual void AddPriorityClient(
+      RenderProcessHostPriorityClient* priority_client) = 0;
+  virtual void RemovePriorityClient(
+      RenderProcessHostPriorityClient* priority_client) = 0;
 
   // Sets a process priority override. This overrides the entire built-in
   // priority setting mechanism for the process.
@@ -322,9 +337,17 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // Return the highest importance of all widgets in this process.
   virtual ChildProcessImportance GetEffectiveImportance() = 0;
 
+  // Return the highest binding this process has.
+  virtual base::android::ChildBindingState GetEffectiveChildBindingState() = 0;
+
   // Dumps the stack of this render process without crashing it.
   virtual void DumpProcessStack() = 0;
 #endif
+
+  virtual void PauseSocketManagerForRenderFrameHost(
+      const GlobalRenderFrameHostId& render_frame_host_id) = 0;
+  virtual void ResumeSocketManagerForRenderFrameHost(
+      const GlobalRenderFrameHostId& render_frame_host_id) = 0;
 
   // Sets a flag indicating that the process can be abnormally terminated.
   virtual void SetSuddenTerminationAllowed(bool allowed) = 0;
@@ -370,7 +393,7 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   //   1. IO thread, |ChildProcessImpl::BindReceiver()| (child_thread_impl.cc)
   //   2. IO thread ,|ContentClient::BindChildProcessInterface()|
   //   3. Main thread, |ChildThreadImpl::OnBindReceiver()| (virtual)
-  //   4. Possibly more stpes, depending on the ChildThreadImpl subclass.
+  //   4. Possibly more steps, depending on the ChildThreadImpl subclass.
   virtual void BindReceiver(mojo::GenericPendingReceiver receiver) = 0;
 
   // Extracts any persistent-memory-allocator used for renderer metrics.
@@ -470,6 +493,9 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   //    process that the shared storage worklets are going to use is determined
   //    by the concrete implementation of
   //    `SharedStorageRenderThreadWorkletDriver`.
+  //  - Auction Worklets (on Android only):
+  //    (https://github.com/WICG/turtledove/blob/main/FLEDGE.md)
+  //    Keeps the renderer alive if there are any worklets using it.
   virtual void IncrementWorkerRefCount() = 0;
   virtual void DecrementWorkerRefCount() = 0;
 
@@ -532,10 +558,6 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   virtual void SetProcessLock(const IsolationContext& isolation_context,
                               const ProcessLock& process_lock) = 0;
 
-  // Enable the given list of blink runtime features
-  virtual void EnableBlinkRuntimeFeatures(
-      const std::vector<std::string>& features) = 0;
-
   // Returns the ProcessLock associated with this process.
   // This method is public so that it can be called from within //content, and
   // used by MockRenderProcessHost. It isn't meant to be called outside of
@@ -548,12 +570,16 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
 
   // The following several methods are for internal use only, and are only
   // exposed here to support MockRenderProcessHost usage in tests.
+  virtual void DelayProcessShutdown(
+      const base::TimeDelta& subframe_shutdown_timeout,
+      const base::TimeDelta& unload_handler_timeout,
+      const SiteInfo& site_info) = 0;
   virtual void StopTrackingProcessForShutdownDelay() = 0;
   virtual void BindCacheStorage(
       const network::CrossOriginEmbedderPolicy& cross_origin_embedder_policy,
       mojo::PendingRemote<network::mojom::CrossOriginEmbedderPolicyReporter>
           coep_reporter_remote,
-      const blink::StorageKey& storage_key,
+      const storage::BucketLocator& bucket_locator,
       mojo::PendingReceiver<blink::mojom::CacheStorage> receiver) = 0;
   virtual void BindFileSystemManager(
       const blink::StorageKey& storage_key,
@@ -562,14 +588,16 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
       const blink::StorageKey& storage_key,
       mojo::PendingReceiver<blink::mojom::FileSystemAccessManager>
           receiver) = 0;
-
-  // |render_frame_id| is the frame associated with |receiver|, or
-  // MSG_ROUTING_NONE if |receiver| is associated with a worker.
+  virtual void GetSandboxedFileSystemForBucket(
+      const storage::BucketLocator& bucket_locator,
+      blink::mojom::FileSystemAccessManager::GetSandboxedFileSystemCallback
+          callback) = 0;
   virtual void BindIndexedDB(
       const blink::StorageKey& storage_key,
+      const GlobalRenderFrameHostId& rfh_id,
       mojo::PendingReceiver<blink::mojom::IDBFactory> receiver) = 0;
   virtual void BindBucketManagerHost(
-      const url::Origin& origin,
+      base::WeakPtr<BucketContext> bucket_context,
       mojo::PendingReceiver<blink::mojom::BucketManagerHost> receiver) = 0;
   virtual void BindRestrictedCookieManagerForServiceWorker(
       const blink::StorageKey& storage_key,
@@ -577,6 +605,11 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
           receiver) = 0;
   virtual void BindVideoDecodePerfHistory(
       mojo::PendingReceiver<media::mojom::VideoDecodePerfHistory> receiver) = 0;
+#if BUILDFLAG(IS_FUCHSIA)
+  virtual void BindMediaCodecProvider(
+      mojo::PendingReceiver<media::mojom::FuchsiaMediaCodecProvider>
+          receiver) = 0;
+#endif
   virtual void CreateOneShotSyncService(
       const url::Origin& origin,
       mojo::PendingReceiver<blink::mojom::OneShotBackgroundSyncService>
@@ -586,8 +619,7 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
       mojo::PendingReceiver<blink::mojom::PeriodicBackgroundSyncService>
           receiver) = 0;
   virtual void BindQuotaManagerHost(
-      int render_frame_id,
-      const url::Origin& origin,
+      const blink::StorageKey& storage_key,
       mojo::PendingReceiver<blink::mojom::QuotaManagerHost> receiver) = 0;
   virtual void CreateLockManager(
       const blink::StorageKey& storage_key,
@@ -598,13 +630,24 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   virtual void CreatePaymentManagerForOrigin(
       const url::Origin& origin,
       mojo::PendingReceiver<payments::mojom::PaymentManager> receiver) = 0;
+  // `rfh_id` is the id for RenderFrameHost for the `receiver` if
+  // the notification service is created by a document, or the id for the
+  // ancestor RenderFrameHost of the worker if the notification service is
+  // created by a dedicated worker, or empty value otherwise.
   virtual void CreateNotificationService(
-      int render_frame_id,
-      const url::Origin& origin,
+      GlobalRenderFrameHostId rfh_id,
+      NotificationServiceCreatorType creator_type,
+      const blink::StorageKey& storage_key,
       mojo::PendingReceiver<blink::mojom::NotificationService> receiver) = 0;
   virtual void CreateWebSocketConnector(
       const blink::StorageKey& storage_key,
       mojo::PendingReceiver<blink::mojom::WebSocketConnector> receiver) = 0;
+
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+  virtual void CreateStableVideoDecoder(
+      mojo::PendingReceiver<media::stable::mojom::StableVideoDecoder>
+          receiver) = 0;
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 
   // Returns the current number of active views in this process.  Excludes
   // any RenderViewHosts that are swapped out.
@@ -635,6 +678,20 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // |callback| once this has completed.
   virtual void DumpProfilingData(base::OnceClosure callback) {}
 #endif
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  // Reinitializes the child process's logging with the given settings. This
+  // is needed on Chrome OS, which switches to a log file in the user's home
+  // directory once they log in.
+  virtual void ReinitializeLogging(uint32_t logging_dest,
+                                   base::ScopedFD log_file_descriptor) = 0;
+#endif
+
+  // Sets whether OS-level support is enabled for Attribution Reporting API.
+  // See
+  // https://github.com/WICG/attribution-reporting-api/blob/main/app_to_web.md.
+  virtual void SetOsSupportForAttributionReporting(
+      attribution_reporting::mojom::OsSupport os_support) = 0;
 
   // Static management functions -----------------------------------------------
 
@@ -707,7 +764,8 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // Returns true if the caller should attempt to use an existing
   // RenderProcessHost rather than creating a new one.
   static bool ShouldTryToUseExistingProcessHost(
-      content::BrowserContext* browser_context, const GURL& site_url);
+      content::BrowserContext* browser_context,
+      const GURL& site_url);
 
   // Overrides the default heuristic for limiting the max renderer process
   // count.  This is useful for unit testing process limit behaviors.  It is

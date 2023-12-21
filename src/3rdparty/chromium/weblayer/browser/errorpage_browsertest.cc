@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -79,7 +79,7 @@ class ErrorPageReloadBrowserTest : public ErrorPageBrowserTest {
       disable_auto_reload =
           std::make_unique<DisableAutoReload>(navigation_controller);
     navigation_controller->Navigate(url, params);
-    navigation.WaitForNavigationFinished();
+    EXPECT_TRUE(navigation.WaitForNavigationFinished());
     return navigation.was_successful();
   }
 

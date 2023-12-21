@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,6 +19,7 @@
 #include "components/page_load_metrics/browser/test_metrics_web_contents_observer_embedder.h"
 #include "content/public/browser/back_forward_cache.h"
 #include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/web_contents_delegate.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_features.h"
 #include "content/public/test/back_forward_cache_util.h"
@@ -30,6 +31,7 @@
 #include "services/network/public/mojom/fetch_api.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/utility/utility.h"
 #include "third_party/blink/public/common/use_counter/use_counter_feature.h"
 #include "third_party/blink/public/mojom/loader/resource_load_info.mojom.h"
 #include "third_party/blink/public/mojom/use_counter/use_counter_feature.mojom-shared.h"
@@ -111,18 +113,19 @@ class MetricsWebContentsObserverTest
   }
 
   void SimulateTimingUpdate(const mojom::PageLoadTiming& timing) {
-    SimulateTimingUpdate(timing, web_contents()->GetMainFrame());
+    SimulateTimingUpdate(timing, web_contents()->GetPrimaryMainFrame());
   }
 
   void SimulateCpuTimingUpdate(const mojom::CpuTiming& timing,
                                content::RenderFrameHost* render_frame_host) {
     observer()->OnTimingUpdated(
         render_frame_host, previous_timing_->Clone(),
-        mojom::FrameMetadataPtr(base::in_place),
+        mojom::FrameMetadataPtr(absl::in_place),
         std::vector<blink::UseCounterFeature>(),
         std::vector<mojom::ResourceDataUpdatePtr>(),
-        mojom::FrameRenderDataUpdatePtr(base::in_place), timing.Clone(),
-        mojom::InputTimingPtr(base::in_place), blink::MobileFriendliness());
+        mojom::FrameRenderDataUpdatePtr(absl::in_place), timing.Clone(),
+        mojom::InputTimingPtr(absl::in_place),
+        mojom::SubresourceLoadMetricsPtr(absl::in_place), 0);
   }
 
   void SimulateTimingUpdate(const mojom::PageLoadTiming& timing,
@@ -140,14 +143,15 @@ class MetricsWebContentsObserverTest
       const mojom::PageLoadTiming& timing,
       content::RenderFrameHost* render_frame_host) {
     previous_timing_ = timing.Clone();
-    observer()->OnTimingUpdated(render_frame_host, timing.Clone(),
-                                mojom::FrameMetadataPtr(base::in_place),
-                                std::vector<blink::UseCounterFeature>(),
-                                std::vector<mojom::ResourceDataUpdatePtr>(),
-                                mojom::FrameRenderDataUpdatePtr(base::in_place),
-                                mojom::CpuTimingPtr(base::in_place),
-                                mojom::InputTimingPtr(base::in_place),
-                                blink::MobileFriendliness());
+    observer()->OnTimingUpdated(
+        render_frame_host, timing.Clone(),
+        mojom::FrameMetadataPtr(absl::in_place),
+        std::vector<blink::UseCounterFeature>(),
+        std::vector<mojom::ResourceDataUpdatePtr>(),
+        mojom::FrameRenderDataUpdatePtr(absl::in_place),
+        mojom::CpuTimingPtr(absl::in_place),
+        mojom::InputTimingPtr(absl::in_place),
+        mojom::SubresourceLoadMetricsPtr(absl::in_place), 0);
   }
 
   virtual std::unique_ptr<TestMetricsWebContentsObserverEmbedder>
@@ -574,43 +578,6 @@ TEST_F(MetricsWebContentsObserverTest, ObservePartialNavigation) {
   ASSERT_EQ(0, CountUpdatedTimingReported());
   CheckErrorEvent(ERR_IPC_WITH_NO_RELEVANT_LOAD, 1);
   CheckTotalErrorEvents();
-}
-
-TEST_F(MetricsWebContentsObserverTest, FlushMetricsOnAppEnterBackground) {
-  content::NavigationSimulator::NavigateAndCommitFromBrowser(
-      web_contents(), GURL(kDefaultTestUrl));
-
-  histogram_tester_.ExpectTotalCount(
-      internal::kPageLoadCompletedAfterAppBackground, 0);
-
-  observer()->FlushMetricsOnAppEnterBackground();
-
-  histogram_tester_.ExpectTotalCount(
-      internal::kPageLoadCompletedAfterAppBackground, 1);
-  histogram_tester_.ExpectBucketCount(
-      internal::kPageLoadCompletedAfterAppBackground, false, 1);
-  histogram_tester_.ExpectBucketCount(
-      internal::kPageLoadCompletedAfterAppBackground, true, 0);
-
-  // Navigate again, which forces completion callbacks on the previous
-  // navigation to be invoked.
-  content::NavigationSimulator::NavigateAndCommitFromBrowser(
-      web_contents(), GURL(kDefaultTestUrl2));
-
-  // Verify that, even though the page load completed, no complete timings were
-  // reported, because the TestPageLoadMetricsObserver's
-  // FlushMetricsOnAppEnterBackground implementation returned STOP_OBSERVING,
-  // thus preventing OnComplete from being invoked.
-  ASSERT_EQ(0, CountCompleteTimingReported());
-
-  DeleteContents();
-
-  histogram_tester_.ExpectTotalCount(
-      internal::kPageLoadCompletedAfterAppBackground, 2);
-  histogram_tester_.ExpectBucketCount(
-      internal::kPageLoadCompletedAfterAppBackground, false, 1);
-  histogram_tester_.ExpectBucketCount(
-      internal::kPageLoadCompletedAfterAppBackground, true, 1);
 }
 
 TEST_F(MetricsWebContentsObserverTest, StopObservingOnCommit) {
@@ -1110,7 +1077,7 @@ TEST_F(MetricsWebContentsObserverTest,
   CheckNoErrorEvents();
 }
 
-TEST_F(MetricsWebContentsObserverTest, DISABLED_LongestInputInMainFrame) {
+TEST_F(MetricsWebContentsObserverTest, LongestInputInMainFrame) {
   // We need to navigate before we can navigate the subframe.
   content::NavigationSimulator::NavigateAndCommitFromBrowser(
       web_contents(), GURL(kDefaultTestUrl));
@@ -1293,31 +1260,31 @@ TEST_F(MetricsWebContentsObserverTest, OnLoadedResource_MainFrame) {
 
   auto navigation_simulator =
       content::NavigationSimulator::CreateRendererInitiated(
-          main_resource_url, web_contents()->GetMainFrame());
+          main_resource_url, web_contents()->GetPrimaryMainFrame());
   navigation_simulator->Start();
   navigation_simulator->Commit();
 
   const auto request_id = navigation_simulator->GetGlobalRequestID();
 
   observer()->ResourceLoadComplete(
-      web_contents()->GetMainFrame(), request_id,
+      web_contents()->GetPrimaryMainFrame(), request_id,
       *CreateResourceLoadInfo(main_resource_url,
                               network::mojom::RequestDestination::kFrame));
   EXPECT_EQ(1u, loaded_resources().size());
-  EXPECT_EQ(url::Origin::Create(main_resource_url),
-            loaded_resources().back().origin_of_final_url);
+  EXPECT_EQ(url::SchemeHostPort(main_resource_url),
+            loaded_resources().back().final_url);
 
   NavigateToUntrackedUrl();
 
   // Deliver a second main frame resource. This one should be ignored, since the
   // specified |request_id| is no longer associated with any tracked page loads.
   observer()->ResourceLoadComplete(
-      web_contents()->GetMainFrame(), request_id,
+      web_contents()->GetPrimaryMainFrame(), request_id,
       *CreateResourceLoadInfo(main_resource_url,
                               network::mojom::RequestDestination::kFrame));
   EXPECT_EQ(1u, loaded_resources().size());
-  EXPECT_EQ(url::Origin::Create(main_resource_url),
-            loaded_resources().back().origin_of_final_url);
+  EXPECT_EQ(url::SchemeHostPort(main_resource_url),
+            loaded_resources().back().final_url);
 }
 
 TEST_F(MetricsWebContentsObserverTest, OnLoadedResource_Subresource) {
@@ -1325,13 +1292,13 @@ TEST_F(MetricsWebContentsObserverTest, OnLoadedResource_Subresource) {
       web_contents(), GURL(kDefaultTestUrl));
   GURL loaded_resource_url("http://www.other.com/");
   observer()->ResourceLoadComplete(
-      web_contents()->GetMainFrame(), content::GlobalRequestID(),
+      web_contents()->GetPrimaryMainFrame(), content::GlobalRequestID(),
       *CreateResourceLoadInfo(loaded_resource_url,
                               network::mojom::RequestDestination::kScript));
 
   EXPECT_EQ(1u, loaded_resources().size());
-  EXPECT_EQ(url::Origin::Create(loaded_resource_url),
-            loaded_resources().back().origin_of_final_url);
+  EXPECT_EQ(url::SchemeHostPort(loaded_resource_url),
+            loaded_resources().back().final_url);
 }
 
 TEST_F(MetricsWebContentsObserverTest,
@@ -1339,7 +1306,7 @@ TEST_F(MetricsWebContentsObserverTest,
   content::NavigationSimulator::NavigateAndCommitFromBrowser(
       web_contents(), GURL(kDefaultTestUrl));
 
-  content::RenderFrameHost* old_rfh = web_contents()->GetMainFrame();
+  content::RenderFrameHost* old_rfh = web_contents()->GetPrimaryMainFrame();
   content::LeaveInPendingDeletionState(old_rfh);
 
   content::NavigationSimulator::NavigateAndCommitFromBrowser(
@@ -1360,7 +1327,7 @@ TEST_F(MetricsWebContentsObserverTest,
       web_contents(), GURL(kDefaultTestUrl));
   GURL loaded_resource_url("data:text/html,Hello world");
   observer()->ResourceLoadComplete(
-      web_contents()->GetMainFrame(), content::GlobalRequestID(),
+      web_contents()->GetPrimaryMainFrame(), content::GlobalRequestID(),
       *CreateResourceLoadInfo(loaded_resource_url,
                               network::mojom::RequestDestination::kScript));
 
@@ -1424,8 +1391,9 @@ class MetricsWebContentsObserverBackForwardCacheTest
  public:
   MetricsWebContentsObserverBackForwardCacheTest() {
     feature_list_.InitWithFeaturesAndParameters(
-        {{features::kBackForwardCache,
-          {{"TimeToLiveInBackForwardCacheInSeconds", "3600"}}}},
+        {{features::kBackForwardCache, {{}}},
+         {features::kBackForwardCacheTimeToLiveControl,
+          {{"time_to_live_seconds", "3600"}}}},
         // Allow BackForwardCache for all devices regardless of their memory.
         {features::kBackForwardCacheMemoryControls});
   }
@@ -1566,6 +1534,26 @@ class MetricsWebContentsObserverNonPrimaryPageTest
     explicit MetricsObserver(
         MetricsWebContentsObserverNonPrimaryPageTest* owner)
         : owner_(owner) {}
+
+    const char* GetObserverName() const override {
+      static const char kName[] =
+          "MetricsWebContentsObserverNonPrimaryPageTest::MetricsObserver";
+      return kName;
+    }
+
+    ObservePolicy OnFencedFramesStart(
+        content::NavigationHandle* navigation_handle,
+        const GURL& currently_committed_url) override {
+      // Takes the default option to test general cases.
+      return FORWARD_OBSERVING;
+    }
+
+    ObservePolicy OnPrerenderStart(
+        content::NavigationHandle* navigation_handle,
+        const GURL& currently_committed_url) override {
+      // This class's users don't need to support Prerendering yet.
+      return STOP_OBSERVING;
+    }
 
     ObservePolicy OnCommit(content::NavigationHandle* handle) override {
       committed_url_ = handle->GetURL();

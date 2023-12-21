@@ -27,99 +27,100 @@
 #include "third_party/blink/renderer/core/css/css_selector_list.h"
 
 #include <memory>
-#include "third_party/blink/renderer/core/css/parser/css_parser_selector.h"
-#include "third_party/blink/renderer/platform/wtf/allocator/partitions.h"
+#include "third_party/blink/renderer/core/css/css_selector.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
-#include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
 
-CSSSelectorList CSSSelectorList::Copy() const {
-  CSSSelectorList list;
+CSSSelectorList* CSSSelectorList::Empty() {
+  CSSSelectorList* list =
+      MakeGarbageCollected<CSSSelectorList>(base::PassKey<CSSSelectorList>());
+  new (list->first_selector_) CSSSelector();
+  list->first_selector_[0].SetMatch(CSSSelector::kInvalidList);
+  DCHECK(!list->IsValid());
+  return list;
+}
 
+CSSSelectorList* CSSSelectorList::Copy() const {
   if (!IsValid()) {
-    DCHECK(!list.IsValid());
-    return list;
+    return CSSSelectorList::Empty();
   }
 
   unsigned length = ComputeLength();
   DCHECK(length);
-  list.selector_array_ = std::make_unique<CSSSelector[]>(length);
-  for (unsigned i = 0; i < length; ++i)
-    new (&list.selector_array_[i]) CSSSelector(selector_array_[i]);
+  CSSSelectorList* list = MakeGarbageCollected<CSSSelectorList>(
+      AdditionalBytes(sizeof(CSSSelector) * (length - 1)),
+      base::PassKey<CSSSelectorList>());
+  for (unsigned i = 0; i < length; ++i) {
+    new (&list->first_selector_[i]) CSSSelector(first_selector_[i]);
+  }
 
   return list;
 }
 
-CSSSelectorList CSSSelectorList::AdoptSelectorVector(
-    Vector<std::unique_ptr<CSSParserSelector>>& selector_vector) {
-  size_t flattened_size = 0;
-  for (wtf_size_t i = 0; i < selector_vector.size(); ++i) {
-    for (CSSParserSelector* selector = selector_vector[i].get(); selector;
-         selector = selector->TagHistory())
-      ++flattened_size;
-  }
-  DCHECK(flattened_size);
-
-  CSSSelectorList list;
-  list.selector_array_ = std::make_unique<CSSSelector[]>(flattened_size);
-  wtf_size_t array_index = 0;
-  for (wtf_size_t i = 0; i < selector_vector.size(); ++i) {
-    CSSParserSelector* current = selector_vector[i].get();
-    while (current) {
-      // Move item from the parser selector vector into selector_array_ without
-      // invoking destructor (Ugh.)
-      CSSSelector* current_selector = current->ReleaseSelector().release();
-      memcpy(&list.selector_array_[array_index], current_selector,
-             sizeof(CSSSelector));
-      WTF::Partitions::FastFree(current_selector);
-
-      current = current->TagHistory();
-      DCHECK(!list.selector_array_[array_index].IsLastInSelectorList());
-      if (current)
-        list.selector_array_[array_index].SetLastInTagHistory(false);
-      ++array_index;
-    }
-    DCHECK(list.selector_array_[array_index - 1].IsLastInTagHistory());
-  }
-  DCHECK_EQ(flattened_size, array_index);
-  list.selector_array_[array_index - 1].SetLastInSelectorList(true);
-  list.selector_array_[array_index - 1].SetLastInOriginalList(true);
-  selector_vector.clear();
-
-  return list;
+void CSSSelectorList::AdoptSelectorVector(
+    base::span<CSSSelector> selector_vector,
+    CSSSelector* selector_array) {
+  std::uninitialized_move(selector_vector.begin(), selector_vector.end(),
+                          selector_array);
+  selector_array[selector_vector.size() - 1].SetLastInSelectorList(true);
 }
 
-const CSSSelector* CSSSelectorList::FirstForCSSOM() const {
-  const CSSSelector* s = First();
-  if (!s)
-    return nullptr;
-  while (Next(*s))
-    s = Next(*s);
-  if (NextInFullList(*s))
-    return NextInFullList(*s);
-  return First();
+CSSSelectorList* CSSSelectorList::AdoptSelectorVector(
+    base::span<CSSSelector> selector_vector) {
+  if (selector_vector.empty()) {
+    return CSSSelectorList::Empty();
+  }
+
+  CSSSelectorList* list = MakeGarbageCollected<CSSSelectorList>(
+      AdditionalBytes(sizeof(CSSSelector) * (selector_vector.size() - 1)),
+      base::PassKey<CSSSelectorList>());
+  AdoptSelectorVector(selector_vector, list->first_selector_);
+  return list;
 }
 
 unsigned CSSSelectorList::ComputeLength() const {
-  if (!selector_array_)
+  if (!IsValid()) {
     return 0;
+  }
   const CSSSelector* current = First();
-  while (!current->IsLastInSelectorList())
+  while (!current->IsLastInSelectorList()) {
     ++current;
+  }
   return SelectorIndex(*current) + 1;
 }
 
-String CSSSelectorList::SelectorsText() const {
+unsigned CSSSelectorList::MaximumSpecificity() const {
+  unsigned specificity = 0;
+
+  for (const CSSSelector* s = First(); s; s = Next(*s)) {
+    specificity = std::max(specificity, s->Specificity());
+  }
+
+  return specificity;
+}
+
+String CSSSelectorList::SelectorsText(const CSSSelector* first) {
   StringBuilder result;
 
-  for (const CSSSelector* s = FirstForCSSOM(); s; s = Next(*s)) {
-    if (s != FirstForCSSOM())
+  for (const CSSSelector* s = first; s; s = Next(*s)) {
+    if (s != first) {
       result.Append(", ");
+    }
     result.Append(s->SelectorText());
   }
 
   return result.ReleaseString();
+}
+
+void CSSSelectorList::Trace(Visitor* visitor) const {
+  if (!IsValid()) {
+    return;
+  }
+  const CSSSelector* current = First();
+  do {
+    visitor->Trace(*current);
+  } while (!(current++)->IsLastInSelectorList());
 }
 
 }  // namespace blink

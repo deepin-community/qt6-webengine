@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,17 +6,18 @@
 
 #include <stddef.h>
 
-#include <algorithm>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/containers/adapters.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/observer_list.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -122,7 +123,6 @@ enum BoundsCallbackIndex : int {
 
 namespace aura {
 namespace {
-static const char* kExo = "Exo";
 
 class ScopedCursorHider {
  public:
@@ -369,7 +369,7 @@ bool Window::IsVisible() const {
   // when a Window is hidden, we want this function to return false immediately
   // after, even though the client may decide to animate the hide effect (and
   // so the layer will be visible for some time after Hide() is called).
-  return visible_ ? layer()->IsDrawn() : false;
+  return visible_ ? layer()->IsVisible() : false;
 }
 
 Window::OcclusionState Window::GetOcclusionState() const {
@@ -439,18 +439,8 @@ void Window::SetTransform(const gfx::Transform& transform) {
   layer()->SetTransform(transform);
 }
 
-void Window::SetLayoutManager(LayoutManager* layout_manager) {
-  if (layout_manager == layout_manager_.get())
-    return;
-  layout_manager_.reset(layout_manager);
-  if (!layout_manager)
-    return;
-  // If we're changing to a new layout manager, ensure it is aware of all the
-  // existing child windows.
-  for (Windows::const_iterator it = children_.begin();
-       it != children_.end();
-       ++it)
-    layout_manager_->OnWindowAddedToLayout(*it);
+void Window::SetLayoutManager(std::nullptr_t) {
+  SetLayoutManagerImpl(nullptr);
 }
 
 std::unique_ptr<WindowTargeter> Window::SetEventTargeter(
@@ -1055,7 +1045,7 @@ void Window::RemoveChildImpl(Window* child, Window* new_parent) {
   if (child->OwnsLayer())
     layer()->Remove(child->layer());
   child->parent_ = nullptr;
-  auto i = std::find(children_.begin(), children_.end(), child);
+  auto i = base::ranges::find(children_, child);
   DCHECK(i != children_.end());
   children_.erase(i);
   child->OnParentChanged();
@@ -1088,9 +1078,9 @@ void Window::StackChildRelativeTo(Window* child,
     return;
 
   const size_t child_i =
-      std::find(children_.begin(), children_.end(), child) - children_.begin();
+      base::ranges::find(children_, child) - children_.begin();
   const size_t target_i =
-      std::find(children_.begin(), children_.end(), target) - children_.begin();
+      base::ranges::find(children_, target) - children_.begin();
 
   DCHECK_LT(child_i, children_.size()) << "Child was not in list of children!";
   DCHECK_LT(target_i, children_.size())
@@ -1305,7 +1295,6 @@ std::unique_ptr<cc::LayerTreeFrameSink> Window::CreateLayerTreeFrameSink() {
       Env::GetInstance()->context_factory()->GetGpuMemoryBufferManager();
   params.pipes.compositor_frame_sink_remote = std::move(sink_remote);
   params.pipes.client_receiver = std::move(client_receiver);
-  params.client_name = kExo;
   auto frame_sink =
       std::make_unique<cc::mojo_embedder::AsyncLayerTreeFrameSink>(
           nullptr /* context_provider */, nullptr /* worker_context_provider */,
@@ -1734,6 +1723,18 @@ void Window::SetY(int y) {
   if (y == bounds().y())
     return;
   SetBounds({bounds().x(), y, bounds().width(), bounds().height()});
+}
+
+void Window::SetLayoutManagerImpl(
+    std::unique_ptr<LayoutManager> layout_manager) {
+  layout_manager_ = std::move(layout_manager);
+  if (!layout_manager_)
+    return;
+  // If we're changing to a new layout manager, ensure it is aware of all the
+  // existing child windows.
+  for (Windows::const_iterator it = children_.begin(); it != children_.end();
+       ++it)
+    layout_manager_->OnWindowAddedToLayout(*it);
 }
 
 bool Window::GetCapture() const {

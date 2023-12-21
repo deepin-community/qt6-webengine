@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 #include <memory>
 #include <utility>
 
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "components/image_fetcher/core/image_fetcher.h"
 #include "components/image_fetcher/core/mock_image_fetcher.h"
 #include "components/offline_pages/core/offline_page_model.h"
@@ -74,8 +74,8 @@ PrefetchServiceTestTaco::PrefetchServiceTestTaco() {
       std::make_unique<TestPrefetchNetworkRequestFactory>(
           new network::TestSharedURLLoaderFactory, pref_service_.get());
 
-  prefetch_store_ =
-      std::make_unique<PrefetchStore>(base::ThreadTaskRunnerHandle::Get());
+  prefetch_store_ = std::make_unique<PrefetchStore>(
+      base::SingleThreadTaskRunner::GetCurrentDefault());
 
   download_service_ = std::make_unique<TestDownloadService>();
   prefetch_downloader_ = std::make_unique<PrefetchDownloaderImpl>(

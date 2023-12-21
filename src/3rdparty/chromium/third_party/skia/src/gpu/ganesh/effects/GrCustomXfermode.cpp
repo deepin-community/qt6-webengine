@@ -12,6 +12,7 @@
 #include "src/gpu/ganesh/GrFragmentProcessor.h"
 #include "src/gpu/ganesh/GrPipeline.h"
 #include "src/gpu/ganesh/GrProcessor.h"
+#include "src/gpu/ganesh/GrProcessorUnitTest.h"
 #include "src/gpu/ganesh/GrShaderCaps.h"
 #include "src/gpu/ganesh/GrXferProcessor.h"
 #include "src/gpu/ganesh/glsl/GrGLSLBlend.h"
@@ -94,7 +95,7 @@ private:
 
     void onAddToKey(const GrShaderCaps&, skgpu::KeyBuilder*) const override;
 
-    void onGetBlendInfo(BlendInfo*) const override;
+    void onGetBlendInfo(skgpu::BlendInfo*) const override;
 
     bool onIsEqual(const GrXferProcessor& xpBase) const override;
 
@@ -106,9 +107,9 @@ private:
 
 void CustomXP::onAddToKey(const GrShaderCaps& caps, skgpu::KeyBuilder* b) const {
     if (this->hasHWBlendEquation()) {
-        SkASSERT(caps.advBlendEqInteraction() > 0);  // 0 will mean !xp.hasHWBlendEquation().
+        SkASSERT(caps.fAdvBlendEqInteraction > 0);  // 0 will mean !xp.hasHWBlendEquation().
         b->addBool(true, "has hardware blend equation");
-        b->add32(caps.advBlendEqInteraction());
+        b->add32(caps.fAdvBlendEqInteraction);
     } else {
         b->addBool(false, "has hardware blend equation");
         b->add32(GrGLSLBlend::BlendKey(fMode));
@@ -185,7 +186,7 @@ GrXferBarrierType CustomXP::xferBarrierType(const GrCaps& caps) const {
     return kNone_GrXferBarrierType;
 }
 
-void CustomXP::onGetBlendInfo(BlendInfo* blendInfo) const {
+void CustomXP::onGetBlendInfo(skgpu::BlendInfo* blendInfo) const {
     if (this->hasHWBlendEquation()) {
         blendInfo->fEquation = fHWBlendEquation;
     }
@@ -355,7 +356,7 @@ GrXPFactory::AnalysisProperties CustomXPFactory::analysisProperties(
            AnalysisProperties::kReadsDstInShader;
 }
 
-GR_DEFINE_XP_FACTORY_TEST(CustomXPFactory);
+GR_DEFINE_XP_FACTORY_TEST(CustomXPFactory)
 #if GR_TEST_UTILS
 const GrXPFactory* CustomXPFactory::TestGet(GrProcessorTestData* d) {
     int mode = d->fRandom->nextRangeU((int)SkBlendMode::kLastCoeffMode + 1,

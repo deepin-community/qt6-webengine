@@ -1,4 +1,4 @@
-// Copyright 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,8 +9,8 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "cc/base/features.h"
 #include "cc/layers/video_frame_provider_client_impl.h"
@@ -19,7 +19,6 @@
 #include "cc/trees/occlusion.h"
 #include "cc/trees/task_runner_provider.h"
 #include "components/viz/client/client_resource_provider.h"
-#include "components/viz/common/quads/stream_video_draw_quad.h"
 #include "components/viz/common/quads/texture_draw_quad.h"
 #include "components/viz/common/quads/yuv_video_draw_quad.h"
 #include "media/base/video_frame.h"
@@ -142,16 +141,16 @@ void VideoLayerImpl::AppendQuads(viz::CompositorRenderPass* render_pass,
   switch (media_transform.rotation) {
     case media::VIDEO_ROTATION_90:
       rotated_size = gfx::Size(rotated_size.height(), rotated_size.width());
-      transform.RotateAboutZAxis(90.0);
+      transform *= gfx::Transform::Make90degRotation();
       transform.Translate(0.0, -rotated_size.height());
       break;
     case media::VIDEO_ROTATION_180:
-      transform.RotateAboutZAxis(180.0);
+      transform *= gfx::Transform::Make180degRotation();
       transform.Translate(-rotated_size.width(), -rotated_size.height());
       break;
     case media::VIDEO_ROTATION_270:
       rotated_size = gfx::Size(rotated_size.height(), rotated_size.width());
-      transform.RotateAboutZAxis(270.0);
+      transform *= gfx::Transform::Make270degRotation();
       transform.Translate(-rotated_size.width(), 0);
       break;
     case media::VIDEO_ROTATION_0:

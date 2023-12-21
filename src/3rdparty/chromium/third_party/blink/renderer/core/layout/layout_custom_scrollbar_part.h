@@ -43,6 +43,8 @@ class CORE_EXPORT LayoutCustomScrollbarPart final : public LayoutReplaced {
                                                     CustomScrollbar* = nullptr,
                                                     ScrollbarPart = kNoPart);
 
+  void Trace(Visitor*) const override;
+
   const char* GetName() const override {
     NOT_DESTROYED();
     return "LayoutCustomScrollbarPart";
@@ -65,6 +67,13 @@ class CORE_EXPORT LayoutCustomScrollbarPart final : public LayoutReplaced {
   // containing box, so this function can only be called after the size is
   // available.
   int ComputeLength() const;
+
+  // Update the overridden location and size.
+  void SetOverriddenFrameRect(const LayoutRect& rect);
+  // Rerturn the overridden location set by SetOverriddenFrameRect();
+  LayoutPoint Location() const override;
+  // Rerturn the overridden size set by SetOverriddenFrameRect();
+  LayoutSize Size() const override;
 
   LayoutUnit MarginTop() const override;
   LayoutUnit MarginBottom() const override;
@@ -136,9 +145,9 @@ class CORE_EXPORT LayoutCustomScrollbarPart final : public LayoutReplaced {
   int ComputeWidth(int container_width) const;
   int ComputeHeight(int container_height) const;
 
-  UntracedMember<ScrollableArea> scrollable_area_;
-  UntracedMember<CustomScrollbar> scrollbar_;
-
+  Member<ScrollableArea> scrollable_area_;
+  Member<CustomScrollbar> scrollbar_;
+  LayoutRect overridden_rect_;
   ScrollbarPart part_;
 };
 

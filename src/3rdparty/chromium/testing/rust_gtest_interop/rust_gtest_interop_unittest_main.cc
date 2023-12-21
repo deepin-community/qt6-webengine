@@ -1,9 +1,9 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/launcher/unit_test_launcher.h"
 #include "base/test/test_suite.h"
@@ -12,7 +12,7 @@
 #include <iostream>
 
 // Update this when adding a new test to rust_test_interop_unittest.rs.
-int kNumTests = 9;
+int kNumTests = 10;
 
 bool is_subprocess() {
   // The test launching process spawns a subprocess to run tests, and it

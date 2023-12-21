@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,9 @@
 #include <memory>
 #include <unordered_map>
 
-#include "base/callback_helpers.h"
 #include "base/callback_list.h"
 #include "base/cxx17_backports.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/memory/weak_ptr.h"
 #include "base/no_destructor.h"
@@ -19,18 +19,20 @@
 #include "base/strings/string_util.h"
 #include "base/threading/thread_checker.h"
 #include "build/build_config.h"
+#include "media/base/eme_constants.h"
+#include "media/base/key_system_info.h"
 #include "media/base/key_system_names.h"
-#include "media/base/key_system_properties.h"
 #include "media/base/media.h"
 #include "media/base/media_client.h"
 #include "media/base/media_switches.h"
 #include "media/base/mime_util.h"
+#include "media/cdm/clear_key_cdm_common.h"
 #include "media/media_buildflags.h"
 #include "third_party/widevine/cdm/widevine_cdm_common.h"
 
 namespace media {
 
-const char kClearKeyKeySystem[] = "org.w3.clearkey";
+namespace {
 
 // These names are used by UMA. Do not change them!
 const char kClearKeyKeySystemNameForUMA[] = "ClearKey";
@@ -63,7 +65,7 @@ static const MimeTypeToCodecs kMimeTypeToCodecsMap[] = {
     {"video/mp2t", EME_CODEC_MP2T_VIDEO_ALL},
 #endif  // BUILDFLAG(ENABLE_MSE_MPEG2TS_STREAM_PARSER)
 #endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
-};      // namespace media
+};
 
 EmeCodec ToAudioEmeCodec(AudioCodec codec) {
   switch (codec) {
@@ -85,6 +87,8 @@ EmeCodec ToAudioEmeCodec(AudioCodec codec) {
       return EME_CODEC_DTS;
     case AudioCodec::kDTSXP2:
       return EME_CODEC_DTSXP2;
+    case AudioCodec::kDTSE:
+      return EME_CODEC_DTSE;
     default:
       DVLOG(1) << "Unsupported AudioCodec " << codec;
       return EME_CODEC_NONE;
@@ -120,16 +124,19 @@ EmeCodec ToVideoEmeCodec(VideoCodec codec, VideoCodecProfile profile) {
     case VideoCodec::kDolbyVision:
       // Only profiles 0, 4, 5, 7, 8, 9 are valid. Profile 0 and 9 are encoded
       // based on AVC while profile 4, 5, 7 and 8 are based on HEVC.
-      if (profile == DOLBYVISION_PROFILE0 || profile == DOLBYVISION_PROFILE9) {
-        return EME_CODEC_DOLBY_VISION_AVC;
-      } else if (profile == DOLBYVISION_PROFILE4 ||
-                 profile == DOLBYVISION_PROFILE5 ||
-                 profile == DOLBYVISION_PROFILE7 ||
-                 profile == DOLBYVISION_PROFILE8) {
-        return EME_CODEC_DOLBY_VISION_HEVC;
-      } else {
-        return EME_CODEC_NONE;
-      }
+      if (profile == DOLBYVISION_PROFILE0)
+        return EME_CODEC_DOLBY_VISION_PROFILE0;
+      if (profile == DOLBYVISION_PROFILE4)
+        return EME_CODEC_DOLBY_VISION_PROFILE4;
+      if (profile == DOLBYVISION_PROFILE5)
+        return EME_CODEC_DOLBY_VISION_PROFILE5;
+      if (profile == DOLBYVISION_PROFILE7)
+        return EME_CODEC_DOLBY_VISION_PROFILE7;
+      if (profile == DOLBYVISION_PROFILE8)
+        return EME_CODEC_DOLBY_VISION_PROFILE8;
+      if (profile == DOLBYVISION_PROFILE9)
+        return EME_CODEC_DOLBY_VISION_PROFILE9;
+      return EME_CODEC_NONE;
     case VideoCodec::kAV1:
       return EME_CODEC_AV1;
     default:
@@ -138,7 +145,7 @@ EmeCodec ToVideoEmeCodec(VideoCodec codec, VideoCodecProfile profile) {
   }
 }
 
-class ClearKeyProperties : public KeySystemProperties {
+class ClearKeyKeySystemInfo : public KeySystemInfo {
  public:
   std::string GetBaseKeySystemName() const final { return kClearKeyKeySystem; }
 
@@ -148,17 +155,18 @@ class ClearKeyProperties : public KeySystemProperties {
            init_data_type == EmeInitDataType::KEYIDS;
   }
 
-  media::EmeConfigRule GetEncryptionSchemeConfigRule(
-      media::EncryptionScheme encryption_scheme) const final {
+  EmeConfig::Rule GetEncryptionSchemeConfigRule(
+      EncryptionScheme encryption_scheme) const final {
     switch (encryption_scheme) {
-      case media::EncryptionScheme::kCenc:
-      case media::EncryptionScheme::kCbcs:
-        return media::EmeConfigRule::SUPPORTED;
-      case media::EncryptionScheme::kUnencrypted:
+      case EncryptionScheme::kCenc:
+      case EncryptionScheme::kCbcs: {
+        return EmeConfig::SupportedRule();
+      }
+      case EncryptionScheme::kUnencrypted:
         break;
     }
     NOTREACHED();
-    return media::EmeConfigRule::NOT_SUPPORTED;
+    return EmeConfig::UnsupportedRule();
   }
 
   SupportedCodecs GetSupportedCodecs() const final {
@@ -168,17 +176,20 @@ class ClearKeyProperties : public KeySystemProperties {
     return EME_CODEC_WEBM_ALL | EME_CODEC_MP4_ALL;
   }
 
-  EmeConfigRule GetRobustnessConfigRule(
+  EmeConfig::Rule GetRobustnessConfigRule(
       const std::string& key_system,
       EmeMediaType media_type,
       const std::string& requested_robustness,
       const bool* /*hw_secure_requirement*/) const final {
-    return requested_robustness.empty() ? EmeConfigRule::SUPPORTED
-                                        : EmeConfigRule::NOT_SUPPORTED;
+    if (requested_robustness.empty()) {
+      return EmeConfig::SupportedRule();
+    } else {
+      return EmeConfig::UnsupportedRule();
+    }
   }
 
-  EmeSessionTypeSupport GetPersistentLicenseSessionSupport() const final {
-    return EmeSessionTypeSupport::NOT_SUPPORTED;
+  EmeConfig::Rule GetPersistentLicenseSessionSupport() const final {
+    return EmeConfig::UnsupportedRule();
   }
 
   EmeFeatureSupport GetPersistentStateSupport() const final {
@@ -220,10 +231,12 @@ static bool IsPotentiallySupportedKeySystem(const std::string& key_system) {
   if (key_system == kWidevineKeySystem)
     return true;
 
-  if (key_system == kClearKeyKeySystem)
+  if (key_system == kClearKeyKeySystem) {
     return true;
+  }
 
-  // External Clear Key is known and supports suffixes for testing.
+  // External or MediaFoundation Clear Key is known and supports suffixes for
+  // testing.
   if (IsExternalClearKey(key_system))
     return true;
 
@@ -241,18 +254,20 @@ static bool IsPotentiallySupportedKeySystem(const std::string& key_system) {
 }
 
 // Returns whether distinctive identifiers and persistent state can be reliably
-// blocked for |properties| (and therefore be safely configurable).
-static bool CanBlock(const KeySystemProperties& properties) {
+// blocked for |key_system_info| (and therefore be safely configurable).
+static bool CanBlock(const KeySystemInfo& key_system_info) {
   // When AesDecryptor is used, we are sure we can block.
-  if (properties.UseAesDecryptor())
+  if (key_system_info.UseAesDecryptor()) {
     return true;
+  }
 
   // For External Clear Key, it is either implemented as a library CDM (Clear
   // Key CDM), which is covered above, or by using AesDecryptor remotely, e.g.
   // via MojoCdm. In both cases, we can block. This is only used for testing.
-  if (base::FeatureList::IsEnabled(media::kExternalClearKeyForTesting) &&
-      IsExternalClearKey(properties.GetBaseKeySystemName()))
+  if (base::FeatureList::IsEnabled(kExternalClearKeyForTesting) &&
+      IsExternalClearKey(key_system_info.GetBaseKeySystemName())) {
     return true;
+  }
 
 #if BUILDFLAG(ENABLE_LIBRARY_CDMS)
   // When library CDMs are enabled, we are either using AesDecryptor, or using
@@ -282,38 +297,37 @@ class KeySystemsImpl : public KeySystems {
   bool CanUseAesDecryptor(const std::string& key_system) const override;
   bool IsSupportedInitDataType(const std::string& key_system,
                                EmeInitDataType init_data_type) const override;
-  EmeConfigRule GetEncryptionSchemeConfigRule(
+  EmeConfig::Rule GetEncryptionSchemeConfigRule(
       const std::string& key_system,
       EncryptionScheme encryption_scheme) const override;
-  EmeConfigRule GetContentTypeConfigRule(
+  EmeConfig::Rule GetContentTypeConfigRule(
       const std::string& key_system,
       EmeMediaType media_type,
       const std::string& container_mime_type,
       const std::vector<std::string>& codecs) const override;
-  EmeConfigRule GetRobustnessConfigRule(
+  EmeConfig::Rule GetRobustnessConfigRule(
       const std::string& key_system,
       EmeMediaType media_type,
       const std::string& requested_robustness,
       const bool* hw_secure_requirement) const override;
-  EmeSessionTypeSupport GetPersistentLicenseSessionSupport(
+  EmeConfig::Rule GetPersistentLicenseSessionSupport(
       const std::string& key_system) const override;
   EmeFeatureSupport GetPersistentStateSupport(
       const std::string& key_system) const override;
   EmeFeatureSupport GetDistinctiveIdentifierSupport(
       const std::string& key_system) const override;
 
-  // These two functions are for testing purpose only.
+  // These functions are for testing purpose only.
   void AddCodecMaskForTesting(EmeMediaType media_type,
                               const std::string& codec,
                               uint32_t mask);
   void AddMimeTypeCodecMaskForTesting(const std::string& mime_type,
                                       uint32_t mask);
+  void ResetForTesting();
 
  private:
   friend class base::NoDestructor<KeySystemsImpl>;
 
-  using KeySystemPropertiesMap =
-      std::unordered_map<std::string, std::unique_ptr<KeySystemProperties>>;
   using MimeTypeToCodecsMap = std::unordered_map<std::string, SupportedCodecs>;
   using CodecMap = std::unordered_map<std::string, EmeCodec>;
   using InitDataTypesMap = std::unordered_map<std::string, EmeInitDataType>;
@@ -321,12 +335,13 @@ class KeySystemsImpl : public KeySystems {
   KeySystemsImpl();
   ~KeySystemsImpl() override;
 
-  void UpdateSupportedKeySystems();
-  void OnSupportedKeySystemsUpdated(KeySystemPropertiesVector key_systems);
-  void ProcessSupportedKeySystems(KeySystemPropertiesVector key_systems);
+  void Initialize();
 
-  const KeySystemProperties* GetKeySystemProperties(
-      const std::string& key_system) const;
+  void UpdateSupportedKeySystems();
+  void OnSupportedKeySystemsUpdated(KeySystemInfos key_systems);
+  void ProcessSupportedKeySystems(KeySystemInfos key_systems);
+
+  const KeySystemInfo* GetKeySystemInfo(const std::string& key_system) const;
 
   void RegisterMimeType(const std::string& mime_type, SupportedCodecs codecs);
   bool IsValidMimeTypeCodecsCombination(const std::string& mime_type,
@@ -349,8 +364,8 @@ class KeySystemsImpl : public KeySystems {
   // Pending callbacks for UpdateIfNeeded() calls.
   base::OnceClosureList update_callbacks_;
 
-  // Map from key system string to KeySystemProperties instance.
-  KeySystemPropertiesMap key_system_properties_map_;
+  // Vector of KeySystemInfo .
+  KeySystemInfos key_system_info_vector_;
 
   // This member should only be modified by RegisterMimeType().
   MimeTypeToCodecsMap mime_type_to_codecs_map_;
@@ -373,15 +388,19 @@ KeySystemsImpl* KeySystemsImpl::GetInstance() {
 }
 
 KeySystemsImpl::KeySystemsImpl() {
-  for (const auto& entry : kMimeTypeToCodecsMap)
-    RegisterMimeType(entry.mime_type, entry.codecs);
-
-  UpdateSupportedKeySystems();
+  Initialize();
 }
 
 KeySystemsImpl::~KeySystemsImpl() {
   if (!update_callbacks_.empty())
     update_callbacks_.Notify();
+}
+
+void KeySystemsImpl::Initialize() {
+  for (const auto& [mime_type, codecs] : kMimeTypeToCodecsMap)
+    RegisterMimeType(mime_type, codecs);
+
+  UpdateSupportedKeySystems();
 }
 
 void KeySystemsImpl::UpdateSupportedKeySystems() {
@@ -462,84 +481,68 @@ EmeCodec KeySystemsImpl::GetEmeCodecForString(
   return ToVideoEmeCodec(video_codec, profile);
 }
 
-void KeySystemsImpl::OnSupportedKeySystemsUpdated(
-    KeySystemPropertiesVector key_systems) {
+void KeySystemsImpl::OnSupportedKeySystemsUpdated(KeySystemInfos key_systems) {
   DVLOG(1) << __func__;
 
   is_updating_ = false;
 
   // Clear Key is always supported.
-  key_systems.emplace_back(new ClearKeyProperties());
+  key_systems.emplace_back(std::make_unique<ClearKeyKeySystemInfo>());
 
   ProcessSupportedKeySystems(std::move(key_systems));
 
   update_callbacks_.Notify();
 }
 
-void KeySystemsImpl::ProcessSupportedKeySystems(
-    KeySystemPropertiesVector key_systems) {
+void KeySystemsImpl::ProcessSupportedKeySystems(KeySystemInfos key_systems) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  // Clear `key_system_properties_map_` before we repopulating it.
-  key_system_properties_map_.clear();
+  // Clear `key_system_info_vector_` before repopulating it.
+  key_system_info_vector_.clear();
 
-  for (auto& properties : key_systems) {
-    DCHECK(!properties->GetBaseKeySystemName().empty());
-    DCHECK(properties->GetPersistentLicenseSessionSupport() !=
-           EmeSessionTypeSupport::INVALID);
-    DCHECK(properties->GetPersistentStateSupport() !=
+  for (auto& key_system : key_systems) {
+    DCHECK(!key_system->GetBaseKeySystemName().empty());
+    DCHECK(key_system->GetPersistentStateSupport() !=
            EmeFeatureSupport::INVALID);
-    DCHECK(properties->GetDistinctiveIdentifierSupport() !=
+    DCHECK(key_system->GetDistinctiveIdentifierSupport() !=
            EmeFeatureSupport::INVALID);
 
-    if (!IsPotentiallySupportedKeySystem(properties->GetBaseKeySystemName())) {
+    if (!IsPotentiallySupportedKeySystem(key_system->GetBaseKeySystemName())) {
       // If you encounter this path, see the comments for the function above.
-      DLOG(ERROR) << "Unsupported name '" << properties->GetBaseKeySystemName()
+      DLOG(ERROR) << "Unsupported name '" << key_system->GetBaseKeySystemName()
                   << "'. See code comments.";
       continue;
     }
 
     // Supporting persistent state is a prerequisite for supporting persistent
     // sessions.
-    if (properties->GetPersistentStateSupport() ==
+    if (key_system->GetPersistentStateSupport() ==
         EmeFeatureSupport::NOT_SUPPORTED) {
-      DCHECK(properties->GetPersistentLicenseSessionSupport() ==
-             EmeSessionTypeSupport::NOT_SUPPORTED);
+      DCHECK(!key_system->GetPersistentLicenseSessionSupport().has_value());
     }
 
-    // If distinctive identifiers are not supported, then no other features can
-    // require them.
-    if (properties->GetDistinctiveIdentifierSupport() ==
-        EmeFeatureSupport::NOT_SUPPORTED) {
-      DCHECK(properties->GetPersistentLicenseSessionSupport() !=
-             EmeSessionTypeSupport::SUPPORTED_WITH_IDENTIFIER);
-    }
-
-    if (!CanBlock(*properties)) {
-      DCHECK(properties->GetDistinctiveIdentifierSupport() ==
+    if (!CanBlock(*key_system)) {
+      DCHECK(key_system->GetDistinctiveIdentifierSupport() ==
              EmeFeatureSupport::ALWAYS_ENABLED);
-      DCHECK(properties->GetPersistentStateSupport() ==
+      DCHECK(key_system->GetPersistentStateSupport() ==
              EmeFeatureSupport::ALWAYS_ENABLED);
     }
 
-    const auto base_key_system_name = properties->GetBaseKeySystemName();
-    DCHECK(!key_system_properties_map_.count(base_key_system_name))
-        << "Key system '" << base_key_system_name << "' already registered";
+    const auto base_key_system_name = key_system->GetBaseKeySystemName();
     DVLOG(1) << __func__ << ": Adding key system " << base_key_system_name;
-    key_system_properties_map_[base_key_system_name] = std::move(properties);
+    key_system_info_vector_.push_back(std::move(key_system));
   }
 }
 
-const KeySystemProperties* KeySystemsImpl::GetKeySystemProperties(
+const KeySystemInfo* KeySystemsImpl::GetKeySystemInfo(
     const std::string& key_system) const {
   DCHECK(!is_updating_);
-  for (const auto& entry : key_system_properties_map_) {
-    const auto& base_key_system = entry.first;
-    const auto* properties = entry.second.get();
+  for (const auto& key_system_info : key_system_info_vector_) {
+    const auto& base_key_system = key_system_info->GetBaseKeySystemName();
     if ((key_system == base_key_system ||
          IsSubKeySystemOf(key_system, base_key_system)) &&
-        properties->IsSupportedKeySystem(key_system)) {
-      return properties;
+        key_system_info->IsSupportedKeySystem(key_system)) {
+      return key_system_info.get();
     }
   }
 
@@ -581,27 +584,27 @@ bool KeySystemsImpl::IsSupportedInitDataType(
     EmeInitDataType init_data_type) const {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  const auto* properties = GetKeySystemProperties(key_system);
-  if (!properties) {
+  const auto* key_system_info = GetKeySystemInfo(key_system);
+  if (!key_system_info) {
     NOTREACHED();
     return false;
   }
 
-  return properties->IsSupportedInitDataType(init_data_type);
+  return key_system_info->IsSupportedInitDataType(init_data_type);
 }
 
-EmeConfigRule KeySystemsImpl::GetEncryptionSchemeConfigRule(
+EmeConfig::Rule KeySystemsImpl::GetEncryptionSchemeConfigRule(
     const std::string& key_system,
     EncryptionScheme encryption_scheme) const {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  const auto* properties = GetKeySystemProperties(key_system);
-  if (!properties) {
+  const auto* key_system_info = GetKeySystemInfo(key_system);
+  if (!key_system_info) {
     NOTREACHED();
-    return EmeConfigRule::NOT_SUPPORTED;
+    return EmeConfig::UnsupportedRule();
   }
 
-  return properties->GetEncryptionSchemeConfigRule(encryption_scheme);
+  return key_system_info->GetEncryptionSchemeConfigRule(encryption_scheme);
 }
 
 void KeySystemsImpl::AddCodecMaskForTesting(EmeMediaType media_type,
@@ -623,51 +626,65 @@ void KeySystemsImpl::AddMimeTypeCodecMaskForTesting(
   RegisterMimeType(mime_type, static_cast<EmeCodec>(codecs_mask));
 }
 
+void KeySystemsImpl::ResetForTesting() {
+  weak_factory_.InvalidateWeakPtrs();
+  is_updating_ = false;
+  DCHECK(update_callbacks_.empty())
+      << "Should have no update callbacks for a clean test.";
+  key_system_info_vector_.clear();
+  mime_type_to_codecs_map_.clear();
+  codec_map_for_testing_.clear();
+  audio_codec_mask_ = EME_CODEC_AUDIO_ALL;
+  video_codec_mask_ = EME_CODEC_VIDEO_ALL;
+
+  Initialize();
+}
+
 std::string KeySystemsImpl::GetBaseKeySystemName(
     const std::string& key_system) const {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  const auto* properties = GetKeySystemProperties(key_system);
-  if (!properties) {
+  const auto* key_system_info = GetKeySystemInfo(key_system);
+  if (!key_system_info) {
     NOTREACHED() << "Key system support should have been checked";
     return key_system;
   }
 
-  return properties->GetBaseKeySystemName();
+  return key_system_info->GetBaseKeySystemName();
 }
 
 bool KeySystemsImpl::IsSupportedKeySystem(const std::string& key_system) const {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  return GetKeySystemProperties(key_system);
+  return GetKeySystemInfo(key_system);
 }
 
 bool KeySystemsImpl::ShouldUseBaseKeySystemName(
     const std::string& key_system) const {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  const auto* properties = GetKeySystemProperties(key_system);
-  if (!properties) {
+  const auto* key_system_info = GetKeySystemInfo(key_system);
+  if (!key_system_info) {
     NOTREACHED() << "Key system support should have been checked";
     return false;
   }
 
-  return properties->ShouldUseBaseKeySystemName();
+  return key_system_info->ShouldUseBaseKeySystemName();
 }
 
 bool KeySystemsImpl::CanUseAesDecryptor(const std::string& key_system) const {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  const auto* properties = GetKeySystemProperties(key_system);
-  if (!properties) {
+  const auto* key_system_info = GetKeySystemInfo(key_system);
+  if (!key_system_info) {
     DLOG(ERROR) << key_system << " is not a known supported key system";
     return false;
   }
 
-  return properties->UseAesDecryptor();
+  return key_system_info->UseAesDecryptor();
 }
 
-EmeConfigRule KeySystemsImpl::GetContentTypeConfigRule(
+EmeConfig::Rule KeySystemsImpl::GetContentTypeConfigRule(
     const std::string& key_system,
     EmeMediaType media_type,
     const std::string& container_mime_type,
@@ -678,27 +695,29 @@ EmeConfigRule KeySystemsImpl::GetContentTypeConfigRule(
   switch (media_type) {
     case EmeMediaType::AUDIO:
       if (!base::StartsWith(container_mime_type, "audio/",
-                            base::CompareCase::SENSITIVE))
-        return EmeConfigRule::NOT_SUPPORTED;
+                            base::CompareCase::SENSITIVE)) {
+        return EmeConfig::UnsupportedRule();
+      }
       break;
     case EmeMediaType::VIDEO:
       if (!base::StartsWith(container_mime_type, "video/",
-                            base::CompareCase::SENSITIVE))
-        return EmeConfigRule::NOT_SUPPORTED;
+                            base::CompareCase::SENSITIVE)) {
+        return EmeConfig::UnsupportedRule();
+      }
       break;
   }
 
   // Double check whether the key system is supported.
-  const auto* properties = GetKeySystemProperties(key_system);
-  if (!properties) {
+  const auto* key_system_info = GetKeySystemInfo(key_system);
+  if (!key_system_info) {
     NOTREACHED() << "Key system support should have been checked";
-    return EmeConfigRule::NOT_SUPPORTED;
+    return EmeConfig::UnsupportedRule();
   }
 
   // Look up the key system's supported codecs and secure codecs.
-  SupportedCodecs key_system_codec_mask = properties->GetSupportedCodecs();
+  SupportedCodecs key_system_codec_mask = key_system_info->GetSupportedCodecs();
   SupportedCodecs key_system_hw_secure_codec_mask =
-      properties->GetSupportedHwSecureCodecs();
+      key_system_info->GetSupportedHwSecureCodecs();
 
   // Check that the container is supported by the key system. (This check is
   // necessary because |codecs| may be empty.)
@@ -707,7 +726,7 @@ EmeConfigRule KeySystemsImpl::GetContentTypeConfigRule(
   if ((key_system_codec_mask & mime_type_codec_mask) == 0) {
     DVLOG(2) << "Container " << container_mime_type << " not supported by "
              << key_system;
-    return EmeConfigRule::NOT_SUPPORTED;
+    return EmeConfig::UnsupportedRule();
   }
 
   // Check that the codecs are supported by the key system and container based
@@ -717,13 +736,13 @@ EmeConfigRule KeySystemsImpl::GetContentTypeConfigRule(
   //       yes        |         no             | HW_SECURE_CODECS_NOT_ALLOWED
   //       no         |         yes            | HW_SECURE_CODECS_REQUIRED
   //       no         |         no             | NOT_SUPPORTED
-  EmeConfigRule support = EmeConfigRule::SUPPORTED;
-  for (size_t i = 0; i < codecs.size(); i++) {
+  auto to_support = EmeConfig::SupportedRule();
+  for (auto& codec_iterator : codecs) {
     EmeCodec codec =
-        GetEmeCodecForString(media_type, container_mime_type, codecs[i]);
+        GetEmeCodecForString(media_type, container_mime_type, codec_iterator);
     if (codec == EME_CODEC_NONE) {
-      DVLOG(2) << "Unsupported codec string \"" << codecs[i] << "\"";
-      return EmeConfigRule::NOT_SUPPORTED;
+      DVLOG(2) << "Unsupported codec string \"" << codec_iterator << "\"";
+      return EmeConfig::UnsupportedRule();
     }
 
     // Currently all EmeCodecs only have one bit set. In case there could be
@@ -734,91 +753,95 @@ EmeConfigRule KeySystemsImpl::GetContentTypeConfigRule(
         (codec & key_system_hw_secure_codec_mask & mime_type_codec_mask) !=
             codec) {
       DVLOG(2) << "Container/codec pair (" << container_mime_type << " / "
-               << codecs[i] << ") not supported by " << key_system;
-      return EmeConfigRule::NOT_SUPPORTED;
+               << codec_iterator << ") not supported by " << key_system;
+      return EmeConfig::UnsupportedRule();
     }
 
     // Check whether the codec supports a hardware-secure mode (any level).
     if ((codec & key_system_hw_secure_codec_mask) != codec) {
       DCHECK_EQ(codec & key_system_codec_mask, codec);
-      if (support == EmeConfigRule::HW_SECURE_CODECS_REQUIRED)
-        return EmeConfigRule::NOT_SUPPORTED;
-      support = EmeConfigRule::HW_SECURE_CODECS_NOT_ALLOWED;
+      if (to_support->hw_secure_codecs == EmeConfigRuleState::kRequired) {
+        return EmeConfig::UnsupportedRule();
+      }
+
+      to_support->hw_secure_codecs = EmeConfigRuleState::kNotAllowed;
     }
 
     // Check whether the codec requires a hardware-secure mode (any level).
     if ((codec & key_system_codec_mask) != codec) {
       DCHECK_EQ(codec & key_system_hw_secure_codec_mask, codec);
-      if (support == EmeConfigRule::HW_SECURE_CODECS_NOT_ALLOWED)
-        return EmeConfigRule::NOT_SUPPORTED;
-      support = EmeConfigRule::HW_SECURE_CODECS_REQUIRED;
+      if (to_support->hw_secure_codecs == EmeConfigRuleState::kNotAllowed) {
+        return EmeConfig::UnsupportedRule();
+      }
+
+      to_support->hw_secure_codecs = EmeConfigRuleState::kRequired;
     }
   }
 
-  return support;
+  return to_support;
 }
 
-EmeConfigRule KeySystemsImpl::GetRobustnessConfigRule(
+EmeConfig::Rule KeySystemsImpl::GetRobustnessConfigRule(
     const std::string& key_system,
     EmeMediaType media_type,
     const std::string& requested_robustness,
     const bool* hw_secure_requirement) const {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  const auto* properties = GetKeySystemProperties(key_system);
-  if (!properties) {
+  const auto* key_system_info = GetKeySystemInfo(key_system);
+  if (!key_system_info) {
     NOTREACHED();
-    return EmeConfigRule::NOT_SUPPORTED;
+    return EmeConfig::UnsupportedRule();
   }
 
-  return properties->GetRobustnessConfigRule(
+  return key_system_info->GetRobustnessConfigRule(
       key_system, media_type, requested_robustness, hw_secure_requirement);
 }
 
-EmeSessionTypeSupport KeySystemsImpl::GetPersistentLicenseSessionSupport(
+EmeConfig::Rule KeySystemsImpl::GetPersistentLicenseSessionSupport(
     const std::string& key_system) const {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  const auto* properties = GetKeySystemProperties(key_system);
-  if (!properties) {
+  const auto* key_system_info = GetKeySystemInfo(key_system);
+  if (!key_system_info) {
     NOTREACHED();
-    return EmeSessionTypeSupport::INVALID;
+    return EmeConfig::UnsupportedRule();
   }
 
-  return properties->GetPersistentLicenseSessionSupport();
+  return key_system_info->GetPersistentLicenseSessionSupport();
 }
 
 EmeFeatureSupport KeySystemsImpl::GetPersistentStateSupport(
     const std::string& key_system) const {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  const auto* properties = GetKeySystemProperties(key_system);
-  if (!properties) {
+  const auto* key_system_info = GetKeySystemInfo(key_system);
+  if (!key_system_info) {
     NOTREACHED();
     return EmeFeatureSupport::INVALID;
   }
 
-  return properties->GetPersistentStateSupport();
+  return key_system_info->GetPersistentStateSupport();
 }
 
 EmeFeatureSupport KeySystemsImpl::GetDistinctiveIdentifierSupport(
     const std::string& key_system) const {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  const auto* properties = GetKeySystemProperties(key_system);
-  if (!properties) {
+  const auto* key_system_info = GetKeySystemInfo(key_system);
+  if (!key_system_info) {
     NOTREACHED();
     return EmeFeatureSupport::INVALID;
   }
 
-  return properties->GetDistinctiveIdentifierSupport();
+  return key_system_info->GetDistinctiveIdentifierSupport();
 }
+
+}  // namespace
 
 KeySystems* KeySystems::GetInstance() {
   return KeySystemsImpl::GetInstance();
 }
-
-//------------------------------------------------------------------------------
 
 bool IsSupportedKeySystemWithInitDataType(const std::string& key_system,
                                           EmeInitDataType init_data_type) {
@@ -845,8 +868,9 @@ std::string GetKeySystemNameForUMA(const std::string& key_system,
   // For Clear Key and unknown key systems we don't to differentiate between
   // software and hardware security.
 
-  if (key_system == kClearKeyKeySystem)
+  if (key_system == kClearKeyKeySystem) {
     return kClearKeyKeySystemNameForUMA;
+  }
 
   return kUnknownKeySystemNameForUMA;
 }
@@ -855,8 +879,9 @@ int GetKeySystemIntForUKM(const std::string& key_system) {
   if (key_system == kWidevineKeySystem)
     return KeySystemForUkm::kWidevineKeySystemForUkm;
 
-  if (key_system == kClearKeyKeySystem)
+  if (key_system == kClearKeyKeySystem) {
     return KeySystemForUkm::kClearKeyKeySystemForUkm;
+  }
 
   return KeySystemForUkm::kUnknownKeySystemForUkm;
 }
@@ -865,7 +890,7 @@ bool CanUseAesDecryptor(const std::string& key_system) {
   return KeySystemsImpl::GetInstance()->CanUseAesDecryptor(key_system);
 }
 
-// These two functions are for testing purpose only. The declaration in the
+// These three functions are for testing purpose only. The declaration in the
 // header file is guarded by "#if defined(UNIT_TEST)" so that they can be used
 // by tests but not non-test code. However, this .cc file is compiled as part of
 // "media" where "UNIT_TEST" is not defined. So we need to specify
@@ -882,6 +907,10 @@ MEDIA_EXPORT void AddMimeTypeCodecMaskForTesting(const std::string& mime_type,
                                                  uint32_t mask) {
   KeySystemsImpl::GetInstance()->AddMimeTypeCodecMaskForTesting(mime_type,
                                                                 mask);
+}
+
+MEDIA_EXPORT void ResetKeySystemsForTesting() {
+  KeySystemsImpl::GetInstance()->ResetForTesting();
 }
 
 }  // namespace media

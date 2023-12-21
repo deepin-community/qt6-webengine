@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,12 +26,17 @@ public class ChromeSwitchPreference extends SwitchPreferenceCompat {
     @ColorRes
     private Integer mBackgroundColorRes;
 
+    /** Indicates if the preference uses a custom layout. */
+    private final boolean mHasCustomLayout;
+
     public ChromeSwitchPreference(Context context) {
-        super(context);
+        this(context, null);
     }
 
     public ChromeSwitchPreference(Context context, AttributeSet attrs) {
         super(context, attrs);
+
+        mHasCustomLayout = ManagedPreferencesUtils.isCustomLayoutApplied(context, attrs);
     }
 
     /**
@@ -39,7 +44,8 @@ public class ChromeSwitchPreference extends SwitchPreferenceCompat {
      */
     public void setManagedPreferenceDelegate(ManagedPreferenceDelegate delegate) {
         mManagedPrefDelegate = delegate;
-        ManagedPreferencesUtils.initPreference(mManagedPrefDelegate, this);
+        ManagedPreferencesUtils.initPreference(mManagedPrefDelegate, this,
+                /*allowManagedIcon=*/true, /*hasCustomLayout=*/mHasCustomLayout);
     }
 
     @Override
@@ -59,7 +65,8 @@ public class ChromeSwitchPreference extends SwitchPreferenceCompat {
 
         mView = holder.itemView;
         updateBackground();
-        ManagedPreferencesUtils.onBindViewToPreference(mManagedPrefDelegate, this, mView);
+
+        ManagedPreferencesUtils.onBindViewToPreference(mManagedPrefDelegate, this, holder.itemView);
     }
 
     @Override

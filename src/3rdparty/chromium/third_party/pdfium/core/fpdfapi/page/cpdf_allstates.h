@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,7 +20,8 @@ class CPDF_AllStates final : public CPDF_GraphicStates {
   ~CPDF_AllStates() override;
 
   void Copy(const CPDF_AllStates& src);
-  void ProcessExtGS(CPDF_Dictionary* pGS, CPDF_StreamContentParser* pParser);
+  void ProcessExtGS(const CPDF_Dictionary* pGS,
+                    CPDF_StreamContentParser* pParser);
   void SetLineDash(const CPDF_Array* pArray, float phase, float scale);
 
   CFX_Matrix m_TextMatrix;

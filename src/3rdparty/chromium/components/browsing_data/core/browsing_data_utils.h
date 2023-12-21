@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,8 @@
 #include "build/build_config.h"
 #include "components/browsing_data/core/clear_browsing_data_tab.h"
 #include "components/browsing_data/core/counters/browsing_data_counter.h"
+#include "net/cookies/cookie_constants.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace browsing_data {
 
@@ -44,7 +46,8 @@ enum class TimePeriod {
   FOUR_WEEKS,
   ALL_TIME,
   OLDER_THAN_30_DAYS,
-  TIME_PERIOD_LAST = OLDER_THAN_30_DAYS
+  LAST_15_MINUTES,
+  TIME_PERIOD_LAST = LAST_15_MINUTES
 };
 
 // Calculate the begin time for the deletion range specified by |time_period|.
@@ -76,8 +79,11 @@ bool GetDeletionPreferenceFromDataType(
     ClearBrowsingDataTab clear_browsing_data_tab,
     std::string* out_pref);
 
-BrowsingDataType GetDataTypeFromDeletionPreference(
+// Returns a BrowsingDataType if a type matching |pref_name| is found.
+absl::optional<BrowsingDataType> GetDataTypeFromDeletionPreference(
     const std::string& pref_name);
+
+bool IsHttpsCookieSourceScheme(net::CookieSourceScheme cookie_source_scheme);
 
 }  // namespace browsing_data
 

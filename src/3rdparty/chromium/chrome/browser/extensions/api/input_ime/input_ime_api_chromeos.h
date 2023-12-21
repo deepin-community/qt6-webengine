@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -150,40 +150,6 @@ class InputMethodPrivateFinishComposingTextFunction : public ExtensionFunction {
  private:
   DECLARE_EXTENSION_FUNCTION("inputMethodPrivate.finishComposingText",
                              INPUTMETHODPRIVATE_FINISHCOMPOSINGTEXT)
-};
-
-class InputMethodPrivateNotifyImeMenuItemActivatedFunction
-    : public ExtensionFunction {
- public:
-  InputMethodPrivateNotifyImeMenuItemActivatedFunction() = default;
-
-  InputMethodPrivateNotifyImeMenuItemActivatedFunction(
-      const InputMethodPrivateNotifyImeMenuItemActivatedFunction&) = delete;
-  InputMethodPrivateNotifyImeMenuItemActivatedFunction& operator=(
-      const InputMethodPrivateNotifyImeMenuItemActivatedFunction&) = delete;
-
- protected:
-  ~InputMethodPrivateNotifyImeMenuItemActivatedFunction() override = default;
-
-  // ExtensionFunction:
-  ResponseAction Run() override;
-
- private:
-  DECLARE_EXTENSION_FUNCTION("inputMethodPrivate.notifyImeMenuItemActivated",
-                             INPUTMETHODPRIVATE_NOTIFYIMEMENUITEMACTIVATED)
-};
-
-class InputMethodPrivateGetCompositionBoundsFunction
-    : public ExtensionFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION("inputMethodPrivate.getCompositionBounds",
-                             INPUTMETHODPRIVATE_GETCOMPOSITIONBOUNDS)
-
- protected:
-  ~InputMethodPrivateGetCompositionBoundsFunction() override = default;
-
-  // ExtensionFunction:
-  ResponseAction Run() override;
 };
 
 class InputImeEventRouter {

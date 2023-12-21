@@ -44,7 +44,7 @@
 #include "third_party/blink/renderer/core/frame/dom_timer.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/page_dismissal_scope.h"
-#include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
+#include "third_party/blink/renderer/core/frame/policy_container.h"
 #include "third_party/blink/renderer/core/messaging/message_port.h"
 #include "third_party/blink/renderer/core/trustedtypes/trusted_types_util.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
@@ -133,8 +133,7 @@ String WindowOrWorkerGlobalScope::atob(EventTarget&,
     return String();
   }
   Vector<char> out;
-  if (!Base64Decode(encoded_string, out, IsHTMLSpace<UChar>,
-                    kBase64ValidatePadding)) {
+  if (!Base64Decode(encoded_string, out, Base64DecodePolicy::kForgiving)) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidCharacterError,
         "The string to be decoded is not correctly encoded.");
@@ -169,7 +168,7 @@ int WindowOrWorkerGlobalScope::setTimeout(ScriptState* script_state,
     return 0;
   // Don't allow setting timeouts to run empty functions.  Was historically a
   // performance issue.
-  if (handler.IsEmpty())
+  if (handler.empty())
     return 0;
   auto* action = MakeGarbageCollected<ScheduledAction>(
       script_state, execution_context, handler);
@@ -202,7 +201,7 @@ int WindowOrWorkerGlobalScope::setInterval(ScriptState* script_state,
     return 0;
   // Don't allow setting timeouts to run empty functions.  Was historically a
   // performance issue.
-  if (handler.IsEmpty())
+  if (handler.empty())
     return 0;
   auto* action = MakeGarbageCollected<ScheduledAction>(
       script_state, execution_context, handler);
@@ -225,6 +224,23 @@ void WindowOrWorkerGlobalScope::clearInterval(EventTarget& event_target,
 bool WindowOrWorkerGlobalScope::crossOriginIsolated(
     const ExecutionContext& execution_context) {
   return execution_context.CrossOriginIsolatedCapability();
+}
+
+// See https://github.com/whatwg/html/issues/7912
+// static
+String WindowOrWorkerGlobalScope::crossOriginEmbedderPolicy(
+    const ExecutionContext& execution_context) {
+  const PolicyContainer* policy_container =
+      execution_context.GetPolicyContainer();
+  CHECK(policy_container);
+  switch (policy_container->GetPolicies().cross_origin_embedder_policy.value) {
+    case network::mojom::CrossOriginEmbedderPolicyValue::kNone:
+      return "unsafe-none";
+    case network::mojom::CrossOriginEmbedderPolicyValue::kCredentialless:
+      return "credentialless";
+    case network::mojom::CrossOriginEmbedderPolicyValue::kRequireCorp:
+      return "require-corp";
+  }
 }
 
 ScriptValue WindowOrWorkerGlobalScope::structuredClone(

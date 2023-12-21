@@ -1,12 +1,13 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/webcodecs/decoder_selector.h"
 
-#include "base/bind.h"
 #include "base/check_op.h"
+#include "base/functional/bind.h"
 #include "base/notreached.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "media/base/channel_layout.h"
 #include "media/base/demuxer_stream.h"
@@ -30,7 +31,7 @@ class NullDemuxerStream : public media::DemuxerStream {
 
   ~NullDemuxerStream() override = default;
 
-  void Read(ReadCB read_cb) override { NOTREACHED(); }
+  void Read(uint32_t count, ReadCB read_cb) override { NOTREACHED(); }
 
   void Configure(DecoderConfigType config);
 
@@ -104,11 +105,11 @@ void DecoderSelector<StreamType>::SelectDecoder(
   demuxer_stream_->Configure(config);
   demuxer_stream_->set_low_delay(low_delay);
 
-  // media::DecoderSelector will call back with a null decoder if selection is
+  // media::DecoderSelector will call back with a DecoderStatus if selection is
   // in progress when it is destructed.
-  impl_.SelectDecoder(
-      WTF::Bind(&DecoderSelector<StreamType>::OnDecoderSelected,
-                weak_factory_.GetWeakPtr(), std::move(select_decoder_cb)),
+  impl_.BeginDecoderSelection(
+      WTF::BindOnce(&DecoderSelector<StreamType>::OnDecoderSelected,
+                    weak_factory_.GetWeakPtr(), std::move(select_decoder_cb)),
       output_cb_);
 }
 
@@ -130,7 +131,7 @@ DecoderSelector<media::DemuxerStream::VIDEO>::CreateStreamTraits() {
 template <media::DemuxerStream::Type StreamType>
 void DecoderSelector<StreamType>::OnDecoderSelected(
     SelectDecoderCB select_decoder_cb,
-    std::unique_ptr<Decoder> decoder,
+    DecoderOrError decoder_or_error,
     std::unique_ptr<media::DecryptingDemuxerStream> decrypting_demuxer_stream) {
   DCHECK(!decrypting_demuxer_stream);
 
@@ -140,7 +141,11 @@ void DecoderSelector<StreamType>::OnDecoderSelected(
   // (configure() no longer takes a promise).
   impl_.FinalizeDecoderSelection();
 
-  std::move(select_decoder_cb).Run(std::move(decoder));
+  if (!decoder_or_error.has_value()) {
+    std::move(select_decoder_cb).Run(nullptr);
+  } else {
+    std::move(select_decoder_cb).Run(std::move(decoder_or_error).value());
+  }
 }
 
 template class MODULES_EXPORT DecoderSelector<media::DemuxerStream::VIDEO>;

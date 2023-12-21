@@ -1,19 +1,19 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "sandbox/win/src/broker_services.h"
-
-#include <aclapi.h>
 
 #include <stddef.h>
 
 #include <utility>
 
 #include "base/check_op.h"
+#include "base/containers/contains.h"
 #include "base/memory/ptr_util.h"
 #include "base/notreached.h"
 #include "base/threading/platform_thread.h"
+#include "base/win/access_token.h"
 #include "base/win/current_module.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/scoped_process_information.h"
@@ -28,6 +28,7 @@
 #include "sandbox/win/src/target_process.h"
 #include "sandbox/win/src/threadpool.h"
 #include "sandbox/win/src/win_utils.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace {
 
@@ -185,9 +186,7 @@ DWORD WINAPI TargetEventsThread(PVOID param) {
       // (as the key is no longer valid). We therefore check if the tracker has
       // already been deleted. Note that Windows may emit notifications after
       // 'job finished' (active process zero), so not every case is unexpected.
-      if (std::find_if(jobs.begin(), jobs.end(), [&](auto&& p) -> bool {
-            return p.get() == tracker;
-          }) == jobs.end()) {
+      if (!base::Contains(jobs, tracker, &std::unique_ptr<JobTracker>::get)) {
         // CHECK if job already deleted.
         CHECK_NE(static_cast<int>(event), JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO);
         // Continue to next notification otherwise.
@@ -410,7 +409,7 @@ BrokerServicesBase::~BrokerServicesBase() {
   ::PostQueuedCompletionStatus(job_port_.Get(), 0, THREAD_CTRL_QUIT, nullptr);
 
   if (job_thread_.IsValid() &&
-      WAIT_TIMEOUT == ::WaitForSingleObject(job_thread_.Get(), 1000)) {
+      WAIT_TIMEOUT == ::WaitForSingleObject(job_thread_.Get(), 5000)) {
     // Cannot clean broker services.
     NOTREACHED();
     return;
@@ -418,9 +417,30 @@ BrokerServicesBase::~BrokerServicesBase() {
 }
 
 std::unique_ptr<TargetPolicy> BrokerServicesBase::CreatePolicy() {
+  return CreatePolicy("");
+}
+
+std::unique_ptr<TargetPolicy> BrokerServicesBase::CreatePolicy(
+    base::StringPiece tag) {
   // If you change the type of the object being created here you must also
   // change the downcast to it in SpawnTarget().
-  return std::make_unique<PolicyBase>();
+  auto policy = std::make_unique<PolicyBase>(tag);
+  // Empty key implies we will not use the store. The policy will need
+  // to look after its config.
+  if (!tag.empty()) {
+    // Otherwise the broker owns the memory, not the policy.
+    auto found = config_cache_.find(tag);
+    ConfigBase* shared_config = nullptr;
+    if (found == config_cache_.end()) {
+      auto new_config = std::make_unique<ConfigBase>();
+      shared_config = new_config.get();
+      config_cache_[std::string(tag)] = std::move(new_config);
+      policy->SetConfig(shared_config);
+    } else {
+      policy->SetConfig(found->second.get());
+    }
+  }
+  return policy;
 }
 
 // SpawnTarget does all the interesting sandbox setup and creates the target
@@ -428,7 +448,6 @@ std::unique_ptr<TargetPolicy> BrokerServicesBase::CreatePolicy() {
 ResultCode BrokerServicesBase::SpawnTarget(const wchar_t* exe_path,
                                            const wchar_t* command_line,
                                            std::unique_ptr<TargetPolicy> policy,
-                                           ResultCode* last_warning,
                                            DWORD* last_error,
                                            PROCESS_INFORMATION* target_info) {
   if (!exe_path)
@@ -450,6 +469,12 @@ ResultCode BrokerServicesBase::SpawnTarget(const wchar_t* exe_path,
   policy_base.reset(static_cast<PolicyBase*>(policy.release()));
   // |policy| cannot be used from here onwards.
 
+  ConfigBase* config_base = static_cast<ConfigBase*>(policy_base->GetConfig());
+  if (!config_base->IsConfigured()) {
+    if (!config_base->Freeze())
+      return SBOX_ERROR_FAILED_TO_FREEZE_CONFIG;
+  }
+
   // Even though the resources touched by SpawnTarget can be accessed in
   // multiple threads, the method itself cannot be called from more than one
   // thread. This is to protect the global variables used while setting up the
@@ -457,7 +482,6 @@ ResultCode BrokerServicesBase::SpawnTarget(const wchar_t* exe_path,
   // correctly.
   static DWORD thread_id = ::GetCurrentThreadId();
   DCHECK(thread_id == ::GetCurrentThreadId());
-  *last_warning = SBOX_ALL_OK;
 
   // Launcher thread only needs to be opted out of ACG once. Do this on the
   // first child process being spawned.
@@ -472,20 +496,18 @@ ResultCode BrokerServicesBase::SpawnTarget(const wchar_t* exe_path,
 
   // Construct the tokens and the job object that we are going to associate
   // with the soon to be created target process.
-  base::win::ScopedHandle initial_token;
-  base::win::ScopedHandle lockdown_token;
-  base::win::ScopedHandle lowbox_token;
+  absl::optional<base::win::AccessToken> initial_token;
+  absl::optional<base::win::AccessToken> lockdown_token;
   ResultCode result = SBOX_ALL_OK;
 
-  result =
-      policy_base->MakeTokens(&initial_token, &lockdown_token, &lowbox_token);
+  result = policy_base->MakeTokens(initial_token, lockdown_token);
   if (SBOX_ALL_OK != result)
     return result;
-  if (lowbox_token.IsValid() &&
-      base::win::GetVersion() < base::win::Version::WIN8) {
-    // We don't allow lowbox_token below Windows 8.
-    return SBOX_ERROR_BAD_PARAMS;
-  }
+
+  result = UpdateDesktopIntegrity(config_base->desktop(),
+                                  config_base->integrity_level());
+  if (result != SBOX_ALL_OK)
+    return result;
 
   result = policy_base->InitJob();
   if (SBOX_ALL_OK != result)
@@ -496,11 +518,12 @@ ResultCode BrokerServicesBase::SpawnTarget(const wchar_t* exe_path,
 
   // We don't want any child processes causing the IDC_APPSTARTING cursor.
   startup_info->UpdateFlags(STARTF_FORCEOFFFEEDBACK);
-  startup_info->SetDesktop(policy_base->GetAlternateDesktop());
-  startup_info->SetMitigations(policy_base->GetProcessMitigations());
+  startup_info->SetDesktop(GetDesktopName(config_base->desktop()));
+  startup_info->SetMitigations(config_base->GetProcessMitigations());
+  startup_info->SetFilterEnvironment(config_base->GetEnvironmentFiltered());
 
   if (base::win::GetVersion() >= base::win::Version::WIN10_TH2 &&
-      policy_base->GetJobLevel() <= JobLevel::kLimitedUser) {
+      config_base->GetJobLevel() <= JobLevel::kLimitedUser) {
     startup_info->SetRestrictChildProcessCreation(true);
   }
 
@@ -512,15 +535,12 @@ ResultCode BrokerServicesBase::SpawnTarget(const wchar_t* exe_path,
   for (HANDLE handle : policy_handle_list)
     startup_info->AddInheritedHandle(handle);
 
-  scoped_refptr<AppContainer> container = policy_base->GetAppContainer();
+  scoped_refptr<AppContainer> container = config_base->GetAppContainer();
   if (container)
     startup_info->SetAppContainer(container);
 
-  // On Win10, jobs are associated via startup_info.
-  if (base::win::GetVersion() >= base::win::Version::WIN10 &&
-      policy_base->HasJob()) {
+  if (policy_base->HasJob())
     startup_info->AddJobToAssociate(policy_base->GetJobHandle());
-  }
 
   if (!startup_info->BuildStartupInformation())
     return SBOX_ERROR_PROC_THREAD_ATTRIBUTES;
@@ -528,16 +548,8 @@ ResultCode BrokerServicesBase::SpawnTarget(const wchar_t* exe_path,
   // Create the TargetProcess object and spawn the target suspended. Note that
   // Brokerservices does not own the target object. It is owned by the Policy.
   base::win::ScopedProcessInformation process_info;
-  std::vector<base::win::Sid> imp_caps;
-  if (container) {
-    for (const base::win::Sid& sid :
-         container->GetImpersonationCapabilities()) {
-      imp_caps.push_back(sid.Clone());
-    }
-  }
   std::unique_ptr<TargetProcess> target = std::make_unique<TargetProcess>(
-      std::move(initial_token), std::move(lockdown_token),
-      policy_base->GetJobHandle(), thread_pool_, imp_caps);
+      std::move(*initial_token), std::move(*lockdown_token), thread_pool_);
 
   result = target->Create(exe_path, command_line, std::move(startup_info),
                           &process_info, last_error);
@@ -548,7 +560,7 @@ ResultCode BrokerServicesBase::SpawnTarget(const wchar_t* exe_path,
   }
 
   if (policy_base->HasJob() &&
-      policy_base->GetJobLevel() <= JobLevel::kLimitedUser) {
+      config_base->GetJobLevel() <= JobLevel::kLimitedUser) {
     // Restrict the job from containing any processes. Job restrictions
     // are only applied at process creation, so the target process is
     // unaffected.
@@ -557,15 +569,6 @@ ResultCode BrokerServicesBase::SpawnTarget(const wchar_t* exe_path,
       target->Terminate();
       return result;
     }
-  }
-
-  if (lowbox_token.IsValid()) {
-    *last_warning = target->AssignLowBoxToken(lowbox_token);
-    // If this fails we continue, but report the error as a warning.
-    // This is due to certain configurations causing the setting of the
-    // token to fail post creation, and we'd rather continue if possible.
-    if (*last_warning != SBOX_ALL_OK)
-      *last_error = ::GetLastError();
   }
 
   // Now the policy is the owner of the target. TargetProcess will terminate
@@ -632,6 +635,86 @@ ResultCode BrokerServicesBase::GetPolicyDiagnostics(
   // Ownership has passed to tracker thread.
   receiver.release();
   return SBOX_ALL_OK;
+}
+
+void BrokerServicesBase::SetStartingMitigations(
+    sandbox::MitigationFlags starting_mitigations) {
+  sandbox::SetStartingMitigations(starting_mitigations);
+}
+
+bool BrokerServicesBase::RatchetDownSecurityMitigations(
+    MitigationFlags additional_flags) {
+  return sandbox::RatchetDownSecurityMitigations(additional_flags);
+}
+
+std::wstring BrokerServicesBase::GetDesktopName(Desktop desktop) {
+  switch (desktop) {
+    case Desktop::kDefault:
+      // No alternate desktop or winstation. Return an empty string.
+      return std::wstring();
+    case Desktop::kAlternateWinstation:
+      return alt_winstation_->GetDesktopName();
+    case Desktop::kAlternateDesktop:
+      return alt_desktop_->GetDesktopName();
+  }
+}
+
+ResultCode BrokerServicesBase::UpdateDesktopIntegrity(
+    Desktop desktop,
+    IntegrityLevel integrity) {
+  // If we're launching on an alternate desktop we need to make sure the
+  // integrity label on the object is no higher than the sandboxed process's
+  // integrity level. So, we lower the label on the desktop handle if it's
+  // not already low enough for our process.
+  if (integrity == INTEGRITY_LEVEL_LAST)
+    return SBOX_ALL_OK;
+  switch (desktop) {
+    case Desktop::kDefault:
+      return SBOX_ALL_OK;
+    case Desktop::kAlternateWinstation:
+      return alt_winstation_->UpdateDesktopIntegrity(integrity);
+    case Desktop::kAlternateDesktop:
+      return alt_desktop_->UpdateDesktopIntegrity(integrity);
+  }
+}
+
+ResultCode BrokerServicesBase::CreateAlternateDesktop(Desktop desktop) {
+  switch (desktop) {
+    case Desktop::kAlternateWinstation: {
+      // If already populated keep going.
+      if (alt_winstation_)
+        return SBOX_ALL_OK;
+      alt_winstation_ = std::make_unique<AlternateDesktop>();
+      ResultCode result = alt_winstation_->Initialize(true);
+      if (result != SBOX_ALL_OK)
+        alt_winstation_.reset();
+      return result;
+    };
+    case Desktop::kAlternateDesktop: {
+      // If already populated keep going.
+      if (alt_desktop_)
+        return SBOX_ALL_OK;
+      alt_desktop_ = std::make_unique<AlternateDesktop>();
+      ResultCode result = alt_desktop_->Initialize(false);
+      if (result != SBOX_ALL_OK)
+        alt_desktop_.reset();
+      return result;
+    };
+    case Desktop::kDefault:
+      // The default desktop always exists.
+      return SBOX_ALL_OK;
+  }
+}
+
+void BrokerServicesBase::DestroyDesktops() {
+  alt_winstation_.reset();
+  alt_desktop_.reset();
+}
+
+// static
+void BrokerServicesBase::FreezeTargetConfigForTesting(TargetConfig* config) {
+  CHECK(!config->IsConfigured());
+  static_cast<ConfigBase*>(config)->Freeze();
 }
 
 }  // namespace sandbox

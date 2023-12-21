@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,11 +15,9 @@ import "ash/components/arc/mojom/backup_settings.mojom";
 import "ash/components/arc/mojom/bluetooth.mojom";
 import "ash/components/arc/mojom/boot_phase_monitor.mojom";
 import "ash/components/arc/mojom/camera.mojom";
-import "ash/components/arc/mojom/cert_store.mojom";
 import "ash/components/arc/mojom/clipboard.mojom";
 import "ash/components/arc/mojom/compatibility_mode.mojom";
 import "ash/components/arc/mojom/crash_collector.mojom";
-import "ash/components/arc/mojom/dark_theme.mojom";
 import "ash/components/arc/mojom/digital_goods.mojom";
 import "ash/components/arc/mojom/disk_quota.mojom";
 import "ash/components/arc/mojom/enterprise_reporting.mojom";
@@ -30,6 +28,7 @@ import "ash/components/arc/mojom/input_method_manager.mojom";
 import "ash/components/arc/mojom/intent_helper.mojom";
 import "ash/components/arc/mojom/keyboard_shortcut.mojom";
 import "ash/components/arc/mojom/keymaster.mojom";
+import "ash/components/arc/mojom/keymint.mojom";
 import "ash/components/arc/mojom/kiosk.mojom";
 import "ash/components/arc/mojom/lock_screen.mojom";
 import "ash/components/arc/mojom/media_session.mojom";
@@ -51,9 +50,9 @@ import "ash/components/arc/mojom/process.mojom";
 import "ash/components/arc/mojom/property.mojom";
 import "ash/components/arc/mojom/rotation_lock.mojom";
 import "ash/components/arc/mojom/screen_capture.mojom";
-import "ash/components/arc/mojom/sensor.mojom";
 import "ash/components/arc/mojom/sharesheet.mojom";
 import "ash/components/arc/mojom/storage_manager.mojom";
+import "ash/components/arc/mojom/system_ui.mojom";
 import "ash/components/arc/mojom/timer.mojom";
 import "ash/components/arc/mojom/tracing.mojom";
 import "ash/components/arc/mojom/tts.mojom";
@@ -64,9 +63,9 @@ import "ash/components/arc/mojom/wake_lock.mojom";
 import "ash/components/arc/mojom/wallpaper.mojom";
 import "ash/components/arc/mojom/webapk.mojom";
 
-// Next MinVersion: 62
-// Deprecated method IDs: 101, 105, 121, 132
-// Next method ID: 167
+// Next MinVersion: 64
+// Deprecated method IDs: 101, 105, 121, 132, 136, 153, 154, 160
+// Next method ID: 169
 interface ArcBridgeHost {
   // Keep the entries alphabetical. In order to do so without breaking
   // compatibility with the ARC instance, explicitly assign each interface a
@@ -115,10 +114,6 @@ interface ArcBridgeHost {
   [MinVersion=46] OnCameraInstanceReady@151(
       pending_remote<CameraInstance> instance_remote);
 
-  // Notifies Chrome that the CertStoreInstance interface is ready.
-  [MinVersion=31] OnCertStoreInstanceReady@136(
-      pending_remote<CertStoreInstance> instance_remote);
-
   // Notifies Chrome that the ClipboardInstance interface is ready.
   [MinVersion=2] OnClipboardInstanceReady@109(
       pending_remote<ClipboardInstance> instance_remote);
@@ -130,10 +125,6 @@ interface ArcBridgeHost {
   // Notifies Chrome that the CrashCollectorInstance interface is ready.
   [MinVersion=7] OnCrashCollectorInstanceReady@112(
       pending_remote<CrashCollectorInstance> instance_remote);
-
-  // Notifies Chrome that the DarkThemeInstance interface is ready.
-  [MinVersion=55] OnDarkThemeInstanceReady@160(
-      pending_remote<DarkThemeInstance> instance_remote);
 
   // Notifies Chrome that the DigitalGoodsInstance interface is ready.
   [MinVersion=51] OnDigitalGoodsInstanceReady@156(
@@ -174,6 +165,10 @@ interface ArcBridgeHost {
   // Notifies Chrome that the KeymasterInstance interface is ready.
   [MinVersion=47] OnKeymasterInstanceReady@152(
       pending_remote<KeymasterInstance> instance_remote);
+
+  // Notifies Chrome that the KeyMintInstance interface is ready.
+  [MinVersion=63] OnKeyMintInstanceReady@168(
+      pending_remote<keymint.KeyMintInstance> instance_remote);
 
   // Notifies Chrome that the KioskInstance interface is ready.
   [MinVersion=20] OnKioskInstanceReady@126(
@@ -257,21 +252,17 @@ interface ArcBridgeHost {
   [MinVersion=35] OnScreenCaptureInstanceReady@140(
       pending_remote<ScreenCaptureInstance> instance_remote);
 
-  // Notifies Chrome that the SensorInstance interface is ready.
-  [MinVersion=49] OnSensorInstanceReady@154(
-      pending_remote<SensorInstance> instance_ptr);
-
   // Notifies Chrome that the SharesheetInstance interface is ready.
   [MinVersion=52] OnSharesheetInstanceReady@157(
       pending_remote<SharesheetInstance> instance_remote);
 
-  // Notifies Chrome that the SmartCardManagerInstance interface is ready.
-  [MinVersion=48] OnSmartCardManagerInstanceReady@153(
-      pending_remote<SmartCardManagerInstance> instance_remote);
-
   // Notifies Chrome that the StorageManagerInstance interface is ready.
   [MinVersion=12] OnStorageManagerInstanceReady@118(
       pending_remote<StorageManagerInstance> instance_remote);
+
+  // Notifies Chrome that the SystemUiInstance interface is ready.
+  [MinVersion=62] OnSystemUiInstanceReady@167(
+      pending_remote<SystemUiInstance> instance_remote);
 
   // Notifies Chrome that the TimerInstance interface is ready.
   [MinVersion=36] OnTimerInstanceReady@141(

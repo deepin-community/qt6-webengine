@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -27,6 +27,7 @@
 #include "components/signin/public/base/signin_client.h"
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/primary_account_change_event.h"
+#include "third_party/abseil-cpp/absl/types/variant.h"
 
 class AccountTrackerService;
 class PrefRegistrySimple;
@@ -34,7 +35,7 @@ class PrefService;
 class ProfileOAuth2TokenService;
 
 namespace signin_metrics {
-enum ProfileSignout : int;
+enum class ProfileSignout;
 enum class SignoutDelete;
 }  // namespace signin_metrics
 
@@ -99,7 +100,8 @@ class PrimaryAccountManager : public ProfileOAuth2TokenServiceObserver {
   // user has consented for sync already, then use ClearPrimaryAccount() or
   // RevokeSync() instead.
   void SetPrimaryAccountInfo(const CoreAccountInfo& account_info,
-                             signin::ConsentLevel consent_level);
+                             signin::ConsentLevel consent_level,
+                             signin_metrics::AccessPoint access_point);
 
   // Updates the primary account information from AccountTrackerService.
   void UpdatePrimaryAccountInfo();
@@ -126,6 +128,8 @@ class PrimaryAccountManager : public ProfileOAuth2TokenServiceObserver {
   void RemoveObserver(Observer* observer);
 
  private:
+  class ScopedPrefCommit;
+
   // Sets the primary account id, when the user has consented to sync.
   // If the user has consented for sync with the same account, then this method
   // is a no-op.
@@ -136,7 +140,8 @@ class PrimaryAccountManager : public ProfileOAuth2TokenServiceObserver {
 
   // Sets |primary_account_info_| and updates the associated preferences.
   void SetPrimaryAccountInternal(const CoreAccountInfo& account_info,
-                                 bool consented_to_sync);
+                                 bool consented_to_sync,
+                                 ScopedPrefCommit& scoped_pref_commit);
 
   // Starts the sign out process.
   void StartSignOut(signin_metrics::ProfileSignout signout_source_metric,
@@ -155,7 +160,9 @@ class PrimaryAccountManager : public ProfileOAuth2TokenServiceObserver {
 
   // Fires OnPrimaryAccountChanged() notifications on all observers.
   void FirePrimaryAccountChanged(
-      const signin::PrimaryAccountChangeEvent::State& previous_state);
+      const signin::PrimaryAccountChangeEvent::State& previous_state,
+      absl::variant<signin_metrics::AccessPoint, signin_metrics::ProfileSignout>
+          event_source);
 
   // ProfileOAuth2TokenServiceObserver:
   void OnRefreshTokensLoaded() override;

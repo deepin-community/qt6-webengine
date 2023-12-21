@@ -1,27 +1,27 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef UI_OZONE_PLATFORM_DRM_GPU_DRM_GPU_UTIL_H_
 #define UI_OZONE_PLATFORM_DRM_GPU_DRM_GPU_UTIL_H_
 
-#include "base/trace_event/traced_value.h"
-#include "ui/ozone/platform/drm/common//drm_util.h"
+#include "third_party/perfetto/include/perfetto/tracing/traced_value_forward.h"
+#include "ui/ozone/platform/drm/common/drm_util.h"
+#include "ui/ozone/platform/drm/common/drm_wrapper.h"
 #include "ui/ozone/platform/drm/common/scoped_drm_types.h"
-#include "ui/ozone/platform/drm/gpu/drm_device.h"
 
 namespace ui {
 
 // Helper function that finds the property with the specified name.
-bool GetDrmPropertyForName(DrmDevice* drm,
+bool GetDrmPropertyForName(DrmWrapper* drm,
                            drmModeObjectProperties* properties,
                            const std::string& name,
-                           DrmDevice::Property* property);
+                           DrmWrapper::Property* property);
 
 // If the |property| has a valid ID add it to the |property_set| request.
 bool AddPropertyIfValid(drmModeAtomicReq* property_set,
                         uint32_t object_id,
-                        const DrmDevice::Property& property);
+                        const DrmWrapper::Property& property);
 
 // Transforms the gamma ramp entries into the drm_color_lut format.
 ScopedDrmColorLutPtr CreateLutBlob(
@@ -41,10 +41,11 @@ std::vector<display::GammaRampRGBEntry> ResampleLut(
 // Returns the display infos parsed in
 // |GetDisplayInfosAndInvalidCrtcs| and disables the invalid CRTCs
 // that weren't picked as preferred CRTCs.
-HardwareDisplayControllerInfoList GetDisplayInfosAndUpdateCrtcs(int fd);
+HardwareDisplayControllerInfoList GetDisplayInfosAndUpdateCrtcs(
+    DrmWrapper& drm);
 
-void DrmAsValueIntoHelper(const drmModeModeInfo& mode_info,
-                          base::trace_event::TracedValue* value);
+void DrmWriteIntoTraceHelper(const drmModeModeInfo& mode_info,
+                             perfetto::TracedValue context);
 
 }  // namespace ui
 

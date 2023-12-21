@@ -24,15 +24,12 @@ namespace {
 using LocalizeStructArrayAssignmentTest = TransformTest;
 
 TEST_F(LocalizeStructArrayAssignmentTest, EmptyModule) {
-  auto* src = R"()";
-  auto* expect = src;
-  auto got =
-      Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
-  EXPECT_EQ(expect, str(got));
+    auto* src = R"()";
+    EXPECT_FALSE(ShouldRun<LocalizeStructArrayAssignment>(src));
 }
 
 TEST_F(LocalizeStructArrayAssignmentTest, StructArray) {
-  auto* src = R"(
+    auto* src = R"(
 struct Uniforms {
   i : u32,
 };
@@ -47,7 +44,7 @@ struct OuterS {
 
 @group(1) @binding(4) var<uniform> uniforms : Uniforms;
 
-@stage(compute) @workgroup_size(1)
+@compute @workgroup_size(1)
 fn main() {
   var v : InnerS;
   var s1 : OuterS;
@@ -55,7 +52,7 @@ fn main() {
 }
 )";
 
-  auto* expect = R"(
+    auto* expect = R"(
 struct Uniforms {
   i : u32,
 }
@@ -70,7 +67,7 @@ struct OuterS {
 
 @group(1) @binding(4) var<uniform> uniforms : Uniforms;
 
-@stage(compute) @workgroup_size(1)
+@compute @workgroup_size(1)
 fn main() {
   var v : InnerS;
   var s1 : OuterS;
@@ -83,14 +80,13 @@ fn main() {
 }
 )";
 
-  auto got =
-      Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
-  EXPECT_EQ(expect, str(got));
+    auto got = Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
+    EXPECT_EQ(expect, str(got));
 }
 
 TEST_F(LocalizeStructArrayAssignmentTest, StructArray_OutOfOrder) {
-  auto* src = R"(
-@stage(compute) @workgroup_size(1)
+    auto* src = R"(
+@compute @workgroup_size(1)
 fn main() {
   var v : InnerS;
   var s1 : OuterS;
@@ -112,8 +108,8 @@ struct Uniforms {
 };
 )";
 
-  auto* expect = R"(
-@stage(compute) @workgroup_size(1)
+    auto* expect = R"(
+@compute @workgroup_size(1)
 fn main() {
   var v : InnerS;
   var s1 : OuterS;
@@ -140,13 +136,12 @@ struct Uniforms {
 }
 )";
 
-  auto got =
-      Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
-  EXPECT_EQ(expect, str(got));
+    auto got = Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
+    EXPECT_EQ(expect, str(got));
 }
 
 TEST_F(LocalizeStructArrayAssignmentTest, StructStructArray) {
-  auto* src = R"(
+    auto* src = R"(
 struct Uniforms {
   i : u32,
 };
@@ -165,7 +160,7 @@ struct OuterS {
 
 @group(1) @binding(4) var<uniform> uniforms : Uniforms;
 
-@stage(compute) @workgroup_size(1)
+@compute @workgroup_size(1)
 fn main() {
   var v : InnerS;
   var s1 : OuterS;
@@ -173,7 +168,7 @@ fn main() {
 }
 )";
 
-  auto* expect = R"(
+    auto* expect = R"(
 struct Uniforms {
   i : u32,
 }
@@ -192,7 +187,7 @@ struct OuterS {
 
 @group(1) @binding(4) var<uniform> uniforms : Uniforms;
 
-@stage(compute) @workgroup_size(1)
+@compute @workgroup_size(1)
 fn main() {
   var v : InnerS;
   var s1 : OuterS;
@@ -205,14 +200,13 @@ fn main() {
 }
 )";
 
-  auto got =
-      Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
-  EXPECT_EQ(expect, str(got));
+    auto got = Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
+    EXPECT_EQ(expect, str(got));
 }
 
 TEST_F(LocalizeStructArrayAssignmentTest, StructStructArray_OutOfOrder) {
-  auto* src = R"(
-@stage(compute) @workgroup_size(1)
+    auto* src = R"(
+@compute @workgroup_size(1)
 fn main() {
   var v : InnerS;
   var s1 : OuterS;
@@ -238,8 +232,8 @@ struct Uniforms {
 };
 )";
 
-  auto* expect = R"(
-@stage(compute) @workgroup_size(1)
+    auto* expect = R"(
+@compute @workgroup_size(1)
 fn main() {
   var v : InnerS;
   var s1 : OuterS;
@@ -270,13 +264,12 @@ struct Uniforms {
 }
 )";
 
-  auto got =
-      Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
-  EXPECT_EQ(expect, str(got));
+    auto got = Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
+    EXPECT_EQ(expect, str(got));
 }
 
 TEST_F(LocalizeStructArrayAssignmentTest, StructArrayArray) {
-  auto* src = R"(
+    auto* src = R"(
 struct Uniforms {
   i : u32,
   j : u32,
@@ -292,7 +285,7 @@ struct OuterS {
 
 @group(1) @binding(4) var<uniform> uniforms : Uniforms;
 
-@stage(compute) @workgroup_size(1)
+@compute @workgroup_size(1)
 fn main() {
   var v : InnerS;
   var s1 : OuterS;
@@ -300,7 +293,7 @@ fn main() {
 }
 )";
 
-  auto* expect = R"(
+    auto* expect = R"(
 struct Uniforms {
   i : u32,
   j : u32,
@@ -316,7 +309,7 @@ struct OuterS {
 
 @group(1) @binding(4) var<uniform> uniforms : Uniforms;
 
-@stage(compute) @workgroup_size(1)
+@compute @workgroup_size(1)
 fn main() {
   var v : InnerS;
   var s1 : OuterS;
@@ -329,13 +322,12 @@ fn main() {
 }
 )";
 
-  auto got =
-      Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
-  EXPECT_EQ(expect, str(got));
+    auto got = Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
+    EXPECT_EQ(expect, str(got));
 }
 
 TEST_F(LocalizeStructArrayAssignmentTest, StructArrayStruct) {
-  auto* src = R"(
+    auto* src = R"(
 struct Uniforms {
   i : u32,
 };
@@ -354,7 +346,7 @@ struct OuterS {
 
 @group(1) @binding(4) var<uniform> uniforms : Uniforms;
 
-@stage(compute) @workgroup_size(1)
+@compute @workgroup_size(1)
 fn main() {
   var v : InnerS;
   var s1 : OuterS;
@@ -362,7 +354,7 @@ fn main() {
 }
 )";
 
-  auto* expect = R"(
+    auto* expect = R"(
 struct Uniforms {
   i : u32,
 }
@@ -381,7 +373,7 @@ struct OuterS {
 
 @group(1) @binding(4) var<uniform> uniforms : Uniforms;
 
-@stage(compute) @workgroup_size(1)
+@compute @workgroup_size(1)
 fn main() {
   var v : InnerS;
   var s1 : OuterS;
@@ -394,13 +386,12 @@ fn main() {
 }
 )";
 
-  auto got =
-      Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
-  EXPECT_EQ(expect, str(got));
+    auto got = Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
+    EXPECT_EQ(expect, str(got));
 }
 
 TEST_F(LocalizeStructArrayAssignmentTest, StructArrayStructArray) {
-  auto* src = R"(
+    auto* src = R"(
 struct Uniforms {
   i : u32,
   j : u32,
@@ -420,7 +411,7 @@ struct OuterS {
 
 @group(1) @binding(4) var<uniform> uniforms : Uniforms;
 
-@stage(compute) @workgroup_size(1)
+@compute @workgroup_size(1)
 fn main() {
   var v : InnerS;
   var s : OuterS;
@@ -428,7 +419,7 @@ fn main() {
 }
 )";
 
-  auto* expect = R"(
+    auto* expect = R"(
 struct Uniforms {
   i : u32,
   j : u32,
@@ -448,7 +439,7 @@ struct OuterS {
 
 @group(1) @binding(4) var<uniform> uniforms : Uniforms;
 
-@stage(compute) @workgroup_size(1)
+@compute @workgroup_size(1)
 fn main() {
   var v : InnerS;
   var s : OuterS;
@@ -464,13 +455,12 @@ fn main() {
 }
 )";
 
-  auto got =
-      Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
-  EXPECT_EQ(expect, str(got));
+    auto got = Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
+    EXPECT_EQ(expect, str(got));
 }
 
 TEST_F(LocalizeStructArrayAssignmentTest, IndexingWithSideEffectFunc) {
-  auto* src = R"(
+    auto* src = R"(
 struct Uniforms {
   i : u32,
   j : u32,
@@ -496,7 +486,7 @@ fn getNextIndex() -> u32 {
 
 @group(1) @binding(4) var<uniform> uniforms : Uniforms;
 
-@stage(compute) @workgroup_size(1)
+@compute @workgroup_size(1)
 fn main() {
   var v : InnerS;
   var s : OuterS;
@@ -504,7 +494,7 @@ fn main() {
 }
 )";
 
-  auto* expect = R"(
+    auto* expect = R"(
 struct Uniforms {
   i : u32,
   j : u32,
@@ -531,7 +521,7 @@ fn getNextIndex() -> u32 {
 
 @group(1) @binding(4) var<uniform> uniforms : Uniforms;
 
-@stage(compute) @workgroup_size(1)
+@compute @workgroup_size(1)
 fn main() {
   var v : InnerS;
   var s : OuterS;
@@ -547,15 +537,13 @@ fn main() {
 }
 )";
 
-  auto got =
-      Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
-  EXPECT_EQ(expect, str(got));
+    auto got = Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
+    EXPECT_EQ(expect, str(got));
 }
 
-TEST_F(LocalizeStructArrayAssignmentTest,
-       IndexingWithSideEffectFunc_OutOfOrder) {
-  auto* src = R"(
-@stage(compute) @workgroup_size(1)
+TEST_F(LocalizeStructArrayAssignmentTest, IndexingWithSideEffectFunc_OutOfOrder) {
+    auto* src = R"(
+@compute @workgroup_size(1)
 fn main() {
   var v : InnerS;
   var s : OuterS;
@@ -588,8 +576,8 @@ struct InnerS {
 };
 )";
 
-  auto* expect = R"(
-@stage(compute) @workgroup_size(1)
+    auto* expect = R"(
+@compute @workgroup_size(1)
 fn main() {
   var v : InnerS;
   var s : OuterS;
@@ -631,13 +619,12 @@ struct InnerS {
 }
 )";
 
-  auto got =
-      Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
-  EXPECT_EQ(expect, str(got));
+    auto got = Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
+    EXPECT_EQ(expect, str(got));
 }
 
 TEST_F(LocalizeStructArrayAssignmentTest, ViaPointerArg) {
-  auto* src = R"(
+    auto* src = R"(
 struct Uniforms {
   i : u32,
 };
@@ -654,14 +641,14 @@ fn f(p : ptr<function, OuterS>) {
   (*p).a1[uniforms.i] = v;
 }
 
-@stage(compute) @workgroup_size(1)
+@compute @workgroup_size(1)
 fn main() {
   var s1 : OuterS;
   f(&s1);
 }
 )";
 
-  auto* expect = R"(
+    auto* expect = R"(
 struct Uniforms {
   i : u32,
 }
@@ -686,21 +673,20 @@ fn f(p : ptr<function, OuterS>) {
   }
 }
 
-@stage(compute) @workgroup_size(1)
+@compute @workgroup_size(1)
 fn main() {
   var s1 : OuterS;
   f(&(s1));
 }
 )";
 
-  auto got =
-      Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
-  EXPECT_EQ(expect, str(got));
+    auto got = Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
+    EXPECT_EQ(expect, str(got));
 }
 
 TEST_F(LocalizeStructArrayAssignmentTest, ViaPointerArg_OutOfOrder) {
-  auto* src = R"(
-@stage(compute) @workgroup_size(1)
+    auto* src = R"(
+@compute @workgroup_size(1)
 fn main() {
   var s1 : OuterS;
   f(&s1);
@@ -725,8 +711,8 @@ struct Uniforms {
 };
 )";
 
-  auto* expect = R"(
-@stage(compute) @workgroup_size(1)
+    auto* expect = R"(
+@compute @workgroup_size(1)
 fn main() {
   var s1 : OuterS;
   f(&(s1));
@@ -757,13 +743,12 @@ struct Uniforms {
 }
 )";
 
-  auto got =
-      Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
-  EXPECT_EQ(expect, str(got));
+    auto got = Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
+    EXPECT_EQ(expect, str(got));
 }
 
 TEST_F(LocalizeStructArrayAssignmentTest, ViaPointerVar) {
-  auto* src = R"(
+    auto* src = R"(
 struct Uniforms {
   i : u32,
 };
@@ -782,7 +767,7 @@ fn f(p : ptr<function, InnerS>, v : InnerS) {
   *(p) = v;
 }
 
-@stage(compute) @workgroup_size(1)
+@compute @workgroup_size(1)
 fn main() {
   var v : InnerS;
   var s1 : OuterS;
@@ -791,7 +776,7 @@ fn main() {
 }
 )";
 
-  auto* expect = R"(
+    auto* expect = R"(
 struct Uniforms {
   i : u32,
 }
@@ -810,7 +795,7 @@ fn f(p : ptr<function, InnerS>, v : InnerS) {
   *(p) = v;
 }
 
-@stage(compute) @workgroup_size(1)
+@compute @workgroup_size(1)
 fn main() {
   var v : InnerS;
   var s1 : OuterS;
@@ -824,13 +809,12 @@ fn main() {
 }
 )";
 
-  auto got =
-      Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
-  EXPECT_EQ(expect, str(got));
+    auto got = Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
+    EXPECT_EQ(expect, str(got));
 }
 
 TEST_F(LocalizeStructArrayAssignmentTest, VectorAssignment) {
-  auto* src = R"(
+    auto* src = R"(
 struct Uniforms {
   i : u32,
 }
@@ -845,7 +829,7 @@ fn f(i : u32) -> u32 {
   return (i + 1u);
 }
 
-@stage(compute) @workgroup_size(1)
+@compute @workgroup_size(1)
 fn main() {
   var s1 : OuterS;
   var v : vec3<f32>;
@@ -854,13 +838,9 @@ fn main() {
 }
 )";
 
-  // Transform does nothing here as we're not actually assigning to the array in
-  // the struct.
-  auto* expect = src;
-
-  auto got =
-      Run<Unshadow, SimplifyPointers, LocalizeStructArrayAssignment>(src);
-  EXPECT_EQ(expect, str(got));
+    // Transform does nothing here as we're not actually assigning to the array in
+    // the struct.
+    EXPECT_FALSE(ShouldRun<LocalizeStructArrayAssignment>(src));
 }
 
 }  // namespace

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,8 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
 #include "base/observer_list.h"
 #include "components/performance_manager/graph/frame_node_impl.h"
 #include "components/performance_manager/graph/page_node_impl.h"
@@ -39,9 +39,12 @@ bool ConnectWindowOpenRelationshipIfExists(PerformanceManagerTabHelper* helper,
   if (!opener_rfh) {
     // If the child page is opened with "noopener" then the parent document
     // maintains the ability to close the child, but the child can't reach back
-    // and see it's parent. In this case there will be no "Opener", but there
-    // will be an "OriginalOpener".
-    opener_rfh = web_contents->GetOriginalOpener();
+    // and see it's parent. In this case there will be no "opener", but there
+    // will be an "original opener".
+    if (content::WebContents* original_opener_wc =
+            web_contents->GetFirstWebContentsInLiveOriginalOpenerChain()) {
+      opener_rfh = original_opener_wc->GetPrimaryMainFrame();
+    }
   }
 
   if (!opener_rfh)
@@ -83,13 +86,12 @@ PerformanceManagerTabHelper::PerformanceManagerTabHelper(
   // We have an early WebContents creation hook so should see it when there is
   // only a single frame, and it is not yet created. We sanity check that here.
 #if DCHECK_IS_ON()
-  DCHECK(!web_contents->GetMainFrame()->IsRenderFrameCreated());
+  DCHECK(!web_contents->GetPrimaryMainFrame()->IsRenderFrameLive());
   size_t frame_count = 0;
-  web_contents->ForEachRenderFrameHost(base::BindRepeating(
-      [](size_t* frame_count, content::RenderFrameHost* render_frame_host) {
-        (*frame_count)++;
-      },
-      &frame_count));
+  web_contents->ForEachRenderFrameHost(
+      [&frame_count](content::RenderFrameHost* render_frame_host) {
+        ++frame_count;
+      });
   DCHECK_EQ(1u, frame_count);
 #endif
 
@@ -103,7 +105,7 @@ PerformanceManagerTabHelper::PerformanceManagerTabHelper(
       web_contents->IsCurrentlyAudible(), web_contents->GetLastActiveTime(),
       // TODO(crbug.com/1211368): Support MPArch fully!
       PageNode::PageState::kActive);
-  content::RenderFrameHost* main_rfh = web_contents->GetMainFrame();
+  content::RenderFrameHost* main_rfh = web_contents->GetPrimaryMainFrame();
   DCHECK(main_rfh);
   page->main_frame_tree_node_id = main_rfh->GetFrameTreeNodeId();
   primary_page_ = page.get();
@@ -138,8 +140,10 @@ void PerformanceManagerTabHelper::TearDown() {
     nodes.push_back(std::move(page_node));
   }
 
-  pages_.clear();
+  // primary_page ptr should be cleared before pages_ is cleared, otherwise
+  // it becomes dangling.
   primary_page_ = nullptr;
+  pages_.clear();
   frames_.clear();
 
   // Delete the page and its entire frame tree from the graph.
@@ -265,7 +269,7 @@ void PerformanceManagerTabHelper::RenderFrameHostChanged(
   if (it != frames_.end()) {
     new_frame = it->second.get();
   } else {
-    DCHECK(!new_host->IsRenderFrameCreated())
+    DCHECK(!new_host->IsRenderFrameLive())
         << "There shouldn't be a case where RenderFrameHostChanged is "
            "dispatched before RenderFrameCreated with a live RenderFrame\n";
   }
@@ -278,28 +282,21 @@ void PerformanceManagerTabHelper::RenderFrameHostChanged(
       FROM_HERE, base::BindOnce(
                      [](FrameNodeImpl* old_frame, FrameNodeImpl* new_frame) {
                        if (old_frame) {
-                         // Prerendering is a special case where,
-                         // old_frame->is_current() would be set to false.
-                         // Ignore this check when Prerender2 is enabled.
-                         // TODO(https://crbug.com/1177859): Remove this check
-                         // once PerformanceManagerTabHelper is supported with
-                         // Prerender2.
-                         DCHECK(blink::features::IsPrerender2Enabled() ||
-                                old_frame->is_current());
+                         // Prerendering is a special case where
+                         // old_frame->is_current() may be false.
+                         // TODO(https://crbug.com/1211368): assert that
+                         // old_frame->is_current() or its PageState is
+                         // kPrerendering.
                          old_frame->SetIsCurrent(false);
                        }
+
                        if (new_frame) {
-                         if (!new_frame->is_current()) {
-                           new_frame->SetIsCurrent(true);
-                         } else {
-                           // The very first frame to be created is already
-                           // current by default. In which case the swap must be
-                           // from no frame to a frame.
-                           // TODO(https://crbug.com/1179682): Make this
-                           // compatible with MPArch.
-                           DCHECK(!old_frame ||
-                                  blink::features::IsPrerender2Enabled());
-                         }
+                         // The very first frame to be created is already
+                         // current by default except in the special case of
+                         // prerendering.
+                         // TODO(https://crbug.com/1211368): assert that
+                         // old_frame is null or its PageState is kPrerendering.
+                         new_frame->SetIsCurrent(true);
                        }
                      },
                      old_frame, new_frame));
@@ -477,6 +474,19 @@ void PerformanceManagerTabHelper::DidUpdateFaviconURL(
   PerformanceManagerImpl::CallOnGraphImpl(
       FROM_HERE, base::BindOnce(&PageNodeImpl::OnFaviconUpdated,
                                 base::Unretained(primary_page_node())));
+}
+
+void PerformanceManagerTabHelper::AboutToBeDiscarded(
+    content::WebContents* new_contents) {
+  DCHECK(primary_page_);
+
+  base::WeakPtr<PageNode> new_page_node =
+      PerformanceManager::GetPrimaryPageNodeForWebContents(new_contents);
+
+  PerformanceManagerImpl::CallOnGraphImpl(
+      FROM_HERE,
+      base::BindOnce(&PageNodeImpl::OnAboutToBeDiscarded,
+                     base::Unretained(primary_page_node()), new_page_node));
 }
 
 void PerformanceManagerTabHelper::BindDocumentCoordinationUnit(

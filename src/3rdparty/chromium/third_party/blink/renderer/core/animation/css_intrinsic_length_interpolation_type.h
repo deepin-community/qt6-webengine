@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -44,7 +44,7 @@ class CSSIntrinsicLengthInterpolationType : public CSSInterpolationType {
   absl::optional<StyleIntrinsicLength> GetIntrinsicDimension(
       const ComputedStyle&) const;
   void SetIntrinsicDimension(
-      ComputedStyle*,
+      ComputedStyleBuilder&,
       const absl::optional<StyleIntrinsicLength>& dimension) const;
 
   InterpolationValue MaybeConvertNeutral(const InterpolationValue& underlying,

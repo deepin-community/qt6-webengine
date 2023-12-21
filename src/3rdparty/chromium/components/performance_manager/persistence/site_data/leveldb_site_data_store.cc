@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,9 @@
 #include <string>
 
 #include "base/auto_reset.h"
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/hash/md5.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
@@ -18,7 +18,6 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/task/task_runner_util.h"
 #include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "build/build_config.h"
@@ -455,8 +454,8 @@ void LevelDBSiteDataStore::ReadSiteDataFromStore(
 
   // Trigger the asynchronous task and make it run the callback on this thread
   // once it returns.
-  base::PostTaskAndReplyWithResult(
-      blocking_task_runner_.get(), FROM_HERE,
+  blocking_task_runner_->PostTaskAndReplyWithResult(
+      FROM_HERE,
       base::BindOnce(&LevelDBSiteDataStore::AsyncHelper::ReadSiteDataFromDB,
                      base::Unretained(async_helper_.get()), origin),
       std::move(callback));
@@ -501,8 +500,8 @@ void LevelDBSiteDataStore::GetStoreSize(GetStoreSizeCallback callback) {
       },
       std::move(callback));
 
-  base::PostTaskAndReplyWithResult(
-      blocking_task_runner_.get(), FROM_HERE,
+  blocking_task_runner_->PostTaskAndReplyWithResult(
+      FROM_HERE,
       base::BindOnce(&LevelDBSiteDataStore::AsyncHelper::GetDatabaseSize,
                      base::Unretained(async_helper_.get())),
       std::move(reply_callback));

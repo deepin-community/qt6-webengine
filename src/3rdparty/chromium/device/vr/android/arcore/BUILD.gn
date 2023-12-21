@@ -1,4 +1,4 @@
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -53,6 +53,7 @@ component("arcore") {
     "//device/base",
     "//device/vr:vr_util",
     "//device/vr/android:vr_android",
+    "//gpu/command_buffer/service:gles2",
     "//mojo/public/cpp/bindings",
     "//services/viz/privileged/mojom",
     "//ui/android",

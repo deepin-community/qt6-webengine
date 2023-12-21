@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -291,68 +291,54 @@
   OP(GetUniformsES3CHROMIUM)                                   /* 532 */ \
   OP(DescheduleUntilFinishedCHROMIUM)                          /* 533 */ \
   OP(GetTranslatedShaderSourceANGLE)                           /* 534 */ \
-  OP(PostSubBufferCHROMIUM)                                    /* 535 */ \
-  OP(CopyTextureCHROMIUM)                                      /* 536 */ \
-  OP(CopySubTextureCHROMIUM)                                   /* 537 */ \
-  OP(DrawArraysInstancedANGLE)                                 /* 538 */ \
-  OP(DrawArraysInstancedBaseInstanceANGLE)                     /* 539 */ \
-  OP(DrawElementsInstancedANGLE)                               /* 540 */ \
-  OP(DrawElementsInstancedBaseVertexBaseInstanceANGLE)         /* 541 */ \
-  OP(VertexAttribDivisorANGLE)                                 /* 542 */ \
-  OP(ProduceTextureDirectCHROMIUMImmediate)                    /* 543 */ \
-  OP(CreateAndConsumeTextureINTERNALImmediate)                 /* 544 */ \
-  OP(BindUniformLocationCHROMIUMBucket)                        /* 545 */ \
-  OP(BindTexImage2DCHROMIUM)                                   /* 546 */ \
-  OP(BindTexImage2DWithInternalformatCHROMIUM)                 /* 547 */ \
-  OP(ReleaseTexImage2DCHROMIUM)                                /* 548 */ \
-  OP(TraceBeginCHROMIUM)                                       /* 549 */ \
-  OP(TraceEndCHROMIUM)                                         /* 550 */ \
-  OP(DiscardFramebufferEXTImmediate)                           /* 551 */ \
-  OP(LoseContextCHROMIUM)                                      /* 552 */ \
-  OP(DrawBuffersEXTImmediate)                                  /* 553 */ \
-  OP(DiscardBackbufferCHROMIUM)                                /* 554 */ \
-  OP(ScheduleOverlayPlaneCHROMIUM)                             /* 555 */ \
-  OP(ScheduleCALayerSharedStateCHROMIUM)                       /* 556 */ \
-  OP(ScheduleCALayerCHROMIUM)                                  /* 557 */ \
-  OP(ScheduleCALayerInUseQueryCHROMIUMImmediate)               /* 558 */ \
-  OP(CommitOverlayPlanesCHROMIUM)                              /* 559 */ \
-  OP(FlushDriverCachesCHROMIUM)                                /* 560 */ \
-  OP(ScheduleDCLayerCHROMIUM)                                  /* 561 */ \
-  OP(SetActiveURLCHROMIUM)                                     /* 562 */ \
-  OP(ContextVisibilityHintCHROMIUM)                            /* 563 */ \
-  OP(CoverageModulationCHROMIUM)                               /* 564 */ \
-  OP(BlendBarrierKHR)                                          /* 565 */ \
-  OP(BindFragDataLocationIndexedEXTBucket)                     /* 566 */ \
-  OP(BindFragDataLocationEXTBucket)                            /* 567 */ \
-  OP(GetFragDataIndexEXT)                                      /* 568 */ \
-  OP(SwapBuffersWithBoundsCHROMIUMImmediate)                   /* 569 */ \
-  OP(SetDrawRectangleCHROMIUM)                                 /* 570 */ \
-  OP(SetEnableDCLayersCHROMIUM)                                /* 571 */ \
-  OP(InitializeDiscardableTextureCHROMIUM)                     /* 572 */ \
-  OP(UnlockDiscardableTextureCHROMIUM)                         /* 573 */ \
-  OP(LockDiscardableTextureCHROMIUM)                           /* 574 */ \
-  OP(TexStorage2DImageCHROMIUM)                                /* 575 */ \
-  OP(SetColorSpaceMetadataCHROMIUM)                            /* 576 */ \
-  OP(WindowRectanglesEXTImmediate)                             /* 577 */ \
-  OP(CreateGpuFenceINTERNAL)                                   /* 578 */ \
-  OP(WaitGpuFenceCHROMIUM)                                     /* 579 */ \
-  OP(DestroyGpuFenceCHROMIUM)                                  /* 580 */ \
-  OP(SetReadbackBufferShadowAllocationINTERNAL)                /* 581 */ \
-  OP(FramebufferTextureMultiviewOVR)                           /* 582 */ \
-  OP(MaxShaderCompilerThreadsKHR)                              /* 583 */ \
-  OP(CreateAndTexStorage2DSharedImageINTERNALImmediate)        /* 584 */ \
-  OP(BeginSharedImageAccessDirectCHROMIUM)                     /* 585 */ \
-  OP(EndSharedImageAccessDirectCHROMIUM)                       /* 586 */ \
-  OP(BeginBatchReadAccessSharedImageCHROMIUM)                  /* 587 */ \
-  OP(EndBatchReadAccessSharedImageCHROMIUM)                    /* 588 */ \
-  OP(EnableiOES)                                               /* 589 */ \
-  OP(DisableiOES)                                              /* 590 */ \
-  OP(BlendEquationiOES)                                        /* 591 */ \
-  OP(BlendEquationSeparateiOES)                                /* 592 */ \
-  OP(BlendFunciOES)                                            /* 593 */ \
-  OP(BlendFuncSeparateiOES)                                    /* 594 */ \
-  OP(ColorMaskiOES)                                            /* 595 */ \
-  OP(IsEnablediOES)                                            /* 596 */
+  OP(CopyTextureCHROMIUM)                                      /* 535 */ \
+  OP(CopySubTextureCHROMIUM)                                   /* 536 */ \
+  OP(DrawArraysInstancedANGLE)                                 /* 537 */ \
+  OP(DrawArraysInstancedBaseInstanceANGLE)                     /* 538 */ \
+  OP(DrawElementsInstancedANGLE)                               /* 539 */ \
+  OP(DrawElementsInstancedBaseVertexBaseInstanceANGLE)         /* 540 */ \
+  OP(VertexAttribDivisorANGLE)                                 /* 541 */ \
+  OP(ProduceTextureDirectCHROMIUMImmediate)                    /* 542 */ \
+  OP(CreateAndConsumeTextureINTERNALImmediate)                 /* 543 */ \
+  OP(BindUniformLocationCHROMIUMBucket)                        /* 544 */ \
+  OP(TraceBeginCHROMIUM)                                       /* 545 */ \
+  OP(TraceEndCHROMIUM)                                         /* 546 */ \
+  OP(DiscardFramebufferEXTImmediate)                           /* 547 */ \
+  OP(LoseContextCHROMIUM)                                      /* 548 */ \
+  OP(DrawBuffersEXTImmediate)                                  /* 549 */ \
+  OP(DiscardBackbufferCHROMIUM)                                /* 550 */ \
+  OP(FlushDriverCachesCHROMIUM)                                /* 551 */ \
+  OP(SetActiveURLCHROMIUM)                                     /* 552 */ \
+  OP(ContextVisibilityHintCHROMIUM)                            /* 553 */ \
+  OP(BlendBarrierKHR)                                          /* 554 */ \
+  OP(BindFragDataLocationIndexedEXTBucket)                     /* 555 */ \
+  OP(BindFragDataLocationEXTBucket)                            /* 556 */ \
+  OP(GetFragDataIndexEXT)                                      /* 557 */ \
+  OP(InitializeDiscardableTextureCHROMIUM)                     /* 558 */ \
+  OP(UnlockDiscardableTextureCHROMIUM)                         /* 559 */ \
+  OP(LockDiscardableTextureCHROMIUM)                           /* 560 */ \
+  OP(WindowRectanglesEXTImmediate)                             /* 561 */ \
+  OP(CreateGpuFenceINTERNAL)                                   /* 562 */ \
+  OP(WaitGpuFenceCHROMIUM)                                     /* 563 */ \
+  OP(DestroyGpuFenceCHROMIUM)                                  /* 564 */ \
+  OP(SetReadbackBufferShadowAllocationINTERNAL)                /* 565 */ \
+  OP(FramebufferTextureMultiviewOVR)                           /* 566 */ \
+  OP(MaxShaderCompilerThreadsKHR)                              /* 567 */ \
+  OP(CreateAndTexStorage2DSharedImageINTERNALImmediate)        /* 568 */ \
+  OP(BeginSharedImageAccessDirectCHROMIUM)                     /* 569 */ \
+  OP(EndSharedImageAccessDirectCHROMIUM)                       /* 570 */ \
+  OP(ConvertRGBAToYUVAMailboxesINTERNALImmediate)              /* 571 */ \
+  OP(ConvertYUVAMailboxesToRGBINTERNALImmediate)               /* 572 */ \
+  OP(CopySharedImageINTERNALImmediate)                         /* 573 */ \
+  OP(EnableiOES)                                               /* 574 */ \
+  OP(DisableiOES)                                              /* 575 */ \
+  OP(BlendEquationiOES)                                        /* 576 */ \
+  OP(BlendEquationSeparateiOES)                                /* 577 */ \
+  OP(BlendFunciOES)                                            /* 578 */ \
+  OP(BlendFuncSeparateiOES)                                    /* 579 */ \
+  OP(ColorMaskiOES)                                            /* 580 */ \
+  OP(IsEnablediOES)                                            /* 581 */ \
+  OP(ProvokingVertexANGLE)                                     /* 582 */
 
 enum CommandId {
   kOneBeforeStartPoint =

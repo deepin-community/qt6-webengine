@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,12 +12,11 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_forward.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_forward.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/task/task_runner_util.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "google_apis/drive/drive_api_parser.h"
@@ -170,8 +169,8 @@ class DriveApiDataRequest : public DriveApiPartialFieldRequest {
     switch (error) {
       case HTTP_SUCCESS:
       case HTTP_CREATED:
-        base::PostTaskAndReplyWithResult(
-            blocking_task_runner(), FROM_HERE,
+        blocking_task_runner()->PostTaskAndReplyWithResult(
+            FROM_HERE,
             base::BindOnce(&DriveApiDataRequest::Parse,
                            std::move(response_body)),
             base::BindOnce(&DriveApiDataRequest::OnDataParsed,

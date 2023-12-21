@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,8 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/unguessable_token.h"
@@ -16,7 +16,7 @@
 #include "content/browser/code_cache/generated_code_cache_context.h"
 #include "content/browser/devtools/devtools_instrumentation.h"
 #include "content/browser/devtools/shared_worker_devtools_manager.h"
-#include "content/browser/net/cross_origin_embedder_policy_reporter.h"
+#include "content/browser/network/cross_origin_embedder_policy_reporter.h"
 #include "content/browser/renderer_host/code_cache_host_impl.h"
 #include "content/browser/renderer_host/private_network_access_util.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
@@ -31,6 +31,7 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
+#include "content/public/browser/permission_controller.h"
 #include "content/public/browser/service_worker_context.h"
 #include "content/public/browser/worker_type.h"
 #include "content/public/common/content_client.h"
@@ -43,12 +44,17 @@
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "services/network/public/cpp/cross_origin_embedder_policy.h"
 #include "services/network/public/cpp/is_potentially_trustworthy.h"
+#include "services/network/public/mojom/client_security_state.mojom-shared.h"
+#include "services/network/public/mojom/ip_address_space.mojom-shared.h"
+#include "storage/browser/blob/blob_url_store_impl.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/loader/url_loader_factory_bundle.h"
 #include "third_party/blink/public/common/messaging/message_port_channel.h"
+#include "third_party/blink/public/common/privacy_budget/identifiability_study_settings.h"
+#include "third_party/blink/public/common/privacy_budget/identifiability_study_worker_client_added.h"
 #include "third_party/blink/public/common/renderer_preferences/renderer_preferences.h"
 #include "third_party/blink/public/mojom/renderer_preference_watcher.mojom.h"
-#include "third_party/blink/public/mojom/web_feature/web_feature.mojom.h"
+#include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom.h"
 #include "third_party/blink/public/mojom/worker/shared_worker_info.mojom.h"
 #include "third_party/blink/public/mojom/worker/worker_content_settings_proxy.mojom.h"
 
@@ -119,7 +125,7 @@ SharedWorkerHost::SharedWorkerHost(
     scoped_refptr<SiteInstanceImpl> site_instance,
     std::vector<network::mojom::ContentSecurityPolicyPtr>
         content_security_policies,
-    network::mojom::ClientSecurityStatePtr creator_client_security_state)
+    scoped_refptr<PolicyContainerHost> creator_policy_container_host)
     : service_(service),
       token_(blink::SharedWorkerToken()),
       instance_(instance),
@@ -135,7 +141,7 @@ SharedWorkerHost::SharedWorkerHost(
       ukm_source_id_(ukm::ConvertToSourceId(ukm::AssignNewSourceId(),
                                             ukm::SourceIdType::WORKER_ID)),
       reporting_source_(base::UnguessableToken::Create()),
-      creator_client_security_state_(std::move(creator_client_security_state)) {
+      creator_policy_container_host_(std::move(creator_policy_container_host)) {
   DCHECK(GetProcessHost());
   DCHECK(GetProcessHost()->IsInitializedAndNotDead());
 
@@ -215,37 +221,56 @@ void SharedWorkerHost::Start(
   //
   // https://html.spec.whatwg.org/C/#initialize-worker-policy-container
   worker_client_security_state_ = network::mojom::ClientSecurityState::New();
+  scoped_refptr<PolicyContainerHost> policy_container_host;
+
   if (final_response_url.SchemeIsLocal()) {
     // TODO(https://crbug.com/1146362): Inherit from the file creator instead
     // once creator policies are persisted through the filesystem store.
-    if (base::FeatureList::IsEnabled(
-            features::kPrivateNetworkAccessForWorkers)) {
+    if (creator_policy_container_host_) {
       worker_client_security_state_ =
-          mojo::Clone(creator_client_security_state_);
+          DeriveClientSecurityState(creator_policy_container_host_->policies(),
+                                    PrivateNetworkRequestContext::kWorker);
     } else {
-      worker_client_security_state_->cross_origin_embedder_policy =
-          creator_client_security_state_->cross_origin_embedder_policy;
+      auto policy = base::FeatureList::IsEnabled(
+                        features::kPrivateNetworkAccessForWorkers)
+                        ? network::mojom::PrivateNetworkRequestPolicy::kBlock
+                        : network::mojom::PrivateNetworkRequestPolicy::kAllow;
+
+      // Create a maximally restricted client security state if the policy
+      // container is missing.
+      worker_client_security_state_ = network::mojom::ClientSecurityState::New(
+          network::CrossOriginEmbedderPolicy(
+              network::mojom::CrossOriginEmbedderPolicyValue::kRequireCorp),
+          /*is_web_secure_context=*/false,
+          network::mojom::IPAddressSpace::kUnknown, policy);
     }
+
+    policy_container_host = std::move(creator_policy_container_host_);
   } else {
     // https://html.spec.whatwg.org/C/#creating-a-policy-container-from-a-fetch-response
-    if (base::FeatureList::IsEnabled(
-            features::kPrivateNetworkAccessForWorkers)) {
-      worker_client_security_state_->ip_address_space = CalculateIPAddressSpace(
-          final_response_url_, main_script_load_params->response_head.get(),
-          client);
-      worker_client_security_state_->is_web_secure_context =
-          network::IsUrlPotentiallyTrustworthy(final_response_url_) &&
-          creator_client_security_state_->is_web_secure_context;
-      worker_client_security_state_->private_network_request_policy =
-          DerivePrivateNetworkRequestPolicy(
-              worker_client_security_state_->ip_address_space,
-              worker_client_security_state_->is_web_secure_context);
+    // This does not parse the referrer policy, which will be
+    // updated in `SharedWorkerGlobalScope::Initialize()`.
+    PolicyContainerPolicies policies(
+        final_response_url, main_script_load_params->response_head.get(),
+        nullptr);
+
+    // A worker context can only be secure if its creator also is.
+    if (!creator_policy_container_host_->policies().is_web_secure_context) {
+      policies.is_web_secure_context = false;
     }
+
+    worker_client_security_state_ = DeriveClientSecurityState(
+        policies, PrivateNetworkRequestContext::kWorker);
+
+    policy_container_host =
+        base::MakeRefCounted<PolicyContainerHost>(std::move(policies));
+
     if (main_script_load_params->response_head->parsed_headers) {
       worker_client_security_state_->cross_origin_embedder_policy =
           main_script_load_params->response_head->parsed_headers
               ->cross_origin_embedder_policy;
     }
+
     switch (worker_client_security_state_->cross_origin_embedder_policy.value) {
       case network::mojom::CrossOriginEmbedderPolicyValue::kNone:
         OnFeatureUsed(blink::mojom::WebFeature::kCoepNoneSharedWorker);
@@ -268,7 +293,7 @@ void SharedWorkerHost::Start(
             .reporting_endpoint,
         worker_client_security_state_->cross_origin_embedder_policy
             .report_only_reporting_endpoint,
-        GetReportingSource(), GetNetworkIsolationKey());
+        GetReportingSource(), GetNetworkAnonymizationKey());
   }
 
   auto options = blink::mojom::WorkerOptions::New(
@@ -276,7 +301,6 @@ void SharedWorkerHost::Start(
   blink::mojom::SharedWorkerInfoPtr info(blink::mojom::SharedWorkerInfo::New(
       instance_.url(), std::move(options),
       mojo::Clone(content_security_policies_),
-      instance_.creation_address_space(),
       std::move(outside_fetch_client_settings_object)));
 
   auto renderer_preferences = blink::RendererPreferences();
@@ -327,7 +351,8 @@ void SharedWorkerHost::Start(
   factory_.Bind(std::move(factory));
   factory_->CreateSharedWorker(
       std::move(info), token_, instance_.storage_key().origin(),
-      creator_client_security_state_->is_web_secure_context,
+      creator_policy_container_host_ &&
+          creator_policy_container_host_->policies().is_web_secure_context,
       GetContentClient()->browser()->GetUserAgentBasedOnPolicy(
           GetProcessHost()->GetBrowserContext()),
       GetContentClient()->browser()->GetFullUserAgent(),
@@ -338,6 +363,7 @@ void SharedWorkerHost::Start(
       std::move(content_settings), service_worker_handle_->TakeContainerInfo(),
       std::move(main_script_load_params),
       std::move(subresource_loader_factories), std::move(controller),
+      policy_container_host->CreatePolicyContainerForBlink(),
       receiver_.BindNewPipeAndPassRemote(), std::move(worker_receiver_),
       std::move(browser_interface_broker), ukm_source_id_);
 
@@ -421,6 +447,53 @@ SharedWorkerHost::CreateNetworkFactoryParamsForSubresources() {
   return factory_params;
 }
 
+blink::StorageKey SharedWorkerHost::GetBucketStorageKey() {
+  return GetStorageKey();
+}
+
+blink::mojom::PermissionStatus SharedWorkerHost::GetPermissionStatus(
+    blink::PermissionType permission_type) {
+  return GetProcessHost()
+      ->GetBrowserContext()
+      ->GetPermissionController()
+      ->GetPermissionStatusForWorker(permission_type, GetProcessHost(),
+                                     GetStorageKey().origin());
+}
+
+void SharedWorkerHost::BindCacheStorageForBucket(
+    const storage::BucketInfo& bucket,
+    mojo::PendingReceiver<blink::mojom::CacheStorage> receiver) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  BindCacheStorageInternal(std::move(receiver), bucket.ToBucketLocator());
+}
+
+void SharedWorkerHost::BindCacheStorageInternal(
+    mojo::PendingReceiver<blink::mojom::CacheStorage> receiver,
+    const storage::BucketLocator& bucket_locator) {
+  mojo::PendingRemote<network::mojom::CrossOriginEmbedderPolicyReporter>
+      coep_reporter;
+  if (coep_reporter_) {
+    coep_reporter_->Clone(coep_reporter.InitWithNewPipeAndPassReceiver());
+  }
+
+  GetProcessHost()->BindCacheStorage(cross_origin_embedder_policy(),
+                                     std::move(coep_reporter), bucket_locator,
+                                     std::move(receiver));
+}
+
+void SharedWorkerHost::GetSandboxedFileSystemForBucket(
+    const storage::BucketInfo& bucket,
+    blink::mojom::BucketHost::GetDirectoryCallback callback) {
+  GetProcessHost()->GetSandboxedFileSystemForBucket(bucket.ToBucketLocator(),
+                                                    std::move(callback));
+}
+
+GlobalRenderFrameHostId SharedWorkerHost::GetAssociatedRenderFrameHostId()
+    const {
+  // For shared workers, there is no associated `RenderFrameHost`.
+  return GlobalRenderFrameHostId();
+}
+
 void SharedWorkerHost::AllowFileSystem(
     const GURL& url,
     base::OnceCallback<void(bool)> callback) {
@@ -458,23 +531,16 @@ void SharedWorkerHost::CreateWebTransportConnector(
   const url::Origin origin = url::Origin::Create(instance().url());
   mojo::MakeSelfOwnedReceiver(std::make_unique<WebTransportConnectorImpl>(
                                   GetProcessHost()->GetID(), /*frame=*/nullptr,
-                                  origin, GetNetworkIsolationKey()),
+                                  origin, GetNetworkAnonymizationKey()),
                               std::move(receiver));
 }
 
 void SharedWorkerHost::BindCacheStorage(
     mojo::PendingReceiver<blink::mojom::CacheStorage> receiver) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-
-  mojo::PendingRemote<network::mojom::CrossOriginEmbedderPolicyReporter>
-      coep_reporter;
-  if (coep_reporter_) {
-    coep_reporter_->Clone(coep_reporter.InitWithNewPipeAndPassReceiver());
-  }
-
-  GetProcessHost()->BindCacheStorage(cross_origin_embedder_policy(),
-                                     std::move(coep_reporter), GetStorageKey(),
-                                     std::move(receiver));
+  BindCacheStorageInternal(
+      std::move(receiver),
+      storage::BucketLocator::ForDefaultBucket(GetStorageKey()));
 }
 
 void SharedWorkerHost::CreateBroadcastChannelProvider(
@@ -490,6 +556,24 @@ void SharedWorkerHost::CreateBroadcastChannelProvider(
       std::make_unique<BroadcastChannelProvider>(broadcast_channel_service,
                                                  GetStorageKey()),
       std::move(receiver));
+}
+
+void SharedWorkerHost::CreateBlobUrlStoreProvider(
+    mojo::PendingReceiver<blink::mojom::BlobURLStore> receiver) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  auto* storage_partition_impl = static_cast<StoragePartitionImpl*>(
+      GetProcessHost()->GetStoragePartition());
+
+  storage_partition_impl->GetBlobUrlRegistry()->AddReceiver(
+      GetStorageKey(), std::move(receiver),
+      storage::BlobURLValidityCheckBehavior::
+          ALLOW_OPAQUE_ORIGIN_STORAGE_KEY_MISMATCH);
+}
+
+void SharedWorkerHost::CreateBucketManagerHost(
+    mojo::PendingReceiver<blink::mojom::BucketManagerHost> receiver) {
+  GetProcessHost()->BindBucketManagerHost(AsWeakPtr(), std::move(receiver));
 }
 
 void SharedWorkerHost::CreateCodeCacheHost(
@@ -608,6 +692,15 @@ net::NetworkIsolationKey SharedWorkerHost::GetNetworkIsolationKey() const {
       GetStorageKey().origin());
 }
 
+net::NetworkAnonymizationKey SharedWorkerHost::GetNetworkAnonymizationKey()
+    const {
+  // TODO(https://crbug.com/1147281): This is the NetworkAnonymizationKey of a
+  // top-level browsing context, which shouldn't be use for SharedWorkers used
+  // in iframes.
+  return net::NetworkAnonymizationKey::ToDoUseTopFrameOriginAsWell(
+      GetStorageKey().origin());
+}
+
 const blink::StorageKey& SharedWorkerHost::GetStorageKey() const {
   return instance().storage_key();
 }
@@ -642,6 +735,13 @@ void SharedWorkerHost::AddClient(
         .SetClientSourceId(client_ukm_source_id)
         .SetWorkerType(static_cast<int64_t>(WorkerType::kSharedWorker))
         .Record(ukm_recorder);
+
+    if (blink::IdentifiabilityStudySettings::Get()->IsActive()) {
+      blink::IdentifiabilityStudyWorkerClientAdded(ukm_source_id_)
+          .SetClientSourceId(client_ukm_source_id)
+          .SetWorkerType(blink::IdentifiableSurface::WorkerType::kSharedWorker)
+          .Record(ukm_recorder);
+    }
   }
 
   worker_->Connect(info.connection_request_id, port.ReleaseHandle());

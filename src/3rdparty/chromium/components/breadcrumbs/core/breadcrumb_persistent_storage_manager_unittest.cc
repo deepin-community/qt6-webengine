@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -72,12 +72,9 @@ class BreadcrumbPersistentStorageManagerTest : public PlatformTest {
         /*is_metrics_enabled_callback=*/base::BindRepeating(
             &BreadcrumbPersistentStorageManagerTest::is_metrics_enabled,
             base::Unretained(this)));
-    breadcrumb_manager_service_.StartPersisting(persistent_storage_.get());
   }
 
-  ~BreadcrumbPersistentStorageManagerTest() override {
-    breadcrumb_manager_service_.StopPersisting();
-  }
+  ~BreadcrumbPersistentStorageManagerTest() override = default;
 
   // Calls `GetStoredEvents()` and wait for its posted tasks to complete.
   std::vector<std::string> GetPersistedEvents() {
@@ -131,8 +128,8 @@ TEST_F(BreadcrumbPersistentStorageManagerTest, PersistEvents) {
   EXPECT_NE(std::string::npos, events.front().find("event"));
 }
 
-// Ensures that persisted events do not grow too large for a single large
-// event bucket when events are logged very quickly one after the other.
+// Ensures that persisted events do not grow too large when events are logged
+// very quickly one after the other.
 TEST_F(BreadcrumbPersistentStorageManagerTest, PersistLargeBucket) {
   std::string event;
   unsigned long event_count = 0;
@@ -174,39 +171,11 @@ TEST_F(BreadcrumbPersistentStorageManagerTest, PersistManyEventsOverTime) {
   EXPECT_TRUE(ValidatePersistedEvents(event, events));
 }
 
-// Ensures that old events are removed from the persisted file when old buckets
-// are dropped.
-TEST_F(BreadcrumbPersistentStorageManagerTest,
-       OldEventsRemovedFromPersistedFile) {
-  std::string event;
-  unsigned long event_counter = 0;
-  constexpr int kNumEventsPerBucket = 200;
-  constexpr int kNumEvents = kNumEventsPerBucket * 3;
-  while (event_counter < kNumEvents) {
-    event = base::StringPrintf("event %lu", event_counter);
-    breadcrumb_manager_service_.AddEvent(event);
-    event_counter++;
-
-    if (event_counter % kNumEventsPerBucket == 0)
-      task_env_.FastForwardBy(base::Hours(1));
-  }
-
-  // Advance clock to trigger writing final events.
-  task_env_.FastForwardBy(base::Minutes(1));
-
-  // The exact number of events could vary based on changes in the
-  // implementation. The important part of this test is to verify that a single
-  // event bucket will not grow unbounded and it will be limited to a value
-  // smaller than the overall total number of events which have been logged.
-  const auto events = GetPersistedEvents();
-  EXPECT_LT(events.size(), event_counter);
-  EXPECT_TRUE(ValidatePersistedEvents(event, events));
-}
-
 // Ensures that events are read correctly if the persisted file becomes
 // corrupted by losing the EOF token or if kPersistedFilesizeInBytes is reduced.
+// TODO(crbug.com/1404642): This test is flaky.
 TEST_F(BreadcrumbPersistentStorageManagerTest,
-       GetStoredEventsAfterFilesizeReduction) {
+       DISABLED_GetStoredEventsAfterFilesizeReduction) {
   const base::FilePath breadcrumbs_file_path =
       GetBreadcrumbPersistentStorageFilePath(scoped_temp_dir_.GetPath());
   base::File file(breadcrumbs_file_path,

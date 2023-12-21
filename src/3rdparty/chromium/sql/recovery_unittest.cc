@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,10 +10,10 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
 #include "base/path_service.h"
 #include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
@@ -822,8 +822,7 @@ TEST_F(SQLRecoveryTest, RecoverDatabase) {
   // Save aside a copy of the original schema, verifying that it has the created
   // items plus the sqlite_sequence table.
   const std::string original_schema = GetSchema(&db_);
-  ASSERT_EQ(4, std::count(original_schema.begin(), original_schema.end(), '\n'))
-      << original_schema;
+  ASSERT_EQ(4, base::ranges::count(original_schema, '\n')) << original_schema;
 
   static constexpr char kTable1Sql[] = "SELECT * FROM table1 ORDER BY 1";
   static constexpr char kTable2Sql[] = "SELECT * FROM table2 ORDER BY 1";
@@ -879,8 +878,7 @@ TEST_F(SQLRecoveryTest, RecoverDatabaseWithView) {
   // Save aside a copy of the original schema, verifying that it has the created
   // items plus the sqlite_sequence table.
   const std::string original_schema = GetSchema(&db);
-  ASSERT_EQ(4, std::count(original_schema.begin(), original_schema.end(), '\n'))
-      << original_schema;
+  ASSERT_EQ(4, base::ranges::count(original_schema, '\n')) << original_schema;
 
   // Database handle is valid before recovery, poisoned after.
   static constexpr char kTrivialSql[] = "SELECT COUNT(*) FROM sqlite_schema";

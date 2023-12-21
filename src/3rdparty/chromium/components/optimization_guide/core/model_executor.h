@@ -1,15 +1,15 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_OPTIMIZATION_GUIDE_CORE_MODEL_EXECUTOR_H_
 #define COMPONENTS_OPTIMIZATION_GUIDE_CORE_MODEL_EXECUTOR_H_
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/files/file_path.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "components/optimization_guide/proto/models.pb.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
@@ -37,11 +37,16 @@ class ModelExecutor {
   ModelExecutor() = default;
   virtual ~ModelExecutor() = default;
 
+  // If |model_inference_timeout| is nullopt a default value will be used,
+  // controlled by the optimization guide.
   virtual void InitializeAndMoveToExecutionThread(
+      absl::optional<base::TimeDelta> model_inference_timeout,
       proto::OptimizationTarget optimization_target,
       scoped_refptr<base::SequencedTaskRunner> execution_task_runner,
       scoped_refptr<base::SequencedTaskRunner> reply_task_runner) = 0;
 
+  // Updates model file. If `SetShouldUnloadModelOnComplete` is false,
+  // immedidately loads model into memory.
   virtual void UpdateModelFile(const base::FilePath& file_path) = 0;
 
   virtual void UnloadModel() = 0;

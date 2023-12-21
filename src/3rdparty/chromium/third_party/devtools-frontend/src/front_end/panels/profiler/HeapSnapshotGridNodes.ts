@@ -37,57 +37,63 @@ import * as HeapSnapshotModel from '../../models/heap_snapshot_model/heap_snapsh
 import * as DataGrid from '../../ui/legacy/components/data_grid/data_grid.js';
 import * as UI from '../../ui/legacy/legacy.js';
 
-import type {ChildrenProvider} from './ChildrenProvider.js';
-import type {AllocationDataGrid, HeapSnapshotConstructorsDataGrid, HeapSnapshotDiffDataGrid, HeapSnapshotSortableDataGrid} from './HeapSnapshotDataGrids.js';
-import {HeapSnapshotSortableDataGridEvents} from './HeapSnapshotDataGrids.js';
-import type {HeapSnapshotProviderProxy, HeapSnapshotProxy} from './HeapSnapshotProxy.js';
-import type {DataDisplayDelegate} from './ProfileHeader.js';
+import {type ChildrenProvider} from './ChildrenProvider.js';
+
+import {
+  HeapSnapshotSortableDataGridEvents,
+  type AllocationDataGrid,
+  type HeapSnapshotConstructorsDataGrid,
+  type HeapSnapshotDiffDataGrid,
+  type HeapSnapshotSortableDataGrid,
+} from './HeapSnapshotDataGrids.js';
+import {type HeapSnapshotProviderProxy, type HeapSnapshotProxy} from './HeapSnapshotProxy.js';
+import {type DataDisplayDelegate} from './ProfileHeader.js';
 
 const UIStrings = {
   /**
-  *@description Generic text with two placeholders separated by a comma
-  *@example {1 613 680} PH1
-  *@example {44 %} PH2
-  */
+   *@description Generic text with two placeholders separated by a comma
+   *@example {1 613 680} PH1
+   *@example {44 %} PH2
+   */
   genericStringsTwoPlaceholders: '{PH1}, {PH2}',
   /**
-  *@description Text in Heap Snapshot Grid Nodes of a profiler tool
-  */
+   *@description Text in Heap Snapshot Grid Nodes of a profiler tool
+   */
   internalArray: '(internal array)[]',
   /**
-  *@description Text in Heap Snapshot Grid Nodes of a profiler tool
-  */
+   *@description Text in Heap Snapshot Grid Nodes of a profiler tool
+   */
   userObjectReachableFromWindow: 'User object reachable from window',
   /**
-  *@description Text in Heap Snapshot Grid Nodes of a profiler tool
-  */
+   *@description Text in Heap Snapshot Grid Nodes of a profiler tool
+   */
   detachedFromDomTree: 'Detached from DOM tree',
   /**
-  *@description Text in Heap Snapshot Grid Nodes of a profiler tool
-  */
+   *@description Text in Heap Snapshot Grid Nodes of a profiler tool
+   */
   previewIsNotAvailable: 'Preview is not available',
   /**
-  *@description A context menu item in the Heap Profiler Panel of a profiler tool
-  */
+   *@description A context menu item in the Heap Profiler Panel of a profiler tool
+   */
   revealInSummaryView: 'Reveal in Summary view',
   /**
-  *@description Text for the summary view
-  */
+   *@description Text for the summary view
+   */
   summary: 'Summary',
   /**
-  *@description A context menu item in the Heap Profiler Panel of a profiler tool
-  *@example {SomeClassConstructor} PH1
-  *@example {12345} PH2
-  */
+   *@description A context menu item in the Heap Profiler Panel of a profiler tool
+   *@example {SomeClassConstructor} PH1
+   *@example {12345} PH2
+   */
   revealObjectSWithIdSInSummary: 'Reveal object \'\'{PH1}\'\' with id @{PH2} in Summary view',
   /**
-  *@description Text to store an HTML element or JavaScript variable or expression result as a global variable
-  */
+   *@description Text to store an HTML element or JavaScript variable or expression result as a global variable
+   */
   storeAsGlobalVariable: 'Store as global variable',
   /**
-  *@description Text in Heap Snapshot Grid Nodes of a profiler tool that indicates an element contained in another
-  * element.
-  */
+   *@description Text in Heap Snapshot Grid Nodes of a profiler tool that indicates an element contained in another
+   * element.
+   */
   inElement: 'in',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/profiler/HeapSnapshotGridNodes.ts', UIStrings);
@@ -572,6 +578,7 @@ export abstract class HeapSnapshotGenericObjectNode extends HeapSnapshotGridNode
         valueStyle = 'number';
         break;
       case 'hidden':
+      case 'object shape':
         valueStyle = 'null';
         break;
       case 'array':
@@ -1296,8 +1303,8 @@ export class AllocationGridNode extends HeapSnapshotGridNode {
       const linkifier = (this.dataGridInternal as AllocationDataGrid).linkifier;
       const urlElement = linkifier.linkifyScriptLocation(
           heapProfilerModel ? heapProfilerModel.target() : null,
-          String(allocationNode.scriptId) as Protocol.Runtime.ScriptId, allocationNode.scriptName,
-          allocationNode.line - 1, {
+          String(allocationNode.scriptId) as Protocol.Runtime.ScriptId,
+          allocationNode.scriptName as Platform.DevToolsPath.UrlString, allocationNode.line - 1, {
             columnNumber: allocationNode.column - 1,
             inlineFrameIndex: 0,
             className: 'profile-node-file',

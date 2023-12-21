@@ -32,42 +32,40 @@ import * as Common from '../../../../core/common/common.js';
 import * as Host from '../../../../core/host/host.js';
 import * as i18n from '../../../../core/i18n/i18n.js';
 import * as Platform from '../../../../core/platform/platform.js';
-import * as Root from '../../../../core/root/root.js';
 import type * as SDK from '../../../../core/sdk/sdk.js';
 import type * as TimelineModel from '../../../../models/timeline_model/timeline_model.js';
 import * as UI from '../../legacy.js';
 import * as ThemeSupport from '../../theme_support/theme_support.js';
 
-import type {ChartViewportDelegate} from './ChartViewport.js';
-import {ChartViewport} from './ChartViewport.js';
-import type {Calculator} from './TimelineGrid.js';
-import {TimelineGrid} from './TimelineGrid.js';
+import {ChartViewport, type ChartViewportDelegate} from './ChartViewport.js';
+
+import {TimelineGrid, type Calculator} from './TimelineGrid.js';
 import flameChartStyles from './flameChart.css.legacy.js';
 
 const UIStrings = {
   /**
-  *@description Aria accessible name in Flame Chart of the Performance panel
-  */
+   *@description Aria accessible name in Flame Chart of the Performance panel
+   */
   flameChart: 'Flame Chart',
   /**
-  *@description Text for the screen reader to announce a hovered group
-  *@example {Network} PH1
-  */
+   *@description Text for the screen reader to announce a hovered group
+   *@example {Network} PH1
+   */
   sHovered: '{PH1} hovered',
   /**
-  *@description Text for screen reader to announce a selected group.
-  *@example {Network} PH1
-  */
+   *@description Text for screen reader to announce a selected group.
+   *@example {Network} PH1
+   */
   sSelected: '{PH1} selected',
   /**
-  *@description Text for screen reader to announce an expanded group
-  *@example {Network} PH1
-  */
+   *@description Text for screen reader to announce an expanded group
+   *@example {Network} PH1
+   */
   sExpanded: '{PH1} expanded',
   /**
-  *@description Text for screen reader to announce a collapsed group
-  *@example {Network} PH1
-  */
+   *@description Text for screen reader to announce a collapsed group
+   *@example {Network} PH1
+   */
   sCollapsed: '{PH1} collapsed',
 };
 const str_ = i18n.i18n.registerUIStrings('ui/legacy/components/perf_ui/FlameChart.ts', UIStrings);
@@ -91,24 +89,19 @@ export class FlameChart extends Common.ObjectWrapper.eventMixin<EventTypes, type
   private readonly groupExpansionSetting?: Common.Settings.Setting<GroupExpansionState>;
   private groupExpansionState: GroupExpansionState;
   private readonly flameChartDelegate: FlameChartDelegate;
-  private useWebGL: boolean;
   private chartViewport: ChartViewport;
   private dataProvider: FlameChartDataProvider;
   private candyStripeCanvas: HTMLCanvasElement;
   private viewportElement: HTMLElement;
-  private canvasGL!: HTMLCanvasElement;
   private canvas: HTMLCanvasElement;
   private entryInfo: HTMLElement;
   private readonly markerHighlighElement: HTMLElement;
   private readonly highlightElement: HTMLElement;
   private readonly selectedElement: HTMLElement;
   private rulerEnabled: boolean;
-  private readonly rangeSelectionStart: number;
-  private readonly rangeSelectionEnd: number;
   private barHeight: number;
   private textBaseline: number;
   private textPadding: number;
-  private readonly markerRadius: number;
   private readonly headerLeftPadding: number;
   private arrowSide: number;
   private readonly expansionArrowIndent: number;
@@ -118,7 +111,6 @@ export class FlameChart extends Common.ObjectWrapper.eventMixin<EventTypes, type
   private highlightedEntryIndex: number;
   private selectedEntryIndex: number;
   private rawTimelineDataLength: number;
-  private textWidth: Map<string, Map<string, number>>;
   private readonly markerPositions: Map<number, {
     x: number,
     width: number,
@@ -133,15 +125,6 @@ export class FlameChart extends Common.ObjectWrapper.eventMixin<EventTypes, type
   private lastMouseOffsetY!: number;
   private minimumBoundaryInternal!: number;
   private maxDragOffset!: number;
-  private shaderProgram?: WebGLProgram|null;
-  private vertexBuffer?: WebGLBuffer|null;
-  private colorBuffer?: WebGLBuffer|null;
-  private uScalingFactor?: WebGLUniformLocation|null;
-  private uShiftVector?: WebGLUniformLocation|null;
-  private aVertexPosition?: number;
-  private aVertexColor?: number;
-  private vertexCount?: number;
-  private prevTimelineData?: TimelineData;
   private timelineLevels?: number[][]|null;
   private visibleLevelOffsets?: Uint32Array|null;
   private visibleLevels?: Uint16Array|null;
@@ -162,7 +145,6 @@ export class FlameChart extends Common.ObjectWrapper.eventMixin<EventTypes, type
     this.groupExpansionState = groupExpansionSetting && groupExpansionSetting.get() || {};
     this.flameChartDelegate = flameChartDelegate;
 
-    this.useWebGL = Root.Runtime.experiments.isEnabled('timelineWebGL');
     this.chartViewport = new ChartViewport(this);
     this.chartViewport.show(this.contentElement);
 
@@ -171,10 +153,6 @@ export class FlameChart extends Common.ObjectWrapper.eventMixin<EventTypes, type
     this.createCandyStripePattern();
 
     this.viewportElement = this.chartViewport.viewportElement;
-    if (this.useWebGL) {
-      this.canvasGL = (this.viewportElement.createChild('canvas', 'fill') as HTMLCanvasElement);
-      this.initWebGL();
-    }
     this.canvas = (this.viewportElement.createChild('canvas', 'fill') as HTMLCanvasElement);
 
     this.canvas.tabIndex = 0;
@@ -200,12 +178,9 @@ export class FlameChart extends Common.ObjectWrapper.eventMixin<EventTypes, type
         null);
 
     this.rulerEnabled = true;
-    this.rangeSelectionStart = 0;
-    this.rangeSelectionEnd = 0;
     this.barHeight = 17;
     this.textBaseline = 5;
     this.textPadding = 5;
-    this.markerRadius = 6;
     this.chartViewport.setWindowTimes(
         dataProvider.minimumBoundary(), dataProvider.minimumBoundary() + dataProvider.totalTime());
 
@@ -219,7 +194,6 @@ export class FlameChart extends Common.ObjectWrapper.eventMixin<EventTypes, type
     this.highlightedEntryIndex = -1;
     this.selectedEntryIndex = -1;
     this.rawTimelineDataLength = 0;
-    this.textWidth = new Map();
     this.markerPositions = new Map();
 
     this.lastMouseOffsetX = 0;
@@ -310,12 +284,6 @@ export class FlameChart extends Common.ObjectWrapper.eventMixin<EventTypes, type
     this.canvas.height = height;
     this.canvas.style.width = `${width / ratio}px`;
     this.canvas.style.height = `${height / ratio}px`;
-    if (this.useWebGL) {
-      this.canvasGL.width = width;
-      this.canvasGL.height = height;
-      this.canvasGL.style.width = `${width / ratio}px`;
-      this.canvasGL.style.height = `${height / ratio}px`;
-    }
   }
 
   windowChanged(startTime: number, endTime: number, animate: boolean): void {
@@ -974,33 +942,6 @@ export class FlameChart extends Common.ObjectWrapper.eventMixin<EventTypes, type
     return group;
   }
 
-  private markerIndexAtPosition(x: number): number {
-    const timelineData = this.timelineData();
-    if (!timelineData) {
-      return -1;
-    }
-
-    const markers = timelineData.markers;
-    if (!markers) {
-      return -1;
-    }
-    const /** @const */ accurracyOffsetPx = 4;
-    const time = this.chartViewport.pixelToTime(x);
-    const leftTime = this.chartViewport.pixelToTime(x - accurracyOffsetPx);
-    const rightTime = this.chartViewport.pixelToTime(x + accurracyOffsetPx);
-    const left = this.markerIndexBeforeTime(leftTime);
-    let markerIndex = -1;
-    let distance: number = Infinity;
-    for (let i = left; i < markers.length && markers[i].startTime() < rightTime; i++) {
-      const nextDistance = Math.abs(markers[i].startTime() - time);
-      if (nextDistance < distance) {
-        markerIndex = i;
-        distance = nextDistance;
-      }
-    }
-    return markerIndex;
-  }
-
   private markerIndexBeforeTime(time: number): number {
     const timelineData = this.timelineData();
     if (!timelineData) {
@@ -1021,9 +962,6 @@ export class FlameChart extends Common.ObjectWrapper.eventMixin<EventTypes, type
     if (!timelineData) {
       return;
     }
-
-    const visibleLevelOffsets = this.visibleLevelOffsets ? this.visibleLevelOffsets : new Uint32Array();
-
     const width = this.offsetWidth;
     const height = this.offsetHeight;
     const context = (this.canvas.getContext('2d') as CanvasRenderingContext2D);
@@ -1037,228 +975,31 @@ export class FlameChart extends Common.ObjectWrapper.eventMixin<EventTypes, type
     const defaultFont = '11px ' + Host.Platform.fontFamily();
     context.font = defaultFont;
 
-    const candyStripePattern = context.createPattern(this.candyStripeCanvas, 'repeat');
+    const {markerIndices, colorBuckets, titleIndices} = this.getDrawableData(context, timelineData);
 
-    const entryTotalTimes = timelineData.entryTotalTimes;
-    const entryStartTimes = timelineData.entryStartTimes;
-    const entryLevels = timelineData.entryLevels;
-    const timeToPixel = this.chartViewport.timeToPixel();
-
-    const titleIndices = [];
-    const markerIndices = [];
-    const textPadding = this.textPadding;
-    const minTextWidth = 2 * textPadding + UI.UIUtils.measureTextWidth(context, '…');
-    const minTextWidthDuration = this.chartViewport.pixelToTimeOffset(minTextWidth);
-    const minVisibleBarLevel = Math.max(
-        Platform.ArrayUtilities.upperBound(visibleLevelOffsets, top, Platform.ArrayUtilities.DEFAULT_COMPARATOR) - 1,
-        0);
-    this.markerPositions.clear();
-
-    let mainThreadTopLevel = -1;
-
-    // Find the main thread so that we can mark tasks longer than 50ms.
-    if ('groups' in timelineData && Array.isArray(timelineData.groups)) {
-      const mainThread = timelineData.groups.find(group => {
-        if (!group.track) {
-          return false;
-        }
-
-        return group.track.name === 'CrRendererMain';
-      });
-
-      if (mainThread) {
-        mainThreadTopLevel = mainThread.startLevel;
+    context.save();
+    this.forEachGroupInViewport((offset, index, group, isFirst, groupHeight) => {
+      if (this.isGroupFocused(index)) {
+        context.fillStyle =
+            ThemeSupport.ThemeSupport.instance().getComputedValue('--selected-group-background', this.contentElement);
+        context.fillRect(0, offset, width, groupHeight - group.style.padding);
       }
+    });
+    context.restore();
+
+    for (const [color, {indexes}] of colorBuckets) {
+      this.drawGenericEvents(context, timelineData, color, indexes);
+      this.drawLongTaskRegions(context, timelineData, color, indexes);
     }
 
-    const colorBuckets = new Map<string, {
-      indexes: number[],
-    }>();
-    for (let level = minVisibleBarLevel; level < this.dataProvider.maxStackDepth(); ++level) {
-      if (this.levelToOffset(level) > top + height) {
-        break;
-      }
-      if (!this.visibleLevels || !this.visibleLevels[level]) {
-        continue;
-      }
-      if (!this.timelineLevels) {
-        continue;
-      }
+    this.drawMarkers(context, timelineData, markerIndices);
 
-      // Entries are ordered by start time within a level, so find the last visible entry.
-      const levelIndexes = this.timelineLevels[level];
-      const rightIndexOnLevel = Platform.ArrayUtilities.lowerBound(
-                                    levelIndexes, this.chartViewport.windowRightTime(),
-                                    (time, entryIndex) => time - entryStartTimes[entryIndex]) -
-          1;
-      let lastDrawOffset = Infinity;
-      for (let entryIndexOnLevel = rightIndexOnLevel; entryIndexOnLevel >= 0; --entryIndexOnLevel) {
-        const entryIndex = levelIndexes[entryIndexOnLevel];
-        const duration = entryTotalTimes[entryIndex];
-        if (isNaN(duration)) {
-          markerIndices.push(entryIndex);
-          continue;
-        }
-        if (duration >= minTextWidthDuration || (this.forceDecorationCache && this.forceDecorationCache[entryIndex])) {
-          titleIndices.push(entryIndex);
-        }
-
-        const entryStartTime = entryStartTimes[entryIndex];
-        const entryOffsetRight = entryStartTime + duration;
-        if (entryOffsetRight <= this.chartViewport.windowLeftTime()) {
-          break;
-        }
-        if (this.useWebGL) {
-          continue;
-        }
-
-        const barX = this.timeToPositionClipped(entryStartTime);
-        // Check if the entry entirely fits into an already drawn pixel, we can just skip drawing it.
-        if (barX >= lastDrawOffset) {
-          continue;
-        }
-        lastDrawOffset = barX;
-
-        if (this.entryColorsCache) {
-          const color = this.entryColorsCache[entryIndex];
-          let bucket = colorBuckets.get(color);
-          if (!bucket) {
-            bucket = {indexes: []};
-            colorBuckets.set(color, bucket);
-          }
-          bucket.indexes.push(entryIndex);
-        }
-      }
-    }
-
-    if (this.useWebGL) {
-      this.drawGL();
-    } else {
-      context.save();
-      this.forEachGroupInViewport((offset, index, group, isFirst, groupHeight) => {
-        if (this.isGroupFocused(index)) {
-          context.fillStyle =
-              ThemeSupport.ThemeSupport.instance().getComputedValue('--selected-group-background', this.contentElement);
-          context.fillRect(0, offset, width, groupHeight - group.style.padding);
-        }
-      });
-      context.restore();
-
-      for (const [color, {indexes}] of colorBuckets) {
-        context.beginPath();
-        for (let i = 0; i < indexes.length; ++i) {
-          const entryIndex = indexes[i];
-          const duration = entryTotalTimes[entryIndex];
-          if (isNaN(duration)) {
-            continue;
-          }
-          const entryStartTime = entryStartTimes[entryIndex];
-          const barX = this.timeToPositionClipped(entryStartTime);
-          const barLevel = entryLevels[entryIndex];
-          const barHeight = this.levelHeight(barLevel);
-          const barY = this.levelToOffset(barLevel);
-          const barRight = this.timeToPositionClipped(entryStartTime + duration);
-          const barWidth = Math.max(barRight - barX, 1);
-          context.rect(barX, barY, barWidth - 0.4, barHeight - 1);
-        }
-        context.fillStyle = color;
-        context.fill();
-
-        // Draw long task regions.
-        context.beginPath();
-        for (let i = 0; i < indexes.length; ++i) {
-          const entryIndex = indexes[i];
-          const duration = entryTotalTimes[entryIndex];
-          const showLongDurations = entryLevels[entryIndex] === mainThreadTopLevel;
-
-          if (!showLongDurations) {
-            continue;
-          }
-
-          if (isNaN(duration) || duration < 50) {
-            continue;
-          }
-
-          const entryStartTime = entryStartTimes[entryIndex];
-          const barX = this.timeToPositionClipped(entryStartTime + 50);
-          const barLevel = entryLevels[entryIndex];
-          const barHeight = this.levelHeight(barLevel);
-          const barY = this.levelToOffset(barLevel);
-          const barRight = this.timeToPositionClipped(entryStartTime + duration);
-          const barWidth = Math.max(barRight - barX, 1);
-          context.rect(barX, barY, barWidth - 0.4, barHeight - 1);
-        }
-
-        if (candyStripePattern) {
-          context.fillStyle = candyStripePattern;
-          context.fill();
-        }
-      }
-    }
-
-    context.textBaseline = 'alphabetic';
-    context.beginPath();
-    let lastMarkerLevel = -1;
-    let lastMarkerX: number = -Infinity;
-    // Markers are sorted top to bottom, right to left.
-    for (let m = markerIndices.length - 1; m >= 0; --m) {
-      const entryIndex = markerIndices[m];
-      const title = this.dataProvider.entryTitle(entryIndex);
-      if (!title) {
-        continue;
-      }
-      const entryStartTime = entryStartTimes[entryIndex];
-      const level = entryLevels[entryIndex];
-      if (lastMarkerLevel !== level) {
-        lastMarkerX = -Infinity;
-      }
-      const x = Math.max(this.chartViewport.timeToPosition(entryStartTime), lastMarkerX);
-      const y = this.levelToOffset(level);
-      const h = this.levelHeight(level);
-      const padding = 4;
-      const width = Math.ceil(UI.UIUtils.measureTextWidth(context, title)) + 2 * padding;
-      lastMarkerX = x + width + 1;
-      lastMarkerLevel = level;
-      this.markerPositions.set(entryIndex, {x, width});
-      context.fillStyle = this.dataProvider.entryColor(entryIndex);
-      context.fillRect(x, y, width, h - 1);
-      context.fillStyle = 'white';
-      context.fillText(title, x + padding, y + h - this.textBaseline);
-    }
-    context.strokeStyle = 'rgba(0, 0, 0, 0.2)';
-    context.stroke();
-
-    for (let i = 0; i < titleIndices.length; ++i) {
-      const entryIndex = titleIndices[i];
-      const entryStartTime = entryStartTimes[entryIndex];
-      const barX = this.timeToPositionClipped(entryStartTime);
-      const barRight = Math.min(this.timeToPositionClipped(entryStartTime + entryTotalTimes[entryIndex]), width) + 1;
-      const barWidth = barRight - barX;
-      const barLevel = entryLevels[entryIndex];
-      const barY = this.levelToOffset(barLevel);
-      let text = this.dataProvider.entryTitle(entryIndex);
-      if (text && text.length) {
-        context.font = this.dataProvider.entryFont(entryIndex) || defaultFont;
-        text = UI.UIUtils.trimTextMiddle(context, text, barWidth - 2 * textPadding);
-      }
-      const unclippedBarX = this.chartViewport.timeToPosition(entryStartTime);
-      const barHeight = this.levelHeight(barLevel);
-      if (this.dataProvider.decorateEntry(
-              entryIndex, context, text, barX, barY, barWidth, barHeight, unclippedBarX, timeToPixel)) {
-        continue;
-      }
-      if (!text || !text.length) {
-        continue;
-      }
-      context.fillStyle = this.dataProvider.textColor(entryIndex);
-      context.fillText(text, barX + textPadding, barY + barHeight - this.textBaseline);
-    }
-
+    this.drawEventTitles(context, timelineData, titleIndices, defaultFont, width);
     context.restore();
 
     this.drawGroupHeaders(width, height);
     this.drawFlowEvents(context, width, height);
-    this.drawMarkers();
+    this.drawMarkerLines();
     const dividersData = TimelineGrid.calculateGridOffsets(this);
     const navStartTimes = Array.from(this.dataProvider.navStartTimes().values());
 
@@ -1294,253 +1035,190 @@ export class FlameChart extends Common.ObjectWrapper.eventMixin<EventTypes, type
     this.updateMarkerHighlight();
   }
 
-  private initWebGL(): void {
-    const gl = (this.canvasGL.getContext('webgl') as WebGLRenderingContext | null);
-    if (!gl) {
-      console.error('Failed to obtain WebGL context.');
-      this.useWebGL = false;  // Fallback to use canvas.
-      return;
-    }
-
-    const vertexShaderSource = `
-  attribute vec2 aVertexPosition;
-  attribute float aVertexColor;
-
-  uniform vec2 uScalingFactor;
-  uniform vec2 uShiftVector;
-
-  varying mediump vec2 vPalettePosition;
-
-  void main() {
-  vec2 shiftedPosition = aVertexPosition - uShiftVector;
-  gl_Position = vec4(shiftedPosition * uScalingFactor + vec2(-1.0, 1.0), 0.0, 1.0);
-  vPalettePosition = vec2(aVertexColor, 0.5);
-  }`;
-
-    const fragmentShaderSource = `
-  varying mediump vec2 vPalettePosition;
-  uniform sampler2D uSampler;
-
-  void main() {
-  gl_FragColor = texture2D(uSampler, vPalettePosition);
-  }`;
-
-    function loadShader(gl: WebGLRenderingContext, type: number, source: string): WebGLShader|null {
-      const shader = gl.createShader(type);
-      if (!shader) {
-        return null;
+  /**
+   * Draws generic flame chart events, that is, the plain rectangles that fill several parts
+   * in the timeline like the Main Thread flamechart and the timings track.
+   * Drawn on a color by color basis to minimize the amount of times context.style is switched.
+   */
+  private drawGenericEvents(
+      context: CanvasRenderingContext2D, timelineData: TimelineData, color: string, indexes: number[]): void {
+    const {entryTotalTimes, entryStartTimes, entryLevels} = timelineData;
+    context.save();
+    context.beginPath();
+    for (let i = 0; i < indexes.length; ++i) {
+      const entryIndex = indexes[i];
+      const duration = entryTotalTimes[entryIndex];
+      if (isNaN(duration)) {
+        continue;
       }
-
-      gl.shaderSource(shader, source);
-      gl.compileShader(shader);
-      if (gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-        return shader;
-      }
-      console.error('Shader compile error: ' + gl.getShaderInfoLog(shader));
-      gl.deleteShader(shader);
-      return null;
+      const entryStartTime = entryStartTimes[entryIndex];
+      const barX = this.timeToPositionClipped(entryStartTime);
+      const barLevel = entryLevels[entryIndex];
+      const barHeight = this.levelHeight(barLevel);
+      const barY = this.levelToOffset(barLevel);
+      const barRight = this.timeToPositionClipped(entryStartTime + duration);
+      const barWidth = Math.max(barRight - barX, 1);
+      context.rect(barX, barY, barWidth - 0.4, barHeight - 1);
     }
-
-    const vertexShader = loadShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
-    const fragmentShader = loadShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
-
-    const shaderProgram = gl.createProgram();
-    if (!shaderProgram || !vertexShader || !fragmentShader) {
-      return;
-    }
-    gl.attachShader(shaderProgram, vertexShader);
-    gl.attachShader(shaderProgram, fragmentShader);
-    gl.linkProgram(shaderProgram);
-
-    if (gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
-      this.shaderProgram = shaderProgram;
-      gl.useProgram(shaderProgram);
-    } else {
-      this.shaderProgram = null;
-      throw new Error('Unable to initialize the shader program: ' + gl.getProgramInfoLog(shaderProgram));
-    }
-
-    this.vertexBuffer = gl.createBuffer();
-    this.colorBuffer = gl.createBuffer();
-
-    this.uScalingFactor = gl.getUniformLocation(shaderProgram, 'uScalingFactor');
-    this.uShiftVector = gl.getUniformLocation(shaderProgram, 'uShiftVector');
-    const uSampler = gl.getUniformLocation(shaderProgram, 'uSampler');
-    gl.uniform1i(uSampler, 0);
-    this.aVertexPosition = gl.getAttribLocation(this.shaderProgram, 'aVertexPosition');
-    this.aVertexColor = gl.getAttribLocation(this.shaderProgram, 'aVertexColor');
-    gl.enableVertexAttribArray(this.aVertexPosition);
-    gl.enableVertexAttribArray(this.aVertexColor);
+    context.fillStyle = color;
+    context.fill();
+    context.restore();
   }
 
-  private setupGLGeometry(): void {
-    const gl = (this.canvasGL.getContext('webgl') as WebGLRenderingContext | null);
-    if (!gl) {
-      return;
+  /**
+   * Marks the portion of long tasks where the 50ms threshold was exceeded.
+   */
+  private drawLongTaskRegions(
+      context: CanvasRenderingContext2D, timelineData: TimelineData, color: string, indexes: number[]): void {
+    const {entryTotalTimes, entryStartTimes, entryLevels} = timelineData;
+    let mainThreadTopLevel = -1;
+
+    // Find the main thread so that we can mark tasks longer than 50ms.
+    if ('groups' in timelineData && Array.isArray(timelineData.groups)) {
+      const mainThread = timelineData.groups.find(group => {
+        if (!group.track) {
+          return false;
+        }
+        return group.track.name === 'CrRendererMain';
+      });
+
+      if (mainThread) {
+        mainThreadTopLevel = mainThread.startLevel;
+      }
     }
 
-    const timelineData = this.timelineData();
-    if (!timelineData) {
-      return;
+    context.save();
+    context.beginPath();
+    for (let i = 0; i < indexes.length; ++i) {
+      const entryIndex = indexes[i];
+      const duration = entryTotalTimes[entryIndex];
+      const showLongDurations = entryLevels[entryIndex] === mainThreadTopLevel;
+
+      if (!showLongDurations) {
+        continue;
+      }
+
+      if (isNaN(duration) || duration < 50) {
+        continue;
+      }
+      const entryStartTime = entryStartTimes[entryIndex];
+      const barX = this.timeToPositionClipped(entryStartTime + 50);
+      const barLevel = entryLevels[entryIndex];
+      const barHeight = this.levelHeight(barLevel);
+      const barY = this.levelToOffset(barLevel);
+      const barRight = this.timeToPositionClipped(entryStartTime + duration);
+      const barWidth = Math.max(barRight - barX, 1);
+      context.rect(barX, barY, barWidth - 0.4, barHeight - 1);
     }
+    const candyStripePattern = context.createPattern(this.candyStripeCanvas, 'repeat');
 
-    const entryTotalTimes = timelineData.entryTotalTimes;
-    const entryStartTimes = timelineData.entryStartTimes;
-    const entryLevels = timelineData.entryLevels;
+    if (candyStripePattern) {
+      context.fillStyle = candyStripePattern;
+      context.fill();
+    }
+    context.restore();
+  }
 
-    const verticesPerBar = 6;
-    const vertexArray = new Float32Array(entryTotalTimes.length * verticesPerBar * 2);
-    let colorArray = new Uint8Array(entryTotalTimes.length * verticesPerBar);
-    let vertex = 0;
-    const parsedColorCache = new Map<string, number>();
-    const colors: number[] = [];
+  /**
+   * Preprocess the data to be drawn to speed the rendering time.
+   * Especifically:
+   *  - Groups events into color buckets.
+   *  - Discards non visible events.
+   *  - Gathers marker events (LCP, FCP, DCL, etc.).
+   *  - Gathers event titles that should be rendered.
+   */
+  private getDrawableData(context: CanvasRenderingContext2D, timelineData: TimelineData):
+      {colorBuckets: Map<string, {indexes: number[]}>, titleIndices: number[], markerIndices: number[]} {
+    // These are the event indexes of events that we are drawing onto the timeline that:
+    // 1) have text within them
+    // 2) are visually wide enough in pixels to make it worth rendering the text.
+    const titleIndices: number[] = [];
 
-    const visibleLevels = this.visibleLevels || [];
-    const rawTimelineData = this.rawTimelineData || {groups: []};
+    // These point to events that represent single points in the timeline, most
+    // often an event such as DCL/LCP.
+    const markerIndices: number[] = [];
+    const {entryTotalTimes, entryStartTimes} = timelineData;
 
-    const collapsedOverviewLevels = new Array(visibleLevels.length);
-    const groups = rawTimelineData.groups || [];
-    this.forEachGroup((offset, index, group) => {
-      if (group.style.useFirstLineForOverview || !this.isGroupCollapsible(index) || group.expanded) {
-        return;
+    const height = this.offsetHeight;
+    const top = this.chartViewport.scrollOffset();
+    const visibleLevelOffsets = this.visibleLevelOffsets ? this.visibleLevelOffsets : new Uint32Array();
+
+    const textPadding = this.textPadding;
+    // How wide in pixels / long in duration an event needs to be to make it
+    // worthwhile rendering the text inside it.
+    const minTextWidth = 2 * textPadding + UI.UIUtils.measureTextWidth(context, '…');
+    const minTextWidthDuration = this.chartViewport.pixelToTimeOffset(minTextWidth);
+
+    const minVisibleBarLevel = Math.max(
+        Platform.ArrayUtilities.upperBound(visibleLevelOffsets, top, Platform.ArrayUtilities.DEFAULT_COMPARATOR) - 1,
+        0);
+
+    // As we parse each event, we bucket them into groups based on the color we
+    // will render them with. The key of this map will be a color, and all
+    // events stored in the `indexes` array for that color will be painted as
+    // such. This way, when rendering events, we can render them based on
+    // color, and ensure the minimum amount of changes to context.fillStyle.
+    const colorBuckets = new Map<string, {indexes: number[]}>();
+    for (let level = minVisibleBarLevel; level < this.dataProvider.maxStackDepth(); ++level) {
+      if (this.levelToOffset(level) > top + height) {
+        break;
       }
-      let nextGroup = index + 1;
-      while (nextGroup < groups.length && groups[nextGroup].style.nestingLevel > group.style.nestingLevel) {
-        ++nextGroup;
-      }
-      const endLevel = nextGroup < groups.length ? groups[nextGroup].startLevel : this.dataProvider.maxStackDepth();
-      for (let i = group.startLevel; i < endLevel; ++i) {
-        collapsedOverviewLevels[i] = offset;
-      }
-    });
-
-    for (let i = 0; i < entryTotalTimes.length; ++i) {
-      const level = entryLevels[i];
-      const collapsedGroupOffset = collapsedOverviewLevels[level];
-      if (!visibleLevels[level] && !collapsedGroupOffset) {
+      if (!this.visibleLevels || !this.visibleLevels[level]) {
         continue;
       }
-      if (!this.entryColorsCache) {
+      if (!this.timelineLevels) {
         continue;
       }
 
-      const color = this.entryColorsCache[i];
-      if (!color) {
-        continue;
-      }
-      let colorIndex = parsedColorCache.get(color);
-      if (colorIndex === undefined) {
-        const parsedColor = Common.Color.Color.parse(color);
-        if (parsedColor) {
-          const rgba = parsedColor.canonicalRGBA();
-          rgba[3] = Math.round(rgba[3] * 255);
-          colorIndex = colors.length / 4;
-          colors.push(...rgba);
-          if (colorIndex === 256) {
-            colorArray = new Uint8Array(colorArray);
+      // Entries are ordered by start time within a level, so find the last visible entry.
+      const levelIndexes = this.timelineLevels[level];
+      const rightIndexOnLevel = Platform.ArrayUtilities.lowerBound(
+                                    levelIndexes, this.chartViewport.windowRightTime(),
+                                    (time, entryIndex) => time - entryStartTimes[entryIndex]) -
+          1;
+      let lastDrawOffset = Infinity;
+      for (let entryIndexOnLevel = rightIndexOnLevel; entryIndexOnLevel >= 0; --entryIndexOnLevel) {
+        const entryIndex = levelIndexes[entryIndexOnLevel];
+        const duration = entryTotalTimes[entryIndex];
+        // Markers are single events in time (e.g. LCP): they do not have a duration.
+        if (isNaN(duration)) {
+          markerIndices.push(entryIndex);
+          continue;
+        }
+
+        if (duration >= minTextWidthDuration || (this.forceDecorationCache && this.forceDecorationCache[entryIndex])) {
+          // If the event is big enough visually to have its text rendered,
+          // or if it's in the array of event indexes that we forcibly render (as defined by the data provider)
+          // then we store its index. Later on, we'll loop through all
+          // `titleIndices` to render the text for each event.
+          titleIndices.push(entryIndex);
+        }
+
+        const entryStartTime = entryStartTimes[entryIndex];
+        const entryOffsetRight = entryStartTime + duration;
+        if (entryOffsetRight <= this.chartViewport.windowLeftTime()) {
+          break;
+        }
+
+        const barX = this.timeToPositionClipped(entryStartTime);
+        // Check if the entry entirely fits into an already drawn pixel, we can just skip drawing it.
+        if (barX >= lastDrawOffset) {
+          continue;
+        }
+        lastDrawOffset = barX;
+
+        if (this.entryColorsCache) {
+          const color = this.entryColorsCache[entryIndex];
+          let bucket = colorBuckets.get(color);
+          if (!bucket) {
+            bucket = {indexes: []};
+            colorBuckets.set(color, bucket);
           }
-        }
-
-        if (colorIndex) {
-          parsedColorCache.set(color, colorIndex);
+          bucket.indexes.push(entryIndex);
         }
       }
-      for (let j = 0; j < verticesPerBar; ++j) {
-        if (colorIndex) {
-          colorArray[vertex + j] = colorIndex;
-        }
-      }
-
-      const vpos = vertex * 2;
-      const x0 = entryStartTimes[i] - this.minimumBoundaryInternal;
-      const x1 = x0 + entryTotalTimes[i];
-      const y0 = collapsedGroupOffset || this.levelToOffset(level);
-      const y1 = y0 + this.levelHeight(level) - 1;
-      vertexArray[vpos + 0] = x0;
-      vertexArray[vpos + 1] = y0;
-      vertexArray[vpos + 2] = x1;
-      vertexArray[vpos + 3] = y0;
-      vertexArray[vpos + 4] = x0;
-      vertexArray[vpos + 5] = y1;
-      vertexArray[vpos + 6] = x0;
-      vertexArray[vpos + 7] = y1;
-      vertexArray[vpos + 8] = x1;
-      vertexArray[vpos + 9] = y0;
-      vertexArray[vpos + 10] = x1;
-      vertexArray[vpos + 11] = y1;
-
-      vertex += verticesPerBar;
     }
-    this.vertexCount = vertex;
-
-    const paletteTexture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, paletteTexture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.activeTexture(gl.TEXTURE0);
-
-    const numColors = colors.length / 4;
-    const useShortForColors = numColors >= 256;
-    const width = !useShortForColors ? 256 : Math.min(1 << 16, gl.getParameter(gl.MAX_TEXTURE_SIZE));
-    console.assert(numColors <= width, 'Too many colors');
-    const height = 1;
-    const colorIndexType = useShortForColors ? gl.UNSIGNED_SHORT : gl.UNSIGNED_BYTE;
-    if (useShortForColors) {
-      const factor = (1 << 16) / width;
-      for (let i = 0; i < vertex; ++i) {
-        colorArray[i] *= factor;
-      }
-    }
-
-    const pixels = new Uint8Array(width * 4);
-    pixels.set(colors);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-
-    if (this.vertexBuffer && this.aVertexPosition) {
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-      gl.bufferData(gl.ARRAY_BUFFER, vertexArray, gl.STATIC_DRAW);
-      gl.vertexAttribPointer(this.aVertexPosition, /* vertexComponents */ 2, gl.FLOAT, false, 0, 0);
-    }
-
-    if (this.colorBuffer && this.aVertexColor) {
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
-      gl.bufferData(gl.ARRAY_BUFFER, colorArray, gl.STATIC_DRAW);
-      gl.vertexAttribPointer(this.aVertexColor, /* colorComponents */ 1, colorIndexType, true, 0, 0);
-    }
-  }
-
-  private drawGL(): void {
-    const gl = (this.canvasGL.getContext('webgl') as WebGLRenderingContext | null);
-    if (!gl) {
-      return;
-    }
-    const timelineData = this.timelineData();
-    if (!timelineData) {
-      return;
-    }
-
-    if (!this.prevTimelineData || timelineData.entryTotalTimes !== this.prevTimelineData.entryTotalTimes) {
-      this.prevTimelineData = timelineData;
-      this.setupGLGeometry();
-    }
-
-    gl.viewport(0, 0, this.canvasGL.width, this.canvasGL.height);
-
-    if (!this.vertexCount) {
-      return;
-    }
-
-    const viewportScale = [2.0 / this.boundarySpan(), -2.0 * window.devicePixelRatio / this.canvasGL.height];
-    const viewportShift = [this.minimumBoundary() - this.zeroTime(), this.chartViewport.scrollOffset()];
-    if (this.uScalingFactor) {
-      gl.uniform2fv(this.uScalingFactor, viewportScale);
-    }
-
-    if (this.uShiftVector) {
-      gl.uniform2fv(this.uShiftVector, viewportShift);
-    }
-
-    gl.drawArrays(gl.TRIANGLES, 0, this.vertexCount);
+    return {colorBuckets, titleIndices, markerIndices};
   }
 
   private drawGroupHeaders(width: number, height: number): void {
@@ -1602,9 +1280,6 @@ export class FlameChart extends Common.ObjectWrapper.eventMixin<EventTypes, type
         }
         return;
       }
-      if (this.useWebGL) {
-        return;
-      }
       let nextGroup = index + 1;
       while (nextGroup < groups.length && groups[nextGroup].style.nestingLevel > group.style.nestingLevel) {
         nextGroup++;
@@ -1622,9 +1297,9 @@ export class FlameChart extends Common.ObjectWrapper.eventMixin<EventTypes, type
           context.fillStyle =
               ThemeSupport.ThemeSupport.instance().getComputedValue('--selected-group-background', this.contentElement);
         } else {
-          const parsedColor = Common.Color.Color.parse(group.style.backgroundColor);
+          const parsedColor = Common.Color.parse(group.style.backgroundColor);
           if (parsedColor) {
-            context.fillStyle = (parsedColor.setAlpha(0.8).asString(null) as string);
+            context.fillStyle = (parsedColor.setAlpha(0.8).asString() as string);
           }
         }
 
@@ -1684,6 +1359,89 @@ export class FlameChart extends Common.ObjectWrapper.eventMixin<EventTypes, type
       context.lineTo(arrowHeight - arrowCenterOffset, 0);
       context.restore();
     }
+  }
+
+  /**
+   * Draws page load events in the Timings track (LCP, FCP, DCL, etc.)
+   */
+  private drawMarkers(context: CanvasRenderingContext2D, timelineData: TimelineData, markerIndices: number[]): void {
+    const {entryStartTimes, entryLevels} = timelineData;
+    this.markerPositions.clear();
+    context.textBaseline = 'alphabetic';
+    context.save();
+    context.beginPath();
+    let lastMarkerLevel = -1;
+    let lastMarkerX: number = -Infinity;
+    // Markers are sorted top to bottom, right to left.
+    for (let m = markerIndices.length - 1; m >= 0; --m) {
+      const entryIndex = markerIndices[m];
+      const title = this.dataProvider.entryTitle(entryIndex);
+      if (!title) {
+        continue;
+      }
+      const entryStartTime = entryStartTimes[entryIndex];
+      const level = entryLevels[entryIndex];
+      if (lastMarkerLevel !== level) {
+        lastMarkerX = -Infinity;
+      }
+      const x = Math.max(this.chartViewport.timeToPosition(entryStartTime), lastMarkerX);
+      const y = this.levelToOffset(level);
+      const h = this.levelHeight(level);
+      const padding = 4;
+      const width = Math.ceil(UI.UIUtils.measureTextWidth(context, title)) + 2 * padding;
+      lastMarkerX = x + width + 1;
+      lastMarkerLevel = level;
+      this.markerPositions.set(entryIndex, {x, width});
+      context.fillStyle = this.dataProvider.entryColor(entryIndex);
+      context.fillRect(x, y, width, h - 1);
+      context.fillStyle = 'white';
+      context.fillText(title, x + padding, y + h - this.textBaseline);
+    }
+    context.strokeStyle = 'rgba(0, 0, 0, 0.2)';
+    context.stroke();
+    context.restore();
+  }
+
+  /**
+   * Draws the titles of trace events in the timeline. Also calls `decorateEntry` on the data
+   * provider, which can do any custom drawing on the corresponding entry's area (e.g. draw screenshots
+   * in the Performance Panel timeline).
+   */
+  private drawEventTitles(
+      context: CanvasRenderingContext2D, timelineData: TimelineData, titleIndices: number[], defaultFont: string,
+      width: number): void {
+    const timeToPixel = this.chartViewport.timeToPixel();
+    const textPadding = this.textPadding;
+    context.save();
+    context.beginPath();
+    const {entryStartTimes, entryLevels, entryTotalTimes} = timelineData;
+    for (let i = 0; i < titleIndices.length; ++i) {
+      const entryIndex = titleIndices[i];
+      const entryStartTime = entryStartTimes[entryIndex];
+      const barX = this.timeToPositionClipped(entryStartTime);
+      const barRight = Math.min(this.timeToPositionClipped(entryStartTime + entryTotalTimes[entryIndex]), width) + 1;
+      const barWidth = barRight - barX;
+      const barLevel = entryLevels[entryIndex];
+      const barY = this.levelToOffset(barLevel);
+      let text = this.dataProvider.entryTitle(entryIndex);
+      if (text && text.length) {
+        context.font = this.dataProvider.entryFont(entryIndex) || defaultFont;
+        text = UI.UIUtils.trimTextMiddle(context, text, barWidth - 2 * textPadding);
+      }
+      const unclippedBarX = this.chartViewport.timeToPosition(entryStartTime);
+      const barHeight = this.levelHeight(barLevel);
+      if (this.dataProvider.decorateEntry(
+              entryIndex, context, text, barX, barY, barWidth, barHeight, unclippedBarX, timeToPixel)) {
+        continue;
+      }
+      if (!text || !text.length) {
+        continue;
+      }
+      context.fillStyle = this.dataProvider.textColor(entryIndex);
+      context.fillText(text, barX + textPadding, barY + barHeight - this.textBaseline);
+    }
+
+    context.restore();
   }
 
   private forEachGroup(callback: (arg0: number, arg1: number, arg2: Group, arg3: boolean, arg4: number) => void): void {
@@ -1885,7 +1643,11 @@ export class FlameChart extends Common.ObjectWrapper.eventMixin<EventTypes, type
     context.restore();
   }
 
-  private drawMarkers(): void {
+  /**
+   * Draws the vertical dashed lines in the timeline marking where the "Marker" events
+   * happened in time.
+   */
+  private drawMarkerLines(): void {
     const timelineData = this.timelineData();
     if (!timelineData) {
       return;
@@ -2064,9 +1826,6 @@ export class FlameChart extends Common.ObjectWrapper.eventMixin<EventTypes, type
       this.groupOffsets[groupIndex + 1] = currentOffset;
     }
     this.visibleLevelOffsets[level] = currentOffset;
-    if (this.useWebGL) {
-      this.setupGLGeometry();
-    }
   }
 
   private isGroupCollapsible(index: number): boolean|undefined {
@@ -2203,7 +1962,6 @@ export class FlameChart extends Common.ObjectWrapper.eventMixin<EventTypes, type
     this.highlightedMarkerIndex = -1;
     this.highlightedEntryIndex = -1;
     this.selectedEntryIndex = -1;
-    this.textWidth = new Map();
     this.chartViewport.scheduleUpdate();
   }
 

@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -46,8 +46,8 @@ viz::mojom::FilterType CCFilterTypeToMojo(
       return viz::mojom::FilterType::SATURATING_BRIGHTNESS;
     case cc::FilterOperation::ALPHA_THRESHOLD:
       return viz::mojom::FilterType::ALPHA_THRESHOLD;
-    case cc::FilterOperation::STRETCH:
-      return viz::mojom::FilterType::STRETCH;
+    case cc::FilterOperation::OFFSET:
+      return viz::mojom::FilterType::OFFSET;
   }
   NOTREACHED();
   return viz::mojom::FilterType::FILTER_TYPE_LAST;
@@ -86,8 +86,8 @@ cc::FilterOperation::FilterType MojoFilterTypeToCC(
       return cc::FilterOperation::SATURATING_BRIGHTNESS;
     case viz::mojom::FilterType::ALPHA_THRESHOLD:
       return cc::FilterOperation::ALPHA_THRESHOLD;
-    case viz::mojom::FilterType::STRETCH:
-      return cc::FilterOperation::STRETCH;
+    case viz::mojom::FilterType::OFFSET:
+      return cc::FilterOperation::OFFSET;
   }
   NOTREACHED();
   return cc::FilterOperation::FILTER_TYPE_LAST;
@@ -128,10 +128,12 @@ bool StructTraits<viz::mojom::FilterOperationDataView, cc::FilterOperation>::
     case cc::FilterOperation::DROP_SHADOW: {
       out->set_amount(data.amount());
       gfx::Point offset;
-      if (!data.ReadDropShadowOffset(&offset))
+      SkColor4f drop_shadow_color;
+      if (!data.ReadOffset(&offset) ||
+          !data.ReadDropShadowColor(&drop_shadow_color))
         return false;
-      out->set_drop_shadow_offset(offset);
-      out->set_drop_shadow_color(data.drop_shadow_color());
+      out->set_offset(offset);
+      out->set_drop_shadow_color(drop_shadow_color);
       return true;
     }
     case cc::FilterOperation::COLOR_MATRIX: {
@@ -168,9 +170,11 @@ bool StructTraits<viz::mojom::FilterOperationDataView, cc::FilterOperation>::
       out->set_shape(shape);
       return true;
     }
-    case cc::FilterOperation::STRETCH: {
-      out->set_amount(data.amount());
-      out->set_outer_threshold(data.outer_threshold());
+    case cc::FilterOperation::OFFSET: {
+      gfx::Point offset;
+      if (!data.ReadOffset(&offset))
+        return false;
+      out->set_offset(offset);
       return true;
     }
   }

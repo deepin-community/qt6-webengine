@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,7 @@
 
 #include "base/auto_reset.h"
 #include "base/base64.h"
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
@@ -30,13 +30,13 @@
 #include "components/history/core/browser/url_database.h"
 #include "components/omnibox/browser/actions/omnibox_pedal.h"
 #include "components/omnibox/browser/autocomplete_classifier.h"
+#include "components/omnibox/browser/autocomplete_controller_emitter.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_provider.h"
-#include "components/omnibox/browser/omnibox_controller_emitter.h"
-#include "components/search_engines/omnibox_focus_type.h"
 #include "components/search_engines/template_url.h"
 #include "content/public/browser/web_ui.h"
 #include "third_party/metrics_proto/omnibox_event.pb.h"
+#include "third_party/metrics_proto/omnibox_focus_type.pb.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/image/image.h"
 
@@ -164,7 +164,7 @@ struct TypeConverter<mojom::AutocompleteMatchPtr, AutocompleteMatch> {
     result->type = AutocompleteMatchType::ToString(input.type);
     result->is_search_type = AutocompleteMatch::IsSearchType(input.type);
     auto subtypes = input.subtypes;
-    size_t type = std::u16string::npos;
+    omnibox::SuggestType type = omnibox::TYPE_NATIVE_CHROME;
     AutocompleteController::GetMatchTypeAndExtendSubtypes(input, &type,
                                                           &subtypes);
     std::vector<std::string> subtypes_str;
@@ -181,7 +181,8 @@ struct TypeConverter<mojom::AutocompleteMatchPtr, AutocompleteMatch> {
     result->keyword = base::UTF16ToUTF8(input.keyword);
     result->duplicates = static_cast<int32_t>(input.duplicate_matches.size());
     result->from_previous = input.from_previous;
-    result->pedal_id = input.action ? input.action->GetID() : 0;
+    const OmniboxAction* action = input.GetPrimaryAction();
+    result->pedal_id = action ? action->GetID() : 0;
     result->additional_info =
         mojo::ConvertTo<std::vector<mojom::AutocompleteAdditionalInfoPtr>>(
             input.additional_info);
@@ -211,7 +212,7 @@ OmniboxPageHandler::OmniboxPageHandler(
     mojo::PendingReceiver<mojom::OmniboxPageHandler> receiver)
     : profile_(profile), receiver_(this, std::move(receiver)) {
   observation_.Observe(
-      OmniboxControllerEmitter::GetForBrowserContext(profile_));
+      AutocompleteControllerEmitter::GetForBrowserContext(profile_));
   ResetController();
 }
 
@@ -358,9 +359,11 @@ void OmniboxPageHandler::StartOmniboxQuery(const std::string& input_string,
   input.set_prefer_keyword(prefer_keyword);
   if (prefer_keyword)
     input.set_keyword_mode_entry_method(metrics::OmniboxEventProto::TAB);
-  input.set_focus_type(zero_suggest ? OmniboxFocusType::ON_FOCUS
-                                    : OmniboxFocusType::DEFAULT);
-
+  input.set_focus_type(
+      zero_suggest ? input.text().empty() && current_url_gurl.is_valid()
+                         ? metrics::OmniboxFocusType::INTERACTION_CLOBBER
+                         : metrics::OmniboxFocusType::INTERACTION_FOCUS
+                   : metrics::OmniboxFocusType::INTERACTION_DEFAULT);
   controller_->Start(input);
 }
 
@@ -369,6 +372,6 @@ void OmniboxPageHandler::ResetController() {
       std::make_unique<ChromeAutocompleteProviderClient>(profile_),
       AutocompleteClassifier::DefaultOmniboxProviders());
   // We will observe our internal AutocompleteController directly, so there's
-  // no reason to hook it up to the profile-keyed OmniboxControllerEmitter.
+  // no reason to hook it up to the profile-keyed AutocompleteControllerEmitter.
   controller_->AddObserver(this);
 }

@@ -100,6 +100,9 @@ export class ExecutionContextSelector implements SDK.TargetManager.SDKModelObser
   }
 
   #shouldSwitchToContext(executionContext: SDK.RuntimeModel.ExecutionContext): boolean {
+    if (executionContext.target().targetInfo()?.subtype) {
+      return false;
+    }
     if (this.#lastSelectedContextId && this.#lastSelectedContextId === this.#contextPersistentId(executionContext)) {
       return true;
     }
@@ -110,7 +113,7 @@ export class ExecutionContextSelector implements SDK.TargetManager.SDKModelObser
     if (!executionContext.isDefault || !executionContext.frameId) {
       return false;
     }
-    if (executionContext.target().parentTarget()) {
+    if (executionContext.target().parentTarget()?.type() === SDK.Target.Type.Frame) {
       return false;
     }
     const resourceTreeModel = executionContext.target().model(SDK.ResourceTreeModel.ResourceTreeModel);

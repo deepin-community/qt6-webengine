@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,10 +13,11 @@
 #include <vector>
 
 #include "base/allocator/partition_allocator/address_space_randomization.h"
+#include "base/allocator/partition_allocator/partition_alloc_base/cpu.h"
+#include "base/allocator/partition_allocator/partition_alloc_base/logging.h"
+#include "base/allocator/partition_allocator/partition_alloc_config.h"
 #include "base/allocator/partition_allocator/partition_alloc_notreached.h"
 #include "base/allocator/partition_allocator/tagging.h"
-#include "base/cpu.h"
-#include "base/logging.h"
 #include "build/build_config.h"
 
 #if BUILDFLAG(IS_ANDROID)
@@ -33,16 +34,26 @@
 
 #include "base/allocator/partition_allocator/arm_bti_test_functions.h"
 
-#if defined(__ARM_FEATURE_MEMORY_TAGGING)
+#if PA_CONFIG(HAS_MEMORY_TAGGING)
 #include <arm_acle.h>
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX)
 #define MTE_KILLED_BY_SIGNAL_AVAILABLE
 #endif
-#endif
+#endif  // PA_CONFIG(HAS_MEMORY_TAGGING)
 
 #if !defined(MEMORY_TOOL_REPLACES_ALLOCATOR)
 
 namespace partition_alloc::internal {
+
+#if BUILDFLAG(IS_ANDROID)
+namespace base::debug {
+
+using ::base::debug::MappedMemoryRegion;
+using ::base::debug::ParseProcMaps;
+using ::base::debug::ReadProcMaps;
+
+}  // namespace base::debug
+#endif
 
 namespace {
 
@@ -119,9 +130,11 @@ TEST(PartitionAllocPageAllocatorTest, AllocFailure) {
   if (size == 0)
     return;
 
-  uintptr_t result = AllocPages(size, PageAllocationGranularity(),
-                                PageAccessibilityConfiguration::kInaccessible,
-                                PageTag::kChromium);
+  uintptr_t result =
+      AllocPages(size, PageAllocationGranularity(),
+                 PageAccessibilityConfiguration(
+                     PageAccessibilityConfiguration::kInaccessible),
+                 PageTag::kChromium);
   if (!result) {
     // We triggered allocation failure. Our reservation should have been
     // released, and we should be able to make a new reservation.
@@ -160,9 +173,11 @@ TEST(PartitionAllocPageAllocatorTest, MAYBE_ReserveAddressSpace) {
 }
 
 TEST(PartitionAllocPageAllocatorTest, AllocAndFreePages) {
-  uintptr_t buffer = AllocPages(
-      PageAllocationGranularity(), PageAllocationGranularity(),
-      PageAccessibilityConfiguration::kReadWrite, PageTag::kChromium);
+  uintptr_t buffer =
+      AllocPages(PageAllocationGranularity(), PageAllocationGranularity(),
+                 PageAccessibilityConfiguration(
+                     PageAccessibilityConfiguration::kReadWrite),
+                 PageTag::kChromium);
   EXPECT_TRUE(buffer);
   int* buffer0 = reinterpret_cast<int*>(buffer);
   *buffer0 = 42;
@@ -181,7 +196,9 @@ TEST(PartitionAllocPageAllocatorTest, AllocPagesAligned) {
     for (size_t offset : offsets) {
       uintptr_t buffer = AllocPagesWithAlignOffset(
           0, size, alignment, offset,
-          PageAccessibilityConfiguration::kReadWrite, PageTag::kChromium);
+          PageAccessibilityConfiguration(
+              PageAccessibilityConfiguration::kReadWrite),
+          PageTag::kChromium);
       EXPECT_TRUE(buffer);
       EXPECT_EQ(buffer % alignment, offset);
       FreePages(buffer, size);
@@ -194,9 +211,11 @@ TEST(PartitionAllocPageAllocatorTest,
   // This test checks that a page allocated with
   // PageAccessibilityConfiguration::kReadWriteTagged is safe to use on all
   // systems (even those which don't support MTE).
-  uintptr_t buffer = AllocPages(
-      PageAllocationGranularity(), PageAllocationGranularity(),
-      PageAccessibilityConfiguration::kReadWriteTagged, PageTag::kChromium);
+  uintptr_t buffer =
+      AllocPages(PageAllocationGranularity(), PageAllocationGranularity(),
+                 PageAccessibilityConfiguration(
+                     PageAccessibilityConfiguration::kReadWriteTagged),
+                 PageTag::kChromium);
   EXPECT_TRUE(buffer);
   int* buffer0 = reinterpret_cast<int*>(buffer);
   *buffer0 = 42;
@@ -222,9 +241,11 @@ TEST(PartitionAllocPageAllocatorTest,
   }
 #if defined(MTE_KILLED_BY_SIGNAL_AVAILABLE)
   // Next, map some read-write memory and copy the BTI-enabled function there.
-  uintptr_t buffer = AllocPages(
-      PageAllocationGranularity(), PageAllocationGranularity(),
-      PageAccessibilityConfiguration::kReadWrite, PageTag::kChromium);
+  uintptr_t buffer =
+      AllocPages(PageAllocationGranularity(), PageAllocationGranularity(),
+                 PageAccessibilityConfiguration(
+                     PageAccessibilityConfiguration::kReadWrite),
+                 PageTag::kChromium);
   ptrdiff_t function_range =
       reinterpret_cast<char*>(arm_bti_test_function_end) -
       reinterpret_cast<char*>(arm_bti_test_function);
@@ -235,8 +256,10 @@ TEST(PartitionAllocPageAllocatorTest,
          reinterpret_cast<void*>(arm_bti_test_function), function_range);
 
   // Next re-protect the page.
-  SetSystemPagesAccess(buffer, PageAllocationGranularity(),
-                       PageAccessibilityConfiguration::kReadExecuteProtected);
+  SetSystemPagesAccess(
+      buffer, PageAllocationGranularity(),
+      PageAccessibilityConfiguration(
+          PageAccessibilityConfiguration::kReadExecuteProtected));
 
   using BTITestFunction = int64_t (*)(int64_t);
 
@@ -272,9 +295,11 @@ TEST(PartitionAllocPageAllocatorTest,
   }
 
 #if defined(MTE_KILLED_BY_SIGNAL_AVAILABLE)
-  uintptr_t buffer = AllocPages(
-      PageAllocationGranularity(), PageAllocationGranularity(),
-      PageAccessibilityConfiguration::kReadWriteTagged, PageTag::kChromium);
+  uintptr_t buffer =
+      AllocPages(PageAllocationGranularity(), PageAllocationGranularity(),
+                 PageAccessibilityConfiguration(
+                     PageAccessibilityConfiguration::kReadWriteTagged),
+                 PageTag::kChromium);
   EXPECT_TRUE(buffer);
   int* buffer0 = reinterpret_cast<int*>(buffer);
   // Assign an 0x1 tag to the first granule of buffer.
@@ -327,9 +352,11 @@ TEST(PartitionAllocPageAllocatorTest,
   }
 
 #if defined(MTE_KILLED_BY_SIGNAL_AVAILABLE)
-  uintptr_t buffer = AllocPages(
-      PageAllocationGranularity(), PageAllocationGranularity(),
-      PageAccessibilityConfiguration::kReadWriteTagged, PageTag::kChromium);
+  uintptr_t buffer =
+      AllocPages(PageAllocationGranularity(), PageAllocationGranularity(),
+                 PageAccessibilityConfiguration(
+                     PageAccessibilityConfiguration::kReadWriteTagged),
+                 PageTag::kChromium);
   EXPECT_TRUE(buffer);
   int* buffer0 = reinterpret_cast<int*>(buffer);
   __arm_mte_set_tag(__arm_mte_increment_tag(buffer0, 0x1));
@@ -353,8 +380,8 @@ TEST(PartitionAllocPageAllocatorTest,
         // generated at this point but we may not notice straight away...
         *buffer0 = 42;
         EXPECT_EQ(42, *buffer0);
-        LOG(ERROR) << "=";  // Until we receive control back from the kernel
-                            // (e.g. on a system call).
+        PA_LOG(ERROR) << "=";  // Until we receive control back from the kernel
+                               // (e.g. on a system call).
       },
       testing::KilledBySignal(SIGSEGV), "");
   FreePages(buffer, PageAllocationGranularity());
@@ -408,9 +435,11 @@ void SignalHandler(int signal, siginfo_t* info, void*) {
   }
 
 TEST(PartitionAllocPageAllocatorTest, InaccessiblePages) {
-  uintptr_t buffer = AllocPages(
-      PageAllocationGranularity(), PageAllocationGranularity(),
-      PageAccessibilityConfiguration::kInaccessible, PageTag::kChromium);
+  uintptr_t buffer =
+      AllocPages(PageAllocationGranularity(), PageAllocationGranularity(),
+                 PageAccessibilityConfiguration(
+                     PageAccessibilityConfiguration::kInaccessible),
+                 PageTag::kChromium);
   EXPECT_TRUE(buffer);
 
   FAULT_TEST_BEGIN()
@@ -434,9 +463,11 @@ TEST(PartitionAllocPageAllocatorTest, InaccessiblePages) {
 #define MAYBE_ReadExecutePages ReadExecutePages
 #endif  // BUILDFLAG(IS_IOS)
 TEST(PartitionAllocPageAllocatorTest, MAYBE_ReadExecutePages) {
-  uintptr_t buffer = AllocPages(
-      PageAllocationGranularity(), PageAllocationGranularity(),
-      PageAccessibilityConfiguration::kReadExecute, PageTag::kChromium);
+  uintptr_t buffer =
+      AllocPages(PageAllocationGranularity(), PageAllocationGranularity(),
+                 PageAccessibilityConfiguration(
+                     PageAccessibilityConfiguration::kReadExecute),
+                 PageTag::kChromium);
   EXPECT_TRUE(buffer);
   int* buffer0 = reinterpret_cast<int*>(buffer);
   // Reading from buffer should succeed.
@@ -459,9 +490,11 @@ TEST(PartitionAllocPageAllocatorTest, MAYBE_ReadExecutePages) {
 
 #if BUILDFLAG(IS_ANDROID)
 TEST(PartitionAllocPageAllocatorTest, PageTagging) {
-  uintptr_t buffer = AllocPages(
-      PageAllocationGranularity(), PageAllocationGranularity(),
-      PageAccessibilityConfiguration::kInaccessible, PageTag::kChromium);
+  uintptr_t buffer =
+      AllocPages(PageAllocationGranularity(), PageAllocationGranularity(),
+                 PageAccessibilityConfiguration(
+                     PageAccessibilityConfiguration::kInaccessible),
+                 PageTag::kChromium);
   EXPECT_TRUE(buffer);
 
   std::string proc_maps;
@@ -489,7 +522,8 @@ TEST(PartitionAllocPageAllocatorTest, DecommitErasesMemory) {
 
   size_t size = PageAllocationGranularity();
   uintptr_t buffer = AllocPages(size, PageAllocationGranularity(),
-                                PageAccessibilityConfiguration::kReadWrite,
+                                PageAccessibilityConfiguration(
+                                    PageAccessibilityConfiguration::kReadWrite),
                                 PageTag::kChromium);
   ASSERT_TRUE(buffer);
 
@@ -497,7 +531,9 @@ TEST(PartitionAllocPageAllocatorTest, DecommitErasesMemory) {
 
   DecommitSystemPages(buffer, size,
                       PageAccessibilityDisposition::kAllowKeepForPerf);
-  RecommitSystemPages(buffer, size, PageAccessibilityConfiguration::kReadWrite,
+  RecommitSystemPages(buffer, size,
+                      PageAccessibilityConfiguration(
+                          PageAccessibilityConfiguration::kReadWrite),
                       PageAccessibilityDisposition::kAllowKeepForPerf);
 
   uint8_t* recommitted_buffer = reinterpret_cast<uint8_t*>(buffer);
@@ -513,7 +549,8 @@ TEST(PartitionAllocPageAllocatorTest, DecommitErasesMemory) {
 TEST(PartitionAllocPageAllocatorTest, DecommitAndZero) {
   size_t size = PageAllocationGranularity();
   uintptr_t buffer = AllocPages(size, PageAllocationGranularity(),
-                                PageAccessibilityConfiguration::kReadWrite,
+                                PageAccessibilityConfiguration(
+                                    PageAccessibilityConfiguration::kReadWrite),
                                 PageTag::kChromium);
   ASSERT_TRUE(buffer);
 
@@ -540,7 +577,8 @@ TEST(PartitionAllocPageAllocatorTest, DecommitAndZero) {
   // call SetSystemPagesAccess to mark the region as accessible again, so we
   // use that here as well.
   SetSystemPagesAccess(buffer, size,
-                       PageAccessibilityConfiguration::kReadWrite);
+                       PageAccessibilityConfiguration(
+                           PageAccessibilityConfiguration::kReadWrite));
 
   uint8_t* recommitted_buffer = reinterpret_cast<uint8_t*>(buffer);
   uint32_t sum = 0;
@@ -565,7 +603,9 @@ TEST(PartitionAllocPageAllocatorTest, MappedPagesAccounting) {
   for (size_t offset : offsets) {
     uintptr_t data = AllocPagesWithAlignOffset(
         0, size, alignment, offset,
-        PageAccessibilityConfiguration::kInaccessible, PageTag::kChromium);
+        PageAccessibilityConfiguration(
+            PageAccessibilityConfiguration::kInaccessible),
+        PageTag::kChromium);
     ASSERT_TRUE(data);
 
     EXPECT_EQ(mapped_size_before + size, GetTotalMappedSize());

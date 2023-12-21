@@ -17,12 +17,12 @@
 #include "quiche/http2/hpack/decoder/hpack_decoding_error.h"
 #include "quiche/http2/hpack/decoder/hpack_entry_decoder.h"
 #include "quiche/http2/hpack/decoder/hpack_entry_decoder_listener.h"
-#include "quiche/http2/platform/api/http2_logging.h"
 #include "quiche/common/platform/api/quiche_export.h"
+#include "quiche/common/platform/api/quiche_logging.h"
 
 namespace http2 {
 
-class QUICHE_EXPORT_PRIVATE HpackBlockDecoder {
+class QUICHE_EXPORT HpackBlockDecoder {
  public:
   explicit HpackBlockDecoder(HpackEntryDecoderListener* listener)
       : listener_(listener) {
@@ -37,7 +37,7 @@ class QUICHE_EXPORT_PRIVATE HpackBlockDecoder {
   // to be called from an implementation of Http2FrameDecoderListener's
   // OnHeadersStart or OnPushPromiseStart methods.
   void Reset() {
-    HTTP2_DVLOG(2) << "HpackBlockDecoder::Reset";
+    QUICHE_DVLOG(2) << "HpackBlockDecoder::Reset";
     before_entry_ = true;
   }
 
@@ -61,8 +61,8 @@ class QUICHE_EXPORT_PRIVATE HpackBlockDecoder {
   bool before_entry_ = true;
 };
 
-QUICHE_EXPORT_PRIVATE std::ostream& operator<<(std::ostream& out,
-                                               const HpackBlockDecoder& v);
+QUICHE_EXPORT std::ostream& operator<<(std::ostream& out,
+                                       const HpackBlockDecoder& v);
 
 }  // namespace http2
 

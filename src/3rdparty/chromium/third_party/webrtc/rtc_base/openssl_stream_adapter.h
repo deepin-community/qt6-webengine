@@ -27,11 +27,11 @@
 #else
 #include "rtc_base/openssl_identity.h"
 #endif
+#include "api/task_queue/pending_task_safety_flag.h"
 #include "rtc_base/ssl_identity.h"
 #include "rtc_base/ssl_stream_adapter.h"
 #include "rtc_base/stream.h"
 #include "rtc_base/system/rtc_export.h"
-#include "rtc_base/task_utils/pending_task_safety_flag.h"
 #include "rtc_base/task_utils/repeating_task.h"
 
 namespace rtc {
@@ -95,14 +95,12 @@ class OpenSSLStreamAdapter final : public SSLStreamAdapter {
   void SetMaxProtocolVersion(SSLProtocolVersion version) override;
   void SetInitialRetransmissionTimeout(int timeout_ms) override;
 
-  StreamResult Read(void* data,
-                    size_t data_len,
-                    size_t* read,
-                    int* error) override;
-  StreamResult Write(const void* data,
-                     size_t data_len,
-                     size_t* written,
-                     int* error) override;
+  StreamResult Read(rtc::ArrayView<uint8_t> data,
+                    size_t& read,
+                    int& error) override;
+  StreamResult Write(rtc::ArrayView<const uint8_t> data,
+                     size_t& written,
+                     int& error) override;
   void Close() override;
   StreamState GetState() const override;
 
@@ -173,7 +171,7 @@ class OpenSSLStreamAdapter final : public SSLStreamAdapter {
   // `alert` indicates an alert description (one of the SSL_AD constants) to
   // send to the remote endpoint when closing the association. If 0, a normal
   // shutdown will be performed.
-  void Error(const char* context, int err, uint8_t alert, bool signal);
+  void Error(absl::string_view context, int err, uint8_t alert, bool signal);
   void Cleanup(uint8_t alert);
 
   // Flush the input buffers by reading left bytes (for DTLS)

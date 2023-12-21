@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,7 +18,7 @@
 #include "ui/message_center/public/cpp/message_center_constants.h"
 #include "ui/message_center/vector_icons.h"
 #include "ui/message_center/views/message_view.h"
-#include "ui/message_center/views/padded_button.h"
+#include "ui/message_center/views/notification_control_button_factory.h"
 #include "ui/strings/grit/ui_strings.h"
 #include "ui/views/background.h"
 #include "ui/views/layout/box_layout.h"
@@ -37,6 +37,10 @@ NotificationControlButtonsView::NotificationControlButtonsView(
   // Use layer to change the opacity.
   SetPaintToLayer();
   layer()->SetFillsBoundsOpaquely(false);
+  if (!notification_control_button_factory_) {
+    notification_control_button_factory_ =
+        std::make_unique<NotificationControlButtonFactory>();
+  }
 }
 
 NotificationControlButtonsView::~NotificationControlButtonsView() = default;
@@ -48,14 +52,15 @@ void NotificationControlButtonsView::OnThemeChanged() {
 
 void NotificationControlButtonsView::ShowCloseButton(bool show) {
   if (show && !close_button_) {
-    close_button_ = AddChildView(std::make_unique<PaddedButton>(
-        base::BindRepeating(&MessageView::OnCloseButtonPressed,
-                            base::Unretained(message_view_))));
+    close_button_ =
+        AddChildView(notification_control_button_factory_->CreateButton(
+            base::BindRepeating(&MessageView::OnCloseButtonPressed,
+                                base::Unretained(message_view_))));
     if (GetWidget()) {
-      close_button_->SetImage(
+      close_button_->SetImageModel(
           views::Button::STATE_NORMAL,
-          gfx::CreateVectorIcon(kNotificationCloseButtonIcon,
-                                DetermineButtonIconColor()));
+          ui::ImageModel::FromVectorIcon(kNotificationCloseButtonIcon,
+                                         DetermineButtonIconColor()));
     }
     close_button_->SetAccessibleName(l10n_util::GetStringUTF16(
         IDS_MESSAGE_CENTER_CLOSE_NOTIFICATION_BUTTON_ACCESSIBLE_NAME));
@@ -75,16 +80,16 @@ void NotificationControlButtonsView::ShowSettingsButton(bool show) {
   if (show && !settings_button_) {
     // Add the button next right to the snooze button.
     const int position = snooze_button_ ? 1 : 0;
-    settings_button_ =
-        AddChildViewAt(std::make_unique<PaddedButton>(base::BindRepeating(
-                           &MessageView::OnSettingsButtonPressed,
-                           base::Unretained(message_view_))),
-                       position);
+    settings_button_ = AddChildViewAt(
+        notification_control_button_factory_->CreateButton(
+            base::BindRepeating(&MessageView::OnSettingsButtonPressed,
+                                base::Unretained(message_view_))),
+        position);
     if (GetWidget()) {
-      settings_button_->SetImage(
+      settings_button_->SetImageModel(
           views::Button::STATE_NORMAL,
-          gfx::CreateVectorIcon(kNotificationSettingsButtonIcon,
-                                DetermineButtonIconColor()));
+          ui::ImageModel::FromVectorIcon(kNotificationSettingsButtonIcon,
+                                         DetermineButtonIconColor()));
     }
     settings_button_->SetAccessibleName(l10n_util::GetStringUTF16(
         IDS_MESSAGE_NOTIFICATION_SETTINGS_BUTTON_ACCESSIBLE_NAME));
@@ -103,16 +108,16 @@ void NotificationControlButtonsView::ShowSettingsButton(bool show) {
 void NotificationControlButtonsView::ShowSnoozeButton(bool show) {
   if (show && !snooze_button_) {
     // Snooze button should appear as the first child.
-    snooze_button_ =
-        AddChildViewAt(std::make_unique<PaddedButton>(base::BindRepeating(
-                           &MessageView::OnSnoozeButtonPressed,
-                           base::Unretained(message_view_))),
-                       0);
+    snooze_button_ = AddChildViewAt(
+        notification_control_button_factory_->CreateButton(
+            base::BindRepeating(&MessageView::OnSnoozeButtonPressed,
+                                base::Unretained(message_view_))),
+        0);
     if (GetWidget()) {
-      snooze_button_->SetImage(
+      snooze_button_->SetImageModel(
           views::Button::STATE_NORMAL,
-          gfx::CreateVectorIcon(kNotificationSnoozeButtonIcon,
-                                DetermineButtonIconColor()));
+          ui::ImageModel::FromVectorIcon(kNotificationSnoozeButtonIcon,
+                                         DetermineButtonIconColor()));
     }
     snooze_button_->SetAccessibleName(l10n_util::GetStringUTF16(
         IDS_MESSAGE_CENTER_NOTIFICATION_SNOOZE_BUTTON_TOOLTIP));
@@ -161,22 +166,31 @@ void NotificationControlButtonsView::SetMessageView(MessageView* message_view) {
   message_view_ = message_view;
 }
 
+void NotificationControlButtonsView::SetNotificationControlButtonFactory(
+    std::unique_ptr<NotificationControlButtonFactory>
+        notification_control_button_factory) {
+  notification_control_button_factory_ =
+      std::move(notification_control_button_factory);
+}
+
 void NotificationControlButtonsView::UpdateButtonIconColors() {
   SkColor icon_color = DetermineButtonIconColor();
   if (close_button_) {
-    close_button_->SetImage(
-        views::Button::STATE_NORMAL,
-        gfx::CreateVectorIcon(kNotificationCloseButtonIcon, icon_color));
+    close_button_->SetImageModel(views::Button::STATE_NORMAL,
+                                 ui::ImageModel::FromVectorIcon(
+                                     kNotificationCloseButtonIcon, icon_color));
   }
   if (settings_button_) {
-    settings_button_->SetImage(
+    settings_button_->SetImageModel(
         views::Button::STATE_NORMAL,
-        gfx::CreateVectorIcon(kNotificationSettingsButtonIcon, icon_color));
+        ui::ImageModel::FromVectorIcon(kNotificationSettingsButtonIcon,
+                                       icon_color));
   }
   if (snooze_button_) {
-    snooze_button_->SetImage(
+    snooze_button_->SetImageModel(
         views::Button::STATE_NORMAL,
-        gfx::CreateVectorIcon(kNotificationSnoozeButtonIcon, icon_color));
+        ui::ImageModel::FromVectorIcon(kNotificationSnoozeButtonIcon,
+                                       icon_color));
   }
 }
 

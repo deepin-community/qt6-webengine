@@ -1,3 +1,5 @@
+# mypy: allow-untyped-defs
+
 class NodeVisitor:
     def visit(self, node):
         # This is ugly as hell, but we don't have multimethods and
@@ -8,10 +10,11 @@ class NodeVisitor:
 
 
 class Node:
-    def __init__(self, data=None):
+    def __init__(self, data=None, comments=None):
         self.data = data
         self.parent = None
         self.children = []
+        self.comments = comments or []
 
     def append(self, other):
         other.parent = self
@@ -21,7 +24,7 @@ class Node:
         self.parent.children.remove(self)
 
     def __repr__(self):
-        return "<%s %s>" % (self.__class__.__name__, self.data)
+        return f"<{self.__class__.__name__} {self.data}>"
 
     def __str__(self):
         rv = [repr(self)]
@@ -40,7 +43,7 @@ class Node:
         return True
 
     def copy(self):
-        new = self.__class__(self.data)
+        new = self.__class__(self.data, self.comments)
         for item in self.children:
             new.append(item.copy())
         return new

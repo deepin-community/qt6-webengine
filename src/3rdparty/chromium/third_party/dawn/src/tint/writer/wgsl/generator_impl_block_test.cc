@@ -20,16 +20,16 @@ namespace {
 using WgslGeneratorImplTest = TestHelper;
 
 TEST_F(WgslGeneratorImplTest, Emit_Block) {
-  auto* b = Block(create<ast::DiscardStatement>());
-  WrapInFunction(b);
+    auto* b = Block(Return());
+    WrapInFunction(b);
 
-  GeneratorImpl& gen = Build();
+    GeneratorImpl& gen = Build();
 
-  gen.increment_indent();
+    gen.increment_indent();
 
-  ASSERT_TRUE(gen.EmitStatement(b)) << gen.error();
-  EXPECT_EQ(gen.result(), R"(  {
-    discard;
+    ASSERT_TRUE(gen.EmitStatement(b)) << gen.error();
+    EXPECT_EQ(gen.result(), R"(  {
+    return;
   }
 )");
 }

@@ -1,29 +1,28 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/bind.h"
+#include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
-#include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_feature_list.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "content/browser/download/download_manager_impl.h"
 #include "content/browser/download/save_package.h"
-#include "content/browser/web_package/web_bundle_utils.h"
+#include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/content_features.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/download_test_observer.h"
+#include "content/public/test/fenced_frame_test_util.h"
 #include "content/shell/browser/shell.h"
 #include "content/shell/browser/shell_download_manager_delegate.h"
-#include "net/base/filename_util.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "testing/gmock/include/gmock/gmock.h"
 
 namespace content {
 
@@ -41,12 +40,7 @@ class TestShellDownloadManagerDelegate : public ShellDownloadManagerDelegate {
                       const base::FilePath::StringType& default_extension,
                       bool can_save_as_complete,
                       SavePackagePathPickedCallback callback) override {
-    base::FilePath suggested_path_copy = suggested_path;
-    if (save_page_type_ == SAVE_PAGE_TYPE_AS_WEB_BUNDLE) {
-      suggested_path_copy =
-          suggested_path_copy.ReplaceExtension(FILE_PATH_LITERAL("wbn"));
-    }
-    std::move(callback).Run(suggested_path_copy, save_page_type_,
+    std::move(callback).Run(suggested_path, save_page_type_,
                             SavePackageDownloadCreatedCallback());
   }
 
@@ -73,7 +67,7 @@ class DownloadicidalObserver : public DownloadManager::Observer {
         after_closure_(std::move(after_closure)) {}
   void OnDownloadCreated(DownloadManager* manager,
                          download::DownloadItem* item) override {
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(
                        [](bool remove_download, base::OnceClosure closure,
                           download::DownloadItem* item) {
@@ -187,7 +181,7 @@ class SavePackageBrowserTest : public ContentBrowserTest {
       download_manager->AddObserver(&download_item_killer);
 
       scoped_refptr<SavePackage> save_package(
-          new SavePackage(shell()->web_contents()->GetPrimaryPage()));
+          new SavePackage(web_contents_impl()->GetPrimaryPage()));
       save_package->GetSaveInfo();
       run_loop.Run();
       download_manager->RemoveObserver(&download_item_killer);
@@ -208,6 +202,10 @@ class SavePackageBrowserTest : public ContentBrowserTest {
     download_manager->SetDelegate(old_delegate);
   }
 
+  WebContentsImpl* web_contents_impl() {
+    return static_cast<WebContentsImpl*>(shell()->web_contents());
+  }
+
   // Temporary directory we will save pages to.
   base::ScopedTempDir save_dir_;
 };
@@ -221,7 +219,7 @@ IN_PROC_BROWSER_TEST_F(SavePackageBrowserTest, ImplicitCancel) {
   base::FilePath full_file_name, dir;
   GetDestinationPaths("a", &full_file_name, &dir);
   scoped_refptr<SavePackage> save_package(
-      new SavePackage(shell()->web_contents()->GetPrimaryPage(),
+      new SavePackage(web_contents_impl()->GetPrimaryPage(),
                       SAVE_PAGE_TYPE_AS_ONLY_HTML, full_file_name, dir));
 }
 
@@ -234,7 +232,7 @@ IN_PROC_BROWSER_TEST_F(SavePackageBrowserTest, ExplicitCancel) {
   base::FilePath full_file_name, dir;
   GetDestinationPaths("a", &full_file_name, &dir);
   scoped_refptr<SavePackage> save_package(
-      new SavePackage(shell()->web_contents()->GetPrimaryPage(),
+      new SavePackage(web_contents_impl()->GetPrimaryPage(),
                       SAVE_PAGE_TYPE_AS_ONLY_HTML, full_file_name, dir));
   save_package->Cancel(true);
 }
@@ -266,7 +264,7 @@ IN_PROC_BROWSER_TEST_F(SavePackageBrowserTest, Reload) {
   download_manager->SetDelegate(delegate.get());
 
   scoped_refptr<SavePackage> save_package(
-      new SavePackage(shell()->web_contents()->GetPrimaryPage(),
+      new SavePackage(web_contents_impl()->GetPrimaryPage(),
                       SAVE_PAGE_TYPE_AS_ONLY_HTML, full_file_name, dir));
   save_package->GetSaveInfo();
   shell()->web_contents()->GetController().Reload(content::ReloadType::NORMAL,
@@ -274,59 +272,84 @@ IN_PROC_BROWSER_TEST_F(SavePackageBrowserTest, Reload) {
   download_manager->SetDelegate(old_delegate);
 }
 
-class SavePackageWebBundleBrowserTest : public SavePackageBrowserTest {
+class SavePackageFencedFrameBrowserTest : public SavePackageBrowserTest {
  public:
-  void SetUp() override {
-    std::vector<base::Feature> enable_features;
-    std::vector<base::Feature> disabled_features;
-    enable_features.push_back(features::kSavePageAsWebBundle);
-    enable_features.push_back(features::kWebBundles);
-    feature_list_.InitWithFeatures(enable_features, disabled_features);
-
-    SavePackageBrowserTest::SetUp();
+  test::FencedFrameTestHelper& fenced_frame_test_helper() {
+    return fenced_frame_helper_;
   }
 
- private:
-  base::test::ScopedFeatureList feature_list_;
+ protected:
+  test::FencedFrameTestHelper fenced_frame_helper_;
 };
 
-IN_PROC_BROWSER_TEST_F(SavePackageWebBundleBrowserTest, OnePageSimple) {
+// If fenced frames become savable, this test will need to be updated.
+// See https://crbug.com/1321102
+IN_PROC_BROWSER_TEST_F(SavePackageFencedFrameBrowserTest,
+                       IgnoreFencedFrameInMHTML) {
   ASSERT_TRUE(embedded_test_server()->Start());
-  GURL url = embedded_test_server()->GetURL(
-      "/web_bundle/save_page_as_web_bundle/one_page_simple.html");
-  EXPECT_TRUE(NavigateToURL(shell(), url));
+  GURL main_url = embedded_test_server()->GetURL(kTestFile);
+  EXPECT_TRUE(NavigateToURL(shell(), main_url));
+
+  RenderFrameHost* main_frame = shell()->web_contents()->GetPrimaryMainFrame();
+
+  // Create an iframe.
+  GURL iframe_url = embedded_test_server()->GetURL("/title2.html");
+  constexpr char kAddIframeScript[] = R"({
+      (()=>{
+          return new Promise((resolve) => {
+            const frame = document.createElement('iframe');
+            frame.addEventListener('load', () => {resolve();});
+            frame.src = $1;
+            document.body.appendChild(frame);
+          });
+      })();
+    })";
+  EXPECT_TRUE(ExecJs(main_frame, JsReplace(kAddIframeScript, iframe_url)));
+
+  // Create a fenced frame.
+  GURL fenced_frame_url =
+      embedded_test_server()->GetURL("/fenced_frames/title1.html");
+  fenced_frame_test_helper().CreateFencedFrame(
+      shell()->web_contents()->GetPrimaryMainFrame(), fenced_frame_url);
+
   auto* download_manager = static_cast<DownloadManagerImpl*>(
       shell()->web_contents()->GetBrowserContext()->GetDownloadManager());
   auto delegate = std::make_unique<TestShellDownloadManagerDelegate>(
-      SAVE_PAGE_TYPE_AS_WEB_BUNDLE);
+      SAVE_PAGE_TYPE_AS_MHTML);
   delegate->download_dir_ = save_dir_.GetPath();
   auto* old_delegate = download_manager->GetDelegate();
   download_manager->SetDelegate(delegate.get());
 
-  GURL wbn_file_url;
+  // Save a page as the MHTML.
+  base::FilePath file_path;
   {
     base::RunLoop run_loop;
     DownloadCompleteObserver observer(run_loop.QuitClosure());
     download_manager->AddObserver(&observer);
     scoped_refptr<SavePackage> save_package(
-        new SavePackage(shell()->web_contents()->GetPrimaryPage()));
+        new SavePackage(web_contents_impl()->GetPrimaryPage()));
     save_package->GetSaveInfo();
     run_loop.Run();
     download_manager->RemoveObserver(&observer);
     EXPECT_TRUE(save_package->finished());
-    EXPECT_EQ("application/webbundle", observer.mime_type());
-    wbn_file_url = net::FilePathToFileURL(observer.target_file_path());
+    file_path = observer.target_file_path();
   }
 
   download_manager->SetDelegate(old_delegate);
-  EXPECT_TRUE(NavigateToURL(shell(), GURL("about:blank")));
 
-  std::u16string expected_title = u"Hello";
-  TitleWatcher title_watcher(shell()->web_contents(), expected_title);
-  EXPECT_TRUE(NavigateToURL(
-      shell(), wbn_file_url,
-      web_bundle_utils::GetSynthesizedUrlForWebBundle(wbn_file_url, url)));
-  EXPECT_EQ(expected_title, title_watcher.WaitAndGetTitle());
+  // Read the saved MHTML.
+  std::string mhtml;
+  {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    ASSERT_TRUE(base::ReadFileToString(file_path, &mhtml));
+  }
+
+  // Verify a title in the iframe's document.
+  EXPECT_THAT(mhtml, testing::HasSubstr("Title Of Awesomeness"));
+
+  // Verify the absence of the fenced frame's document.
+  EXPECT_THAT(mhtml,
+              ::testing::Not(testing::HasSubstr("This page has no title")));
 }
 
 }  // namespace content

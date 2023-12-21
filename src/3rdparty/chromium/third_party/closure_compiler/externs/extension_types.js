@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,12 @@
 // NOTE: The format of types has changed. 'FooType' is now
 //   'chrome.extensionTypes.FooType'.
 // Please run the closure compiler before committing changes.
-// See
-// https://chromium.googlesource.com/chromium/src/+/main/docs/closure_compilation.md
+// See https://chromium.googlesource.com/chromium/src/+/main/docs/closure_compilation.md
 
-/** @fileoverview Externs generated from namespace: extensionTypes */
+/**
+ * @fileoverview Externs generated from namespace: extensionTypes
+ * @externs
+ */
 
 /** @const */
 chrome.extensionTypes = {};
@@ -69,8 +71,7 @@ chrome.extensionTypes.CSSOrigin = {
 chrome.extensionTypes.InjectDetails;
 
 /**
- * Details of the CSS to remove. Either the code or the file property must be
- * set, but both may not be set at the same time.
+ * Details of the CSS to remove. Either the code or the file property must be set, but both may not be set at the same time.
  * @typedef {{
  *   code: (string|undefined),
  *   file: (string|undefined),

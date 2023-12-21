@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -73,7 +73,7 @@ class SyncInternalsMessageHandler : public content::WebUIMessageHandler,
 
   // Callback used in GetAllNodes.
   void OnReceivedAllNodes(const std::string& callback_id,
-                          std::unique_ptr<base::ListValue> nodes);
+                          base::Value::List nodes);
 
   // syncer::SyncServiceObserver implementation.
   void OnStateChanged(syncer::SyncService* sync) override;
@@ -86,9 +86,8 @@ class SyncInternalsMessageHandler : public content::WebUIMessageHandler,
 
  protected:
   using AboutSyncDataDelegate =
-      base::RepeatingCallback<std::unique_ptr<base::DictionaryValue>(
-          syncer::SyncService* service,
-          const std::string& channel)>;
+      base::RepeatingCallback<base::Value::Dict(syncer::SyncService* service,
+                                                const std::string& channel)>;
 
   // Constructor used for unit testing to override dependencies.
   explicit SyncInternalsMessageHandler(
@@ -108,8 +107,7 @@ class SyncInternalsMessageHandler : public content::WebUIMessageHandler,
   // nullptr (e.g. if sync is disabled on the command line).
   syncer::SyncService* GetSyncService();
 
-  // Gets the SyncInvalidationsService of the underlying original profile. May
-  // return nullptr (e.g. if sync invalidations are not enabled).
+  // Gets the SyncInvalidationsService of the underlying original profile.
   syncer::SyncInvalidationsService* GetSyncInvalidationsService();
 
   // Unregisters for notifications from all notifications coming from the sync

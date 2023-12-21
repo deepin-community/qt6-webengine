@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,19 +7,18 @@
 #include <iostream>
 #include <memory>
 
-#include "base/bind.h"
 #include "base/check_op.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/run_loop.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_restrictions.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "cc/base/switches.h"
 #include "components/network_session_configurator/common/network_switches.h"
@@ -28,7 +27,6 @@
 #include "content/public/browser/browser_main_runner.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
-#include "content/public/test/ppapi_test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "content/shell/common/shell_switches.h"
 #include "content/test/gpu_browsertest_helpers.h"
@@ -40,6 +38,9 @@
 #include "gpu/ipc/client/gpu_channel_host.h"
 #include "media/base/media_switches.h"
 #include "net/base/filename_util.h"
+#include "net/base/ip_address.h"
+#include "net/base/ip_endpoint.h"
+#include "net/base/url_util.h"
 #include "ppapi/buildflags/buildflags.h"
 #include "services/network/public/cpp/network_switches.h"
 #include "ui/base/ui_base_switches.h"
@@ -47,9 +48,61 @@
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_switches.h"
 
+#if BUILDFLAG(ENABLE_PPAPI)
+#include "content/public/test/ppapi_test_utils.h"
+#endif
+
+#if BUILDFLAG(IS_FUCHSIA)
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
+
 namespace content {
 
 namespace {
+
+#if BUILDFLAG(IS_FUCHSIA)
+// Fuchsia doesn't support stdin stream for packaged apps, and stdout from
+// run-test-suite not only has extra emissions from the Fuchsia test
+// infrastructure, it also merges stderr and stdout together. Combined, these
+// mean that when running content_shell on Fuchsia it's not possible to use
+// stdin to pass list of tests or to reliably use stdout to emit results. To
+// workaround this issue for web tests we redirect stdin and stdout to a TCP
+// socket connected to the web test runner. The runner uses --stdio-redirect to
+// specify address and port for stdin and stdout redirection.
+constexpr char kStdioRedirectSwitch[] = "stdio-redirect";
+
+void ConnectStdioSocket(const std::string& host_and_port) {
+  std::string host;
+  int port;
+  net::IPAddress address;
+  if (!net::ParseHostAndPort(host_and_port, &host, &port) ||
+      !address.AssignFromIPLiteral(host)) {
+    LOG(FATAL) << "Invalid stdio address: " << host_and_port;
+  }
+
+  sockaddr_storage sockaddr_storage;
+  sockaddr* addr = reinterpret_cast<sockaddr*>(&sockaddr_storage);
+  socklen_t addr_len = sizeof(sockaddr_storage);
+  net::IPEndPoint endpoint(address, port);
+  bool converted = endpoint.ToSockAddr(addr, &addr_len);
+  CHECK(converted);
+
+  int fd = socket(addr->sa_family, SOCK_STREAM, 0);
+  PCHECK(fd >= 0);
+  int result = connect(fd, addr, addr_len);
+  PCHECK(result == 0) << "Failed to connect to " << host_and_port;
+
+  result = dup2(fd, STDIN_FILENO);
+  PCHECK(result == STDIN_FILENO) << "Failed to dup socket to stdin";
+
+  result = dup2(fd, STDOUT_FILENO);
+  PCHECK(result == STDOUT_FILENO) << "Failed to dup socket to stdout";
+
+  PCHECK(close(fd) == 0);
+}
+
+#endif  // BUILDFLAG(IS_FUCHSIA)
 
 bool RunOneTest(const content::TestInfo& test_info,
                 content::WebTestControlHost* web_test_control_host,
@@ -66,6 +119,12 @@ bool RunOneTest(const content::TestInfo& test_info,
 }
 
 void RunTests(content::BrowserMainRunner* main_runner) {
+#if BUILDFLAG(IS_FUCHSIA)
+  if (auto& cmd_line = *base::CommandLine::ForCurrentProcess();
+      cmd_line.HasSwitch(kStdioRedirectSwitch)) {
+    ConnectStdioSocket(cmd_line.GetSwitchValueASCII(kStdioRedirectSwitch));
+  }
+#endif  // BUILDFLAG(IS_FUCHSIA)
   TRACE_EVENT0("shell", "WebTestBrowserMainRunner::RunTests");
   content::WebTestControlHost test_controller;
   {
@@ -128,9 +187,8 @@ void WebTestBrowserMainRunner::Initialize() {
   // interference. This GPU process is launched 120 seconds after chrome starts.
   command_line.AppendSwitch(switches::kDisableGpuProcessForDX12InfoCollection);
 
-#if BUILDFLAG(ENABLE_PLUGINS)
-  bool ppapi_ok = ppapi::RegisterBlinkTestPlugin(&command_line);
-  CHECK(ppapi_ok);
+#if BUILDFLAG(ENABLE_PPAPI)
+  CHECK(ppapi::RegisterBlinkTestPlugin(&command_line));
 #endif
 
   command_line.AppendSwitch(cc::switches::kEnableGpuBenchmarking);
@@ -178,10 +236,13 @@ void WebTestBrowserMainRunner::Initialize() {
 
   command_line.AppendSwitchASCII(network::switches::kHostResolverRules,
                                  "MAP nonexistent.*.test ~NOTFOUND,"
+                                 "MAP web-platform.test:443 127.0.0.1:8444,"
+                                 "MAP not-web-platform.test:443 127.0.0.1:8444,"
                                  "MAP *.test. 127.0.0.1,"
                                  "MAP *.test 127.0.0.1");
 
-  // These must be kept in sync with //third_party/wpt_tools/wpt.config.json.
+  // These must be kept in sync with
+  // //third_party/blink/web_tests/external/wpt/config.json.
   command_line.AppendSwitchASCII(network::switches::kIpAddressSpaceOverrides,
                                  "127.0.0.1:8082=private,"
                                  "127.0.0.1:8093=public,"
@@ -209,7 +270,11 @@ void WebTestBrowserMainRunner::Initialize() {
 
   // Always run with fake media devices.
   command_line.AppendSwitch(switches::kUseFakeUIForMediaStream);
-  command_line.AppendSwitch(switches::kUseFakeDeviceForMediaStream);
+
+  // The check here ensures that a test's custom value for the switch is not
+  // overwritten by the default one.
+  if (!command_line.HasSwitch(switches::kUseFakeDeviceForMediaStream))
+    command_line.AppendSwitch(switches::kUseFakeDeviceForMediaStream);
 
   // Always run with fake FedCM UI.
   command_line.AppendSwitch(switches::kUseFakeUIForFedCM);
@@ -240,7 +305,7 @@ void WebTestBrowserMainRunner::RunBrowserMain(
   RunTests(main_runner.get());
 
   // Shell::Shutdown() will cause the |main_runner| loop to quit.
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&Shell::Shutdown));
   main_runner->Run();
 

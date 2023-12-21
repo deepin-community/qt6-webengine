@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -202,10 +202,10 @@ class VIEWS_EXPORT TreeView : public View,
   void OnDidChangeFocus(View* focused_before, View* focused_now) override;
 
   // PrefixDelegate overrides:
-  int GetRowCount() override;
-  int GetSelectedRow() override;
-  void SetSelectedRow(int row) override;
-  std::u16string GetTextForRow(int row) override;
+  size_t GetRowCount() override;
+  absl::optional<size_t> GetSelectedRow() override;
+  void SetSelectedRow(absl::optional<size_t> row) override;
+  std::u16string GetTextForRow(size_t row) override;
 
  protected:
   // View overrides:
@@ -276,7 +276,7 @@ class VIEWS_EXPORT TreeView : public View,
     int text_width() const { return text_width_; }
 
     // Returns the total number of descendants (including this node).
-    int NumExpandedNodes() const;
+    size_t NumExpandedNodes() const;
 
     // Returns the max width of all descendants (including this node). |indent|
     // is how many pixels each child is indented and |depth| is the depth of
@@ -286,14 +286,14 @@ class VIEWS_EXPORT TreeView : public View,
 
    private:
     // The node from the model.
-    raw_ptr<ui::TreeModelNode> model_node_ = nullptr;
+    raw_ptr<ui::TreeModelNode, DanglingUntriaged> model_node_ = nullptr;
 
     // A virtual accessibility view that is used to expose information about
     // this node to assistive software.
     //
     // This is a weak pointer. This class doesn't own its virtual accessibility
     // view but the Views system does.
-    raw_ptr<AXVirtualView> accessibility_view_ = nullptr;
+    raw_ptr<AXVirtualView, DanglingUntriaged> accessibility_view_ = nullptr;
 
     // Whether the children have been loaded.
     bool loaded_children_ = false;
@@ -477,10 +477,10 @@ class VIEWS_EXPORT TreeView : public View,
   InternalNode root_;
 
   // The selected node, may be null.
-  raw_ptr<InternalNode> selected_node_ = nullptr;
+  raw_ptr<InternalNode, DanglingUntriaged> selected_node_ = nullptr;
 
   // The current active node, may be null.
-  raw_ptr<InternalNode> active_node_ = nullptr;
+  raw_ptr<InternalNode, DanglingUntriaged> active_node_ = nullptr;
 
   bool editing_ = false;
 

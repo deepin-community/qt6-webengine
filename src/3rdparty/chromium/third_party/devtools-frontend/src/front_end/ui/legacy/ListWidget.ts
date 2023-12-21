@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import * as i18n from '../../core/i18n/i18n.js';
+import * as Platform from '../../core/platform/platform.js';
 
 import * as ARIAUtils from './ARIAUtils.js';
 import listWidgetStyles from './listWidget.css.legacy.js';
@@ -13,24 +14,24 @@ import {VBox} from './Widget.js';
 
 const UIStrings = {
   /**
-  *@description Text on a button to start editing text
-  */
+   *@description Text on a button to start editing text
+   */
   editString: 'Edit',
   /**
-  *@description Label for an item to remove something
-  */
+   *@description Label for an item to remove something
+   */
   removeString: 'Remove',
   /**
-  *@description Text to save something
-  */
+   *@description Text to save something
+   */
   saveString: 'Save',
   /**
-  *@description Text to add something
-  */
+   *@description Text to add something
+   */
   addString: 'Add',
   /**
-  *@description Text to cancel something
-  */
+   *@description Text to cancel something
+   */
   cancelString: 'Cancel',
 };
 const str_ = i18n.i18n.registerUIStrings('ui/legacy/ListWidget.ts', UIStrings);
@@ -200,6 +201,7 @@ export class ListWidget<T> extends VBox {
     this.focusRestorer = new ElementFocusRestorer(this.element);
 
     this.list.classList.add('list-editing');
+    this.element.classList.add('list-editing');
     this.editItem = item;
     this.editElement = element;
     if (element) {
@@ -227,6 +229,7 @@ export class ListWidget<T> extends VBox {
 
   private stopEditing(): void {
     this.list.classList.remove('list-editing');
+    this.element.classList.remove('list-editing');
     if (this.focusRestorer) {
       this.focusRestorer.restore();
     }
@@ -275,7 +278,8 @@ export class Editor<T> {
   constructor() {
     this.element = document.createElement('div');
     this.element.classList.add('editor-container');
-    this.element.addEventListener('keydown', onKeyDown.bind(null, isEscKey, this.cancelClicked.bind(this)), false);
+    this.element.addEventListener(
+        'keydown', onKeyDown.bind(null, Platform.KeyboardUtilities.isEscKey, this.cancelClicked.bind(this)), false);
 
     this.contentElementInternal = this.element.createChild('div', 'editor-content');
     this.contentElementInternal.addEventListener(

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,13 +27,14 @@
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/base/url_util.h"
 #include "net/cert/asn1_util.h"
-#include "net/cert/internal/cert_errors.h"
-#include "net/cert/internal/name_constraints.h"
-#include "net/cert/internal/parsed_certificate.h"
-#include "net/cert/internal/signature_algorithm.h"
-#include "net/cert/internal/verify_name_match.h"
-#include "net/cert/internal/verify_signed_data.h"
 #include "net/cert/pem.h"
+#include "net/cert/pki/cert_errors.h"
+#include "net/cert/pki/name_constraints.h"
+#include "net/cert/pki/parsed_certificate.h"
+#include "net/cert/pki/signature_algorithm.h"
+#include "net/cert/pki/verify_certificate_chain.h"
+#include "net/cert/pki/verify_name_match.h"
+#include "net/cert/pki/verify_signed_data.h"
 #include "net/cert/x509_util.h"
 #include "net/der/encode_values.h"
 #include "net/der/parser.h"
@@ -62,7 +63,7 @@ const char kPKCS7Header[] = "PKCS7";
 // Utility to split |src| on the first occurrence of |c|, if any. |right| will
 // either be empty if |c| was not found, or will contain the remainder of the
 // string including the split character itself.
-void SplitOnChar(const base::StringPiece& src,
+void SplitOnChar(base::StringPiece src,
                  char c,
                  base::StringPiece* left,
                  base::StringPiece* right) {
@@ -118,7 +119,7 @@ scoped_refptr<X509Certificate> X509Certificate::CreateFromBuffer(
     bssl::UniquePtr<CRYPTO_BUFFER> cert_buffer,
     std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates) {
   DCHECK(cert_buffer);
-  scoped_refptr<X509Certificate> cert(
+  auto cert = base::WrapRefCounted(
       new X509Certificate(std::move(cert_buffer), std::move(intermediates)));
   if (!cert->cert_buffer())
     return nullptr;  // Initialize() failed.
@@ -131,7 +132,7 @@ scoped_refptr<X509Certificate> X509Certificate::CreateFromBufferUnsafeOptions(
     std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates,
     UnsafeCreateOptions options) {
   DCHECK(cert_buffer);
-  scoped_refptr<X509Certificate> cert(new X509Certificate(
+  auto cert = base::WrapRefCounted(new X509Certificate(
       std::move(cert_buffer), std::move(intermediates), options));
   if (!cert->cert_buffer())
     return nullptr;  // Initialize() failed.
@@ -205,17 +206,17 @@ scoped_refptr<X509Certificate> X509Certificate::CreateFromPickle(
 scoped_refptr<X509Certificate> X509Certificate::CreateFromPickleUnsafeOptions(
     base::PickleIterator* pickle_iter,
     UnsafeCreateOptions options) {
-  int chain_length = 0;
+  size_t chain_length = 0;
   if (!pickle_iter->ReadLength(&chain_length))
     return nullptr;
 
   std::vector<base::StringPiece> cert_chain;
   const char* data = nullptr;
-  int data_length = 0;
-  for (int i = 0; i < chain_length; ++i) {
+  size_t data_length = 0;
+  for (size_t i = 0; i < chain_length; ++i) {
     if (!pickle_iter->ReadData(&data, &data_length))
       return nullptr;
-    cert_chain.push_back(base::StringPiece(data, data_length));
+    cert_chain.emplace_back(data, data_length);
   }
   return CreateFromDERCertChainUnsafeOptions(cert_chain, options);
 }
@@ -338,11 +339,11 @@ bool X509Certificate::GetSubjectAltName(
                            x509_util::DefaultParseCertificateOptions(), &tbs,
                            nullptr))
     return false;
-  if (!tbs.has_extensions)
+  if (!tbs.extensions_tlv)
     return false;
 
   std::map<der::Input, ParsedExtension> extensions;
-  if (!ParseExtensions(tbs.extensions_tlv, &extensions))
+  if (!ParseExtensions(tbs.extensions_tlv.value(), &extensions))
     return false;
 
   ParsedExtension subject_alt_names_extension;
@@ -468,7 +469,7 @@ bool X509Certificate::VerifyHostname(
   // and DNS names, via dNSName subjectAltNames.
   // Validate that the host conforms to the DNS preferred name syntax, in
   // either relative or absolute form, and exclude the "root" label for DNS.
-  if (reference_name == "." || !IsValidDNSDomain(reference_name))
+  if (reference_name == "." || !IsCanonicalizedHostCompliant(reference_name))
     return false;
 
   // CanonicalizeHost does not normalize absolute vs relative DNS names. If
@@ -588,8 +589,8 @@ bool X509Certificate::GetPEMEncodedChain(
   if (!GetPEMEncoded(cert_buffer(), &pem_data))
     return false;
   encoded_chain.push_back(pem_data);
-  for (size_t i = 0; i < intermediate_ca_certs_.size(); ++i) {
-    if (!GetPEMEncoded(intermediate_ca_certs_[i].get(), &pem_data))
+  for (const auto& intermediate_ca_cert : intermediate_ca_certs_) {
+    if (!GetPEMEncoded(intermediate_ca_cert.get(), &pem_data))
       return false;
     encoded_chain.push_back(pem_data);
   }
@@ -621,7 +622,7 @@ void X509Certificate::GetPublicKeyInfo(const CRYPTO_BUFFER* cert_buffer,
   if (!pkey)
     return;
 
-  switch (pkey->type) {
+  switch (EVP_PKEY_id(pkey.get())) {
     case EVP_PKEY_RSA:
       *type = kPublicKeyTypeRSA;
       break;
@@ -709,49 +710,16 @@ SHA256HashValue X509Certificate::CalculateChainFingerprint256() const {
 }
 
 // static
-bool X509Certificate::IsSelfSigned(const CRYPTO_BUFFER* cert_buffer) {
-  der::Input tbs_certificate_tlv;
-  der::Input signature_algorithm_tlv;
-  der::BitString signature_value;
-  if (!ParseCertificate(der::Input(CRYPTO_BUFFER_data(cert_buffer),
-                                   CRYPTO_BUFFER_len(cert_buffer)),
-                        &tbs_certificate_tlv, &signature_algorithm_tlv,
-                        &signature_value, nullptr)) {
+bool X509Certificate::IsSelfSigned(CRYPTO_BUFFER* cert_buffer) {
+  std::shared_ptr<const ParsedCertificate> parsed_cert =
+      ParsedCertificate::Create(bssl::UpRef(cert_buffer),
+                                x509_util::DefaultParseCertificateOptions(),
+                                /*errors=*/nullptr);
+  if (!parsed_cert) {
     return false;
   }
-  ParsedTbsCertificate tbs;
-  if (!ParseTbsCertificate(tbs_certificate_tlv,
-                           x509_util::DefaultParseCertificateOptions(), &tbs,
-                           nullptr)) {
-    return false;
-  }
-
-  der::Input subject_value;
-  CertErrors errors;
-  std::string normalized_subject;
-  if (!ParseSequenceValue(tbs.subject_tlv, &subject_value) ||
-      !NormalizeName(subject_value, &normalized_subject, &errors)) {
-    return false;
-  }
-  der::Input issuer_value;
-  std::string normalized_issuer;
-  if (!ParseSequenceValue(tbs.issuer_tlv, &issuer_value) ||
-      !NormalizeName(issuer_value, &normalized_issuer, &errors)) {
-    return false;
-  }
-
-  if (normalized_subject != normalized_issuer)
-    return false;
-
-  std::unique_ptr<SignatureAlgorithm> signature_algorithm =
-      SignatureAlgorithm::Create(signature_algorithm_tlv, nullptr /* errors */);
-  if (!signature_algorithm)
-    return false;
-
-  // Don't enforce any minimum key size or restrict the algorithm, since when
-  // self signed not very relevant.
-  return VerifySignedData(*signature_algorithm, tbs_certificate_tlv,
-                          signature_value, tbs.spki_tlv);
+  return VerifyCertificateIsSelfSigned(*parsed_cert, /*cache=*/nullptr,
+                                       /*errors=*/nullptr);
 }
 
 X509Certificate::X509Certificate(
@@ -796,11 +764,9 @@ bool X509Certificate::Initialize(UnsafeCreateOptions options) {
       options.printable_string_is_utf8
           ? CertPrincipal::PrintableStringHandling::kAsUTF8Hack
           : CertPrincipal::PrintableStringHandling::kDefault;
-  if (!subject_.ParseDistinguishedName(tbs.subject_tlv.UnsafeData(),
-                                       tbs.subject_tlv.Length(),
+  if (!subject_.ParseDistinguishedName(tbs.subject_tlv,
                                        printable_string_handling) ||
-      !issuer_.ParseDistinguishedName(tbs.issuer_tlv.UnsafeData(),
-                                      tbs.issuer_tlv.Length(),
+      !issuer_.ParseDistinguishedName(tbs.issuer_tlv,
                                       printable_string_handling)) {
     return false;
   }

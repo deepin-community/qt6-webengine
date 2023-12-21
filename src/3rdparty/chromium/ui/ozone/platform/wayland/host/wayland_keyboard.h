@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,17 +7,25 @@
 
 #include <cstdint>
 
+#include "base/containers/flat_set.h"
+#include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/buildflags.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/events/ozone/keyboard/event_auto_repeat_handler.h"
 #include "ui/events/types/event_type.h"
+#include "ui/ozone/common/base_keyboard_hook.h"
 #include "ui/ozone/platform/wayland/common/wayland_object.h"
+
+struct zwp_keyboard_shortcuts_inhibitor_v1;
 
 namespace ui {
 
 class KeyboardLayoutEngine;
+class KeyEvent;
 class WaylandConnection;
 class WaylandWindow;
 #if BUILDFLAG(USE_XKBCOMMON)
@@ -34,6 +42,9 @@ class WaylandKeyboard : public EventAutoRepeatHandler::Delegate {
     kKey,      // Originated by wl_keyboard::key.
   };
 
+  // Property key to annotate wayland serial to a KeyEvent.
+  static constexpr char kPropertyWaylandSerial[] = "_keyevent_wayland_serial_";
+
   WaylandKeyboard(wl_keyboard* keyboard,
                   zcr_keyboard_extension_v1* keyboard_extension_v1,
                   WaylandConnection* connection,
@@ -43,6 +54,20 @@ class WaylandKeyboard : public EventAutoRepeatHandler::Delegate {
 
   uint32_t id() const { return obj_.id(); }
   int device_id() const { return obj_.id(); }
+
+  // Called when it turns out that KeyEvent is not handled.
+  void OnUnhandledKeyEvent(const KeyEvent& key_event);
+
+  // Creates a new PlatformKeyboardHook/shortcuts inhibitor for |window|. For
+  // now used only for non-Lacros windows due to divergences between CrOS/Lacros
+  // and Linux Desktop requirements and their actual implementation. See
+  // comments in this function's definition for more context.
+  std::unique_ptr<PlatformKeyboardHook> CreateKeyboardHook(
+      WaylandWindow* window,
+      absl::optional<base::flat_set<DomCode>> dom_codes,
+      PlatformKeyboardHook::KeyEventCallback callback);
+  wl::Object<zwp_keyboard_shortcuts_inhibitor_v1> CreateShortcutsInhibitor(
+      WaylandWindow* window);
 
  private:
   using LayoutEngine =
@@ -100,6 +125,7 @@ class WaylandKeyboard : public EventAutoRepeatHandler::Delegate {
                    unsigned int scan_code,
                    bool down,
                    bool repeat,
+                   absl::optional<uint32_t> serial,
                    base::TimeTicks timestamp,
                    int device_id,
                    int flags,
@@ -117,8 +143,8 @@ class WaylandKeyboard : public EventAutoRepeatHandler::Delegate {
 
   wl::Object<wl_keyboard> obj_;
   std::unique_ptr<ZCRExtendedKeyboard> extended_keyboard_;
-  WaylandConnection* const connection_;
-  Delegate* const delegate_;
+  const raw_ptr<WaylandConnection> connection_;
+  const raw_ptr<Delegate> delegate_;
 
   // Key repeat handler.
   static const wl_callback_listener callback_listener_;
@@ -126,7 +152,7 @@ class WaylandKeyboard : public EventAutoRepeatHandler::Delegate {
   base::OnceClosure auto_repeat_closure_;
   wl::Object<wl_callback> sync_callback_;
 
-  LayoutEngine* layout_engine_;
+  raw_ptr<LayoutEngine> layout_engine_;
 };
 
 class WaylandKeyboard::Delegate {
@@ -138,6 +164,7 @@ class WaylandKeyboard::Delegate {
   virtual uint32_t OnKeyboardKeyEvent(EventType type,
                                       DomCode dom_code,
                                       bool repeat,
+                                      absl::optional<uint32_t> serial,
                                       base::TimeTicks timestamp,
                                       int device_id,
                                       WaylandKeyboard::KeyEventKind kind) = 0;

@@ -28,7 +28,7 @@ GrDawnAttachment::GrDawnAttachment(GrDawnGpu* gpu,
                     label)
         , fTexture(texture)
         , fView(view) {
-    this->registerWithCache(SkBudgeted::kYes);
+    this->registerWithCache(skgpu::Budgeted::kYes);
 }
 
 sk_sp<GrDawnAttachment> GrDawnAttachment::MakeStencil(GrDawnGpu* gpu,
@@ -54,7 +54,7 @@ sk_sp<GrDawnAttachment> GrDawnAttachment::MakeStencil(GrDawnGpu* gpu,
                                                         sampleCnt,
                                                         texture,
                                                         view,
-                                                        /*label=*/{}));
+                                                        /*label=*/"DawnAttachment_MakeStencil"));
 }
 
 GrDawnAttachment::~GrDawnAttachment() {}

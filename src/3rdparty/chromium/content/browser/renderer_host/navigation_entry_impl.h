@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -35,6 +35,9 @@
 
 namespace blink {
 struct FramePolicy;
+namespace scheduler {
+class TaskAttributionId;
+}  // namespace scheduler
 }  // namespace blink
 
 namespace content {
@@ -42,7 +45,6 @@ namespace content {
 class FrameTreeNode;
 class NavigationEntryRestoreContext;
 class NavigationEntryRestoreContextImpl;
-class WebBundleNavigationInfo;
 class SubresourceWebBundleNavigationInfo;
 
 class CONTENT_EXPORT NavigationEntryImpl : public NavigationEntry {
@@ -104,6 +106,7 @@ class CONTENT_EXPORT NavigationEntryImpl : public NavigationEntry {
       const GURL& url,
       const Referrer& referrer,
       const absl::optional<url::Origin>& initiator_origin,
+      const absl::optional<GURL>& initiator_base_url,
       const std::u16string& title,
       ui::PageTransition transition_type,
       bool is_renderer_initiated,
@@ -211,14 +214,16 @@ class CONTENT_EXPORT NavigationEntryImpl : public NavigationEntry {
   blink::mojom::CommitNavigationParamsPtr ConstructCommitNavigationParams(
       const FrameNavigationEntry& frame_entry,
       const GURL& original_url,
-      const absl::optional<url::Origin>& origin_to_commit,
       const std::string& original_method,
       const base::flat_map<std::string, bool>& subframe_unique_names,
       bool intended_as_new_entry,
       int pending_offset_to_send,
       int current_offset_to_send,
       int current_length_to_send,
-      const blink::FramePolicy& frame_policy);
+      const blink::FramePolicy& frame_policy,
+      bool ancestor_or_self_has_cspee,
+      absl::optional<blink::scheduler::TaskAttributionId>
+          soft_navigation_heuristics_task_id);
 
   // Once a navigation entry is committed, we should no longer track several
   // pieces of non-persisted state, as documented on the members below.
@@ -254,12 +259,12 @@ class CONTENT_EXPORT NavigationEntryImpl : public NavigationEntry {
       const absl::optional<url::Origin>& origin,
       const Referrer& referrer,
       const absl::optional<url::Origin>& initiator_origin,
+      const absl::optional<GURL>& initiator_base_url,
       const std::vector<GURL>& redirect_chain,
       const blink::PageState& page_state,
       const std::string& method,
       int64_t post_id,
       scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory,
-      std::unique_ptr<WebBundleNavigationInfo> web_bundle_navigation_info,
       std::unique_ptr<SubresourceWebBundleNavigationInfo>
           subresource_web_bundle_navigation_info,
       std::unique_ptr<PolicyContainerPolicies> policy_container_policies);
@@ -267,6 +272,13 @@ class CONTENT_EXPORT NavigationEntryImpl : public NavigationEntry {
   // Returns the FrameNavigationEntry corresponding to |frame_tree_node|, if
   // there is one in this NavigationEntry.
   FrameNavigationEntry* GetFrameEntry(FrameTreeNode* frame_tree_node) const;
+
+  // Calls |on_frame_entry| for each FrameNavigationEntry in this
+  // NavigationEntry. More efficient than calling GetFrameEntry() N times while
+  // iterating over the current tree of FrameTreeNodes.
+  using FrameEntryIterationCallback =
+      base::FunctionRef<void(FrameNavigationEntry*)>;
+  void ForEachFrameEntry(FrameEntryIterationCallback on_frame_entry);
 
   // Returns a map of frame unique names to |is_about_blank| for immediate
   // children of the TreeNode associated with |frame_tree_node|.  The renderer
@@ -284,7 +296,8 @@ class CONTENT_EXPORT NavigationEntryImpl : public NavigationEntry {
 
   // Walks the tree of FrameNavigationEntries to find entries with |origin| so
   // their isolation status can be registered.
-  void RegisterExistingOriginToPreventOptInIsolation(const url::Origin& origin);
+  void RegisterExistingOriginAsHavingDefaultIsolation(
+      const url::Origin& origin);
 
   // Removes any subframe FrameNavigationEntries that match the unique name of
   // |frame_tree_node|, and all of their children. There should be at most one,
@@ -296,6 +309,13 @@ class CONTENT_EXPORT NavigationEntryImpl : public NavigationEntry {
   // |frame_tree_node|.
   void RemoveEntryForFrame(FrameTreeNode* frame_tree_node,
                            bool only_if_different_position);
+
+  // Update NotRestoredReasons for |navigation_request| which should be a
+  // cross-document main frame navigation and is not served from back/forward
+  // cache. This will create a metrics object if there is none, which can happen
+  // when doing a session restore.
+  void UpdateBackForwardCacheNotRestoredReasons(
+      NavigationRequest* navigation_request);
 
   void set_unique_id(int unique_id) { unique_id_ = unique_id; }
 
@@ -419,6 +439,10 @@ class CONTENT_EXPORT NavigationEntryImpl : public NavigationEntry {
 
   BackForwardCacheMetrics* back_forward_cache_metrics() {
     return back_forward_cache_metrics_.get();
+  }
+
+  scoped_refptr<BackForwardCacheMetrics> TakeBackForwardCacheMetrics() {
+    return std::move(back_forward_cache_metrics_);
   }
 
   void set_back_forward_cache_metrics(

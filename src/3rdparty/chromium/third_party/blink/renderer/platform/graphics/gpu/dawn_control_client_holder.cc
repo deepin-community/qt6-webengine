@@ -1,11 +1,13 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/platform/graphics/gpu/dawn_control_client_holder.h"
 
 #include "base/check.h"
+#include "base/task/single_thread_task_runner.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/webgpu_resource_provider_cache.h"
+#include "third_party/blink/renderer/platform/scheduler/public/event_loop.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
@@ -76,6 +78,10 @@ DawnControlClientHolder::GetContextProviderWeakPtr() const {
   return context_provider_->GetWeakPtr();
 }
 
+WGPUInstance DawnControlClientHolder::GetWGPUInstance() const {
+  return api_channel_->GetWGPUInstance();
+}
+
 void DawnControlClientHolder::MarkContextLost() {
   if (context_lost_) {
     return;
@@ -93,6 +99,36 @@ DawnControlClientHolder::GetOrCreateCanvasResource(const SkImageInfo& info,
                                                    bool is_origin_top_left) {
   return recyclable_resource_cache_.GetOrCreateCanvasResource(
       info, is_origin_top_left);
+}
+
+void DawnControlClientHolder::Flush() {
+  auto context_provider = GetContextProviderWeakPtr();
+  if (LIKELY(context_provider)) {
+    context_provider->ContextProvider()->WebGPUInterface()->FlushCommands();
+  }
+}
+
+void DawnControlClientHolder::EnsureFlush(scheduler::EventLoop& event_loop) {
+  auto context_provider = GetContextProviderWeakPtr();
+  if (UNLIKELY(!context_provider))
+    return;
+  if (!context_provider->ContextProvider()
+           ->WebGPUInterface()
+           ->EnsureAwaitingFlush()) {
+    // We've already enqueued a task to flush, or the command buffer
+    // is empty. Do nothing.
+    return;
+  }
+  event_loop.EnqueueMicrotask(WTF::BindOnce(
+      [](scoped_refptr<DawnControlClientHolder> dawn_control_client) {
+        if (auto context_provider =
+                dawn_control_client->GetContextProviderWeakPtr()) {
+          context_provider->ContextProvider()
+              ->WebGPUInterface()
+              ->FlushAwaitingCommands();
+        }
+      },
+      scoped_refptr<DawnControlClientHolder>(this)));
 }
 
 }  // namespace blink

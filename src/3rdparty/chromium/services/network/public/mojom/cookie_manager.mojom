@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,10 @@ module network.mojom;
 
 import "components/content_settings/core/common/content_settings.mojom";
 import "mojo/public/mojom/base/time.mojom";
+import "sandbox/policy/mojom/context.mojom";
 import "services/network/public/mojom/cookie_partition_key.mojom";
+import "services/network/public/mojom/first_party_sets.mojom";
+import "services/network/public/mojom/schemeful_site.mojom";
 import "services/network/public/mojom/site_for_cookies.mojom";
 import "url/mojom/url.mojom";
 
@@ -40,6 +43,12 @@ struct CookieManagerParams {
   // the Storage Access API.
   array<content_settings.mojom.ContentSettingPatternSource>
       settings_for_storage_access;
+  // Much like the Storage Access API, but applicable at the page-level instead
+  // of per-frame. The two permissions are being separated; some duplication
+  // will be present until that process completes. TODO(crbug.com/1385156):
+  // consolidate as much as possible.
+  array<content_settings.mojom.ContentSettingPatternSource>
+      settings_for_top_level_storage_access;
 
   // The type of CookieAccessDelegate to pass to the underlying CookieStore.
   // If these params are not present, CookieManager defaults to using
@@ -112,10 +121,25 @@ enum ContextRedirectTypeBug1221316 {
   kAllSameSiteRedirect,
 };
 
+enum HttpMethod {
+  kUnset,
+  kUnknown,
+  kGet,
+  kHead,
+  kPost,
+  KPut,
+  kDelete,
+  kConnect,
+  kOptions,
+  kTrace,
+  kPatch,
+};
+
 // Keep defaults here in sync with net/cookies/cookie_options.h.
 struct CookieSameSiteContextMetadata {
   CookieSameSiteContextMetadataDowngradeType cross_site_redirect_downgrade = kNoDowngrade;
   ContextRedirectTypeBug1221316 redirect_type_bug_1221316 = kUnset;
+  HttpMethod http_method_bug_1221316 = kUnset;
 };
 
 // Keep defaults here in sync with net/cookies/cookie_options.h.
@@ -124,16 +148,6 @@ struct CookieSameSiteContext {
   ContextType schemeful_context = CROSS_SITE;
   CookieSameSiteContextMetadata metadata;
   CookieSameSiteContextMetadata schemeful_metadata;
-};
-
-// Computed for every cookie access attempt but is only relevant for SameParty
-// cookies.
-enum SamePartyCookieContextType {
-  // The opposite to kSameParty. Should be the default value.
-  kCrossParty,
-  // If the request URL is in the same First-Party Sets as the top-frame site
-  // and each member of the isolation_info.party_context.
-  kSameParty,
 };
 
 // What rules to apply when determining whether access to a particular cookie is
@@ -169,6 +183,7 @@ struct CanonicalCookie {
   mojo_base.mojom.Time creation;
   mojo_base.mojom.Time expiry;
   mojo_base.mojom.Time last_access;
+  mojo_base.mojom.Time last_update;
   bool secure = false;
   bool httponly = false;
   CookieSameSite site_restrictions = NO_RESTRICTION;
@@ -220,13 +235,6 @@ struct CookieAccessResult {
 struct CookieWithAccessResult {
   CanonicalCookie cookie;
   CookieAccessResult access_result;
-};
-
-// Keep defaults in here in sync with net/cookies/same_party_context.cc.
-struct SamePartyContext {
-  SamePartyCookieContextType context_type = kCrossParty;
-  SamePartyCookieContextType ancestors_for_metrics_only = kCrossParty;
-  SamePartyCookieContextType top_resource_for_metrics_only = kCrossParty;
 };
 
 // Keep values here in sync with net::CookieChangeCause.
@@ -324,7 +332,10 @@ struct CookieDeletionFilter {
   // Only delete partitioned cookies contained in this
   // CookiePartitionKeyCollection.
   // See net/cookies/cookie_partition_key_collection.h for documentation.
-  CookiePartitionKeyCollection cookie_partition_key_collection;
+  // If the field is not set, then we delete cookies from all partitions. This
+  // is equivalent to setting the field to
+  // CookiePartitionKeyCollection::ContainsAll.
+  CookiePartitionKeyCollection? cookie_partition_key_collection;
 };
 
 interface CookieChangeListener {
@@ -336,6 +347,11 @@ interface CookieRemoteAccessFilter {
   AllowedAccess(url.mojom.Url url, SiteForCookies site_for_cookies) => (bool allowed);
 };
 
+// CookieManager is a privileged interface that should only be used in trusted
+// processes.
+//
+// Untrusted processes like renderers should use RestrictedCookieManager.
+[RequireContext=sandbox.mojom.Context.kBrowser]
 interface CookieManager {
   // TODO(rdsmith): Worthwhile specifying a sort order for the getters?
 
@@ -430,6 +446,7 @@ interface CookieManager {
   // Clone the interface for use somewhere else.  After this call,
   // requests to the same implementation may be posted to the other side
   // of the pipe new_interface was configured on.
+  [AllowedContext=sandbox.mojom.Context.kBrowser]
   CloneInterface(pending_receiver<CookieManager> new_interface);
 
   // Flush the backing store (if any) to disk.
@@ -466,7 +483,8 @@ interface CookieManager {
   SetStorageAccessGrantSettings(
       array<content_settings.mojom.ContentSettingPatternSource> settings) => ();
 
-  // TODO(crbug.com/1296161): Delete this method when the partitioned cookies
-  // Origin Trial is over.
-  ConvertPartitionedCookiesToUnpartitioned(url.mojom.Url url);
+  // Sets content settings for which top-level storage access grants exist. Will
+  // ack the caller with a callback when settings have been updated.
+  SetTopLevelStorageAccessSettings(
+      array<content_settings.mojom.ContentSettingPatternSource> settings) => ();
 };

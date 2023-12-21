@@ -1,13 +1,13 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <memory>
 #include <tuple>
 
-#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
@@ -20,7 +20,6 @@
 #include "components/autofill/core/common/form_field_data.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/renderer/render_frame.h"
-#include "content/public/renderer/render_view.h"
 #include "mojo/public/cpp/bindings/associated_receiver_set.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -98,11 +97,17 @@ class FakeContentAutofillDriver : public mojom::AutofillDriver {
                               const FormFieldData& field,
                               const gfx::RectF& bounding_box) override {}
 
-  void AskForValuesToFill(int32_t id,
-                          const FormData& form,
-                          const FormFieldData& field,
-                          const gfx::RectF& bounding_box,
-                          bool autoselect_first_suggestion) override {}
+  void JavaScriptChangedAutofilledValue(
+      const FormData& form,
+      const FormFieldData& field,
+      const std::u16string& old_value) override {}
+
+  void AskForValuesToFill(
+      const FormData& form,
+      const FormFieldData& field,
+      const gfx::RectF& bounding_box,
+      AutoselectFirstSuggestion autoselect_first_suggestion,
+      FormElementWasClicked form_element_was_clicked) override {}
 
   void HidePopup() override {}
 
@@ -136,12 +141,10 @@ using AutofillQueryParam =
 
 class AutofillRendererTest : public ChromeRenderViewTest {
  public:
-  AutofillRendererTest() {}
-
+  AutofillRendererTest() = default;
   AutofillRendererTest(const AutofillRendererTest&) = delete;
   AutofillRendererTest& operator=(const AutofillRendererTest&) = delete;
-
-  ~AutofillRendererTest() override {}
+  ~AutofillRendererTest() override = default;
 
  protected:
   void SetUp() override {

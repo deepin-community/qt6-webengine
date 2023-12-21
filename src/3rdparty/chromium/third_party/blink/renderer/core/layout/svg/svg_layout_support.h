@@ -121,8 +121,6 @@ class CORE_EXPORT SVGLayoutSupport {
   static bool WillIsolateBlendingDescendantsForObject(const LayoutObject*);
   static bool IsIsolationRequired(const LayoutObject*);
 
-  static AffineTransform DeprecatedCalculateTransformToLayer(
-      const LayoutObject*);
   static float CalculateScreenFontSizeScalingFactor(const LayoutObject*);
 
   // This returns a LayoutSVGText, a LayoutNGSVGText, or nullptr.
@@ -137,12 +135,12 @@ class SubtreeContentTransformScope {
   SubtreeContentTransformScope(const AffineTransform&);
   ~SubtreeContentTransformScope();
 
-  static AffineTransform CurrentContentTransformation() {
-    return AffineTransform(current_content_transformation_);
+  static const AffineTransform& CurrentContentTransformation() {
+    return current_content_transformation_;
   }
 
  private:
-  static AffineTransform::Transform current_content_transformation_;
+  static AffineTransform current_content_transformation_;
   AffineTransform saved_content_transformation_;
 };
 

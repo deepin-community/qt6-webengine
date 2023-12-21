@@ -24,6 +24,7 @@
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_context.h"
+#include "third_party/blink/renderer/core/css/parser/css_tokenizer.h"
 #include "third_party/blink/renderer/core/css/rule_set.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -92,6 +93,10 @@ class CORE_EXPORT StyleSheetContents final
   // if there are none.
   Document* AnyOwnerDocument() const;
 
+  // True if any the StyleSheetContents's owner nodes have a *parent* that is
+  // equal to `candidate`.
+  bool HasOwnerParentNode(Node* candidate) const;
+
   const WTF::TextEncoding& Charset() const {
     return parser_context_->Charset();
   }
@@ -116,6 +121,22 @@ class CORE_EXPORT StyleSheetContents final
   void ParserAppendRule(StyleRuleBase*);
 
   void ClearRules();
+
+  // If the given rule exists, replace it with the new one. This is used when
+  // CSSOM wants to modify the rule but cannot do so without reallocating
+  // (see setCssSelectorText()).
+  //
+  // The position_hint variable is a pure hint as of where the old rule can
+  // be found; if it is wrong or out-of-range (for instance because the rule
+  // has been deleted, or some have been moved around), the function is still
+  // safe to call, but will do a linear search for the rule. The return value
+  // is an updated position hint suitable for the next ReplaceRuleIfExists()
+  // call on the same (new) rule. The position_hint is not capable of describing
+  // rules nested within other rules; the result will still be correct, but the
+  // search will be slow for such rules.
+  wtf_size_t ReplaceRuleIfExists(const StyleRuleBase* old_rule,
+                                 StyleRuleBase* new_rule,
+                                 wtf_size_t position_hint);
 
   // Rules other than @import.
   const HeapVector<Member<StyleRuleBase>>& ChildRules() const {

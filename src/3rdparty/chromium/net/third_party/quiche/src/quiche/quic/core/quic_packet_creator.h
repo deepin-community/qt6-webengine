@@ -141,13 +141,13 @@ class QUIC_EXPORT_PRIVATE QuicPacketCreator {
 
   // The overhead the framing will add for a packet with one frame.
   static size_t StreamFramePacketOverhead(
-      QuicTransportVersion version,
-      QuicConnectionIdLength destination_connection_id_length,
-      QuicConnectionIdLength source_connection_id_length, bool include_version,
+      QuicTransportVersion version, uint8_t destination_connection_id_length,
+      uint8_t source_connection_id_length, bool include_version,
       bool include_diversification_nonce,
       QuicPacketNumberLength packet_number_length,
-      QuicVariableLengthIntegerLength retry_token_length_length,
-      QuicVariableLengthIntegerLength length_length, QuicStreamOffset offset);
+      quiche::QuicheVariableLengthIntegerLength retry_token_length_length,
+      quiche::QuicheVariableLengthIntegerLength length_length,
+      QuicStreamOffset offset);
 
   // Returns false and flushes all pending frames if current open packet is
   // full.
@@ -211,6 +211,10 @@ class QUIC_EXPORT_PRIVATE QuicPacketCreator {
   // are the last frame in a packet, this method will return a different
   // value than max_packet_size - PacketSize(), in this case.
   size_t BytesFree() const;
+
+  // Since PADDING frames are always prepended, a separate function computes
+  // available space without considering STREAM frame expansion.
+  size_t BytesFreeForPadding() const;
 
   // Returns the number of bytes that the packet will expand by if a new frame
   // is added to the packet. If the last frame was a stream frame, it will
@@ -285,10 +289,10 @@ class QUIC_EXPORT_PRIVATE QuicPacketCreator {
   QuicConnectionId GetSourceConnectionId() const;
 
   // Returns length of destination connection ID to send over the wire.
-  QuicConnectionIdLength GetDestinationConnectionIdLength() const;
+  uint8_t GetDestinationConnectionIdLength() const;
 
   // Returns length of source connection ID to send over the wire.
-  QuicConnectionIdLength GetSourceConnectionIdLength() const;
+  uint8_t GetSourceConnectionIdLength() const;
 
   // Sets whether the server connection ID should be sent over the wire.
   void SetServerConnectionIdIncluded(
@@ -303,11 +307,6 @@ class QUIC_EXPORT_PRIVATE QuicPacketCreator {
   // Sets the encryption level that will be applied to new packets.
   void set_encryption_level(EncryptionLevel level);
   EncryptionLevel encryption_level() { return packet_.encryption_level; }
-
-  // Sets whether initial packets are protected with chaos.
-  void set_chaos_protection_enabled(bool chaos_protection_enabled) {
-    chaos_protection_enabled_ = chaos_protection_enabled;
-  }
 
   // packet number of the last created packet, or 0 if no packets have been
   // created.
@@ -433,7 +432,9 @@ class QUIC_EXPORT_PRIVATE QuicPacketCreator {
   }
 
   // Returns the minimum size that the plaintext of a packet must be.
-  static size_t MinPlaintextPacketSize(const ParsedQuicVersion& version);
+  static size_t MinPlaintextPacketSize(
+      const ParsedQuicVersion& version,
+      QuicPacketNumberLength packet_number_length);
 
   // Indicates whether packet flusher is currently attached.
   bool PacketFlusherAttached() const;
@@ -484,10 +485,6 @@ class QUIC_EXPORT_PRIVATE QuicPacketCreator {
   bool HasRetryToken() const;
 
   const QuicSocketAddress& peer_address() const { return packet_.peer_address; }
-
-  bool close_connection_if_fail_to_serialzie_coalesced_packet() const {
-    return close_connection_if_fail_to_serialzie_coalesced_packet_;
-  }
 
  private:
   friend class test::QuicPacketCreatorPeer;
@@ -587,7 +584,7 @@ class QUIC_EXPORT_PRIVATE QuicPacketCreator {
 
   // Returns length of the retry token variable length integer to send over the
   // wire. Is non-zero for v99 IETF Initial packets.
-  QuicVariableLengthIntegerLength GetRetryTokenLengthLength() const;
+  quiche::QuicheVariableLengthIntegerLength GetRetryTokenLengthLength() const;
 
   // Returns the retry token to send over the wire, only sent in
   // v99 IETF Initial packets.
@@ -595,7 +592,7 @@ class QUIC_EXPORT_PRIVATE QuicPacketCreator {
 
   // Returns length of the length variable length integer to send over the
   // wire. Is non-zero for v99 IETF Initial, 0-RTT or Handshake packets.
-  QuicVariableLengthIntegerLength GetLengthLength() const;
+  quiche::QuicheVariableLengthIntegerLength GetLengthLength() const;
 
   // Returns true if |frame| is a ClientHello.
   bool StreamFrameIsClientHello(const QuicStreamFrame& frame) const;
@@ -689,13 +686,6 @@ class QUIC_EXPORT_PRIVATE QuicPacketCreator {
   // accept. There is no limit for QUIC_CRYPTO connections, but QUIC+TLS
   // negotiates this during the handshake.
   QuicByteCount max_datagram_frame_size_;
-
-  // Whether to attempt protecting initial packets with chaos.
-  bool chaos_protection_enabled_;
-
-  const bool close_connection_if_fail_to_serialzie_coalesced_packet_ =
-      GetQuicReloadableFlag(
-          quic_close_connection_if_fail_to_serialzie_coalesced_packet2);
 };
 
 }  // namespace quic

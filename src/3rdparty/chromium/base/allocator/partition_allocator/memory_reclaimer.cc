@@ -1,24 +1,24 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/allocator/partition_allocator/memory_reclaimer.h"
 
 #include "base/allocator/partition_allocator/partition_alloc.h"
+#include "base/allocator/partition_allocator/partition_alloc_base/no_destructor.h"
+#include "base/allocator/partition_allocator/partition_alloc_buildflags.h"
 #include "base/allocator/partition_allocator/partition_alloc_check.h"
 #include "base/allocator/partition_allocator/partition_alloc_config.h"
-#include "base/allocator/partition_allocator/starscan/pcscan.h"
-#include "base/no_destructor.h"
 
-// TODO(bikineev): Temporarily disable *Scan in MemoryReclaimer as it seems to
-// cause significant jank.
-#define PA_STARSCAN_ENABLE_STARSCAN_ON_RECLAIM 0
+#if BUILDFLAG(USE_STARSCAN)
+#include "base/allocator/partition_allocator/starscan/pcscan.h"
+#endif
 
 namespace partition_alloc {
 
 // static
 MemoryReclaimer* MemoryReclaimer::Instance() {
-  static base::NoDestructor<MemoryReclaimer> instance;
+  static internal::base::NoDestructor<MemoryReclaimer> instance;
   return instance.get();
 }
 
@@ -66,7 +66,7 @@ void MemoryReclaimer::Reclaim(int flags) {
   //
   // Lastly decommit empty slot spans and lastly try to discard unused pages at
   // the end of the remaining active slots.
-#if PA_STARSCAN_ENABLE_STARSCAN_ON_RECLAIM
+#if PA_CONFIG(STARSCAN_ENABLE_STARSCAN_ON_RECLAIM) && BUILDFLAG(USE_STARSCAN)
   {
     using PCScan = internal::PCScan;
     const auto invocation_mode = flags & PurgeFlags::kAggressiveReclaim
@@ -74,18 +74,21 @@ void MemoryReclaimer::Reclaim(int flags) {
                                      : PCScan::InvocationMode::kBlocking;
     PCScan::PerformScanIfNeeded(invocation_mode);
   }
-#endif
+#endif  // PA_CONFIG(STARSCAN_ENABLE_STARSCAN_ON_RECLAIM) &&
+        // BUILDFLAG(USE_STARSCAN)
 
-#if defined(PA_THREAD_CACHE_SUPPORTED)
+#if PA_CONFIG(THREAD_CACHE_SUPPORTED)
   // Don't completely empty the thread cache outside of low memory situations,
   // as there is periodic purge which makes sure that it doesn't take too much
   // space.
-  if (flags & PurgeFlags::kAggressiveReclaim)
+  if (flags & PurgeFlags::kAggressiveReclaim) {
     ThreadCacheRegistry::Instance().PurgeAll();
-#endif
+  }
+#endif  // PA_CONFIG(THREAD_CACHE_SUPPORTED)
 
-  for (auto* partition : partitions_)
+  for (auto* partition : partitions_) {
     partition->PurgeMemory(flags);
+  }
 }
 
 void MemoryReclaimer::ResetForTesting() {

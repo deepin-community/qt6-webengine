@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_CLIPBOARD_CLIPBOARD_READER_H_
 
 #include "base/sequence_checker.h"
+#include "base/task/single_thread_task_runner.h"
 #include "third_party/blink/renderer/core/fileapi/blob.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
@@ -43,8 +44,7 @@ class ClipboardReader : public GarbageCollected<ClipboardReader> {
   // ClipboardWriter::IsValidType() must return true for `mime_type`.
   static ClipboardReader* Create(SystemClipboard* system_clipboard,
                                  const String& mime_type,
-                                 ClipboardPromise* promise,
-                                 bool is_custom_format_type);
+                                 ClipboardPromise* promise);
   virtual ~ClipboardReader();
 
   // Reads from the system clipboard and encodes on a background thread.

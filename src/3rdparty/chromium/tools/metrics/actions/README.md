@@ -1,5 +1,7 @@
 # User Action Guidelines
 
+[TOC]
+
 This document covers the best practices on using user actions in code and
 documenting them for the dashboard. User actions come with only a name and
 a timestamp. They are best used when you care about a sequence—which actions
@@ -9,8 +11,6 @@ happen in what order. If you don't care about the order, you should be using
 
 Often, you want both user actions and histogram logging in your code. They
 enable different analyses. They're complementary.
-
-[TOC]
 
 ## Coding (emitting to user actions)
 
@@ -88,7 +88,7 @@ you need.
 
 It's okay to emit user actions such as "ShowTranslateInfobar" or
 "DisplayedImageLinkContextMenu". Remember to mark them as
-[not_user_triggered](#not_user_triggered) and please try to make sure they're
+[not_user_triggered](#not-user-triggered) and please try to make sure they're
 not excessive. For example, don't emit "ShowedSecureIconNextToOmnibox" because
 that's likely to appear on most pages. That said, if you need
 ShowedSecureIconNextToOmnibox logged in order to analyze a sequence of user
@@ -111,6 +111,9 @@ not emitted excessively (see [advice above](#Do-not-emit-excessively)).
 In addition to testing interactively, unit tests can check the number of times a
 user action was emitted. See [user_action_tester.h](https://cs.chromium.org/chromium/src/base/test/metrics/user_action_tester.h)
 for details.
+
+See also `chrome://metrics-internals` ([docs](https://chromium.googlesource.com/chromium/src/+/master/components/metrics/debug/README.md))
+for more thorough manual testing if needed.
 
 ## Interpreting the resulting data
 
@@ -175,7 +178,7 @@ the metrics team may file bugs related to user actions, and such bugs need to be
 triaged by someone familiar with the metric. If an appropriate mailing list or
 team email is available, it's a good idea to list it as a secondary owner.
 
-### Set `not_user_triggered="true"` when appropriate {#not_user_triggered}
+### Set `not_user_triggered="true"` when appropriate {#not-user-triggered}
 
 actions.xml allows you to annotate an action as `not_user_triggered="true"`.
 Use it when appropriate. For example, showing a notification is not user

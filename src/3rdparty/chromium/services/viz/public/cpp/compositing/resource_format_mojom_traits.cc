@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -51,6 +51,8 @@ EnumTraits<viz::mojom::ResourceFormat, viz::ResourceFormat>::ToMojom(
       return viz::mojom::ResourceFormat::YVU_420;
     case viz::ResourceFormat::YUV_420_BIPLANAR:
       return viz::mojom::ResourceFormat::YUV_420_BIPLANAR;
+    case viz::ResourceFormat::YUVA_420_TRIPLANAR:
+      return viz::mojom::ResourceFormat::YUVA_420_TRIPLANAR;
     case viz::ResourceFormat::P010:
       return viz::mojom::ResourceFormat::P010;
   }
@@ -122,6 +124,9 @@ bool EnumTraits<viz::mojom::ResourceFormat, viz::ResourceFormat>::FromMojom(
       return true;
     case viz::mojom::ResourceFormat::YUV_420_BIPLANAR:
       *out = viz::ResourceFormat::YUV_420_BIPLANAR;
+      return true;
+    case viz::mojom::ResourceFormat::YUVA_420_TRIPLANAR:
+      *out = viz::ResourceFormat::YUVA_420_TRIPLANAR;
       return true;
     case viz::mojom::ResourceFormat::P010:
       *out = viz::ResourceFormat::P010;

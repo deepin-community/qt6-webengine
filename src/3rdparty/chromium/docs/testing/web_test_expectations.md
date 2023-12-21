@@ -103,37 +103,22 @@ results from try jobs, by using the command-tool
 2. Trigger try jobs by running `blink_tool.py rebaseline-cl`. This should
    trigger jobs on
    [tryserver.blink](https://ci.chromium.org/p/chromium/g/tryserver.blink/builders).
-   In addition, this will also trigger the CQ try builders that run blink web tests.
-   linux-rel, mac-rel and win10_chromium_x64_rel_ng.
-   * Optionally one can choose to trigger only blink try bots alone.
-   Run the tool with the option -
-   `blink_tool.py rebaseline-cl --use-blink-try-bots-only`
-   * If you would like to rebaseline for flag specific builders, use the flag-specific option.
-   Rebaseline for highdpi and disable-layout-ng are
-   supported for now. For example, to rebaseline for highdpi, use
-   `blink_tool.py rebaseline-cl --flag-specific=highdpi`. This will trigger
-   only the highdpi try builder. Since this is an experimental builder at this time,
-   this will not be triggered with the default or '--use-blink-try-bots-only' options.
-   * If you need to trigger all the builders including supported flag-specific builders, run the
-   tool with desired options multiple times. There is no need to wait for the builders
-   triggered with default option to finish before triggering the flag specific
-   builders and vice versa.
 3. Wait for all try jobs to finish.
 4. Run `blink_tool.py rebaseline-cl` again to fetch new baselines.
-   By default, this will download new baselines for any failing tests
-   in the blink try jobs and CQ try bots.
-   * Again, there is an option to use only blink try jobs results for rebaselining.
-   (Run `blink_tool.py rebaseline-cl --help` for more specific options.)
-   * To rebaseline for flag-specific builders (using highdpi as an example again), runs -
-   `blink_tool.py rebaseline-cl --flag-specific=highdpi` which will download baselines
-   for any failures in the highdpi run only. We suggest running flag-specific rebaseline
-   after non-flag-specific rebaseline as baseline optimization is not
-   implemented for flag-specific rebaseline yet.
 5. Commit the new baselines and upload a new patch.
 
 This way, the new baselines can be reviewed along with the changes, which helps
 the reviewer verify that the new baselines are correct. It also means that there
 is no period of time when the web test results are ignored.
+
+#### Handle bot timeouts
+
+When a change will cause many tests to fail, the try jobs may exit early because
+the number of failures exceeds the limit, or the try jobs may timeout because
+more time is needed for the retries. Rebaseline based on such results are not
+suggested. The solution is to temporarily increase the number of shards in
+[test_suite_exceptions.pyl](https://source.chromium.org/chromium/chromium/src/+/main:testing/buildbot/test_suite_exceptions.pyl) in your CL.
+Change the values back to its original value before sending the CL to CQ.
 
 #### Options
 
@@ -249,8 +234,6 @@ files. You can follow the steps below for easier review.
 * [SlowTests](../../third_party/blink/web_tests/SlowTests): Tests that take
   longer than the usual timeout to run. Slow tests are given 5x the usual
   timeout.
-* [SmokeTests](../../third_party/blink/web_tests/SmokeTests): A small subset
-  of tests that we run on the Fuchsia bots.
 * [StaleTestExpectations](../../third_party/blink/web_tests/StaleTestExpectations):
   Platform-specific lines that have been in TestExpectations for many months.
   They're moved here to get them out of the way of people doing rebaselines
@@ -296,23 +279,25 @@ The syntax of a line is roughly:
   enclose them in brackets.
 * If test_name_or_directory is a directory, it should be ended with '/*', and all
   tests under the directory will have the expectations, unless overridden by
-  more specific expectation lines.
+  more specific expectation lines. **The wildcard is intentionally only allowed at the
+  end of test_name_or_directory, so that it will be easy to reason about
+  which test(s) a test expectation will apply to.**
 * Lines are expected to have one or more bug identifiers, and the linter will
   complain about lines missing them. Bug identifiers are of the form
   `crbug.com/12345`, `code.google.com/p/v8/issues/detail?id=12345` or
   `Bug(username)`.
 * If no modifiers are specified, the test applies to all of the configurations
   applicable to that file.
-* If specified, modifiers must be one of `Fuchsia`, `Mac`, `Mac10.12`,
-  `Mac10.13`, `Mac10.14`, `Mac10.15`, `Mac11`, `Mac11-arm64`, `Mac12`, 
-  `Mac12-arm64`, `Linux`, `Trusty`, `Win`, `Win7`, `Win10.20h2`, `Win11`, 
-  and, optionally, `Release`, or `Debug`. Check the top of
+* If specified, modifiers must be one of `Fuchsia`, `Mac`, `Mac10.13`,
+  `Mac10.14`, `Mac10.15`, `Mac11`, `Mac11-arm64`, `Mac12`, `Mac12-arm64`,
+  `Mac13`, `Mac13-arm64`, `Linux`, `Trusty`, `Win`, `Win10.20h2`,
+  `Win11`, and, optionally, `Release`, or `Debug`. Check the top of
   [TestExpectations](../../third_party/blink/web_tests/TestExpectations) or the
   `ALL_SYSTEMS` macro in
   [third_party/blink/tools/blinkpy/web_tests/port/base.py](../../third_party/blink/tools/blinkpy/web_tests/port/base.py)
   for an up-to-date list.
-* Some modifiers are meta keywords, e.g. `Win` represents both `Win7` and
-  `Win10.20h2`. See the `CONFIGURATION_SPECIFIER_MACROS` dictionary in
+* Some modifiers are meta keywords, e.g. `Win` represents `Win10.20h2` and `Win11`.
+  See the `CONFIGURATION_SPECIFIER_MACROS` dictionary in
   [third_party/blink/tools/blinkpy/web_tests/port/base.py](../../third_party/blink/tools/blinkpy/web_tests/port/base.py)
   for the meta keywords and which modifiers they represent.
 * Expectations can be one or more of `Crash`, `Failure`, `Pass`, `Rebaseline`,
@@ -370,7 +355,7 @@ debug build on `Mac10.10`:
 ```
 crbug.com/12345 [ Mac10.10 ] fast/html [ Failure ]
 crbug.com/12345 [ Mac10.10 ] fast/html/keygen.html [ Pass ]
-crbug.com/12345 [ Win7 ] fast/forms/submit.html [ Failure ]
+crbug.com/12345 [ Win11 ] fast/forms/submit.html [ Failure ]
 crbug.com/12345 fast/html/section-element.html [ Failure Crash ]
 ```
 

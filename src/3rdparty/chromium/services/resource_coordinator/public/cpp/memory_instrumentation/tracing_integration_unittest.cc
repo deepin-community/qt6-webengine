@@ -1,19 +1,19 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "services/resource_coordinator/public/cpp/memory_instrumentation/client_process_impl.h"
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/run_loop.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_io_thread.h"
 #include "base/test/trace_event_analyzer.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/memory_dump_manager_test_utils.h"
 #include "base/trace_event/memory_dump_scheduler.h"
@@ -305,7 +305,7 @@ TEST_F(MemoryTracingIntegrationTest, TestBackgroundTracingSetup) {
                        kWhitelistedMDPName);
 
   base::RunLoop run_loop;
-  auto test_task_runner = base::ThreadTaskRunnerHandle::Get();
+  auto test_task_runner = base::SingleThreadTaskRunner::GetCurrentDefault();
   auto quit_closure = run_loop.QuitClosure();
 
   {
@@ -407,7 +407,7 @@ TEST_F(MemoryTracingIntegrationTest, PeriodicDumpingWithMultipleModes) {
   // process with a fully defined trigger config should cause periodic dumps to
   // be performed in the correct order.
   base::RunLoop run_loop;
-  auto test_task_runner = base::ThreadTaskRunnerHandle::Get();
+  auto test_task_runner = base::SingleThreadTaskRunner::GetCurrentDefault();
   auto quit_closure = run_loop.QuitClosure();
 
   const int kHeavyDumpRate = 5;
@@ -493,7 +493,8 @@ TEST_F(MemoryTracingIntegrationTest, GenerationChangeDoesntReenterMDM) {
             TRACE_EVENT0(MemoryDumpManager::kTraceCategory, "foo");
             main_task_runner->PostTask(FROM_HERE, std::move(quit_closure));
           },
-          base::SequencedTaskRunnerHandle::Get(), run_loop.QuitClosure()));
+          base::SequencedTaskRunner::GetCurrentDefault(),
+          run_loop.QuitClosure()));
   run_loop.Run();
 
   EXPECT_TRUE(RequestChromeDumpAndWait(MemoryDumpType::EXPLICITLY_TRIGGERED,

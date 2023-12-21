@@ -15,12 +15,12 @@ import stackTraceLinkButtonStyles from './stackTraceLinkButton.css.js';
 
 const UIStrings = {
   /**
-  *@description Error message stating that something went wrong when tring to render stack trace
-  */
+   *@description Error message stating that something went wrong when tring to render stack trace
+   */
   cannotRenderStackTrace: 'Cannot render stack trace',
   /**
-  *@description A link to show more frames in the stack trace if more are available. Never 0.
-  */
+   *@description A link to show more frames in the stack trace if more are available. Never 0.
+   */
   showSMoreFrames: '{n, plural, =1 {Show # more frame} other {Show # more frames}}',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/application/components/StackTrace.ts', UIStrings);
@@ -155,7 +155,7 @@ export class StackTrace extends HTMLElement {
     const expandableRows = [];
     let hiddenCallFramesCount = 0;
     for (const item of this.#stackTraceRows) {
-      if (this.#showHidden || (!item.ignoreListHide && !item.rowCountHide)) {
+      if (this.#showHidden || !item.ignoreListHide) {
         if ('functionName' in item) {
           expandableRows.push(LitHtml.html`
           <${StackTraceRow.litTagName} data-stack-trace-row .data=${{
@@ -168,7 +168,7 @@ export class StackTrace extends HTMLElement {
           `);
         }
       }
-      if (!this.#showHidden && 'functionName' in item && (item.ignoreListHide || item.rowCountHide)) {
+      if (!this.#showHidden && 'functionName' in item && item.ignoreListHide) {
         hiddenCallFramesCount++;
       }
     }

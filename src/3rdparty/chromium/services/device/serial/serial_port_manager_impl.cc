@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,10 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
 #include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "services/device/public/cpp/serial/serial_switches.h"
 #include "services/device/serial/bluetooth_serial_device_enumerator.h"
@@ -111,10 +112,11 @@ void SerialPortManagerImpl::OpenPort(
   if (path) {
     io_task_runner_->PostTask(
         FROM_HERE,
-        base::BindOnce(&SerialPortImpl::Open, *path, std::move(options),
-                       std::move(client), std::move(watcher), ui_task_runner_,
-                       base::BindOnce(&OnPortOpened, std::move(callback),
-                                      base::SequencedTaskRunnerHandle::Get())));
+        base::BindOnce(
+            &SerialPortImpl::Open, *path, std::move(options), std::move(client),
+            std::move(watcher), ui_task_runner_,
+            base::BindOnce(&OnPortOpened, std::move(callback),
+                           base::SequencedTaskRunner::GetCurrentDefault())));
     return;
   }
 
@@ -137,7 +139,7 @@ void SerialPortManagerImpl::OpenPort(
               weak_factory_.GetWeakPtr(), *address, service_class_id,
               std::move(options), std::move(client), std::move(watcher),
               base::BindOnce(&OnPortOpened, std::move(callback),
-                             base::SequencedTaskRunnerHandle::Get())));
+                             base::SequencedTaskRunner::GetCurrentDefault())));
       return;
     }
   }

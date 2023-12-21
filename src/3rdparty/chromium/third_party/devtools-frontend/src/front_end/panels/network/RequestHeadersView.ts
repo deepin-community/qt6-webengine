@@ -56,156 +56,149 @@ import requestHeadersViewStyles from './requestHeadersView.css.js';
 
 const UIStrings = {
   /**
-  *@description Text in Request Headers View of the Network panel
-  */
+   *@description Text in Request Headers View of the Network panel
+   */
   general: 'General',
   /**
-  *@description A context menu item in the Watch Expressions Sidebar Pane of the Sources panel and Network pane request.
-  */
+   *@description A context menu item in the Watch Expressions Sidebar Pane of the Sources panel and Network pane request.
+   */
   copyValue: 'Copy value',
   /**
-  *@description Text for a link to the issues panel
-  */
+   *@description Text for a link to the issues panel
+   */
   learnMoreInTheIssuesTab: 'Learn more in the issues tab',
   /**
-  *@description Text that is usually a hyperlink to more documentation
-  */
+   *@description Text that is usually a hyperlink to more documentation
+   */
   learnMore: 'Learn more',
   /**
-  *@description Text in Request Headers View of the Network panel
-  */
+   *@description Text in Request Headers View of the Network panel
+   */
   requestUrl: 'Request URL',
   /**
-  *@description Text to show more content
-  */
+   *@description Text to show more content
+   */
   showMore: 'Show more',
   /**
-  *@description Text for toggling the view of header data (e.g. query string parameters) from source to parsed in the headers tab
-  */
+   *@description Text for toggling the view of header data (e.g. query string parameters) from source to parsed in the headers tab
+   */
   viewParsed: 'View parsed',
   /**
-  *@description Text for toggling the view of header data (e.g. query string parameters) from parsed to source in the headers tab
-  */
+   *@description Text for toggling the view of header data (e.g. query string parameters) from parsed to source in the headers tab
+   */
   viewSource: 'View source',
   /**
-  *@description Text in Request Headers View of the Network panel
-  */
+   *@description Text in Request Headers View of the Network panel
+   */
   requestHeaders: 'Request Headers',
   /**
-  *@description A context menu item in the Network Log View Columns of the Network panel
-  */
+   *@description A context menu item in the Network Log View Columns of the Network panel
+   */
   responseHeaders: 'Response Headers',
   /**
-  *@description Status code of an event
-  */
+   *@description Status code of an event
+   */
   statusCode: 'Status Code',
   /**
-  *@description Text that refers to the network request method
-  */
+   *@description Text that refers to the network request method
+   */
   requestMethod: 'Request Method',
   /**
-  *@description Text in Request Headers View of the Network panel
-  */
+   *@description Text in Request Headers View of the Network panel
+   */
   fromMemoryCache: '(from memory cache)',
   /**
-  *@description Text in Request Headers View of the Network panel
-  */
+   *@description Text in Request Headers View of the Network panel
+   */
   fromServiceWorker: '(from `service worker`)',
   /**
-  *@description Text in Request Headers View of the Network panel
-  */
+   *@description Text in Request Headers View of the Network panel
+   */
   fromSignedexchange: '(from signed-exchange)',
   /**
-  *@description Text in Request Headers View of the Network panel
-  */
+   *@description Text in Request Headers View of the Network panel
+   */
   fromPrefetchCache: '(from prefetch cache)',
   /**
-  *@description Text in Request Headers View of the Network panel
-  */
+   *@description Text in Request Headers View of the Network panel
+   */
   fromDiskCache: '(from disk cache)',
   /**
-  *@description Text in Request Headers View of the Network panel
-  */
+   *@description Text in Request Headers View of the Network panel
+   */
   fromWebBundle: '(from Web Bundle)',
   /**
-  *@description Message to explain lack of raw headers for a particular network request
-  */
+   *@description Message to explain lack of raw headers for a particular network request
+   */
   provisionalHeadersAreShownS: 'Provisional headers are shown. Disable cache to see full headers.',
   /**
-  *@description Tooltip to explain lack of raw headers for a particular network request
-  */
+   *@description Tooltip to explain lack of raw headers for a particular network request
+   */
   onlyProvisionalHeadersAre:
       'Only provisional headers are available because this request was not sent over the network and instead was served from a local cache, which doesn’t store the original request headers. Disable cache to see full request headers.',
   /**
-  *@description Message to explain lack of raw headers for a particular network request
-  */
+   *@description Message to explain lack of raw headers for a particular network request
+   */
   provisionalHeadersAreShown: 'Provisional headers are shown',
   /**
-  *@description Comment used in decoded X-Client-Data HTTP header output in Headers View of the Network panel
-  */
+   *@description Comment used in decoded X-Client-Data HTTP header output in Headers View of the Network panel
+   */
   activeClientExperimentVariation: 'Active `client experiment variation IDs`.',
   /**
-  *@description Comment used in decoded X-Client-Data HTTP header output in Headers View of the Network panel
-  */
+   *@description Comment used in decoded X-Client-Data HTTP header output in Headers View of the Network panel
+   */
   activeClientExperimentVariationIds: 'Active `client experiment variation IDs` that trigger server-side behavior.',
   /**
-  *@description Text in Headers View of the Network panel for X-Client-Data HTTP headers
-  */
+   *@description Text in Headers View of the Network panel for X-Client-Data HTTP headers
+   */
   decoded: 'Decoded:',
   /**
-  *@description Text in Network Log View Columns of the Network panel
-  */
+   *@description Text in Network Log View Columns of the Network panel
+   */
   remoteAddress: 'Remote Address',
   /**
-  *@description Text in Request Headers View of the Network panel
-  */
+   *@description Text in Request Headers View of the Network panel
+   */
   referrerPolicy: 'Referrer Policy',
   /**
-  *@description Text in Headers View of the Network panel
-  */
+   *@description Text in Headers View of the Network panel
+   */
   toEmbedThisFrameInYourDocument:
       'To embed this frame in your document, the response needs to enable the cross-origin embedder policy by specifying the following response header:',
   /**
-  *@description Text in Headers View of the Network panel
-  */
+   *@description Text in Headers View of the Network panel
+   */
   toUseThisResourceFromADifferent:
       'To use this resource from a different origin, the server needs to specify a cross-origin resource policy in the response headers:',
   /**
-  *@description Text in Headers View of the Network panel
-  */
+   *@description Text in Headers View of the Network panel
+   */
   chooseThisOptionIfTheResourceAnd:
       'Choose this option if the resource and the document are served from the same site.',
   /**
-  *@description Text in Headers View of the Network panel
-  */
+   *@description Text in Headers View of the Network panel
+   */
   onlyChooseThisOptionIfAn:
       'Only choose this option if an arbitrary website including this resource does not impose a security risk.',
   /**
-  *@description Text in Headers View of the Network panel
-  */
+   *@description Text in Headers View of the Network panel
+   */
   thisDocumentWasBlockedFrom:
       'This document was blocked from loading in an `iframe` with a `sandbox` attribute because this document specified a cross-origin opener policy.',
   /**
-  *@description Text in Headers View of the Network panel
-  */
+   *@description Text in Headers View of the Network panel
+   */
   toUseThisResourceFromADifferentSite:
       'To use this resource from a different site, the server may relax the cross-origin resource policy response header:',
   /**
-  *@description Text in Headers View of the Network panel
-  */
+   *@description Text in Headers View of the Network panel
+   */
   toUseThisResourceFromADifferentOrigin:
       'To use this resource from a different origin, the server may relax the cross-origin resource policy response header:',
   /**
-   * @description Shown in the network panel for network requests that meet special criteria.
-   * 'Attribution' is a term used by the "Attribution Reporting API" and refers to an event, e.g.
-   * buying an item in an online store after an ad was clicked.
-   * @example {foo} PH1
+   *@description Label for a link from the network panel's headers view to the file in which
+   * header overrides are defined in the sources panel.
    */
-  recordedAttribution: 'Recorded attribution with `trigger-data`: {PH1}',
-  /**
-  *@description Label for a link from the network panel's headers view to the file in which
-  * header overrides are defined in the sources panel.
-  */
   headerOverrides: 'Header overrides',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/network/RequestHeadersView.ts', UIStrings);
@@ -322,22 +315,7 @@ export class RequestHeadersView extends UI.Widget.VBox {
   private formatHeaderObject(header: BlockedReasonDetailDescriptor): DocumentFragment {
     const fragment = document.createDocumentFragment();
     if (header.headerNotSet) {
-      fragment.createChild('div', 'header-badge header-badge-error header-badge-text').textContent = 'not-set';
-    }
-    // Highlight successful Attribution Reporting API redirects. If the request was
-    // not canceled, then something went wrong.
-    if (header.name.toLowerCase() === 'location' && this.request.canceled) {
-      const url = new URL(header.value?.toString() || '', this.request.parsedURL.securityOrigin());
-      const triggerData = getTriggerDataFromAttributionRedirect(url);
-      if (triggerData) {
-        fragment.createChild('div', 'header-badge header-badge-success header-badge-text').textContent =
-            'Attribution Reporting API';
-        header.details = {
-          explanation: (): string => i18nString(UIStrings.recordedAttribution, {PH1: triggerData}),
-          examples: [],
-          link: null,
-        };
-      }
+      fragment.createChild('div', 'header-badge header-badge-text').textContent = 'not-set';
     }
     const colon = header.value ? ': ' : '';
     fragment.createChild('div', 'header-name').textContent = header.name + colon;
@@ -451,7 +429,7 @@ export class RequestHeadersView extends UI.Widget.VBox {
     if (headersText) {
       const toggleButton = this.createHeadersToggleButton(this.showRequestHeadersText);
       toggleButton.addEventListener('click', this.toggleRequestHeadersText.bind(this), false);
-      treeElement.listItemElement.appendChild(toggleButton);
+      treeElement.listItemElement.querySelector('.headers-title-left')?.appendChild(toggleButton);
     }
   }
 
@@ -815,19 +793,6 @@ export class Category extends UI.TreeOutline.TreeElement {
   oncollapse(): void {
     this.expandedSetting.set(false);
   }
-}
-
-/**
- * Returns the value for the `trigger-data` search parameter iff the provided
- * url is a valid attribution redirect as specified by the Attribution
- * Reporting API.
- */
-function getTriggerDataFromAttributionRedirect(url: URL): string|null {
-  if (url.pathname === '/.well-known/attribution-reporting/trigger-attribution' &&
-      url.searchParams.has('trigger-data')) {
-    return url.searchParams.get('trigger-data');
-  }
-  return null;
 }
 
 interface BlockedReasonDetailDescriptor {

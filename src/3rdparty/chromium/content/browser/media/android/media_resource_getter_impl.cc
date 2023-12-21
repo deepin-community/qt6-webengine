@@ -1,10 +1,10 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/media/android/media_resource_getter_impl.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/path_service.h"
 #include "base/task/single_thread_task_runner.h"
 #include "content/browser/child_process_security_policy_impl.h"
@@ -23,7 +23,7 @@
 #include "mojo/public/cpp/bindings/remote.h"
 #include "net/base/auth.h"
 #include "net/base/isolation_info.h"
-#include "net/base/network_isolation_key.h"
+#include "net/base/network_anonymization_key.h"
 #include "net/http/http_auth.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/restricted_cookie_manager.mojom.h"
@@ -117,8 +117,8 @@ void MediaResourceGetterImpl::GetAuthCredentials(
 
   RenderFrameHostImpl* render_frame_host =
       RenderFrameHostImpl::FromID(render_process_id_, render_frame_id_);
-  // Can't get a NetworkIsolationKey to get credentials if the RenderFrameHost
-  // has already been destroyed.
+  // Can't get a NetworkAnonymizationKey to get credentials if the
+  // RenderFrameHost has already been destroyed.
   if (!render_frame_host) {
     GetAuthCredentialsCallback(std::move(callback), absl::nullopt);
     return;
@@ -127,7 +127,7 @@ void MediaResourceGetterImpl::GetAuthCredentials(
   browser_context_->GetDefaultStoragePartition()
       ->GetNetworkContext()
       ->LookupServerBasicAuthCredentials(
-          url, render_frame_host->GetNetworkIsolationKey(),
+          url, render_frame_host->GetIsolationInfoForSubresources().network_anonymization_key(),
           base::BindOnce(&MediaResourceGetterImpl::GetAuthCredentialsCallback,
                          weak_factory_.GetWeakPtr(), std::move(callback)));
 }
@@ -155,9 +155,10 @@ void MediaResourceGetterImpl::GetCookies(
           RenderFrameHostImpl::FromID(render_process_id_, render_frame_id_)));
   network::mojom::RestrictedCookieManager* cookie_manager_ptr =
       cookie_manager.get();
+  // TODO(https://crbug.com/1416422): use the correct value for
+  // `has_storage_access` here, instead of passing false.
   cookie_manager_ptr->GetCookiesString(
-      url, site_for_cookies, top_frame_origin,
-      /*partitioned_cookies_runtime_feature_enabled=*/false,
+      url, site_for_cookies, top_frame_origin, /*has_storage_access=*/false,
       base::BindOnce(&ReturnResultOnUIThreadAndClosePipe,
                      std::move(cookie_manager), std::move(callback)));
 }

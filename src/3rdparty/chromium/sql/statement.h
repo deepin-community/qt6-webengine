@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -64,6 +64,9 @@ class COMPONENT_EXPORT(SQL) Statement {
 
   Statement(const Statement&) = delete;
   Statement& operator=(const Statement&) = delete;
+
+  Statement(Statement&&) = delete;
+  Statement& operator=(Statement&&) = delete;
 
   ~Statement();
 
@@ -151,6 +154,16 @@ class COMPONENT_EXPORT(SQL) Statement {
   //                          then remove the migration details above.
   void BindTime(int param_index, base::Time time);
 
+  // Conforms with base::TimeDelta serialization recommendations.
+  //
+  // This is equivalent to the following snippets, which should be replaced.
+  // * BindInt64(col, delta.ToInternalValue())
+  // * BindInt64(col, delta.InMicroseconds())
+  //
+  // TODO(crbug.com/1402777): Migrate all TimeDelta serialization to this method
+  //                          and remove the migration details above.
+  void BindTimeDelta(int param_index, base::TimeDelta delta);
+
   // Retrieving ----------------------------------------------------------------
 
   // Returns the number of output columns in the result.
@@ -183,6 +196,15 @@ class COMPONENT_EXPORT(SQL) Statement {
   //                          then remove the migration details above.
   base::Time ColumnTime(int column_index);
 
+  // Conforms with base::TimeDelta deserialization recommendations.
+  //
+  // This is equivalent to the following snippets, which should be replaced.
+  // * base::TimeDelta::FromInternalValue(ColumnInt64(column_index))
+  //
+  // TODO(crbug.com/1402777): Migrate all TimeDelta serialization to this method
+  //                          and remove the migration details above.
+  base::TimeDelta ColumnTimeDelta(int column_index);
+
   // Returns a span pointing to a buffer containing the blob data.
   //
   // The span's contents should be copied to a caller-owned buffer immediately.
@@ -199,8 +221,9 @@ class COMPONENT_EXPORT(SQL) Statement {
 
   // Diagnostics --------------------------------------------------------------
 
-  // Returns the original text of a SQL statement. Intended for logging in case
-  // of failures.
+  // Returns the original text of a SQL statement WITHOUT any bound values.
+  // Intended for logging in case of failures. Note that DOES NOT return any
+  // bound values, because that would cause a privacy / PII issue for logging.
   std::string GetSQLStatement();
 
  private:

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -56,7 +56,7 @@ TEST_F(ObjectPaintInvalidatorTest, Selection) {
   UpdateAllLifecyclePhasesForTest();
   EXPECT_TRUE(GetRasterInvalidationTracking(*GetDocument().View())
                   ->Invalidations()
-                  .IsEmpty());
+                  .empty());
   GetDocument().View()->SetTracksRasterInvalidations(false);
 
   // Remove selection.
@@ -122,6 +122,30 @@ TEST_F(ObjectPaintInvalidatorTest, VisibilityHidden) {
   UpdateAllLifecyclePhasesForTest();
   // |target| is not validated because it didn't paint anything.
   EXPECT_FALSE(IsValidDisplayItemClient(target));
+}
+
+TEST_F(ObjectPaintInvalidatorTest,
+       DirectPaintInvalidationSkipsPaintInvalidationChecking) {
+  SetBodyInnerHTML(R"HTML(
+    <div id='target' style="color: rgb(80, 230, 175);">Text</div>
+  )HTML");
+
+  auto* div = GetDocument().getElementById("target");
+  auto* text = div->firstChild();
+  const auto* object = text->GetLayoutObject();
+  ValidateDisplayItemClient(object);
+  EXPECT_TRUE(IsValidDisplayItemClient(object));
+  EXPECT_FALSE(object->ShouldCheckForPaintInvalidation());
+
+  div->setAttribute(html_names::kStyleAttr, "color: rgb(80, 100, 175)");
+  GetDocument().View()->UpdateLifecycleToLayoutClean(
+      DocumentUpdateReason::kTest);
+  EXPECT_FALSE(IsValidDisplayItemClient(object));
+  EXPECT_FALSE(object->ShouldCheckForPaintInvalidation());
+
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_TRUE(IsValidDisplayItemClient(object));
+  EXPECT_FALSE(object->ShouldCheckForPaintInvalidation());
 }
 
 }  // namespace blink

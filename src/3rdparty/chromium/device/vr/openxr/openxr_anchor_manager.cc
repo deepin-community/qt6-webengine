@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -100,11 +100,11 @@ AnchorId OpenXrAnchorManager::CreateAnchor(XrPosef pose,
   anchor_create_info.pose = pose;
   anchor_create_info.time = predicted_display_time;
 
-  DCHECK(extension_helper_.ExtensionMethods().xrCreateSpatialAnchorMSFT);
-  DCHECK(extension_helper_.ExtensionMethods().xrCreateSpatialAnchorSpaceMSFT);
-  DCHECK(extension_helper_.ExtensionMethods().xrDestroySpatialAnchorMSFT);
+  DCHECK(extension_helper_->ExtensionMethods().xrCreateSpatialAnchorMSFT);
+  DCHECK(extension_helper_->ExtensionMethods().xrCreateSpatialAnchorSpaceMSFT);
+  DCHECK(extension_helper_->ExtensionMethods().xrDestroySpatialAnchorMSFT);
 
-  if (XR_FAILED(extension_helper_.ExtensionMethods().xrCreateSpatialAnchorMSFT(
+  if (XR_FAILED(extension_helper_->ExtensionMethods().xrCreateSpatialAnchorMSFT(
           session_, &anchor_create_info, &xr_anchor))) {
     return kInvalidAnchorId;
   }
@@ -115,10 +115,10 @@ AnchorId OpenXrAnchorManager::CreateAnchor(XrPosef pose,
   space_create_info.anchor = xr_anchor;
   space_create_info.poseInAnchorSpace = PoseIdentity();
   if (FAILED(
-          extension_helper_.ExtensionMethods().xrCreateSpatialAnchorSpaceMSFT(
+          extension_helper_->ExtensionMethods().xrCreateSpatialAnchorSpaceMSFT(
               session_, &space_create_info, &anchor_space))) {
     std::ignore =
-        extension_helper_.ExtensionMethods().xrDestroySpatialAnchorMSFT(
+        extension_helper_->ExtensionMethods().xrDestroySpatialAnchorMSFT(
             xr_anchor);
     return kInvalidAnchorId;
   }
@@ -141,8 +141,9 @@ XrSpace OpenXrAnchorManager::GetAnchorSpace(AnchorId anchor_id) const {
 void OpenXrAnchorManager::DestroyAnchorData(
     const AnchorData& anchor_data) const {
   std::ignore = xrDestroySpace(anchor_data.space);
-  std::ignore = extension_helper_.ExtensionMethods().xrDestroySpatialAnchorMSFT(
-      anchor_data.anchor);
+  std::ignore =
+      extension_helper_->ExtensionMethods().xrDestroySpatialAnchorMSFT(
+          anchor_data.anchor);
 }
 
 void OpenXrAnchorManager::DetachAnchor(AnchorId anchor_id) {
@@ -193,20 +194,20 @@ OpenXrAnchorManager::GetXrLocationFromNativeOriginInformation(
     const gfx::Transform& native_origin_from_anchor,
     const std::vector<mojom::XRInputSourceStatePtr>& input_state) const {
   switch (native_origin_information.which()) {
-    case mojom::XRNativeOriginInformation::Tag::INPUT_SOURCE_SPACE_INFO:
+    case mojom::XRNativeOriginInformation::Tag::kInputSourceSpaceInfo:
       // Currently unimplemented as only anchors are supported and are never
       // created relative to input sources
       return absl::nullopt;
-    case mojom::XRNativeOriginInformation::Tag::REFERENCE_SPACE_TYPE:
+    case mojom::XRNativeOriginInformation::Tag::kReferenceSpaceType:
       return GetXrLocationFromReferenceSpace(openxr, current_stage_parameters,
                                              native_origin_information,
                                              native_origin_from_anchor);
-    case mojom::XRNativeOriginInformation::Tag::PLANE_ID:
-    case mojom::XRNativeOriginInformation::Tag::HAND_JOINT_SPACE_INFO:
-    case mojom::XRNativeOriginInformation::Tag::IMAGE_INDEX:
+    case mojom::XRNativeOriginInformation::Tag::kPlaneId:
+    case mojom::XRNativeOriginInformation::Tag::kHandJointSpaceInfo:
+    case mojom::XRNativeOriginInformation::Tag::kImageIndex:
       // Unsupported for now
       return absl::nullopt;
-    case mojom::XRNativeOriginInformation::Tag::ANCHOR_ID:
+    case mojom::XRNativeOriginInformation::Tag::kAnchorId:
       return XrLocation{
           GfxTransformToXrPose(native_origin_from_anchor),
           GetAnchorSpace(AnchorId(native_origin_information.get_anchor_id()))};

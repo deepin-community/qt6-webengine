@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,7 +23,6 @@ namespace extension_misc {
 const char kCalendarAppId[] = "ejjicmeblgpmajnghnpcppodonldlgfn";
 const char kDataSaverExtensionId[] = "pfmgfdlgomnbgkofeojodiodmgpgmkac";
 const char kDocsOfflineExtensionId[] = "ghbmnnjooekpmoecnnnilnnbdlolhkhi";
-const char kEnterpriseWebStoreAppId[] = "afchcafgojfnemjkcbhfekplkmjaldaa";
 const char kGoogleMapsAppId[] = "lneaknkopdijkpnocmklfnjbeapigfbh";
 const char kGooglePhotosAppId[] = "hcglmfcclpfgljeaiahehebeoaiicbko";
 const char kGooglePlayBooksAppId[] = "mmimngoggfoobjdlefbcabngfnmieonb";
@@ -41,7 +40,6 @@ const char* const kBuiltInFirstPartyExtensionIds[] = {
     kDataSaverExtensionId,
     kDocsOfflineExtensionId,
     kGoogleDriveAppId,
-    kEnterpriseWebStoreAppId,
     kGmailAppId,
     kGoogleDocsAppId,
     kGoogleMapsAppId,
@@ -66,7 +64,6 @@ const char* const kBuiltInFirstPartyExtensionIds[] = {
     kFirstRunDialogId,
     kEspeakSpeechSynthesisExtensionId,
     kGoogleSpeechSynthesisExtensionId,
-    kWallpaperManagerId,
 #endif        // BUILDFLAG(IS_CHROMEOS_ASH)
     nullptr,  // Null-terminated array.
 };
@@ -74,9 +71,15 @@ const char* const kBuiltInFirstPartyExtensionIds[] = {
 #if BUILDFLAG(IS_CHROMEOS)
 const char kAssessmentAssistantExtensionId[] =
     "gndmhdcefbhlchkhipcnnbkcmicncehk";
+const char kEchoExtensionId[] = "kddnkjkcjddckihglkfcickdhbmaodcn";
 const char kGnubbyAppId[] = "beknehfpfkghjoafdifaflglpjkojoco";
 const char kGnubbyV3ExtensionId[] = "lfboplenmmjcmpbkeemecobbadnmpfhi";
 const char kGCSEExtensionId[] = "cfmgaohenjcikllcgjpepfadgbflcjof";
+const char kContactCenterInsightsExtensionId[] =
+    "oebfonohdfogiaaaelfmjlkjbgdbaahf";
+const char kDeskApiExtensionId[] = "kflgdebkpepnpjobkdfeeipcjdahoomc";
+const char kBruSecurityKeyForwarderExtensionId[] =
+    "lcooaekmckohjjnpaaokodoepajbnill";
 #endif
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 const char kAccessibilityCommonExtensionId[] =
@@ -89,6 +92,7 @@ const char kAccessibilityCommonGuestManifestFilename[] =
 const char kChromeVoxExtensionPath[] = "chromeos/accessibility";
 const char kChromeVoxManifestFilename[] = "chromevox_manifest.json";
 const char kChromeVoxGuestManifestFilename[] = "chromevox_manifest_guest.json";
+const char kChromeVoxOptionsPath[] = "/chromevox/options/options.html";
 const char kEnhancedNetworkTtsExtensionId[] =
     "jacnkoglebceckolkoapelihnglgaicd";
 const char kEnhancedNetworkTtsExtensionPath[] = "chromeos/accessibility";
@@ -112,18 +116,14 @@ const char kEspeakSpeechSynthesisExtensionPath[] =
     "/usr/share/chromeos-assets/speech_synthesis/espeak-ng";
 const char kEspeakSpeechSynthesisExtensionId[] =
     "dakbfdmgjiabojdgbiljlhgjbokobjpg";
+const char kEspeakSpeechSynthesisOptionsPath[] = "/options.html";
 const char kGoogleSpeechSynthesisExtensionPath[] =
     "/usr/share/chromeos-assets/speech_synthesis/patts";
 const char kGoogleSpeechSynthesisExtensionId[] =
     "gjjabgpgjpampikjhjpfhneeoapjbjaf";
-const char kWallpaperManagerId[] = "obklkkbkpaoaejdabbfldmcfplpdgolj";
+const char kGoogleSpeechSynthesisOptionsPath[] = "/options.html";
 const char kHelpAppExtensionId[] = "honijodknafkokifofgiaalefdiedpko";
-const char kEchoExtensionId[] = "kddnkjkcjddckihglkfcickdhbmaodcn";
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-#if BUILDFLAG(ENABLE_HANGOUT_SERVICES_EXTENSION)
-// The extension id of the Hangout Service extnsion.
-const char kHangoutServiceExtensionId[] = "nkeimhogjdpnpccoofpliimaahmaaome";
-#endif
 
 const char kAppStateNotInstalled[] = "not_installed";
 const char kAppStateInstalled[] = "installed";
@@ -135,4 +135,5 @@ const char kAppStateReadyToRun[] = "ready_to_run";
 const char kMediaFileSystemPathPart[] = "_";
 const char kExtensionRequestTimestamp[] = "timestamp";
 const char kExtensionWorkflowJustification[] = "justification";
+
 }  // namespace extension_misc

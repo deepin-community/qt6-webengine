@@ -65,7 +65,6 @@ struct FtraceClockSnapshot {
 // Utility class for controlling ftrace.
 class FtraceController {
  public:
-
   class Observer {
    public:
     virtual ~Observer();
@@ -73,12 +72,13 @@ class FtraceController {
   };
 
   // The passed Observer must outlive the returned FtraceController instance.
-  static std::unique_ptr<FtraceController> Create(base::TaskRunner*, Observer*);
+  static std::unique_ptr<FtraceController> Create(base::TaskRunner*,
+                                                  Observer*,
+                                                  bool preserve_ftrace_buffer);
   virtual ~FtraceController();
 
-  void DisableAllEvents();
-  void WriteTraceMarker(const std::string& s);
   void ClearTrace();
+  bool IsTracingAvailable();
 
   bool AddDataSource(FtraceDataSource*) PERFETTO_WARN_UNUSED_RESULT;
   bool StartDataSource(FtraceDataSource*);
@@ -115,6 +115,18 @@ class FtraceController {
     size_t period_page_quota = 0;
   };
 
+  struct FtraceInstanceState {
+    FtraceInstanceState(std::unique_ptr<FtraceProcfs> ftrace_procfs,
+                        std::unique_ptr<ProtoTranslationTable> table_,
+                        std::unique_ptr<FtraceConfigMuxer> ftrace_config_muxer);
+
+    std::unique_ptr<FtraceProcfs> ftrace_procfs_;
+    std::unique_ptr<ProtoTranslationTable> table_;
+    std::unique_ptr<FtraceConfigMuxer> ftrace_config_muxer_;
+    std::vector<PerCpuState> per_cpu_;  // empty if tracing isn't active
+    std::set<FtraceDataSource*> started_data_sources_;
+  };
+
   FtraceController(const FtraceController&) = delete;
   FtraceController& operator=(const FtraceController&) = delete;
 
@@ -133,15 +145,12 @@ class FtraceController {
   base::PagedMemory parsing_mem_;
   base::ScopedFile cpu_zero_stats_fd_;
   std::unique_ptr<LazyKernelSymbolizer> symbolizer_;
-  std::unique_ptr<FtraceProcfs> ftrace_procfs_;
-  std::unique_ptr<ProtoTranslationTable> table_;
-  std::unique_ptr<FtraceConfigMuxer> ftrace_config_muxer_;
+  FtraceInstanceState primary_;
   std::unique_ptr<FtraceClockSnapshot> ftrace_clock_snapshot_;
   int generation_ = 0;
-  bool atrace_running_ = false;
-  std::vector<PerCpuState> per_cpu_;  // empty if tracing isn't active
+  bool retain_ksyms_on_stop_ = false;
   std::set<FtraceDataSource*> data_sources_;
-  std::set<FtraceDataSource*> started_data_sources_;
+  FtraceConfigId next_cfg_id_ = 1;
   base::WeakPtrFactory<FtraceController> weak_factory_;  // Keep last.
 };
 

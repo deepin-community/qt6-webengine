@@ -1,11 +1,11 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef MEDIA_CAPTURE_VIDEO_VIDEO_FRAME_RECEIVER_H_
 #define MEDIA_CAPTURE_VIDEO_VIDEO_FRAME_RECEIVER_H_
 
-#include "base/callback_helpers.h"
+#include "base/functional/callback_helpers.h"
 #include "media/capture/capture_export.h"
 #include "media/capture/mojom/video_capture_buffer.mojom.h"
 #include "media/capture/mojom/video_capture_types.mojom.h"
@@ -55,7 +55,7 @@ class CAPTURE_EXPORT ScopedFrameDoneHelper final
 // cannot be posted back to. The mostly equivalent interface
 // video_capture::mojom::VideoFrameHandler cannot be used by
 // VideoCaptureDeviceClient directly, because creating a
-// video_catpure::mojom::ScopedAccessPermission for passing into
+// video_capture::mojom::ScopedAccessPermission for passing into
 // OnFrameReadyInBuffer() requires a thread with a task runner.
 class CAPTURE_EXPORT VideoFrameReceiver {
  public:
@@ -90,8 +90,11 @@ class CAPTURE_EXPORT VideoFrameReceiver {
   // OnNewBuffer().
   virtual void OnBufferRetired(int buffer_id) = 0;
 
+  virtual void OnCaptureConfigurationChanged() = 0;
+
   virtual void OnError(VideoCaptureError error) = 0;
   virtual void OnFrameDropped(VideoCaptureFrameDropReason reason) = 0;
+  virtual void OnNewCropVersion(uint32_t crop_version) = 0;
   virtual void OnFrameWithEmptyRegionCapture() = 0;
   virtual void OnLog(const std::string& message) = 0;
   virtual void OnStarted() = 0;

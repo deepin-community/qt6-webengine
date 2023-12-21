@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -63,23 +63,23 @@ class CascadeExpansionTest : public PageTestBase {
     }
   };
 
-  HeapVector<Member<ExpansionResult>> ExpansionAt(
-      const MatchResult& result,
-      wtf_size_t i,
-      CascadeFilter filter = CascadeFilter()) {
+  HeapVector<Member<ExpansionResult>> ExpansionAt(const MatchResult& result,
+                                                  wtf_size_t i) {
     HeapVector<Member<ExpansionResult>> ret;
-    ExpandCascade(result.GetMatchedProperties()[i], GetDocument(), filter, i,
-                  [&ret](CascadePriority cascade_priority,
-                         const CSSProperty& css_property,
-                         const CSSValue& css_value, uint16_t tree_order) {
-                    ExpansionResult* er =
-                        MakeGarbageCollected<ExpansionResult>(css_property);
-                    er->priority = cascade_priority;
-                    er->css_value = &css_value;
-                    er->tree_order = tree_order;
+    ExpandCascade(
+        result.GetMatchedProperties()[i], GetDocument(), i,
+        [&ret](CascadePriority cascade_priority,
+               const CSSProperty& css_property, const CSSPropertyName& name,
+               const CSSValue& css_value, uint16_t tree_order) {
+          ExpansionResult* er =
+              MakeGarbageCollected<ExpansionResult>(css_property);
+          EXPECT_EQ(name, css_property.GetCSSPropertyName());
+          er->priority = cascade_priority;
+          er->css_value = &css_value;
+          er->tree_order = tree_order;
 
-                    ret.push_back(er);
-                  });
+          ret.push_back(er);
+        });
     return ret;
   }
 
@@ -87,10 +87,12 @@ class CascadeExpansionTest : public PageTestBase {
     Vector<CSSPropertyID> all;
     for (CSSPropertyID id : CSSPropertyIDList()) {
       const CSSProperty& property = CSSProperty::Get(id);
-      if (!IsInAllExpansion(id))
+      if (!IsInAllExpansion(id)) {
         continue;
-      if (filter.Rejects(property))
+      }
+      if (filter.Rejects(property)) {
         continue;
+      }
       all.push_back(id);
     }
     return all;
@@ -101,14 +103,17 @@ class CascadeExpansionTest : public PageTestBase {
       wtf_size_t i) {
     Vector<CSSPropertyID> visited;
 
-    ExpandCascade(matched_properties, GetDocument(), CascadeFilter(), i,
-                  [&visited](CascadePriority cascade_priority [[maybe_unused]],
-                             const CSSProperty& css_property,
-                             const CSSValue& css_value [[maybe_unused]],
-                             uint16_t tree_order [[maybe_unused]]) {
-                    if (css_property.IsVisited())
-                      visited.push_back(css_property.PropertyID());
-                  });
+    ExpandCascade(
+        matched_properties, GetDocument(), i,
+        [&visited](CascadePriority cascade_priority [[maybe_unused]],
+                   const CSSProperty& css_property, const CSSPropertyName& name,
+                   const CSSValue& css_value [[maybe_unused]],
+                   uint16_t tree_order [[maybe_unused]]) {
+          EXPECT_EQ(name, css_property.GetCSSPropertyName());
+          if (css_property.IsVisited()) {
+            visited.push_back(css_property.PropertyID());
+          }
+        });
 
     return visited;
   }
@@ -409,40 +414,6 @@ TEST_F(CascadeExpansionTest, InlineAll) {
   EXPECT_EQ(CSSPropertyID::kRight, e[index++]->ref.GetProperty().PropertyID());
 }
 
-TEST_F(CascadeExpansionTest, FilterNormalNonInherited) {
-  MatchResult result;
-  result.FinishAddingUARules();
-  result.FinishAddingUserRules();
-  result.FinishAddingPresentationalHints();
-  result.AddMatchedProperties(ParseDeclarationBlock("font-size:1px;left:1px"));
-  result.FinishAddingAuthorRulesForTreeScope(GetDocument());
-
-  ASSERT_EQ(1u, result.GetMatchedProperties().size());
-
-  CascadeFilter filter(CSSProperty::kInherited, false);
-
-  auto e = ExpansionAt(result, 0, filter);
-  ASSERT_EQ(1u, e.size());
-  EXPECT_EQ(CSSPropertyID::kFontSize, e[0]->ref.GetProperty().PropertyID());
-}
-
-TEST_F(CascadeExpansionTest, FilterInternalVisited) {
-  MatchResult result;
-  result.FinishAddingUARules();
-  result.FinishAddingUserRules();
-  result.FinishAddingPresentationalHints();
-  result.AddMatchedProperties(ParseDeclarationBlock("color:red"));
-  result.FinishAddingAuthorRulesForTreeScope(GetDocument());
-
-  CascadeFilter filter(CSSProperty::kVisited, true);
-
-  ASSERT_EQ(1u, result.GetMatchedProperties().size());
-
-  auto e = ExpansionAt(result, 0, filter);
-  ASSERT_EQ(1u, e.size());
-  EXPECT_EQ(CSSPropertyID::kColor, e[0]->ref.GetProperty().PropertyID());
-}
-
 TEST_F(CascadeExpansionTest, FilterFirstLetter) {
   MatchResult result;
   result.FinishAddingUARules();
@@ -511,13 +482,37 @@ TEST_F(CascadeExpansionTest, FilterMarker) {
   EXPECT_EQ(CSSPropertyID::kFontSize, e[0]->ref.GetProperty().PropertyID());
 }
 
+TEST_F(CascadeExpansionTest, FilterHighlightLegacy) {
+  MatchResult result;
+  result.FinishAddingUARules();
+  result.FinishAddingUserRules();
+  result.FinishAddingPresentationalHints();
+  result.AddMatchedProperties(
+      ParseDeclarationBlock(
+          "display:block;background-color:lime;forced-color-adjust:none"),
+      AddMatchedPropertiesOptions::Builder()
+          .SetValidPropertyFilter(ValidPropertyFilter::kHighlightLegacy)
+          .Build());
+  result.FinishAddingAuthorRulesForTreeScope(GetDocument());
+
+  auto e = ExpansionAt(result, 0);
+  ASSERT_EQ(3u, e.size());
+  EXPECT_EQ(CSSPropertyID::kBackgroundColor,
+            e[0]->ref.GetProperty().PropertyID());
+  EXPECT_EQ(CSSPropertyID::kInternalVisitedBackgroundColor,
+            e[1]->ref.GetProperty().PropertyID());
+  EXPECT_EQ(CSSPropertyID::kForcedColorAdjust,
+            e[2]->ref.GetProperty().PropertyID());
+}
+
 TEST_F(CascadeExpansionTest, FilterHighlight) {
   MatchResult result;
   result.FinishAddingUARules();
   result.FinishAddingUserRules();
   result.FinishAddingPresentationalHints();
   result.AddMatchedProperties(
-      ParseDeclarationBlock("display:block;background-color:lime;"),
+      ParseDeclarationBlock(
+          "display:block;background-color:lime;forced-color-adjust:none"),
       AddMatchedPropertiesOptions::Builder()
           .SetValidPropertyFilter(ValidPropertyFilter::kHighlight)
           .Build());
@@ -529,29 +524,6 @@ TEST_F(CascadeExpansionTest, FilterHighlight) {
             e[0]->ref.GetProperty().PropertyID());
   EXPECT_EQ(CSSPropertyID::kInternalVisitedBackgroundColor,
             e[1]->ref.GetProperty().PropertyID());
-}
-
-TEST_F(CascadeExpansionTest, FilterAllNonInherited) {
-  MatchResult result;
-  result.FinishAddingUARules();
-  result.FinishAddingUserRules();
-  result.FinishAddingPresentationalHints();
-  result.AddMatchedProperties(ParseDeclarationBlock("all:unset"));
-  result.FinishAddingAuthorRulesForTreeScope(GetDocument());
-
-  ASSERT_EQ(1u, result.GetMatchedProperties().size());
-
-  CascadeFilter filter(CSSProperty::kInherited, false);
-
-  const Vector<CSSPropertyID> all = AllProperties(filter);
-  auto e = ExpansionAt(result, 0, filter);
-
-  ASSERT_EQ(e.size(), all.size());
-
-  int index = 0;
-  for (CSSPropertyID expected : all) {
-    EXPECT_EQ(expected, e[index++]->ref.GetProperty().PropertyID());
-  }
 }
 
 TEST_F(CascadeExpansionTest, Importance) {
@@ -734,13 +706,15 @@ TEST_F(CascadeExpansionTest, MatchedPropertiesLimit) {
   auto* set = ParseDeclarationBlock("left:1px");
 
   MatchResult result;
-  for (wtf_size_t i = 0; i < max + 3; ++i)
+  for (wtf_size_t i = 0; i < max + 3; ++i) {
     result.AddMatchedProperties(set);
+  }
 
   ASSERT_EQ(max + 3u, result.GetMatchedProperties().size());
 
-  for (wtf_size_t i = 0; i < max + 1; ++i)
+  for (wtf_size_t i = 0; i < max + 1; ++i) {
     EXPECT_GT(ExpansionAt(result, i).size(), 0u);
+  }
 
   // The indices beyond the max should not yield anything.
   EXPECT_EQ(0u, ExpansionAt(result, max + 1).size());

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -49,7 +49,7 @@ BoxReflection BoxReflectionForPaintLayer(const PaintLayer& layer,
 
   const NinePieceImage& mask_nine_piece = reflect_style->Mask();
   if (!mask_nine_piece.HasImage())
-    return BoxReflection(direction, offset, nullptr, gfx::RectF());
+    return BoxReflection(direction, offset, PaintRecord(), gfx::RectF());
 
   PhysicalRect mask_rect(PhysicalOffset(), frame_layout_rect.Size());
   PhysicalRect mask_bounding_rect(mask_rect);

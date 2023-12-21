@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,10 @@
 
 #include "base/containers/flat_set.h"
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/scoped_observation_traits.h"
 #include "base/sequence_checker.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 
@@ -42,8 +43,8 @@ class UrlSignalHandler {
   explicit UrlSignalHandler(UkmDatabase* ukm_database);
   ~UrlSignalHandler();
 
-  UrlSignalHandler(UrlSignalHandler&) = delete;
-  UrlSignalHandler& operator=(UrlSignalHandler&) = delete;
+  UrlSignalHandler(const UrlSignalHandler&) = delete;
+  UrlSignalHandler& operator=(const UrlSignalHandler&) = delete;
 
   // Called by UKM observer when source URL for the |source_id| is updated.
   void OnUkmSourceUpdated(ukm::SourceId source_id,
@@ -55,7 +56,7 @@ class UrlSignalHandler {
   void OnHistoryVisit(const GURL& url);
 
   // Called when |urls| are removed from the history database.
-  void OnUrlsRemovedFromHistory(const std::vector<GURL>& urls);
+  void OnUrlsRemovedFromHistory(const std::vector<GURL>& urls, bool all_urls);
 
   // Add/Remove history delegates.
   void AddHistoryDelegate(HistoryDelegate* history_delegate);
@@ -92,5 +93,25 @@ class UrlSignalHandler {
 };
 
 }  // namespace segmentation_platform
+
+namespace base {
+
+template <>
+struct ScopedObservationTraits<
+    segmentation_platform::UrlSignalHandler,
+    segmentation_platform::UrlSignalHandler::HistoryDelegate> {
+  static void AddObserver(
+      segmentation_platform::UrlSignalHandler* source,
+      segmentation_platform::UrlSignalHandler::HistoryDelegate* observer) {
+    source->AddHistoryDelegate(observer);
+  }
+  static void RemoveObserver(
+      segmentation_platform::UrlSignalHandler* source,
+      segmentation_platform::UrlSignalHandler::HistoryDelegate* observer) {
+    source->RemoveHistoryDelegate(observer);
+  }
+};
+
+}  // namespace base
 
 #endif  // COMPONENTS_SEGMENTATION_PLATFORM_INTERNAL_SIGNALS_URL_SIGNAL_HANDLER_H_

@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,7 +23,6 @@ class ScrollbarAnimationControllerClient;
 class CC_EXPORT SingleScrollbarAnimationControllerThinning {
  public:
   static constexpr float kIdleThicknessScale = 0.4f;
-  static constexpr float kMouseMoveDistanceToTriggerExpand = 25.f;
 
   static std::unique_ptr<SingleScrollbarAnimationControllerThinning> Create(
       ElementId scroll_element_id,
@@ -49,6 +48,9 @@ class CC_EXPORT SingleScrollbarAnimationControllerThinning {
   }
 
   bool captured() const { return captured_; }
+  gfx::PointF device_viewport_last_pointer_location() const {
+    return device_viewport_last_pointer_location_;
+  }
 
   bool Animate(base::TimeTicks now);
   void StartAnimation();
@@ -56,10 +58,15 @@ class CC_EXPORT SingleScrollbarAnimationControllerThinning {
 
   void UpdateThumbThicknessScale();
 
+  void DidScrollUpdate();
+
   void DidMouseDown();
   void DidMouseUp();
   void DidMouseLeave();
   void DidMouseMove(const gfx::PointF& device_viewport_point);
+
+  float MouseMoveDistanceToTriggerExpand();
+  float MouseMoveDistanceToTriggerFadeIn();
 
  private:
   SingleScrollbarAnimationControllerThinning(
@@ -75,7 +82,9 @@ class CC_EXPORT SingleScrollbarAnimationControllerThinning {
   // Describes whether the current animation should INCREASE (thicken)
   // a bar or DECREASE it (thin).
   enum class AnimationChange { NONE, INCREASE, DECREASE };
-  float ThumbThicknessScaleAt(float progress);
+  float ThumbThicknessScaleAt(float progress) const;
+  float ThumbThicknessScaleByMouseDistanceToScrollbar() const;
+  void CalculateThicknessShouldChange(const gfx::PointF& device_viewport_point);
 
   float AdjustScale(float new_value,
                     float current_value,
@@ -95,11 +104,18 @@ class CC_EXPORT SingleScrollbarAnimationControllerThinning {
   bool captured_;
   bool mouse_is_over_scrollbar_thumb_;
   bool mouse_is_near_scrollbar_thumb_;
+  // For Fluent scrollbars the near distance to the track is 0 which is
+  // equivalent to the mouse being over the thumb/track.
   bool mouse_is_near_scrollbar_track_;
   // Are we narrowing or thickening the bars.
   AnimationChange thickness_change_;
 
   base::TimeDelta thinning_duration_;
+
+  // Save last known pointer location in the device viewport for use in
+  // DidScrollUpdate() to check the pointers proximity to the thumb in case of a
+  // scroll.
+  gfx::PointF device_viewport_last_pointer_location_{-1, -1};
 };
 
 }  // namespace cc

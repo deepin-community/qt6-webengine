@@ -9,8 +9,8 @@
 #define GrOpFlushState_DEFINED
 
 #include <utility>
-#include "src/core/SkArenaAlloc.h"
-#include "src/core/SkArenaAllocList.h"
+#include "src/base/SkArenaAlloc.h"
+#include "src/base/SkArenaAllocList.h"
 #include "src/gpu/ganesh/GrAppliedClip.h"
 #include "src/gpu/ganesh/GrBufferAllocPool.h"
 #include "src/gpu/ganesh/GrDeferredUpload.h"
@@ -29,7 +29,7 @@ public:
     // vertexSpace and indexSpace may either be null or an alloation of size
     // GrBufferAllocPool::kDefaultBufferSize. If the latter, then CPU memory is only allocated for
     // vertices/indices when a buffer larger than kDefaultBufferSize is required.
-    GrOpFlushState(GrGpu*, GrResourceProvider*, GrTokenTracker*,
+    GrOpFlushState(GrGpu*, GrResourceProvider*, skgpu::TokenTracker*,
                    sk_sp<GrBufferAllocPool::CpuBufferCache> = nullptr);
 
     ~GrOpFlushState() final { this->reset(); }
@@ -119,9 +119,9 @@ public:
 
     /** Overrides of GrDeferredUploadTarget. */
 
-    const GrTokenTracker* tokenTracker() final { return fTokenTracker; }
-    GrDeferredUploadToken addInlineUpload(GrDeferredTextureUploadFn&&) final;
-    GrDeferredUploadToken addASAPUpload(GrDeferredTextureUploadFn&&) final;
+    const skgpu::TokenTracker* tokenTracker() final { return fTokenTracker; }
+    skgpu::AtlasToken addInlineUpload(GrDeferredTextureUploadFn&&) final;
+    skgpu::AtlasToken addASAPUpload(GrDeferredTextureUploadFn&&) final;
 
     /** Overrides of GrMeshDrawTarget. */
     void recordDraw(const GrGeometryProcessor*,
@@ -179,12 +179,14 @@ public:
     GrThreadSafeCache* threadSafeCache() const final;
     GrResourceProvider* resourceProvider() const final { return fResourceProvider; }
 
-    GrStrikeCache* strikeCache() const final;
+    sktext::gpu::StrikeCache* strikeCache() const final;
 
     // At this point we know we're flushing so full access to the GrAtlasManager and
     // SmallPathAtlasMgr is required (and permissible).
     GrAtlasManager* atlasManager() const final;
+#if !defined(SK_ENABLE_OPTIMIZE_SIZE)
     skgpu::v1::SmallPathAtlasMgr* smallPathAtlasManager() const final;
+#endif
 
     /** GrMeshDrawTarget override. */
     SkArenaAlloc* allocator() override { return &fArena; }
@@ -263,10 +265,10 @@ public:
 
 private:
     struct InlineUpload {
-        InlineUpload(GrDeferredTextureUploadFn&& upload, GrDeferredUploadToken token)
+        InlineUpload(GrDeferredTextureUploadFn&& upload, skgpu::AtlasToken token)
                 : fUpload(std::move(upload)), fUploadBeforeToken(token) {}
         GrDeferredTextureUploadFn fUpload;
-        GrDeferredUploadToken fUploadBeforeToken;
+        skgpu::AtlasToken fUploadBeforeToken;
     };
 
     // A set of contiguous draws that share a draw token, geometry processor, and pipeline. The
@@ -301,7 +303,7 @@ private:
 
     // All draws we store have an implicit draw token. This is the draw token for the first draw
     // in fDraws.
-    GrDeferredUploadToken fBaseDrawToken = GrDeferredUploadToken::AlreadyFlushedToken();
+    skgpu::AtlasToken fBaseDrawToken = skgpu::AtlasToken::InvalidToken();
 
     // Info about the op that is currently preparing or executing using the flush state or null if
     // an op is not currently preparing of executing.
@@ -313,7 +315,7 @@ private:
 
     GrGpu* fGpu;
     GrResourceProvider* fResourceProvider;
-    GrTokenTracker* fTokenTracker;
+    skgpu::TokenTracker* fTokenTracker;
     GrOpsRenderPass* fOpsRenderPass = nullptr;
 
     // Variables that are used to track where we are in lists as ops are executed

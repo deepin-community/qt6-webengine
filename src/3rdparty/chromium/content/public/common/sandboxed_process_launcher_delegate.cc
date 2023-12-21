@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,11 @@
 namespace content {
 
 #if BUILDFLAG(IS_WIN)
+std::string SandboxedProcessLauncherDelegate::GetSandboxTag() {
+  // This implies that policies will not share backing data.
+  return "";
+}
+
 bool SandboxedProcessLauncherDelegate::DisableDefaultPolicy() {
   return false;
 }
@@ -40,13 +45,13 @@ bool SandboxedProcessLauncherDelegate::CetCompatible() {
 }
 #endif  // BUILDFLAG(IS_WIN)
 
-#if BUILDFLAG(USE_ZYGOTE_HANDLE)
-ZygoteHandle SandboxedProcessLauncherDelegate::GetZygote() {
+#if BUILDFLAG(USE_ZYGOTE)
+ZygoteCommunication* SandboxedProcessLauncherDelegate::GetZygote() {
   // Default to the sandboxed zygote. If a more lax sandbox is needed, then the
   // child class should override this method and use the unsandboxed zygote.
   return GetGenericZygote();
 }
-#endif  // BUILDFLAG(USE_ZYGOTE_HANDLE)
+#endif  // BUILDFLAG(USE_ZYGOTE)
 
 #if BUILDFLAG(IS_POSIX)
 base::EnvironmentMap SandboxedProcessLauncherDelegate::GetEnvironment() {

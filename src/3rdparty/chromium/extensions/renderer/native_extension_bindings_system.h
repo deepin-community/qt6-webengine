@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,12 +9,13 @@
 #include <string>
 
 #include "base/memory/weak_ptr.h"
+#include "base/values.h"
 #include "extensions/common/mojom/event_dispatcher.mojom-forward.h"
+#include "extensions/renderer/api/messaging/native_renderer_messaging_service.h"
 #include "extensions/renderer/bindings/api_binding_types.h"
 #include "extensions/renderer/bindings/api_bindings_system.h"
 #include "extensions/renderer/bindings/event_emitter.h"
 #include "extensions/renderer/feature_cache.h"
-#include "extensions/renderer/native_renderer_messaging_service.h"
 #include "v8/include/v8-forward.h"
 #include "v8/include/v8-persistent-handle.h"
 
@@ -72,7 +73,8 @@ class NativeExtensionBindingsSystem {
   void HandleResponse(int request_id,
                       bool success,
                       const base::Value::List& response,
-                      const std::string& error);
+                      const std::string& error,
+                      mojom::ExtraResponseDataPtr extra_data = nullptr);
 
   // Returns the associated IPC message sender.
   IPCMessageSender* GetIPCMessageSender();
@@ -107,7 +109,7 @@ class NativeExtensionBindingsSystem {
   // to |send_event_listener_ipc_|.
   void OnEventListenerChanged(const std::string& event_name,
                               binding::EventListenersChanged change,
-                              const base::DictionaryValue* filter,
+                              const base::Value::Dict* filter,
                               bool was_manual,
                               v8::Local<v8::Context> context);
 

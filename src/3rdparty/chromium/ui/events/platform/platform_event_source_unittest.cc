@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,12 +11,11 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/platform/platform_event_dispatcher.h"
 #include "ui/events/platform/platform_event_observer.h"
@@ -636,7 +635,7 @@ class ConsecutiveOverriddenDispatcherInTheSameMessageLoopIteration
     second_overriding.set_post_dispatch_action(POST_DISPATCH_NONE);
     base::RunLoop run_loop(base::RunLoop::Type::kNestableTasksAllowed);
     second_overriding.set_callback(run_loop.QuitClosure());
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(base::IgnoreResult(&TestPlatformEventSource::Dispatch),
                        base::Unretained(source()), *event));
@@ -671,7 +670,7 @@ class ConsecutiveOverriddenDispatcherInTheSameMessageLoopIteration
     // Start a nested message-loop, and destroy |override_handle| in the nested
     // loop. That should terminate the nested loop, restore the previous
     // dispatchers, and return control to this function.
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(
             &ConsecutiveOverriddenDispatcherInTheSameMessageLoopIteration::

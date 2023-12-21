@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,11 +7,14 @@
 #include "base/memory/ptr_util.h"
 #include "ui/gl/egl_util.h"
 #include "ui/gl/gl_bindings.h"
+#include "ui/gl/gl_bindings_autogen_gl.h"
+#include "ui/gl/gl_surface_egl.h"
 
 namespace gl {
 
 namespace {
 bool g_check_egl_fence_before_wait = false;
+bool g_flush_before_create_fence = false;
 }  // namespace
 
 GLFenceEGL::GLFenceEGL() = default;
@@ -39,10 +42,17 @@ void GLFenceEGL::CheckEGLFenceBeforeWait() {
   g_check_egl_fence_before_wait = true;
 }
 
+// static
+void GLFenceEGL::FlushBeforeCreateFence() {
+  g_flush_before_create_fence = true;
+}
+
 bool GLFenceEGL::InitializeInternal(EGLenum type, EGLint* attribs) {
   sync_ = EGL_NO_SYNC_KHR;
   display_ = eglGetCurrentDisplay();
   if (display_ != EGL_NO_DISPLAY) {
+    if (g_flush_before_create_fence)
+      glFlush();
     sync_ = eglCreateSyncKHR(display_, type, attribs);
     glFlush();
   }
@@ -88,7 +98,8 @@ EGLint GLFenceEGL::ClientWaitWithTimeoutNanos(EGLTimeKHR timeout) {
 }
 
 void GLFenceEGL::ServerWait() {
-  if (!g_driver_egl.ext.b_EGL_KHR_wait_sync) {
+  GLDisplayEGL* display = GLSurfaceEGL::GetGLDisplayEGL();
+  if (!display->ext->b_EGL_KHR_wait_sync) {
     ClientWait();
     return;
   }

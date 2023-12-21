@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -21,7 +21,7 @@ class BackgroundTracingConfig;
 // called on the UI thread.
 class BackgroundTracingManager {
  public:
-  CONTENT_EXPORT static BackgroundTracingManager* GetInstance();
+  CONTENT_EXPORT static BackgroundTracingManager& GetInstance();
 
   CONTENT_EXPORT static const char kContentTriggerConfig[];
 
@@ -116,11 +116,6 @@ class BackgroundTracingManager {
   // TODO(ssid): This should also return the trigger for the trace along with
   // the serialized trace proto.
   virtual std::string GetLatestTraceToUpload() = 0;
-
-  // Returns the URL for uploading the trace files corresponding to the
-  // experiment |trial_name|.
-  virtual std::string GetBackgroundTracingUploadUrl(
-      const std::string& trial_name) = 0;
 
   // Returns background tracing configuration for the experiment |trial_name|.
   virtual std::unique_ptr<BackgroundTracingConfig> GetBackgroundTracingConfig(

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,24 @@
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
 #include "third_party/blink/renderer/core/dom/slot_assignment_engine.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
+#include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/intersection_observer/intersection_observer.h"
 #include "third_party/blink/renderer/core/intersection_observer/intersection_observer_entry.h"
+#include "third_party/blink/renderer/core/layout/layout_block.h"
+#include "third_party/blink/renderer/core/style/computed_style.h"
+#include "third_party/blink/renderer/core/view_transition/view_transition_utils.h"
+
+namespace {
+
+const char kForcedRendering[] =
+    "Rendering was performed in a subtree hidden by content-visibility.";
+const char kForcedRenderingMax[] =
+    "Rendering was performed in a subtree hidden by content-visibility. "
+    "Further messages will be suppressed.";
+constexpr unsigned kMaxConsoleMessages = 500;
+
+}  // namespace
 
 namespace blink {
 
@@ -129,12 +145,12 @@ void DisplayLockDocumentState::ProcessDisplayLockActivationObservation(
     if (context->HadAnyViewportIntersectionNotifications()) {
       if (entry->isIntersecting()) {
         document_->View()->EnqueueStartOfLifecycleTask(
-            WTF::Bind(&DisplayLockContext::NotifyIsIntersectingViewport,
-                      WrapWeakPersistent(context)));
+            WTF::BindOnce(&DisplayLockContext::NotifyIsIntersectingViewport,
+                          WrapWeakPersistent(context)));
       } else {
         document_->View()->EnqueueStartOfLifecycleTask(
-            WTF::Bind(&DisplayLockContext::NotifyIsNotIntersectingViewport,
-                      WrapWeakPersistent(context)));
+            WTF::BindOnce(&DisplayLockContext::NotifyIsNotIntersectingViewport,
+                          WrapWeakPersistent(context)));
       }
       had_asynchronous_notifications = true;
     } else {
@@ -154,8 +170,8 @@ void DisplayLockDocumentState::ProcessDisplayLockActivationObservation(
     // lifecycle).
     document_->GetTaskRunner(TaskType::kInternalFrameLifecycleControl)
         ->PostTask(FROM_HERE,
-                   WTF::Bind(&DisplayLockDocumentState::ScheduleAnimation,
-                             WrapWeakPersistent(this)));
+                   WTF::BindOnce(&DisplayLockDocumentState::ScheduleAnimation,
+                                 WrapWeakPersistent(this)));
   }
 }
 
@@ -167,6 +183,10 @@ void DisplayLockDocumentState::ScheduleAnimation() {
 DisplayLockDocumentState::ScopedForceActivatableDisplayLocks
 DisplayLockDocumentState::GetScopedForceActivatableLocks() {
   return ScopedForceActivatableDisplayLocks(this);
+}
+
+bool DisplayLockDocumentState::HasActivatableLocks() const {
+  return LockedDisplayLockCount() != DisplayLockBlockingAllActivationCount();
 }
 
 bool DisplayLockDocumentState::ActivatableDisplayLocksForced() const {
@@ -215,7 +235,7 @@ void DisplayLockDocumentState::ElementRemovedFromTopLayer(Element*) {
 
 bool DisplayLockDocumentState::MarkAncestorContextsHaveTopLayerElement(
     Element* element) {
-  if (display_lock_contexts_.IsEmpty())
+  if (display_lock_contexts_.empty())
     return false;
 
   bool had_locked_ancestor = false;
@@ -227,6 +247,35 @@ bool DisplayLockDocumentState::MarkAncestorContextsHaveTopLayerElement(
     }
   }
   return had_locked_ancestor;
+}
+
+void DisplayLockDocumentState::NotifyViewTransitionPseudoTreeChanged() {
+  // Reset the view transition element flag.
+  // TODO(vmpstr): This should be optimized to keep track of elements that
+  // actually have this flag set.
+  for (auto context : display_lock_contexts_)
+    context->ResetDescendantIsViewTransitionElement();
+
+  // Process the view transition elements to check if their ancestors are
+  // locks that need to be made relevant.
+  UpdateViewTransitionElementAncestorLocks();
+}
+
+void DisplayLockDocumentState::UpdateViewTransitionElementAncestorLocks() {
+  auto* transition = ViewTransitionUtils::GetActiveTransition(*document_);
+  if (!transition)
+    return;
+
+  const auto& transitioning_elements = transition->GetTransitioningElements();
+  for (auto element : transitioning_elements) {
+    auto* ancestor = element.Get();
+    // When the element which has c-v:auto is itself a view transition element,
+    // we keep it locked. So start with the parent.
+    while ((ancestor = FlatTreeTraversal::ParentElement(*ancestor))) {
+      if (auto* context = ancestor->GetDisplayLockContext())
+        context->SetDescendantIsViewTransitionElement();
+    }
+  }
 }
 
 void DisplayLockDocumentState::NotifySelectionRemoved() {
@@ -383,6 +432,26 @@ void DisplayLockDocumentState::NotifyPrintingOrPreviewChanged() {
 
   for (auto& context : display_lock_contexts_)
     context->SetShouldUnlockAutoForPrint(printing_);
+}
+
+void DisplayLockDocumentState::IssueForcedRenderWarning(Element* element) {
+  // Note that this is a verbose level message, since it can happen
+  // frequently and is not necessarily a problem if the developer is
+  // accessing content-visibility: hidden subtrees intentionally.
+  if (forced_render_warnings_ < kMaxConsoleMessages) {
+    forced_render_warnings_++;
+    auto level =
+        RuntimeEnabledFeatures::WarnOnContentVisibilityRenderAccessEnabled()
+            ? mojom::blink::ConsoleMessageLevel::kWarning
+            : mojom::blink::ConsoleMessageLevel::kVerbose;
+    auto* console_message = MakeGarbageCollected<ConsoleMessage>(
+        mojom::blink::ConsoleMessageSource::kJavaScript, level,
+        forced_render_warnings_ == kMaxConsoleMessages ? kForcedRenderingMax
+                                                       : kForcedRendering);
+    console_message->SetNodes(document_->GetFrame(),
+                              {DOMNodeIds::IdForNode(element)});
+    document_->AddConsoleMessage(console_message);
+  }
 }
 
 }  // namespace blink

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,10 +26,12 @@ class CORE_EXPORT LargestContentfulPaint final : public PerformanceEntry {
                          base::TimeDelta first_animated_frame_time,
                          const AtomicString& id,
                          const String& url,
-                         Element*);
+                         Element* element,
+                         DOMWindow* source,
+                         bool is_triggered_by_soft_navigation);
   ~LargestContentfulPaint() override;
 
-  AtomicString entryType() const override;
+  const AtomicString& entryType() const override;
   PerformanceEntryType EntryTypeEnum() const override;
 
   uint64_t size() const { return size_; }

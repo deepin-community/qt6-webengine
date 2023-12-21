@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -29,7 +29,7 @@ class DrmDumbBuffer {
     GEM_CLOSE,
   };
 
-  DrmDumbBuffer(const scoped_refptr<DrmDevice>& drm);
+  explicit DrmDumbBuffer(const scoped_refptr<DrmDevice>& drm);
 
   DrmDumbBuffer(const DrmDumbBuffer&) = delete;
   DrmDumbBuffer& operator=(const DrmDumbBuffer&) = delete;
@@ -65,7 +65,7 @@ class DrmDumbBuffer {
   HandleCloser handle_closer_ = HandleCloser::DESTROY_DUMB;
 
   // Base address for memory mapping.
-  void* mmap_base_ = 0;
+  void* mmap_base_ = nullptr;
 
   // Size for memory mapping.
   size_t mmap_size_ = 0;

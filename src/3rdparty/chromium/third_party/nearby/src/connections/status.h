@@ -15,7 +15,8 @@
 #ifndef CORE_STATUS_H_
 #define CORE_STATUS_H_
 
-namespace location {
+#include <string>
+
 namespace nearby {
 namespace connections {
 
@@ -44,6 +45,9 @@ struct Status {
   };
   Value value{kError};
   bool Ok() const { return value == kSuccess; }
+
+  // Converts the status to a logging-friendly string.
+  std::string ToString() const;
 };
 
 inline bool operator==(const Status& a, const Status& b) {
@@ -54,6 +58,5 @@ inline bool operator!=(const Status& a, const Status& b) { return !(a == b); }
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location
 
 #endif  // CORE_STATUS_H_

@@ -8,11 +8,11 @@
 #ifndef GrMeshDrawTarget_DEFINED
 #define GrMeshDrawTarget_DEFINED
 
+#include "src/base/SkArenaAlloc.h"
 #include "src/gpu/ganesh/GrDrawIndirectCommand.h"
 #include "src/gpu/ganesh/GrSimpleMesh.h"
 
 class GrAtlasManager;
-class GrStrikeCache;
 class GrThreadSafeCache;
 
 namespace skgpu {
@@ -21,6 +21,10 @@ namespace skgpu {
     struct IndexWriter;
     struct VertexWriter;
 } // namespace skgpu
+
+namespace sktext::gpu {
+class StrikeCache;
+}
 
 /*
  * Abstract interface that supports creating vertices, indices, and meshes, as well as
@@ -139,9 +143,11 @@ public:
     virtual GrResourceProvider* resourceProvider() const = 0;
     uint32_t contextUniqueID() const;
 
-    virtual GrStrikeCache* strikeCache() const = 0;
+    virtual sktext::gpu::StrikeCache* strikeCache() const = 0;
     virtual GrAtlasManager* atlasManager() const = 0;
+#if !defined(SK_ENABLE_OPTIMIZE_SIZE)
     virtual skgpu::v1::SmallPathAtlasMgr* smallPathAtlasManager() const = 0;
+#endif
 
     // This should be called during onPrepare of a GrOp. The caller should add any proxies to the
     // array it will use that it did not access during a call to visitProxies. This is usually the

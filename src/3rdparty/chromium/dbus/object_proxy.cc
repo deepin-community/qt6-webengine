@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,15 +7,15 @@
 #include <stddef.h>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/debug/alias.h"
 #include "base/debug/leak_annotations.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
-#include "base/task/task_runner_util.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_restrictions.h"
@@ -250,8 +250,8 @@ void ObjectProxy::ConnectToSignal(const std::string& interface_name,
   bus_->AssertOnOriginThread();
 
   if (bus_->HasDBusThread()) {
-    base::PostTaskAndReplyWithResult(
-        bus_->GetDBusTaskRunner(), FROM_HERE,
+    bus_->GetDBusTaskRunner()->PostTaskAndReplyWithResult(
+        FROM_HERE,
         base::BindOnce(&ObjectProxy::ConnectToSignalAndBlock, this,
                        interface_name, signal_name, signal_callback),
         base::BindOnce(std::move(on_connected_callback), interface_name,

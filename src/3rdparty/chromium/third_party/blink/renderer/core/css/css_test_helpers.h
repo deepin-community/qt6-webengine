@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/core/css/css_selector_list.h"
 #include "third_party/blink/renderer/core/css/rule_set.h"
+#include "third_party/blink/renderer/core/testing/null_execution_context.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
@@ -42,15 +43,20 @@ class TestStyleSheet {
   CSSRuleList* CssRules();
 
  private:
+  ScopedNullExecutionContext execution_context_;
   Persistent<Document> document_;
   Persistent<CSSStyleSheet> style_sheet_;
 };
 
 CSSStyleSheet* CreateStyleSheet(Document& document);
 
-// Create a PropertyRegistration for the given name. The syntax, initial value,
-// and inherited status are all undefined.
-PropertyRegistration* CreatePropertyRegistration(const String& name);
+// Create a PropertyRegistration with the given name. An initial value must
+// be provided when the syntax is not "*".
+PropertyRegistration* CreatePropertyRegistration(
+    const String& name,
+    String syntax = "*",
+    const CSSValue* initial_value = nullptr,
+    bool is_inherited = false);
 
 // Create a non-inherited PropertyRegistration with syntax <length>, and the
 // given value in pixels as the initial value.
@@ -87,7 +93,7 @@ StyleRuleBase* ParseRule(Document& document, String text);
 // https://drafts.css-houdini.org/css-properties-values-api-1/#syntax-strings
 const CSSValue* ParseValue(Document&, String syntax, String value);
 
-CSSSelectorList ParseSelectorList(const String&);
+CSSSelectorList* ParseSelectorList(const String&);
 
 }  // namespace css_test_helpers
 }  // namespace blink

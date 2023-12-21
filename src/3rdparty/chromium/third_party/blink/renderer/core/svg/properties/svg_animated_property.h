@@ -31,6 +31,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_SVG_PROPERTIES_SVG_ANIMATED_PROPERTY_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_SVG_PROPERTIES_SVG_ANIMATED_PROPERTY_H_
 
+#include "base/check_op.h"
 #include "third_party/blink/renderer/core/css/css_property_names.h"
 #include "third_party/blink/renderer/core/dom/qualified_name.h"
 #include "third_party/blink/renderer/core/svg/properties/svg_property_info.h"
@@ -53,9 +54,7 @@ class SVGAnimatedPropertyBase : public GarbageCollectedMixin {
   virtual const SVGPropertyBase& BaseValueBase() const = 0;
   virtual bool IsAnimating() const = 0;
 
-  virtual SVGPropertyBase* CreateAnimatedValue() = 0;
   virtual void SetAnimatedValue(SVGPropertyBase*) = 0;
-  virtual void AnimationEnded() = 0;
 
   virtual SVGParsingError AttributeChanged(const String&) = 0;
   virtual bool NeedsSynchronizeAttribute() const;
@@ -141,17 +140,9 @@ class SVGAnimatedPropertyCommon : public SVGAnimatedPropertyBase {
     return parse_status;
   }
 
-  SVGPropertyBase* CreateAnimatedValue() override {
-    return base_value_->Clone();
-  }
-
   void SetAnimatedValue(SVGPropertyBase* value) override {
-    DCHECK_EQ(value->GetType(), Property::ClassType());
-    current_value_ = static_cast<Property*>(value);
-  }
-
-  void AnimationEnded() override {
-    current_value_ = base_value_;
+    DCHECK(!value || value->GetType() == Property::ClassType());
+    current_value_ = value ? static_cast<Property*>(value) : BaseValue();
   }
 
   void Trace(Visitor* visitor) const override {
@@ -238,11 +229,6 @@ class SVGAnimatedProperty<Property, TearOffType, void>
 
   void SetAnimatedValue(SVGPropertyBase* value) override {
     SVGAnimatedPropertyCommon<Property>::SetAnimatedValue(value);
-    UpdateAnimValTearOffIfNeeded();
-  }
-
-  void AnimationEnded() override {
-    SVGAnimatedPropertyCommon<Property>::AnimationEnded();
     UpdateAnimValTearOffIfNeeded();
   }
 

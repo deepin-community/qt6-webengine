@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,7 @@
 #include "base/atomicops.h"
 #include "base/compiler_specific.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/synchronization/lock.h"
 #include "base/time/time.h"
 #include "base/types/pass_key.h"
@@ -136,8 +137,8 @@ class NET_EXPORT NetLog {
     friend class NetLog;
 
     // Both of these values are only modified by the NetLog.
-    NetLogCaptureMode capture_mode_;
-    raw_ptr<NetLog> net_log_;
+    NetLogCaptureMode capture_mode_ = NetLogCaptureMode::kDefault;
+    raw_ptr<NetLog> net_log_ = nullptr;
   };
 
   // An observer that is notified of changes in the capture mode set, and has
@@ -255,11 +256,11 @@ class NET_EXPORT NetLog {
       explicit GetParamsImpl(const ParametersCallback& get_params)
           : get_params_(get_params) {}
       base::Value GetParams(NetLogCaptureMode mode) const override {
-        return get_params_(mode);
+        return (*get_params_)(mode);
       }
 
      private:
-      const ParametersCallback& get_params_;
+      const raw_ref<const ParametersCallback> get_params_;
     };
 
     GetParamsImpl wrapper(get_params);

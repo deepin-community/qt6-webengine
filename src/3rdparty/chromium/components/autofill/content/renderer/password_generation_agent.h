@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -86,7 +86,7 @@ class PasswordGenerationAgent : public content::RenderFrameObserver,
   bool ShouldIgnoreBlur() const;
 
 #if defined(UNIT_TEST)
-  // This method requests the autofill::mojom::PasswordManagerClient which binds
+  // This method requests the mojom::PasswordManagerClient which binds
   // requests the binding if it wasn't bound yet.
   void RequestPasswordManagerClientForTesting() {
     GetPasswordGenerationDriver();
@@ -94,6 +94,14 @@ class PasswordGenerationAgent : public content::RenderFrameObserver,
 #endif
 
   bool IsPrerendering() const;
+
+  // Previews the generation suggestion for the current generation element.
+  void PreviewGenerationSuggestion(const std::u16string& password);
+
+  // Returns true if a generation suggestion was found and cleared successfully
+  // on |control_element|.
+  bool DidClearGenerationSuggestion(
+      const blink::WebFormControlElement& control_element);
 
  private:
   class DeferringPasswordGenerationDriver;
@@ -145,8 +153,8 @@ class PasswordGenerationAgent : public content::RenderFrameObserver,
       blink::WebInputElement element,
       FieldRendererId confirmation_password_renderer_id);
 
-  void LogMessage(autofill::SavePasswordProgressLogger::StringID message_id);
-  void LogBoolean(autofill::SavePasswordProgressLogger::StringID message_id,
+  void LogMessage(SavePasswordProgressLogger::StringID message_id);
+  void LogBoolean(SavePasswordProgressLogger::StringID message_id,
                   bool truth_value);
 
   // Creates a FormData to presave a generated password. It copies behavior

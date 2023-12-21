@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -35,7 +35,6 @@ class VIEWS_EXAMPLES_EXPORT BubbleExample : public ExampleBase {
                   bool persistent,
                   const ui::Event& event);
 
-  Button* no_shadow_legacy_;
   Button* standard_shadow_;
   Button* no_shadow_;
   Button* persistent_;

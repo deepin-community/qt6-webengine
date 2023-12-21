@@ -36,11 +36,10 @@
 #include "cc/paint/paint_flags.h"
 #include "third_party/blink/renderer/platform/geometry/layout_rect.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
-#include "third_party/blink/renderer/platform/transforms/transformation_matrix.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/partitions.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
 #include "third_party/skia/include/effects/SkCornerPathEffect.h"
-#include "third_party/skia/include/third_party/skcms/skcms.h"
+#include "third_party/skia/modules/skcms/skcms.h"
 #include "ui/base/ui_base_features.h"
 
 #include <algorithm>
@@ -253,32 +252,22 @@ SkMatrix AffineTransformToSkMatrix(const AffineTransform& source) {
   return result;
 }
 
-SkMatrix TransformationMatrixToSkMatrix(const TransformationMatrix& source) {
-  // SkMatrix is 3x3, TransformationMatrix is 4x4, this function encodes
-  // assuming that a 2D-transformation with perspective is what's desired,
-  // throwing out the z-dimension values. i.e.:
-
-  //        INPUT                  OUTPUT
-  // | m11 m21 m31 m41 |       | m11 m21 m41 |
-  // | m12 m22 m32 m42 | ----> | m12 m22 m42 |
-  // | m13 m23 m33 m43 |       | m14 m24 m44 |
-  // | m14 m24 m34 m44 |
-
-  SkMatrix result;
-
-  result.setScaleX(WebCoreDoubleToSkScalar(source.M11()));
-  result.setSkewX(WebCoreDoubleToSkScalar(source.M21()));
-  result.setTranslateX(WebCoreDoubleToSkScalar(source.M41()));
-
-  result.setScaleY(WebCoreDoubleToSkScalar(source.M22()));
-  result.setSkewY(WebCoreDoubleToSkScalar(source.M12()));
-  result.setTranslateY(WebCoreDoubleToSkScalar(source.M42()));
-
-  result.setPerspX(source.M14());
-  result.setPerspY(source.M24());
-  result.set(SkMatrix::kMPersp2, source.M44());
-
-  return result;
+SkM44 AffineTransformToSkM44(const AffineTransform& source) {
+  //   INPUT           OUTPUT
+  // | a c e |       | a c 0 e |
+  // | b d f | ----> | b d 0 f |
+  //                 | 0 0 1 0 |
+  //                 | 0 0 0 1 |
+  SkScalar a = WebCoreDoubleToSkScalar(source.A());
+  SkScalar b = WebCoreDoubleToSkScalar(source.B());
+  SkScalar c = WebCoreDoubleToSkScalar(source.C());
+  SkScalar d = WebCoreDoubleToSkScalar(source.D());
+  SkScalar e = WebCoreDoubleToSkScalar(source.E());
+  SkScalar f = WebCoreDoubleToSkScalar(source.F());
+  return SkM44(a, c, 0, e,   // row 0
+               b, d, 0, f,   // row 1
+               0, 0, 1, 0,   // row 2
+               0, 0, 0, 1);  // row 3
 }
 
 bool NearlyIntegral(float value) {

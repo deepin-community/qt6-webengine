@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -612,6 +612,7 @@ const GetMarkers = natives.GetMarkers;
 /**
  * @param {string} axTreeID The id of the accessibility tree.
  * @param {number} nodeID The id of a node.
+ * @param {!automation.PositionType} type
  * @param {number} offset
  * @param {boolean} isUpstream
  * @return {!Object}
@@ -699,7 +700,7 @@ AutomationNodeImpl.prototype = {
     }
 
     if (data.length !== 4) {
-      throw 'Internal encoding error for caret bounds.';
+      throw Error('Internal encoding error for caret bounds.');
     }
 
     return {left: data[0], top: data[1], width: data[2], height: data[3]};
@@ -1021,9 +1022,9 @@ AutomationNodeImpl.prototype = {
     return GetMarkers(this.treeID, this.id);
   },
 
-  createPosition: function(offset, opt_isUpstream) {
+  createPosition: function(type, offset, opt_isUpstream) {
     const nativePosition = CreateAutomationPosition(
-        this.treeID, this.id, offset, !!opt_isUpstream);
+        this.treeID, this.id, type, offset, Boolean(opt_isUpstream));
 
     // Attach a getter for the node, which is only available in js.
     Object.defineProperty(nativePosition, 'node', {
@@ -1035,7 +1036,7 @@ AutomationNodeImpl.prototype = {
         }
 
         return privates(tree).impl.get(nativePosition.anchorID);
-      }
+      },
     });
 
     return nativePosition;
@@ -1087,7 +1088,7 @@ AutomationNodeImpl.prototype = {
     const standardActions = GetStandardActions(this.treeID, this.id);
     if (!standardActions ||
         !standardActions.find(item => action == item)) {
-      throw 'Inapplicable action for node: ' + action;
+      throw Error('Inapplicable action for node: ' + action);
     }
     this.performAction_(action);
   },
@@ -1128,6 +1129,10 @@ AutomationNodeImpl.prototype = {
 
   scrollToPoint: function(x, y) {
     this.performAction_('scrollToPoint', {x, y});
+  },
+
+  scrollToPositionAtRowColumn: function(row, column) {
+    this.performAction_('scrollToPositionAtRowColumn', {row, column});
   },
 
   setScrollOffset: function(x, y) {
@@ -1171,6 +1176,9 @@ AutomationNodeImpl.prototype = {
 
   suspendMedia: function() {
     this.performAction_('suspendMedia');
+  },
+  longClick: function() {
+    this.performAction_('longClick');
   },
 
   domQuerySelector: function(selector, callback) {
@@ -1395,7 +1403,7 @@ AutomationNodeImpl.prototype = {
           treeID: this.rootImpl.treeID,
           automationNodeID: this.id,
           actionType: actionType,
-          requestID: requestID
+          requestID: requestID,
         },
         opt_args || {});
   },
@@ -1493,7 +1501,7 @@ AutomationNodeImpl.prototype = {
       }
     }
     return true;
-  }
+  },
 };
 
 const stringAttributes = [
@@ -1506,6 +1514,7 @@ const stringAttributes = [
   'containerLiveStatus',
   'description',
   'display',
+  'doDefaultLabel',
   'fontFamily',
   'htmlTag',
   'imageDataUrl',
@@ -1513,23 +1522,46 @@ const stringAttributes = [
   'language',
   'liveRelevant',
   'liveStatus',
+  'longClickLabel',
   'placeholder',
   'roleDescription',
   'tooltip',
-  'url'
+  'url',
 ];
 
 const boolAttributes = [
-  'busy', 'clickable', 'containerLiveAtomic', 'containerLiveBusy',
-  'nonAtomicTextFieldRoot', 'liveAtomic', 'modal', 'notUserSelectableStyle',
-  'scrollable', 'selected', 'supportsTextLocation'
+  'busy',
+  'clickable',
+  'containerLiveAtomic',
+  'containerLiveBusy',
+  'nonAtomicTextFieldRoot',
+  'liveAtomic',
+  'modal',
+  'notUserSelectableStyle',
+  'scrollable',
+  'selected',
+  'supportsTextLocation',
 ];
 
 const intAttributes = [
-  'backgroundColor', 'color', 'colorValue', 'hierarchicalLevel', 'posInSet',
-  'scrollX', 'scrollXMax', 'scrollXMin', 'scrollY', 'scrollYMax', 'scrollYMin',
-  'setSize', 'tableCellColumnSpan', 'tableCellRowSpan', 'ariaColumnCount',
-  'ariaRowCount', 'textSelEnd', 'textSelStart'
+  'backgroundColor',
+  'color',
+  'colorValue',
+  'hierarchicalLevel',
+  'posInSet',
+  'scrollX',
+  'scrollXMax',
+  'scrollXMin',
+  'scrollY',
+  'scrollYMax',
+  'scrollYMin',
+  'setSize',
+  'tableCellColumnSpan',
+  'tableCellRowSpan',
+  'ariaColumnCount',
+  'ariaRowCount',
+  'textSelEnd',
+  'textSelStart',
 ];
 
 // Int attribute, relation property to expose, reverse relation to expose.
@@ -1537,12 +1569,15 @@ const nodeRefAttributes = [
   ['activedescendantId', 'activeDescendant', 'activeDescendantFor'],
   ['errormessageId', 'errorMessage', 'errorMessageFor'],
   ['inPageLinkTargetId', 'inPageLinkTarget', null],
-  ['nextFocusId', 'nextFocus', null], ['nextOnLineId', 'nextOnLine', null],
+  ['nextFocusId', 'nextFocus', null],
+  ['nextOnLineId', 'nextOnLine', null],
+  ['nextWindowFocusId', 'nextWindowFocus', null],
   ['previousFocusId', 'previousFocus', null],
   ['previousOnLineId', 'previousOnLine', null],
+  ['previousWindowFocusId', 'previousWindowFocus', null],
   ['tableColumnHeaderId', 'tableColumnHeader', null],
   ['tableHeaderId', 'tableHeader', null],
-  ['tableRowHeaderId', 'tableRowHeader', null]
+  ['tableRowHeaderId', 'tableRowHeader', null],
 ];
 
 const intListAttributes = ['wordEnds', 'wordStarts'];
@@ -1551,8 +1586,9 @@ const intListAttributes = ['wordEnds', 'wordStarts'];
 const nodeRefListAttributes = [
   ['controlsIds', 'controls', 'controlledBy'],
   ['describedbyIds', 'describedBy', 'descriptionFor'],
-  ['detailsIds', 'details', 'detailsFor'], ['flowtoIds', 'flowTo', 'flowFrom'],
-  ['labelledbyIds', 'labelledBy', 'labelFor']
+  ['detailsIds', 'details', 'detailsFor'],
+  ['flowtoIds', 'flowTo', 'flowFrom'],
+  ['labelledbyIds', 'labelledBy', 'labelFor'],
 ];
 
 const floatAttributes =
@@ -1568,7 +1604,7 @@ $Array.forEach(stringAttributes, function(attributeName) {
     __proto__: null,
     get: function() {
       return GetStringAttribute(this.treeID, this.id, attributeName);
-    }
+    },
   });
 });
 
@@ -1578,7 +1614,7 @@ $Array.forEach(boolAttributes, function(attributeName) {
     __proto__: null,
     get: function() {
       return GetBoolAttribute(this.treeID, this.id, attributeName);
-    }
+    },
   });
 });
 
@@ -1588,7 +1624,7 @@ $Array.forEach(intAttributes, function(attributeName) {
     __proto__: null,
     get: function() {
       return GetIntAttribute(this.treeID, this.id, attributeName);
-    }
+    },
   });
 });
 
@@ -1606,7 +1642,7 @@ $Array.forEach(nodeRefAttributes, function(params) {
       } else {
         return undefined;
       }
-    }
+    },
   });
   if (dstReverseAttributeName) {
     $Array.push(publicAttributes, dstReverseAttributeName);
@@ -1627,7 +1663,7 @@ $Array.forEach(nodeRefAttributes, function(params) {
               }
             }
             return result;
-          }
+          },
         });
   }
 });
@@ -1638,7 +1674,7 @@ $Array.forEach(intListAttributes, function(attributeName) {
     __proto__: null,
     get: function() {
       return GetIntListAttribute(this.treeID, this.id, attributeName);
-    }
+    },
   });
 });
 
@@ -1662,7 +1698,7 @@ $Array.forEach(nodeRefListAttributes, function(params) {
         }
       }
       return result;
-    }
+    },
   });
   if (dstReverseAttributeName) {
     $Array.push(publicAttributes, dstReverseAttributeName);
@@ -1683,7 +1719,7 @@ $Array.forEach(nodeRefListAttributes, function(params) {
               }
             }
             return result;
-          }
+          },
         });
   }
 });
@@ -1694,7 +1730,7 @@ $Array.forEach(floatAttributes, function(attributeName) {
     __proto__: null,
     get: function() {
       return GetFloatAttribute(this.treeID, this.id, attributeName);
-    }
+    },
   });
 });
 
@@ -1706,7 +1742,7 @@ $Array.forEach(htmlAttributes, function(params) {
     __proto__: null,
     get: function() {
       return GetHtmlAttribute(this.treeID, this.id, srcAttributeName);
-    }
+    },
   });
 });
 
@@ -1761,6 +1797,10 @@ utils.defineProperty(
 
 utils.defineProperty(AutomationRootNodeImpl, 'destroy', function(treeID) {
   delete AutomationTreeCache.idToAutomationRootNode[treeID];
+});
+
+utils.defineProperty(AutomationRootNodeImpl, 'destroyAll', function() {
+  AutomationTreeCache.idToAutomationRootNode = {};
 });
 
 /**
@@ -1990,7 +2030,7 @@ AutomationRootNodeImpl.prototype = {
                                          .actionRequestCounter] = {
       actionType,
       opt_args,
-      callback
+      callback,
     };
     return AutomationRootNodeImpl.actionRequestCounter;
   },
@@ -2057,15 +2097,7 @@ AutomationRootNodeImpl.prototype = {
         if (appNode) {
           delete AutomationRootNodeImpl.actionRequestIDToCallback[requestID];
 
-          const relativeWindow = appNode.parent;
-          if (!relativeWindow) {
-            return false;
-          }
-
-          // The hit test needs to be relative to the container of the app node.
-          data.opt_args.x -= relativeWindow.location.left;
-          data.opt_args.y -= relativeWindow.location.top;
-
+          // Repost the hit test on |appNode|.
           privates(appNode).impl.performAction_(
               data.actionType, data.opt_args, data.callback);
           return true;
@@ -2131,6 +2163,7 @@ utils.expose(AutomationNode, AutomationNodeImpl, {
     'scrollLeft',
     'scrollRight',
     'scrollToPoint',
+    'scrollToPositionAtRowColumn',
     'scrollUp',
     'setAccessibilityFocus',
     'setScrollOffset',
@@ -2141,8 +2174,9 @@ utils.expose(AutomationNode, AutomationNodeImpl, {
     'startDuckingMedia',
     'stopDuckingMedia',
     'suspendMedia',
+    'longClick',
     'toString',
-    'unclippedBoundsForRange'
+    'unclippedBoundsForRange',
   ],
   readonly: $Array.concat(
       publicAttributes,
@@ -2238,6 +2272,10 @@ utils.defineProperty(AutomationRootNode, 'getOrCreate', function(treeID) {
 
 utils.defineProperty(AutomationRootNode, 'destroy', function(treeID) {
   AutomationRootNodeImpl.destroy(treeID);
+});
+
+utils.defineProperty(AutomationRootNode, 'destroyAll', function() {
+  AutomationRootNodeImpl.destroyAll();
 });
 
 exports.$set('AutomationNode', AutomationNode);

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -13,10 +13,10 @@
 
 #include <algorithm>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/circular_deque.h"
 #include "base/cxx17_backports.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/sys_byteorder.h"
@@ -373,7 +373,7 @@ bool Vp9FrameContext::IsValid() const {
     for (auto& ai : a) {
       for (auto& aj : ai) {
         for (auto& ak : aj) {
-          int max_l = (ak == aj[0]) ? 3 : 6;
+          int max_l = (+ak == +aj[0]) ? 3 : 6;
           for (int l = 0; l < max_l; l++) {
             for (auto& x : ak[l]) {
               if (x == 0) {

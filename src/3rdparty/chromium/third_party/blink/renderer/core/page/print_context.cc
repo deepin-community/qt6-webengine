@@ -27,6 +27,7 @@
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/page_scale_constraints_set.h"
+#include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
@@ -94,10 +95,10 @@ void PrintContext::ComputePageRectsWithPageSizeInternal(
 
   gfx::Rect snapped_doc_rect = ToPixelSnappedRect(view->DocumentRect());
 
-  int page_width = page_size_in_pixels.width();
   // We scaled with floating point arithmetic and need to ensure results like
   // 13329.99 are treated as 13330 so that we don't mistakenly assign an extra
   // page for the stray pixel.
+  int page_width = page_size_in_pixels.width() + LayoutUnit::Epsilon();
   int page_height = page_size_in_pixels.height() + LayoutUnit::Epsilon();
 
   bool is_horizontal = view->StyleRef().IsHorizontalWritingMode();
@@ -155,11 +156,16 @@ void PrintContext::BeginPrintMode(float width, float height) {
       original_page_size, gfx::SizeF(width * kPrintingMinimumShrinkFactor,
                                      height * kPrintingMinimumShrinkFactor));
 
+  const Settings* settings = frame_->GetSettings();
+  DCHECK(settings);
+  float printingMaximumShrinkFactor =
+      settings->GetPrintingMaximumShrinkFactor();
+
   // This changes layout, so callers need to make sure that they don't paint to
   // screen while in printing mode.
   frame_->StartPrinting(
       min_layout_size, original_page_size,
-      kPrintingMaximumShrinkFactor / kPrintingMinimumShrinkFactor);
+      printingMaximumShrinkFactor / kPrintingMinimumShrinkFactor);
 }
 
 void PrintContext::EndPrintMode() {
@@ -322,9 +328,11 @@ int PrintContext::NumberOfPages(LocalFrame* frame,
   print_context->BeginPrintMode(page_rect.width(), page_rect.height());
   // Account for shrink-to-fit.
   gfx::SizeF scaled_page_size = page_size_in_pixels;
+  const LayoutView* layout_view = frame->View()->GetLayoutView();
+  bool is_horizontal = layout_view->StyleRef().IsHorizontalWritingMode();
   scaled_page_size.Scale(
-      frame->View()->LayoutViewport()->ContentsSize().width() /
-      page_rect.width());
+      layout_view->PageLogicalHeight() /
+      (is_horizontal ? page_rect.height() : page_rect.width()));
   print_context->ComputePageRectsWithPageSize(scaled_page_size);
   return print_context->PageCount();
 }

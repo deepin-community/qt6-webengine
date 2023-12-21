@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -21,6 +21,7 @@
 #include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/browsing_data_remover.h"
+#include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "url/origin.h"
 
 namespace content {
@@ -42,6 +43,14 @@ class CONTENT_EXPORT BrowsingDataRemoverImpl
 
   // Is the BrowsingDataRemoverImpl currently in the process of removing data?
   bool IsRemovingForTesting() { return is_removing_; }
+
+  void RemoveStorageBucketsAndReply(
+      const blink::StorageKey& storage_key,
+      const std::set<std::string>& storage_buckets,
+      base::OnceClosure callback);
+
+  void RemoveAllStorageBucketsAndReply(const blink::StorageKey& storage_key,
+                                       base::OnceClosure callback);
 
   // BrowsingDataRemover implementation:
   void SetEmbedderDelegate(
@@ -187,6 +196,9 @@ class CONTENT_EXPORT BrowsingDataRemoverImpl
   // Checks if all tasks have completed, and if so, calls Notify().
   void OnTaskComplete(TracingDataType data_type, base::TimeTicks started);
 
+  // Called when the storage buckets data has been removed.
+  void DidRemoveStorageBuckets(base::OnceClosure callback);
+
   // Increments the number of pending tasks by one, and returns a OnceClosure
   // that calls OnTaskComplete(). The Remover is complete once all the closures
   // created by this method have been invoked.
@@ -211,7 +223,7 @@ class CONTENT_EXPORT BrowsingDataRemoverImpl
   raw_ptr<BrowserContext> browser_context_;
 
   // A delegate to delete the embedder-specific data. Owned by the embedder.
-  raw_ptr<BrowsingDataRemoverDelegate> embedder_delegate_;
+  raw_ptr<BrowsingDataRemoverDelegate, DanglingUntriaged> embedder_delegate_;
 
   // Start time to delete from.
   base::Time delete_begin_;

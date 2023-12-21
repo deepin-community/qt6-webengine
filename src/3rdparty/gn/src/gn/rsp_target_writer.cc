@@ -124,9 +124,9 @@ void RspTargetWriter::Run() {
             tool_outputs[0].AsSourceFile(settings->build_settings()));
       }
       if (target_->config_values().has_precompiled_headers()) {
-        const CTool* tool =
+        const CTool* tool_cxx =
             target_->toolchain()->GetTool(CTool::kCToolCxx)->AsC();
-        if (tool && tool->precompiled_header_type() == CTool::PCH_MSVC) {
+        if (tool_cxx && tool_cxx->precompiled_header_type() == CTool::PCH_MSVC) {
           GetPCHOutputFiles(target_, CTool::kCToolCxx, &tool_outputs);
           if (!tool_outputs.empty())
             object_files.push_back(
@@ -152,6 +152,9 @@ void RspTargetWriter::Run() {
       RecursiveTargetConfigStringsToStream(kRecursiveWriterKeepDuplicates,
                                            target_, &ConfigValues::ldflags,
                                            opts, out_);
+      out_.flush();
+    } break;
+    case LDIR: {
       // library dirs
       const UniqueVector<SourceDir> all_lib_dirs = target_->all_lib_dirs();
 
@@ -245,7 +248,8 @@ RspTargetWriter::Type RspTargetWriter::strToType(const std::string& str) {
       {"archives", RspTargetWriter::ARCHIVES},
       {"defines", RspTargetWriter::DEFINES},
       {"lflags", RspTargetWriter::LFLAGS},
-      {"libs", RspTargetWriter::LIBS}};
+      {"libs", RspTargetWriter::LIBS},
+      {"ldir", RspTargetWriter::LDIR}};
   auto it = types.find(str);
   if (it != types.end()) {
     return it->second;

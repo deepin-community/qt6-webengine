@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,11 +13,10 @@
 #include "base/component_export.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
-#include "net/base/network_isolation_key.h"
+#include "net/base/network_anonymization_key.h"
 #include "net/log/net_log_with_source.h"
 #include "net/proxy_resolution/proxy_info.h"
 #include "net/proxy_resolution/proxy_resolution_service.h"
@@ -33,7 +32,7 @@ class ConnectJobFactory;
 class HttpAuthController;
 class HttpResponseInfo;
 class HttpNetworkSession;
-class NetworkIsolationKey;
+class NetworkAnonymizationKey;
 class ProxyResolutionRequest;
 }  // namespace net
 
@@ -58,7 +57,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) ProxyResolvingClientSocket
       net::HttpNetworkSession* network_session,
       const net::CommonConnectJobParams* common_connect_job_params,
       const GURL& url,
-      const net::NetworkIsolationKey& network_isolation_key,
+      const net::NetworkAnonymizationKey& network_anonymization_key,
       bool use_tls,
       const net::ConnectJobFactory* connect_job_factory);
 
@@ -94,10 +93,6 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) ProxyResolvingClientSocket
   bool WasAlpnNegotiated() const override;
   net::NextProto GetNegotiatedProtocol() const override;
   bool GetSSLInfo(net::SSLInfo* ssl_info) override;
-  void GetConnectionAttempts(net::ConnectionAttempts* out) const override;
-  void ClearConnectionAttempts() override {}
-  void AddConnectionAttempts(const net::ConnectionAttempts& attempts) override {
-  }
   int64_t GetTotalReceivedBytes() const override;
   void ApplySocketTag(const net::SocketTag& tag) override;
 
@@ -143,7 +138,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) ProxyResolvingClientSocket
   std::unique_ptr<net::ProxyResolutionRequest> proxy_resolve_request_;
   net::ProxyInfo proxy_info_;
   const GURL url_;
-  const net::NetworkIsolationKey network_isolation_key_;
+  const net::NetworkAnonymizationKey network_anonymization_key_;
   const bool use_tls_;
 
   net::NetLogWithSource net_log_;

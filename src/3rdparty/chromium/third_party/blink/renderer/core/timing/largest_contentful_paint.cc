@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,8 +19,14 @@ LargestContentfulPaint::LargestContentfulPaint(
     base::TimeDelta first_animated_frame_time,
     const AtomicString& id,
     const String& url,
-    Element* element)
-    : PerformanceEntry(g_empty_atom, start_time, start_time),
+    Element* element,
+    DOMWindow* source,
+    bool is_triggered_by_soft_navigation)
+    : PerformanceEntry(g_empty_atom,
+                       start_time,
+                       start_time,
+                       source,
+                       is_triggered_by_soft_navigation),
       size_(size),
       render_time_(render_time),
       load_time_(load_time),
@@ -31,7 +37,7 @@ LargestContentfulPaint::LargestContentfulPaint(
 
 LargestContentfulPaint::~LargestContentfulPaint() = default;
 
-AtomicString LargestContentfulPaint::entryType() const {
+const AtomicString& LargestContentfulPaint::entryType() const {
   return performance_entry_names::kLargestContentfulPaint;
 }
 

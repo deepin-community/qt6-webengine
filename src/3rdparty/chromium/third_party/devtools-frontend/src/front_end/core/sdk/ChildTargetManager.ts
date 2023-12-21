@@ -9,8 +9,8 @@ import type * as ProtocolProxyApi from '../../generated/protocol-proxy-api.js';
 import type * as Protocol from '../../generated/protocol.js';
 
 import {ParallelConnection} from './Connections.js';
-import type {Target} from './Target.js';
-import {Capability, Type} from './Target.js';
+
+import {Capability, Type, type Target} from './Target.js';
 import {SDKModel} from './SDKModel.js';
 import {Events as TargetManagerEvents, TargetManager} from './TargetManager.js';
 
@@ -40,7 +40,7 @@ export class ChildTargetManager extends SDKModel<EventTypes> implements Protocol
       void this.#targetAgent.invoke_setAutoAttach({autoAttach: true, waitForDebuggerOnStart: true, flatten: true});
     }
 
-    if (!parentTarget.parentTarget() && !Host.InspectorFrontendHost.isUnderTest()) {
+    if (parentTarget.parentTarget()?.type() !== Type.Frame && !Host.InspectorFrontendHost.isUnderTest()) {
       void this.#targetAgent.invoke_setDiscoverTargets({discover: true});
       void this.#targetAgent.invoke_setRemoteLocations({locations: [{host: 'localhost', port: 9229}]});
     }
@@ -115,17 +115,22 @@ export class ChildTargetManager extends SDKModel<EventTypes> implements Protocol
     if (this.#parentTargetId === targetInfo.targetId) {
       return;
     }
+    let type = Type.Browser;
     let targetName = '';
     if (targetInfo.type === 'worker' && targetInfo.title && targetInfo.title !== targetInfo.url) {
       targetName = targetInfo.title;
-    } else if (targetInfo.type !== 'iframe' && targetInfo.type !== 'webview') {
+    } else if (!['page', 'iframe', 'webview'].includes(targetInfo.type)) {
       const parsedURL = Common.ParsedURL.ParsedURL.fromString(targetInfo.url);
       targetName =
           parsedURL ? parsedURL.lastPathComponentWithFragment() : '#' + (++ChildTargetManager.lastAnonymousTargetId);
+      if (parsedURL?.scheme === 'devtools' && targetInfo.type === 'other') {
+        type = Type.Frame;
+      }
     }
 
-    let type = Type.Browser;
     if (targetInfo.type === 'iframe' || targetInfo.type === 'webview') {
+      type = Type.Frame;
+    } else if (targetInfo.type === 'background_page' || targetInfo.type === 'app' || targetInfo.type === 'popup_page') {
       type = Type.Frame;
     }
     // TODO(lfg): ensure proper capabilities for child pages (e.g. portals).
@@ -142,9 +147,6 @@ export class ChildTargetManager extends SDKModel<EventTypes> implements Protocol
     }
     const target = this.#targetManager.createTarget(
         targetInfo.targetId, targetName, type, this.#parentTarget, sessionId, undefined, undefined, targetInfo);
-    if (type === Type.Worker || type === Type.ServiceWorker || type === Type.SharedWorker) {
-      target.setInspectedURL(this.#parentTarget.inspectedURL());
-    }
     this.#childTargetsBySessionId.set(sessionId, target);
     this.#childTargetsById.set(target.id(), target);
 

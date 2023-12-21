@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,60 +16,42 @@ import {driveDescriptor as driveV2Descriptor} from './drive_v2/module.js';
 // <if expr="not is_official_build">
 import {dummyV2Descriptor, dummyV2Descriptor02, dummyV2Descriptor03, dummyV2Descriptor04, dummyV2Descriptor05, dummyV2Descriptor06, dummyV2Descriptor07, dummyV2Descriptor08, dummyV2Descriptor09, dummyV2Descriptor10, dummyV2Descriptor11, dummyV2Descriptor12} from './dummy_v2/module.js';
 // </if>
-import {ModuleDescriptor, ModuleDescriptorV2} from './module_descriptor.js';
+import {feedDescriptor, feedV2Descriptor} from './feed/module.js';
+import {HistoryClustersProxyImpl} from './history_clusters/history_clusters_proxy.js';
+import {historyClustersDescriptor} from './history_clusters/module.js';
+import {ModuleDescriptor} from './module_descriptor.js';
 import {ModuleRegistry} from './module_registry.js';
 import {photosDescriptor} from './photos/module.js';
+import {recipeTasksDescriptor} from './recipes/module.js';
 import {recipeTasksDescriptor as recipeTasksV2Descriptor} from './recipes_v2/module.js';
-import {recipeTasksDescriptor} from './task_module/module.js';
 
+const modulesRedesignedEnabled: boolean =
+    loadTimeData.getBoolean('modulesRedesignedEnabled');
 export const descriptors: ModuleDescriptor[] = [];
-
-export const descriptorsV2: ModuleDescriptorV2[] = [];
-
-if (loadTimeData.getBoolean('recipeTasksModuleEnabled')) {
-  if (loadTimeData.getBoolean('modulesRedesignedEnabled')) {
-    descriptorsV2.push(recipeTasksV2Descriptor);
-  } else {
-    descriptors.push(recipeTasksDescriptor);
-  }
-}
-
-if (loadTimeData.getBoolean('chromeCartModuleEnabled')) {
-  if (loadTimeData.getBoolean('modulesRedesignedEnabled')) {
-    descriptorsV2.push(chromeCartV2Descriptor);
-  } else {
-    descriptors.push(chromeCartDescriptor);
-  }
-}
-
-if (loadTimeData.getBoolean('driveModuleEnabled')) {
-  if (loadTimeData.getBoolean('modulesRedesignedEnabled')) {
-    descriptorsV2.push(driveV2Descriptor);
-  } else {
-    descriptors.push(driveDescriptor);
-  }
-}
-
-if (loadTimeData.getBoolean('photosModuleEnabled')) {
-  descriptors.push(photosDescriptor);
-}
+descriptors.push(
+    modulesRedesignedEnabled ? recipeTasksV2Descriptor : recipeTasksDescriptor);
+descriptors.push(
+    modulesRedesignedEnabled ? chromeCartV2Descriptor : chromeCartDescriptor);
+descriptors.push(
+    modulesRedesignedEnabled ? driveV2Descriptor : driveDescriptor);
+descriptors.push(photosDescriptor);
+descriptors.push(modulesRedesignedEnabled ? feedV2Descriptor : feedDescriptor);
+descriptors.push(historyClustersDescriptor);
 
 // <if expr="not is_official_build">
-if (loadTimeData.getBoolean('dummyModulesEnabled')) {
-  if (loadTimeData.getBoolean('modulesRedesignedEnabled')) {
-    descriptorsV2.push(dummyV2Descriptor);
-    descriptorsV2.push(dummyV2Descriptor02);
-    descriptorsV2.push(dummyV2Descriptor03);
-    descriptorsV2.push(dummyV2Descriptor04);
-    descriptorsV2.push(dummyV2Descriptor05);
-    descriptorsV2.push(dummyV2Descriptor06);
-    descriptorsV2.push(dummyV2Descriptor07);
-    descriptorsV2.push(dummyV2Descriptor08);
-    descriptorsV2.push(dummyV2Descriptor09);
-    descriptorsV2.push(dummyV2Descriptor10);
-    descriptorsV2.push(dummyV2Descriptor11);
-    descriptorsV2.push(dummyV2Descriptor12);
-  }
+if (modulesRedesignedEnabled) {
+  descriptors.push(dummyV2Descriptor);
+  descriptors.push(dummyV2Descriptor02);
+  descriptors.push(dummyV2Descriptor03);
+  descriptors.push(dummyV2Descriptor04);
+  descriptors.push(dummyV2Descriptor05);
+  descriptors.push(dummyV2Descriptor06);
+  descriptors.push(dummyV2Descriptor07);
+  descriptors.push(dummyV2Descriptor08);
+  descriptors.push(dummyV2Descriptor09);
+  descriptors.push(dummyV2Descriptor10);
+  descriptors.push(dummyV2Descriptor11);
+  descriptors.push(dummyV2Descriptor12);
 }
 // </if>
 
@@ -81,8 +63,16 @@ export async function counterfactualLoad() {
     const modules = await ModuleRegistry.getInstance().initializeModules(
         loadTimeData.getInteger('modulesLoadTimeout'));
     if (modules) {
-      NewTabPageProxy.getInstance().handler.onModulesLoadedWithData();
+      NewTabPageProxy.getInstance().handler.onModulesLoadedWithData(
+          modules.map(module => module.descriptor.id));
     }
+  }
+  // Instantiate history clusters module if |historyClustersModuleEnabled| is
+  // false to counterfactually log metrics about the coverage of the history
+  // clusters module without rendering it.
+  if (!loadTimeData.getBoolean('historyClustersModuleEnabled') &&
+      loadTimeData.getBoolean('historyClustersModuleLoadEnabled')) {
+    HistoryClustersProxyImpl.getInstance().handler.getCluster();
   }
 }
 counterfactualLoad();

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -41,7 +41,6 @@
 namespace content {
 class VideoCaptureController;
 class VideoCaptureControllerEventHandler;
-class ScreenlockMonitor;
 
 // VideoCaptureManager is used to open/close, start/stop, enumerate available
 // video capture devices, and manage VideoCaptureController's.
@@ -59,10 +58,13 @@ class CONTENT_EXPORT VideoCaptureManager
   using DoneCB =
       base::OnceCallback<void(const base::WeakPtr<VideoCaptureController>&)>;
 
+  using SetDesktopCaptureWindowIdCallback = base::RepeatingCallback<void(
+      const media::VideoCaptureSessionId& session_id,
+      gfx::NativeViewId window_id)>;
+
   explicit VideoCaptureManager(
       std::unique_ptr<VideoCaptureProvider> video_capture_provider,
-      base::RepeatingCallback<void(const std::string&)> emit_log_message_cb,
-      ScreenlockMonitor* monitor = nullptr);
+      base::RepeatingCallback<void(const std::string&)> emit_log_message_cb);
 
   VideoCaptureManager(const VideoCaptureManager&) = delete;
   VideoCaptureManager& operator=(const VideoCaptureManager&) = delete;
@@ -206,7 +208,8 @@ class CONTENT_EXPORT VideoCaptureManager
 #endif
 
   using EnumerationCallback =
-      base::OnceCallback<void(const media::VideoCaptureDeviceDescriptors&)>;
+      base::OnceCallback<void(media::mojom::DeviceEnumerationResult result_code,
+                              const media::VideoCaptureDeviceDescriptors&)>;
   // Asynchronously obtains descriptors for the available devices.
   // As a side-effect, updates |devices_info_cache_|.
   void EnumerateDevices(EnumerationCallback client_callback);
@@ -225,6 +228,11 @@ class CONTENT_EXPORT VideoCaptureManager
     idle_close_timeout_ = timeout;
   }
 
+  void set_desktop_capture_window_id_callback_for_testing(
+      SetDesktopCaptureWindowIdCallback callback) {
+    set_desktop_capture_window_id_callback_for_testing_ = callback;
+  }
+
  private:
   class CaptureDeviceStartRequest;
 
@@ -239,6 +247,7 @@ class CONTENT_EXPORT VideoCaptureManager
   void OnDeviceInfosReceived(
       base::ElapsedTimer timer,
       EnumerationCallback client_callback,
+      media::mojom::DeviceEnumerationResult error_code,
       const std::vector<media::VideoCaptureDeviceInfo>& device_infos);
 
   // Helpers to report an event to our Listener.
@@ -337,7 +346,6 @@ class CONTENT_EXPORT VideoCaptureManager
 
   const std::unique_ptr<VideoCaptureProvider> video_capture_provider_;
   base::RepeatingCallback<void(const std::string&)> emit_log_message_cb_;
-  raw_ptr<ScreenlockMonitor> screenlock_monitor_;
 
   base::ObserverList<media::VideoCaptureObserver>::Unchecked capture_observers_;
 
@@ -354,6 +362,9 @@ class CONTENT_EXPORT VideoCaptureManager
   // chosen based on UMA metrics. See https://crbug.com/1163105#c28
   base::TimeDelta idle_close_timeout_ = base::Seconds(15);
   base::OneShotTimer idle_close_timer_;
+
+  SetDesktopCaptureWindowIdCallback
+      set_desktop_capture_window_id_callback_for_testing_;
 };
 
 }  // namespace content

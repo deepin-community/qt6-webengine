@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,10 +9,10 @@
 #include <string>
 #include <vector>
 
-#include "base/callback_forward.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
 #include "base/containers/lru_cache.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
@@ -175,7 +175,6 @@ class HintsManager : public OptimizationHintsComponentObserver,
       base::OnceClosure on_success,
       proto::KeyRepresentation key_representation,
       const base::flat_set<std::string>& hint_keys) override;
-  void PurgeFetchedEntries(base::OnceClosure on_success) override;
 
   // Returns true if |this| is allowed to fetch hints at the navigation time for
   // |url|.
@@ -404,8 +403,12 @@ class HintsManager : public OptimizationHintsComponentObserver,
   // |optimization_guide_service_|.
   absl::optional<HintsComponentInfo> hints_component_info_;
 
-  // Whether the component is currently being processed.
-  bool is_processing_component_ = false;
+  // The component version that failed to process in the last session, if
+  // applicable.
+  const absl::optional<base::Version> failed_component_version_;
+
+  // The version of the component that is currently being processed.
+  absl::optional<base::Version> currently_processing_component_version_;
 
   // The set of optimization types that have been registered with the hints
   // manager.
@@ -468,10 +471,10 @@ class HintsManager : public OptimizationHintsComponentObserver,
   std::unique_ptr<HintsFetcherFactory> hints_fetcher_factory_;
 
   // The top host provider that can be queried. Not owned.
-  raw_ptr<TopHostProvider> top_host_provider_ = nullptr;
+  raw_ptr<TopHostProvider, DanglingUntriaged> top_host_provider_ = nullptr;
 
   // The tab URL provider that can be queried. Not owned.
-  raw_ptr<TabUrlProvider> tab_url_provider_ = nullptr;
+  raw_ptr<TabUrlProvider, DanglingUntriaged> tab_url_provider_ = nullptr;
 
   // The timer used to schedule fetching hints from the remote Optimization
   // Guide Service.
@@ -484,7 +487,8 @@ class HintsManager : public OptimizationHintsComponentObserver,
   // The logger that plumbs the debug logs to the optimization guide
   // internals page. Not owned. Guaranteed to outlive |this|, since the logger
   // and |this| are owned by the optimization guide keyed service.
-  raw_ptr<OptimizationGuideLogger> optimization_guide_logger_;
+  raw_ptr<OptimizationGuideLogger, DanglingUntriaged>
+      optimization_guide_logger_;
 
   // The clock used to schedule fetching from the remote Optimization Guide
   // Service.

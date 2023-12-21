@@ -44,8 +44,8 @@ exit /b 0
 
 set ORIGINAL_SRC_DIR= %~dp0\..\..\..
 set TEMP_DIR=%TEMP%\dawn-temp
-set SRC_DIR="%TEMP_DIR%\dawn-src"
-set BUILD_DIR="%TEMP_DIR%\dawn-build"
+set SRC_DIR=%TEMP_DIR%\dawn-src
+set BUILD_DIR=%TEMP_DIR%\dawn-build
 
 cd /d %ORIGINAL_SRC_DIR%
 if not exist ".git\" (
@@ -62,17 +62,10 @@ mkdir %TEMP_DIR% || goto :error
 
 call :status "Fetching and installing DXC"
 @echo on
-set DXC_RELEASE="https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.6.2112/dxc_2021_12_08.zip"
+set DXC_RELEASE="https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.7.2207/dxc_2022_07_18.zip"
 curl -k -L %DXC_RELEASE% --output "%TEMP_DIR%\dxc_release.zip" || goto :error
 powershell.exe -Command "Expand-Archive -LiteralPath '%TEMP_DIR%\dxc_release.zip' -DestinationPath '%TEMP_DIR%\dxc'" || goto :error
 set DXC_PATH=%TEMP_DIR%\dxc\bin\x64
-
-rem Patch with artifact build that contains fixes not present in the release build
-set DXC_ARTIFACT="https://ci.appveyor.com/api/projects/dnovillo/directxshadercompiler/artifacts/build%%2FRelease%%2Fdxc-artifacts.zip?branch=master&pr=false&job=image%%3A%%20Visual%%20Studio%%202019"
-curl -k -L %DXC_ARTIFACT% --output "%TEMP_DIR%\dxc_artifact.zip" || goto :error
-powershell.exe -Command "Expand-Archive -Force -LiteralPath '%TEMP_DIR%\dxc_artifact.zip' -DestinationPath '%TEMP_DIR%\dxc_artifact'" || goto :error
-move /Y %TEMP_DIR%\dxc_artifact\bin\* %DXC_PATH%
-@echo off
 
 call :status "Fetching and installing Windows SDK for d3dcompiler DLL"
 @echo on
@@ -112,11 +105,29 @@ copy scripts\standalone.gclient .gclient || goto :error
 call gclient sync || goto :error
 @echo off
 
+call :status "Adding the Ninja from DEPS to the PATH"
+@echo on
+set PATH=%SRC_DIR%\third_party\ninja;%PATH%
+@echo off
+
 call :status "Configuring build system"
 @echo on
 mkdir %BUILD_DIR%
 cd /d %BUILD_DIR%
-set COMMON_CMAKE_FLAGS=-DTINT_BUILD_DOCS=O -DTINT_BUILD_BENCHMARKS=1 -DCMAKE_BUILD_TYPE=%BUILD_TYPE%
+set COMMON_CMAKE_FLAGS=             ^
+    -DTINT_BUILD_DOCS=O             ^
+    -DTINT_BUILD_BENCHMARKS=1       ^
+    -DCMAKE_BUILD_TYPE=%BUILD_TYPE% ^
+    -DTINT_BUILD_BENCHMARKS=1       ^
+    -DTINT_BUILD_SPV_READER=1       ^
+    -DTINT_BUILD_WGSL_READER=1      ^
+    -DTINT_BUILD_GLSL_WRITER=1      ^
+    -DTINT_BUILD_HLSL_WRITER=1      ^
+    -DTINT_BUILD_MSL_WRITER=1       ^
+    -DTINT_BUILD_SPV_WRITER=1       ^
+    -DTINT_BUILD_WGSL_WRITER=1      ^
+    -DTINT_RANDOMIZE_HASHES=1
+
 @echo off
 
 call :status "Building dawn"
@@ -142,20 +153,10 @@ tint_unittests.exe || goto :error
 call :status "Testing test/tint/test-all.sh"
 @echo on
 cd /d %SRC_DIR% || goto :error
-rem Run tests with DXC and Metal validation
+rem Run tests with DXC, FXC and Metal validation
 set OLD_PATH=%PATH%
 set PATH=C:\Program Files\Metal Developer Tools\macos\bin;%PATH%
-where metal.exe
-set PATH=%DXC_PATH%;%OLD_PATH%
-where dxc.exe dxil.dll
-call git bash -- ./test/tint/test-all.sh ../dawn-build/tint.exe --verbose || goto :error
-@echo on
-set PATH=%OLD_PATH%
-rem Run again to test with FXC validation
-set PATH=%D3DCOMPILER_PATH%;%OLD_PATH%
-where d3dcompiler_47.dll
-call git bash -- ./test/tint/test-all.sh ../dawn-build/tint.exe --verbose --format hlsl --fxc || goto :error
-@echo on
+call git bash -- ./test/tint/test-all.sh %BUILD_DIR%/tint.exe --verbose || goto :error
 set PATH=%OLD_PATH%
 @echo off
 

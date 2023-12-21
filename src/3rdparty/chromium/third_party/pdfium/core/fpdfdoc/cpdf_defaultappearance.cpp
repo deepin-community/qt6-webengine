@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -64,7 +64,8 @@ CPDF_DefaultAppearance::CPDF_DefaultAppearance(
 
 CPDF_DefaultAppearance::~CPDF_DefaultAppearance() = default;
 
-absl::optional<ByteString> CPDF_DefaultAppearance::GetFont(float* fFontSize) {
+absl::optional<ByteString> CPDF_DefaultAppearance::GetFont(
+    float* fFontSize) const {
   *fFontSize = 0.0f;
   if (m_csDA.IsEmpty())
     return absl::nullopt;
@@ -138,6 +139,7 @@ absl::optional<CFX_Color::TypeAndARGB> CPDF_DefaultAppearance::GetColorARGB()
   return absl::nullopt;
 }
 
+// static
 bool CPDF_DefaultAppearance::FindTagParamFromStartForTesting(
     CPDF_SimpleParser* parser,
     ByteStringView token,

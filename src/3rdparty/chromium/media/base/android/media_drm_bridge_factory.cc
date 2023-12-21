@@ -1,11 +1,11 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "media/base/android/media_drm_bridge_factory.h"
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "media/base/cdm_config.h"
 #include "media/base/content_decryption_module.h"
 #include "third_party/widevine/cdm/widevine_cdm_common.h"
@@ -62,13 +62,6 @@ void MediaDrmBridgeFactory::Create(
 
   // MediaDrmStorage may be lazy created in MediaDrmStorageBridge.
   storage_ = std::make_unique<MediaDrmStorageBridge>();
-
-  if (!MediaDrmBridge::IsPerOriginProvisioningSupported()) {
-    // Per-origin provisioning isn't supported, so proceed without specifying an
-    // origin ID.
-    CreateMediaDrmBridge("");
-    return;
-  }
 
   storage_->Initialize(
       create_storage_cb_,

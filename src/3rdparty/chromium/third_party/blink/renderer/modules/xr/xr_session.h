@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -24,10 +24,10 @@
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_associated_receiver.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_receiver.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_wrapper_mode.h"
-#include "third_party/blink/renderer/platform/transforms/transformation_matrix.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_view.h"
+#include "ui/gfx/geometry/transform.h"
 
 namespace blink {
 
@@ -89,6 +89,8 @@ class XRSession final
   static constexpr char kCannotCancelHitTestSource[] =
       "Hit test source could not be canceled! Ensure that it was not already "
       "canceled.";
+  static constexpr char kCannotReportPoses[] =
+      "Poses cannot be given out for the current state.";
 
   // Runs all the video.requestVideoFrameCallback() callbacks associated with
   // one HTMLVideoElement. |double| is the |high_res_now_ms|, derived from
@@ -137,6 +139,8 @@ class XRSession final
   // have a need to differentiate based on the underlying runtime.
   const String preferredReflectionFormat() const { return "rgba16f"; }
 
+  Vector<String> enabledFeatures() const;
+
   XRSpace* viewerSpace() const;
 
   XRAnchorSet* TrackedAnchors() const;
@@ -174,7 +178,7 @@ class XRSession final
   // plane.
   ScriptPromise CreateAnchorHelper(
       ScriptState* script_state,
-      const blink::TransformationMatrix& native_origin_from_anchor,
+      const gfx::Transform& native_origin_from_anchor,
       const device::mojom::blink::XRNativeOriginInformationPtr&
           native_origin_information,
       absl::optional<uint64_t> maybe_plane_id,
@@ -185,7 +189,7 @@ class XRSession final
   // stationary reference space.
   struct ReferenceSpaceInformation {
     device::mojom::blink::XRNativeOriginInformationPtr native_origin;
-    blink::TransformationMatrix mojo_from_space;
+    gfx::Transform mojo_from_space;
   };
 
   // Helper for anchor creation - returns information about the reference space
@@ -279,7 +283,7 @@ class XRSession final
   bool EmulatedPosition() const {
     // If we don't have display info then we should be using the identity
     // reference space, which by definition will be emulating the position.
-    if (pending_views_.IsEmpty()) {
+    if (pending_views_.empty()) {
       return true;
     }
 
@@ -313,8 +317,6 @@ class XRSession final
   bool RemoveHitTestSource(XRHitTestSource* hit_test_source);
   bool RemoveHitTestSource(XRTransientInputHitTestSource* hit_test_source);
 
-  void SetXRDisplayInfo(device::mojom::blink::VRDisplayInfoPtr display_info);
-
   bool UsesInputEventing() { return uses_input_eventing_; }
   bool LightEstimationEnabled() { return !!world_light_probe_; }
 
@@ -335,7 +337,7 @@ class XRSession final
   // Note: currently, the information about the mojo_from_-floor-type spaces is
   // stored elsewhere, this method will not work for those reference space
   // types.
-  absl::optional<TransformationMatrix> GetMojoFrom(
+  absl::optional<gfx::Transform> GetMojoFrom(
       device::mojom::blink::XRReferenceSpaceType space_type) const;
 
   XRCPUDepthInformation* GetCpuDepthInformation(
@@ -416,7 +418,6 @@ class XRSession final
       const device::mojom::blink::XRFrameDataPtr& frame_data);
 
   // XRSessionClient
-  void OnChanged(device::mojom::blink::VRDisplayInfoPtr display_info) override;
   void OnExitPresent() override;
   void OnVisibilityStateChanged(
       device::mojom::blink::XRVisibilityState visibility_state) override;
@@ -536,7 +537,7 @@ class XRSession final
   // on the device - this is done in |hit_test_source_ids_| and
   // |hit_test_source_for_transient_input_ids_|.
   // For the specifics of HeapHashMap<Key, WeakMember<Value>> behavior, see:
-  // https://chromium.googlesource.com/chromium/src/+/master/third_party/blink/renderer/platform/heap/BlinkGCAPIReference.md#weak-collections
+  // https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/renderer/platform/heap/BlinkGCAPIReference.md#weak-collections
   HeapHashMap<uint64_t, WeakMember<XRHitTestSource>>
       hit_test_source_ids_to_hit_test_sources_;
   HeapHashMap<uint64_t, WeakMember<XRTransientInputHitTestSource>>
@@ -586,13 +587,14 @@ class XRSession final
 
   Member<XRFrameRequestCallbackCollection> callback_collection_;
   // Viewer pose in mojo space.
-  std::unique_ptr<TransformationMatrix> mojo_from_viewer_;
+  std::unique_ptr<gfx::Transform> mojo_from_viewer_;
 
   bool pending_frame_ = false;
   bool resolving_frame_ = false;
   bool frames_throttled_ = false;
 
   bool views_updated_this_frame_ = false;
+  bool canvas_was_resized_ = false;
 
   // Indicates that we've already logged a metric, so don't need to log it
   // again.

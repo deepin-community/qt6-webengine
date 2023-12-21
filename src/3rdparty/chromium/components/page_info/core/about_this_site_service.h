@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,11 +17,15 @@
 #include "url/origin.h"
 
 class GURL;
+class TemplateURLService;
 
 namespace page_info {
 namespace proto {
 class SiteInfo;
 }
+
+static const char AboutThisSiteRenderModeParameterName[] = "ilrm";
+static const char AboutThisSiteRenderModeParameterValue[] = "minimal";
 
 // Provides "About this site" information for a web site. It includes short
 // description about the website (from external source, usually from Wikipedia),
@@ -33,13 +37,35 @@ class AboutThisSiteService : public KeyedService {
   // therefore the interface cannot be used in this service.
   class Client {
    public:
+    virtual bool IsOptimizationGuideAllowed() = 0;
     virtual optimization_guide::OptimizationGuideDecision CanApplyOptimization(
         const GURL& url,
         optimization_guide::OptimizationMetadata* optimization_metadata) = 0;
     virtual ~Client() = default;
   };
 
-  explicit AboutThisSiteService(std::unique_ptr<Client> client);
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  // Keep in sync with AboutThisSiteInteraction in enums.xml
+  enum class AboutThisSiteInteraction {
+    kNotShown = 0,
+    kShownWithDescription = 1,
+    kShownWithoutDescription = 2,
+    kClickedWithDescription = 3,
+    kClickedWithoutDescription = 4,
+    kOpenedDirectlyFromSidePanel = 5,
+    kNotShownNonGoogleDSE = 6,
+    kNotShownLocalHost = 7,
+    kNotShownOptimizationGuideNotAllowed = 8,
+    kShownWithoutMsbb = 9,
+
+    kMaxValue = kShownWithoutMsbb,
+  };
+
+  explicit AboutThisSiteService(std::unique_ptr<Client> client,
+                                TemplateURLService* template_url_service,
+                                bool allow_missing_description,
+                                bool allow_non_msbb_users);
   ~AboutThisSiteService() override;
 
   AboutThisSiteService(const AboutThisSiteService&) = delete;
@@ -50,15 +76,16 @@ class AboutThisSiteService : public KeyedService {
       const GURL& url,
       ukm::SourceId source_id) const;
 
-  bool CanShowBanner(GURL url);
-  void OnBannerDismissed(GURL url, ukm::SourceId source_id);
-  void OnBannerURLOpened(GURL url, ukm::SourceId source_id);
+  static void OnAboutThisSiteRowClicked(bool with_description);
+  static void OnOpenedDirectlyFromSidePanel();
 
   base::WeakPtr<AboutThisSiteService> GetWeakPtr();
 
  private:
   std::unique_ptr<Client> client_;
-  base::flat_set<url::Origin> dismissed_banners_;
+  raw_ptr<TemplateURLService> template_url_service_;
+  const bool allow_missing_description_;
+  const bool allow_non_msbb_users_;
 
   base::WeakPtrFactory<AboutThisSiteService> weak_ptr_factory_{this};
 };

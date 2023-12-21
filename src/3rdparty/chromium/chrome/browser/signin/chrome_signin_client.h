@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -49,9 +49,25 @@ class ChromeSigninClient
 
   // SigninClient implementation.
   PrefService* GetPrefs() override;
+
+  // Returns true if removing/changing a non empty primary account (signout)
+  // from the profile is allowed. Returns false if signout is disallowed.
+  // Signout is diallowed for:
+  // - Cloud-managed enterprise accounts. Signout would require profile
+  //   destruction (See ChromeSigninClient::PreSignOut(),
+  //   PrimaryAccountPolicyManager::EnsurePrimaryAccountAllowedForProfile()).
+  // - Supervised users on Android.IsRevokeSyncConsentAllowed
+  // - Lacros main profile: the primary account
+  //   must be the device account and can't be changed/cleared.
+  bool IsClearPrimaryAccountAllowed(bool has_sync_account) const override;
+
+  // TODO(crbug.com/1369980): Remove revoke sync restriction when allowing
+  // enterprise users to revoke sync fully launches.
+  bool IsRevokeSyncConsentAllowed() const override;
   void PreSignOut(
       base::OnceCallback<void(SignoutDecision)> on_signout_decision_reached,
-      signin_metrics::ProfileSignout signout_source_metric) override;
+      signin_metrics::ProfileSignout signout_source_metric,
+      bool has_sync_account) override;
   scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory() override;
   network::mojom::CookieManager* GetCookieManager() override;
   bool AreSigninCookiesAllowed() override;
@@ -64,7 +80,6 @@ class ChromeSigninClient
   std::unique_ptr<GaiaAuthFetcher> CreateGaiaAuthFetcher(
       GaiaAuthConsumer* consumer,
       gaia::GaiaSource source) override;
-  bool IsNonEnterpriseUser(const std::string& username) override;
 
 #if !BUILDFLAG(IS_CHROMEOS_ASH)
   // network::NetworkConnectionTracker::NetworkConnectionObserver
@@ -75,6 +90,7 @@ class ChromeSigninClient
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
   absl::optional<account_manager::Account> GetInitialPrimaryAccount() override;
   absl::optional<bool> IsInitialPrimaryAccountChild() const override;
+  void RemoveAccount(const account_manager::AccountKey& account_key) override;
   void RemoveAllAccounts() override;
 #endif
 
@@ -88,9 +104,18 @@ class ChromeSigninClient
   virtual void LockForceSigninProfile(const base::FilePath& profile_path);
 
  private:
+  // Returns what kind of signout is possible given `has_sync_account` and the
+  // optional `signout_source`. If `signout_source` is provided, it will be
+  // check against some sources that must always allow signout regardless of any
+  // restriction, otherwise the decision is made based on the profile's status.
+  SigninClient::SignoutDecision GetSignoutDecision(
+      bool has_sync_account,
+      const absl::optional<signin_metrics::ProfileSignout> signout_source)
+      const;
   void VerifySyncToken();
   void OnCloseBrowsersSuccess(
       const signin_metrics::ProfileSignout signout_source_metric,
+      bool has_sync_account,
       const base::FilePath& profile_path);
   void OnCloseBrowsersAborted(const base::FilePath& profile_path);
 

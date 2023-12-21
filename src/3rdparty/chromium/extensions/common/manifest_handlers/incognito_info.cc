@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,14 +22,14 @@ IncognitoInfo::~IncognitoInfo() = default;
 bool IncognitoInfo::IsSplitMode(const Extension* extension) {
   IncognitoInfo* info = static_cast<IncognitoInfo*>(
       extension->GetManifestData(IncognitoManifestKeys::kIncognito));
-  return info ? info->mode == api::incognito::INCOGNITO_MODE_SPLIT : false;
+  return info->mode == api::incognito::INCOGNITO_MODE_SPLIT;
 }
 
 // static
 bool IncognitoInfo::IsIncognitoAllowed(const Extension* extension) {
   IncognitoInfo* info = static_cast<IncognitoInfo*>(
       extension->GetManifestData(IncognitoManifestKeys::kIncognito));
-  return info ? info->mode != api::incognito::INCOGNITO_MODE_NOT_ALLOWED : true;
+  return info->mode != api::incognito::INCOGNITO_MODE_NOT_ALLOWED;
 }
 
 IncognitoHandler::IncognitoHandler() = default;

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,7 @@
 #include <string>
 
 #include "base/android/scoped_java_ref.h"
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "components/messages/android/message_enums.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
@@ -62,6 +62,10 @@ class MessageWrapper {
   void AddSecondaryMenuItem(int item_id,
                             int resource_id,
                             const std::u16string& item_text);
+  void AddSecondaryMenuItem(int item_id,
+                            int resource_id,
+                            const std::u16string& item_text,
+                            const std::u16string& item_description);
   void ClearSecondaryMenuItems();
   void AddSecondaryMenuItemDivider();
 
@@ -79,7 +83,7 @@ class MessageWrapper {
   int GetSecondaryIconResourceId();
   void SetSecondaryIconResourceId(int resource_id);
 
-  void SetSecondaryActionCallback(base::OnceClosure callback);
+  void SetSecondaryActionCallback(base::RepeatingClosure callback);
   void SetSecondaryMenuItemSelectedCallback(
       base::RepeatingCallback<void(int)> callback);
 
@@ -117,7 +121,7 @@ class MessageWrapper {
  private:
   base::android::ScopedJavaGlobalRef<jobject> java_message_wrapper_;
   base::OnceClosure action_callback_;
-  base::OnceClosure secondary_action_callback_;
+  base::RepeatingClosure secondary_action_callback_;
   SecondaryMenuItemSelectedCallback secondary_menu_item_selected_callback_;
   DismissCallback dismiss_callback_;
   // True if message is in queue.

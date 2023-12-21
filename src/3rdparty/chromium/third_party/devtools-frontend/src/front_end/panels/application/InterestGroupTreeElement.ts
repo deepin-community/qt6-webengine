@@ -11,16 +11,16 @@ import * as UI from '../../ui/legacy/legacy.js';
 import type * as Protocol from '../../generated/protocol.js';
 
 import {ApplicationPanelTreeElement} from './ApplicationPanelTreeElement.js';
-import type {ResourcesPanel} from './ResourcesPanel.js';
+import {type ResourcesPanel} from './ResourcesPanel.js';
 import {InterestGroupStorageView} from './InterestGroupStorageView.js';
 
 const UIStrings = {
   /**
-  *@description Label for an item in the Application Panel Sidebar of the Application panel
-  * An interest group is an ad targeting group stored on the browser that can
-  * be used to show a certain set of advertisements in the future as the
-  * outcome of a FLEDGE auction. (https://developer.chrome.com/blog/fledge-api/)
-  */
+   *@description Label for an item in the Application Panel Sidebar of the Application panel
+   * An interest group is an ad targeting group stored on the browser that can
+   * be used to show a certain set of advertisements in the future as the
+   * outcome of a FLEDGE auction. (https://developer.chrome.com/blog/fledge-api/)
+   */
   interestGroups: 'Interest Groups',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/application/InterestGroupTreeElement.ts', UIStrings);
@@ -41,7 +41,7 @@ export class InterestGroupTreeElement extends ApplicationPanelTreeElement {
   }
 
   async getInterestGroupDetails(owner: string, name: string): Promise<Protocol.Storage.InterestGroupDetails|null> {
-    const mainTarget = SDK.TargetManager.TargetManager.instance().mainTarget();
+    const mainTarget = SDK.TargetManager.TargetManager.instance().mainFrameTarget();
     if (!mainTarget) {
       return null;
     }

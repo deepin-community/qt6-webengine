@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,8 @@
 namespace base {
 class Value;
 }  // namespace base
+
+namespace lookalikes {
 
 // Allow easier reporting of UKM when no interstitial is shown.
 void RecordUkmForLookalikeUrlBlockingPage(
@@ -27,11 +29,13 @@ void ReportUkmForLookalikeUrlBlockingPageIfNeeded(
     bool triggered_by_initial_url);
 
 // Populates |load_time_data| for interstitial HTML.
-void PopulateLookalikeUrlBlockingPageStrings(base::Value* load_time_data,
+void PopulateLookalikeUrlBlockingPageStrings(base::Value::Dict& load_time_data,
                                              const GURL& safe_url,
                                              const GURL& request_url);
 
 // Values added to get shared interstitial HTML to play nice.
-void PopulateStringsForSharedHTML(base::Value* load_time_data);
+void PopulateStringsForSharedHTML(base::Value::Dict& load_time_data);
+
+}  // namespace lookalikes
 
 #endif  // COMPONENTS_LOOKALIKES_CORE_LOOKALIKE_URL_UI_UTIL_H_

@@ -1,10 +1,11 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <stddef.h>
+#include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
@@ -74,10 +75,26 @@ class WebUISourcesTest : public testing::Test {
 };
 
 TEST_F(WebUISourcesTest, ThemeSourceMimeTypes) {
-  EXPECT_EQ(theme_source()->GetMimeType("css/new_tab_theme.css"), "text/css");
-  EXPECT_EQ(theme_source()->GetMimeType("css/new_tab_theme.css?foo"),
-                                        "text/css");
-  EXPECT_EQ(theme_source()->GetMimeType("WRONGURL"), "image/png");
+  std::vector<std::string> css_urls{
+      "chrome://theme/css/new_tab_theme.css",
+      "chrome://theme/css/new_tab_theme.css?foo",
+      "chrome://theme/colors.css?sets.css",
+      "chrome://theme/colors.css?sets.css=ui",
+  };
+
+  for (auto url : css_urls) {
+    EXPECT_EQ(theme_source()->GetMimeType(GURL(url)), "text/css");
+  }
+
+  std::vector<std::string> png_urls{
+      "chrome://theme/current-channel-logo",
+      "chrome://theme/other.png",
+      "chrome://theme/WRONGURL",
+  };
+
+  for (auto url : png_urls) {
+    EXPECT_EQ(theme_source()->GetMimeType(GURL(url)), "image/png");
+  }
 }
 
 TEST_F(WebUISourcesTest, ThemeSourceImages) {
@@ -119,7 +136,7 @@ TEST_F(WebUISourcesTest, ThemeSourceColorsCSS) {
   // functions.
   size_t empty_size = 0;
 
-  StartDataRequest("colors.css");
+  StartDataRequest("colors.css?sets=ui");
   base::RunLoop().RunUntilIdle();
   EXPECT_NE(result_data_size_, empty_size);
 }

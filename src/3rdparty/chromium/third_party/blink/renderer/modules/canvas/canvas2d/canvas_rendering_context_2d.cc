@@ -40,13 +40,17 @@
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/privacy_budget/identifiability_metric_builder.h"
 #include "third_party/blink/public/common/privacy_budget/identifiability_metrics.h"
+#include "third_party/blink/public/mojom/scroll/scroll_into_view_params.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/task_type.h"
-#include "third_party/blink/renderer/bindings/modules/v8/v8_union_canvasrenderingcontext2d_gpucanvascontext_imagebitmaprenderingcontext_webgl2renderingcontext_webglrenderingcontext.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_canvas_will_read_frequently.h"
+#include "third_party/blink/renderer/modules/shorter_includes.h"
+#include SHORT_INCLUDE_FILE(third_party/blink/renderer/bindings/modules/v8/v8_union,canvasrenderingcontext2d_gpucanvascontext_imagebitmaprenderingcontext_webgl2renderingcontext_webglrenderingcontext)
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/css/css_font_selector.h"
 #include "third_party/blink/renderer/core/css/css_property_names.h"
 #include "third_party/blink/renderer/core/css/css_property_value_set.h"
+#include "third_party/blink/renderer/core/css/parser/css_parser.h"
 #include "third_party/blink/renderer/core/css/properties/computed_style_utils.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/css/style_engine.h"
@@ -55,16 +59,18 @@
 #include "third_party/blink/renderer/core/events/mouse_event.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
+#include "third_party/blink/renderer/core/html/canvas/canvas_context_creation_attributes_core.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_font_cache.h"
 #include "third_party/blink/renderer/core/html/canvas/text_metrics.h"
 #include "third_party/blink/renderer/core/layout/hit_test_canvas_result.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/layout/layout_theme.h"
 #include "third_party/blink/renderer/core/scroll/scroll_alignment.h"
+#include "third_party/blink/renderer/core/scroll/scroll_into_view_util.h"
 #include "third_party/blink/renderer/core/typed_arrays/array_buffer/array_buffer_contents.h"
-#include "third_party/blink/renderer/modules/canvas/canvas2d/canvas_formatted_text.h"
 #include "third_party/blink/renderer/modules/canvas/canvas2d/canvas_style.h"
 #include "third_party/blink/renderer/modules/canvas/canvas2d/path_2d.h"
+#include "third_party/blink/renderer/modules/formatted_text/formatted_text.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
 #include "third_party/blink/renderer/platform/fonts/text_run_paint_info.h"
@@ -86,6 +92,16 @@ namespace blink {
 // storage of the context and allocate a new one.
 static const unsigned kMaxTryRestoreContextAttempts = 4;
 
+static mojom::blink::ColorScheme GetColorSchemeFromCanvas(
+    HTMLCanvasElement* canvas) {
+  if (canvas && canvas->isConnected()) {
+    if (auto* style = canvas->GetComputedStyle()) {
+      return style->UsedColorScheme();
+    }
+  }
+  return mojom::blink::ColorScheme::kLight;
+}
+
 // Drawing methods need to use this instead of SkAutoCanvasRestore in case
 // overdraw detection substitutes the recording canvas (to discard overdrawn
 // draw calls).
@@ -95,7 +111,7 @@ class CanvasRenderingContext2DAutoRestoreSkCanvas {
  public:
   explicit CanvasRenderingContext2DAutoRestoreSkCanvas(
       CanvasRenderingContext2D* context)
-      : context_(context), save_count_(0) {
+      : context_(context) {
     DCHECK(context_);
     cc::PaintCanvas* c = context_->GetOrCreatePaintCanvas();
     if (c) {
@@ -112,7 +128,7 @@ class CanvasRenderingContext2DAutoRestoreSkCanvas {
 
  private:
   CanvasRenderingContext2D* context_;
-  int save_count_;
+  int save_count_ = 0;
 };
 
 CanvasRenderingContext* CanvasRenderingContext2D::Factory::Create(
@@ -130,6 +146,8 @@ CanvasRenderingContext2D::CanvasRenderingContext2D(
     HTMLCanvasElement* canvas,
     const CanvasContextCreationAttributesCore& attrs)
     : CanvasRenderingContext(canvas, attrs, CanvasRenderingAPI::k2D),
+      BaseRenderingContext2D(
+          canvas->GetDocument().GetTaskRunner(TaskType::kInternalDefault)),
       should_prune_local_font_cache_(false),
       color_params_(attrs.color_space, attrs.pixel_format, attrs.alpha) {
   identifiability_study_helper_.SetExecutionContext(
@@ -210,7 +228,7 @@ void CanvasRenderingContext2D::LoseContext(LostContextMode lost_mode) {
   if (context_lost_mode_ != kNotLostContext)
     return;
   context_lost_mode_ = lost_mode;
-  PostDeferrableAction(WTF::Bind(
+  PostDeferrableAction(WTF::BindOnce(
       [](BaseRenderingContext2D* context) { context->ResetInternal(); },
       WrapPersistent(this)));
   if (context_lost_mode_ == kSyntheticLostContext && Host()) {
@@ -346,7 +364,7 @@ void CanvasRenderingContext2D::ScrollPathIntoViewInternal(const Path& path) {
 
   // Apply transformation and get the bounding rect
   Path transformed_path = path;
-  transformed_path.Transform(GetState().GetAffineTransform());
+  transformed_path.Transform(GetState().GetTransform());
   gfx::RectF bounding_rect = transformed_path.BoundingRect();
 
   // We first map canvas coordinates to layout coordinates.
@@ -381,11 +399,12 @@ void CanvasRenderingContext2D::ScrollPathIntoViewInternal(const Path& path) {
                                                : ScrollAlignment::LeftAlways());
     vertical_scroll_mode = ScrollAlignment::ToEdgeIfNeeded();
   }
-  renderer->ScrollRectToVisible(
-      path_rect, ScrollAlignment::CreateScrollIntoViewParams(
-                     horizontal_scroll_mode, vertical_scroll_mode,
-                     mojom::blink::ScrollType::kProgrammatic, false,
-                     mojom::blink::ScrollBehavior::kAuto));
+  scroll_into_view_util::ScrollRectToVisible(
+      *renderer, path_rect,
+      ScrollAlignment::CreateScrollIntoViewParams(
+          horizontal_scroll_mode, vertical_scroll_mode,
+          mojom::blink::ScrollType::kProgrammatic, false,
+          mojom::blink::ScrollBehavior::kAuto));
 }
 
 void CanvasRenderingContext2D::clearRect(double x,
@@ -411,12 +430,21 @@ void CanvasRenderingContext2D::SnapshotStateForFilter() {
 cc::PaintCanvas* CanvasRenderingContext2D::GetOrCreatePaintCanvas() {
   if (UNLIKELY(isContextLost()))
     return nullptr;
-  if (LIKELY(canvas()->GetOrCreateCanvas2DLayerBridge()))
+  if (LIKELY(canvas()->GetOrCreateCanvas2DLayerBridge())) {
+    if (LIKELY(!layer_count_) &&
+        LIKELY(canvas()->GetCanvas2DLayerBridge()->ResourceProvider())) {
+      // TODO(crbug.com/1246486): Make auto-flushing layer friendly.
+      canvas()
+          ->GetCanvas2DLayerBridge()
+          ->ResourceProvider()
+          ->FlushIfRecordingLimitExceeded();
+    }
     return canvas()->GetCanvas2DLayerBridge()->GetPaintCanvas();
+  }
   return nullptr;
 }
 
-cc::PaintCanvas* CanvasRenderingContext2D::GetPaintCanvas() const {
+cc::PaintCanvas* CanvasRenderingContext2D::GetPaintCanvas() {
   if (UNLIKELY(isContextLost() || !canvas() ||
                !canvas()->GetCanvas2DLayerBridge() ||
                !canvas()->GetCanvas2DLayerBridge()->ResourceProvider()))
@@ -424,13 +452,9 @@ cc::PaintCanvas* CanvasRenderingContext2D::GetPaintCanvas() const {
   return canvas()->GetCanvas2DLayerBridge()->GetPaintCanvas();
 }
 
-cc::PaintCanvas* CanvasRenderingContext2D::GetPaintCanvasForDraw(
+void CanvasRenderingContext2D::WillDraw(
     const SkIRect& dirty_rect,
     CanvasPerformanceMonitor::DrawType draw_type) {
-  if (UNLIKELY(isContextLost() || !canvas() ||
-               !canvas()->GetCanvas2DLayerBridge() ||
-               !canvas()->GetCanvas2DLayerBridge()->ResourceProvider()))
-    return nullptr;
   CanvasRenderingContext::DidDraw(dirty_rect, draw_type);
   // Always draw everything during printing.
   if (!layer_count_) {
@@ -440,7 +464,6 @@ cc::PaintCanvas* CanvasRenderingContext2D::GetPaintCanvasForDraw(
         ->ResourceProvider()
         ->FlushIfRecordingLimitExceeded();
   }
-  return canvas()->GetCanvas2DLayerBridge()->GetPaintCanvas();
 }
 
 void CanvasRenderingContext2D::FlushCanvas() {
@@ -500,7 +523,6 @@ void CanvasRenderingContext2D::setFont(const String& new_font) {
 
   // Map the <canvas> font into the text style. If the font uses keywords like
   // larger/smaller, these will work relative to the canvas.
-  scoped_refptr<ComputedStyle> font_style;
   const ComputedStyle* computed_style = canvas()->EnsureComputedStyle();
   if (computed_style) {
     auto i = fonts_resolved_using_current_style_.find(new_font);
@@ -513,8 +535,11 @@ void CanvasRenderingContext2D::setFont(const String& new_font) {
           canvas_font_cache->ParseFont(new_font);
       if (!parsed_style)
         return;
-      font_style =
-          canvas()->GetDocument().GetStyleResolver().CreateComputedStyle();
+      ComputedStyleBuilder font_style_builder =
+          canvas()
+              ->GetDocument()
+              .GetStyleResolver()
+              .CreateComputedStyleBuilder();
       FontDescription element_font_description(
           computed_style->GetFontDescription());
       // Reset the computed size to avoid inheriting the zoom factor from the
@@ -524,14 +549,15 @@ void CanvasRenderingContext2D::setFont(const String& new_font) {
       element_font_description.SetAdjustedSize(
           element_font_description.SpecifiedSize());
 
-      font_style->SetFontDescription(element_font_description);
-      canvas()->GetDocument().GetStyleEngine().ComputeFont(
-          *canvas(), font_style.get(), *parsed_style);
+      font_style_builder.SetFontDescription(element_font_description);
+      scoped_refptr<const ComputedStyle> font_style =
+          font_style_builder.TakeStyle();
+      Font font = canvas()->GetDocument().GetStyleEngine().ComputeFont(
+          *canvas(), *font_style, *parsed_style);
 
       // We need to reset Computed and Adjusted size so we skip zoom and
       // minimum font size.
-      FontDescription final_description(
-          font_style->GetFont().GetFontDescription());
+      FontDescription final_description(font.GetFontDescription());
       final_description.SetComputedSize(final_description.SpecifiedSize());
       final_description.SetAdjustedSize(final_description.SpecifiedSize());
 
@@ -652,8 +678,10 @@ ImageData* CanvasRenderingContext2D::getImageDataInternal(
     int sh,
     ImageDataSettings* image_data_settings,
     ExceptionState& exception_state) {
-  UMA_HISTOGRAM_BOOLEAN("Blink.Canvas.GetImageData.WillReadFrequently",
-                        CreationAttributes().will_read_frequently);
+  UMA_HISTOGRAM_BOOLEAN(
+      "Blink.Canvas.GetImageData.WillReadFrequently",
+      CreationAttributes().will_read_frequently ==
+          CanvasContextCreationAttributesCore::WillReadFrequently::kTrue);
   return BaseRenderingContext2D::getImageDataInternal(
       sx, sy, sw, sh, image_data_settings, exception_state);
 }
@@ -673,10 +701,14 @@ ExecutionContext* CanvasRenderingContext2D::GetTopExecutionContext() const {
   return Host()->GetTopExecutionContext();
 }
 
-bool CanvasRenderingContext2D::ParseColorOrCurrentColor(
-    Color& color,
-    const String& color_string) const {
-  return ::blink::ParseColorOrCurrentColor(color, color_string, canvas());
+Color CanvasRenderingContext2D::GetCurrentColor() const {
+  if (!canvas() || !canvas()->isConnected() || !canvas()->InlineStyle()) {
+    return Color::kBlack;
+  }
+  Color color = Color::kBlack;
+  CSSParser::ParseColor(
+      color, canvas()->InlineStyle()->GetPropertyValue(CSSPropertyID::kColor));
+  return color;
 }
 
 static inline TextDirection ToTextDirection(
@@ -922,12 +954,11 @@ TextMetrics* CanvasRenderingContext2D::measureText(const String& text) {
                                            GetState().GetTextAlign(), text);
 }
 
-void CanvasRenderingContext2D::fillFormattedText(
-    CanvasFormattedText* formatted_text,
+void CanvasRenderingContext2D::drawFormattedText(
+    FormattedText* formatted_text,
     double x,
     double y,
-    double wrap_width,
-    double height) {
+    ExceptionState& exception_state) {
   if (!formatted_text)
     return;
   // TODO(crbug.com/1234113): Instrument new canvas APIs.
@@ -937,17 +968,19 @@ void CanvasRenderingContext2D::fillFormattedText(
     setFont(font());
 
   gfx::RectF bounds;
-  sk_sp<PaintRecord> recording = formatted_text->PaintFormattedText(
-      canvas()->GetDocument(), GetState().GetFontDescription(), x, y,
-      wrap_width, height, bounds);
-  Draw<OverdrawOp::kNone>(
-      [recording](cc::PaintCanvas* c,
-                  const cc::PaintFlags* flags)  // draw lambda
-      { c->drawPicture(recording); },
-      [](const SkIRect& rect) { return false; }, gfx::RectFToSkRect(bounds),
-      CanvasRenderingContext2DState::PaintType::kFillPaintType,
-      CanvasRenderingContext2DState::kNoImage,
-      CanvasPerformanceMonitor::DrawType::kText);
+  PaintRecord recording = formatted_text->PaintFormattedText(
+      canvas()->GetDocument(), GetState().GetFontDescription(), x, y, bounds,
+      exception_state);
+  if (recording.size()) {
+    Draw<OverdrawOp::kNone>(
+        [&recording](cc::PaintCanvas* c,
+                     const cc::PaintFlags* flags)  // draw lambda
+        { c->drawPicture(std::move(recording)); },
+        [](const SkIRect& rect) { return false; }, bounds,
+        CanvasRenderingContext2DState::PaintType::kFillPaintType,
+        CanvasRenderingContext2DState::kNoImage,
+        CanvasPerformanceMonitor::DrawType::kText);
+  }
 }
 
 void CanvasRenderingContext2D::DrawTextInternal(
@@ -990,7 +1023,6 @@ void CanvasRenderingContext2D::DrawTextInternal(
   DCHECK(font_data);
   if (!font_data)
     return;
-  const FontMetrics& font_metrics = font_data->GetFontMetrics();
 
   // FIXME: Need to turn off font smoothing.
 
@@ -1007,7 +1039,8 @@ void CanvasRenderingContext2D::DrawTextInternal(
   // Draw the item text at the correct point.
   gfx::PointF location(ClampTo<float>(x),
                        ClampTo<float>(y + GetFontBaseline(*font_data)));
-  double font_width = font.Width(text_run);
+  gfx::RectF bounds;
+  double font_width = font.Width(text_run, nullptr, &bounds);
 
   bool use_max_width = (max_width && *max_width < font_width);
   double width = use_max_width ? *max_width : font_width;
@@ -1029,11 +1062,7 @@ void CanvasRenderingContext2D::DrawTextInternal(
       break;
   }
 
-  gfx::RectF bounds(
-      location.x() - font_metrics.Height() / 2,
-      location.y() - font_metrics.Ascent() - font_metrics.LineGap(),
-      ClampTo<float>(width + font_metrics.Height()),
-      font_metrics.LineSpacing());
+  bounds.Offset(location.x(), location.y());
   if (paint_type == CanvasRenderingContext2DState::kStrokePaintType)
     InflateStrokeRect(bounds);
 
@@ -1058,12 +1087,11 @@ void CanvasRenderingContext2D::DrawTextInternal(
         TextRunPaintInfo text_run_paint_info(text_run);
         this->AccessFont().DrawBidiText(c, text_run_paint_info, location,
                                         Font::kUseFallbackIfFontNotReady,
-                                        kCDeviceScaleFactor, *flags);
+                                        *flags);
       },
       [](const SkIRect& rect)  // overdraw test lambda
       { return false; },
-      gfx::RectFToSkRect(bounds), paint_type,
-      CanvasRenderingContext2DState::kNoImage,
+      bounds, paint_type, CanvasRenderingContext2DState::kNoImage,
       CanvasPerformanceMonitor::DrawType::kText);
 }
 
@@ -1095,12 +1123,21 @@ CanvasRenderingContext2D::getContextAttributes() const {
   CanvasRenderingContext2DSettings* settings =
       CanvasRenderingContext2DSettings::Create();
   settings->setAlpha(CreationAttributes().alpha);
-  if (RuntimeEnabledFeatures::CanvasColorManagementEnabled())
-    settings->setColorSpace(color_params_.GetColorSpaceAsString());
-  if (RuntimeEnabledFeatures::CanvasColorManagementV2Enabled())
+  settings->setColorSpace(color_params_.GetColorSpaceAsString());
+  if (RuntimeEnabledFeatures::CanvasFloatingPointEnabled())
     settings->setPixelFormat(color_params_.GetPixelFormatAsString());
   settings->setDesynchronized(Host()->LowLatencyEnabled());
-  settings->setWillReadFrequently(CreationAttributes().will_read_frequently);
+  switch (CreationAttributes().will_read_frequently) {
+    case CanvasContextCreationAttributesCore::WillReadFrequently::kTrue:
+      settings->setWillReadFrequently(V8CanvasWillReadFrequently::Enum::kTrue);
+      break;
+    case CanvasContextCreationAttributesCore::WillReadFrequently::kFalse:
+      settings->setWillReadFrequently(V8CanvasWillReadFrequently::Enum::kFalse);
+      break;
+    case CanvasContextCreationAttributesCore::WillReadFrequently::kUndefined:
+      settings->setWillReadFrequently(
+          V8CanvasWillReadFrequently::Enum::kUndefined);
+  }
   return settings;
 }
 
@@ -1164,7 +1201,8 @@ void CanvasRenderingContext2D::DrawFocusRing(const Path& path,
   SkColor color = LayoutTheme::GetTheme().FocusRingColor(color_scheme).Rgb();
   const int kFocusRingWidth = 5;
   DrawPlatformFocusRing(path.GetSkPath(), GetPaintCanvas(), color,
-                        /*width=*/kFocusRingWidth, /*radius=*/kFocusRingWidth);
+                        /*width=*/kFocusRingWidth,
+                        /*corner_radius=*/kFocusRingWidth);
 
   // We need to add focusRingWidth to dirtyRect.
   StrokeData stroke_data;
@@ -1190,7 +1228,7 @@ void CanvasRenderingContext2D::UpdateElementAccessibility(const Path& path,
 
   // Get the transformed path.
   Path transformed_path = path;
-  transformed_path.Transform(GetState().GetAffineTransform());
+  transformed_path.Transform(GetState().GetTransform());
 
   // Add border and padding to the bounding rect.
   LayoutRect element_rect =
@@ -1213,6 +1251,10 @@ bool CanvasRenderingContext2D::IsCanvas2DBufferValid() const {
     return canvas()->GetCanvas2DLayerBridge()->IsValid();
   }
   return false;
+}
+
+void CanvasRenderingContext2D::ColorSchemeMayHaveChanged() {
+  SetColorScheme(GetColorSchemeFromCanvas(canvas()));
 }
 
 RespectImageOrientationEnum CanvasRenderingContext2D::RespectImageOrientation()

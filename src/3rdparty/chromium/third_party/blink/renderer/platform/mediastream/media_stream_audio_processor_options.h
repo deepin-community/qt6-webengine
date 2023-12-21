@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -75,8 +75,6 @@ struct PLATFORM_EXPORT AudioProcessingProperties {
   // removal).
   bool goog_experimental_noise_suppression = true;
   bool goog_highpass_filter = true;
-  // TODO(bugs.webrtc.org/7494): Effectively a no-op, remove this flag.
-  bool goog_experimental_auto_gain_control = true;
 };
 }  // namespace blink
 

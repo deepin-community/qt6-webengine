@@ -186,11 +186,14 @@ void QWebEngineProfilePrivate::downloadRequested(DownloadItemInfo &info)
     Q_Q(QWebEngineProfile);
 
     Q_ASSERT(!m_ongoingDownloads.contains(info.id));
-    QWebEngineDownloadRequestPrivate *itemPrivate = new QWebEngineDownloadRequestPrivate(m_profileAdapter, info.url);
+    QWebEngineDownloadRequestPrivate *itemPrivate =
+            new QWebEngineDownloadRequestPrivate(m_profileAdapter);
     itemPrivate->downloadId = info.id;
     itemPrivate->downloadState = info.accepted ? QWebEngineDownloadRequest::DownloadInProgress
                                                : QWebEngineDownloadRequest::DownloadRequested;
     itemPrivate->startTime = info.startTime;
+    itemPrivate->downloadUrl = info.url;
+    itemPrivate->totalBytes = info.totalBytes;
     itemPrivate->downloadDirectory = QFileInfo(info.path).path();
     itemPrivate->downloadFileName = QFileInfo(info.path).fileName();
     itemPrivate->suggestedFileName = info.suggestedFileName;
@@ -390,6 +393,37 @@ void QWebEngineProfile::setDownloadPath(const QString &path)
 }
 
 /*!
+    \since 6.5
+
+    Returns \c true if the push messaging service is enabled.
+    \note By default the push messaging service is disabled.
+
+    \sa setPushServiceEnabled()
+*/
+bool QWebEngineProfile::isPushServiceEnabled() const
+{
+    const Q_D(QWebEngineProfile);
+    return d->profileAdapter()->pushServiceEnabled();
+}
+
+/*!
+    \since 6.5
+
+    Enables the push messaging service if \a enable is \c true, otherwise disables it.
+
+    \note \QWE uses \l {https://firebase.google.com}{Firebase Cloud Messaging (FCM)}
+    as a browser push service. Therefore, all push messages will go through the
+    Google push service and its respective servers.
+
+    \sa isPushServiceEnabled()
+*/
+void QWebEngineProfile::setPushServiceEnabled(bool enable)
+{
+    Q_D(QWebEngineProfile);
+    d->profileAdapter()->setPushServiceEnabled(enable);
+}
+
+/*!
     Returns the path used for caches.
 
     By default, this is below StandardPaths::CacheLocation in a QtWebengine/StorageName specific
@@ -426,7 +460,7 @@ void QWebEngineProfile::setCachePath(const QString &path)
     "Windows NT 6.2" (Windows 8), unless the application does contain a manifest
     that declares newer Windows versions as supported.
 
-    \sa setHttpUserAgent()
+    \sa setHttpUserAgent(), {windows_manifest} {Windows Application Manifest}
 */
 QString QWebEngineProfile::httpUserAgent() const
 {
@@ -461,7 +495,10 @@ QWebEngineProfile::HttpCacheType QWebEngineProfile::httpCacheType() const
 /*!
     Sets the HTTP cache type to \a httpCacheType.
 
-    \sa httpCacheType(), setCachePath()
+    \note Setting the \a httpCacheType to NoCache on the profile, which has already some cache
+    entries does not trigger the removal of those entries.
+
+    \sa httpCacheType(), setCachePath(), clearHttpCache()
 */
 void QWebEngineProfile::setHttpCacheType(QWebEngineProfile::HttpCacheType httpCacheType)
 {

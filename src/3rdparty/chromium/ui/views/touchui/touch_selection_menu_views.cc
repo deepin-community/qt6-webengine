@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,11 +8,15 @@
 #include <utility>
 
 #include "base/check.h"
+#include "base/feature_list.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/chromeos_buildflags.h"
 #include "ui/aura/window.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/pointer/touch_editing_controller.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/color/color_id.h"
 #include "ui/color/color_provider.h"
 #include "ui/display/display.h"
@@ -26,6 +30,7 @@
 #include "ui/touch_selection/touch_selection_menu_runner.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/layout/box_layout.h"
+#include "ui/views/views_features.h"
 
 namespace views {
 namespace {
@@ -33,11 +38,20 @@ namespace {
 struct MenuCommand {
   int command_id;
   int message_id;
-} kMenuCommands[] = {
+};
+
+MenuCommand kMenuCommands[] = {
     {ui::TouchEditable::kCut, IDS_APP_CUT},
     {ui::TouchEditable::kCopy, IDS_APP_COPY},
     {ui::TouchEditable::kPaste, IDS_APP_PASTE},
 };
+
+#if BUILDFLAG(IS_CHROMEOS)
+MenuCommand kMenuSelectCommands[] = {
+    {ui::TouchEditable::kSelectAll, IDS_APP_SELECT_ALL},
+    {ui::TouchEditable::kSelectWord, IDS_APP_SELECT},
+};
+#endif
 
 constexpr int kSpacingBetweenButtons = 2;
 
@@ -45,7 +59,7 @@ constexpr int kSpacingBetweenButtons = 2;
 
 TouchSelectionMenuViews::TouchSelectionMenuViews(
     TouchSelectionMenuRunnerViews* owner,
-    ui::TouchSelectionMenuClient* client,
+    base::WeakPtr<ui::TouchSelectionMenuClient> client,
     aura::Window* context)
     : BubbleDialogDelegateView(nullptr, BubbleBorder::BOTTOM_CENTER),
       owner_(owner),
@@ -100,7 +114,10 @@ void TouchSelectionMenuViews::ShowMenu(const gfx::Rect& anchor_rect,
   // invokes widget->StackAbove(context). That causes the bubble to stack
   // _immediately_ above |context|; below any already-existing bubbles. That
   // doesn't make sense for a menu, so put it back on top.
-  widget->StackAtTop();
+  if (base::FeatureList::IsEnabled(features::kWidgetLayering))
+    widget->SetZOrderLevel(ui::ZOrderLevel::kFloatingWindow);
+  else
+    widget->StackAtTop();
   widget->Show();
 }
 
@@ -111,12 +128,17 @@ bool TouchSelectionMenuViews::IsMenuAvailable(
   const auto is_enabled = [client](MenuCommand command) {
     return client->IsCommandIdEnabled(command.command_id);
   };
-  return std::any_of(std::cbegin(kMenuCommands), std::cend(kMenuCommands),
-                     is_enabled);
+  bool is_available = base::ranges::any_of(kMenuCommands, is_enabled);
+#if BUILDFLAG(IS_CHROMEOS)
+  is_available |= ::features::IsTouchTextEditingRedesignEnabled() &&
+                  base::ranges::any_of(kMenuSelectCommands, is_enabled);
+#endif
+  return is_available;
 }
 
 void TouchSelectionMenuViews::CloseMenu() {
-  DisconnectOwner();
+  if (owner_)
+    DisconnectOwner();
   // Closing the widget will self-destroy this object.
   Widget* widget = GetWidget();
   if (widget && !widget->IsClosed())
@@ -126,6 +148,7 @@ void TouchSelectionMenuViews::CloseMenu() {
 TouchSelectionMenuViews::~TouchSelectionMenuViews() = default;
 
 void TouchSelectionMenuViews::CreateButtons() {
+  DCHECK(client_);
   for (const auto& command : kMenuCommands) {
     if (client_->IsCommandIdEnabled(command.command_id)) {
       CreateButton(
@@ -134,6 +157,18 @@ void TouchSelectionMenuViews::CreateButtons() {
                               base::Unretained(this), command.command_id));
     }
   }
+#if BUILDFLAG(IS_CHROMEOS)
+  if (::features::IsTouchTextEditingRedesignEnabled()) {
+    for (const auto& command : kMenuSelectCommands) {
+      if (client_->IsCommandIdEnabled(command.command_id)) {
+        CreateButton(
+            l10n_util::GetStringUTF16(command.message_id),
+            base::BindRepeating(&TouchSelectionMenuViews::ButtonPressed,
+                                base::Unretained(this), command.command_id));
+      }
+    }
+  }
+#endif
 
   // Finally, add ellipsis button.
   CreateButton(u"...",
@@ -184,11 +219,13 @@ void TouchSelectionMenuViews::WindowClosing() {
 
 void TouchSelectionMenuViews::ButtonPressed(int command,
                                             const ui::Event& event) {
+  DCHECK(client_);
   CloseMenu();
   client_->ExecuteCommand(command, event.flags());
 }
 
 void TouchSelectionMenuViews::EllipsisPressed(const ui::Event& event) {
+  DCHECK(client_);
   CloseMenu();
   client_->RunContextMenu();
 }

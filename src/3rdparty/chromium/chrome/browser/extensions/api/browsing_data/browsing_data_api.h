@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,6 +15,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
 #include "base/time/time.h"
+#include "base/types/expected.h"
 #include "components/browsing_data/core/browsing_data_utils.h"
 #include "components/signin/core/browser/account_reconcilor.h"
 #include "content/public/browser/browsing_data_filter_builder.h"
@@ -76,8 +77,8 @@ class BrowsingDataSettingsFunction : public ExtensionFunction {
   // indicating whether the data type is both selected and permitted to be
   // removed; and a value in the |permitted_dict| with the |data_type| as a
   // key, indicating only whether the data type is permitted to be removed.
-  void SetDetails(base::Value* selected_dict,
-                  base::Value* permitted_dict,
+  void SetDetails(base::Value::Dict* selected_dict,
+                  base::Value::Dict* permitted_dict,
                   const char* data_type,
                   bool is_selected);
 
@@ -127,15 +128,15 @@ class BrowsingDataRemoverFunction
   // that can be used with the BrowsingDataRemover.
   // Returns true if parsing was successful.
   // Pre-condition: `options` is a dictionary.
-  bool ParseOriginTypeMask(const base::Value& options,
+  bool ParseOriginTypeMask(const base::Value::Dict& options,
                            uint64_t* origin_type_mask);
 
   // Parses the developer-provided list of origins into |result|.
   // Returns whether or not parsing was successful. In case of parse failure,
   // |error_response| will contain the error response.
-  bool ParseOrigins(const base::Value& list_value,
-                    std::vector<url::Origin>* result,
-                    ResponseValue* error_response);
+  using OriginParsingResult =
+      base::expected<std::vector<url::Origin>, ResponseValue>;
+  OriginParsingResult ParseOrigins(const base::Value::List& list_value);
 
   // Called when we're ready to start removing data.
   void StartRemoving();

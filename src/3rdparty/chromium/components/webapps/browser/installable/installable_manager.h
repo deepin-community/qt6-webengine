@@ -1,19 +1,21 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_WEBAPPS_BROWSER_INSTALLABLE_INSTALLABLE_MANAGER_H_
 #define COMPONENTS_WEBAPPS_BROWSER_INSTALLABLE_INSTALLABLE_MANAGER_H_
 
+#include <limits>
 #include <map>
 #include <memory>
 #include <vector>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "components/webapps/browser/installable/installable_data.h"
 #include "components/webapps/browser/installable/installable_logging.h"
 #include "components/webapps/browser/installable/installable_params.h"
@@ -23,7 +25,6 @@
 #include "content/public/browser/service_worker_context_observer.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "url/gurl.h"
@@ -37,6 +38,14 @@ class InstallableManager
       public content::WebContentsObserver,
       public content::WebContentsUserData<InstallableManager> {
  public:
+  // Maximum dimension size in pixels for icons.
+  static const int kMaximumIconSizeInPx =
+#if BUILDFLAG(IS_ANDROID)
+      std::numeric_limits<int>::max();
+#else
+      1024;
+#endif
+
   explicit InstallableManager(content::WebContents* web_contents);
 
   InstallableManager(const InstallableManager&) = delete;
@@ -200,11 +209,11 @@ class InstallableManager
   // Returns true if |params| requires no more work to be done.
   bool IsComplete(const InstallableParams& params) const;
 
-  // Resets members to empty and removes all queued tasks.
+  // Resets members to empty and reports the given |error| to all queued tasks
+  // to run queued callbacks before removing the tasks.
   // Called when navigating to a new page or if the WebContents is destroyed
   // whilst waiting for a callback.
-  // If populated, the given |error| is reported to all queued tasks.
-  void Reset(absl::optional<InstallableStatusCode> error = absl::nullopt);
+  void Reset(InstallableStatusCode error);
 
   // Sets the fetched bit on the installable and icon subtasks.
   // Called if no manifest (or an empty manifest) was fetched from the site.
@@ -241,15 +250,17 @@ class InstallableManager
                              IconUsage usage);
   void OnIconFetched(GURL icon_url, IconUsage usage, const SkBitmap& bitmap);
 
-  void CheckAndFetchScreenshots();
+  void CheckAndFetchScreenshots(bool check_form_factor = true);
+
   void OnScreenshotFetched(GURL screenshot_url, const SkBitmap& bitmap);
+  void PopulateScreenshots(bool check_form_factor);
 
   // content::ServiceWorkerContextObserver overrides
   void OnRegistrationCompleted(const GURL& pattern) override;
   void OnDestruct(content::ServiceWorkerContext* context) override;
 
   // content::WebContentsObserver overrides
-  void DidFinishNavigation(content::NavigationHandle* handle) override;
+  void PrimaryPageChanged(content::Page& page) override;
   void DidUpdateWebManifestURL(content::RenderFrameHost* rfh,
                                const GURL& manifest_url) override;
   void WebContentsDestroyed() override;
@@ -268,7 +279,7 @@ class InstallableManager
   std::unique_ptr<ValidManifestProperty> valid_manifest_;
   std::unique_ptr<ServiceWorkerProperty> worker_;
   std::map<IconUsage, IconProperty> icons_;
-  std::vector<SkBitmap> screenshots_;
+  std::vector<Screenshot> screenshots_;
 
   // A map of screenshots downloaded. Used temporarily until images are moved to
   // the screenshots_ member.

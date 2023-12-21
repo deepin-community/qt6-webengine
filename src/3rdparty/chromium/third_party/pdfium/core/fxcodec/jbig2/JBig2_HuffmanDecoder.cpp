@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -36,7 +36,7 @@ int CJBig2_HuffmanDecoder::DecodeAValue(const CJBig2_HuffmanTable* pTable,
         continue;
 
       if (pTable->IsHTOOB() && i == pTable->Size() - 1)
-        return JBIG2_OOB;
+        return kJBig2OOB;
 
       if (m_pStream->readNBits(pTable->GetRANGELEN()[i], &nTmp) == -1)
         return -1;

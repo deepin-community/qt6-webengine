@@ -1,4 +1,4 @@
-// Copyright (c) 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -163,7 +163,7 @@ TEST(ContextCacheControllerTest, CheckSkiaResourcePurgeAPI) {
   auto task_runner = base::MakeRefCounted<base::TestMockTimeTaskRunner>();
   ContextCacheController cache_controller(&context_support, task_runner);
   auto context_provider = TestContextProvider::Create();
-  context_provider->BindToCurrentThread();
+  context_provider->BindToCurrentSequence();
   auto* gr_context = context_provider->GrContext();
   cache_controller.SetGrContext(gr_context);
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright (c) 2012 The Chromium Authors. All rights reserved.
+# Copyright 2012 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -114,9 +114,6 @@ PATH_SPECIFIC_ALLOWLISTED_LICENSES = {
     'base/third_party/icu': [  # http://crbug.com/98087
         'UNKNOWN',
     ],
-    'base/third_party/libevent': [  # http://crbug.com/98309
-        'UNKNOWN',
-    ],
     'buildtools/third_party/libc++/trunk/test': [
         # http://llvm.org/bugs/show_bug.cgi?id=25980
         'UNKNOWN',
@@ -128,15 +125,6 @@ PATH_SPECIFIC_ALLOWLISTED_LICENSES = {
     'buildtools/third_party/libc++/trunk/utils/not': ['UNKNOWN'],
     'buildtools/third_party/libc++/trunk/utils/sym_check': ['UNKNOWN'],
     'buildtools/third_party/libc++abi/trunk/test': ['UNKNOWN'],
-    'chrome/common/extensions/docs/examples': [  # http://crbug.com/98092
-        'UNKNOWN',
-    ],
-    # This contains files copied from elsewhere from the tree. Since the copied
-    # directories might have suppressions below (like simplejson), allowlist the
-    # whole directory. This is also not shipped code.
-    'chrome/common/extensions/docs/server2/third_party': [
-        'UNKNOWN',
-    ],
     'native_client': [  # http://crbug.com/98099
         'UNKNOWN',
     ],
@@ -401,6 +389,9 @@ PATH_SPECIFIC_ALLOWLISTED_LICENSES = {
     ],
     'third_party/lcov/contrib/galaxy/genflat.pl': [
         'GPL (v2 or later)',
+    ],
+    'third_party/libevent': [  # http://crbug.com/98309
+        'UNKNOWN',
     ],
     'third_party/libjpeg_turbo': [  # http://crbug.com/98314
         'UNKNOWN',

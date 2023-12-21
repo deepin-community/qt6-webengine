@@ -14,159 +14,165 @@ import * as UI from '../../ui/legacy/legacy.js';
 import type * as Protocol from '../../generated/protocol.js';
 
 import cssOverviewCompletedViewStyles from './cssOverviewCompletedView.css.js';
-import type {OverviewController, PopulateNodesEvent, PopulateNodesEventNodes, PopulateNodesEventNodeTypes} from './CSSOverviewController.js';
-import {Events as CSSOverViewControllerEvents} from './CSSOverviewController.js';
-import {CSSOverviewSidebarPanel, SidebarEvents} from './CSSOverviewSidebarPanel.js';
-import type {UnusedDeclaration} from './CSSOverviewUnusedDeclarations.js';
+
+import {
+  Events as CSSOverViewControllerEvents,
+  type OverviewController,
+  type PopulateNodesEvent,
+  type PopulateNodesEventNodes,
+  type PopulateNodesEventNodeTypes,
+} from './CSSOverviewController.js';
+import {CSSOverviewSidebarPanel, SidebarEvents, type ItemSelectedEvent} from './CSSOverviewSidebarPanel.js';
+import {type UnusedDeclaration} from './CSSOverviewUnusedDeclarations.js';
 
 const UIStrings = {
   /**
-  *@description Label for the summary in the CSS Overview report
-  */
+   *@description Label for the summary in the CSS Overview report
+   */
   overviewSummary: 'Overview summary',
   /**
-  *@description Title of colors subsection in the CSS Overview Panel
-  */
+   *@description Title of colors subsection in the CSS Overview Panel
+   */
   colors: 'Colors',
   /**
-  *@description Title of font info subsection in the CSS Overview Panel
-  */
+   *@description Title of font info subsection in the CSS Overview Panel
+   */
   fontInfo: 'Font info',
   /**
-  *@description Label to denote unused declarations in the target page
-  */
+   *@description Label to denote unused declarations in the target page
+   */
   unusedDeclarations: 'Unused declarations',
   /**
-  *@description Label for the number of media queries in the CSS Overview report
-  */
+   *@description Label for the number of media queries in the CSS Overview report
+   */
   mediaQueries: 'Media queries',
   /**
-  *@description Title of the Elements Panel
-  */
+   *@description Title of the Elements Panel
+   */
   elements: 'Elements',
   /**
-  *@description Label for the number of External stylesheets in the CSS Overview report
-  */
+   *@description Label for the number of External stylesheets in the CSS Overview report
+   */
   externalStylesheets: 'External stylesheets',
   /**
-  *@description Label for the number of inline style elements in the CSS Overview report
-  */
+   *@description Label for the number of inline style elements in the CSS Overview report
+   */
   inlineStyleElements: 'Inline style elements',
   /**
-  *@description Label for the number of style rules in CSS Overview report
-  */
+   *@description Label for the number of style rules in CSS Overview report
+   */
   styleRules: 'Style rules',
   /**
-  *@description Label for the number of type selectors in the CSS Overview report
-  */
+   *@description Label for the number of type selectors in the CSS Overview report
+   */
   typeSelectors: 'Type selectors',
   /**
-  *@description Label for the number of ID selectors in the CSS Overview report
-  */
+   *@description Label for the number of ID selectors in the CSS Overview report
+   */
   idSelectors: 'ID selectors',
   /**
-  *@description Label for the number of class selectors in the CSS Overview report
-  */
+   *@description Label for the number of class selectors in the CSS Overview report
+   */
   classSelectors: 'Class selectors',
   /**
-  *@description Label for the number of universal selectors in the CSS Overview report
-  */
+   *@description Label for the number of universal selectors in the CSS Overview report
+   */
   universalSelectors: 'Universal selectors',
   /**
-  *@description Label for the number of Attribute selectors in the CSS Overview report
-  */
+   *@description Label for the number of Attribute selectors in the CSS Overview report
+   */
   attributeSelectors: 'Attribute selectors',
   /**
-  *@description Label for the number of non-simple selectors in the CSS Overview report
-  */
+   *@description Label for the number of non-simple selectors in the CSS Overview report
+   */
   nonsimpleSelectors: 'Non-simple selectors',
   /**
-  *@description Label for unique background colors in the CSS Overview Panel
-  *@example {32} PH1
-  */
+   *@description Label for unique background colors in the CSS Overview Panel
+   *@example {32} PH1
+   */
   backgroundColorsS: 'Background colors: {PH1}',
   /**
-  *@description Label for unique text colors in the CSS Overview Panel
-  *@example {32} PH1
-  */
+   *@description Label for unique text colors in the CSS Overview Panel
+   *@example {32} PH1
+   */
   textColorsS: 'Text colors: {PH1}',
   /**
-  *@description Label for unique fill colors in the CSS Overview Panel
-  *@example {32} PH1
-  */
+   *@description Label for unique fill colors in the CSS Overview Panel
+   *@example {32} PH1
+   */
   fillColorsS: 'Fill colors: {PH1}',
   /**
-  *@description Label for unique border colors in the CSS Overview Panel
-  *@example {32} PH1
-  */
+   *@description Label for unique border colors in the CSS Overview Panel
+   *@example {32} PH1
+   */
   borderColorsS: 'Border colors: {PH1}',
   /**
-  *@description Label to indicate that there are no fonts in use
-  */
+   *@description Label to indicate that there are no fonts in use
+   */
   thereAreNoFonts: 'There are no fonts.',
   /**
-  *@description Message to show when no unused declarations in the target page
-  */
+   *@description Message to show when no unused declarations in the target page
+   */
   thereAreNoUnusedDeclarations: 'There are no unused declarations.',
   /**
-  *@description Message to show when no media queries are found in the target page
-  */
+   *@description Message to show when no media queries are found in the target page
+   */
   thereAreNoMediaQueries: 'There are no media queries.',
   /**
-  *@description Title of the Drawer for contrast issues in the CSS Overview Panel
-  */
+   *@description Title of the Drawer for contrast issues in the CSS Overview Panel
+   */
   contrastIssues: 'Contrast issues',
   /**
-  * @description Text to indicate how many times this CSS rule showed up.
-  */
+   * @description Text to indicate how many times this CSS rule showed up.
+   */
   nOccurrences: '{n, plural, =1 {# occurrence} other {# occurrences}}',
   /**
-  *@description Section header for contrast issues in the CSS Overview Panel
-  *@example {1} PH1
-  */
+   *@description Section header for contrast issues in the CSS Overview Panel
+   *@example {1} PH1
+   */
   contrastIssuesS: 'Contrast issues: {PH1}',
   /**
-  *@description Title of the button for a contrast issue in the CSS Overview Panel
-  *@example {#333333} PH1
-  *@example {#333333} PH2
-  *@example {2} PH3
-  */
+   *@description Title of the button for a contrast issue in the CSS Overview Panel
+   *@example {#333333} PH1
+   *@example {#333333} PH2
+   *@example {2} PH3
+   */
   textColorSOverSBackgroundResults: 'Text color {PH1} over {PH2} background results in low contrast for {PH3} elements',
   /**
-  *@description Label aa text content in Contrast Details of the Color Picker
-  */
+   *@description Label aa text content in Contrast Details of the Color Picker
+   */
   aa: 'AA',
   /**
-  *@description Label aaa text content in Contrast Details of the Color Picker
-  */
+   *@description Label aaa text content in Contrast Details of the Color Picker
+   */
   aaa: 'AAA',
   /**
-  *@description Label for the APCA contrast in Color Picker
-  */
+   *@description Label for the APCA contrast in Color Picker
+   */
   apca: 'APCA',
   /**
-  *@description Label for the column in the element list in the CSS Overview report
-  */
+   *@description Label for the column in the element list in the CSS Overview report
+   */
   element: 'Element',
   /**
-  *@description Column header title denoting which declaration is unused
-  */
+   *@description Column header title denoting which declaration is unused
+   */
   declaration: 'Declaration',
   /**
-  *@description Text for the source of something
-  */
+   *@description Text for the source of something
+   */
   source: 'Source',
   /**
-  *@description Text of a DOM element in Contrast Details of the Color Picker
-  */
+   *@description Text of a DOM element in Contrast Details of the Color Picker
+   */
   contrastRatio: 'Contrast ratio',
   /**
-  *@description Accessible title of a table in the CSS Overview Elements.
-  */
+   *@description Accessible title of a table in the CSS Overview Elements.
+   */
   cssOverviewElements: 'CSS Overview Elements',
   /**
-  *@description Title of the button to show the element in the CSS Overview panel
-  */
+   *@description Title of the button to show the element in the CSS Overview panel
+   */
   showElement: 'Show element',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/css_overview/CSSOverviewCompletedView.ts', UIStrings);
@@ -205,8 +211,8 @@ export interface OverviewData {
 
 export type FontInfo = Map<string, Map<string, Map<string, number[]>>>;
 
-function getBorderString(color: Common.Color.Color): string {
-  let [h, s, l] = color.hsla();
+function getBorderString(color: Common.Color.Legacy): string {
+  let {h, s, l} = color.as(Common.Color.Format.HSL);
   h = Math.round(h * 360);
   s = Math.round(s * 100);
   l = Math.round(l * 100);
@@ -299,14 +305,19 @@ export class CSSOverviewCompletedView extends UI.Panel.PanelWithSidebar {
     this.#domModel = domModel;
   }
 
-  #sideBarItemSelected(event: Common.EventTarget.EventTargetEvent<string>): void {
+  #sideBarItemSelected(event: Common.EventTarget.EventTargetEvent<ItemSelectedEvent>): void {
     const {data} = event;
-    const section = (this.#fragment as UI.Fragment.Fragment).$(data);
+    const section = (this.#fragment as UI.Fragment.Fragment).$(data.id);
     if (!section) {
       return;
     }
 
     section.scrollIntoView();
+    // Set focus for keyboard invoked event
+    if (!data.isMouseEvent) {
+      const focusableElement: HTMLElement|null = section.querySelector('button, [tabindex="0"]');
+      focusableElement?.focus();
+    }
   }
 
   #sideBarReset(): void {
@@ -781,7 +792,7 @@ export class CSSOverviewCompletedView extends UI.Panel.PanelWithSidebar {
     const block = (blockFragment.$('color') as HTMLElement);
     block.style.backgroundColor = backgroundColor;
     block.style.color = color;
-    block.style.border = getBorderString(minContrastIssue.backgroundColor);
+    block.style.border = getBorderString(minContrastIssue.backgroundColor.asLegacyColor());
 
     return blockFragment;
   }
@@ -789,13 +800,13 @@ export class CSSOverviewCompletedView extends UI.Panel.PanelWithSidebar {
   #colorsToFragment(section: string, color: string): UI.Fragment.Fragment|undefined {
     const blockFragment = UI.Fragment.Fragment.build`<li>
       <button data-type="color" data-color="${color}" data-section="${section}" class="block" $="color"></button>
-      <div class="block-title">${color}</div>
+      <div class="block-title color-text" title=${color}>${color}</div>
     </li>`;
 
     const block = (blockFragment.$('color') as HTMLElement);
     block.style.backgroundColor = color;
 
-    const borderColor = Common.Color.Color.parse(color);
+    const borderColor = Common.Color.parse(color)?.asLegacyColor();
     if (!borderColor) {
       return;
     }
@@ -806,8 +817,8 @@ export class CSSOverviewCompletedView extends UI.Panel.PanelWithSidebar {
 
   #sortColorsByLuminance(srcColors: Map<string, Set<number>>): string[] {
     return Array.from(srcColors.keys()).sort((colA, colB) => {
-      const colorA = Common.Color.Color.parse(colA);
-      const colorB = Common.Color.Color.parse(colB);
+      const colorA = Common.Color.parse(colA)?.asLegacyColor();
+      const colorB = Common.Color.parse(colB)?.asLegacyColor();
       if (!colorA || !colorB) {
         return 0;
       }
@@ -1072,7 +1083,7 @@ export class ElementNode extends DataGrid.SortableDataGrid.SortableDataGridNode<
         button.classList.add('show-element');
         UI.Tooltip.Tooltip.install(button, i18nString(UIStrings.showElement));
         button.tabIndex = 0;
-        button.onclick = (): void => this.data.node.scrollIntoView();
+        button.onclick = (): Promise<void> => frontendNode.scrollIntoView();
         cell.appendChild(button);
       });
       return cell;

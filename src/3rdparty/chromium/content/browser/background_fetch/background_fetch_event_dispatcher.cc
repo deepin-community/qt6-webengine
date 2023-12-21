@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,9 @@
 #include <map>
 #include <sstream>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/stringprintf.h"
 #include "content/browser/background_fetch/background_fetch_registration_id.h"
@@ -368,11 +368,9 @@ void BackgroundFetchEventDispatcher::LogBackgroundFetchCompletionForDevTools(
     metadata["Failure Reason"] = stream.str();
   }
 
-  // TODO(https://crbug.com/1199077): Pass `registration_id.storage_key()`
-  // directly once DevToolsBackgroundServicesContextImpl implements StorageKey.
   devtools_context_->LogBackgroundServiceEvent(
       registration_id.service_worker_registration_id(),
-      registration_id.storage_key().origin(),
+      registration_id.storage_key(),
       DevToolsBackgroundService::kBackgroundFetch,
       /* event_name= */ "Background Fetch completed",
       /* instance_id= */ registration_id.developer_id(), metadata);

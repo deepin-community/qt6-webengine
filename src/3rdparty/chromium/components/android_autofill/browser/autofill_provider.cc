@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -32,10 +32,11 @@ AutofillProvider::AutofillProvider(content::WebContents* web_contents)
 AutofillProvider::~AutofillProvider() = default;
 
 void AutofillProvider::FillOrPreviewForm(AndroidAutofillManager* manager,
-                                         int requestId,
-                                         const FormData& formData) {
-  manager->FillOrPreviewForm(requestId, mojom::RendererFormDataAction::kFill,
-                             formData);
+                                         const FormData& form_data,
+                                         FieldTypeGroup field_type_group,
+                                         const url::Origin& triggered_origin) {
+  manager->FillOrPreviewForm(mojom::RendererFormDataAction::kFill, form_data,
+                             field_type_group, triggered_origin);
 }
 
 void AutofillProvider::RendererShouldAcceptDataListSuggestion(

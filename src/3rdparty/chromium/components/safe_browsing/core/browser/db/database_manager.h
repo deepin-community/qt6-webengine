@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -18,6 +18,7 @@
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted_delete_on_sequence.h"
+#include "base/task/sequenced_task_runner.h"
 #include "components/safe_browsing/core/browser/db/hit_report.h"
 #include "components/safe_browsing/core/browser/db/util.h"
 #include "components/safe_browsing/core/browser/db/v4_protocol_manager_util.h"
@@ -91,14 +92,6 @@ class SafeBrowsingDatabaseManager
     // Called when the result of checking a allowlist is known.
     // Currently only used for CSD allowlist.
     virtual void OnCheckAllowlistUrlResult(bool did_match_allowlist) {}
-
-    // Called when the result of checking the high-confidence allowlist is
-    // known.
-    virtual void OnCheckUrlForHighConfidenceAllowlist(
-        bool did_match_allowlist) {}
-
-    // Called when the result of checking for accuracy tips is known.
-    virtual void OnCheckUrlForAccuracyTip(bool should_show_accuracy_tip) {}
   };
 
   //
@@ -157,10 +150,14 @@ class SafeBrowsingDatabaseManager
   // can synchronously determine that the url is safe, CheckUrl returns true.
   // Otherwise it returns false, and |client| is called asynchronously with the
   // result when it is ready. The URL will only be checked for the threat types
-  // in |threat_types|.
-  virtual bool CheckBrowseUrl(const GURL& url,
-                              const SBThreatTypeSet& threat_types,
-                              Client* client) = 0;
+  // in |threat_types|. |experiment_cache_selection| specifies which cache to
+  // use. See comments above MechanismExperimentHashDatabaseCache's definition
+  // for more details.
+  virtual bool CheckBrowseUrl(
+      const GURL& url,
+      const SBThreatTypeSet& threat_types,
+      Client* client,
+      MechanismExperimentHashDatabaseCache experiment_cache_selection) = 0;
 
   // Check if the prefix for |url| is in safebrowsing download add lists.
   // Result will be passed to callback in |client|.
@@ -187,20 +184,15 @@ class SafeBrowsingDatabaseManager
                                             Client* client) = 0;
 
   // Called on the IO thread to check whether |url| is safe by checking if it
-  // appears on a high-confidence allowlist. The 3-state return value indicates
-  // the result or that |client| will get a callback later with the result.
-  // The high confidence allowlist is a list of partial or full hashes of URLs
-  // that are expected to be safe so in the case of a match on this list, the
-  // realtime full URL Safe Browsing lookup isn't performed.
-  virtual AsyncMatch CheckUrlForHighConfidenceAllowlist(const GURL& url,
-                                                        Client* client) = 0;
-
-  // Called on the IO thread to check whether |url| should show an accuracy tip.
-  // If we can synchronously determine that the url shouldn't trigger an
-  // accuracy tip, it returns true.
-  // Otherwise it returns false, and |client| is called asynchronously with the
-  // result when it is ready.
-  virtual bool CheckUrlForAccuracyTips(const GURL& url, Client* client) = 0;
+  // appears on a high-confidence allowlist. The return value is true if it
+  // matches the allowlist, and is false if it does not. The high confidence
+  // allowlist is a list of full hashes of URLs that are expected to be safe so
+  // in the case of a match on this list, the realtime full URL Safe Browsing
+  // lookup isn't performed. |metric_variation| is used for logging purposes to
+  // specify the consumer mechanism performing this check in histograms.
+  virtual bool CheckUrlForHighConfidenceAllowlist(
+      const GURL& url,
+      const std::string& metric_variation) = 0;
 
   //
   // Match*(): Methods to synchronously check if various types are safe.
@@ -233,9 +225,8 @@ class SafeBrowsingDatabaseManager
   // Returns whether download protection is enabled.
   virtual bool IsDownloadProtectionEnabled() const = 0;
 
-  // Returns true if URL-checking is supported on this build+device.
-  // If false, calls to CheckBrowseUrl may dcheck-fail.
-  virtual bool IsSupported() const = 0;
+  // Calls the method with the same name in |v4_get_hash_protocol_manager_|.
+  virtual void SetLookupMechanismExperimentIsEnabled();
 
   //
   // Methods to indicate when to start or suspend the SafeBrowsing operations.
@@ -266,6 +257,9 @@ class SafeBrowsingDatabaseManager
   // should override this method, set enabled_ to false and call the base class
   // method at the bottom of it.
   virtual void StopOnIOThread(bool shutdown);
+
+  // Called to check if database is ready or not.
+  virtual bool IsDatabaseReady();
 
  protected:
   // Bundled client info for an API abuse hash prefix check.

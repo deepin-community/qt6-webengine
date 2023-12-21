@@ -1,5 +1,0 @@
-# SymbolsHelper-Confirmed: 6.2.2 amd64
-libQt6WebEngineQuickDelegatesQml.so.6 libqt6webenginequickdelegatesqml6 #MINVER#
-| libqt6webenginequickdelegatesqml6 #MINVER#, qt6-webengine-abi (= 6.4.2)
-* Build-Depends-Package: qt6-webengine-dev
- _Z48qml_register_types_QtWebEngine_ControlsDelegatesv@Base 6.2.2

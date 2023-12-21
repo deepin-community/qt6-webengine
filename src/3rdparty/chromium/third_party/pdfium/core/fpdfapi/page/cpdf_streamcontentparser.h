@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -42,11 +42,11 @@ class CPDF_TextObject;
 class CPDF_StreamContentParser {
  public:
   CPDF_StreamContentParser(CPDF_Document* pDoc,
-                           CPDF_Dictionary* pPageResources,
-                           CPDF_Dictionary* pParentResources,
+                           RetainPtr<CPDF_Dictionary> pPageResources,
+                           RetainPtr<CPDF_Dictionary> pParentResources,
                            const CFX_Matrix* pmtContentToUser,
                            CPDF_PageObjectHolder* pObjHolder,
-                           CPDF_Dictionary* pResources,
+                           RetainPtr<CPDF_Dictionary> pResources,
                            const CFX_FloatRect& rcBBox,
                            const CPDF_AllStates* pStates,
                            std::set<const uint8_t*>* pParsedSet);
@@ -56,9 +56,7 @@ class CPDF_StreamContentParser {
                  uint32_t start_offset,
                  uint32_t max_cost,
                  const std::vector<uint32_t>& stream_start_offsets);
-  CPDF_PageObjectHolder* GetPageObjectHolder() const {
-    return m_pObjectHolder.Get();
-  }
+  CPDF_PageObjectHolder* GetPageObjectHolder() const { return m_pObjectHolder; }
   CPDF_AllStates* GetCurStates() const { return m_pCurStates.get(); }
   bool IsColored() const { return m_bColored; }
   pdfium::span<const float> GetType3Data() const { return m_Type3Data; }
@@ -76,7 +74,7 @@ class CPDF_StreamContentParser {
     ContentParam();
     ~ContentParam();
 
-    Type m_Type;
+    Type m_Type = Type::kObject;
     FX_Number m_Number;
     ByteString m_Name;
     RetainPtr<CPDF_Object> m_pObject;
@@ -92,7 +90,7 @@ class CPDF_StreamContentParser {
   void AddObjectParam(RetainPtr<CPDF_Object> pObj);
   int GetNextParamPos();
   void ClearAllParams();
-  CPDF_Object* GetObject(uint32_t index);
+  RetainPtr<CPDF_Object> GetObject(uint32_t index);
   ByteString GetString(uint32_t index) const;
   float GetNumber(uint32_t index) const;
   // Calls GetNumber() |count| times and returns the values in reverse order.
@@ -125,7 +123,7 @@ class CPDF_StreamContentParser {
   CPDF_ImageObject* AddImage(uint32_t streamObjNum);
   CPDF_ImageObject* AddImage(const RetainPtr<CPDF_Image>& pImage);
 
-  void AddForm(CPDF_Stream* pStream);
+  void AddForm(RetainPtr<CPDF_Stream> pStream);
   void SetGraphicStates(CPDF_PageObject* pObj,
                         bool bColor,
                         bool bText,
@@ -133,8 +131,9 @@ class CPDF_StreamContentParser {
   RetainPtr<CPDF_ColorSpace> FindColorSpace(const ByteString& name);
   RetainPtr<CPDF_Pattern> FindPattern(const ByteString& name);
   RetainPtr<CPDF_ShadingPattern> FindShading(const ByteString& name);
-  CPDF_Dictionary* FindResourceHolder(const ByteString& type);
-  CPDF_Object* FindResourceObj(const ByteString& type, const ByteString& name);
+  RetainPtr<CPDF_Dictionary> FindResourceHolder(const ByteString& type);
+  RetainPtr<CPDF_Object> FindResourceObj(const ByteString& type,
+                                         const ByteString& name);
 
   // Takes ownership of |pImageObj|, returns unowned pointer to it.
   CPDF_ImageObject* AddImageObject(std::unique_ptr<CPDF_ImageObject> pImageObj);

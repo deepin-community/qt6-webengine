@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -73,7 +73,7 @@ bool OptionsSpecifyAudioOrVideo(const TabCapture::CaptureOptions& options) {
 DesktopMediaID BuildDesktopMediaID(content::WebContents* target_contents,
                                    TabCapture::CaptureOptions* options) {
   content::RenderFrameHost* const target_frame =
-      target_contents->GetMainFrame();
+      target_contents->GetPrimaryMainFrame();
   DesktopMediaID source(
       DesktopMediaID::TYPE_WEB_CONTENTS, DesktopMediaID::kNullId,
       WebContentsMediaCaptureId(target_frame->GetProcess()->GetID(),
@@ -93,23 +93,23 @@ void AddMediaStreamSourceConstraints(content::WebContents* target_contents,
 
   if (options->audio && *options->audio) {
     if (!options->audio_constraints)
-      options->audio_constraints = std::make_unique<MediaStreamConstraint>();
-    constraints_to_modify[0] = options->audio_constraints.get();
+      options->audio_constraints.emplace();
+    constraints_to_modify[0] = &*options->audio_constraints;
   }
 
   if (options->video && *options->video) {
     if (!options->video_constraints)
-      options->video_constraints = std::make_unique<MediaStreamConstraint>();
-    constraints_to_modify[1] = options->video_constraints.get();
+      options->video_constraints.emplace();
+    constraints_to_modify[1] = &*options->video_constraints;
   }
 
   // Append chrome specific tab constraints.
   for (MediaStreamConstraint* msc : constraints_to_modify) {
     if (!msc)
       continue;
-    base::DictionaryValue* constraint = &msc->mandatory.additional_properties;
-    constraint->SetStringKey(kMediaStreamSource, kMediaStreamSourceTab);
-    constraint->SetStringKey(kMediaStreamSourceId, device_id);
+    base::Value::Dict* constraint = &msc->mandatory.additional_properties;
+    constraint->Set(kMediaStreamSource, kMediaStreamSourceTab);
+    constraint->Set(kMediaStreamSourceId, device_id);
   }
 }
 
@@ -118,15 +118,13 @@ void AddMediaStreamSourceConstraints(content::WebContents* target_contents,
 // include incognito profile browsers.
 Browser* GetLastActiveBrowser(const Profile* profile,
                               const bool match_incognito_profile) {
-  BrowserList* browser_list = BrowserList::GetInstance();
   Browser* target_browser = nullptr;
-  for (auto iter = browser_list->begin_browsers_ordered_by_activation();
-       iter != browser_list->end_browsers_ordered_by_activation(); ++iter) {
-    Profile* browser_profile = (*iter)->profile();
+  for (Browser* browser : BrowserList::GetInstance()->OrderedByActivation()) {
+    Profile* browser_profile = browser->profile();
     if (browser_profile == profile ||
         (match_incognito_profile &&
          browser_profile->GetOriginalProfile() == profile)) {
-      target_browser = *iter;
+      target_browser = browser;
       break;
     }
   }
@@ -134,16 +132,10 @@ Browser* GetLastActiveBrowser(const Profile* profile,
   return target_browser;
 }
 
-// Get the id of the allowlisted extension. At the moment two switches can
-// contain it. Prioritize the non-deprecated one.
+// Get the id of the allowlisted extension.
 std::string GetAllowlistedExtensionID() {
-  std::string id = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+  return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
       switches::kAllowlistedExtensionID);
-  if (id.empty()) {
-    id = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-        switches::kDEPRECATED_AllowlistedExtensionID);
-  }
-  return id;
 }
 
 }  // namespace
@@ -216,19 +208,16 @@ ExtensionFunction::ResponseAction TabCaptureCaptureFunction::Run() {
   // virtual audio/video capture devices and set up all the data flows.  The
   // custom JS bindings can be found here:
   // chrome/renderer/resources/extensions/tab_capture_custom_bindings.js
-  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
-  result->MergeDictionary(params->options.ToValue().get());
-  return RespondNow(
-      OneArgument(base::Value::FromUniquePtrValue(std::move(result))));
+  base::Value result(params->options.ToValue());
+  return RespondNow(OneArgument(std::move(result)));
 }
 
 ExtensionFunction::ResponseAction TabCaptureGetCapturedTabsFunction::Run() {
   TabCaptureRegistry* registry = TabCaptureRegistry::Get(browser_context());
-  std::unique_ptr<base::ListValue> list(new base::ListValue());
+  base::Value::List list;
   if (registry)
-    registry->GetCapturedTabs(extension()->id(), list.get());
-  return RespondNow(
-      OneArgument(base::Value::FromUniquePtrValue(std::move(list))));
+    registry->GetCapturedTabs(extension()->id(), &list);
+  return RespondNow(OneArgument(base::Value(std::move(list))));
 }
 
 ExtensionFunction::ResponseAction TabCaptureGetMediaStreamIdFunction::Run() {

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,15 +11,7 @@
 #include "base/strings/string_piece.h"
 #include "net/base/net_export.h"
 
-namespace net {
-
-namespace dns_alias_utility {
-
-// Validates that `alias` represents a valid DNS alias name, e.g. CNAME, and
-// then URL-canonicalizes the name. Returns empty string if not valid or unable
-// to canonicalize.
-NET_EXPORT_PRIVATE std::string ValidateAndCanonicalizeAlias(
-    base::StringPiece alias);
+namespace net::dns_alias_utility {
 
 // Returns a fixed up set of canonicalized aliases (i.e. aliases that are
 // written as hostnames for canonical URLs). The set is stripped of "localhost",
@@ -31,8 +23,6 @@ NET_EXPORT_PRIVATE std::string ValidateAndCanonicalizeAlias(
 NET_EXPORT_PRIVATE std::set<std::string> FixUpDnsAliases(
     const std::set<std::string>& aliases);
 
-}  // namespace dns_alias_utility
-
-}  // namespace net
+}  // namespace net::dns_alias_utility
 
 #endif  // NET_DNS_DNS_ALIAS_UTILITY_H_

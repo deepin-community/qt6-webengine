@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -157,8 +157,8 @@ TEST_F(SQLMetaTableTest, VersionNumber) {
     EXPECT_EQ(kVersionFirst, meta_table.GetVersionNumber());
     EXPECT_EQ(kCompatVersionFirst, meta_table.GetCompatibleVersionNumber());
 
-    meta_table.SetVersionNumber(kVersionSecond);
-    meta_table.SetCompatibleVersionNumber(kCompatVersionSecond);
+    EXPECT_TRUE(meta_table.SetVersionNumber(kVersionSecond));
+    EXPECT_TRUE(meta_table.SetCompatibleVersionNumber(kCompatVersionSecond));
   }
 
   // Version info from Set*() calls is seen.

@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 
 #include <memory>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "url/gurl.h"
@@ -51,7 +51,11 @@ class WebApiHandshakeChecker {
   // must live on the IO thread.
   class CheckerOnIO;
 
-  void OnCompleteCheck(bool slow_check, bool proceed, bool showed_interstitial);
+  void OnCompleteCheck(bool slow_check,
+                       bool proceed,
+                       bool showed_interstitial,
+                       bool did_perform_real_time_check,
+                       bool did_check_allowlist);
 
   std::unique_ptr<CheckerOnIO> io_checker_;
   CheckCallback check_callback_;

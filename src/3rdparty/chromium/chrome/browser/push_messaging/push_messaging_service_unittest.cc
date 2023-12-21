@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,13 +7,12 @@
 #include <string>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
@@ -41,6 +40,11 @@
 #if BUILDFLAG(IS_ANDROID)
 #include "components/gcm_driver/instance_id/instance_id_android.h"
 #include "components/gcm_driver/instance_id/scoped_use_fake_instance_id_android.h"
+#include "components/prefs/testing_pref_service.h"
+#include "content/public/browser/permission_controller.h"
+#include "third_party/blink/public/common/permissions/permission_utils.h"
+#include "url/gurl.h"
+#include "url/origin.h"
 #endif  // BUILDFLAG(IS_ANDROID)
 
 namespace {
@@ -100,18 +104,19 @@ constexpr base::TimeDelta kPushEventHandleTime = base::Seconds(10);
 class PushMessagingServiceTest : public ::testing::Test {
  public:
   PushMessagingServiceTest() {
-    // Always allow push notifications in the profile.
-    HostContentSettingsMap* host_content_settings_map =
-        HostContentSettingsMapFactory::GetForProfile(&profile_);
-    host_content_settings_map->SetDefaultContentSetting(
-        ContentSettingsType::NOTIFICATIONS, CONTENT_SETTING_ALLOW);
-
     // Override the GCM Profile service so that we can send fake messages.
     gcm::GCMProfileServiceFactory::GetInstance()->SetTestingFactory(
         &profile_, base::BindRepeating(&BuildFakeGCMProfileService));
   }
 
   ~PushMessagingServiceTest() override = default;
+
+  void SetPermission(const GURL& origin, ContentSetting value) {
+    HostContentSettingsMap* host_content_settings_map =
+        HostContentSettingsMapFactory::GetForProfile(&profile_);
+    host_content_settings_map->SetContentSettingDefaultScope(
+        origin, origin, ContentSettingsType::NOTIFICATIONS, value);
+  }
 
   // Callback to use when the subscription may have been subscribed.
   void DidRegister(std::string* subscription_id_out,
@@ -192,7 +197,8 @@ class PushMessagingServiceTest : public ::testing::Test {
         kTestSenderId + sizeof(kTestSenderId) / sizeof(char) - 1);
 
     push_service->SubscribeFromWorker(
-        origin, kTestServiceWorkerId, std::move(options),
+        origin, kTestServiceWorkerId, /*render_process_id=*/-1,
+        std::move(options),
         base::BindOnce(&PushMessagingServiceTest::DidRegister,
                        base::Unretained(this), &subscription_id, &endpoint,
                        &expiration_time, &p256dh, &auth,
@@ -226,6 +232,7 @@ class PushMessagingServiceTest : public ::testing::Test {
  private:
   content::BrowserTaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
+
   PushMessagingTestingProfile profile_;
 
 #if BUILDFLAG(IS_ANDROID)
@@ -245,6 +252,7 @@ TEST_F(PushMessagingServiceTest, MAYBE_PayloadEncryptionTest) {
   ASSERT_TRUE(push_service);
 
   const GURL origin(kTestOrigin);
+  SetPermission(origin, CONTENT_SETTING_ALLOW);
 
   // (1) Make sure that |kExampleOrigin| has access to use Push Messaging.
   ASSERT_EQ(blink::mojom::PermissionStatus::GRANTED,
@@ -348,10 +356,12 @@ TEST_F(PushMessagingServiceTest, MAYBE_RemoveExpiredSubscriptions) {
       /* disabled features */
       {});
 
+  const GURL origin(kTestOrigin);
+  SetPermission(origin, CONTENT_SETTING_ALLOW);
+
   // (2) Set up push service and test origin
   PushMessagingServiceImpl* push_service = profile()->GetPushMessagingService();
   ASSERT_TRUE(push_service);
-  const GURL origin(kTestOrigin);
 
   // (3) Subscribe origin to push service and find corresponding
   // |app_identifier|
@@ -383,11 +393,14 @@ TEST_F(PushMessagingServiceTest, MAYBE_RemoveExpiredSubscriptions) {
 
 TEST_F(PushMessagingServiceTest, TestMultipleIncomingPushMessages) {
   base::HistogramTester histograms;
+
+  const GURL origin(kTestOrigin);
+  SetPermission(origin, CONTENT_SETTING_ALLOW);
+
   PushMessagingServiceImpl* push_service = profile()->GetPushMessagingService();
   ASSERT_TRUE(push_service);
 
   // Subscribe |origin| to push service.
-  const GURL origin(kTestOrigin);
   Subscribe(push_service, origin);
   PushMessagingAppIdentifier app_identifier =
       PushMessagingAppIdentifier::FindByServiceWorker(profile(), origin,
@@ -476,3 +489,248 @@ TEST_F(PushMessagingServiceTest, TestMultipleIncomingPushMessages) {
                                    kPushEventHandleTime * 2,
                                    /*count=*/1);
 }
+
+#if BUILDFLAG(IS_ANDROID)
+class FCMRevocationTest : public PushMessagingServiceTest {
+ public:
+  FCMRevocationTest() {
+    scoped_feature_list_.InitAndEnableFeature(
+        features::kRevokeNotificationsPermissionIfDisabledOnAppLevel);
+    PushMessagingServiceImpl::RegisterPrefs(prefs_.registry());
+  }
+
+  ~FCMRevocationTest() override = default;
+
+  GURL GetUrl() { return origin_; }
+
+  url::Origin GetOrigin() { return url::Origin::Create(origin_); }
+
+  PrefService* pref() { return &prefs_; }
+
+  void SetPermission(const GURL& origin,
+                     ContentSetting value,
+                     TestingProfile* profile) {
+    HostContentSettingsMap* host_content_settings_map =
+        HostContentSettingsMapFactory::GetForProfile(profile);
+    host_content_settings_map->SetContentSettingDefaultScope(
+        origin, origin, ContentSettingsType::NOTIFICATIONS, value);
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+  GURL origin_ = GURL("https://example.com");
+  TestingPrefServiceSimple prefs_;
+};
+
+TEST_F(FCMRevocationTest, ResetPrefs) {
+  content::PermissionController* permission_controller =
+      profile()->GetPermissionController();
+
+  content::PermissionResult result =
+      permission_controller->GetPermissionResultForOriginWithoutContext(
+          blink::PermissionType::NOTIFICATIONS, GetOrigin());
+  EXPECT_EQ(result.status, blink::mojom::PermissionStatus::ASK);
+
+  SetPermission(GetUrl(), ContentSetting::CONTENT_SETTING_ALLOW, profile());
+
+  result = permission_controller->GetPermissionResultForOriginWithoutContext(
+      blink::PermissionType::NOTIFICATIONS, GetOrigin());
+  EXPECT_EQ(result.status, blink::mojom::PermissionStatus::GRANTED);
+
+  const char kNotificationsPermissionRevocationGracePeriodDate[] =
+      "notifications_permission_revocation_grace_period";
+
+  // Just random value to make sure it is reset.
+  base::Time time = base::Time::FromTimeT(100);
+
+  pref()->SetTime(kNotificationsPermissionRevocationGracePeriodDate, time);
+
+  PushMessagingServiceImpl::RevokePermissionIfPossible(
+      GetUrl(), /*app_level_notifications_enabled=*/true, pref(), profile());
+
+  // Time is reset.
+  base::Time grace_period_date =
+      pref()->GetTime(kNotificationsPermissionRevocationGracePeriodDate);
+  EXPECT_EQ(grace_period_date, base::Time());
+  EXPECT_NE(grace_period_date, time);
+
+  // Permission is not reset.
+  result = permission_controller->GetPermissionResultForOriginWithoutContext(
+      blink::PermissionType::NOTIFICATIONS, GetOrigin());
+  EXPECT_EQ(result.status, blink::mojom::PermissionStatus::GRANTED);
+}
+
+// This test verifies that if the grace period is not started, and there is no
+// app-level Notifications permissions, we init the grace period prefs without
+// revoking permissions.
+TEST_F(FCMRevocationTest, NoAppLevelPermissionInitGracePeriodPrefsTest) {
+  content::PermissionController* permission_controller =
+      profile()->GetPermissionController();
+
+  content::PermissionResult result =
+      permission_controller->GetPermissionResultForOriginWithoutContext(
+          blink::PermissionType::NOTIFICATIONS, GetOrigin());
+  EXPECT_EQ(result.status, blink::mojom::PermissionStatus::ASK);
+
+  SetPermission(GetUrl(), ContentSetting::CONTENT_SETTING_ALLOW, profile());
+
+  result = permission_controller->GetPermissionResultForOriginWithoutContext(
+      blink::PermissionType::NOTIFICATIONS, GetOrigin());
+  EXPECT_EQ(result.status, blink::mojom::PermissionStatus::GRANTED);
+
+  const char kNotificationsPermissionRevocationGracePeriodDate[] =
+      "notifications_permission_revocation_grace_period";
+
+  // The grace period is not initialized.
+  EXPECT_EQ(pref()->GetTime(kNotificationsPermissionRevocationGracePeriodDate),
+            base::Time());
+
+  PushMessagingServiceImpl::RevokePermissionIfPossible(
+      GetUrl(), /*app_level_notifications_enabled=*/false, pref(), profile());
+
+  // The grace period is initialized with non-default time value.
+  EXPECT_NE(pref()->GetTime(kNotificationsPermissionRevocationGracePeriodDate),
+            base::Time());
+
+  // Permission is still granted.
+  result = permission_controller->GetPermissionResultForOriginWithoutContext(
+      blink::PermissionType::NOTIFICATIONS, GetOrigin());
+  EXPECT_EQ(result.status, blink::mojom::PermissionStatus::GRANTED);
+}
+
+// This test verifies that if the grace period is over and there is no app-level
+// Notifications permissions, site-level Notifications permission will be
+// revoked.
+TEST_F(FCMRevocationTest, NoAppLevelPermissionRevocationTest) {
+  content::PermissionController* permission_controller =
+      profile()->GetPermissionController();
+
+  content::PermissionResult result =
+      permission_controller->GetPermissionResultForOriginWithoutContext(
+          blink::PermissionType::NOTIFICATIONS, GetOrigin());
+  EXPECT_EQ(result.status, blink::mojom::PermissionStatus::ASK);
+
+  SetPermission(GetUrl(), ContentSetting::CONTENT_SETTING_ALLOW, profile());
+
+  result = permission_controller->GetPermissionResultForOriginWithoutContext(
+      blink::PermissionType::NOTIFICATIONS, GetOrigin());
+  EXPECT_EQ(result.status, blink::mojom::PermissionStatus::GRANTED);
+
+  const char kNotificationsPermissionRevocationGracePeriodDate[] =
+      "notifications_permission_revocation_grace_period";
+
+  // The grace period is not initialized.
+  EXPECT_EQ(pref()->GetTime(kNotificationsPermissionRevocationGracePeriodDate),
+            base::Time());
+
+  // Init `time` with 4 days old time value.
+  const base::Time time = base::Time::FromDeltaSinceWindowsEpoch(
+      base::Time::Now() -
+      base::Time::FromDeltaSinceWindowsEpoch(base::Days(4)));
+
+  // Init the grace period date with a value that is older than 3 days (the
+  // default grace period).
+  pref()->SetTime(kNotificationsPermissionRevocationGracePeriodDate, time);
+
+  PushMessagingServiceImpl::RevokePermissionIfPossible(
+      GetUrl(), /*app_level_notifications_enabled=*/false, pref(), profile());
+
+  EXPECT_EQ(pref()->GetTime(kNotificationsPermissionRevocationGracePeriodDate),
+            time);
+
+  // Permission is revoked.
+  result = permission_controller->GetPermissionResultForOriginWithoutContext(
+      blink::PermissionType::NOTIFICATIONS, GetOrigin());
+  EXPECT_EQ(result.status, blink::mojom::PermissionStatus::ASK);
+}
+
+// This test verifies that if the grace period is not over and there is no
+// app-level Notifications permissions, site-level Notifications permission will
+// not be revoked.
+TEST_F(FCMRevocationTest, NoAppLevelPermissionIgnoreTest) {
+  content::PermissionController* permission_controller =
+      profile()->GetPermissionController();
+
+  content::PermissionResult result =
+      permission_controller->GetPermissionResultForOriginWithoutContext(
+          blink::PermissionType::NOTIFICATIONS, GetOrigin());
+  EXPECT_EQ(result.status, blink::mojom::PermissionStatus::ASK);
+
+  SetPermission(GetUrl(), ContentSetting::CONTENT_SETTING_ALLOW, profile());
+
+  result = permission_controller->GetPermissionResultForOriginWithoutContext(
+      blink::PermissionType::NOTIFICATIONS, GetOrigin());
+  EXPECT_EQ(result.status, blink::mojom::PermissionStatus::GRANTED);
+
+  const char kNotificationsPermissionRevocationGracePeriodDate[] =
+      "notifications_permission_revocation_grace_period";
+
+  // The grace period is not initialized.
+  EXPECT_EQ(pref()->GetTime(kNotificationsPermissionRevocationGracePeriodDate),
+            base::Time());
+
+  // Init `time` with 2 days old time value.
+  const base::Time time = base::Time::FromDeltaSinceWindowsEpoch(
+      base::Time::Now() -
+      base::Time::FromDeltaSinceWindowsEpoch(base::Days(2)));
+  // Init the grace period date with a value that is fewer than 3 days (the
+  // default grace period).
+  pref()->SetTime(kNotificationsPermissionRevocationGracePeriodDate, time);
+
+  PushMessagingServiceImpl::RevokePermissionIfPossible(
+      GetUrl(), /*app_level_notifications_enabled=*/false, pref(), profile());
+
+  EXPECT_EQ(pref()->GetTime(kNotificationsPermissionRevocationGracePeriodDate),
+            time);
+
+  // Permission is revoked.
+  result = permission_controller->GetPermissionResultForOriginWithoutContext(
+      blink::PermissionType::NOTIFICATIONS, GetOrigin());
+  EXPECT_EQ(result.status, blink::mojom::PermissionStatus::GRANTED);
+}
+
+// This test verifies that if the grace period is not over and there is
+// app-level Notifications permissions, the grace period reset will be tracked.
+TEST_F(FCMRevocationTest, ResetAndRecordGracePeriodTest) {
+  content::PermissionController* permission_controller =
+      profile()->GetPermissionController();
+
+  content::PermissionResult result =
+      permission_controller->GetPermissionResultForOriginWithoutContext(
+          blink::PermissionType::NOTIFICATIONS, GetOrigin());
+  EXPECT_EQ(result.status, blink::mojom::PermissionStatus::ASK);
+
+  SetPermission(GetUrl(), ContentSetting::CONTENT_SETTING_ALLOW, profile());
+
+  result = permission_controller->GetPermissionResultForOriginWithoutContext(
+      blink::PermissionType::NOTIFICATIONS, GetOrigin());
+  EXPECT_EQ(result.status, blink::mojom::PermissionStatus::GRANTED);
+
+  const char kNotificationsPermissionRevocationGracePeriodDate[] =
+      "notifications_permission_revocation_grace_period";
+
+  // The grace period is not initialized.
+  EXPECT_EQ(pref()->GetTime(kNotificationsPermissionRevocationGracePeriodDate),
+            base::Time());
+
+  // Init `time` with 2 days old time value.
+  const base::Time time = base::Time::FromDeltaSinceWindowsEpoch(
+      base::Time::Now() -
+      base::Time::FromDeltaSinceWindowsEpoch(base::Days(2)));
+  // Init the grace period date with a value that is fewer than 3 days (the
+  // default grace period).
+  pref()->SetTime(kNotificationsPermissionRevocationGracePeriodDate, time);
+
+  PushMessagingServiceImpl::RevokePermissionIfPossible(
+      GetUrl(), /*app_level_notifications_enabled=*/true, pref(), profile());
+
+  EXPECT_EQ(pref()->GetTime(kNotificationsPermissionRevocationGracePeriodDate),
+            base::Time());
+
+  // Permission is revoked.
+  result = permission_controller->GetPermissionResultForOriginWithoutContext(
+      blink::PermissionType::NOTIFICATIONS, GetOrigin());
+  EXPECT_EQ(result.status, blink::mojom::PermissionStatus::GRANTED);
+}
+
+#endif

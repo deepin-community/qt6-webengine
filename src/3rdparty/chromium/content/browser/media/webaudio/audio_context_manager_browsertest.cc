@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -83,7 +83,8 @@ class AudioContextManagerTest : public content::ContentBrowserTest {
 };
 
 // Flaky on Linux: https://crbug.com/1047163
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+// Flaky on Mac: https://crbug.com/1399440
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC)
 #define MAYBE_AudioContextPlaybackRecorded DISABLED_AudioContextPlaybackRecorded
 #else
 #define MAYBE_AudioContextPlaybackRecorded AudioContextPlaybackRecorded
@@ -96,7 +97,10 @@ IN_PROC_BROWSER_TEST_F(AudioContextManagerTest,
 }
 
 // Flaky on Linux: https://crbug.com/941219
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+// Flaky on Android: https://crbug.com/1379357
+// Flaky on Mac: https://crbug.com/1399440
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID) || \
+    BUILDFLAG(IS_MAC)
 #define MAYBE_AudioContextPlaybackTimeUkm DISABLED_AudioContextPlaybackTimeUkm
 #else
 #define MAYBE_AudioContextPlaybackTimeUkm AudioContextPlaybackTimeUkm

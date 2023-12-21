@@ -257,6 +257,125 @@ TEST(FastVector, NonCopyable)
     EXPECT_EQ(3, copy[0].x);
 }
 
+// Tests reusing capacity for the new items
+TEST(FastVector, ReuseCapacity)
+{
+    constexpr int kMagicValue = 123454321;
+    struct s
+    {
+        int value;
+
+        // Initialize in the constructor because of MSVC compiler bug:
+        // error C2065: 'kMagicValue': undeclared identifier
+        s() : value(kMagicValue) {}
+    };
+
+    FastVector<s, 3> vec;
+    vec.resize(3);
+    EXPECT_EQ(kMagicValue, vec[0].value);
+    EXPECT_EQ(kMagicValue, vec[1].value);
+    EXPECT_EQ(kMagicValue, vec[2].value);
+
+    vec[2].value = 0;
+    vec.resize(4);
+    EXPECT_EQ(0, vec[2].value);
+    EXPECT_EQ(kMagicValue, vec[3].value);
+
+    vec[3].value = 0;
+    EXPECT_EQ(0, vec[3].value);
+
+    vec.pop_back();
+    vec.resize(2);
+    vec.resize(4);
+    EXPECT_EQ(kMagicValue, vec[2].value);
+    EXPECT_EQ(kMagicValue, vec[3].value);
+}
+
+// Tests destroying old items after resize to a lesser size
+TEST(FastVector, DestroyOldItems)
+{
+    int counter = 0;
+
+    struct s : angle::NonCopyable
+    {
+        int *counter = nullptr;
+
+        ~s() { reset(); }
+        s &operator=(const s &other)
+        {
+            reset();
+            init(other.counter);
+            return *this;
+        }
+        s &operator=(s &&other)
+        {
+            std::swap(counter, other.counter);
+            return *this;
+        }
+        void init(int *c)
+        {
+            counter = c;
+            if (counter != nullptr)
+            {
+                ++(*counter);
+            }
+        }
+        void reset()
+        {
+            if (counter != nullptr)
+            {
+                --(*counter);
+                counter = nullptr;
+            }
+        }
+    };
+
+    FastVector<s, 3> vec;
+
+    vec.resize(3);
+    vec[0].init(&counter);
+    vec[1].init(&counter);
+    vec[2].init(&counter);
+    EXPECT_EQ(3, counter);
+
+    vec.resize(6);
+    vec[3].init(&counter);
+    vec[4].init(&counter);
+    vec[5].init(&counter);
+    EXPECT_EQ(6, counter);
+
+    vec.resize(3);
+    EXPECT_EQ(3, counter);
+
+    vec.pop_back();
+    EXPECT_EQ(2, counter);
+
+    vec.clear();
+    EXPECT_EQ(0, counter);
+
+    vec.resize(3);
+    vec[0].init(&counter);
+    vec[1].init(&counter);
+    vec[2].init(&counter);
+    EXPECT_EQ(3, counter);
+
+    FastVector<s, 3> vec2;
+    vec = vec2;
+    EXPECT_EQ(0, counter);
+
+    vec.resize(3);
+    vec[0].init(&counter);
+    vec[1].init(&counter);
+    vec[2].init(&counter);
+    EXPECT_EQ(3, counter);
+
+    vec = {s()};
+    EXPECT_EQ(0, counter);
+
+    vec[0].init(&counter);
+    EXPECT_EQ(1, counter);
+}
+
 // Basic functionality for FlatUnorderedMap
 TEST(FlatUnorderedMap, BasicUsage)
 {
@@ -317,6 +436,32 @@ TEST(FlatUnorderedSet, BasicUsage)
     {
         EXPECT_TRUE(testMap.contains(i));
     }
+}
+
+// Comparison of FlatUnorderedSet
+TEST(FlatUnorderedSet, Comparison)
+{
+    FlatUnorderedSet<int, 3> testSet0;
+    FlatUnorderedSet<int, 3> testSet1;
+    EXPECT_TRUE(testSet0.empty());
+    EXPECT_TRUE(testSet1.empty());
+
+    testSet0.insert(5);
+    EXPECT_FALSE(testSet0 == testSet1);
+
+    testSet0.insert(10);
+    EXPECT_FALSE(testSet0 == testSet1);
+
+    testSet1.insert(5);
+    EXPECT_FALSE(testSet0 == testSet1);
+
+    testSet1.insert(15);
+    EXPECT_FALSE(testSet0 == testSet1);
+
+    testSet1.clear();
+    testSet1.insert(5);
+    testSet1.insert(10);
+    EXPECT_TRUE(testSet0 == testSet1);
 }
 
 // Basic functionality for FastIntegerSet
@@ -383,5 +528,28 @@ TEST(FastIntegerMap, BasicUsage)
     testMap.clear();
     EXPECT_TRUE(testMap.empty());
     EXPECT_EQ(testMap.size(), 0u);
+}
+
+// Basic usage tests of fast map.
+TEST(FastMap, Basic)
+{
+    FastMap<int, 5> testMap;
+    EXPECT_TRUE(testMap.empty());
+
+    testMap[5] = 5;
+    EXPECT_FALSE(testMap.empty());
+
+    testMap.clear();
+    EXPECT_TRUE(testMap.empty());
+
+    for (int i = 0; i < 10; ++i)
+    {
+        testMap[i] = i;
+    }
+
+    for (int i = 0; i < 10; ++i)
+    {
+        EXPECT_TRUE(testMap[i] == i);
+    }
 }
 }  // namespace angle

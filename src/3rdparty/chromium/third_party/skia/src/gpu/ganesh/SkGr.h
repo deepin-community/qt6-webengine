@@ -8,41 +8,42 @@
 #ifndef SkGr_DEFINED
 #define SkGr_DEFINED
 
-#include "include/core/SkBlender.h"
-#include "include/core/SkCanvas.h"
+#include "include/core/SkBlendMode.h"
 #include "include/core/SkColor.h"
-#include "include/core/SkImageInfo.h"
+#include "include/core/SkColorPriv.h"
+#include "include/core/SkRefCnt.h"
 #include "include/core/SkSamplingOptions.h"
+#include "include/core/SkTileMode.h"
+#include "include/core/SkTypes.h"
+#include "include/gpu/GpuTypes.h"
 #include "include/gpu/GrTypes.h"
 #include "include/private/SkColorData.h"
-#include "src/core/SkBlendModePriv.h"
 #include "src/gpu/Blend.h"
-#include "src/gpu/ganesh/GrCaps.h"
+#include "src/gpu/SkBackingFit.h"
 #include "src/gpu/ganesh/GrColor.h"
 #include "src/gpu/ganesh/GrSamplerState.h"
 
-class GrCaps;
+#include <cstdint>
+#include <memory>
+#include <string_view>
+#include <tuple>
+
 class GrColorInfo;
-class GrColorSpaceXform;
-class GrDirectContext;
 class GrFragmentProcessor;
 class GrPaint;
 class GrRecordingContext;
-class GrResourceProvider;
-class GrTextureProxy;
+class GrSurfaceProxy;
+class GrSurfaceProxyView;
 class SkBitmap;
-class SkData;
+class SkBlender;
 class SkIDChangeListener;
 class SkMatrix;
-class SkMatrixProvider;
 class SkPaint;
-class SkPixelRef;
-class SkPixmap;
+class SkSurfaceProps;
+enum class GrColorType;
 struct SkIRect;
 
-namespace skgpu {
-class UniqueKey;
-}
+namespace skgpu { class UniqueKey; }
 
 ////////////////////////////////////////////////////////////////////////////////
 // Color type conversions
@@ -91,7 +92,8 @@ static constexpr GrSamplerState::WrapMode SkTileModeToWrapMode(SkTileMode tileMo
 bool SkPaintToGrPaint(GrRecordingContext*,
                       const GrColorInfo& dstColorInfo,
                       const SkPaint& skPaint,
-                      const SkMatrixProvider& matrixProvider,
+                      const SkMatrix& ctm,
+                      const SkSurfaceProps& surfaceProps,
                       GrPaint* grPaint);
 
 /** Replaces the SkShader (if any) on skPaint with the passed in GrFragmentProcessor, if not null.
@@ -100,8 +102,9 @@ bool SkPaintToGrPaint(GrRecordingContext*,
 bool SkPaintToGrPaintReplaceShader(GrRecordingContext*,
                                    const GrColorInfo& dstColorInfo,
                                    const SkPaint& skPaint,
-                                   const SkMatrixProvider& matrixProvider,
+                                   const SkMatrix& ctm,
                                    std::unique_ptr<GrFragmentProcessor> shaderFP,
+                                   const SkSurfaceProps& surfaceProps,
                                    GrPaint* grPaint);
 
 /** Blends the SkPaint's shader (or color if no shader) with the color which specified via a
@@ -109,8 +112,9 @@ bool SkPaintToGrPaintReplaceShader(GrRecordingContext*,
 bool SkPaintToGrPaintWithBlend(GrRecordingContext* context,
                                const GrColorInfo& dstColorInfo,
                                const SkPaint& skPaint,
-                               const SkMatrixProvider& matrixProvider,
+                               const SkMatrix& ctm,
                                SkBlender* primColorBlender,
+                               const SkSurfaceProps& surfaceProps,
                                GrPaint* grPaint);
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -149,14 +153,15 @@ enum class GrImageTexGenPolicy : int {
 sk_sp<GrSurfaceProxy> GrCopyBaseMipMapToTextureProxy(GrRecordingContext*,
                                                      sk_sp<GrSurfaceProxy> baseProxy,
                                                      GrSurfaceOrigin origin,
-                                                     SkBudgeted = SkBudgeted::kYes);
+                                                     std::string_view label,
+                                                     skgpu::Budgeted = skgpu::Budgeted::kYes);
 /**
  * Same as GrCopyBaseMipMapToTextureProxy but takes the src as a view and returns a view with same
  * origin and swizzle as the src view.
  */
 GrSurfaceProxyView GrCopyBaseMipMapToView(GrRecordingContext*,
                                           GrSurfaceProxyView,
-                                          SkBudgeted = SkBudgeted::kYes);
+                                          skgpu::Budgeted = skgpu::Budgeted::kYes);
 
 /*
  * Create a texture proxy from the provided bitmap and add it to the texture cache using the key
@@ -169,18 +174,19 @@ GrSurfaceProxyView GrCopyBaseMipMapToView(GrRecordingContext*,
 std::tuple<GrSurfaceProxyView, GrColorType>
 GrMakeCachedBitmapProxyView(GrRecordingContext*,
                             const SkBitmap&,
+                            std::string_view label,
                             GrMipmapped = GrMipmapped::kNo);
 
 /**
  * Like above but always uploads the bitmap and never inserts into the cache. Unlike above, the
  * texture may be approx or scratch and budgeted or not.
  */
-std::tuple<GrSurfaceProxyView, GrColorType>
-GrMakeUncachedBitmapProxyView(GrRecordingContext*,
-                              const SkBitmap&,
-                              GrMipmapped = GrMipmapped::kNo,
-                              SkBackingFit = SkBackingFit::kExact,
-                              SkBudgeted = SkBudgeted::kYes);
+std::tuple<GrSurfaceProxyView, GrColorType> GrMakeUncachedBitmapProxyView(
+        GrRecordingContext*,
+        const SkBitmap&,
+        GrMipmapped = GrMipmapped::kNo,
+        SkBackingFit = SkBackingFit::kExact,
+        skgpu::Budgeted = skgpu::Budgeted::kYes);
 
 /**
  *  Our key includes the offset, width, and height so that bitmaps created by extractSubset()

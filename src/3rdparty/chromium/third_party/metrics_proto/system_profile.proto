@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,7 +17,7 @@ import "extension_install.proto";
 // Almost all the fields should be populated on every upload. (The only
 // exception is some fields in the stability section that are only uploaded
 // once per browsing session, usually shortly after startup.)
-// Next tag: 41
+// Next tag: 43
 message SystemProfileProto {
   // The time when the client was compiled/linked, in seconds since the epoch.
   optional int64 build_timestamp = 1;
@@ -77,10 +77,14 @@ message SystemProfileProto {
   // This field was renamed from |is_asan_build| to reflect its actual meaning.
   optional bool is_instrumented_build = 20 [default = false];
 
-  // The date the user enabled UMA, in seconds since the epoch.
+  // For Chrome, the date the user enabled UMA, in seconds since the epoch.
   // If the user has toggled the UMA enabled state multiple times, this will
   // be the most recent date on which UMA was enabled.
   // For privacy, this is rounded to the nearest hour (M30+).
+  // For WebView, the field stores the date "January 1st, 2014 00:00:00 UTC"
+  // if the user opted into metrics collection before WebView started tracking
+  // this information. Otherwise, the field value should correctly reflect the
+  // first startup for this app after the user opted into metrics collection.
   optional int64 uma_enabled_date = 3;
 
   // The time when the client was installed, in seconds since the epoch.
@@ -153,7 +157,7 @@ message SystemProfileProto {
   repeated fixed32 command_line_key_hash = 38 [packed = true];
 
   // Information on the user's operating system.
-  // Next tag: 9
+  // Next tag: 11
   message OS {
     // The user's operating system. This should be one of:
     // - 'Android'
@@ -178,7 +182,8 @@ message SystemProfileProto {
     // used only on iOS. Chrome for iOS detects whether device contains a
     // DynamicLibraries/ directory. It's a necessary but insufficient indicator
     // of whether the operating system has been jailbroken.
-    optional bool is_jailbroken = 4;
+    // Deprecated 01/2023. This was never set.
+    optional bool DEPRECATED_is_jailbroken = 4 [deprecated = true];
 
     // The build number for the OS version. The same OS version may have a
     // different build number. The meaning of this field is OS-dependent.
@@ -225,15 +230,50 @@ message SystemProfileProto {
       LIGHT_MODE_APP = 4;
     }
     optional DarkModeState dark_mode_state = 8 [default = UNKNOWN];
+
+    // The value returned by the "XDG_SESSION_TYPE" environment variable, as
+    // translated to a base::nix::SessionType, this field is only set on Linux.
+    // Some features are enabled/disabled depending on this value.
+    enum XdgSessionType {
+      UNSET = 0;
+      OTHER_SESSION_TYPE = 1;
+      UNSPECIFIED = 2;
+      TTY = 3;
+      X11 = 4;
+      WAYLAND = 5;
+      MIR = 6;
+    }
+    optional XdgSessionType xdg_session_type = 9;
+
+    // The value returned by the "XDG_CURRENT_DESKTOP" environment variable, as
+    // translated to a base::nix::DesktopEnvironment. Note that all KDE values
+    // from that enum are bucketed together. This field is only set on Linux.
+    // Some bugs reproduce only in particular desktop environments.
+    enum XdgCurrentDesktop {
+      OTHER = 0;
+      CINNAMON = 1;
+      DEEPIN = 2;
+      GNOME = 3;
+      KDE = 4;
+      PANTHEON = 5;
+      UKUI = 6;
+      UNITY = 7;
+      XFCE = 8;
+      LXQT = 9;
+    }
+    optional XdgCurrentDesktop xdg_current_desktop = 10;
   }
   optional OS os = 5;
 
   // Information on the user's hardware.
-  // Next tag: 23
+  // Next tag: 27
   message Hardware {
-    // OS CPU architecture. Taken from uname -m and modified in Chromium logic.
-    // Common options are: x86, x86_64, armv7l, armv8l, aarch64.
-    // Not recorded on iOS.
+    // OS CPU architecture. Common options are: x86, x86_64, arm64, armv7,
+    // armv7l, armv8l and aarch64.
+    // Note: On Windows, this is not the true OS CPU architecture in the case
+    // of running under emulation (e.g. on Windows on ARM, which would report
+    // either x86 or x86_64, depending on the bitness of the exe being run).
+    // Started being correctly recorded on iOS in M90: crrev/c/2723012.
     optional string cpu_architecture = 1;
 
     // Browser process CPU architecture. Will be different from
@@ -275,6 +315,10 @@ message SystemProfileProto {
     // qualification reports, test device tags, etc.
     optional string full_hardware_class = 18;
 
+    // This field is only sent on Chrome OS devices with cellular support.
+    // This represents the variant of cellular modem present on the device.
+    optional string cellular_device_variant = 24;
+
     // The number of physical screens.
     optional int32 screen_count = 5;
 
@@ -299,6 +343,8 @@ message SystemProfileProto {
       FORM_FACTOR_PHONE = 2;
       FORM_FACTOR_TABLET = 3;
       FORM_FACTOR_TV = 4;
+      FORM_FACTOR_MEET_DEVICE = 5;
+      FORM_FACTOR_AUTOMOTIVE = 6;
     }
     optional FormFactor form_factor = 22;
 
@@ -318,6 +364,29 @@ message SystemProfileProto {
       optional bool is_hypervisor = 4;
     }
     optional CPU cpu = 13;
+
+    // Type of BIOS (can change at each boot).
+    enum BiosType {
+      BIOS_TYPE_UNKNOWN = 0;
+      // Legacy BIOS or UEFI with CSM mode.
+      BIOS_TYPE_LEGACY = 1;
+      // BIOS is UEFI and booted into UEFI mode.
+      BIOS_TYPE_UEFI = 2;
+    }
+    // Motherboard information.
+    message Motherboard {
+      // Manufacturer for the motherboard.
+      optional string manufacturer = 1;
+      // Model for the motherboard.
+      optional string model = 2;
+      // Manufacturer for the BIOS.
+      optional string bios_manufacturer = 3;
+      // Version of the BIOS currently installed.
+      optional string bios_version = 4;
+      // What mode of BIOS is booted.
+      optional BiosType bios_type = 5;
+    }
+    optional Motherboard motherboard = 25;
 
     // Information on the GPU
     message Graphics {
@@ -407,6 +476,26 @@ message SystemProfileProto {
     optional Drive app_drive = 16;
     // The drive that the current user data directory was loaded from.
     optional Drive user_data_drive = 17;
+
+    // Type of TPM on the device. This field is only filled in on ChromeOS
+    // devices (both CrOS and LaCrOS platforms). This includes Chromebooks with
+    // TPM1.2 or GSC (cr50 and ti50), flex devices (ChromeOS installed on
+    // devices with other OS) which has TPM type "runtime selection", and lastly
+    // generic TPM2 devices that use TPM2 chips that aren't manufactured by
+    // Google.
+    enum TpmType {
+      TPM_TYPE_UNKNOWN = 0;
+      TPM_TYPE_1 = 1;
+      TPM_TYPE_CR50 = 2;
+      TPM_TYPE_TI50 = 3;
+      TPM_TYPE_RUNTIME_SELECTION = 4;
+      TPM_TYPE_GENERIC_2 = 5;
+    }
+    optional TpmType tpm_type = 23;
+
+    // Firmware version of the TPM on the device. This field is only filled in
+    // on ChromeOS devices (both CrOS and LaCrOS platforms).
+    optional uint64 tpm_firmware_version = 26;
   }
   optional Hardware hardware = 6;
 
@@ -553,19 +642,13 @@ message SystemProfileProto {
     // This field was added for M-35.
     optional int64 uptime_sec = 23;
 
-    // Page loads along with renderer launches, crashes, hangs and failed
-    // launches, since page load count roughly corresponds to usage.
+    // Logged on Android only as of late Q2 2022. Used by only Android WebView.
+    // Other platforms should use Stability.Counts2.
     optional int32 page_load_count = 2;
-    optional int32 renderer_crash_count = 3;
+
+    // Logged on Android only as of Q2 2022. Used by only Android WebView. Other
+    // platforms should use Stability.Counts2.
     optional int32 renderer_launch_count = 26;
-
-    // Number of renderer launches, crashes and failed launches that were for
-    // extensions. These are not counted in the renderer counts above.
-    optional int32 extension_renderer_crash_count = 5;
-
-    // Number of gpu crashes that generate a crash dump. Currently only used by
-    // Android Chrome starting with M71.
-    optional int32 gpu_crash_count = 31;
 
     // Number of times the browser has crashed while logged in as the "other
     // user" (guest) account.
@@ -590,12 +673,9 @@ message SystemProfileProto {
     // early during startup), making this value greater than 1. For subsequent
     // metrics uploads, this value will be 0.
     //
-    // Logged on Android only. Used by only Android WebView.
+    // Logged on Android only as of Q1 2022. Used by only Android WebView. Other
+    // platforms should use Stability.Counts2.
     optional int32 launch_count = 15;
-    // The number of times that it didn't exit cleanly (which we assume to be
-    // mostly crashes). On Android M71+ this does not include times when the Gms
-    // Core version has changed, which is recorded separately below.
-    optional int32 crash_count = 16;
     // Android only. The number of times Chrome didn't exit cleanly and the GMS
     // Core version has changed from the last session. This is in addition to
     // |crash_count| in which we exclude unclean exits that are likely caused by
@@ -954,6 +1034,7 @@ message SystemProfileProto {
     CRL_SET = 10;
     SUBRESOURCE_FILTER = 11;
     SW_REPORTER = 12;
+    // Software Decryption CDM on all platforms of Chrome
     WIDEVINE_CDM = 13;
     EPSON_INKJET_PRINTER_ESCPR = 14;
     CROS_TERMINA = 15;
@@ -971,11 +1052,45 @@ message SystemProfileProto {
     ZXCVBN_DATA = 27;
     AUTOFILL_REGEX_CONSTANTS = 28;
     WEBVIEW_APPS_PACKAGE_NAMES_ALLOWLIST = 29;
+    // Hardware Decryption CDM only for Chrome on Windows.
+    MEDIA_FOUNDATION_WIDEVINE_CDM = 30;
+    CROWD_DENY = 31;
+    APP_PROVISIONING = 32;
+    AUTOFILL_STATES = 33;
+    CLIENT_SIDE_PHISHING = 34;
+    COMMERCE_HEURISTICS = 35;
+    CROW_DOMAIN_LIST = 36;
+    DEMO_MODE_APP = 37;
+    DESKTOP_SCREENSHOT_EDITOR = 38;
+    DESKTOP_SHARING_HUB = 39;
+    FIRST_PARTY_SETS = 40;
+    HYPHENATION = 41;
+    INTERVENTION_POLICY_DATABASE = 42;
+    LACROS_DOGFOOD_BETA = 43;
+    LACROS_DOGFOOD_CANARY = 44;
+    LACROS_DOGFOOD_DEV = 45;
+    LACROS_DOGFOOD_STABLE = 46;
+    MEI_PRELOAD = 47;
+    PKI_METADATA = 48;
+    REAL_TIME_URL_CHECKS_ALLOWLIST = 49;
+    RECOVERY_IMPROVED = 50;
+    SAFETY_TIPS = 51;
+    SCREEN_AI = 52;
+    SMART_DIM = 53;
+    SODA = 54;
+    SODA_DE_DE = 55;
+    SODA_EN_US = 56;
+    SODA_ES_ES = 57;
+    SODA_FR_FR = 58;
+    SODA_IT_IT = 59;
+    SODA_JA_JP = 60;
+    THIRD_PARTY_MODULE_LIST = 61;
+    TRUST_TOKEN_KEY_COMMITMENTS = 62;
   }
 
   // Information about what Chrome components are registered and at which
   // version.
-  // Next Tag: 4
+  // Next Tag: 5
   message ChromeComponent {
     // Which component this information is for.
     optional ComponentId component_id = 1 [default = UNKNOWN];
@@ -990,6 +1105,11 @@ message SystemProfileProto {
     // was installed as the component. It is a stronger version number that can
     // vary across platform, architecture, or branches of an A/B component test.
     optional fixed32 omaha_fingerprint = 3;
+
+    // A hash of the cohort identifier of this component, excluding
+    // non-assignment information. The hash function is Chromium's
+    // PersistentHash.
+    optional fixed32 cohort_hash = 4;
   }
   repeated ChromeComponent chrome_component = 24;
 
@@ -998,9 +1118,37 @@ message SystemProfileProto {
   // installed in multiple profiles, it will be recorded multiple times.
   repeated ExtensionInstallProto extension_install = 25;
 
-  // The Chrome package name on Android, if it's different from
-  // "com.android.chrome".
+  // Android-only.
+  // For Chrome UMA records, this field contains the package name of the
+  // version of Chrome that is running if it's different from
+  // "com.android.chrome".  ("com.android.chrome" is the name of the Chrome
+  // stable channel app package name.)
+  // For WebView UMA records, under some conditions this field contains the
+  // package name of the currently-running app.  See http://shortn/_5HRGU153JL
+  // for details.
   optional string app_package_name = 26;
+
+  // Indicates if the `app_package_name` should be filtered out on the
+  // server-side. The client will use this to signal no further filtering is
+  // required if filtering is enabled on the client-side. If the package name is
+  // a system app and the server-side filtering is enabled, the client will use
+  // this to indicate no filtering is required since system apps are not subject
+  // to filtering. Only recorded on the Android WebView platform.
+  enum AppPackageNameAllowlistFilter {
+    // Indicates the package name filtering was not set.
+    // This will be the case with data coming from old WebView versions.
+    SERVER_SIDE_FILTER_UNSPECIFIED = 0;
+    // Indicates the package name filtering should occur on the server-side
+    SERVER_SIDE_FILTER_REQUIRED = 1;
+    // Indicates the `app_package_name` does not need filtering since filtering
+    // occurred on the client-side.
+    NO_SERVER_SIDE_FILTER_REQUIRED_DUE_TO_CLIENT_FILTERING = 2;
+    // Indicates the `app_package_name` does not need filtering since it is
+    // a system app.
+    NO_SERVER_SIDE_FILTER_REQUIRED_FOR_SYSTEM_APPS = 3;
+  }
+
+  optional AppPackageNameAllowlistFilter app_package_name_allowlist_filter = 42;
 
   // The package which installed Chrome, as reported by
   // PackageManager.getInstallerPackageName().
@@ -1037,4 +1185,25 @@ message SystemProfileProto {
     optional bool is_messages_enabled = 4;
   }
   optional LinkedAndroidPhoneData linked_android_phone_data = 29;
+
+  // Demo mode related dimension information.
+  // Next Tag: 4
+  message DemoModeDimensions {
+    optional string country = 1;
+
+    // Demo devices retailer id and store id, value is set during demo setup.
+    // Next Tag: 3
+    message Retailer {
+      optional string retailer_id = 1;
+      optional string store_id = 2;
+    }
+    optional Retailer retailer = 2;
+
+    enum CustomizationFacet {
+      UNDEFINED = 0;
+      CLOUD_GAMING_DEVICE = 1;
+    }
+    repeated CustomizationFacet customization_facet = 3 [packed = true];
+  }
+  optional DemoModeDimensions demo_mode_dimensions = 41;
 }

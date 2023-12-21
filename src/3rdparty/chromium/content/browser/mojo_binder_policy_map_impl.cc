@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,7 +23,6 @@
 #include "third_party/blink/public/mojom/loader/code_cache.mojom.h"
 #include "third_party/blink/public/mojom/manifest/manifest_observer.mojom.h"
 #include "third_party/blink/public/mojom/media/renderer_audio_output_stream_factory.mojom.h"
-#include "third_party/blink/public/mojom/native_io/native_io.mojom.h"
 #include "third_party/blink/public/mojom/notifications/notification_service.mojom.h"
 #include "third_party/blink/public/mojom/page/display_cutout.mojom.h"
 
@@ -40,13 +39,9 @@ void RegisterNonAssociatedPoliciesForSameOriginPrerendering(
   // audio, showing notification) and are non-deferrable.
   // Please update `PrerenderCancelledInterface` and
   // `GetCancelledInterfaceType()` in
-  // content/browser/prerender/prerender_metrics.h once you add a new kCancel
-  // interface.
+  // content/browser/preloading/prerender/prerender_metrics.h once you add a new
+  // kCancel interface.
 
-  // NotificationService has a sync message and is requested in
-  // Notification constructor, so it should be kCancel.
-  map.SetNonAssociatedPolicy<blink::mojom::NotificationService>(
-      MojoBinderNonAssociatedPolicy::kCancel);
   map.SetNonAssociatedPolicy<device::mojom::GamepadHapticsManager>(
       MojoBinderNonAssociatedPolicy::kCancel);
   map.SetNonAssociatedPolicy<device::mojom::GamepadMonitor>(
@@ -68,8 +63,6 @@ void RegisterNonAssociatedPoliciesForSameOriginPrerendering(
   map.SetNonAssociatedPolicy<blink::mojom::CacheStorage>(
       MojoBinderNonAssociatedPolicy::kGrant);
   map.SetNonAssociatedPolicy<blink::mojom::IDBFactory>(
-      MojoBinderNonAssociatedPolicy::kGrant);
-  map.SetNonAssociatedPolicy<blink::mojom::NativeIOHost>(
       MojoBinderNonAssociatedPolicy::kGrant);
 
   // Grant this interface because some sync web APIs rely on it; deferring it

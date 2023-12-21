@@ -15,8 +15,8 @@ const LINES_TO_SCAN_FOR_INDENTATION_GUESSING = 1000;
 
 const UIStrings = {
   /**
-  *@description Label text for the editor
-  */
+   *@description Label text for the editor
+   */
   codeEditor: 'Code editor',
 };
 const str_ = i18n.i18n.registerUIStrings('ui/components/text_editor/config.ts', UIStrings);
@@ -71,15 +71,81 @@ export const tabMovesFocus = DynamicSetting.bool('textEditorTabMovesFocus', [], 
   shift: (view: CM.EditorView): boolean => view.state.doc.length ? CM.indentLess(view) : false,
 }]));
 
-export const autocompletion: CM.Extension = [
-  CM.autocompletion({
-    icons: false,
-    optionClass: (option: CM.Completion): string => option.type === 'secondary' ? 'cm-secondaryCompletion' : '',
-  }),
-  CM.Prec.highest(CM.keymap.of([{key: 'ArrowRight', run: CM.acceptCompletion}])),
-];
+// When enabled, this suppresses the behavior of showCompletionHint
+// and accepting of completions with Enter until the user selects a
+// completion beyond the initially selected one. Used in the console.
+export const conservativeCompletion = CM.StateField.define<boolean>({
+  create() {
+    return true;
+  },
+  update(value, tr) {
+    if (CM.completionStatus(tr.state) !== 'active') {
+      return true;
+    }
+    if ((CM.selectedCompletionIndex(tr.startState) ?? 0) !== (CM.selectedCompletionIndex(tr.state) ?? 0)) {
+      return false;
+    }
+    return value;
+  },
+});
 
-export const sourcesAutocompletion = DynamicSetting.bool('textEditorAutocompletion', autocompletion);
+function acceptCompletionIfNotConservative(view: CM.EditorView): boolean {
+  return !view.state.field(conservativeCompletion, false) && CM.acceptCompletion(view);
+}
+
+function acceptCompletionIfAtEndOfLine(view: CM.EditorView): boolean {
+  const cursorPosition = view.state.selection.main.head;
+  const line = view.state.doc.lineAt(cursorPosition);
+  const column = cursorPosition - line.from;
+  const isCursorAtEndOfLine = column >= line.length;
+  if (isCursorAtEndOfLine) {
+    return CM.acceptCompletion(view);
+  }
+
+  // We didn't handle this key press
+  // so it will be handled by default behavior.
+  return false;
+}
+
+// This is a wrapper around CodeMirror's own moveCompletionSelection command, which
+// selects the first selection if the state of the selection is conservative, and
+// otherwise behaves as normal.
+function moveCompletionSelectionIfNotConversative(
+    forward: boolean, by: 'option'|'page' = 'option'): ((view: CM.EditorView) => boolean) {
+  return view => {
+    if (view.state.field(conservativeCompletion, false)) {
+      // There's no CodeMirror API to select the first item, so we just go down and up here.
+      return CM.moveCompletionSelection(true, 'option')(view) && CM.moveCompletionSelection(false, 'option')(view);
+    }
+    return CM.moveCompletionSelection(forward, by)(view);
+  };
+}
+
+export const autocompletion = new DynamicSetting<boolean>(
+    'textEditorAutocompletion',
+    (activateOnTyping: boolean): CM.Extension =>
+        [CM.autocompletion({
+          activateOnTyping,
+          icons: false,
+          optionClass: (option: CM.Completion): string => option.type === 'secondary' ? 'cm-secondaryCompletion' : '',
+          tooltipClass: (state: CM.EditorState): string => {
+            return state.field(conservativeCompletion, false) ? 'cm-conservativeCompletion' : '';
+          },
+          defaultKeymap: false,
+        }),
+         CM.Prec.highest(CM.keymap.of([
+           {key: 'End', run: acceptCompletionIfAtEndOfLine},
+           {key: 'ArrowRight', run: acceptCompletionIfAtEndOfLine},
+           {key: 'Ctrl-Space', run: CM.startCompletion},
+           {key: 'Escape', run: CM.closeCompletion},
+           {key: 'ArrowDown', run: moveCompletionSelectionIfNotConversative(true)},
+           {key: 'ArrowUp', run: CM.moveCompletionSelection(false)},
+           {mac: 'Ctrl-n', run: moveCompletionSelectionIfNotConversative(true)},
+           {mac: 'Ctrl-p', run: CM.moveCompletionSelection(false)},
+           {key: 'PageDown', run: CM.moveCompletionSelection(true, 'page')},
+           {key: 'PageUp', run: CM.moveCompletionSelection(false, 'page')},
+           {key: 'Enter', run: acceptCompletionIfNotConservative},
+         ]))]);
 
 export const bracketMatching = DynamicSetting.bool('textEditorBracketMatching', CM.bracketMatching());
 
@@ -88,6 +154,7 @@ export const codeFolding = DynamicSetting.bool('textEditorCodeFolding', [
     markerDOM(open: boolean): HTMLElement {
       const iconName = open ? 'triangle-expanded' : 'triangle-collapsed';
       const icon = new Icon.Icon.Icon();
+      icon.setAttribute('class', open ? 'cm-foldGutterElement' : 'cm-foldGutterElement cm-foldGutterElement-folded');
       icon.data = {
         iconName,
         color: 'var(--color-text-secondary)',
@@ -204,7 +271,6 @@ function detectLineSeparator(text: string): CM.Extension {
 
 const baseKeymap = CM.keymap.of([
   {key: 'Tab', run: CM.acceptCompletion},
-  {key: 'End', run: CM.acceptCompletion},
   {key: 'Ctrl-m', run: CM.cursorMatchingBracket, shift: CM.selectMatchingBracket},
   {key: 'Mod-/', run: CM.toggleComment},
   {key: 'Mod-d', run: CM.selectNextOccurrence},
@@ -236,7 +302,7 @@ function getTooltipSpace(): DOMRect {
   return sideBarElement.getBoundingClientRect();
 }
 
-export function baseConfiguration(text: string): CM.Extension {
+export function baseConfiguration(text: string|CM.Text): CM.Extension {
   return [
     theme(),
     CM.highlightSpecialChars(),
@@ -245,15 +311,14 @@ export function baseConfiguration(text: string): CM.Extension {
     CM.drawSelection(),
     CM.EditorState.allowMultipleSelections.of(true),
     CM.indentOnInput(),
-    CodeHighlighter.CodeHighlighter.highlightStyle,
+    CM.syntaxHighlighting(CodeHighlighter.CodeHighlighter.highlightStyle),
     baseKeymap,
     CM.EditorView.clickAddsSelectionRange.of(mouseEvent => mouseEvent.altKey || mouseEvent.ctrlKey),
     tabMovesFocus.instance(),
     bracketMatching.instance(),
     indentUnit.instance(),
     CM.Prec.lowest(CM.EditorView.contentAttributes.of({'aria-label': i18nString(UIStrings.codeEditor)})),
-    detectLineSeparator(text),
-    autocompletion,
+    text instanceof CM.Text ? [] : detectLineSeparator(text),
     CM.tooltips({
       parent: getTooltipHost() as unknown as HTMLElement,
       tooltipSpace: getTooltipSpace,
@@ -281,7 +346,7 @@ function getTooltipHost(): ShadowRoot {
                                extensions: [
                                  editorTheme,
                                  themeIsDark() ? dummyDarkTheme : [],
-                                 CodeHighlighter.CodeHighlighter.highlightStyle,
+                                 CM.syntaxHighlighting(CodeHighlighter.CodeHighlighter.highlightStyle),
                                  CM.showTooltip.of({
                                    pos: 0,
                                    create() {
@@ -322,7 +387,7 @@ export const showCompletionHint = CM.ViewPlugin.fromClass(class {
 
   update(update: CM.ViewUpdate): void {
     const top = this.currentHint = this.topCompletion(update.state);
-    if (!top) {
+    if (!top || update.state.field(conservativeCompletion, false)) {
       this.decorations = CM.Decoration.none;
     } else {
       this.decorations = CM.Decoration.set(
@@ -348,7 +413,9 @@ export const showCompletionHint = CM.ViewPlugin.fromClass(class {
     if (pos !== lineBefore.to) {
       return null;
     }
-    const partBefore = (label[0] === '\'' ? /'(\\.|[^'\\])*$/ : label[0] === '"' ? /"(\\.|[^"\\])*$/ : /#?[\w$]+$/)
+    const partBefore = (label[0] === '\''    ? /'(\\.|[^'\\])*$/ :
+                            label[0] === '"' ? /"(\\.|[^"\\])*$/ :
+                                               /#?[\w$]+$/)
                            .exec(lineBefore.text);
     if (partBefore && !label.startsWith(partBefore[0])) {
       return null;

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,7 @@ import androidx.annotation.NonNull;
 /**
  * Parameters for {@link NavigationController#navigate}.
  */
-public class NavigateParams {
+class NavigateParams {
     private boolean mShouldReplaceCurrentEntry;
     private boolean mIntentProcessingDisabled;
     private boolean mIntentLaunchesAllowedInBackground;
@@ -114,9 +114,7 @@ public class NavigateParams {
          *                  page wasn't in the back-forward cache. An example to cache for 1 minute:
          *                      Cache-Control: private, max-age=60
          *             -since this isn't fetched by WebLayer it won't have the necessary certificate
-         *                  information to show the security padlock or certificate data. As such an
-         *                  exception is thrown if this is set when a View from UrlBarController is
-         *                  attached to a window.
+         *                  information to show the security padlock or certificate data.
          */
         @NonNull
         public Builder setResponse(@NonNull WebResourceResponse response) {

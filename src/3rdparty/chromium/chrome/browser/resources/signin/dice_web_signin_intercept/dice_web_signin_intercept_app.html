@@ -1,8 +1,7 @@
-<style include="signin-dialog-shared">
+<style include="signin-shared">
   #interceptDialog {
     display: flex;
     flex-direction: column;
-    height: 100%;
   }
 
   #header {
@@ -16,6 +15,9 @@
   #headerV2 {
     --header-width: 290px;
     --header-height: 140px;
+    /* Colors used in svg image file for split header border and box. */
+    --split-header-image-border-color-fill: var(--google-grey-200);
+    --split-header-image-box-color-fill: white;
     left: calc(50% - var(--header-width)/2);
     min-height: var(--header-height);
     position: relative;
@@ -72,11 +74,11 @@
   }
 
   #headerImagePrimary {
-    --color-fill: var(--primary-profile-color);
+    --split-header-image-theme-color-fill: var(--primary-profile-color);
   }
 
   #headerImageIntercepted {
-    --color-fill: var(--intercepted-profile-color);
+    --split-header-image-theme-color-fill: var(--intercepted-profile-color);
   }
 
   .avatar {
@@ -89,6 +91,10 @@
     width: var(--avatar-image-width);
   }
 
+  #headerV2 .avatar {
+    border-color: var(--split-header-image-box-color-fill);
+  }
+
   .work-badge {
     --badge-width: 20px;
     --badge-offset: -4px;
@@ -97,8 +103,8 @@
     border-radius: 50%;
     bottom: var(--badge-offset);
     height: var(--badge-width);
+    inset-inline-end: var(--badge-offset);
     position: absolute;
-    right: var(--badge-offset);
     width: var(--badge-width);
   }
 
@@ -115,12 +121,23 @@
     width: var(--work-icon-size);
   }
 
+  #headerV2 .work-badge {
+    --badge-width: 18px;
+    border: 1px solid var(--google-grey-300);
+    bottom: -3px;
+    inset-inline-end: -9px;
+  }
+
+  #headerV2 .work-badge > iron-icon {
+    --work-icon-size: 12px;
+  }
+
   #body {
     color: var(--cr-secondary-text-color);
-    flex-grow: 1;
     font-size: 13px;
     line-height: 20px;
     margin: 0 16px;
+    padding-bottom: 24px;
   }
 
   #title {
@@ -132,7 +149,32 @@
   }
 
   #contents {
+    margin: 0;
     overflow-wrap: break-word;  /** For very long names and emails */
+  }
+
+  #managedDisclaimer {
+    align-items: center;
+    background: var(--google-grey-50);
+    border-radius: 8px;
+    color: var(--google-grey-700);
+    display: flex;
+    flex-direction: row;
+    font-size: 12px;
+    font-weight: 400;
+    justify-content: flex-start;
+    line-height: 16px;
+    margin: 10px 0 0;
+    padding: 10px 12px;
+  }
+
+  #managedDisclaimerIcon {
+    margin-inline-end: 12px;
+  }
+
+  #managedDisclaimerIcon > iron-icon {
+    height: 16px;
+    width: 16px;
   }
 
   #actionRow {
@@ -163,6 +205,21 @@
     #interceptDialog [slot=footer] {
       background: rgb(50, 54, 57);  /* Custom color from Namrata. */
     }
+
+    #headerV2 {
+      /* Colors used in svg image file for split header border and box. */
+      --split-header-image-border-color-fill: var(--google-grey-700);
+      --split-header-image-box-color-fill: var(--google-grey-800);
+    }
+
+    #headerV2 .work-badge {
+      border: 1px solid var(--google-grey-500);
+    }
+
+    #managedDisclaimer {
+      background: var(--google-grey-800);
+      color: var(--google-grey-100);
+    }
   }
 
   .divider {
@@ -181,9 +238,10 @@
   <template is="dom-if" if="[[interceptionParameters_.useV2Design]]" restamp>
     <div id="headerV2">
       <svg>
-        <use href="images/split_header.svg#primary" id="headerImagePrimary" >
+        <use href="images/split_header.svg#EXPORT_primary"
+            id="headerImagePrimary" >
         </use>
-        <use href="images/split_header.svg#intercepted"
+        <use href="images/split_header.svg#EXPORT_intercepted"
             id="headerImageIntercepted">
         </use>
       </svg>
@@ -222,6 +280,18 @@
   <div id="body">
     <div id="title">[[interceptionParameters_.bodyTitle]]</div>
     <div id="contents">[[interceptionParameters_.bodyText]]</div>
+    <template is="dom-if"
+        if="[[interceptionParameters_.showManagedDisclaimer]]">
+      <div id="managedDisclaimer">
+        <div id="managedDisclaimerIcon">
+          <iron-icon class="icon" icon="cr:domain"></iron-icon>
+        </div>
+        <div id="managedDisclaimerText"
+            inner-h-t-m-l="[[sanitizeInnerHtml_(
+                interceptionParameters_.managedDisclaimerText)]]">
+        </div>
+      </div>
+    </template>
   </div>
 
   <div id="actionRow">

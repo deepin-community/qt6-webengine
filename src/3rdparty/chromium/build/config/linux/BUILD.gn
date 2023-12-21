@@ -1,4 +1,4 @@
-# Copyright (c) 2013 The Chromium Authors. All rights reserved.
+# Copyright 2013 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -41,7 +41,7 @@ config("runtime_library") {
   }
 
   if ((!is_chromeos || default_toolchain != "//build/toolchain/cros:target") &&
-      (!use_custom_libcxx || current_cpu == "mipsel") && !use_qt) {
+      (!use_custom_libcxx || current_cpu == "mipsel") && !is_qtwebengine) {
     libs = [ "atomic" ]
   }
 }
@@ -63,8 +63,8 @@ if (use_glib) {
       "gthread-2.0",
     ]
     defines = [
-      "GLIB_VERSION_MAX_ALLOWED=GLIB_VERSION_2_40",
-      "GLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_40",
+      "GLIB_VERSION_MAX_ALLOWED=GLIB_VERSION_2_56",
+      "GLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_56",
     ]
   }
 }

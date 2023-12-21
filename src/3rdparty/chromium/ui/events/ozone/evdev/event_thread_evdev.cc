@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,17 +7,19 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/logging.h"
+#include "base/memory/raw_ptr.h"
 #include "base/message_loop/message_pump_type.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/events/ozone/evdev/cursor_delegate_evdev.h"
 #include "ui/events/ozone/evdev/device_event_dispatcher_evdev.h"
 #include "ui/events/ozone/evdev/input_device_factory_evdev.h"
 #include "ui/events/ozone/evdev/input_device_factory_evdev_proxy.h"
+#include "ui/events/ozone/evdev/input_device_opener_evdev.h"
 
 namespace ui {
 
@@ -33,17 +35,19 @@ class EvdevThread : public base::Thread {
         dispatcher_(std::move(dispatcher)),
         cursor_(cursor),
         init_callback_(std::move(callback)),
-        init_runner_(base::ThreadTaskRunnerHandle::Get()) {}
+        init_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()) {}
   ~EvdevThread() override { Stop(); }
 
   void Init() override {
     TRACE_EVENT0("evdev", "EvdevThread::Init");
     input_device_factory_ =
-        new InputDeviceFactoryEvdev(std::move(dispatcher_), cursor_);
+        new InputDeviceFactoryEvdev(std::move(dispatcher_), cursor_,
+                                    std::make_unique<InputDeviceOpenerEvdev>());
 
     std::unique_ptr<InputDeviceFactoryEvdevProxy> proxy(
-        new InputDeviceFactoryEvdevProxy(base::ThreadTaskRunnerHandle::Get(),
-                                         input_device_factory_->GetWeakPtr()));
+        new InputDeviceFactoryEvdevProxy(
+            base::SingleThreadTaskRunner::GetCurrentDefault(),
+            input_device_factory_->GetWeakPtr()));
 
     if (cursor_)
       cursor_->InitializeOnEvdev();
@@ -60,12 +64,12 @@ class EvdevThread : public base::Thread {
  private:
   // Initialization bits passed from main thread.
   std::unique_ptr<DeviceEventDispatcherEvdev> dispatcher_;
-  CursorDelegateEvdev* cursor_;
+  raw_ptr<CursorDelegateEvdev> cursor_;
   EventThreadStartCallback init_callback_;
   scoped_refptr<base::SingleThreadTaskRunner> init_runner_;
 
   // Thread-internal state.
-  InputDeviceFactoryEvdev* input_device_factory_ = nullptr;
+  raw_ptr<InputDeviceFactoryEvdev> input_device_factory_ = nullptr;
 };
 
 }  // namespace
@@ -85,7 +89,7 @@ void EventThreadEvdev::Start(
                                           std::move(callback));
   base::Thread::Options thread_options;
   thread_options.message_pump_type = base::MessagePumpType::UI;
-  thread_options.priority = base::ThreadPriority::DISPLAY;
+  thread_options.thread_type = base::ThreadType::kDisplayCritical;
   if (!thread_->StartWithOptions(std::move(thread_options)))
     LOG(FATAL) << "Failed to create input thread";
 }

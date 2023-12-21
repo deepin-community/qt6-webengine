@@ -7,6 +7,7 @@
 #include <QtWebEngineCore/qtwebenginecoreglobal.h>
 #include <QtWebEngineCore/qwebengineclientcertificateselection.h>
 #include <QtWebEngineCore/qwebenginedownloadrequest.h>
+#include <QtWebEngineCore/qwebenginequotarequest.h>
 
 #include <QtCore/qobject.h>
 #include <QtCore/qurl.h>
@@ -35,7 +36,6 @@ class QWebEngineNavigationRequest;
 class QWebEngineNewWindowRequest;
 class QWebEnginePagePrivate;
 class QWebEngineProfile;
-class QWebEngineQuotaRequest;
 class QWebEngineRegisterProtocolHandlerRequest;
 class QWebEngineScriptCollection;
 class QWebEngineSettings;
@@ -49,7 +49,7 @@ class Q_WEBENGINECORE_EXPORT QWebEnginePage : public QObject
     Q_PROPERTY(QUrl requestedUrl READ requestedUrl)
     Q_PROPERTY(qreal zoomFactor READ zoomFactor WRITE setZoomFactor)
     Q_PROPERTY(QString title READ title)
-    Q_PROPERTY(QUrl url READ url WRITE setUrl)
+    Q_PROPERTY(QUrl url READ url WRITE setUrl NOTIFY urlChanged)
     Q_PROPERTY(QUrl iconUrl READ iconUrl NOTIFY iconUrlChanged)
     Q_PROPERTY(QIcon icon READ icon NOTIFY iconChanged)
     Q_PROPERTY(QColor backgroundColor READ backgroundColor WRITE setBackgroundColor)
@@ -121,6 +121,9 @@ public:
 
         InsertOrderedList,
         InsertUnorderedList,
+
+        ChangeTextDirectionLTR,
+        ChangeTextDirectionRTL,
 
         WebActionCount
     };
@@ -282,6 +285,7 @@ public:
     QWebEnginePage *inspectedPage() const;
     void setDevToolsPage(QWebEnginePage *page);
     QWebEnginePage *devToolsPage() const;
+    QString devToolsId() const;
 
     void setUrlRequestInterceptor(QWebEngineUrlRequestInterceptor *interceptor);
 
@@ -309,7 +313,10 @@ Q_SIGNALS:
     void featurePermissionRequested(const QUrl &securityOrigin, QWebEnginePage::Feature feature);
     void featurePermissionRequestCanceled(const QUrl &securityOrigin, QWebEnginePage::Feature feature);
     void fullScreenRequested(QWebEngineFullScreenRequest fullScreenRequest);
+#if QT_DEPRECATED_SINCE(6, 5)
+    QT_DEPRECATED_VERSION_X_6_5("Requesting host quota is no longer supported.")
     void quotaRequested(QWebEngineQuotaRequest quotaRequest);
+#endif
     void registerProtocolHandlerRequested(QWebEngineRegisterProtocolHandlerRequest request);
     void fileSystemAccessRequested(QWebEngineFileSystemAccessRequest request);
     void selectClientCertificate(QWebEngineClientCertificateSelection clientCertSelection);

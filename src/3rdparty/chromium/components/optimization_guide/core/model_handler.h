@@ -1,19 +1,19 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_OPTIMIZATION_GUIDE_CORE_MODEL_HANDLER_H_
 #define COMPONENTS_OPTIMIZATION_GUIDE_CORE_MODEL_HANDLER_H_
 
-#include "base/bind.h"
-#include "base/callback_forward.h"
 #include "base/callback_list.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_forward.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/sequence_checker.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "components/optimization_guide/core/model_executor.h"
 #include "components/optimization_guide/core/model_util.h"
@@ -37,6 +37,8 @@ class ModelHandler : public OptimizationTargetModelObserver {
       OptimizationGuideModelProvider* model_provider,
       scoped_refptr<base::SequencedTaskRunner> model_executor_task_runner,
       std::unique_ptr<ModelExecutor<OutputType, InputTypes...>> model_executor,
+      // Passing nullopt will use a default value.
+      absl::optional<base::TimeDelta> model_inference_timeout,
       proto::OptimizationTarget optimization_target,
       const absl::optional<proto::Any>& model_metadata)
       : model_provider_(model_provider),
@@ -54,11 +56,16 @@ class ModelHandler : public OptimizationTargetModelObserver {
         true);
 
     handler_created_time_ = base::TimeTicks::Now();
+
+    model_executor_->InitializeAndMoveToExecutionThread(
+        model_inference_timeout, optimization_target_,
+        model_executor_task_runner_,
+        base::SequencedTaskRunner::GetCurrentDefault());
+
+    // Run this after the executor is initialized in case the model is already
+    // available.
     model_provider_->AddObserverForOptimizationTargetModel(
         optimization_target_, model_metadata, this);
-    model_executor_->InitializeAndMoveToExecutionThread(
-        optimization_target_, model_executor_task_runner_,
-        base::SequencedTaskRunnerHandle::Get());
   }
   ~ModelHandler() override {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);

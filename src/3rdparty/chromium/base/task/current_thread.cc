@@ -1,17 +1,16 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/task/current_thread.h"
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/message_loop/message_pump_for_io.h"
 #include "base/message_loop/message_pump_for_ui.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/task/sequence_manager/sequence_manager_impl.h"
 #include "base/threading/thread_local.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/base_tracing.h"
 #include "build/build_config.h"
 
@@ -68,6 +67,11 @@ bool CurrentThread::IsIdleForTesting() {
   return current_->IsIdleForTesting();
 }
 
+void CurrentThread::EnableMessagePumpTimeKeeperMetrics(
+    const char* thread_name) {
+  return current_->EnableMessagePumpTimeKeeperMetrics(thread_name);
+}
+
 void CurrentThread::AddTaskObserver(TaskObserver* task_observer) {
   DCHECK(current_->IsBoundToCurrentThread());
   current_->AddTaskObserver(task_observer);
@@ -102,7 +106,7 @@ CurrentThread::ScopedAllowApplicationTasksInNativeNestedLoop::
   TRACE_EVENT_END0("base", "ScopedNestableTaskAllower");
 }
 
-bool CurrentThread::NestableTasksAllowed() const {
+bool CurrentThread::ApplicationTasksAllowedInNativeNestedLoop() const {
   return current_->IsTaskExecutionAllowed();
 }
 
@@ -145,7 +149,7 @@ MessagePumpForUI* CurrentUIThread::GetMessagePumpForUI() const {
   return static_cast<MessagePumpForUI*>(current_->GetMessagePump());
 }
 
-#if defined(USE_OZONE) && !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_WIN)
 bool CurrentUIThread::WatchFileDescriptor(
     int fd,
     bool persistent,

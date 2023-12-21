@@ -1,9 +1,10 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_fragment_items.h"
 
+#include "base/ranges/algorithm.h"
 #include "third_party/blink/renderer/core/layout/layout_block.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_fragment_items_builder.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_cursor.h"
@@ -82,14 +83,6 @@ bool NGFragmentItems::IsSubSpan(const Span& span) const {
 
 void NGFragmentItems::FinalizeAfterLayout(
     const HeapVector<Member<const NGLayoutResult>, 1>& results) {
-#if DCHECK_IS_ON()
-  if (!RuntimeEnabledFeatures::LayoutNGBlockFragmentationEnabled()) {
-    for (const auto& result : results) {
-      CheckNoItemsAreAssociated(
-          To<NGPhysicalBoxFragment>(result->PhysicalFragment()));
-    }
-  }
-#endif
   struct LastItem {
     const NGFragmentItem* item;
     wtf_size_t fragment_id;
@@ -144,10 +137,6 @@ void NGFragmentItems::FinalizeAfterLayout(
       const bool is_first = last_item_result.is_new_entry;
       if (is_first) {
         item.SetFragmentId(0);
-#if DCHECK_IS_ON()
-        if (!RuntimeEnabledFeatures::LayoutNGBlockFragmentationEnabled())
-          DCHECK_EQ(layout_object->FirstInlineFragmentItemIndex(), 0u);
-#endif
         layout_object->SetFirstInlineFragmentItemIndex(item_index);
         continue;
       }
@@ -434,11 +423,10 @@ void NGFragmentItems::DirtyFirstItem(const LayoutBlockFlow& container) {
 // static
 void NGFragmentItems::DirtyLinesFromNeedsLayout(
     const LayoutBlockFlow& container) {
-  DCHECK(std::any_of(container.PhysicalFragments().begin(),
-                     container.PhysicalFragments().end(),
-                     [](const NGPhysicalBoxFragment& fragment) {
-                       return fragment.HasItems();
-                     }));
+  DCHECK(base::ranges::any_of(container.PhysicalFragments(),
+                              [](const NGPhysicalBoxFragment& fragment) {
+                                return fragment.HasItems();
+                              }));
 
   // Mark dirty for the first top-level child that has |NeedsLayout|.
   //
@@ -471,7 +459,7 @@ bool NGFragmentItems::ReplaceBoxFragment(
     const NGFragmentItem* item = cursor.Current().Item();
     if (item->BoxFragment() != &old_fragment)
       continue;
-    item->GetMutableForOOFFragmentation().ReplaceBoxFragment(new_fragment);
+    item->GetMutableForCloning().ReplaceBoxFragment(new_fragment);
     return true;
   }
   return false;

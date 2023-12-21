@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,10 +6,8 @@
 #define CORE_FXCRT_STL_UTIL_H_
 
 #include <memory>
-#include <vector>
 
 #include "third_party/base/numerics/safe_conversions.h"
-#include "third_party/base/numerics/safe_math.h"
 
 namespace fxcrt {
 
@@ -21,6 +19,12 @@ class FakeUniquePtr : public std::unique_ptr<T> {
   using std::unique_ptr<T>::unique_ptr;
   ~FakeUniquePtr() { std::unique_ptr<T>::release(); }
 };
+
+// Type-deducing wrapper for FakeUniquePtr<T>.
+template <class T>
+FakeUniquePtr<T> MakeFakeUniquePtr(T* arg) {
+  return FakeUniquePtr<T>(arg);
+}
 
 // Convenience routine for "int-fected" code, so that the stl collection
 // size_t size() method return values will be checked.
@@ -34,14 +38,6 @@ ResultType CollectionSize(const Collection& collection) {
 template <typename IndexType, typename Collection>
 bool IndexInBounds(const Collection& collection, IndexType index) {
   return index >= 0 && index < CollectionSize<IndexType>(collection);
-}
-
-// Safely allocate a 1-dim vector big enough for |w| by |h| or die.
-template <typename T, typename A = std::allocator<T>>
-std::vector<T, A> Vector2D(size_t w, size_t h) {
-  pdfium::base::CheckedNumeric<size_t> safe_size = w;
-  safe_size *= h;
-  return std::vector<T, A>(safe_size.ValueOrDie());
 }
 
 }  // namespace fxcrt

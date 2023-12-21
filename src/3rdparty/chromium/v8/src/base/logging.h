@@ -5,6 +5,7 @@
 #ifndef V8_BASE_LOGGING_H_
 #define V8_BASE_LOGGING_H_
 
+#include <cstdint>
 #include <cstring>
 #include <sstream>
 #include <string>
@@ -45,12 +46,25 @@ V8_BASE_EXPORT V8_NOINLINE void V8_Dcheck(const char* file, int line,
 #endif  // !defined(OFFICIAL_BUILD)
 #endif  // DEBUG
 
+namespace v8::base {
+// These string constants are pattern-matched by fuzzers.
+constexpr const char* kUnimplementedCodeMessage = "unimplemented code";
+constexpr const char* kUnreachableCodeMessage = "unreachable code";
+}  // namespace v8::base
+
 #if defined(_MSC_VER)
-#define UNIMPLEMENTED() do { FATAL("unimplemented code"); __assume(0); } while(false)
-#define UNREACHABLE() do { FATAL("unreachable code"); __assume(0); } while(false)
+#define UNIMPLEMENTED() [] { FATAL(::v8::base::kUnimplementedCodeMessage); }()
+#define UNREACHABLE() [] { FATAL(::v8::base::kUnreachableCodeMessage); }()
 #else
-#define UNIMPLEMENTED() FATAL("unimplemented code")
-#define UNREACHABLE() FATAL("unreachable code")
+#define UNIMPLEMENTED() FATAL(::v8::base::kUnimplementedCodeMessage)
+#define UNREACHABLE() FATAL(::v8::base::kUnreachableCodeMessage)
+#endif
+// g++ versions <= 8 cannot use UNREACHABLE() in a constexpr function.
+// TODO(miladfarca): Remove once all compilers handle this properly.
+#if defined(__GNUC__) && !defined(__clang__) && (__GNUC__ <= 8)
+#define CONSTEXPR_UNREACHABLE() abort()
+#else
+#define CONSTEXPR_UNREACHABLE() UNREACHABLE()
 #endif
 
 namespace v8 {

@@ -14,7 +14,7 @@
 
 cmake_minimum_required(VERSION 3.10.2)
 
-# When upgrading to CMake 3.11 we can remove DAWN_DUMMY_FILE because source-less add_library
+# When upgrading to CMake 3.11 we can remove DAWN_PLACEHOLDER_FILE because source-less add_library
 # becomes available.
 # When upgrading to CMake 3.12 we should add CONFIGURE_DEPENDS to DawnGenerator to rerun CMake in
 # case any of the generator files changes. We should also remove the CACHE "" FORCE stuff to
@@ -46,7 +46,7 @@ set(DAWN_SRC_DIR "${Dawn_SOURCE_DIR}/src")
 set(DAWN_INCLUDE_DIR "${Dawn_SOURCE_DIR}/include")
 set(DAWN_TEMPLATE_DIR "${DAWN_GENERATOR_DIR}/templates")
 
-set(DAWN_DUMMY_FILE "${DAWN_SRC_DIR}/Dummy.cpp")
+set(DAWN_PLACEHOLDER_FILE "${DAWN_SRC_DIR}/Placeholder.cpp")
 
 ################################################################################
 # Configuration options
@@ -82,6 +82,7 @@ set(ENABLE_METAL OFF)
 set(ENABLE_OPENGLES OFF)
 set(ENABLE_DESKTOP_GL OFF)
 set(ENABLE_VULKAN OFF)
+set(USE_WAYLAND OFF)
 set(USE_X11 OFF)
 set(BUILD_SAMPLES OFF)
 if (WIN32)
@@ -113,8 +114,9 @@ if (DAWN_SUPPORTS_GLFW_FOR_WINDOWING)
     set(BUILD_SAMPLES ON)
 endif()
 
-option_if_not_defined(DAWN_ENABLE_MSAN "Enable memory sanitizer" OFF)
 option_if_not_defined(DAWN_ENABLE_ASAN "Enable address sanitizer" OFF)
+option_if_not_defined(DAWN_ENABLE_TSAN "Enable thread sanitizer" OFF)
+option_if_not_defined(DAWN_ENABLE_MSAN "Enable memory sanitizer" OFF)
 option_if_not_defined(DAWN_ENABLE_UBSAN "Enable undefined behaviour sanitizer" OFF)
 
 option_if_not_defined(DAWN_ENABLE_D3D12 "Enable compilation of the D3D12 backend" ${ENABLE_D3D12})
@@ -123,7 +125,9 @@ option_if_not_defined(DAWN_ENABLE_NULL "Enable compilation of the Null backend" 
 option_if_not_defined(DAWN_ENABLE_DESKTOP_GL "Enable compilation of the OpenGL backend" ${ENABLE_DESKTOP_GL})
 option_if_not_defined(DAWN_ENABLE_OPENGLES "Enable compilation of the OpenGL ES backend" ${ENABLE_OPENGLES})
 option_if_not_defined(DAWN_ENABLE_VULKAN "Enable compilation of the Vulkan backend" ${ENABLE_VULKAN})
+
 option_if_not_defined(DAWN_ALWAYS_ASSERT "Enable assertions on all build types" OFF)
+option_if_not_defined(DAWN_USE_WAYLAND "Enable support for Wayland surface" ${USE_WAYLAND})
 option_if_not_defined(DAWN_USE_X11 "Enable support for X11 surface" ${USE_X11})
 
 option_if_not_defined(DAWN_BUILD_SAMPLES "Enables building Dawn's samples" ${BUILD_SAMPLES})
@@ -132,14 +136,51 @@ option_if_not_defined(DAWN_ENABLE_SWIFTSHADER "Enables building Swiftshader as p
 
 option_if_not_defined(DAWN_ENABLE_PIC "Build with Position-Independent-Code enabled" OFF)
 
-set_if_not_defined(DAWN_THIRD_PARTY_DIR "${Dawn_SOURCE_DIR}/third_party" "Directory in which to find third-party dependencies.")
+option_if_not_defined(DAWN_EMIT_COVERAGE "Emit code coverage information" OFF)
+set_if_not_defined(LLVM_SOURCE_DIR "${Dawn_LLVM_SOURCE_DIR}" "Directory to an LLVM source checkout. Required to build turbo-cov")
+
+if (DAWN_ENABLE_OPENGLES OR DAWN_ENABLE_DESKTOP_GL)
+  set(TINT_DEFAULT_GLSL ON)
+else()
+  set(TINT_DEFAULT_GLSL OFF)
+endif()
+
+option_if_not_defined(TINT_BUILD_SAMPLES "Build samples" ${DAWN_BUILD_SAMPLES})
+option_if_not_defined(TINT_BUILD_DOCS "Build documentation" ON)
+option_if_not_defined(TINT_DOCS_WARN_AS_ERROR "When building documentation, treat warnings as errors" OFF)
+
+option_if_not_defined(TINT_BUILD_SPV_READER "Build the SPIR-V input reader" ${DAWN_ENABLE_VULKAN})
+option_if_not_defined(TINT_BUILD_WGSL_READER "Build the WGSL input reader" ON)
+option_if_not_defined(TINT_BUILD_GLSL_WRITER "Build the GLSL output writer" ${TINT_DEFAULT_GLSL})
+option_if_not_defined(TINT_BUILD_HLSL_WRITER "Build the HLSL output writer" ${DAWN_ENABLE_D3D12})
+option_if_not_defined(TINT_BUILD_MSL_WRITER "Build the MSL output writer" ${DAWN_ENABLE_METAL})
+option_if_not_defined(TINT_BUILD_SPV_WRITER "Build the SPIR-V output writer" ${DAWN_ENABLE_VULKAN})
+option_if_not_defined(TINT_BUILD_WGSL_WRITER "Build the WGSL output writer" ON)
+
+option_if_not_defined(TINT_BUILD_IR "Build the IR" ON)
+
+option_if_not_defined(TINT_BUILD_FUZZERS "Build fuzzers" OFF)
+option_if_not_defined(TINT_BUILD_SPIRV_TOOLS_FUZZER "Build SPIRV-Tools fuzzer" OFF)
+option_if_not_defined(TINT_BUILD_AST_FUZZER "Build AST fuzzer" OFF)
+option_if_not_defined(TINT_BUILD_REGEX_FUZZER "Build regex fuzzer" OFF)
+option_if_not_defined(TINT_BUILD_BENCHMARKS "Build benchmarks" OFF)
+option_if_not_defined(TINT_BUILD_TESTS "Build tests" ON)
+option_if_not_defined(TINT_BUILD_AS_OTHER_OS "Override OS detection to force building of *_other.cc files" OFF)
+option_if_not_defined(TINT_BUILD_REMOTE_COMPILE "Build the remote-compile tool for validating shaders on a remote machine" OFF)
+
+option_if_not_defined(TINT_ENABLE_BREAK_IN_DEBUGGER "Enable tint::debugger::Break()" OFF)
+option_if_not_defined(TINT_CHECK_CHROMIUM_STYLE "Check for [chromium-style] issues during build" OFF)
+option_if_not_defined(TINT_SYMBOL_STORE_DEBUG_NAME "Enable storing of name in tint::ast::Symbol to help debugging the AST" OFF)
+option_if_not_defined(TINT_RANDOMIZE_HASHES "Randomize the hash seed value to detect non-deterministic output" OFF)
 
 # Recommended setting for compability with future abseil releases.
 set(ABSL_PROPAGATE_CXX_STD ON)
 
+set_if_not_defined(DAWN_THIRD_PARTY_DIR "${Dawn_SOURCE_DIR}/third_party" "Directory in which to find third-party dependencies.")
 set_if_not_defined(DAWN_ABSEIL_DIR "${DAWN_THIRD_PARTY_DIR}/abseil-cpp" "Directory in which to find Abseil")
 set_if_not_defined(DAWN_GLFW_DIR "${DAWN_THIRD_PARTY_DIR}/glfw" "Directory in which to find GLFW")
 set_if_not_defined(DAWN_JINJA2_DIR "${DAWN_THIRD_PARTY_DIR}/jinja2" "Directory in which to find Jinja2")
+set_if_not_defined(DAWN_KHRONOS_DIR "${DAWN_THIRD_PARTY_DIR}/khronos" "Directory in which to find Khronos GL headers")
 set_if_not_defined(DAWN_SPIRV_HEADERS_DIR "${DAWN_THIRD_PARTY_DIR}/vulkan-deps/spirv-headers/src" "Directory in which to find SPIRV-Headers")
 set_if_not_defined(DAWN_SPIRV_TOOLS_DIR "${DAWN_THIRD_PARTY_DIR}/vulkan-deps/spirv-tools/src" "Directory in which to find SPIRV-Tools")
 set_if_not_defined(DAWN_SWIFTSHADER_DIR "${DAWN_THIRD_PARTY_DIR}/swiftshader" "Directory in which to find swiftshader")
@@ -162,160 +203,6 @@ endif()
 if(DAWN_ENABLE_PIC)
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 endif()
-
-################################################################################
-# common_compile_options - sets compiler and linker options common for dawn and
-# tint on the given target
-################################################################################
-function(common_compile_options TARGET)
-  if (COMPILER_IS_LIKE_GNU)
-    target_compile_options(${TARGET} PRIVATE
-      -fno-exceptions
-      -fno-rtti
-    )
-
-    if (${DAWN_ENABLE_MSAN})
-      target_compile_options(${TARGET} PRIVATE -fsanitize=memory)
-      target_link_options(${TARGET} PRIVATE -fsanitize=memory)
-    elseif (${DAWN_ENABLE_ASAN})
-      target_compile_options(${TARGET} PRIVATE -fsanitize=address)
-      target_link_options(${TARGET} PRIVATE -fsanitize=address)
-    elseif (${DAWN_ENABLE_UBSAN})
-      target_compile_options(${TARGET} PRIVATE -fsanitize=undefined)
-      target_link_options(${TARGET} PRIVATE -fsanitize=undefined)
-    endif()
-  endif(COMPILER_IS_LIKE_GNU)
-endfunction()
-
-################################################################################
-# Dawn's public and internal "configs"
-################################################################################
-
-# The public config contains only the include paths for the Dawn headers.
-add_library(dawn_public_config INTERFACE)
-target_include_directories(dawn_public_config INTERFACE
-    "${DAWN_INCLUDE_DIR}"
-    "${DAWN_BUILD_GEN_DIR}/include"
-)
-
-# The internal config conatins additional path but includes the dawn_public_config include paths
-add_library(dawn_internal_config INTERFACE)
-target_include_directories(dawn_internal_config INTERFACE
-    "${DAWN_SRC_DIR}"
-    "${DAWN_BUILD_GEN_DIR}/src"
-)
-target_link_libraries(dawn_internal_config INTERFACE dawn_public_config)
-
-# Compile definitions for the internal config
-if (DAWN_ALWAYS_ASSERT OR $<CONFIG:Debug>)
-    target_compile_definitions(dawn_internal_config INTERFACE "DAWN_ENABLE_ASSERTS")
-endif()
-if (DAWN_ENABLE_D3D12)
-    target_compile_definitions(dawn_internal_config INTERFACE "DAWN_ENABLE_BACKEND_D3D12")
-endif()
-if (DAWN_ENABLE_METAL)
-    target_compile_definitions(dawn_internal_config INTERFACE "DAWN_ENABLE_BACKEND_METAL")
-endif()
-if (DAWN_ENABLE_NULL)
-    target_compile_definitions(dawn_internal_config INTERFACE "DAWN_ENABLE_BACKEND_NULL")
-endif()
-if (DAWN_ENABLE_DESKTOP_GL)
-    target_compile_definitions(dawn_internal_config INTERFACE "DAWN_ENABLE_BACKEND_DESKTOP_GL")
-endif()
-if (DAWN_ENABLE_OPENGLES)
-    target_compile_definitions(dawn_internal_config INTERFACE "DAWN_ENABLE_BACKEND_OPENGLES")
-endif()
-if (DAWN_ENABLE_OPENGL)
-    target_compile_definitions(dawn_internal_config INTERFACE "DAWN_ENABLE_BACKEND_OPENGL")
-endif()
-if (DAWN_ENABLE_VULKAN)
-    target_compile_definitions(dawn_internal_config INTERFACE "DAWN_ENABLE_BACKEND_VULKAN")
-endif()
-if (DAWN_USE_X11)
-    target_compile_definitions(dawn_internal_config INTERFACE "DAWN_USE_X11")
-endif()
-if (WIN32)
-    target_compile_definitions(dawn_internal_config INTERFACE "NOMINMAX" "WIN32_LEAN_AND_MEAN")
-endif()
-
-set(CMAKE_CXX_STANDARD "17")
-
-################################################################################
-# Tint
-################################################################################
-
-# TINT_IS_SUBPROJECT is 1 if added via add_subdirectory() from another project.
-get_directory_property(TINT_IS_SUBPROJECT PARENT_DIRECTORY)
-if(TINT_IS_SUBPROJECT)
-  set(TINT_IS_SUBPROJECT 1)
-
-  # If tint is used as a subproject, default to disabling the building of
-  # documentation and tests. These are unlikely to be desirable, but can be
-  # enabled.
-  set(TINT_BUILD_DOCS_DEFAULT OFF)
-  set(TINT_BUILD_TESTS_DEFAULT OFF)
-else()
-  set(TINT_BUILD_DOCS_DEFAULT ON)
-  set(TINT_BUILD_TESTS_DEFAULT ON)
-endif()
-
-option_if_not_defined(TINT_BUILD_SAMPLES "Build samples" ON)
-option_if_not_defined(TINT_BUILD_DOCS "Build documentation" ${TINT_BUILD_DOCS_DEFAULT})
-option_if_not_defined(TINT_DOCS_WARN_AS_ERROR "When building documentation, treat warnings as errors" OFF)
-option_if_not_defined(TINT_BUILD_SPV_READER "Build the SPIR-V input reader" ON)
-option_if_not_defined(TINT_BUILD_WGSL_READER "Build the WGSL input reader" ON)
-option_if_not_defined(TINT_BUILD_GLSL_WRITER "Build the GLSL output writer" ON)
-option_if_not_defined(TINT_BUILD_HLSL_WRITER "Build the HLSL output writer" ON)
-option_if_not_defined(TINT_BUILD_MSL_WRITER "Build the MSL output writer" ON)
-option_if_not_defined(TINT_BUILD_SPV_WRITER "Build the SPIR-V output writer" ON)
-option_if_not_defined(TINT_BUILD_WGSL_WRITER "Build the WGSL output writer" ON)
-option_if_not_defined(TINT_BUILD_FUZZERS "Build fuzzers" OFF)
-option_if_not_defined(TINT_BUILD_SPIRV_TOOLS_FUZZER "Build SPIRV-Tools fuzzer" OFF)
-option_if_not_defined(TINT_BUILD_AST_FUZZER "Build AST fuzzer" OFF)
-option_if_not_defined(TINT_BUILD_REGEX_FUZZER "Build regex fuzzer" OFF)
-option_if_not_defined(TINT_BUILD_BENCHMARKS "Build benchmarks" OFF)
-option_if_not_defined(TINT_BUILD_TESTS "Build tests" ${TINT_BUILD_TESTS_DEFAULT})
-option_if_not_defined(TINT_BUILD_AS_OTHER_OS "Override OS detection to force building of *_other.cc files" OFF)
-option_if_not_defined(TINT_BUILD_REMOTE_COMPILE "Build the remote-compile tool for validating shaders on a remote machine" OFF)
-
-set(TINT_LIB_FUZZING_ENGINE_LINK_OPTIONS "" CACHE STRING "Used by OSS-Fuzz to control, via link options, which fuzzing engine should be used")
-
-option_if_not_defined(TINT_ENABLE_BREAK_IN_DEBUGGER "Enable tint::debugger::Break()" OFF)
-
-option_if_not_defined(TINT_EMIT_COVERAGE "Emit code coverage information" OFF)
-
-option_if_not_defined(TINT_CHECK_CHROMIUM_STYLE "Check for [chromium-style] issues during build" OFF)
-
-option_if_not_defined(TINT_SYMBOL_STORE_DEBUG_NAME "Enable storing of name in tint::ast::Symbol to help debugging the AST" OFF)
-
-message(STATUS "Tint build samples: ${TINT_BUILD_SAMPLES}")
-message(STATUS "Tint build docs: ${TINT_BUILD_DOCS}")
-message(STATUS "Tint build docs with warn as error: ${TINT_DOCS_WARN_AS_ERROR}")
-message(STATUS "Tint build SPIR-V reader: ${TINT_BUILD_SPV_READER}")
-message(STATUS "Tint build WGSL reader: ${TINT_BUILD_WGSL_READER}")
-message(STATUS "Tint build GLSL writer: ${TINT_BUILD_GLSL_WRITER}")
-message(STATUS "Tint build HLSL writer: ${TINT_BUILD_HLSL_WRITER}")
-message(STATUS "Tint build MSL writer: ${TINT_BUILD_MSL_WRITER}")
-message(STATUS "Tint build SPIR-V writer: ${TINT_BUILD_SPV_WRITER}")
-message(STATUS "Tint build WGSL writer: ${TINT_BUILD_WGSL_WRITER}")
-message(STATUS "Tint build fuzzers: ${TINT_BUILD_FUZZERS}")
-message(STATUS "Tint build SPIRV-Tools fuzzer: ${TINT_BUILD_SPIRV_TOOLS_FUZZER}")
-message(STATUS "Tint build AST fuzzer: ${TINT_BUILD_AST_FUZZER}")
-message(STATUS "Tint build regex fuzzer: ${TINT_BUILD_REGEX_FUZZER}")
-message(STATUS "Tint build benchmarks: ${TINT_BUILD_BENCHMARKS}")
-message(STATUS "Tint build tests: ${TINT_BUILD_TESTS}")
-message(STATUS "Tint build with ASAN: ${DAWN_ENABLE_ASAN}")
-message(STATUS "Tint build with MSAN: ${DAWN_ENABLE_MSAN}")
-message(STATUS "Tint build with UBSAN: ${DAWN_ENABLE_UBSAN}")
-message(STATUS "Tint build checking [chromium-style]: ${TINT_CHECK_CHROMIUM_STYLE}")
-message(STATUS "Tint build remote-compile tool: ${TINT_BUILD_REMOTE_COMPILE}")
-
-if (NOT ${TINT_LIB_FUZZING_ENGINE_LINK_OPTIONS} STREQUAL "")
-  message(STATUS "Using provided LIB_FUZZING_ENGINE options: ${TINT_LIB_FUZZING_ENGINE_LINK_OPTIONS}")
-endif()
-
-message(STATUS "Using python3")
-find_package(PythonInterp 3 REQUIRED)
 
 if (${TINT_BUILD_SPIRV_TOOLS_FUZZER})
   message(STATUS "TINT_BUILD_SPIRV_TOOLS_FUZZER is ON - setting
@@ -373,6 +260,175 @@ if (${TINT_BUILD_REGEX_FUZZER})
       set(TINT_BUILD_HLSL_WRITER ON CACHE BOOL "Build HLSL writer" FORCE)
 endif()
 
+message(STATUS "Dawn build D3D12 backend: ${DAWN_ENABLE_D3D12}")
+message(STATUS "Dawn build Metal backend: ${DAWN_ENABLE_METAL}")
+message(STATUS "Dawn build Vulkan backend: ${DAWN_ENABLE_VULKAN}")
+message(STATUS "Dawn build OpenGL backend: ${DAWN_ENABLE_DESKTOP_GL}")
+message(STATUS "Dawn build OpenGL ES backend: ${DAWN_ENABLE_OPENGLES}")
+message(STATUS "Dawn build Null backend: ${DAWN_ENABLE_NULL}")
+
+message(STATUS "Dawn build with asserts in all configurations: ${DAWN_ALWAYS_ASSERT}")
+message(STATUS "Dawn build Wayland support: ${DAWN_USE_WAYLAND}")
+message(STATUS "Dawn build X11 support: ${DAWN_USE_X11}")
+
+message(STATUS "Dawn build samples: ${DAWN_BUILD_SAMPLES}")
+message(STATUS "Dawn build Node bindings: ${DAWN_BUILD_NODE_BINDINGS}")
+message(STATUS "Dawn build Swiftshader: ${DAWN_ENABLE_SWIFTSHADER}")
+
+message(STATUS "Dawn build PIC: ${DAWN_ENABLE_PIC}")
+
+message(STATUS "Dawn build with ASAN: ${DAWN_ENABLE_ASAN}")
+message(STATUS "Dawn build with TSAN: ${DAWN_ENABLE_TSAN}")
+message(STATUS "Dawn build with MSAN: ${DAWN_ENABLE_MSAN}")
+message(STATUS "Dawn build with UBSAN: ${DAWN_ENABLE_UBSAN}")
+
+message(STATUS "Tint build samples: ${TINT_BUILD_SAMPLES}")
+message(STATUS "Tint build docs: ${TINT_BUILD_DOCS}")
+message(STATUS "Tint build docs with warn as error: ${TINT_DOCS_WARN_AS_ERROR}")
+message(STATUS "Tint build SPIR-V reader: ${TINT_BUILD_SPV_READER}")
+message(STATUS "Tint build WGSL reader: ${TINT_BUILD_WGSL_READER}")
+message(STATUS "Tint build GLSL writer: ${TINT_BUILD_GLSL_WRITER}")
+message(STATUS "Tint build HLSL writer: ${TINT_BUILD_HLSL_WRITER}")
+message(STATUS "Tint build MSL writer: ${TINT_BUILD_MSL_WRITER}")
+message(STATUS "Tint build SPIR-V writer: ${TINT_BUILD_SPV_WRITER}")
+message(STATUS "Tint build WGSL writer: ${TINT_BUILD_WGSL_WRITER}")
+message(STATUS "Tint build IR: ${TINT_BUILD_IR}")
+message(STATUS "Tint build fuzzers: ${TINT_BUILD_FUZZERS}")
+message(STATUS "Tint build SPIRV-Tools fuzzer: ${TINT_BUILD_SPIRV_TOOLS_FUZZER}")
+message(STATUS "Tint build AST fuzzer: ${TINT_BUILD_AST_FUZZER}")
+message(STATUS "Tint build regex fuzzer: ${TINT_BUILD_REGEX_FUZZER}")
+message(STATUS "Tint build benchmarks: ${TINT_BUILD_BENCHMARKS}")
+message(STATUS "Tint build tests: ${TINT_BUILD_TESTS}")
+message(STATUS "Tint build checking [chromium-style]: ${TINT_CHECK_CHROMIUM_STYLE}")
+message(STATUS "Tint build remote-compile tool: ${TINT_BUILD_REMOTE_COMPILE}")
+
+if (NOT ${TINT_LIB_FUZZING_ENGINE_LINK_OPTIONS} STREQUAL "")
+  message(STATUS "Using provided LIB_FUZZING_ENGINE options: ${TINT_LIB_FUZZING_ENGINE_LINK_OPTIONS}")
+endif()
+
+message(STATUS "Using python3")
+find_package(PythonInterp 3 REQUIRED)
+
+################################################################################
+# common_compile_options - sets compiler and linker options common for dawn and
+# tint on the given target
+################################################################################
+function(common_compile_options TARGET)
+  if (COMPILER_IS_LIKE_GNU)
+    target_compile_options(${TARGET} PRIVATE
+      -fno-exceptions
+      -fno-rtti
+
+      -Wno-deprecated-builtins
+      -Wno-unknown-warning-option
+    )
+
+    if (${DAWN_ENABLE_MSAN})
+      target_compile_options(${TARGET} PUBLIC -fsanitize=memory)
+      target_link_options(${TARGET} PUBLIC -fsanitize=memory)
+    elseif (${DAWN_ENABLE_ASAN})
+      target_compile_options(${TARGET} PUBLIC -fsanitize=address)
+      target_link_options(${TARGET} PUBLIC -fsanitize=address)
+    elseif (${DAWN_ENABLE_TSAN})
+      target_compile_options(${TARGET} PUBLIC -fsanitize=thread)
+      target_link_options(${TARGET} PUBLIC -fsanitize=thread)
+    elseif (${DAWN_ENABLE_UBSAN})
+      target_compile_options(${TARGET} PUBLIC -fsanitize=undefined)
+      target_link_options(${TARGET} PUBLIC -fsanitize=undefined)
+    endif()
+  endif(COMPILER_IS_LIKE_GNU)
+
+  if(MSVC)
+      target_compile_options(${TARGET} PUBLIC /utf-8)
+  endif()
+
+  if (DAWN_EMIT_COVERAGE)
+    target_compile_definitions(${TARGET} PRIVATE "DAWN_EMIT_COVERAGE")
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+        target_compile_options(${TARGET} PRIVATE "--coverage")
+        target_link_options(${TARGET} PRIVATE "gcov")
+    elseif(COMPILER_IS_CLANG OR COMPILER_IS_CLANG_CL)
+        target_compile_options(${TARGET} PRIVATE "-fprofile-instr-generate" "-fcoverage-mapping")
+        target_link_options(${TARGET} PRIVATE "-fprofile-instr-generate" "-fcoverage-mapping")
+    else()
+        message(FATAL_ERROR "Coverage generation not supported for the ${CMAKE_CXX_COMPILER_ID} toolchain")
+    endif()
+  endif(DAWN_EMIT_COVERAGE)
+endfunction()
+
+if (${DAWN_ENABLE_TSAN})
+  add_compile_options(-stdlib=libc++)
+  add_link_options(-stdlib=libc++)
+endif()
+
+################################################################################
+# Dawn's public and internal "configs"
+################################################################################
+
+set(IS_DEBUG_BUILD 0)
+string(TOUPPER "${CMAKE_BUILD_TYPE}" build_type)
+if ((NOT ${build_type} STREQUAL "RELEASE") AND (NOT ${build_type} STREQUAL "RELWITHDEBINFO"))
+  set(IS_DEBUG_BUILD 1)
+endif()
+
+# The public config contains only the include paths for the Dawn headers.
+add_library(dawn_public_config INTERFACE)
+target_include_directories(dawn_public_config INTERFACE
+    "${DAWN_INCLUDE_DIR}"
+    "${DAWN_BUILD_GEN_DIR}/include"
+)
+
+# The internal config conatins additional path but includes the dawn_public_config include paths
+add_library(dawn_internal_config INTERFACE)
+target_include_directories(dawn_internal_config INTERFACE
+    "${DAWN_SRC_DIR}"
+    "${DAWN_BUILD_GEN_DIR}/src"
+)
+target_link_libraries(dawn_internal_config INTERFACE dawn_public_config)
+
+# Compile definitions for the internal config
+if (DAWN_ALWAYS_ASSERT OR IS_DEBUG_BUILD)
+    target_compile_definitions(dawn_internal_config INTERFACE "DAWN_ENABLE_ASSERTS")
+endif()
+if (DAWN_ENABLE_D3D12)
+    target_compile_definitions(dawn_internal_config INTERFACE "DAWN_ENABLE_BACKEND_D3D12")
+endif()
+if (DAWN_ENABLE_METAL)
+    target_compile_definitions(dawn_internal_config INTERFACE "DAWN_ENABLE_BACKEND_METAL")
+endif()
+if (DAWN_ENABLE_NULL)
+    target_compile_definitions(dawn_internal_config INTERFACE "DAWN_ENABLE_BACKEND_NULL")
+endif()
+if (DAWN_ENABLE_DESKTOP_GL)
+    target_compile_definitions(dawn_internal_config INTERFACE "DAWN_ENABLE_BACKEND_DESKTOP_GL")
+endif()
+if (DAWN_ENABLE_OPENGLES)
+    target_compile_definitions(dawn_internal_config INTERFACE "DAWN_ENABLE_BACKEND_OPENGLES")
+endif()
+if (DAWN_ENABLE_OPENGL)
+    target_compile_definitions(dawn_internal_config INTERFACE "DAWN_ENABLE_BACKEND_OPENGL")
+endif()
+if (DAWN_ENABLE_VULKAN)
+    target_compile_definitions(dawn_internal_config INTERFACE "DAWN_ENABLE_BACKEND_VULKAN")
+endif()
+if (DAWN_USE_WAYLAND)
+    target_compile_definitions(dawn_internal_config INTERFACE "DAWN_USE_WAYLAND")
+endif()
+if (DAWN_USE_X11)
+    target_compile_definitions(dawn_internal_config INTERFACE "DAWN_USE_X11")
+endif()
+if (WIN32)
+    target_compile_definitions(dawn_internal_config INTERFACE "NOMINMAX" "WIN32_LEAN_AND_MEAN")
+endif()
+
+set(CMAKE_CXX_STANDARD "17")
+
+################################################################################
+# Tint
+################################################################################
+
+set(TINT_LIB_FUZZING_ENGINE_LINK_OPTIONS "" CACHE STRING "Used by OSS-Fuzz to control, via link options, which fuzzing engine should be used")
+
 set(TINT_ROOT_SOURCE_DIR ${PROJECT_SOURCE_DIR})
 
 # CMake < 3.15 sets /W3 in CMAKE_CXX_FLAGS. Remove it if it's there.
@@ -395,10 +451,13 @@ if((CMAKE_CXX_COMPILER_ID STREQUAL "Clang") AND (CMAKE_CXX_SIMULATE_ID STREQUAL 
   set(COMPILER_IS_CLANG_CL TRUE)
 endif()
 
-if((CMAKE_CXX_COMPILER_ID STREQUAL "GNU") OR
-    (CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang") OR
+if((CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang") OR
     ((CMAKE_CXX_COMPILER_ID STREQUAL "Clang") AND
      (NOT COMPILER_IS_CLANG_CL)))
+  set(COMPILER_IS_CLANG TRUE)
+endif()
+
+if((CMAKE_CXX_COMPILER_ID STREQUAL "GNU") OR COMPILER_IS_CLANG)
   set(COMPILER_IS_LIKE_GNU TRUE)
 endif()
 
@@ -462,20 +521,9 @@ function(tint_core_compile_options TARGET)
   target_compile_definitions(${TARGET} PUBLIC -DTINT_BUILD_MSL_WRITER=$<BOOL:${TINT_BUILD_MSL_WRITER}>)
   target_compile_definitions(${TARGET} PUBLIC -DTINT_BUILD_SPV_WRITER=$<BOOL:${TINT_BUILD_SPV_WRITER}>)
   target_compile_definitions(${TARGET} PUBLIC -DTINT_BUILD_WGSL_WRITER=$<BOOL:${TINT_BUILD_WGSL_WRITER}>)
+  target_compile_definitions(${TARGET} PUBLIC -DTINT_BUILD_IR=$<BOOL:${TINT_BUILD_IR}>)
 
   common_compile_options(${TARGET})
-
-  if (TINT_EMIT_COVERAGE)
-    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-        target_compile_options(${TARGET} PRIVATE "--coverage")
-        target_link_options(${TARGET} PRIVATE "gcov")
-    elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-        target_compile_options(${TARGET} PRIVATE "-fprofile-instr-generate" "-fcoverage-mapping")
-        target_link_options(${TARGET} PRIVATE "-fprofile-instr-generate" "-fcoverage-mapping")
-    else()
-        message(FATAL_ERROR "Coverage generation not supported for the ${CMAKE_CXX_COMPILER_ID} toolchain")
-    endif()
-  endif(TINT_EMIT_COVERAGE)
 endfunction()
 
 function(tint_default_compile_options TARGET)
@@ -495,9 +543,11 @@ function(tint_default_compile_options TARGET)
     -Wno-c++98-compat
     -Wno-c++98-compat-pedantic
     -Wno-format-pedantic
+    -Wno-poison-system-directories
     -Wno-return-std-move-in-c++11
     -Wno-unknown-warning-option
     -Wno-undefined-var-template
+    -Wno-unsafe-buffer-usage
     -Wno-used-but-marked-unused
     -Weverything
   )
@@ -508,8 +558,7 @@ function(tint_default_compile_options TARGET)
       ${COMMON_GNU_OPTIONS}
     )
 
-    if (("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang") OR
-        ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "AppleClang"))
+    if (COMPILER_IS_CLANG)
       target_compile_options(${TARGET} PRIVATE
         ${COMMON_CLANG_OPTIONS}
       )
@@ -557,6 +606,15 @@ function(tint_default_compile_options TARGET)
       )
     endif()
   endif()
+
+  if (TINT_RANDOMIZE_HASHES)
+    if(NOT DEFINED TINT_HASH_SEED)
+        string(RANDOM LENGTH 16 ALPHABET "0123456789abcdef" seed)
+        set(TINT_HASH_SEED "0x${seed}" CACHE STRING "Tint hash seed value")
+        message("Using TINT_HASH_SEED: ${TINT_HASH_SEED}")
+    endif()
+    target_compile_definitions(${TARGET} PUBLIC "-DTINT_HASH_SEED=${TINT_HASH_SEED}")
+  endif()
 endfunction()
 
 ################################################################################
@@ -564,7 +622,14 @@ endfunction()
 ################################################################################
 
 add_subdirectory(third_party)
+
+# TODO(crbug.com/tint/455): Tint does not currently build with CMake when
+# BUILD_SHARED_LIBS=1, so always build it as static for now.
+set(BUILD_SHARED_LIBS_SAVED ${BUILD_SHARED_LIBS})
+set(BUILD_SHARED_LIBS 0)
 add_subdirectory(src/tint)
+set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED})
+
 add_subdirectory(generator)
 add_subdirectory(src/dawn)
 
@@ -592,9 +657,11 @@ add_custom_target(tint-format
   COMMENT "Running formatter"
   VERBATIM)
 
+if (DAWN_EMIT_COVERAGE)
+  add_subdirectory(tools/src/cmd/turbo-cov)
 
-if (TINT_EMIT_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  # Generates a lcov.info file at the project root.
+  # The tint-generate-coverage target generates a lcov.info file at the project
+  # root, holding the code coverage for all the tint_unitests.
   # This can be used by tools such as VSCode's Coverage Gutters extension to
   # visualize code coverage in the editor.
   get_filename_component(CLANG_BIN_DIR ${CMAKE_C_COMPILER} DIRECTORY)

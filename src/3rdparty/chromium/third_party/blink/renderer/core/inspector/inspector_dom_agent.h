@@ -31,14 +31,14 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_INSPECTOR_INSPECTOR_DOM_AGENT_H_
 
 #include <memory>
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/scoped_refptr.h"
-#include "third_party/blink/renderer/bindings/core/v8/source_location.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/events/event_listener_map.h"
 #include "third_party/blink/renderer/core/inspector/inspector_base_agent.h"
 #include "third_party/blink/renderer/core/inspector/protocol/dom.h"
 #include "third_party/blink/renderer/core/style/computed_style_constants.h"
+#include "third_party/blink/renderer/platform/bindings/source_location.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
@@ -257,9 +257,13 @@ class CORE_EXPORT InspectorDOMAgent final
   protocol::Response getFileInfo(const String& object_id,
                                  String* path) override;
 
+  // Find the closest size query container ascendant for a node given an
+  // optional container-name.
   protocol::Response getContainerForNode(
       int node_id,
       protocol::Maybe<String> container_name,
+      protocol::Maybe<protocol::DOM::PhysicalAxes> physical_axes,
+      protocol::Maybe<protocol::DOM::LogicalAxes> logical_axes,
       protocol::Maybe<int>* container_node_id) override;
   protocol::Response getQueryingDescendantsForContainer(
       int node_id,
@@ -293,6 +297,7 @@ class CORE_EXPORT InspectorDOMAgent final
   void FrameDocumentUpdated(LocalFrame*);
   void FrameOwnerContentUpdated(LocalFrame*, HTMLFrameOwnerElement*);
   void PseudoElementCreated(PseudoElement*);
+  void TopLayerElementsChanged();
   void PseudoElementDestroyed(PseudoElement*);
   void NodeCreated(Node* node);
   void PortalRemoteFrameCreated(HTMLPortalElement*);
@@ -336,6 +341,8 @@ class CORE_EXPORT InspectorDOMAgent final
                                 Node*&);
   protocol::Response AssertElement(int node_id, Element*&);
   Document* GetDocument() const { return document_.Get(); }
+  protocol::Response getTopLayerElements(
+      std::unique_ptr<protocol::Array<int>>* node_ids) override;
 
  private:
   void SetDocument(Document*);
@@ -383,6 +390,7 @@ class CORE_EXPORT InspectorDOMAgent final
       protocol::Array<protocol::DOM::Node>* flatten_result);
   std::unique_ptr<protocol::Array<protocol::DOM::Node>>
   BuildArrayForPseudoElements(Element*, NodeToIdMap* nodes_map);
+  std::unique_ptr<protocol::DOM::BackendNode> BuildBackendNode(Node* node);
   std::unique_ptr<protocol::Array<protocol::DOM::BackendNode>>
   BuildDistributedNodesForSlot(HTMLSlotElement*);
 

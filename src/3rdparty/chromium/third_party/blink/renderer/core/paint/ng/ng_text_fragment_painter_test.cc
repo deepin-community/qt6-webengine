@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,12 +16,11 @@ using testing::ElementsAre;
 
 namespace blink {
 
-class NGTextFragmentPainterTest : public PaintControllerPaintTest,
-                                  private ScopedLayoutNGForTest {
+class NGTextFragmentPainterTest : public PaintControllerPaintTest {
  public:
-  NGTextFragmentPainterTest(LocalFrameClient* local_frame_client = nullptr)
-      : PaintControllerPaintTest(local_frame_client),
-        ScopedLayoutNGForTest(true) {}
+  explicit NGTextFragmentPainterTest(
+      LocalFrameClient* local_frame_client = nullptr)
+      : PaintControllerPaintTest(local_frame_client) {}
 };
 
 INSTANTIATE_PAINT_TEST_SUITE_P(NGTextFragmentPainterTest);

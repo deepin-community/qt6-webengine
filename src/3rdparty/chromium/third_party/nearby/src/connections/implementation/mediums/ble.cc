@@ -21,11 +21,10 @@
 #include "absl/strings/escaping.h"
 #include "connections/implementation/mediums/ble_v2/ble_advertisement.h"
 #include "connections/implementation/mediums/utils.h"
-#include "internal/platform/prng.h"
 #include "internal/platform/logging.h"
 #include "internal/platform/mutex_lock.h"
+#include "internal/platform/prng.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 
@@ -46,7 +45,9 @@ bool Ble::IsAvailable() const {
   return IsAvailableLocked();
 }
 
-bool Ble::IsAvailableLocked() const { return medium_.IsValid(); }
+bool Ble::IsAvailableLocked() const {
+  return medium_.IsValid() && adapter_.IsValid() && adapter_.IsEnabled();
+}
 
 bool Ble::StartAdvertising(const std::string& service_id,
                            const ByteArray& advertisement_bytes,
@@ -221,7 +222,7 @@ bool Ble::StopScanning(const std::string& service_id) {
   MutexLock lock(&mutex_);
 
   if (!IsScanningLocked(service_id)) {
-    NEARBY_LOGS(INFO) << "Can't turn off BLE sacanning because we never "
+    NEARBY_LOGS(INFO) << "Can't turn off BLE scanning because we never "
                          "started scanning.";
     return false;
   }
@@ -272,7 +273,7 @@ bool Ble::StartAcceptingConnections(const std::string& service_id,
     return false;
   }
 
-  if (!medium_.StartAcceptingConnections(service_id, callback)) {
+  if (!medium_.StartAcceptingConnections(service_id, std::move(callback))) {
     NEARBY_LOGS(INFO) << "Failed to accept connections callback for "
                       << service_id << " .";
     return false;
@@ -358,4 +359,3 @@ ByteArray Ble::UnwrapAdvertisementBytes(
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location

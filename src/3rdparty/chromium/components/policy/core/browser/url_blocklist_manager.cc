@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,17 +11,15 @@
 #include <set>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/check.h"
 #include "base/files/file_path.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/task/task_runner_util.h"
 #include "base/task/thread_pool.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/policy/core/browser/url_blocklist_policy_handler.h"
@@ -77,18 +75,18 @@ constexpr char kIosNtpHost[] = "newtab";
 #endif
 
 // Returns a blocklist based on the given |block| and |allow| pattern lists.
-std::unique_ptr<URLBlocklist> BuildBlocklist(const base::Value* block,
-                                             const base::Value* allow) {
+std::unique_ptr<URLBlocklist> BuildBlocklist(const base::Value::List* block,
+                                             const base::Value::List* allow) {
   auto blocklist = std::make_unique<URLBlocklist>();
   if (block)
-    blocklist->Block(&base::Value::AsListValue(*block));
+    blocklist->Block(*block);
   if (allow)
-    blocklist->Allow(&base::Value::AsListValue(*allow));
+    blocklist->Allow(*allow);
   return blocklist;
 }
 
-const base::Value* GetPrefValue(PrefService* pref_service,
-                                absl::optional<std::string> pref_path) {
+const base::Value::List* GetPrefList(PrefService* pref_service,
+                                     absl::optional<std::string> pref_path) {
   DCHECK(pref_service);
 
   if (!pref_path)
@@ -97,7 +95,7 @@ const base::Value* GetPrefValue(PrefService* pref_service,
   DCHECK(!pref_path->empty());
 
   return pref_service->HasPrefPath(*pref_path)
-             ? pref_service->GetList(*pref_path)
+             ? &pref_service->GetList(*pref_path)
              : nullptr;
 }
 
@@ -131,12 +129,12 @@ URLBlocklist::URLBlocklist() : url_matcher_(new URLMatcher) {}
 
 URLBlocklist::~URLBlocklist() = default;
 
-void URLBlocklist::Block(const base::ListValue* filters) {
+void URLBlocklist::Block(const base::Value::List& filters) {
   url_matcher::util::AddFilters(url_matcher_.get(), false, &id_, filters,
                                 &filters_);
 }
 
-void URLBlocklist::Allow(const base::ListValue* filters) {
+void URLBlocklist::Allow(const base::Value::List& filters) {
   url_matcher::util::AddFilters(url_matcher_.get(), true, &id_, filters,
                                 &filters_);
 }
@@ -148,7 +146,7 @@ bool URLBlocklist::IsURLBlocked(const GURL& url) const {
 
 URLBlocklist::URLBlocklistState URLBlocklist::GetURLBlocklistState(
     const GURL& url) const {
-  std::set<URLMatcherConditionSet::ID> matching_ids =
+  std::set<base::MatcherStringPattern::ID> matching_ids =
       url_matcher_->MatchURL(url);
 
   const FilterComponents* max = nullptr;
@@ -223,7 +221,7 @@ URLBlocklistManager::URLBlocklistManager(
 
   // This class assumes that it is created on the same thread that
   // |pref_service_| lives on.
-  ui_task_runner_ = base::SequencedTaskRunnerHandle::Get();
+  ui_task_runner_ = base::SequencedTaskRunner::GetCurrentDefault();
   background_task_runner_ = base::ThreadPool::CreateSequencedTaskRunner(
       {base::TaskPriority::BEST_EFFORT});
 
@@ -237,8 +235,10 @@ URLBlocklistManager::URLBlocklistManager(
 
   // Start enforcing the policies without a delay when they are present at
   // startup.
-  const base::Value* block = GetPrefValue(pref_service_, blocklist_pref_path_);
-  const base::Value* allow = GetPrefValue(pref_service_, allowlist_pref_path_);
+  const base::Value::List* block =
+      GetPrefList(pref_service_, blocklist_pref_path_);
+  const base::Value::List* allow =
+      GetPrefList(pref_service_, allowlist_pref_path_);
   if (block || allow)
     SetBlocklist(BuildBlocklist(block, allow));
 }
@@ -264,16 +264,20 @@ void URLBlocklistManager::Update() {
 
   // The URLBlocklist is built in the background. Once it's ready, it is passed
   // to the URLBlocklistManager back on ui_task_runner_.
-  const base::Value* block = GetPrefValue(pref_service_, blocklist_pref_path_);
-  const base::Value* allow = GetPrefValue(pref_service_, allowlist_pref_path_);
-  base::PostTaskAndReplyWithResult(
-      background_task_runner_.get(), FROM_HERE,
+  const base::Value::List* block =
+      GetPrefList(pref_service_, blocklist_pref_path_);
+  const base::Value::List* allow =
+      GetPrefList(pref_service_, allowlist_pref_path_);
+  background_task_runner_->PostTaskAndReplyWithResult(
+      FROM_HERE,
       base::BindOnce(
           &BuildBlocklist,
-          base::Owned(block ? base::Value::ToUniquePtrValue(block->Clone())
-                            : nullptr),
-          base::Owned(allow ? base::Value::ToUniquePtrValue(allow->Clone())
-                            : nullptr)),
+          base::Owned(block
+                          ? std::make_unique<base::Value::List>(block->Clone())
+                          : nullptr),
+          base::Owned(allow
+                          ? std::make_unique<base::Value::List>(allow->Clone())
+                          : nullptr)),
       base::BindOnce(&URLBlocklistManager::SetBlocklist,
                      ui_weak_ptr_factory_.GetWeakPtr()));
 }

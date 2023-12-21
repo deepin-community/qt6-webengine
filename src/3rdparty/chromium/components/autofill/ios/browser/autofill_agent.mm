@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -21,14 +21,16 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/time/time.h"
 #include "base/values.h"
 #include "components/autofill/core/browser/autofill_field.h"
 #include "components/autofill/core/browser/browser_autofill_manager.h"
 #include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/data_model/credit_card.h"
-#include "components/autofill/core/browser/keyboard_accessory_metrics_logger.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics.h"
 #include "components/autofill/core/browser/ui/popup_item_ids.h"
+#include "components/autofill/core/browser/ui/popup_types.h"
+#include "components/autofill/core/browser/ui/suggestion.h"
 #include "components/autofill/core/common/autofill_constants.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_prefs.h"
@@ -39,7 +41,6 @@
 #include "components/autofill/core/common/form_data_predictions.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/autofill/ios/browser/autofill_driver_ios.h"
-#include "components/autofill/ios/browser/autofill_driver_ios_webframe.h"
 #import "components/autofill/ios/browser/autofill_java_script_feature.h"
 #include "components/autofill/ios/browser/autofill_util.h"
 #import "components/autofill/ios/browser/form_suggestion.h"
@@ -68,15 +69,15 @@
 #error "This file requires ARC support."
 #endif
 
-using base::NumberToString;
-using base::SysNSStringToUTF8;
-using base::SysNSStringToUTF16;
-using base::SysUTF16ToNSString;
-using autofill::FormGlobalId;
-using autofill::FormRendererId;
 using autofill::FieldDataManager;
 using autofill::FieldRendererId;
+using autofill::FormGlobalId;
+using autofill::FormRendererId;
 using autofill::FieldPropertiesFlags::kAutofilledOnUserTrigger;
+using base::NumberToString;
+using base::SysNSStringToUTF16;
+using base::SysNSStringToUTF8;
+using base::SysUTF16ToNSString;
 
 namespace {
 
@@ -90,9 +91,9 @@ typedef void (^FetchFormsCompletionHandler)(BOOL, const FormDataVector&);
 // modifies the field's value for the select elements.
 void GetFormField(autofill::FormFieldData* field,
                   const autofill::FormData& form,
-                  const std::u16string& fieldIdentifier) {
+                  FieldRendererId fieldIdentifier) {
   for (const auto& currentField : form.fields) {
-    if (currentField.unique_id == fieldIdentifier &&
+    if (currentField.unique_renderer_id == fieldIdentifier &&
         currentField.is_focusable) {
       *field = currentField;
       break;
@@ -109,6 +110,11 @@ void GetFormField(autofill::FormFieldData* field,
     field->value = std::u16string();
   }
 }
+
+// Delay for setting an utterance to be queued, it is required to ensure that
+// standard announcements have already been started and thus would not interrupt
+// the enqueued utterance.
+constexpr base::TimeDelta kA11yAnnouncementQueueDelay = base::Seconds(1);
 
 }  // namespace
 
@@ -151,9 +157,9 @@ void GetFormField(autofill::FormFieldData* field,
   base::WeakPtr<autofill::AutofillPopupDelegate> _popupDelegate;
 
   // The autofill data that needs to be send when the |webState_| is shown.
-  // The pair contains the frame ID and the base::Value to send.
-  // If the value is nullptr, no data needs to be sent.
-  std::pair<std::string, std::unique_ptr<base::Value>> _pendingFormData;
+  // The pair contains the frame ID and the base::Value::Dict to send.
+  // If the value is nullopt, no data needs to be sent.
+  absl::optional<std::pair<std::string, base::Value::Dict>> _pendingFormData;
 
   // Bridge to listen to pref changes.
   std::unique_ptr<PrefObserverBridge> _prefObserverBridge;
@@ -164,20 +170,10 @@ void GetFormField(autofill::FormFieldData* field,
   std::unique_ptr<autofill::FormActivityObserverBridge>
       _formActivityObserverBridge;
 
-  // AutofillDriverIOSWebFrame will keep a refcountable AutofillDriverIOS.
-  // This is a workaround crbug.com/892612. On submission,
-  // AutofillDownloadManager and CreditCardSaveManager expect
-  // BrowserAutofillManager and AutofillDriver to live after web frame deletion
-  // so AutofillAgent will keep the latest submitted AutofillDriver alive.
-  // TODO(crbug.com/892612): remove this workaround once life cycle of
-  // BrowserAutofillManager is fixed.
-  scoped_refptr<autofill::AutofillDriverIOSRefCountable>
-      _last_submitted_autofill_driver;
-
   scoped_refptr<FieldDataManager> _fieldDataManager;
 
   // ID of the last Autofill query made. Used to discard outdated suggestions.
-  int _lastQueryID;
+  autofill::FieldGlobalId _lastQueriedFieldID;
 }
 
 @end
@@ -207,7 +203,6 @@ void GetFormField(autofill::FormFieldData* field,
     UniqueIDDataTabHelper* uniqueIDDataTabHelper =
         UniqueIDDataTabHelper::FromWebState(_webState);
     _fieldDataManager = uniqueIDDataTabHelper->GetFieldDataManager();
-    _lastQueryID = 0;
   }
   return self;
 }
@@ -257,7 +252,6 @@ void GetFormField(autofill::FormFieldData* field,
   autofill::FormData form = forms[0];
   autofillManager->OnFormSubmitted(
       form, false, autofill::mojom::SubmissionSource::FORM_SUBMISSION);
-  autofill::KeyboardAccessoryMetricsLogger::OnFormSubmitted();
 }
 
 // Invokes the form extraction script in |frame| and loads the output into the
@@ -308,7 +302,7 @@ void GetFormField(autofill::FormFieldData* field,
 // Sends a request to BrowserAutofillManager to retrieve suggestions for the
 // specified form and field.
 - (void)queryAutofillForForm:(const autofill::FormData&)form
-             fieldIdentifier:(NSString*)fieldIdentifier
+             fieldIdentifier:(FieldRendererId)fieldIdentifier
                         type:(NSString*)type
                   typedValue:(NSString*)typedValue
                      frameID:(NSString*)frameID
@@ -323,7 +317,7 @@ void GetFormField(autofill::FormFieldData* field,
 
   // Find the right field.
   autofill::FormFieldData field;
-  GetFormField(&field, form, SysNSStringToUTF16(fieldIdentifier));
+  GetFormField(&field, form, fieldIdentifier);
 
   // Save the completion and go look for suggestions.
   _suggestionsAvailableCompletion = [completion copy];
@@ -331,14 +325,14 @@ void GetFormField(autofill::FormFieldData* field,
 
   // Query the BrowserAutofillManager for suggestions. Results will arrive in
   // -showAutofillPopup:popupDelegate:.
-  autofillManager->OnAskForValuesToFill(++_lastQueryID, form, field,
-                                        gfx::RectF(),
-                                        /*autoselect_first_suggestion=*/false);
+  _lastQueriedFieldID = field.global_id();
+  autofillManager->OnAskForValuesToFill(
+      form, field, gfx::RectF(), autofill::AutoselectFirstSuggestion(false),
+      autofill::FormElementWasClicked(false));
 }
 
 - (void)checkIfSuggestionsAvailableForForm:
             (FormSuggestionProviderQuery*)formQuery
-                               isMainFrame:(BOOL)isMainFrame
                             hasUserGesture:(BOOL)hasUserGesture
                                   webState:(web::WebState*)webState
                          completionHandler:
@@ -369,7 +363,7 @@ void GetFormField(autofill::FormFieldData* field,
   id completionHandler = ^(BOOL success, const FormDataVector& forms) {
     if (success && forms.size() == 1) {
       [weakSelf queryAutofillForForm:forms[0]
-                     fieldIdentifier:formQuery.fieldIdentifier
+                     fieldIdentifier:formQuery.uniqueFieldID
                                 type:formQuery.type
                           typedValue:formQuery.typedValue
                              frameID:formQuery.frameID
@@ -418,13 +412,44 @@ void GetFormField(autofill::FormFieldData* field,
   DCHECK(completion);
   _suggestionHandledCompletion = [completion copy];
 
+  if (suggestion.acceptanceA11yAnnouncement != nil) {
+    __weak AutofillAgent* weakSelf = self;
+    // The announcement is done asyncronously with certain delay to make sure
+    // it is not interrupted by (almost) immediate standard announcements.
+    dispatch_after(
+        dispatch_time(DISPATCH_TIME_NOW,
+                      kA11yAnnouncementQueueDelay.InNanoseconds()),
+        dispatch_get_main_queue(), ^{
+          AutofillAgent* strongSelf = weakSelf;
+          if (!strongSelf)
+            return;
+
+          // Queueing flag allows to preserve standard announcements, they
+          // are conveyed first and then announce this message.
+          // This is a tradeoff as there is no control over the standard
+          // utterances (they are interrupting) and it is not desirable
+          // to interrupt them. Hence acceptance announcement is done after
+          // standard ones (which takes seconds).
+          NSAttributedString* message = [[NSAttributedString alloc]
+              initWithString:suggestion.acceptanceA11yAnnouncement
+                  attributes:@{
+                    UIAccessibilitySpeechAttributeQueueAnnouncement : @YES
+                  }];
+          UIAccessibilityPostNotification(
+              UIAccessibilityAnnouncementNotification, message);
+        });
+  }
+
   if (suggestion.identifier > 0) {
     _pendingAutocompleteFieldID = uniqueFieldID;
     if (_popupDelegate) {
       // TODO(966411): Replace 0 with the index of the selected suggestion.
-      _popupDelegate->DidAcceptSuggestion(SysNSStringToUTF16(suggestion.value),
-                                          suggestion.identifier, std::string(),
-                                          0);
+      autofill::Suggestion autofill_suggestion;
+      autofill_suggestion.main_text.value =
+          SysNSStringToUTF16(suggestion.value);
+      autofill_suggestion.frontend_id = suggestion.identifier;
+      autofill_suggestion.payload = autofill::Suggestion::BackendId();
+      _popupDelegate->DidAcceptSuggestion(autofill_suggestion, 0);
     }
     return;
   }
@@ -481,30 +506,34 @@ void GetFormField(autofill::FormFieldData* field,
   return SuggestionProviderTypeAutofill;
 }
 
+- (autofill::PopupType)suggestionType {
+  return _popupDelegate ? _popupDelegate->GetPopupType()
+                        : autofill::PopupType::kUnspecified;
+}
+
 #pragma mark - AutofillDriverIOSBridge
 
 - (void)fillFormData:(const autofill::FormData&)form
              inFrame:(web::WebFrame*)frame {
-  auto autofillData =
-      std::make_unique<base::Value>(base::Value::Type::DICTIONARY);
-  autofillData->SetKey("formName", base::Value(base::UTF16ToUTF8(form.name)));
-  autofillData->SetKey(
+  base::Value::Dict autofillData;
+  autofillData.Set("formName", base::Value(base::UTF16ToUTF8(form.name)));
+  autofillData.Set(
       "formRendererID",
       base::Value(static_cast<int>(form.unique_renderer_id.value())));
 
-  base::Value fieldsData(base::Value::Type::DICTIONARY);
+  base::Value::Dict fieldsData;
   for (const auto& field : form.fields) {
     // Skip empty fields and those that are not autofilled.
     if (field.value.empty() || !field.is_autofilled)
       continue;
 
-    base::Value fieldData(base::Value::Type::DICTIONARY);
-    fieldData.SetKey("value", base::Value(field.value));
-    fieldData.SetKey("section", base::Value(field.section));
-    fieldsData.SetKey(NumberToString(field.unique_renderer_id.value()),
-                      std::move(fieldData));
+    base::Value::Dict fieldData;
+    fieldData.Set("value", field.value);
+    fieldData.Set("section", field.section.ToString());
+    fieldsData.Set(NumberToString(field.unique_renderer_id.value()),
+                   std::move(fieldData));
   }
-  autofillData->SetKey("fields", std::move(fieldsData));
+  autofillData.Set("fields", std::move(fieldsData));
 
   // Store the form data when WebState is not visible, to send it as soon as it
   // becomes visible again, e.g., when the CVC unmask prompt is showing.
@@ -531,21 +560,20 @@ void GetFormField(autofill::FormFieldData* field,
             (const std::vector<autofill::FormDataPredictions>&)forms
                         inFrame:(web::WebFrame*)frame {
   if (!base::FeatureList::IsEnabled(
-          autofill::features::kAutofillShowTypePredictions)) {
+          autofill::features::test::kAutofillShowTypePredictions)) {
     return;
   }
 
-  auto predictionData =
-      std::make_unique<base::Value>(base::Value::Type::DICTIONARY);
+  base::Value::Dict predictionData;
   for (const auto& form : forms) {
-    base::Value fieldData(base::Value::Type::DICTIONARY);
+    base::Value::Dict fieldData;
     DCHECK(form.fields.size() == form.data.fields.size());
     for (size_t i = 0; i < form.fields.size(); i++) {
-      fieldData.SetKey(base::UTF16ToUTF8(form.data.fields[i].unique_id),
-                       base::Value(form.fields[i].overall_type));
+      fieldData.Set(
+          NumberToString(form.data.fields[i].unique_renderer_id.value()),
+          base::Value(form.fields[i].overall_type));
     }
-    predictionData->SetKey(base::UTF16ToUTF8(form.data.name),
-                           std::move(fieldData));
+    predictionData.Set(base::UTF16ToUTF8(form.data.name), std::move(fieldData));
   }
   autofill::AutofillJavaScriptFeature::GetInstance()->FillPredictionData(
       frame, std::move(predictionData));
@@ -581,27 +609,42 @@ void GetFormField(autofill::FormFieldData* field,
       // Value will contain the text to be filled in the selected element while
       // displayDescription will contain a summary of the data to be filled in
       // the other elements.
-      value = SysUTF16ToNSString(popup_suggestion.value);
-      displayDescription = SysUTF16ToNSString(popup_suggestion.label);
+      value = SysUTF16ToNSString(popup_suggestion.main_text.value);
+      if (!popup_suggestion.labels.empty()) {
+        DCHECK_EQ(popup_suggestion.labels.size(), 1U);
+        DCHECK_EQ(popup_suggestion.labels[0].size(), 1U);
+        displayDescription =
+            SysUTF16ToNSString(popup_suggestion.labels[0][0].value);
+      }
     } else if (popup_suggestion.frontend_id ==
                autofill::POPUP_ITEM_ID_CLEAR_FORM) {
       // Show the "clear form" button.
-      value = SysUTF16ToNSString(popup_suggestion.value);
+      value = SysUTF16ToNSString(popup_suggestion.main_text.value);
     } else if (popup_suggestion.frontend_id ==
                autofill::POPUP_ITEM_ID_SHOW_ACCOUNT_CARDS) {
       // Show opt-in for showing cards from account.
-      value = SysUTF16ToNSString(popup_suggestion.value);
+      value = SysUTF16ToNSString(popup_suggestion.main_text.value);
     }
 
     if (!value)
       continue;
 
-    FormSuggestion* suggestion = [FormSuggestion
-        suggestionWithValue:value
-         displayDescription:displayDescription
-                       icon:base::SysUTF8ToNSString(popup_suggestion.icon)
-                 identifier:popup_suggestion.frontend_id
-             requiresReauth:NO];
+    NSString* acceptanceA11yAnnouncement =
+        popup_suggestion.acceptance_a11y_announcement.has_value()
+            ? SysUTF16ToNSString(*popup_suggestion.acceptance_a11y_announcement)
+            : nil;
+    // Only show icon for credit card suggestions.
+    NSString* icon = delegate && delegate->GetPopupType() ==
+                                     autofill::PopupType::kCreditCards
+                         ? base::SysUTF8ToNSString(popup_suggestion.icon)
+                         : nil;
+    FormSuggestion* suggestion =
+        [FormSuggestion suggestionWithValue:value
+                         displayDescription:displayDescription
+                                       icon:icon
+                                 identifier:popup_suggestion.frontend_id
+                             requiresReauth:NO
+                 acceptanceA11yAnnouncement:acceptanceA11yAnnouncement];
 
     // Put "clear form" entry at the front of the suggestions.
     if (popup_suggestion.frontend_id == autofill::POPUP_ITEM_ID_CLEAR_FORM) {
@@ -622,24 +665,27 @@ void GetFormField(autofill::FormFieldData* field,
              popupDelegate:base::WeakPtr<autofill::AutofillPopupDelegate>()];
 }
 
-- (bool)isQueryIDRelevant:(int)queryID {
-  return queryID == _lastQueryID;
+- (bool)isLastQueriedField:(autofill::FieldGlobalId)fieldID {
+  return fieldID == _lastQueriedFieldID;
 }
 
 #pragma mark - CRWWebStateObserver
 
 - (void)webStateWasShown:(web::WebState*)webState {
   DCHECK_EQ(_webState, webState);
-  if (_pendingFormData.second) {
-    // The frameID cannot be empty.
-    DCHECK(!_pendingFormData.first.empty());
-    web::WebFrame* frame = nullptr;
-    if (!_pendingFormData.first.empty()) {
-      frame = web::GetWebFrameWithId(_webState, _pendingFormData.first);
-    }
-    [self sendData:std::move(_pendingFormData.second) toFrame:frame];
+  if (!_pendingFormData.has_value()) {
+    return;
   }
-  _pendingFormData = std::make_pair("", nullptr);
+
+  std::pair<std::string, base::Value::Dict> pendingFormData =
+      std::move(_pendingFormData).value();
+  _pendingFormData = absl::nullopt;
+
+  // The frameID cannot be empty.
+  DCHECK(!pendingFormData.first.empty());
+  web::WebFrame* frame =
+      web::GetWebFrameWithId(_webState, pendingFormData.first);
+  [self sendData:std::move(pendingFormData.second) toFrame:frame];
 }
 
 - (void)webState:(web::WebState*)webState
@@ -654,11 +700,12 @@ void GetFormField(autofill::FormFieldData* field,
     return;
   }
   // Check that the main frame has already been processed.
-  if (!webState->GetWebFramesManager()->GetMainWebFrame()) {
+  if (!webState->GetPageWorldWebFramesManager()->GetMainWebFrame()) {
     return;
   }
   if (!autofill::AutofillDriverIOS::FromWebStateAndWebFrame(
-           webState, webState->GetWebFramesManager()->GetMainWebFrame())
+           webState,
+           webState->GetPageWorldWebFramesManager()->GetMainWebFrame())
            ->is_processed()) {
     return;
   }
@@ -675,7 +722,6 @@ void GetFormField(autofill::FormFieldData* field,
 
 - (void)webStateDestroyed:(web::WebState*)webState {
   DCHECK_EQ(_webState, webState);
-  _last_submitted_autofill_driver = nullptr;
   if (_webState) {
     _formActivityObserverBridge.reset();
     _webState->RemoveObserver(_webStateObserverBridge.get());
@@ -689,7 +735,8 @@ void GetFormField(autofill::FormFieldData* field,
 #pragma mark - Private methods
 
 - (void)processPage:(web::WebState*)webState {
-  web::WebFramesManager* framesManager = webState->GetWebFramesManager();
+  web::WebFramesManager* framesManager =
+      webState->GetPageWorldWebFramesManager();
   if (!framesManager->GetMainWebFrame()) {
     return;
   }
@@ -813,7 +860,7 @@ void GetFormField(autofill::FormFieldData* field,
   // -onFormsFetched:formsData:webFrameId:fieldIdentifier.
   __weak AutofillAgent* weakSelf = self;
   __block const std::string webFrameId = frame->GetFrameId();
-  __block const std::string fieldIdentifier = params.field_identifier;
+  __block FieldRendererId fieldIdentifier = params.unique_field_id;
   auto completionHandler = ^(BOOL success, const FormDataVector& forms) {
     [weakSelf onFormsFetched:success
                    formsData:forms
@@ -834,7 +881,6 @@ void GetFormField(autofill::FormFieldData* field,
     didSubmitDocumentWithFormNamed:(const std::string&)formName
                           withData:(const std::string&)formData
                     hasUserGesture:(BOOL)hasUserGesture
-                   formInMainFrame:(BOOL)formInMainFrame
                            inFrame:(web::WebFrame*)frame {
   if (![self isAutofillEnabled])
     return;
@@ -850,18 +896,6 @@ void GetFormField(autofill::FormFieldData* field,
       [self autofillManagerFromWebState:webState webFrame:frame];
   if (!autofillManager || !success || forms.empty())
     return;
-  // AutofillDriverIOSWebFrame will keep a refcountable AutofillDriverIOS.
-  // This is a workaround crbug.com/892612. On submission,
-  // AutofillDownloadManager and CreditCardSaveManager expect
-  // BrowserAutofillManager and AutofillDriver to live after web frame deletion
-  // so AutofillAgent will keep the latest submitted AutofillDriver alive.
-  // TODO(crbug.com/892612): remove this workaround once life cycle of
-  // BrowserAutofillManager is fixed.
-  DCHECK(frame);
-  _last_submitted_autofill_driver =
-      autofill::AutofillDriverIOSWebFrame::FromWebFrame(frame)
-          ->GetRetainableDriver();
-  DCHECK(_last_submitted_autofill_driver);
   DCHECK(forms.size() <= 1) << "Only one form should be extracted.";
   [self notifyBrowserAutofillManager:autofillManager
                     ofFormsSubmitted:forms
@@ -904,11 +938,11 @@ void GetFormField(autofill::FormFieldData* field,
          formName:(const std::string&)formName
             value:(const std::u16string)value
           inFrame:(web::WebFrame*)frame {
-  auto data = std::make_unique<base::DictionaryValue>();
-  data->SetInteger("unique_renderer_id", uniqueFieldID.value());
-  data->SetString("identifier", fieldIdentifier);
-  data->SetString("form", formName);
-  data->SetString("value", value);
+  base::Value::Dict data;
+  data.Set("unique_renderer_id", static_cast<int>(uniqueFieldID.value()));
+  data.Set("identifier", fieldIdentifier);
+  data.Set("form", formName);
+  data.Set("value", value);
 
   DCHECK(_suggestionHandledCompletion);
   __weak AutofillAgent* weakSelf = self;
@@ -947,8 +981,7 @@ void GetFormField(autofill::FormFieldData* field,
 }
 
 // Sends the the |data| to |frame| to actually fill the data.
-- (void)sendData:(std::unique_ptr<base::Value>)data
-         toFrame:(web::WebFrame*)frame {
+- (void)sendData:(base::Value::Dict)data toFrame:(web::WebFrame*)frame {
   DCHECK(_webState->IsVisible());
   __weak AutofillAgent* weakSelf = self;
   SuggestionHandledCompletion suggestionHandledCompletionCopy =
@@ -975,16 +1008,16 @@ void GetFormField(autofill::FormFieldData* field,
 - (void)onFormsFetched:(BOOL)success
              formsData:(const FormDataVector&)forms
             webFrameId:(const std::string&)webFrameId
-       fieldIdentifier:(const std::string&)fieldIdentifier {
+       fieldIdentifier:(FieldRendererId)fieldIdentifier {
   if (!success || forms.size() != 1)
     return;
 
   if (!_webState)
     return;
 
-  DCHECK(_webState->GetWebFramesManager());
+  DCHECK(_webState->GetPageWorldWebFramesManager());
   web::WebFrame* webFrame =
-      _webState->GetWebFramesManager()->GetFrameWithId(webFrameId);
+      _webState->GetPageWorldWebFramesManager()->GetFrameWithId(webFrameId);
   if (!webFrame)
     return;
 
@@ -994,7 +1027,7 @@ void GetFormField(autofill::FormFieldData* field,
     return;
 
   autofill::FormFieldData field;
-  GetFormField(&field, forms[0], base::UTF8ToUTF16(fieldIdentifier));
+  GetFormField(&field, forms[0], fieldIdentifier);
   autofillManager->OnTextFieldDidChange(
       forms[0], field, gfx::RectF(), autofill::AutofillTickClock::NowTicks());
 }

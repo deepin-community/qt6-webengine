@@ -15,7 +15,10 @@
 #include <QLoggingCategory>
 #include <QMetaEnum>
 #include <QMutex>
+#include <QPixmap>
 #include <QVector2D>
+
+#include <QtCore/private/qtools_p.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -39,7 +42,7 @@ public:
         QMetaEnum rolesMetaEnum = doc->metaObject()->enumerator(doc->metaObject()->indexOfEnumerator("PageModelRole"));
         for (int r = Qt::UserRole; r < int(QPdfDocument::PageModelRole::NRoles); ++r) {
             auto name = QByteArray(rolesMetaEnum.valueToKey(r));
-            name[0] = tolower(name[0]);
+            name[0] = QtMiscUtils::toAsciiLower(name[0]);
             m_roleNames.insert(r, name);
         }
         connect(doc, &QPdfDocument::statusChanged, this, [this](QPdfDocument::Status s) {
@@ -54,6 +57,7 @@ public:
     {
         if (!index.isValid())
             return QVariant();
+
         switch (QPdfDocument::PageModelRole(role)) {
         case QPdfDocument::PageModelRole::Label:
             return document()->pageLabel(index.row());
@@ -62,6 +66,14 @@ public:
         case QPdfDocument::PageModelRole::NRoles:
             break;
         }
+
+        switch (role) {
+        case Qt::DecorationRole:
+            return pageThumbnail(index.row());
+        case Qt::DisplayRole:
+            return document()->pageLabel(index.row());
+        }
+
         return QVariant();
     }
 
@@ -71,8 +83,24 @@ public:
 
 private:
     QPdfDocument *document() const { return static_cast<QPdfDocument *>(parent()); }
+    QPixmap pageThumbnail(int page) const
+    {
+        auto it = m_thumbnails.constFind(page);
+        if (it == m_thumbnails.constEnd()) {
+            auto doc = document();
+            auto size = doc->pagePointSize(page);
+            size.scale(128, 128, Qt::KeepAspectRatio);
+            // TODO use QPdfPageRenderer for threading?
+            auto image = document()->render(page, size.toSize());
+            QPixmap ret = QPixmap::fromImage(image);
+            m_thumbnails.insert(page, ret);
+            return ret;
+        }
+        return it.value();
+    }
 
     QHash<int, QByteArray> m_roleNames;
+    mutable QHash<int, QPixmap> m_thumbnails;
 };
 
 QPdfDocumentPrivate::QPdfDocumentPrivate()
@@ -781,6 +809,8 @@ QAbstractListModel *QPdfDocument::pageModel()
 
     If the document does not have custom page numbering, this function returns
     \c {page + 1}.
+
+    \sa pageIndexForLabel()
 */
 QString QPdfDocument::pageLabel(int page)
 {
@@ -792,6 +822,21 @@ QString QPdfDocument::pageLabel(int page)
     FPDF_GetPageLabel(d->doc, page, buf.data(), len);
     lock.unlock();
     return QString::fromUtf16(buf.constData());
+}
+
+/*!
+    Returns the index of the page that has the \a label, or \c -1 if not found.
+
+    \sa pageLabel()
+    \since 6.6
+*/
+int QPdfDocument::pageIndexForLabel(const QString &label)
+{
+    for (int i = 0; i < d->pageCount; ++i) {
+        if (pageLabel(i) == label)
+            return i;
+    }
+    return -1;
 }
 
 /*!
@@ -821,22 +866,6 @@ QImage QPdfDocument::render(int page, QSize imageSize, QPdfDocumentRenderOptions
     QImage result(imageSize, QImage::Format_ARGB32);
     result.fill(Qt::transparent);
     FPDF_BITMAP bitmap = FPDFBitmap_CreateEx(result.width(), result.height(), FPDFBitmap_BGRA, result.bits(), result.bytesPerLine());
-
-    int rotation = 0;
-    switch (renderOptions.rotation()) {
-    case QPdfDocumentRenderOptions::Rotation::None:
-        rotation = 0;
-        break;
-    case QPdfDocumentRenderOptions::Rotation::Clockwise90:
-        rotation = 1;
-        break;
-    case QPdfDocumentRenderOptions::Rotation::Clockwise180:
-        rotation = 2;
-        break;
-    case QPdfDocumentRenderOptions::Rotation::Clockwise270:
-        rotation = 3;
-        break;
-    }
 
     const QPdfDocumentRenderOptions::RenderFlags renderFlags = renderOptions.renderFlags();
     int flags = 0;
@@ -883,6 +912,7 @@ QImage QPdfDocument::render(int page, QSize imageSize, QPdfDocumentRenderOptions
         qCDebug(qLcDoc) << "page" << page << "region" << renderOptions.scaledClipRect()
                         << "size" << imageSize << "took" << timer.elapsed() << "ms";
     } else {
+        const auto rotation = QPdfDocumentPrivate::toFPDFRotation(renderOptions.rotation());
         FPDF_RenderPageBitmap(bitmap, pdfPage, 0, 0, result.width(), result.height(), rotation, flags);
         qCDebug(qLcDoc) << "page" << page << "size" << imageSize << "took" << timer.elapsed() << "ms";
     }

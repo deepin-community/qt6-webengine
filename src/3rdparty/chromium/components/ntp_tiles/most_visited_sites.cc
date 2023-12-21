@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,10 +10,10 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/metrics/user_metrics.h"
 #include "base/observer_list.h"
@@ -179,8 +179,6 @@ bool MostVisitedSites::DoesSourceExist(TileSource source) const {
       return supervisor_ != nullptr;
     case TileSource::CUSTOM_LINKS:
       return custom_links_ != nullptr;
-    case TileSource::EXPLORE:
-      return explore_sites_client_ != nullptr;
   }
   NOTREACHED();
   return false;
@@ -190,11 +188,6 @@ void MostVisitedSites::SetHomepageClient(
     std::unique_ptr<HomepageClient> client) {
   DCHECK(client);
   homepage_client_ = std::move(client);
-}
-
-void MostVisitedSites::SetExploreSitesClient(
-    std::unique_ptr<ExploreSitesClient> client) {
-  explore_sites_client_ = std::move(client);
 }
 
 void MostVisitedSites::AddMostVisitedURLsObserver(Observer* observer,
@@ -622,19 +615,6 @@ NTPTilesVector MostVisitedSites::InsertHomeTile(
   return new_tiles;
 }
 
-absl::optional<NTPTile> MostVisitedSites::CreateExploreSitesTile() {
-  if (!explore_sites_client_)
-    return absl::nullopt;
-
-  NTPTile explore_sites_tile;
-  explore_sites_tile.url = explore_sites_client_->GetExploreSitesUrl();
-  explore_sites_tile.title = explore_sites_client_->GetExploreSitesTitle();
-  explore_sites_tile.source = TileSource::EXPLORE;
-  explore_sites_tile.title_source = TileTitleSource::UNKNOWN;
-
-  return explore_sites_tile;
-}
-
 void MostVisitedSites::OnCustomLinksChanged() {
   DCHECK(custom_links_);
   if (!IsCustomLinksEnabled())
@@ -696,15 +676,8 @@ void MostVisitedSites::InitiateNotificationForNewTiles(
 void MostVisitedSites::MergeMostVisitedTiles(NTPTilesVector personal_tiles) {
   std::set<std::string> used_hosts;
 
-  absl::optional<NTPTile> explore_tile = CreateExploreSitesTile();
-  size_t num_actual_tiles = explore_tile ? 1 : 0;
+  size_t num_actual_tiles = 0;
 
-  // The explore sites tile may have taken a space that was utilized by the
-  // personal tiles.
-  if (!personal_tiles.empty() &&
-      personal_tiles.size() + num_actual_tiles > GetMaxNumSites()) {
-    personal_tiles.pop_back();
-  }
   AddToHostsAndTotalCount(personal_tiles, &used_hosts, &num_actual_tiles);
 
   std::map<SectionType, NTPTilesVector> sections =
@@ -714,7 +687,7 @@ void MostVisitedSites::MergeMostVisitedTiles(NTPTilesVector personal_tiles) {
 
   NTPTilesVector new_tiles =
       MergeTiles(std::move(personal_tiles),
-                 std::move(sections[SectionType::PERSONALIZED]), explore_tile);
+                 std::move(sections[SectionType::PERSONALIZED]));
 
   SaveTilesAndNotify(std::move(new_tiles), std::move(sections));
 }
@@ -765,11 +738,9 @@ bool MostVisitedSites::IsNtpTileFromPreinstalledApp(GURL url) {
 
 // static
 bool MostVisitedSites::WasNtpAppMigratedToWebApp(PrefService* prefs, GURL url) {
-  const base::Value* migrated_apps =
+  const base::Value::List& migrated_apps =
       prefs->GetList(webapps::kWebAppsMigratedPreinstalledApps);
-  if (!migrated_apps)
-    return false;
-  for (const auto& val : migrated_apps->GetListDeprecated()) {
+  for (const auto& val : migrated_apps) {
     if (val.is_string() && val.GetString() == url.host())
       return true;
   }
@@ -790,17 +761,13 @@ NTPTilesVector MostVisitedSites::RemoveInvalidPreinstallApps(
   return new_tiles;
 }
 
-NTPTilesVector MostVisitedSites::MergeTiles(
-    NTPTilesVector personal_tiles,
-    NTPTilesVector popular_tiles,
-    absl::optional<NTPTile> explore_tile) {
+NTPTilesVector MostVisitedSites::MergeTiles(NTPTilesVector personal_tiles,
+                                            NTPTilesVector popular_tiles) {
   NTPTilesVector merged_tiles;
   std::move(personal_tiles.begin(), personal_tiles.end(),
             std::back_inserter(merged_tiles));
   std::move(popular_tiles.begin(), popular_tiles.end(),
             std::back_inserter(merged_tiles));
-  if (explore_tile)
-    merged_tiles.push_back(*explore_tile);
 
   return merged_tiles;
 }

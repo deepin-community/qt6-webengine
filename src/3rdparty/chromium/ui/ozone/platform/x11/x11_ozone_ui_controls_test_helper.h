@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,14 +19,14 @@ class X11OzoneUIControlsTestHelper : public OzoneUIControlsTestHelper {
       delete;
   ~X11OzoneUIControlsTestHelper() override;
 
+  // OzoneUIControlsTestHelper:
+  bool SupportsScreenCoordinates() const override;
   unsigned ButtonDownMask() const override;
-  void SendKeyPressEvent(gfx::AcceleratedWidget widget,
-                         ui::KeyboardCode key,
-                         bool control,
-                         bool shift,
-                         bool alt,
-                         bool command,
-                         base::OnceClosure closure) override;
+  void SendKeyEvents(gfx::AcceleratedWidget widget,
+                     ui::KeyboardCode key,
+                     int key_event_types,
+                     int accelerated_state,
+                     base::OnceClosure closure) override;
   void SendMouseMotionNotifyEvent(gfx::AcceleratedWidget widget,
                                   const gfx::Point& mouse_loc,
                                   const gfx::Point& mouse_root_loc,

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 
 #include "base/auto_reset.h"
 #include "base/check_op.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "components/prefs/pref_registry_simple.h"
@@ -78,9 +78,12 @@ ProfileOAuth2TokenService::ProfileOAuth2TokenService(
       all_credentials_loaded_(false) {
   DCHECK(user_prefs_);
   DCHECK(delegate_);
-  token_manager_ = std::make_unique<OAuth2AccessTokenManager>(
-      this /* OAuth2AccessTokenManager::Delegate* */);
+  token_manager_ =
+      std::make_unique<OAuth2AccessTokenManager>(/*delegate=*/this);
+  // The `ProfileOAuth2TokenService` must be the first observer of `delegate_`.
+  DCHECK(!delegate_->HasObserver());
   AddObserver(this);
+  DCHECK(delegate_->HasObserver());
 }
 
 ProfileOAuth2TokenService::~ProfileOAuth2TokenService() {
@@ -194,7 +197,7 @@ ProfileOAuth2TokenService::StartRequestForMultilogin(
   // in the access token field.
   OAuth2AccessTokenConsumer::TokenResponse token_response =
       TokenResponseBuilder().WithAccessToken(refresh_token).build();
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(&OAuth2AccessTokenManager::RequestImpl::InformConsumer,
                      request.get()->AsWeakPtr(),
@@ -255,12 +258,13 @@ void ProfileOAuth2TokenService::SetRefreshTokenRevokedFromSourceCallback(
 }
 
 void ProfileOAuth2TokenService::LoadCredentials(
-    const CoreAccountId& primary_account_id) {
+    const CoreAccountId& primary_account_id,
+    bool is_syncing) {
   DCHECK_EQ(SourceForRefreshTokenOperation::kUnknown,
             update_refresh_token_source_);
   update_refresh_token_source_ =
       SourceForRefreshTokenOperation::kTokenService_LoadCredentials;
-  GetDelegate()->LoadCredentials(primary_account_id);
+  GetDelegate()->LoadCredentials(primary_account_id, is_syncing);
 }
 
 void ProfileOAuth2TokenService::UpdateCredentials(

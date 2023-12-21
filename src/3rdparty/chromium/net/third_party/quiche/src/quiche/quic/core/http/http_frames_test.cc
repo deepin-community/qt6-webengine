@@ -44,42 +44,24 @@ TEST(HttpFramesTest, GoAwayFrame) {
   EXPECT_TRUE(a == b);
 }
 
-TEST(HttpFramesTest, MaxPushIdFrame) {
-  MaxPushIdFrame a{1};
-  EXPECT_TRUE(a == a);
-
-  MaxPushIdFrame b{2};
-  EXPECT_FALSE(a == b);
-
-  b.push_id = 1;
-  EXPECT_TRUE(a == b);
-}
-
 TEST(HttpFramesTest, PriorityUpdateFrame) {
-  PriorityUpdateFrame a{REQUEST_STREAM, 0, ""};
+  PriorityUpdateFrame a{0, ""};
   EXPECT_TRUE(a == a);
-  PriorityUpdateFrame b{REQUEST_STREAM, 4, ""};
+  PriorityUpdateFrame b{4, ""};
   EXPECT_FALSE(a == b);
   a.prioritized_element_id = 4;
-  EXPECT_TRUE(a == b);
-
-  a.prioritized_element_type = PUSH_STREAM;
-  EXPECT_FALSE(a == b);
-  b.prioritized_element_type = PUSH_STREAM;
   EXPECT_TRUE(a == b);
 
   a.priority_field_value = "foo";
   EXPECT_FALSE(a == b);
 
   EXPECT_EQ(
-      "Priority Frame : {prioritized_element_type: 128, "
-      "prioritized_element_id: 4, priority_field_value: foo}",
+      "Priority Frame : {prioritized_element_id: 4, priority_field_value: foo}",
       a.ToString());
   std::stringstream s;
   s << a;
   EXPECT_EQ(
-      "Priority Frame : {prioritized_element_type: 128, "
-      "prioritized_element_id: 4, priority_field_value: foo}",
+      "Priority Frame : {prioritized_element_id: 4, priority_field_value: foo}",
       s.str());
 }
 

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,9 @@
 #include <mfmediaengine.h>
 #include <wrl.h>
 
-#include "base/callback.h"
+#include <memory>
+
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
@@ -58,18 +60,18 @@ class MEDIA_EXPORT MediaFoundationRenderer
     kFailedToGetDCompSurface = 10,
     kFailedToDuplicateHandle = 11,
     kFailedToCreateMediaEngine = 12,
+    kFailedToCreateDCompTextureWrapper = 13,
+    kFailedToInitDCompTextureWrapper = 14,
     // Add new values here and update `kMaxValue`. Never reuse existing values.
-    kMaxValue = kFailedToCreateMediaEngine,
+    kMaxValue = kFailedToInitDCompTextureWrapper,
   };
 
   // Report `reason` to UMA.
   static void ReportErrorReason(ErrorReason reason);
 
-  // Whether MediaFoundationRenderer() is supported on the current device.
-  static bool IsSupported();
-
   MediaFoundationRenderer(scoped_refptr<base::SequencedTaskRunner> task_runner,
                           std::unique_ptr<MediaLog> media_log,
+                          LUID gpu_process_adapter_luid,
                           bool force_dcomp_mode_for_testing = false);
   MediaFoundationRenderer(const MediaFoundationRenderer&) = delete;
   MediaFoundationRenderer& operator=(const MediaFoundationRenderer&) = delete;
@@ -86,22 +88,24 @@ class MEDIA_EXPORT MediaFoundationRenderer
   void SetPlaybackRate(double playback_rate) override;
   void SetVolume(float volume) override;
   base::TimeDelta GetMediaTime() override;
+  RendererType GetRendererType() override;
 
   // MediaFoundationRendererExtension implementation.
   void GetDCompSurface(GetDCompSurfaceCB callback) override;
   void SetVideoStreamEnabled(bool enabled) override;
   void SetOutputRect(const gfx::Rect& output_rect,
                      SetOutputRectCB callback) override;
+  void NotifyFrameReleased(const base::UnguessableToken& frame_token) override;
+  void RequestNextFrame() override;
+  void SetMediaFoundationRenderingMode(
+      MediaFoundationRenderingMode render_mode) override;
 
   using FrameReturnCallback = base::RepeatingCallback<
       void(const base::UnguessableToken&, const gfx::Size&, base::TimeDelta)>;
   void SetFrameReturnCallbacks(
       FrameReturnCallback frame_available_cb,
       FramePoolInitializedCallback initialized_frame_pool_cb);
-  void NotifyFrameReleased(const base::UnguessableToken& frame_token) override;
-  void RequestNextFrameBetweenTimestamps(base::TimeTicks deadline_min,
-                                         base::TimeTicks deadline_max) override;
-  void SetRenderingMode(RenderingMode render_mode) override;
+  void SetGpuProcessAdapterLuid(LUID gpu_process_adapter_luid);
 
   // Testing verification
   bool InFrameServerMode();
@@ -122,6 +126,7 @@ class MEDIA_EXPORT MediaFoundationRenderer
   void OnPlaybackEnded();
   void OnFormatChange();
   void OnLoadedData();
+  void OnCanPlayThrough();
   void OnPlaying();
   void OnWaiting();
   void OnTimeUpdate();
@@ -136,7 +141,7 @@ class MEDIA_EXPORT MediaFoundationRenderer
   HRESULT SetDCompModeInternal();
   HRESULT GetDCompSurfaceInternal(HANDLE* surface_handle);
   HRESULT SetSourceOnMediaEngine();
-  HRESULT UpdateVideoStream(const gfx::Rect& rect);
+  HRESULT UpdateVideoStream(const gfx::Size rect_size);
   HRESULT PauseInternal();
   HRESULT InitializeTexturePool(const gfx::Size& size);
   void OnVideoNaturalSizeChange();
@@ -150,7 +155,7 @@ class MEDIA_EXPORT MediaFoundationRenderer
   //   `renderer_client` via OnError().
   void OnError(PipelineStatus status,
                ErrorReason reason,
-               absl::optional<HRESULT> hresult = absl::nullopt,
+               HRESULT hresult,
                PipelineStatusCallback status_cb = base::NullCallback());
 
   // Renderer methods are running in the same sequence.
@@ -158,6 +163,11 @@ class MEDIA_EXPORT MediaFoundationRenderer
 
   // Used to report media logs. Can be called on any thread.
   std::unique_ptr<MediaLog> media_log_;
+
+  // LUID identifying the graphics adapter used by the GPU process, the DXGI
+  // device created for Media Foundation Renderer must match in order to share
+  // handles between the two processes for Frame Server mode.
+  LUID gpu_process_adapter_luid_;
 
   // Once set, will force `mf_media_engine_` to use DirectComposition mode.
   // This is used for testing.
@@ -175,6 +185,9 @@ class MEDIA_EXPORT MediaFoundationRenderer
   // This enables MFMediaEngine to use hardware acceleration for video decoding
   // and video processing.
   Microsoft::WRL::ComPtr<IMFDXGIDeviceManager> dxgi_device_manager_;
+
+  // Current cached rectangle size of video to be rendered.
+  gfx::Size current_video_rect_size_;
 
   // Current duration of the media.
   base::TimeDelta duration_;
@@ -211,9 +224,11 @@ class MEDIA_EXPORT MediaFoundationRenderer
   // Composition mode.
   MediaFoundationTexturePool texture_pool_;
 
-  // The represents the rendering mode of the Media Engine.
-  RenderingMode rendering_mode_ = RenderingMode::DirectComposition;
+  // Rendering mode the Media Engine will use.
+  MediaFoundationRenderingMode rendering_mode_ =
+      MediaFoundationRenderingMode::DirectComposition;
 
+  bool has_reported_playing_ = false;
   bool has_reported_significant_playback_ = false;
 
   // NOTE: Weak pointers must be invalidated before all other member variables.

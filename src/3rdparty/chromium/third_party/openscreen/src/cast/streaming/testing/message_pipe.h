@@ -27,10 +27,9 @@ class MessagePipeEnd : public MessagePort {
 
   ~MessagePipeEnd() override = default;
 
-  void SetClient(MessagePort::Client* client,
-                 std::string client_sender_id) override {
-    sender_id_ = std::move(client_sender_id);
-    client_ = client;
+  void SetClient(MessagePort::Client& client) override {
+    client_ = &client;
+    source_id_ = client.source_id();
   }
 
   void SetOtherEnd(MessagePipeEnd* other_end) {
@@ -39,6 +38,13 @@ class MessagePipeEnd : public MessagePort {
   }
 
   void ResetClient() override { client_ = nullptr; }
+
+  void ReceiveMessage(const std::string& sender_id,
+                      const std::string& namespace_,
+                      const std::string& message) {
+    ASSERT_NE(client_, nullptr);
+    client_->OnMessage(sender_id, namespace_, message);
+  }
 
   void ReceiveMessage(const std::string& namespace_,
                       const std::string& message) {
@@ -54,7 +60,7 @@ class MessagePipeEnd : public MessagePort {
   }
 
  private:
-  std::string sender_id_;
+  std::string source_id_;
   std::string destination_id_;
   MessagePort::Client* client_ = nullptr;
   MessagePipeEnd* other_end_ = nullptr;

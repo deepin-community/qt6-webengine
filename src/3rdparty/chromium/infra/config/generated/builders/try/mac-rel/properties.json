@@ -1,7 +1,7 @@
 {
   "$build/chromium_orchestrator": {
     "compilator": "mac-rel-compilator",
-    "compilator_watcher_git_revision": "7809a690bbd935bcb3b4d922e24cabe168aaabc8"
+    "compilator_watcher_git_revision": "e6d08be3fd589d4f222dae5d18dbc972e6117b23"
   },
   "$build/chromium_tests_builder_config": {
     "builder_config": {
@@ -11,7 +11,7 @@
             "builder_id": {
               "bucket": "ci",
               "builder": "GPU Mac Builder",
-              "project": "chromium"
+              "project": "chromium-m112"
             },
             "builder_spec": {
               "build_gs_bucket": "chromium-gpu-archive",
@@ -19,8 +19,7 @@
               "execution_mode": "COMPILE_AND_TEST",
               "legacy_chromium_config": {
                 "apply_configs": [
-                  "mb",
-                  "goma_use_local"
+                  "mb"
                 ],
                 "build_config": "Release",
                 "config": "chromium",
@@ -39,7 +38,7 @@
             "builder_id": {
               "bucket": "ci",
               "builder": "Mac Builder",
-              "project": "chromium"
+              "project": "chromium-m112"
             },
             "builder_spec": {
               "build_gs_bucket": "chromium-mac-archive",
@@ -47,8 +46,7 @@
               "execution_mode": "COMPILE_AND_TEST",
               "legacy_chromium_config": {
                 "apply_configs": [
-                  "mb",
-                  "goma_use_local"
+                  "mb"
                 ],
                 "build_config": "Release",
                 "config": "chromium",
@@ -67,7 +65,7 @@
             "builder_id": {
               "bucket": "ci",
               "builder": "Mac Release (Intel)",
-              "project": "chromium"
+              "project": "chromium-m112"
             },
             "builder_spec": {
               "build_gs_bucket": "chromium-gpu-archive",
@@ -75,8 +73,7 @@
               "execution_mode": "TEST",
               "legacy_chromium_config": {
                 "apply_configs": [
-                  "mb",
-                  "goma_use_local"
+                  "mb"
                 ],
                 "build_config": "Release",
                 "config": "chromium",
@@ -89,53 +86,22 @@
               "parent": {
                 "bucket": "ci",
                 "builder": "GPU Mac Builder",
-                "project": "chromium"
+                "project": "chromium-m112"
               }
             }
           },
           {
             "builder_id": {
               "bucket": "ci",
-              "builder": "Mac Retina Release (AMD)",
-              "project": "chromium"
-            },
-            "builder_spec": {
-              "build_gs_bucket": "chromium-gpu-archive",
-              "builder_group": "chromium.gpu",
-              "execution_mode": "TEST",
-              "legacy_chromium_config": {
-                "apply_configs": [
-                  "mb",
-                  "goma_use_local"
-                ],
-                "build_config": "Release",
-                "config": "chromium",
-                "target_bits": 64,
-                "target_platform": "mac"
-              },
-              "legacy_gclient_config": {
-                "config": "chromium"
-              },
-              "parent": {
-                "bucket": "ci",
-                "builder": "GPU Mac Builder",
-                "project": "chromium"
-              }
-            }
-          },
-          {
-            "builder_id": {
-              "bucket": "ci",
-              "builder": "Mac11 Tests",
-              "project": "chromium"
+              "builder": "Mac12 Tests",
+              "project": "chromium-m112"
             },
             "builder_spec": {
               "builder_group": "chromium.mac",
               "execution_mode": "TEST",
               "legacy_chromium_config": {
                 "apply_configs": [
-                  "mb",
-                  "goma_use_local"
+                  "mb"
                 ],
                 "build_config": "Release",
                 "config": "chromium",
@@ -148,7 +114,7 @@
               "parent": {
                 "bucket": "ci",
                 "builder": "Mac Builder",
-                "project": "chromium"
+                "project": "chromium-m112"
               }
             }
           }
@@ -158,29 +124,24 @@
         {
           "bucket": "ci",
           "builder": "GPU Mac Builder",
-          "project": "chromium"
+          "project": "chromium-m112"
         },
         {
           "bucket": "ci",
           "builder": "Mac Builder",
-          "project": "chromium"
+          "project": "chromium-m112"
         }
       ],
       "builder_ids_in_scope_for_testing": [
         {
           "bucket": "ci",
           "builder": "Mac Release (Intel)",
-          "project": "chromium"
+          "project": "chromium-m112"
         },
         {
           "bucket": "ci",
-          "builder": "Mac Retina Release (AMD)",
-          "project": "chromium"
-        },
-        {
-          "bucket": "ci",
-          "builder": "Mac11 Tests",
-          "project": "chromium"
+          "builder": "Mac12 Tests",
+          "project": "chromium-m112"
         }
       ],
       "rts_config": {
@@ -189,7 +150,14 @@
     }
   },
   "$build/code_coverage": {
+    "coverage_test_types": [
+      "overall",
+      "unit"
+    ],
     "use_clang_coverage": true
+  },
+  "$build/flakiness": {
+    "check_for_flakiness": true
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],

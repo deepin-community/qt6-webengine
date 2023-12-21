@@ -19,7 +19,6 @@
 #include "src/tint/ast/call_statement.h"
 #include "src/tint/ast/continue_statement.h"
 #include "src/tint/ast/discard_statement.h"
-#include "src/tint/ast/fallthrough_statement.h"
 #include "src/tint/ast/if_statement.h"
 #include "src/tint/ast/loop_statement.h"
 #include "src/tint/ast/return_statement.h"
@@ -30,56 +29,50 @@ TINT_INSTANTIATE_TYPEINFO(tint::ast::Statement);
 
 namespace tint::ast {
 
-Statement::Statement(ProgramID pid, const Source& src) : Base(pid, src) {}
+Statement::Statement(ProgramID pid, NodeID nid, const Source& src) : Base(pid, nid, src) {}
 
 Statement::Statement(Statement&&) = default;
 
 Statement::~Statement() = default;
 
 const char* Statement::Name() const {
-  if (Is<AssignmentStatement>()) {
-    return "assignment statement";
-  }
-  if (Is<BlockStatement>()) {
-    return "block statement";
-  }
-  if (Is<BreakStatement>()) {
-    return "break statement";
-  }
-  if (Is<CaseStatement>()) {
-    return "case statement";
-  }
-  if (Is<CallStatement>()) {
-    return "function call";
-  }
-  if (Is<ContinueStatement>()) {
-    return "continue statement";
-  }
-  if (Is<DiscardStatement>()) {
-    return "discard statement";
-  }
-  if (Is<ElseStatement>()) {
-    return "else statement";
-  }
-  if (Is<FallthroughStatement>()) {
-    return "fallthrough statement";
-  }
-  if (Is<IfStatement>()) {
-    return "if statement";
-  }
-  if (Is<LoopStatement>()) {
-    return "loop statement";
-  }
-  if (Is<ReturnStatement>()) {
-    return "return statement";
-  }
-  if (Is<SwitchStatement>()) {
-    return "switch statement";
-  }
-  if (Is<VariableDeclStatement>()) {
-    return "variable declaration";
-  }
-  return "statement";
+    if (Is<AssignmentStatement>()) {
+        return "assignment statement";
+    }
+    if (Is<BlockStatement>()) {
+        return "block statement";
+    }
+    if (Is<BreakStatement>()) {
+        return "break statement";
+    }
+    if (Is<CaseStatement>()) {
+        return "case statement";
+    }
+    if (Is<CallStatement>()) {
+        return "function call";
+    }
+    if (Is<ContinueStatement>()) {
+        return "continue statement";
+    }
+    if (Is<DiscardStatement>()) {
+        return "discard statement";
+    }
+    if (Is<IfStatement>()) {
+        return "if statement";
+    }
+    if (Is<LoopStatement>()) {
+        return "loop statement";
+    }
+    if (Is<ReturnStatement>()) {
+        return "return statement";
+    }
+    if (Is<SwitchStatement>()) {
+        return "switch statement";
+    }
+    if (Is<VariableDeclStatement>()) {
+        return "variable declaration";
+    }
+    return "statement";
 }
 
 }  // namespace tint::ast

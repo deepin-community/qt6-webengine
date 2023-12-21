@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,15 +7,16 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/process_memory_dump.h"
+#include "cc/base/features.h"
 #include "cc/layers/recording_source.h"
 #include "cc/raster/raster_buffer.h"
 #include "cc/raster/raster_source.h"
@@ -375,6 +376,151 @@ TEST_F(TileManagerTilePriorityQueueTest, RasterTilePriorityQueue) {
   }
   EXPECT_EQ(expected_required_for_draw_tiles, required_for_draw_tiles);
   EXPECT_NE(new_content_tiles, required_for_draw_tiles);
+}
+
+TEST_F(TileManagerTilePriorityQueueTest,
+       RasterTilePriorityQueueAll_GetNextQueues) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(features::kRasterTilePriorityQueue);
+
+  host_impl()->AdvanceToNextFrame(base::Milliseconds(1));
+  gfx::Size layer_bounds(1000, 1000);
+  SetupDefaultTrees(layer_bounds);
+
+  // Create a pending child layer.
+  scoped_refptr<FakeRasterSource> pending_raster_source =
+      FakeRasterSource::CreateFilled(layer_bounds);
+  auto* pending_child = AddLayer<FakePictureLayerImpl>(
+      host_impl()->pending_tree(), pending_raster_source);
+  pending_child->SetDrawsContent(true);
+  CopyProperties(pending_layer(), pending_child);
+
+  // Set a small viewport, so we have soon and eventually tiles.
+  host_impl()->active_tree()->SetDeviceViewportRect(
+      gfx::Rect(100, 100, 200, 200));
+  host_impl()->AdvanceToNextFrame(base::Milliseconds(1));
+  UpdateDrawProperties(host_impl()->active_tree());
+  UpdateDrawProperties(host_impl()->pending_tree());
+  host_impl()->SetRequiresHighResToDraw();
+
+  // (1) SMOOTHNESS_TAKES_PRIORITY
+  {
+    std::unique_ptr<RasterTilePriorityQueue> queue(
+        host_impl()->BuildRasterQueue(SMOOTHNESS_TAKES_PRIORITY,
+                                      RasterTilePriorityQueue::Type::ALL));
+    EXPECT_FALSE(queue->IsEmpty());
+
+    TilePriority::PriorityBin last_bin = TilePriority::NOW;
+    WhichTree las_tree = WhichTree::ACTIVE_TREE;
+    float last_distance = 0.f;
+    while (!queue->IsEmpty()) {
+      PrioritizedTile prioritized_tile = queue->Top();
+      WhichTree tree = prioritized_tile.source_tiling()->tree();
+      TilePriority::PriorityBin priority_bin =
+          prioritized_tile.priority().priority_bin;
+      float distance_to_visible =
+          prioritized_tile.priority().distance_to_visible;
+
+      // Higher priority bin should come before lower priority bin regardless
+      // of the tree.
+      EXPECT_LE(last_bin, priority_bin);
+
+      // If SMOOTHNESS_TAKES_PRIORITY, ACTIVE_TREE comes before PENDING_TREE for
+      // NOW bin. The rest bins use the IsHigherPriorityThan condition.
+      if (priority_bin == TilePriority::NOW) {
+        EXPECT_LE(las_tree, tree);
+      } else {
+        // Reset the distance if it's in a different bin.
+        if (last_bin != priority_bin)
+          last_distance = 0;
+        if (las_tree != tree)
+          EXPECT_LE(last_distance, distance_to_visible);
+      }
+
+      last_bin = priority_bin;
+      las_tree = tree;
+      last_distance = distance_to_visible;
+      queue->Pop();
+    }
+  }
+
+  // (2) NEW_CONTENT_TAKES_PRIORITY
+  {
+    std::unique_ptr<RasterTilePriorityQueue> queue(
+        host_impl()->BuildRasterQueue(NEW_CONTENT_TAKES_PRIORITY,
+                                      RasterTilePriorityQueue::Type::ALL));
+    EXPECT_FALSE(queue->IsEmpty());
+
+    TilePriority::PriorityBin last_bin = TilePriority::NOW;
+    WhichTree las_tree = WhichTree::PENDING_TREE;
+    float last_distance = 0.f;
+    while (!queue->IsEmpty()) {
+      PrioritizedTile prioritized_tile = queue->Top();
+      WhichTree tree = prioritized_tile.source_tiling()->tree();
+      TilePriority::PriorityBin priority_bin =
+          prioritized_tile.priority().priority_bin;
+      float distance_to_visible =
+          prioritized_tile.priority().distance_to_visible;
+
+      // Higher priority bin should come before lower priority bin regardless
+      // of the tree.
+      EXPECT_LE(last_bin, priority_bin);
+
+      // If SMOOTHNESS_TAKES_PRIORITY, PENDING_TREE comes before ACTIVE_TREE for
+      // NOW bin. The rest bins use the IsHigherPriorityThan condition.
+      if (priority_bin == TilePriority::NOW) {
+        EXPECT_GE(las_tree, tree);
+      } else {
+        // Reset the distance if it's in a different bin.
+        if (last_bin != priority_bin)
+          last_distance = 0;
+        if (las_tree != tree)
+          EXPECT_LE(last_distance, distance_to_visible);
+      }
+
+      last_bin = priority_bin;
+      las_tree = tree;
+      last_distance = distance_to_visible;
+      queue->Pop();
+    }
+  }
+
+  // (3) SAME_PRIORITY_FOR_BOTH_TREES
+  {
+    std::unique_ptr<RasterTilePriorityQueue> queue(
+        host_impl()->BuildRasterQueue(SAME_PRIORITY_FOR_BOTH_TREES,
+                                      RasterTilePriorityQueue::Type::ALL));
+    EXPECT_FALSE(queue->IsEmpty());
+
+    TilePriority::PriorityBin last_bin = TilePriority::NOW;
+    WhichTree las_tree = WhichTree::PENDING_TREE;
+    float last_distance = 0.f;
+    while (!queue->IsEmpty()) {
+      PrioritizedTile prioritized_tile = queue->Top();
+      WhichTree tree = prioritized_tile.source_tiling()->tree();
+      TilePriority::PriorityBin priority_bin =
+          prioritized_tile.priority().priority_bin;
+      float distance_to_visible =
+          prioritized_tile.priority().distance_to_visible;
+
+      // Higher priority bin should come before lower priority bin regardless
+      // of the tree.
+      EXPECT_LE(last_bin, priority_bin);
+
+      // Reset the distance if it's in a different bin.
+      if (last_bin != priority_bin)
+        last_distance = 0;
+
+      // Use the IsHigherPriorityThan() condition.
+      if (las_tree != tree)
+        EXPECT_LE(last_distance, distance_to_visible);
+
+      last_bin = priority_bin;
+      las_tree = tree;
+      last_distance = distance_to_visible;
+      queue->Pop();
+    }
+  }
 }
 
 TEST_F(TileManagerTilePriorityQueueTest,
@@ -1236,7 +1382,7 @@ TEST_F(TileManagerTilePriorityQueueTest,
     // On the second iteration, mark everything as ready to draw (solid color).
     if (i == 1) {
       TileDrawInfo& draw_info = last_tile.tile()->draw_info();
-      draw_info.SetSolidColorForTesting(SK_ColorRED);
+      draw_info.SetSolidColorForTesting(SkColors::kRed);
     }
     queue->Pop();
     int eventually_bin_order_correct_count = 0;
@@ -1272,7 +1418,7 @@ TEST_F(TileManagerTilePriorityQueueTest,
       // color).
       if (i == 1) {
         TileDrawInfo& draw_info = last_tile.tile()->draw_info();
-        draw_info.SetSolidColorForTesting(SK_ColorRED);
+        draw_info.SetSolidColorForTesting(SkColors::kRed);
       }
     }
 
@@ -1519,13 +1665,13 @@ TEST_F(TileManagerTilePriorityQueueTest, NoRasterTasksforSolidColorTiles) {
       FakeRecordingSource::CreateFilledRecordingSource(layer_bounds);
 
   PaintFlags solid_flags;
-  SkColor solid_color = SkColorSetARGB(255, 12, 23, 34);
+  SkColor4f solid_color{0.1f, 0.2f, 0.3f, 1.0f};
   solid_flags.setColor(solid_color);
   recording_source->add_draw_rect_with_flags(gfx::Rect(layer_bounds),
                                              solid_flags);
 
   // Create non solid tile as well, otherwise tilings wouldnt be created.
-  SkColor non_solid_color = SkColorSetARGB(128, 45, 56, 67);
+  SkColor4f non_solid_color{0.2f, 0.3f, 0.4f, 0.5f};
   PaintFlags non_solid_flags;
   non_solid_flags.setColor(non_solid_color);
 
@@ -1682,7 +1828,6 @@ TEST_F(TileManagerTest, AllWorkFinished) {
     base::RunLoop run_loop;
     EXPECT_FALSE(
         host_impl()->tile_manager()->HasScheduledTileTasksForTesting());
-    EXPECT_CALL(MockHostImpl(), NotifyReadyToActivate());
     EXPECT_CALL(MockHostImpl(), NotifyReadyToDraw());
     EXPECT_CALL(MockHostImpl(), NotifyAllTileTasksCompleted())
         .WillOnce(testing::Invoke([&run_loop]() { run_loop.Quit(); }));
@@ -1697,7 +1842,6 @@ TEST_F(TileManagerTest, AllWorkFinished) {
     base::RunLoop run_loop;
     EXPECT_FALSE(
         host_impl()->tile_manager()->HasScheduledTileTasksForTesting());
-    EXPECT_CALL(MockHostImpl(), NotifyReadyToActivate());
     EXPECT_CALL(MockHostImpl(), NotifyReadyToDraw());
     EXPECT_CALL(MockHostImpl(), NotifyAllTileTasksCompleted())
         .WillOnce(testing::Invoke([&run_loop]() { run_loop.Quit(); }));
@@ -1713,7 +1857,6 @@ TEST_F(TileManagerTest, AllWorkFinished) {
     base::RunLoop run_loop;
     EXPECT_FALSE(
         host_impl()->tile_manager()->HasScheduledTileTasksForTesting());
-    EXPECT_CALL(MockHostImpl(), NotifyReadyToActivate());
     EXPECT_CALL(MockHostImpl(), NotifyReadyToDraw());
     EXPECT_CALL(MockHostImpl(), NotifyAllTileTasksCompleted())
         .WillOnce(testing::Invoke([&run_loop]() { run_loop.Quit(); }));
@@ -1728,7 +1871,6 @@ TEST_F(TileManagerTest, AllWorkFinished) {
     base::RunLoop run_loop;
     EXPECT_FALSE(
         host_impl()->tile_manager()->HasScheduledTileTasksForTesting());
-    EXPECT_CALL(MockHostImpl(), NotifyReadyToActivate());
     EXPECT_CALL(MockHostImpl(), NotifyReadyToDraw());
     EXPECT_CALL(MockHostImpl(), NotifyAllTileTasksCompleted())
         .WillOnce(testing::Invoke([&run_loop]() { run_loop.Quit(); }));
@@ -1915,7 +2057,7 @@ TEST_F(PixelInspectTileManagerTest, LowResHasNoImage) {
 
     std::unique_ptr<FakeRecordingSource> recording_source =
         FakeRecordingSource::CreateFilledRecordingSource(size);
-    recording_source->SetBackgroundColor(SK_ColorTRANSPARENT);
+    recording_source->SetBackgroundColor(SkColors::kTransparent);
     recording_source->SetRequiresClear(true);
     PaintFlags flags;
     flags.setColor(SK_ColorGREEN);
@@ -2822,13 +2964,9 @@ class CheckerImagingTileManagerTest : public TestLayerTreeHostBase {
         : FakePaintImageGenerator(
               SkImageInfo::MakeN32Premul(size.width(), size.height())) {}
 
-    MOCK_METHOD6(GetPixels,
-                 bool(const SkImageInfo&,
-                      void*,
-                      size_t,
-                      size_t,
-                      PaintImage::GeneratorClientId,
-                      uint32_t));
+    MOCK_METHOD4(
+        GetPixels,
+        bool(SkPixmap, size_t, PaintImage::GeneratorClientId, uint32_t));
   };
 
   void TearDown() override {
@@ -3261,7 +3399,7 @@ TEST_F(CheckerImagingTileManagerTest,
                   ->tile_manager()
                   ->checker_image_tracker()
                   .no_decodes_allowed_for_testing());
-  while (!host_impl()->client()->ready_to_draw()) {
+  while (!host_impl()->tile_manager()->IsReadyToDraw()) {
     static_cast<SynchronousTaskGraphRunner*>(task_graph_runner())
         ->RunSingleTaskForTesting();
     base::RunLoop().RunUntilIdle();
@@ -3569,7 +3707,7 @@ TEST_F(DecodedImageTrackerTileManagerTest, DecodedImageTrackerDropsLocksOnUse) {
 
 class HdrImageTileManagerTest : public CheckerImagingTileManagerTest {
  public:
-  void DecodeHdrImage(const gfx::ColorSpace& raster_cs) {
+  void DecodeHdrImage(const gfx::ColorSpace& output_cs) {
     auto color_space = gfx::ColorSpace::CreateHDR10();
     auto size = gfx::Size(250, 250);
     auto info =
@@ -3586,7 +3724,7 @@ class HdrImageTileManagerTest : public CheckerImagingTileManagerTest {
 
     // Add the image to our decoded_image_tracker.
     TargetColorParams target_color_params;
-    target_color_params.color_space = raster_cs;
+    target_color_params.color_space = output_cs;
     host_impl()->tile_manager()->decoded_image_tracker().QueueImageDecode(
         hdr_image, target_color_params, base::DoNothing());
     FlushDecodeTasks();
@@ -3606,8 +3744,8 @@ class HdrImageTileManagerTest : public CheckerImagingTileManagerTest {
     SetupPendingTree(raster_source, kTileSize, invalidation);
 
     constexpr float kCustomWhiteLevel = 200.f;
-    auto display_cs = gfx::DisplayColorSpaces(raster_cs);
-    if (raster_cs.IsHDR())
+    auto display_cs = gfx::DisplayColorSpaces(output_cs);
+    if (output_cs.IsHDR())
       display_cs.SetSDRMaxLuminanceNits(kCustomWhiteLevel);
 
     pending_layer()->layer_tree_impl()->SetDisplayColorSpaces(display_cs);
@@ -3628,7 +3766,8 @@ class HdrImageTileManagerTest : public CheckerImagingTileManagerTest {
     auto pending_tiles = pending_tiling->AllTilesForTesting();
     ASSERT_FALSE(pending_tiles.empty());
 
-    if (raster_cs.IsHDR()) {
+    const auto raster_cs = gfx::ColorSpace::CreateExtendedSRGB();
+    if (output_cs.IsHDR()) {
       // Only the last tile will have any pending tasks.
       const auto& pending_tasks =
           host_impl()->tile_manager()->decode_tasks_for_testing(
@@ -3647,7 +3786,7 @@ class HdrImageTileManagerTest : public CheckerImagingTileManagerTest {
     ASSERT_FALSE(
         host_impl()->tile_manager()->HasScheduledTileTasksForTesting());
 
-    auto expected_format = raster_cs.IsHDR() ? viz::RGBA_F16 : viz::RGBA_8888;
+    auto expected_format = output_cs.IsHDR() ? viz::RGBA_F16 : viz::RGBA_8888;
     auto all_tiles = host_impl()->tile_manager()->AllTilesForTesting();
     for (const auto* tile : all_tiles)
       EXPECT_EQ(expected_format, tile->draw_info().resource_format());

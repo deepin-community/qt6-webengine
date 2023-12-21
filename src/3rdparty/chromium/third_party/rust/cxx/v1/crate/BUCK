@@ -1,6 +1,11 @@
 rust_library(
     name = "cxx",
-    srcs = glob(["src/**"]),
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2018",
+    features = [
+        "alloc",
+        "std",
+    ],
     visibility = ["PUBLIC"],
     deps = [
         ":core",
@@ -10,8 +15,9 @@ rust_library(
 
 rust_binary(
     name = "codegen",
-    srcs = glob(["gen/cmd/src/**"]),
+    srcs = glob(["gen/cmd/src/**/*.rs"]) + ["gen/cmd/src/gen/include/cxx.h"],
     crate = "cxxbridge",
+    edition = "2018",
     visibility = ["PUBLIC"],
     deps = [
         "//third-party:clap",
@@ -35,8 +41,9 @@ cxx_library(
 
 rust_library(
     name = "macro",
-    srcs = glob(["macro/src/**"]),
+    srcs = glob(["macro/src/**/*.rs"]),
     crate = "cxxbridge_macro",
+    edition = "2018",
     proc_macro = True,
     deps = [
         "//third-party:proc-macro2",
@@ -47,12 +54,13 @@ rust_library(
 
 rust_library(
     name = "build",
-    srcs = glob(["gen/build/src/**"]),
+    srcs = glob(["gen/build/src/**/*.rs"]),
+    edition = "2018",
     visibility = ["PUBLIC"],
     deps = [
         "//third-party:cc",
         "//third-party:codespan-reporting",
-        "//third-party:lazy_static",
+        "//third-party:once_cell",
         "//third-party:proc-macro2",
         "//third-party:quote",
         "//third-party:scratch",
@@ -62,7 +70,8 @@ rust_library(
 
 rust_library(
     name = "lib",
-    srcs = glob(["gen/lib/src/**"]),
+    srcs = glob(["gen/lib/src/**/*.rs"]),
+    edition = "2018",
     visibility = ["PUBLIC"],
     deps = [
         "//third-party:cc",

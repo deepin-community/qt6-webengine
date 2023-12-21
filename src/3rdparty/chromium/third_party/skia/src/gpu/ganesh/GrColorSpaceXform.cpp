@@ -8,7 +8,7 @@
 #include "src/gpu/ganesh/GrColorSpaceXform.h"
 
 #include "include/core/SkString.h"
-#include "include/third_party/skcms/skcms.h"
+#include "modules/skcms/skcms.h"
 #include "src/core/SkColorSpacePriv.h"
 #include "src/gpu/KeyBuilder.h"
 #include "src/gpu/ganesh/GrColorInfo.h"
@@ -43,10 +43,10 @@ uint32_t GrColorSpaceXform::XformKey(const GrColorSpaceXform* xform) {
     const SkColorSpaceXformSteps& steps(xform->fSteps);
     uint32_t key = steps.flags.mask();
     if (steps.flags.linearize) {
-        key |= classify_transfer_fn(steps.srcTF)    << 8;
+        key |= skcms_TransferFunction_getType(&steps.srcTF)    << 8;
     }
     if (steps.flags.encode) {
-        key |= classify_transfer_fn(steps.dstTFInv) << 16;
+        key |= skcms_TransferFunction_getType(&steps.dstTFInv) << 16;
     }
     return key;
 }

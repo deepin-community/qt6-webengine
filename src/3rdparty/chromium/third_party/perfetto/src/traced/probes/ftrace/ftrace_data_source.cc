@@ -112,6 +112,13 @@ void FtraceDataSource::Start() {
     return;
   DumpFtraceStats(&stats_before_);
   setup_errors_ = FtraceSetupErrors();  // Dump only on START_OF_TRACE.
+
+  if (config_.preserve_ftrace_buffer()) {
+    auto stats_packet = writer_->NewTracePacket();
+    auto* stats = stats_packet->set_ftrace_stats();
+    stats->set_phase(protos::pbzero::FtraceStats::Phase::START_OF_TRACE);
+    stats->set_preserve_ftrace_buffer(true);
+  }
 }
 
 void FtraceDataSource::DumpFtraceStats(FtraceStats* stats) {
@@ -157,7 +164,7 @@ void FtraceDataSource::WriteStats() {
   {
     auto before_packet = writer_->NewTracePacket();
     auto out = before_packet->set_ftrace_stats();
-    out->set_phase(protos::pbzero::FtraceStats_Phase_START_OF_TRACE);
+    out->set_phase(protos::pbzero::FtraceStats::Phase::START_OF_TRACE);
     stats_before_.Write(out);
   }
   {
@@ -165,7 +172,7 @@ void FtraceDataSource::WriteStats() {
     DumpFtraceStats(&stats_after);
     auto after_packet = writer_->NewTracePacket();
     auto out = after_packet->set_ftrace_stats();
-    out->set_phase(protos::pbzero::FtraceStats_Phase_END_OF_TRACE);
+    out->set_phase(protos::pbzero::FtraceStats::Phase::END_OF_TRACE);
     stats_after.Write(out);
   }
 }

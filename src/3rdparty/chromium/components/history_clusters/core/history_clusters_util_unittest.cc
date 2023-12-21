@@ -1,9 +1,10 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/history_clusters/core/history_clusters_util.h"
 
+#include "base/ranges/algorithm.h"
 #include "base/strings/stringprintf.h"
 #include "components/history_clusters/core/config.h"
 #include "components/history_clusters/core/history_clusters_service_test_api.h"
@@ -14,43 +15,85 @@ namespace history_clusters {
 namespace {
 
 TEST(HistoryClustersUtilTest, ComputeURLForDeduping) {
-  EXPECT_EQ(ComputeURLForDeduping(GURL("https://www.google.com/")),
-            "https://google.com/")
-      << "Strip off WWW.";
-  EXPECT_EQ(ComputeURLForDeduping(GURL("http://google.com/")),
-            "https://google.com/")
-      << "Normalizes scheme to https.";
-  EXPECT_EQ(
-      ComputeURLForDeduping(GURL("https://google.com/path?foo=bar#reftag")),
-      "https://google.com/path?foo=bar")
-      << "Strips ref, leaves path and query.";
-  EXPECT_EQ(
-      ComputeURLForDeduping(GURL("http://www.google.com/path?foo=bar#reftag")),
-      "https://google.com/path?foo=bar")
-      << "Does all of the above at once.";
-  EXPECT_EQ(ComputeURLForDeduping(GURL("https://google.com/path?foo=bar")),
-            "https://google.com/path?foo=bar")
-      << "Sanity check when no replacements needed.";
+  {
+    Config config;
+    config.use_host_for_visit_deduping = false;
+    SetConfigForTesting(config);
+
+    EXPECT_EQ(ComputeURLForDeduping(GURL("https://www.google.com/")),
+              "https://google.com/")
+        << "Strip off WWW.";
+    EXPECT_EQ(ComputeURLForDeduping(GURL("http://google.com/")),
+              "https://google.com/")
+        << "Normalizes scheme to https.";
+    EXPECT_EQ(
+        ComputeURLForDeduping(GURL("https://google.com/path?foo=bar#reftag")),
+        "https://google.com/path")
+        << "Strips ref and query, leaves path.";
+    EXPECT_EQ(ComputeURLForDeduping(
+                  GURL("http://www.google.com/path?foo=bar#reftag")),
+              "https://google.com/path")
+        << "Does all of the above at once.";
+    EXPECT_EQ(ComputeURLForDeduping(GURL("https://google.com/path")),
+              "https://google.com/path")
+        << "Sanity check when no replacements needed.";
+  }
+
+  {
+    Config config;
+    config.use_host_for_visit_deduping = true;
+    SetConfigForTesting(config);
+
+    EXPECT_EQ(ComputeURLForDeduping(
+                  GURL("http://www.google.com/path?foo=bar#reftag")),
+              "https://google.com/")
+        << "Does all of the above at once.";
+
+    EXPECT_EQ(ComputeURLForDeduping(GURL("https://google.com/path/")),
+              "https://google.com/")
+        << "Strips path.";
+  }
 }
 
 TEST(HistoryClustersUtilTest, ComputeURLKeywordForLookup) {
-  EXPECT_EQ(ComputeURLKeywordForLookup(GURL("http://www.google.com/")),
-            "http://google.com/")
-      << "Strip off WWW.";
-  EXPECT_EQ(ComputeURLKeywordForLookup(GURL("https://google.com/")),
-            "http://google.com/")
-      << "Normalizes scheme to http.";
-  EXPECT_EQ(
-      ComputeURLKeywordForLookup(GURL("http://google.com/path?foo=bar#reftag")),
-      "http://google.com/path")
-      << "Strips ref and query, leaves path.";
-  EXPECT_EQ(ComputeURLKeywordForLookup(
-                GURL("https://www.google.com/path?foo=bar#reftag")),
-            "http://google.com/path")
-      << "Does all of the above at once.";
-  EXPECT_EQ(ComputeURLKeywordForLookup(GURL("http://google.com/path")),
-            "http://google.com/path")
-      << "Sanity check when no replacements needed.";
+  {
+    Config config;
+    config.use_host_for_visit_deduping = false;
+    SetConfigForTesting(config);
+
+    EXPECT_EQ(ComputeURLKeywordForLookup(GURL("http://www.google.com/")),
+              "http://google.com/")
+        << "Strip off WWW.";
+    EXPECT_EQ(ComputeURLKeywordForLookup(GURL("https://google.com/")),
+              "http://google.com/")
+        << "Normalizes scheme to http.";
+    EXPECT_EQ(ComputeURLKeywordForLookup(
+                  GURL("http://google.com/path?foo=bar#reftag")),
+              "http://google.com/path")
+        << "Strips ref and query, leaves path.";
+    EXPECT_EQ(ComputeURLKeywordForLookup(
+                  GURL("https://www.google.com/path?foo=bar#reftag")),
+              "http://google.com/path")
+        << "Does all of the above at once.";
+    EXPECT_EQ(ComputeURLKeywordForLookup(GURL("http://google.com/path")),
+              "http://google.com/path")
+        << "Sanity check when no replacements needed.";
+  }
+
+  {
+    Config config;
+    config.use_host_for_visit_deduping = true;
+    SetConfigForTesting(config);
+
+    EXPECT_EQ(ComputeURLKeywordForLookup(GURL("https://google.com/path/")),
+              "http://google.com/")
+        << "Strips path.";
+
+    EXPECT_EQ(ComputeURLKeywordForLookup(
+                  GURL("https://www.google.com/path?foo=bar#reftag")),
+              "http://google.com/")
+        << "Does everything at once.";
+  }
 }
 
 TEST(HistoryClustersUtilTest, FilterClustersMatchingQuery) {
@@ -61,15 +104,18 @@ TEST(HistoryClustersUtilTest, FilterClustersMatchingQuery) {
                            GetHardcodedClusterVisit(2),
                            GetHardcodedClusterVisit(1),
                        },
-                       {u"apples", u"Red Oranges"},
-                       /*should_show_on_prominent_ui_surfaces=*/false));
+                       {{u"apples", history::ClusterKeywordData()},
+                        {u"Red Oranges", history::ClusterKeywordData()}},
+                       /*should_show_on_prominent_ui_surfaces=*/false,
+                       /*label=*/u"LabelOne"));
   all_clusters.push_back(
       history::Cluster(2,
                        {
                            GetHardcodedClusterVisit(2),
                        },
                        {},
-                       /*should_show_on_prominent_ui_surfaces=*/true));
+                       /*should_show_on_prominent_ui_surfaces=*/true,
+                       /*label=*/u"LabelTwo"));
 
   struct TestData {
     std::string query;
@@ -105,6 +151,8 @@ TEST(HistoryClustersUtilTest, FilterClustersMatchingQuery) {
       // Verify that we DON'T match if the query spans both the visit and
       // keywords.
       {"goog red", false, false},
+      // Verify that we can find clusters by label.
+      {"labeltwo", false, true},
   };
 
   for (size_t i = 0; i < std::size(test_data); ++i) {
@@ -113,7 +161,7 @@ TEST(HistoryClustersUtilTest, FilterClustersMatchingQuery) {
                                     test_data[i].query.c_str()));
 
     auto clusters = all_clusters;
-    ApplySearchQuery(test_data[i].query, &clusters);
+    ApplySearchQuery(test_data[i].query, clusters);
 
     size_t expected_size =
         static_cast<size_t>(test_data[i].expect_first_cluster) +
@@ -140,13 +188,14 @@ TEST(HistoryClustersUtilTest, PromoteMatchingVisitsAboveNonMatchingVisits) {
                            GetHardcodedClusterVisit(1),
                            GetHardcodedClusterVisit(2),
                        },
-                       {u"apples", u"Red Oranges"},
+                       {{u"apples", history::ClusterKeywordData()},
+                        {u"Red Oranges", history::ClusterKeywordData()}},
                        /*should_show_on_prominent_ui_surfaces=*/false));
 
   // No promotion when we match a keyword.
   {
     std::vector clusters = all_clusters;
-    ApplySearchQuery("apples", &clusters);
+    ApplySearchQuery("apples", clusters);
     ASSERT_EQ(clusters.size(), 1U);
     ASSERT_EQ(clusters[0].visits.size(), 2U);
     EXPECT_EQ(clusters[0].visits[0].annotated_visit.visit_row.visit_id, 1);
@@ -158,7 +207,7 @@ TEST(HistoryClustersUtilTest, PromoteMatchingVisitsAboveNonMatchingVisits) {
   // Promote the second visit over the first if we match the second visit.
   {
     std::vector clusters = all_clusters;
-    ApplySearchQuery("git", &clusters);
+    ApplySearchQuery("git", clusters);
     ASSERT_EQ(clusters.size(), 1U);
     ASSERT_EQ(clusters[0].visits.size(), 2U);
     EXPECT_EQ(clusters[0].visits[0].annotated_visit.visit_row.visit_id, 2);
@@ -176,14 +225,15 @@ TEST(HistoryClustersUtilTest, SortClustersWithinBatchForQuery) {
                            GetHardcodedClusterVisit(1),
                            GetHardcodedClusterVisit(2),
                        },
-                       {u"apples", u"Red Oranges"},
+                       {{u"apples", history::ClusterKeywordData()},
+                        {u"Red Oranges", history::ClusterKeywordData()}},
                        /*should_show_on_prominent_ui_surfaces=*/false));
   all_clusters.push_back(
       history::Cluster(2,
                        {
                            GetHardcodedClusterVisit(1),
                        },
-                       {u"search"},
+                       {{u"search", history::ClusterKeywordData()}},
                        /*should_show_on_prominent_ui_surfaces=*/false));
 
   // When the flag is off, leave the initial ordering alone.
@@ -193,7 +243,7 @@ TEST(HistoryClustersUtilTest, SortClustersWithinBatchForQuery) {
     SetConfigForTesting(config);
 
     std::vector clusters = all_clusters;
-    ApplySearchQuery("search", &clusters);
+    ApplySearchQuery("search", clusters);
     ASSERT_EQ(clusters.size(), 2U);
     EXPECT_EQ(clusters[0].cluster_id, 1);
     EXPECT_EQ(clusters[1].cluster_id, 2);
@@ -209,7 +259,7 @@ TEST(HistoryClustersUtilTest, SortClustersWithinBatchForQuery) {
     SetConfigForTesting(config);
 
     std::vector clusters = all_clusters;
-    ApplySearchQuery("search", &clusters);
+    ApplySearchQuery("search", clusters);
     ASSERT_EQ(clusters.size(), 2U);
     EXPECT_EQ(clusters[0].cluster_id, 2);
     EXPECT_EQ(clusters[1].cluster_id, 1);
@@ -224,13 +274,128 @@ TEST(HistoryClustersUtilTest, SortClustersWithinBatchForQuery) {
     SetConfigForTesting(config);
 
     std::vector clusters = all_clusters;
-    ApplySearchQuery("google", &clusters);
+    ApplySearchQuery("google", clusters);
     ASSERT_EQ(clusters.size(), 2U);
     EXPECT_EQ(clusters[0].cluster_id, 1);
     EXPECT_EQ(clusters[1].cluster_id, 2);
     EXPECT_FLOAT_EQ(clusters[0].search_match_score, 0.5);
     EXPECT_FLOAT_EQ(clusters[1].search_match_score, 0.5);
   }
+}
+
+TEST(HistoryClustersUtilTest, HideAndCullLowScoringVisits) {
+  std::vector<history::Cluster> all_clusters;
+
+  auto add_cluster = [&](int64_t cluster_id, std::vector<float> visit_scores) {
+    history::Cluster cluster;
+    cluster.cluster_id = cluster_id;
+    base::ranges::transform(visit_scores, std::back_inserter(cluster.visits),
+                            [&](const auto& visit_score) {
+                              return GetHardcodedClusterVisit(1, visit_score);
+                            });
+    cluster.keyword_to_data_map = {{u"keyword", history::ClusterKeywordData()}};
+    all_clusters.push_back(cluster);
+  };
+
+  // High scoring visits should always be above the fold.
+  add_cluster(4, {1, .8, .5, .5, .5});
+
+  // Low scoring visits should be above the fold only if they're one of top 4.
+  add_cluster(6, {.4, .4, .4, .4, .4});
+
+  // 0 scoring visits should never be above the fold.
+  add_cluster(8, {0, 0, .8, .8});
+
+  // Clusters with 1 visit after filtering should be removed.
+  add_cluster(10, {.8, 0});
+
+  // Clusters with 0 visits after filtering should be removed.
+  add_cluster(12, {0, 0});
+
+  auto clusters = all_clusters;
+  // Try with `min_visits` = 2. This is how query-less state behaves.
+  HideAndCullLowScoringVisits(clusters, 2);
+  ASSERT_EQ(clusters.size(), 3u);
+
+  EXPECT_EQ(clusters[0].cluster_id, 4);
+  EXPECT_EQ(clusters[0].visits.size(), 5u);
+
+  EXPECT_EQ(clusters[1].cluster_id, 6);
+  EXPECT_EQ(clusters[1].visits.size(), 4u);
+
+  EXPECT_EQ(clusters[2].cluster_id, 8);
+  EXPECT_EQ(clusters[2].visits.size(), 2u);
+
+  // Try with `min_visits` = 1. This is how query state behaves.
+  clusters = all_clusters;
+  HideAndCullLowScoringVisits(clusters, 1);
+  // Cluster 10, with 1 visit after filtering should no longer be removed.
+  ASSERT_EQ(clusters.size(), 4u);
+  EXPECT_EQ(clusters[3].cluster_id, 10);
+  EXPECT_EQ(clusters[3].visits.size(), 1u);
+}
+
+TEST(HistoryClustersUtilTest, CoalesceRelatedSearches) {
+  // canonical_visit has the same URL as Visit1.
+  history::ClusterVisit visit1 = GetHardcodedClusterVisit(1);
+  visit1.annotated_visit.content_annotations.related_searches.push_back(
+      "search1");
+  visit1.annotated_visit.content_annotations.related_searches.push_back(
+      "search2");
+  visit1.annotated_visit.content_annotations.related_searches.push_back(
+      "search3");
+
+  history::ClusterVisit visit2 = GetHardcodedClusterVisit(2);
+  visit2.annotated_visit.content_annotations.related_searches.push_back(
+      "search4");
+  visit2.annotated_visit.content_annotations.related_searches.push_back(
+      "search5");
+  visit2.annotated_visit.content_annotations.related_searches.push_back(
+      "search6");
+
+  history::Cluster cluster;
+  cluster.visits = {visit1, visit2};
+  std::vector<history::Cluster> clusters;
+  clusters.push_back(cluster);
+
+  CoalesceRelatedSearches(clusters);
+  EXPECT_THAT(clusters[0].related_searches,
+              testing::ElementsAre("search1", "search2", "search3", "search4",
+                                   "search5"));
+}
+
+TEST(HistoryClustersUtilTest, SortClusters) {
+  std::vector<history::Cluster> clusters;
+  // This first cluster is meant to validate that the higher scoring "visit 1"
+  // gets sorted to the top, even though "visit 1" is older than "visit 2".
+  // It's to validate the within-cluster sorting.
+  clusters.push_back(history::Cluster(0,
+                                      {
+                                          GetHardcodedClusterVisit(2, 0.5),
+                                          GetHardcodedClusterVisit(1, 0.9),
+                                      },
+                                      {}));
+  // The second cluster is lower scoring, but newer, because the top visit is
+  // newer. It should be sorted above the first cluster because of reverse
+  // chronological between-cluster sorting.
+  clusters.push_back(history::Cluster(0,
+                                      {
+                                          GetHardcodedClusterVisit(3, 0.1),
+                                      },
+                                      {}));
+
+  SortClusters(&clusters);
+
+  ASSERT_EQ(clusters.size(), 2u);
+
+  auto& visits = clusters[0].visits;
+  ASSERT_EQ(visits.size(), 1u);
+  EXPECT_FLOAT_EQ(visits[0].score, 0.1);
+
+  visits = clusters[1].visits;
+  ASSERT_EQ(visits.size(), 2u);
+  EXPECT_FLOAT_EQ(visits[0].score, 0.9);
+  EXPECT_FLOAT_EQ(visits[1].score, 0.5);
 }
 
 }  // namespace

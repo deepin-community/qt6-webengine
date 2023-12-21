@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,18 +6,21 @@
 
 #include <utility>
 
+#include "ash/display/output_protection_delegate.h"
 #include "ash/public/cpp/shell_window_ids.h"
-#include "base/callback_helpers.h"
+#include "ash/public/cpp/window_properties.h"
+#include "ash/wm/desks/desks_util.h"
 #include "base/containers/adapters.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/exo/buffer.h"
 #include "components/exo/frame_sink_resource_manager.h"
 #include "components/exo/shell_surface_util.h"
@@ -30,6 +33,7 @@
 #include "components/viz/common/quads/solid_color_draw_quad.h"
 #include "components/viz/common/quads/surface_draw_quad.h"
 #include "components/viz/common/quads/texture_draw_quad.h"
+#include "components/viz/common/quads/tile_draw_quad.h"
 #include "components/viz/common/resources/resource_id.h"
 #include "media/media_buildflags.h"
 #include "third_party/khronos/GLES2/gl2.h"
@@ -50,6 +54,7 @@
 #include "ui/events/event.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/buffer_types.h"
+#include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/dip_util.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/point_conversions.h"
@@ -58,17 +63,13 @@
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/size_conversions.h"
+#include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/gfx/geometry/transform_util.h"
 #include "ui/gfx/geometry/vector2d_f.h"
 #include "ui/gfx/gpu_fence.h"
 #include "ui/gfx/gpu_memory_buffer.h"
 #include "ui/gfx/presentation_feedback.h"
 #include "ui/views/widget/widget.h"
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ash/display/output_protection_delegate.h"
-#include "ash/wm/desks/desks_util.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 DEFINE_UI_CLASS_PROPERTY_TYPE(exo::Surface*)
 
@@ -87,10 +88,7 @@ DEFINE_UI_CLASS_PROPERTY_KEY(bool, kStylusOnlyKey, false)
 // with |key|.
 template <typename T, typename U>
 typename T::iterator FindListEntry(T& list, U key) {
-  return std::find_if(list.begin(), list.end(),
-                      [key](const typename T::value_type& entry) {
-                        return entry.first == key;
-                      });
+  return base::ranges::find(list, key, &T::value_type::first);
 }
 
 // Helper function that returns true if |list| contains an entry with |key|.
@@ -114,6 +112,54 @@ bool FormatHasAlpha(gfx::BufferFormat format) {
   }
 }
 
+Transform InvertY(Transform transform) {
+  switch (transform) {
+    case Transform::NORMAL:
+      return Transform::FLIPPED_ROTATE_180;
+    case Transform::ROTATE_90:
+      return Transform::FLIPPED_ROTATE_270;
+    case Transform::ROTATE_180:
+      return Transform::FLIPPED;
+    case Transform::ROTATE_270:
+      return Transform::FLIPPED_ROTATE_90;
+    case Transform::FLIPPED:
+      return Transform::ROTATE_180;
+    case Transform::FLIPPED_ROTATE_90:
+      return Transform::ROTATE_270;
+    case Transform::FLIPPED_ROTATE_180:
+      return Transform::NORMAL;
+    case Transform::FLIPPED_ROTATE_270:
+      return Transform::ROTATE_90;
+  }
+  NOTREACHED();
+}
+
+// Returns a gfx::Transform that can transform a (0,0 1x1) rect to the same
+// rect while rotate/flip the contents about (0.5, 0.5) origin. It's equivalent
+// to rotating/flipping about (0, 0) origin then translating by
+// (0 or 1, 0 or 1). Note that the rotations are counter-clockwise.
+gfx::Transform ToBufferTransformMatrix(Transform transform, bool invert_y) {
+  switch (invert_y ? InvertY(transform) : transform) {
+    case Transform::NORMAL:
+      return gfx::Transform();
+    case Transform::ROTATE_90:
+      return gfx::Transform::Affine(0, -1, 1, 0, 0, 1);
+    case Transform::ROTATE_180:
+      return gfx::Transform::Affine(-1, 0, 0, -1, 1, 1);
+    case Transform::ROTATE_270:
+      return gfx::Transform::Affine(0, 1, -1, 0, 1, 0);
+    case Transform::FLIPPED:
+      return gfx::Transform::Affine(-1, 0, 0, 1, 1, 0);
+    case Transform::FLIPPED_ROTATE_90:
+      return gfx::Transform::Affine(0, 1, 1, 0, 0, 0);
+    case Transform::FLIPPED_ROTATE_180:
+      return gfx::Transform::Affine(1, 0, 0, -1, 0, 1);
+    case Transform::FLIPPED_ROTATE_270:
+      return gfx::Transform::Affine(0, -1, -1, 0, 1, 1);
+  }
+  NOTREACHED();
+}
+
 // Helper function that returns |size| after adjusting for |transform|.
 gfx::Size ToTransformedSize(const gfx::Size& size, Transform transform) {
   switch (transform) {
@@ -133,11 +179,7 @@ gfx::Size ToTransformedSize(const gfx::Size& size, Transform transform) {
 }
 
 bool IsDeskContainer(aura::Window* container) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   return ash::desks_util::IsDeskContainer(container);
-#else
-  return container->GetId() == ash::kShellWindowId_DefaultContainerDeprecated;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 }
 
 class CustomWindowDelegate : public aura::WindowDelegate {
@@ -542,6 +584,30 @@ void Surface::SetOverlayPriorityHint(OverlayPriority hint) {
   pending_state_.overlay_priority_hint = hint;
 }
 
+void Surface::SetClipRect(const absl::optional<gfx::RectF>& clip_rect) {
+  TRACE_EVENT1("exo", "Surface::SetClipRect", "clip_rect",
+               (clip_rect ? clip_rect->ToString() : "nullopt"));
+
+  if (pending_state_.clip_rect == clip_rect) {
+    return;
+  }
+  pending_state_.clip_rect = clip_rect;
+}
+
+void Surface::SetSurfaceTransform(const gfx::Transform& transform) {
+  TRACE_EVENT1("exo", "Surface::SetSurfaceTransform", "transform",
+               transform.ToString());
+  if (pending_state_.surface_transform != transform) {
+    has_pending_contents_ = true;
+    pending_state_.surface_transform = transform;
+  }
+}
+
+void Surface::SetBackgroundColor(absl::optional<SkColor4f> background_color) {
+  TRACE_EVENT0("exo", "Surface::SetBackgroundColor");
+  pending_state_.basic_state.background_color = background_color;
+}
+
 void Surface::SetViewport(const gfx::SizeF& viewport) {
   TRACE_EVENT1("exo", "Surface::SetViewport", "viewport", viewport.ToString());
 
@@ -633,14 +699,14 @@ void Surface::HideSnapPreview() {
     delegate_->HideSnapPreview();
 }
 
-void Surface::SetSnappedToSecondary() {
+void Surface::SetSnapPrimary(float snap_ratio) {
   if (delegate_)
-    delegate_->SetSnappedToSecondary();
+    delegate_->SetSnapPrimary(snap_ratio);
 }
 
-void Surface::SetSnappedToPrimary() {
+void Surface::SetSnapSecondary(float snap_ratio) {
   if (delegate_)
-    delegate_->SetSnappedToPrimary();
+    delegate_->SetSnapSecondary(snap_ratio);
 }
 
 void Surface::UnsetSnap() {
@@ -693,6 +759,23 @@ std::string Surface::GetClientSurfaceId() const {
   return value ? *value : std::string();
 }
 
+void Surface::SetContainsVideo(bool contains_video) {
+  TRACE_EVENT1("exo", "Surface::SetContainsVideo", "contains_video",
+               contains_video ? "true" : "false");
+  pending_state_.basic_state.contains_video = contains_video;
+}
+
+bool Surface::ContainsVideo() {
+  if (state_.basic_state.contains_video)
+    return true;
+
+  for (auto& subsurface : sub_surfaces_) {
+    if (subsurface.first->ContainsVideo())
+      return true;
+  }
+  return false;
+}
+
 void Surface::SetWindowSessionId(int32_t window_session_id) {
   if (window_session_id > 0)
     window_->SetProperty(kWindowSessionId, window_session_id);
@@ -730,10 +813,8 @@ void Surface::SetEmbeddedSurfaceSize(const gfx::Size& size) {
 }
 
 void Surface::SetAcquireFence(std::unique_ptr<gfx::GpuFence> gpu_fence) {
-#if BUILDFLAG(IS_POSIX)
   TRACE_EVENT1("exo", "Surface::SetAcquireFence", "fence_fd",
                gpu_fence ? gpu_fence->GetGpuFenceHandle().owned_fd.get() : -1);
-#endif  // BUILDFLAG(IS_POSIX)
 
   pending_state_.acquire_fence = std::move(gpu_fence);
 }
@@ -777,6 +858,8 @@ void Surface::Commit() {
   }
   cached_state_.rounded_corners_bounds = pending_state_.rounded_corners_bounds;
   cached_state_.overlay_priority_hint = pending_state_.overlay_priority_hint;
+  cached_state_.clip_rect = pending_state_.clip_rect;
+  cached_state_.surface_transform = pending_state_.surface_transform;
   cached_state_.acquire_fence = std::move(pending_state_.acquire_fence);
   cached_state_.per_commit_explicit_release_callback_ =
       std::move(pending_state_.per_commit_explicit_release_callback_);
@@ -818,6 +901,10 @@ bool Surface::UpdateDisplay(int64_t old_display, int64_t new_display) {
   return true;
 }
 
+display::Display Surface::GetDisplay() const {
+  return display::Screen::GetScreen()->GetDisplayNearestWindow(window());
+}
+
 void Surface::CommitSurfaceHierarchy(bool synchronized) {
   TRACE_EVENT0("exo", "Surface::CommitSurfaceHierarchy");
   if (needs_commit_surface_ && (synchronized || !IsSynchronized())) {
@@ -852,11 +939,9 @@ void Surface::CommitSurfaceHierarchy(bool synchronized) {
         cached_state_.basic_state.buffer_transform !=
             state_.basic_state.buffer_transform;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
     bool needs_output_protection =
         cached_state_.basic_state.only_visible_on_secure_output !=
         state_.basic_state.only_visible_on_secure_output;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
     bool cached_invert_y = false;
 
@@ -882,7 +967,6 @@ void Surface::CommitSurfaceHierarchy(bool synchronized) {
       window_->TrackOcclusionState();
     }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
     if (needs_output_protection) {
       if (!output_protection_) {
         output_protection_ =
@@ -896,7 +980,6 @@ void Surface::CommitSurfaceHierarchy(bool synchronized) {
 
       output_protection_->SetProtection(protection_mask, base::DoNothing());
     }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
     // We update contents if Attach() has been called since last commit.
     if (has_cached_contents_) {
@@ -917,6 +1000,8 @@ void Surface::CommitSurfaceHierarchy(bool synchronized) {
       }
       state_.rounded_corners_bounds = cached_state_.rounded_corners_bounds;
       state_.overlay_priority_hint = cached_state_.overlay_priority_hint;
+      state_.clip_rect = cached_state_.clip_rect;
+      state_.surface_transform = cached_state_.surface_transform;
       state_.acquire_fence = std::move(cached_state_.acquire_fence);
       state_.per_commit_explicit_release_callback_ =
           std::move(cached_state_.per_commit_explicit_release_callback_);
@@ -1030,6 +1115,7 @@ void Surface::AppendSurfaceHierarchyCallbacks(
 void Surface::AppendSurfaceHierarchyContentsToFrame(
     const gfx::PointF& origin,
     float device_scale_factor,
+    bool client_submits_in_pixel_coords,
     FrameSinkResourceManager* resource_manager,
     viz::CompositorFrame* frame) {
   // The top most sub-surface is at the front of the RenderPass's quad_list,
@@ -1040,7 +1126,9 @@ void Surface::AppendSurfaceHierarchyContentsToFrame(
     // decendents.
     sub_surface->AppendSurfaceHierarchyContentsToFrame(
         origin + sub_surface_entry.second.OffsetFromOrigin(),
-        device_scale_factor, resource_manager, frame);
+
+        device_scale_factor, client_submits_in_pixel_coords, resource_manager,
+        frame);
   }
 
   // Update the resource, or if not required, ensure we call the buffer release
@@ -1052,10 +1140,8 @@ void Surface::AppendSurfaceHierarchyContentsToFrame(
         std::move(state_.per_commit_explicit_release_callback_));
   }
 
-  AppendContentsToFrame(origin, device_scale_factor, frame);
-
-  DCHECK(!current_resource_.id ||
-         resource_manager->HasReleaseCallbackForResource(current_resource_.id));
+  AppendContentsToFrame(origin, device_scale_factor,
+                        client_submits_in_pixel_coords, frame);
 }
 
 bool Surface::IsSynchronized() const {
@@ -1211,26 +1297,33 @@ void Surface::UpdateResource(FrameSinkResourceManager* resource_manager) {
   DCHECK(needs_update_resource_);
   needs_update_resource_ = false;
   if (state_.buffer.has_value() && state_.buffer->buffer()) {
+    gfx::ColorSpace buffer_color_space = state_.basic_state.color_space;
+    // Invalid color spaces cause issues went sent to the buffer. In these cases
+    // revert to passing SRGB as before.
+    if (!buffer_color_space.IsValid()) {
+      buffer_color_space = gfx::ColorSpace::CreateSRGB();
+    }
+    if (legacy_buffer_release_skippable_ &&
+        state_.per_commit_explicit_release_callback_) {
+      state_.buffer->buffer()->SkipLegacyRelease();
+    }
     if (state_.buffer->buffer()->ProduceTransferableResource(
             resource_manager, std::move(state_.acquire_fence),
             state_.basic_state.only_visible_on_secure_output,
-            &current_resource_,
+            &current_resource_, buffer_color_space,
             window_->GetToplevelWindow()->GetProperty(
                 kProtectedNativePixmapQueryDelegate),
             std::move(state_.per_commit_explicit_release_callback_))) {
       current_resource_has_alpha_ =
           FormatHasAlpha(state_.buffer->buffer()->GetFormat());
-      // Setting colors for YUV buffers has been problematic in the past. See
-      // crrev.com/c/2331769
-      if (state_.buffer->buffer()->GetFormat() != gfx::BufferFormat::YVU_420)
-        current_resource_.color_space = state_.basic_state.color_space;
+      current_resource_.color_space = state_.basic_state.color_space;
     } else {
       current_resource_.id = viz::kInvalidResourceId;
       // Use the buffer's size, so the AppendContentsToFrame() will append
       // a SolidColorDrawQuad with the buffer's size.
       current_resource_.size = state_.buffer->size();
-      SkColor color = state_.buffer->buffer()->GetColor().toSkColor();
-      current_resource_has_alpha_ = SkColorGetA(color) != SK_AlphaOPAQUE;
+      SkColor4f color = state_.buffer->buffer()->GetColor();
+      current_resource_has_alpha_ = !color.isOpaque();
     }
   } else {
     current_resource_.id = viz::kInvalidResourceId;
@@ -1242,47 +1335,70 @@ void Surface::UpdateResource(FrameSinkResourceManager* resource_manager) {
 }
 
 void Surface::UpdateBufferTransform(bool y_invert) {
-  SkMatrix buffer_matrix;
-  Transform transform = state_.basic_state.buffer_transform;
-  switch (transform) {
-    case Transform::ROTATE_90:
-    case Transform::FLIPPED_ROTATE_90:
-      buffer_matrix.setSinCos(-1, 0, 0.5f, 0.5f);
-      break;
-    case Transform::ROTATE_180:
-    case Transform::FLIPPED_ROTATE_180:
-      buffer_matrix.setSinCos(0, -1, 0.5f, 0.5f);
-      break;
-    case Transform::ROTATE_270:
-    case Transform::FLIPPED_ROTATE_270:
-      buffer_matrix.setSinCos(1, 0, 0.5f, 0.5f);
-      break;
-    default:
-      break;
+  buffer_transform_ =
+      ToBufferTransformMatrix(state_.basic_state.buffer_transform, y_invert);
+  if (state_.basic_state.buffer_scale != 0) {
+    buffer_transform_.PostScale(1.0f / state_.basic_state.buffer_scale,
+                                1.0f / state_.basic_state.buffer_scale);
   }
-  bool x_invert = false;
-  switch (transform) {
-    case Transform::FLIPPED:
-    case Transform::FLIPPED_ROTATE_90:
-    case Transform::FLIPPED_ROTATE_180:
-    case Transform::FLIPPED_ROTATE_270:
-      x_invert = true;
-      break;
-    default:
-      break;
+}
+
+// Try to share the |SharedQuadState| (sqs) when a single layer can be
+// reconstructed. This is important for performance reasons in the occlusion
+// code and correctness in the per edge anti-alias code.
+static viz::SharedQuadState* AppendOrCreateSharedQuadState(
+    float opacity,
+    const std::unique_ptr<viz::CompositorRenderPass>& render_pass,
+    const gfx::Transform quad_to_target_transform,
+    const gfx::Rect& quad_rect,
+    const gfx::MaskFilterInfo& msk,
+    const absl::optional<gfx::Rect>& quad_clip_rect,
+    const bool are_contents_opaque) {
+  viz::SharedQuadState* quad_state =
+      !render_pass->shared_quad_state_list.empty()
+          ? render_pass->shared_quad_state_list.back()
+          : nullptr;
+  auto test_union = quad_rect;
+  bool is_sealed_union = false;
+  if (quad_state) {
+    // A sealed union is when the combined rect has no gaps and can form a
+    // single layer rect.
+    test_union.Union(quad_state->quad_layer_rect);
+    if ((test_union.width() == quad_rect.width() &&
+         test_union.width() == quad_state->quad_layer_rect.width())) {
+      if (quad_rect.height() + quad_state->quad_layer_rect.height() >=
+          test_union.height())
+        is_sealed_union = true;
+    }
+
+    if ((test_union.height() == quad_rect.height() &&
+         test_union.height() == quad_state->quad_layer_rect.height())) {
+      if (quad_rect.width() + quad_state->quad_layer_rect.width() >=
+          test_union.width())
+        is_sealed_union = true;
+    }
   }
-  if (x_invert)
-    buffer_matrix.preScale(-1, 1, 0.5f, 0.5f);
-  if (y_invert)
-    buffer_matrix.preScale(1, -1, 0.5f, 0.5f);
-  if (state_.basic_state.buffer_scale != 0)
-    buffer_matrix.postScale(1.0f / state_.basic_state.buffer_scale,
-                            1.0f / state_.basic_state.buffer_scale);
-  buffer_transform_ = gfx::Transform(buffer_matrix);
+
+  if (quad_state && is_sealed_union &&
+      quad_to_target_transform == quad_state->quad_to_target_transform &&
+      opacity == quad_state->opacity &&
+      quad_clip_rect == quad_state->clip_rect &&
+      are_contents_opaque == quad_state->are_contents_opaque && msk == msk) {
+    // Expland the layer portion of the sqs.
+    quad_state->quad_layer_rect = test_union;
+    quad_state->visible_quad_layer_rect = test_union;
+  } else {
+    quad_state = render_pass->CreateAndAppendSharedQuadState();
+    quad_state->SetAll(quad_to_target_transform, quad_rect, quad_rect, msk,
+                       quad_clip_rect, are_contents_opaque, opacity,
+                       SkBlendMode::kSrcOver, 0);
+  }
+  return quad_state;
 }
 
 void Surface::AppendContentsToFrame(const gfx::PointF& origin,
                                     float device_scale_factor,
+                                    bool client_submits_in_pixel_coords,
                                     viz::CompositorFrame* frame) {
   const std::unique_ptr<viz::CompositorRenderPass>& render_pass =
       frame->render_pass_list.back();
@@ -1311,9 +1427,18 @@ void Surface::AppendContentsToFrame(const gfx::PointF& origin,
     }
   }
 
+  absl::optional<gfx::Rect> quad_clip_rect;
+  if (state_.clip_rect) {
+    // The clip rect will later be rescaled by 1/device_scale_factor, and the
+    // enclosing rect used. Take the enclosed rect here to mitigate error.
+    gfx::RectF clip_rect_px(*state_.clip_rect);
+    clip_rect_px.Scale(device_scale_factor);
+    quad_clip_rect = gfx::ToEnclosedRect(clip_rect_px);
+  }
+
   state_.damage.Clear();
 
-  gfx::PointF scale(content_size_.width(), content_size_.height());
+  gfx::Vector2dF scale(content_size_.width(), content_size_.height());
 
   gfx::Vector2dF translate(0.0f, 0.0f);
 
@@ -1321,7 +1446,7 @@ void Surface::AppendContentsToFrame(const gfx::PointF& origin,
   // use the shared quad clip rect.
   if (get_current_surface_id_) {
     quad_rect = gfx::Rect(embedded_surface_size_);
-    scale = gfx::PointF(1.0f, 1.0f);
+    scale = gfx::Vector2dF(1.0f, 1.0f);
 
     if (!state_.basic_state.crop.IsEmpty()) {
       // In order to crop an AxB rect to CxD we need to scale by A/C, B/D.
@@ -1338,21 +1463,6 @@ void Surface::AppendContentsToFrame(const gfx::PointF& origin,
     scale.Scale(state_.basic_state.buffer_scale);
   }
 
-  // Compute the total transformation from post-transform buffer coordinates to
-  // target coordinates.
-  SkMatrix viewport_to_target_matrix;
-  // Scale and offset the normalized space to fit the content size rectangle.
-  viewport_to_target_matrix.setScale(scale.x(), scale.y());
-
-  gfx::PointF target = gfx::PointF(origin) + translate;
-  viewport_to_target_matrix.postTranslate(target.x(), target.y());
-  // Convert from DPs to pixels.
-  viewport_to_target_matrix.postScale(device_scale_factor, device_scale_factor);
-
-  gfx::Transform quad_to_target_transform(buffer_transform_);
-  quad_to_target_transform.ConcatTransform(
-      gfx::Transform(viewport_to_target_matrix));
-
   bool are_contents_opaque =
       !current_resource_has_alpha_ ||
       state_.basic_state.blend_mode == SkBlendMode::kSrc ||
@@ -1365,41 +1475,51 @@ void Surface::AppendContentsToFrame(const gfx::PointF& origin,
     auto rounded_corners_rect = state_.rounded_corners_bounds;
 
     // Convert from dip to px.
-    gfx::Transform scale_transform;
-    scale_transform.Scale(device_scale_factor, device_scale_factor);
-    scale_transform.TransformRRectF(&rounded_corners_rect);
+    rounded_corners_rect.Scale(device_scale_factor);
 
     // Set the mask.
     msk = gfx::MaskFilterInfo(rounded_corners_rect);
   }
+
+  // Compute the total transformation from post-transform buffer coordinates to
+  // target coordinates.
+  // Scale and offset the normalized space to fit the content size rectangle.
+  gfx::Transform viewport_to_target_transform(
+      gfx::AxisTransform2d::FromScaleAndTranslation(
+          scale, origin.OffsetFromOrigin() + translate));
+  viewport_to_target_transform.PostConcat(state_.surface_transform);
+
+  if (!client_submits_in_pixel_coords) {
+    // Convert from DPs to pixels.
+    viewport_to_target_transform.PostScale(device_scale_factor);
+  }
+
+  gfx::Transform quad_to_target_transform(buffer_transform_);
+  quad_to_target_transform.PostConcat(viewport_to_target_transform);
 
   // The overdraw algorithm in 'Display::RemoveOverdrawQuads' operates in
   // content space and, due to the discretized nature of the |gfx::Rect|, cannot
   // work with 0,0 1x1 quads. This also means that quads that do not fall on
   // pixel boundaries (rotated or subpixel rects) cannot be removed by the
   // algorithm.
-  gfx::RectF target_space_rect(quad_rect);
-  quad_to_target_transform.TransformRect(&target_space_rect);
-  CHECK(quad_to_target_transform.Preserves2dAxisAlignment());
-  // This simple rect representation cannot mathematically express a rotation
-  // (and currently does not express flip/mirror) hence the
-  // 'IsPositiveScaleOrTranslation' check.
-  if (gfx::IsNearestRectWithinDistance(target_space_rect, 0.001f) &&
-      quad_to_target_transform.IsPositiveScaleOrTranslation()) {
-    quad_rect = gfx::ToNearestRect(target_space_rect);
-    // Later in 'SurfaceAggregator' this transform will have 2d translation.
-    quad_to_target_transform = gfx::Transform();
+  if (quad_to_target_transform.Preserves2dAxisAlignment()) {
+    gfx::RectF target_space_rect =
+        quad_to_target_transform.MapRect(gfx::RectF(quad_rect));
+    // This simple rect representation cannot mathematically express a rotation
+    // (and currently does not express flip/mirror) hence the
+    // 'IsPositiveScaleOrTranslation' check.
+    if (gfx::IsNearestRectWithinDistance(target_space_rect, 0.001f) &&
+        quad_to_target_transform.IsPositiveScaleOrTranslation()) {
+      quad_rect = gfx::ToNearestRect(target_space_rect);
+      // Later in 'SurfaceAggregator' this transform will have 2d translation.
+      quad_to_target_transform = gfx::Transform();
+    }
   }
 
-  viz::SharedQuadState* quad_state =
-      render_pass->CreateAndAppendSharedQuadState();
-  quad_state->SetAll(/*quad_layer_rect=*/quad_to_target_transform, quad_rect,
-                     /*visible_quad_layer_rect=*/quad_rect,
-                     /*mask_filter_info=*/msk, /*clip_rect=*/absl::nullopt,
-                     /*contents_opaque=*/are_contents_opaque,
-                     /*opacity=*/state_.basic_state.alpha,
-                     /*blend_mode=*/SkBlendMode::kSrcOver,
-                     /*sorting_context_id=*/0);
+  if (client_submits_in_pixel_coords) {
+    // Client DPs are actually pixels. This coverts to target space of surface.
+    quad_to_target_transform.PostScale(device_scale_factor);
+  }
 
   if (current_resource_.id) {
     gfx::RectF uv_crop(gfx::SizeF(1, 1));
@@ -1410,16 +1530,18 @@ void Surface::AppendContentsToFrame(const gfx::PointF& origin,
       uv_crop = gfx::RectF(state_.basic_state.crop);
       gfx::Size transformed_buffer_size(ToTransformedSize(
           current_resource_.size, state_.basic_state.buffer_transform));
-      if (!transformed_buffer_size.IsEmpty())
-        uv_crop.Scale(1.f / transformed_buffer_size.width(),
-                      1.f / transformed_buffer_size.height());
-
-      buffer_transform_.TransformRectReverse(&uv_crop);
+      if (!transformed_buffer_size.IsEmpty()) {
+        uv_crop.InvScale(transformed_buffer_size.width(),
+                         transformed_buffer_size.height());
+      }
+      uv_crop = buffer_transform_.InverseMapRect(uv_crop).value_or(uv_crop);
     }
 
-    SkColor background_color = SK_ColorTRANSPARENT;
-    if (current_resource_has_alpha_ && are_contents_opaque)
-      background_color = SK_ColorBLACK;  // Avoid writing alpha < 1
+    SkColor4f background_color = SkColors::kTransparent;
+    if (state_.basic_state.background_color.has_value())
+      background_color = state_.basic_state.background_color.value();
+    else if (current_resource_has_alpha_ && are_contents_opaque)
+      background_color = SkColors::kBlack;  // Avoid writing alpha < 1
 
     // If this surface is being replaced by a SurfaceId emit a SurfaceDrawQuad.
     if (get_current_surface_id_) {
@@ -1435,6 +1557,11 @@ void Surface::AppendContentsToFrame(const gfx::PointF& origin,
       }
       if (latest_embedded_surface_id_.is_valid() &&
           !embedded_surface_size_.IsEmpty()) {
+        viz::SharedQuadState* quad_state =
+            render_pass->CreateAndAppendSharedQuadState();
+        quad_state->SetAll(quad_to_target_transform, quad_rect, quad_rect, msk,
+                           quad_clip_rect, are_contents_opaque,
+                           state_.basic_state.alpha, SkBlendMode::kSrcOver, 0);
         if (!state_.basic_state.crop.IsEmpty()) {
           quad_state->clip_rect = gfx::ToEnclosedRect(output_rect);
         }
@@ -1449,61 +1576,86 @@ void Surface::AppendContentsToFrame(const gfx::PointF& origin,
       // A resource was still produced for this so we still need to release it
       // later.
       frame->resource_list.push_back(current_resource_);
-    } else if (state_.basic_state.alpha) {
-      // Texture quad is only needed if buffer is not fully transparent.
-      viz::TextureDrawQuad* texture_quad =
-          render_pass->CreateAndAppendDrawQuad<viz::TextureDrawQuad>();
-      float vertex_opacity[4] = {1.0, 1.0, 1.0, 1.0};
-      texture_quad->SetNew(
-          quad_state, quad_rect, quad_rect,
-          /* needs_blending=*/!are_contents_opaque, current_resource_.id,
-          /* premultiplied_alpha=*/true, uv_crop.origin(),
-          uv_crop.bottom_right(), background_color, vertex_opacity,
-          /* y_flipped=*/false, /* nearest_neighbor=*/false,
-          state_.basic_state.only_visible_on_secure_output,
-          gfx::ProtectedVideoType::kClear);
-      if (current_resource_.is_overlay_candidate)
-        texture_quad->set_resource_size_in_pixels(current_resource_.size);
+    } else if (state_.basic_state.alpha != 0.0f) {
+      const viz::SharedQuadState* quad_state = AppendOrCreateSharedQuadState(
+          state_.basic_state.alpha, render_pass, quad_to_target_transform,
+          quad_rect, msk, quad_clip_rect, are_contents_opaque);
 
-      switch (state_.overlay_priority_hint) {
-        case OverlayPriority::LOW:
-          texture_quad->overlay_priority_hint = viz::OverlayPriority::kLow;
-          break;
-        case OverlayPriority::REQUIRED:
-          texture_quad->overlay_priority_hint = viz::OverlayPriority::kRequired;
-          break;
-        case OverlayPriority::REGULAR:
-          texture_quad->overlay_priority_hint = viz::OverlayPriority::kRegular;
-          break;
-      }
+      // Draw quad is only needed if buffer is not fully transparent.
+      const bool requires_texture_draw_quad =
+          state_.basic_state.only_visible_on_secure_output ||
+          state_.overlay_priority_hint != OverlayPriority::LOW;
+
+      if (requires_texture_draw_quad) {
+        viz::TextureDrawQuad* texture_quad =
+            render_pass->CreateAndAppendDrawQuad<viz::TextureDrawQuad>();
+        float vertex_opacity[4] = {1.0, 1.0, 1.0, 1.0};
+        texture_quad->SetNew(
+            quad_state, quad_rect, quad_rect,
+            /* needs_blending=*/!are_contents_opaque, current_resource_.id,
+            /* premultiplied*/ true, uv_crop.origin(), uv_crop.bottom_right(),
+            background_color, vertex_opacity,
+            /* flipped=*/false, /* nearest*/ false,
+            state_.basic_state.only_visible_on_secure_output,
+            gfx::ProtectedVideoType::kClear);
+        if (current_resource_.is_overlay_candidate)
+          texture_quad->set_resource_size_in_pixels(current_resource_.size);
+
+        switch (state_.overlay_priority_hint) {
+          case OverlayPriority::LOW:
+            texture_quad->overlay_priority_hint = viz::OverlayPriority::kLow;
+            break;
+          case OverlayPriority::REQUIRED:
+            texture_quad->overlay_priority_hint =
+                viz::OverlayPriority::kRequired;
+            break;
+          case OverlayPriority::REGULAR:
+            texture_quad->overlay_priority_hint =
+                viz::OverlayPriority::kRegular;
+            break;
+        }
 
 #if BUILDFLAG(USE_ARC_PROTECTED_MEDIA)
-      if (state_.basic_state.only_visible_on_secure_output &&
-          state_.buffer.has_value() && state_.buffer->buffer() &&
-          state_.buffer->buffer()->NeedsHardwareProtection()) {
-        texture_quad->protected_video_type =
-            gfx::ProtectedVideoType::kHardwareProtected;
-      }
+        if (state_.basic_state.only_visible_on_secure_output &&
+            state_.buffer.has_value() && state_.buffer->buffer() &&
+            state_.buffer->buffer()->NeedsHardwareProtection()) {
+          texture_quad->protected_video_type =
+              gfx::ProtectedVideoType::kHardwareProtected;
+        }
 #endif  // BUILDFLAG(USE_ARC_PROTECTED_MEDIA)
-      frame->resource_list.push_back(current_resource_);
 
-      if (!damage_rect.IsEmpty()) {
-        texture_quad->damage_rect = gfx::ToEnclosedRect(damage_rect);
-        render_pass->has_per_quad_damage = true;
-        // Clear handled damage so it will not be added to the |render_pass|.
-        damage_rect = gfx::RectF();
+        if (!damage_rect.IsEmpty()) {
+          texture_quad->damage_rect = gfx::ToEnclosedRect(damage_rect);
+          render_pass->has_per_quad_damage = true;
+          // Clear handled damage so it will not be added to the |render_pass|.
+          damage_rect = gfx::RectF();
+        }
+      } else {
+        viz::TileDrawQuad* tile_quad =
+            render_pass->CreateAndAppendDrawQuad<viz::TileDrawQuad>();
+        // TODO(crbug.com/1339335): Support AA quads coming from exo.
+        constexpr bool kForceAntiAliasingOff = true;
+        tile_quad->SetNew(
+            quad_state, quad_rect, quad_rect,
+            /* needs_blending=*/!are_contents_opaque, current_resource_.id,
+            gfx::ScaleRect(uv_crop, current_resource_.size.width(),
+                           current_resource_.size.height()),
+            current_resource_.size,
+            /* is_premultiplied=*/true,
+            /* nearest_neighbor */ false, kForceAntiAliasingOff);
       }
+      frame->resource_list.push_back(current_resource_);
     }
-  } else if (state_.buffer.has_value() && state_.buffer->buffer()) {
-    SkColor color = state_.buffer->buffer()->GetColor().toSkColor();
+  } else {
+    const viz::SharedQuadState* quad_state = AppendOrCreateSharedQuadState(
+        state_.basic_state.alpha, render_pass, quad_to_target_transform,
+        quad_rect, msk, quad_clip_rect, are_contents_opaque);
+    SkColor4f color = state_.buffer.has_value() && state_.buffer->buffer()
+                          ? state_.buffer->buffer()->GetColor()
+                          : SkColors::kBlack;
     viz::SolidColorDrawQuad* solid_quad =
         render_pass->CreateAndAppendDrawQuad<viz::SolidColorDrawQuad>();
     solid_quad->SetNew(quad_state, quad_rect, quad_rect, color,
-                       false /* force_anti_aliasing_off */);
-  } else {
-    viz::SolidColorDrawQuad* solid_quad =
-        render_pass->CreateAndAppendDrawQuad<viz::SolidColorDrawQuad>();
-    solid_quad->SetNew(quad_state, quad_rect, quad_rect, SK_ColorBLACK,
                        false /* force_anti_aliasing_off */);
   }
 
@@ -1512,29 +1664,31 @@ void Surface::AppendContentsToFrame(const gfx::PointF& origin,
 
 void Surface::UpdateContentSize() {
   gfx::SizeF content_size;
-  if (!state_.basic_state.viewport.IsEmpty()) {
-    content_size = state_.basic_state.viewport;
-  } else if (!state_.basic_state.crop.IsEmpty()) {
-    DLOG_IF(WARNING, !base::IsValueInRangeForNumericType<int>(
-                         state_.basic_state.crop.width()) ||
-                         !base::IsValueInRangeForNumericType<int>(
-                             state_.basic_state.crop.height()))
-        << "Crop rectangle size (" << state_.basic_state.crop.size().ToString()
-        << ") most be expressible using integers when viewport is not set";
-    content_size = state_.basic_state.crop.size();
-  } else {
-    content_size = gfx::ScaleSize(
-        gfx::SizeF(ToTransformedSize(
-            state_.buffer.has_value() ? state_.buffer->size() : gfx::Size(),
-            state_.basic_state.buffer_transform)),
-        1.0f / state_.basic_state.buffer_scale);
-  }
-
   // Enable/disable sub-surface based on if it has contents.
-  if (has_contents())
+  if (has_contents()) {
+    if (!state_.basic_state.viewport.IsEmpty()) {
+      content_size = state_.basic_state.viewport;
+    } else if (!state_.basic_state.crop.IsEmpty()) {
+      DLOG_IF(WARNING, !base::IsValueInRangeForNumericType<int>(
+                           state_.basic_state.crop.width()) ||
+                           !base::IsValueInRangeForNumericType<int>(
+                               state_.basic_state.crop.height()))
+          << "Crop rectangle size ("
+          << state_.basic_state.crop.size().ToString()
+          << ") most be expressible using integers when viewport is not set";
+      content_size = state_.basic_state.crop.size();
+    } else {
+      content_size = gfx::ScaleSize(
+          gfx::SizeF(ToTransformedSize(
+              state_.buffer.has_value() ? state_.buffer->size() : gfx::Size(),
+              state_.basic_state.buffer_transform)),
+          1.0f / state_.basic_state.buffer_scale);
+    }
+
     window_->Show();
-  else
+  } else {
     window_->Hide();
+  }
 
   if (content_size_ != content_size) {
     content_size_ = content_size;
@@ -1571,6 +1725,17 @@ void Surface::OnDeskChanged(int state) {
     observer.OnDeskChanged(this, state);
 }
 
+void Surface::OnTooltipShown(const std::u16string& text,
+                             const gfx::Rect& bounds) {
+  for (SurfaceObserver& observer : observers_)
+    observer.OnTooltipShown(this, text, bounds);
+}
+
+void Surface::OnTooltipHidden() {
+  for (SurfaceObserver& observer : observers_)
+    observer.OnTooltipHidden(this);
+}
+
 void Surface::MoveToDesk(int desk_index) {
   if (delegate_)
     delegate_->MoveToDesk(desk_index);
@@ -1599,6 +1764,24 @@ void Surface::Unpin() {
 void Surface::ThrottleFrameRate(bool on) {
   for (SurfaceObserver& observer : observers_)
     observer.ThrottleFrameRate(on);
+}
+
+void Surface::SetKeyboardShortcutsInhibited(bool inhibited) {
+  if (keyboard_shortcuts_inhibited_ == inhibited)
+    return;
+
+  keyboard_shortcuts_inhibited_ = inhibited;
+
+  // Also set kCanConsumeSystemKeysKey property, so that the key event
+  // is also forwarded to exo::Keyboard.
+  // TODO(hidehiko): Support capability on migrating ARC/Crostini.
+  window_->SetProperty(ash::kCanConsumeSystemKeysKey, inhibited);
+}
+
+SecurityDelegate* Surface::GetSecurityDelegate() {
+  if (delegate_)
+    return delegate_->GetSecurityDelegate();
+  return nullptr;
 }
 
 }  // namespace exo

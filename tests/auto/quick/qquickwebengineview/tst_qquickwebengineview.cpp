@@ -3,6 +3,7 @@
 
 #include "testwindow.h"
 #include "quickutil.h"
+#include "util.h"
 
 #include <QScopedPointer>
 #include <QtCore/qelapsedtimer.h>
@@ -16,6 +17,7 @@
 #include <QtGui/private/qinputmethod_p.h>
 #include <QtWebEngineQuick/private/qquickwebenginescriptcollection_p.h>
 #include <QtWebEngineQuick/private/qquickwebenginesettings_p.h>
+#include <QtWebEngineQuick/private/qquickwebenginedownloadrequest_p.h>
 #include <QtWebEngineQuick/private/qquickwebengineview_p.h>
 #include <QtWebEngineCore/private/qtwebenginecore-config_p.h>
 #include <qpa/qplatforminputcontext.h>
@@ -69,9 +71,13 @@ private Q_SLOTS:
     void javascriptClipboard_data();
     void javascriptClipboard();
     void setProfile();
-    void focusChild();
+#if QT_CONFIG(accessibility)
     void focusChild_data();
+    void focusChild();
+#endif
     void htmlSelectPopup();
+    void savePage_data();
+    void savePage();
 
 private:
     inline QQuickWebEngineView *newWebEngineView();
@@ -1117,7 +1123,7 @@ void tst_QQuickWebEngineView::javascriptClipboard()
     // - return value of queryCommandEnabled and
     // - return value of execCommand
     // - comparing the clipboard / input field
-    QGuiApplication::clipboard()->clear();
+    QGuiApplication::clipboard()->setText(QString());
     QCOMPARE(evaluateJavaScriptSync(view, "document.queryCommandEnabled('copy')").toBool(),
              copyResult);
     QCOMPARE(evaluateJavaScriptSync(view, "document.execCommand('copy')").toBool(), copyResult);
@@ -1180,6 +1186,7 @@ void tst_QQuickWebEngineView::setProfile() {
     QTRY_COMPARE(webEngineView()->url() ,urlFromTestPath("html/basic_page2.html"));
 }
 
+#if QT_CONFIG(accessibility)
 void tst_QQuickWebEngineView::focusChild_data()
 {
     QTest::addColumn<QString>("interfaceName");
@@ -1242,6 +1249,7 @@ void tst_QQuickWebEngineView::focusChild()
     // <html> -> <body> -> <input>
     QCOMPARE(traverseToWebDocumentAccessibleInterface(iface)->child(0)->child(0), iface->focusChild());
 }
+#endif // QT_CONFIG(accessibility)
 
 void tst_QQuickWebEngineView::htmlSelectPopup()
 {
@@ -1270,8 +1278,92 @@ void tst_QQuickWebEngineView::htmlSelectPopup()
     QCOMPARE(evaluateJavaScriptSync(&view, "document.getElementById('select').value").toString(), QStringLiteral("O2"));
 }
 
+void tst_QQuickWebEngineView::savePage_data()
+{
+    QTest::addColumn<QWebEngineDownloadRequest::SavePageFormat>("savePageFormat");
+
+    QTest::newRow("SingleHtmlSaveFormat") << QWebEngineDownloadRequest::SingleHtmlSaveFormat;
+    QTest::newRow("CompleteHtmlSaveFormat") << QWebEngineDownloadRequest::CompleteHtmlSaveFormat;
+    QTest::newRow("MimeHtmlSaveFormat") << QWebEngineDownloadRequest::MimeHtmlSaveFormat;
+}
+
+void tst_QQuickWebEngineView::savePage()
+{
+    QFETCH(QWebEngineDownloadRequest::SavePageFormat, savePageFormat);
+
+    QTemporaryDir tempDir(QDir::tempPath() + "/tst_QQuickWebEngineView-XXXXXX");
+    QVERIFY(tempDir.isValid());
+    const QString filePath = tempDir.path() + "/saved_page.html";
+
+    QQuickWebEngineView *view = webEngineView();
+    int acceptedCount = 0;
+    int finishedCount = 0;
+    ScopedConnection sc1 = connect(
+            view->profile(), &QQuickWebEngineProfile::downloadRequested,
+            [&](QQuickWebEngineDownloadRequest *downloadRequest) {
+                QCOMPARE(downloadRequest->state(),
+                         QQuickWebEngineDownloadRequest::DownloadInProgress);
+                QCOMPARE(downloadRequest->isSavePageDownload(), true);
+                QCOMPARE(downloadRequest->savePageFormat(), savePageFormat);
+                QCOMPARE(QDir(downloadRequest->downloadDirectory())
+                                 .filePath(downloadRequest->downloadFileName()),
+                         filePath);
+                QCOMPARE(downloadRequest->url(), view->url());
+
+                connect(downloadRequest, &QQuickWebEngineDownloadRequest::isFinishedChanged,
+                        [&, downloadRequest]() {
+                            QCOMPARE(downloadRequest->state(),
+                                     QQuickWebEngineDownloadRequest::DownloadCompleted);
+                            QCOMPARE(downloadRequest->isSavePageDownload(), true);
+                            QCOMPARE(downloadRequest->isFinished(), true);
+                            QCOMPARE(downloadRequest->savePageFormat(), savePageFormat);
+                            QCOMPARE(downloadRequest->totalBytes(),
+                                     downloadRequest->receivedBytes());
+                            QVERIFY(downloadRequest->receivedBytes() > 0);
+                            QCOMPARE(QDir(downloadRequest->downloadDirectory())
+                                             .filePath(downloadRequest->downloadFileName()),
+                                     filePath);
+                            QCOMPARE(downloadRequest->url(), view->url());
+                            finishedCount++;
+                        });
+                acceptedCount++;
+            });
+
+    const QString originalData = QStringLiteral("Basic page");
+    view->setUrl(urlFromTestPath("html/basic_page.html"));
+    QVERIFY(waitForLoadSucceeded(view));
+    QCOMPARE(evaluateJavaScriptSync(view, "document.getElementsByTagName('h1')[0].innerText")
+                     .toString(),
+             originalData);
+
+    // Save the loaded page as HTML.
+    view->save(filePath, savePageFormat);
+    QTRY_COMPARE(acceptedCount, 1);
+    QTRY_COMPARE(finishedCount, 1);
+    QFile file(filePath);
+    QVERIFY(file.exists());
+
+    // Load something else.
+    view->setUrl(urlFromTestPath("html/basic_page2.html"));
+    QVERIFY(waitForLoadSucceeded(view));
+    QVERIFY(evaluateJavaScriptSync(view, "document.getElementsByTagName('h1')[0].innerText")
+                    .toString()
+            != originalData);
+
+    // Load the saved page and compare the contents.
+    view->setUrl(QUrl::fromLocalFile(filePath));
+    QVERIFY(waitForLoadSucceeded(view));
+    QCOMPARE(evaluateJavaScriptSync(view, "document.getElementsByTagName('h1')[0].innerText")
+                     .toString(),
+             originalData);
+}
+
+#if QT_CONFIG(accessibility)
 static QByteArrayList params = QByteArrayList()
     << "--force-renderer-accessibility";
+#else
+static QByteArrayList params;
+#endif
 
 W_QTEST_MAIN(tst_QQuickWebEngineView, params)
 #include "tst_qquickwebengineview.moc"

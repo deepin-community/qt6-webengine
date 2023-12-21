@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,11 +10,11 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/contains.h"
 #include "base/containers/span.h"
 #include "base/files/file.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/time/time.h"
@@ -32,9 +32,10 @@
 // Note that headers in third_party/skia/src are fragile.  This is
 // an experimental, fragile, and diagnostic-only document type.
 #include "third_party/skia/src/utils/SkMultiPictureDocument.h"
+#include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/geometry/skia_conversions.h"
 
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_APPLE)
 #include "printing/pdf_metafile_cg_mac.h"
 #endif
 
@@ -64,22 +65,13 @@ bool WriteAssetToBuffer(const SkStreamAsset* asset, void* buffer, size_t size) {
 namespace printing {
 
 struct Page {
-  Page(const SkSize& s, sk_sp<cc::PaintRecord> c)
-      : size(s), content(std::move(c)) {}
-  Page(Page&& that) : size(that.size), content(std::move(that.content)) {}
-  Page(const Page&) = default;
-  Page& operator=(const Page&) = default;
-  Page& operator=(Page&& that) {
-    size = that.size;
-    content = std::move(that.content);
-    return *this;
-  }
+  Page(const SkSize& s, cc::PaintRecord c) : size(s), content(std::move(c)) {}
   SkSize size;
-  sk_sp<cc::PaintRecord> content;
+  cc::PaintRecord content;
 };
 
 struct MetafileSkiaData {
-  cc::PaintRecorder recorder;  // Current recording
+  cc::InspectablePaintRecorder recorder;  // Current recording
 
   std::vector<Page> pages;
   std::unique_ptr<SkStreamAsset> data_stream;
@@ -95,7 +87,7 @@ struct MetafileSkiaData {
   SkSize size;
   mojom::SkiaDocumentType type;
 
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_APPLE)
   PdfMetafileCg pdf_cg;
 #endif
 };
@@ -147,8 +139,7 @@ void MetafileSkia::StartPage(const gfx::Size& page_size,
 
   float inverse_scale = 1.0 / scale_factor;
   cc::PaintCanvas* canvas = data_->recorder.beginRecording(
-      inverse_scale * physical_page_size.width(),
-      inverse_scale * physical_page_size.height());
+      gfx::ScaleToCeiledSize(physical_page_size, inverse_scale));
   // Recording canvas is owned by the `data_->recorder`.  No ref() necessary.
   if (content_area != gfx::Rect(page_size) ||
       page_orientation != mojom::PageOrientation::kUpright) {
@@ -187,13 +178,13 @@ bool MetafileSkia::FinishPage() {
   if (!data_->recorder.getRecordingCanvas())
     return false;
 
-  sk_sp<cc::PaintRecord> pic = data_->recorder.finishRecordingAsPicture();
+  cc::PaintRecord pic = data_->recorder.finishRecordingAsPicture();
   if (data_->scale_factor != 1.0f) {
-    cc::PaintCanvas* canvas = data_->recorder.beginRecording(
-        data_->size.width(), data_->size.height());
+    cc::PaintRecorder recorder;
+    cc::PaintCanvas* canvas = recorder.beginRecording();
     canvas->scale(data_->scale_factor, data_->scale_factor);
-    canvas->drawPicture(pic);
-    pic = data_->recorder.finishRecordingAsPicture();
+    canvas->drawPicture(std::move(pic));
+    pic = recorder.finishRecordingAsPicture();
   }
   data_->pages.emplace_back(data_->size, std::move(pic));
   return true;
@@ -249,9 +240,8 @@ void MetafileSkia::FinishFrameContent() {
   cc::PlaybackParams::CustomDataRasterCallback custom_callback =
       base::BindRepeating(&MetafileSkia::CustomDataToSkPictureCallback,
                           base::Unretained(this));
-  sk_sp<SkPicture> pic = ToSkPicture(data_->pages[0].content,
-                                     SkRect::MakeSize(data_->pages[0].size),
-                                     nullptr, custom_callback);
+  sk_sp<SkPicture> pic = data_->pages[0].content.ToSkPicture(
+      SkRect::MakeSize(data_->pages[0].size), nullptr, custom_callback);
   SkSerialProcs procs = SerializationProcs(&data_->subframe_content_info,
                                            data_->typeface_content_info);
   SkDynamicMemoryWStream stream;
@@ -311,7 +301,7 @@ bool MetafileSkia::SafePlayback(printing::NativeDrawingContext hdc) const {
   return false;
 }
 
-#elif BUILDFLAG(IS_MAC)
+#elif BUILDFLAG(IS_APPLE)
 /* TODO(caryclark): The set up of PluginInstance::PrintPDFOutput may result in
    rasterized output.  Even if that flow uses PdfMetafileCg::RenderPage,
    the drawing of the PDF into the canvas may result in a rasterized output.
@@ -432,8 +422,7 @@ const ContentToProxyTokenMap& MetafileSkia::GetSubframeContentInfo() const {
   return data_->subframe_content_info;
 }
 
-void MetafileSkia::AppendPage(const SkSize& page_size,
-                              sk_sp<cc::PaintRecord> record) {
+void MetafileSkia::AppendPage(const SkSize& page_size, cc::PaintRecord record) {
   data_->pages.emplace_back(page_size, std::move(record));
 }
 

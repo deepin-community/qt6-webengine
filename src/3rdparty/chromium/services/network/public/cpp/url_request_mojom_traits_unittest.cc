@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -21,6 +21,7 @@
 #include "services/network/public/mojom/cookie_access_observer.mojom.h"
 #include "services/network/public/mojom/data_pipe_getter.mojom.h"
 #include "services/network/public/mojom/devtools_observer.mojom.h"
+#include "services/network/public/mojom/trust_token_access_observer.mojom.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
 #include "services/network/public/mojom/url_request.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -70,6 +71,7 @@ TEST(URLRequestMojomTraitsTest, Roundtrips_ResourceRequest) {
   original.load_flags = 3;
   original.resource_type = 2;
   original.priority = net::IDLE;
+  original.priority_incremental = net::kDefaultPriorityIncremental;
   original.cors_preflight_policy =
       mojom::CorsPreflightPolicy::kConsiderPreflight;
   original.originated_from_service_worker = false;
@@ -79,6 +81,7 @@ TEST(URLRequestMojomTraitsTest, Roundtrips_ResourceRequest) {
   original.redirect_mode = mojom::RedirectMode::kFollow;
   original.fetch_integrity = "dummy_fetch_integrity";
   original.keepalive = true;
+  original.browsing_topics = true;
   original.has_user_gesture = false;
   original.enable_load_timing = true;
   original.enable_upload_progress = false;
@@ -104,6 +107,7 @@ TEST(URLRequestMojomTraitsTest, Roundtrips_ResourceRequest) {
            net::SourceStream::SourceType::TYPE_GZIP,
            net::SourceStream::SourceType::TYPE_DEFLATE});
   original.target_ip_address_space = mojom::IPAddressSpace::kPrivate;
+  original.has_storage_access = false;
 
   original.trusted_params = ResourceRequest::TrustedParams();
   original.trusted_params->isolation_info = net::IsolationInfo::Create(
@@ -111,11 +115,14 @@ TEST(URLRequestMojomTraitsTest, Roundtrips_ResourceRequest) {
       url::Origin::Create(original.url), url::Origin::Create(original.url),
       original.site_for_cookies);
   original.trusted_params->disable_secure_dns = true;
+  original.trusted_params->allow_cookies_from_browser = true;
 
   original.trust_token_params = network::mojom::TrustTokenParams();
   original.trust_token_params->issuers.push_back(
       url::Origin::Create(GURL("https://issuer.com")));
-  original.trust_token_params->type =
+  original.trust_token_params->version =
+      mojom::TrustTokenMajorVersion::kPrivateStateTokenV1;
+  original.trust_token_params->operation =
       mojom::TrustTokenOperationType::kRedemption;
   original.trust_token_params->include_timestamp_header = true;
   original.trust_token_params->sign_request_data =

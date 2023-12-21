@@ -6,6 +6,7 @@
 <translation id="1127811143501539442">{DAYS,plural, =1{1 gün öncə}other{# gün öncə}}</translation>
 <translation id="1156623771253174079">{SECONDS,plural, =1{1 dəqiqə əvvəl}other{# dəqiqə əvvəl}}</translation>
 <translation id="1169783199079129864">{MINUTES,plural, =1{1dəq}other{#dəq}}</translation>
+<translation id="1181037720776840403">Silin</translation>
 <translation id="1243314992276662751">Yükləyin</translation>
 <translation id="1266864766717917324"><ph name="CONTENT_TYPE" /> paylaşmaq mümkün olmnadı</translation>
 <translation id="1269641567813814718">Win</translation>
@@ -25,6 +26,7 @@
 <translation id="1803208670097017349">{MONTHS,plural, =1{1 ay}other{# ay}}</translation>
 <translation id="1809410197924942083"><ph name="QUANTITY" /> MB/s</translation>
 <translation id="1830179671306812954">{HOURS,plural, =1{1 saat və }other{# saat və }}</translation>
+<translation id="185013357618350178">&amp;Seçin</translation>
 <translation id="1859234291848436338">Yazı istiqaməti</translation>
 <translation id="1860796786778352021">Bildiriş qapatma</translation>
 <translation id="186476001994626254">Veb Ağıllı Əlavə Etmə Məzmunu</translation>
@@ -52,7 +54,6 @@
 <translation id="2445449901874883781">Yüksək sıxlıqdan istifadə edin</translation>
 <translation id="2482878487686419369">Bildirişlər</translation>
 <translation id="2497284189126895209">Bütün fayllar</translation>
-<translation id="2498950423397131220">Üzən</translation>
 <translation id="2515586267016047495">Alt</translation>
 <translation id="2522350507219695259">Kalibrləmə tamamlandı</translation>
 <translation id="252373100621549798">Naməlum Displey</translation>
@@ -60,6 +61,7 @@
 <translation id="2573731672208488250">{HOURS,plural, =1{1 saatda}other{# saatda}}</translation>
 <translation id="2583543531130364912">Sensor ekranı kalibrləyin</translation>
 <translation id="2586657967955657006">Mübadilə buferi</translation>
+<translation id="2653844658857826081">YENİ</translation>
 <translation id="2666092431469916601">Yuxarı</translation>
 <translation id="2701330563083355633"><ph name="DEVICE_NAME" /> adlı cihazdan paylaşıldı</translation>
 <translation id="271033894570825754">Yeni</translation>

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 #include "content/browser/devtools/protocol/fetch_handler.h"
@@ -6,8 +6,8 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/browser/devtools/devtools_agent_host_impl.h"
@@ -447,7 +447,8 @@ void FetchHandler::RequestIntercepted(
       info->frame_id.ToString(),
       NetworkHandler::ResourceTypeToString(info->resource_type),
       std::move(error_reason), std::move(status_code), std::move(status_text),
-      std::move(response_headers), std::move(info->renderer_request_id));
+      std::move(response_headers), std::move(info->renderer_request_id),
+      std::move(info->redirected_request_id));
 }
 
 }  // namespace protocol

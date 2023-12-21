@@ -1,4 +1,4 @@
-# Copyright 2016 The Chromium Authors. All rights reserved.
+# Copyright 2016 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -11,7 +11,6 @@ mojom("mojom") {
   sources = [
     "battery_monitor.mojom",
     "battery_status.mojom",
-    "bluetooth_system.mojom",
     "device_posture_provider.mojom",
     "fingerprint.mojom",
     "geolocation.mojom",
@@ -24,10 +23,13 @@ mojom("mojom") {
     "nfc.mojom",
     "nfc_provider.mojom",
     "power_monitor.mojom",
+    "pressure_manager.mojom",
+    "pressure_update.mojom",
     "public_ip_address_geolocation_provider.mojom",
     "screen_orientation.mojom",
     "screen_orientation_lock_types.mojom",
     "serial.mojom",
+    "smart_card.mojom",
     "time_zone_monitor.mojom",
     "vibration_manager.mojom",
     "wake_lock.mojom",
@@ -59,8 +61,6 @@ mojom("mojom") {
           cpp = "::std::array<::uint8_t, 6>"
         },
       ]
-      traits_headers = [ "//services/device/public/cpp/bluetooth/bluetooth_system_mojom_traits.h" ]
-      traits_sources = [ "//services/device/public/cpp/bluetooth/bluetooth_system_mojom_traits.cc" ]
       traits_public_deps = [ "//base" ]
     },
   ]
@@ -87,6 +87,7 @@ mojom("device_service") {
   # non-Blink variant as a dependency. Blink can never use the DeviceService
   # interface directly anyway, so don't generate bindings for it.
   disable_variants = true
+  cpp_only = true
 
   enabled_features = []
   if ((is_linux || is_chromeos) && use_udev) {
@@ -151,6 +152,8 @@ mojom("generic_sensor") {
           [ "//services/device/public/cpp/generic_sensor:sensor_configuration" ]
     },
   ]
+
+  public_deps = [ "//mojo/public/mojom/base" ]
 }
 
 mojom("usb") {
@@ -189,6 +192,11 @@ mojom("usb") {
   ]
 
   webui_module_path = "/"
+  use_typescript_sources = true
+
+  # Generate legacy JS bindings in addition to WebUI TS bindings for Blink Web
+  # Tests.
+  generate_legacy_js_bindings = true
 }
 
 mojom("usb_test") {
@@ -196,4 +204,9 @@ mojom("usb_test") {
   sources = [ "usb_manager_test.mojom" ]
   public_deps = [ "//url/mojom:url_mojom_gurl" ]
   webui_module_path = "/"
+  use_typescript_sources = true
+
+  # Generate legacy JS bindings in addition to WebUI bindings for fuzzers,
+  # since fuzzers still use the 3 legacy bindings types.
+  generate_legacy_js_bindings = enable_mojom_fuzzer
 }

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,7 @@
 
 #include "base/rand_util.h"
 #include "base/values.h"
+#include "cc/base/math_util.h"
 #include "cc/layers/layer.h"
 #include "cc/layers/picture_layer.h"
 #include "cc/trees/draw_property_utils.h"
@@ -70,10 +71,8 @@ void InvalidationBenchmark::DidUpdateLayers(LayerTreeHost* layer_tree_host) {
 
 void InvalidationBenchmark::RunOnLayer(PictureLayer* layer) {
   gfx::Rect visible_layer_rect = gfx::Rect(layer->bounds());
-  gfx::Transform from_screen;
-  bool invertible = layer->ScreenSpaceTransform().GetInverse(&from_screen);
-  if (!invertible)
-    from_screen = gfx::Transform();
+  gfx::Transform from_screen =
+      layer->ScreenSpaceTransform().InverseOrIdentity();
   gfx::Rect viewport_rect = MathUtil::ProjectEnclosingClippedRect(
       from_screen, layer->layer_tree_host()->device_viewport_rect());
   visible_layer_rect.Intersect(viewport_rect);

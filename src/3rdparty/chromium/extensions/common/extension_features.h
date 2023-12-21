@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,29 +9,52 @@
 
 namespace extensions_features {
 
-extern const base::Feature kSafeBrowsingCrxAllowlistShowWarnings;
-extern const base::Feature kSafeBrowsingCrxAllowlistAutoDisable;
+BASE_DECLARE_FEATURE(kSafeBrowsingCrxAllowlistShowWarnings);
+BASE_DECLARE_FEATURE(kSafeBrowsingCrxAllowlistAutoDisable);
 
-extern const base::Feature kForceWebRequestProxyForTest;
+BASE_DECLARE_FEATURE(kForceWebRequestProxyForTest);
 
-extern const base::Feature kAllowWithholdingExtensionPermissionsOnInstall;
+BASE_DECLARE_FEATURE(kAllowWithholdingExtensionPermissionsOnInstall);
 
-extern const base::Feature kContentScriptsMatchOriginAsFallback;
+BASE_DECLARE_FEATURE(kContentScriptsMatchOriginAsFallback);
 
-extern const base::Feature kReportKeepaliveUkm;
+BASE_DECLARE_FEATURE(kReportKeepaliveUkm);
 
-extern const base::Feature kAllowSharedArrayBuffersUnconditionally;
+BASE_DECLARE_FEATURE(kAllowSharedArrayBuffersUnconditionally);
 
-extern const base::Feature kU2FSecurityKeyAPI;
+BASE_DECLARE_FEATURE(kStructuredCloningForMV3Messaging);
 
-extern const base::Feature kStructuredCloningForMV3Messaging;
+BASE_DECLARE_FEATURE(kRestrictDeveloperModeAPIs);
 
-extern const base::Feature kRestrictDeveloperModeAPIs;
+BASE_DECLARE_FEATURE(kCheckingNoExtensionIdInExtensionIpcs);
 
-extern const base::Feature kCheckingUnexpectedExtensionIdInContentScriptIpcs;
-extern const base::Feature kCheckingNoExtensionIdInExtensionIpcs;
+BASE_DECLARE_FEATURE(kNewExtensionFaviconHandling);
 
-extern const base::Feature kNewExtensionFaviconHandling;
+BASE_DECLARE_FEATURE(kExtensionDynamicURLRedirection);
+
+BASE_DECLARE_FEATURE(kExtensionsMenuAccessControl);
+
+BASE_DECLARE_FEATURE(kAvoidEarlyExtensionScriptContextCreation);
+
+BASE_DECLARE_FEATURE(kExtensionsOffscreenDocuments);
+
+BASE_DECLARE_FEATURE(kNewWebstoreDomain);
+
+BASE_DECLARE_FEATURE(kExtensionSidePanelIntegration);
+
+BASE_DECLARE_FEATURE(kWebFileHandlers);
+
+BASE_DECLARE_FEATURE(kExtensionSourceUrlEnforcement);
+
+BASE_DECLARE_FEATURE(kWebviewTagMPArchBehavior);
+
+BASE_DECLARE_FEATURE(kExtensionsManifestV3Only);
+
+BASE_DECLARE_FEATURE(kMinimumMV3CSPWithInlineSpeculationRules);
+
+BASE_DECLARE_FEATURE(kTelemetryExtensionPendingApprovalApi);
+
+BASE_DECLARE_FEATURE(kExtensionsMenuAccessControlWithPermittedSites);
 
 }  // namespace extensions_features
 

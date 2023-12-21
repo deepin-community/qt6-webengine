@@ -1,3 +1,68 @@
+qt6-webengine (6.6.1+dfsg-2) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Update symbols from buildlogs.
+
+ -- Patrick Franz <deltaone@debian.org>  Thu, 14 Dec 2023 06:24:08 +0100
+
+qt6-webengine (6.6.1+dfsg-1) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * New upstream release (6.6.1).
+  * Bump Qt B-Ds to 6.6.1.
+  * Update ABI to 6.6.1.
+  * Remove patches that have been applied upstream.
+  * Update symbols from buildlogs.
+
+ -- Patrick Franz <deltaone@debian.org>  Wed, 13 Dec 2023 08:39:07 +0100
+
+qt6-webengine (6.6.0+dfsg-3) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Update symbols from buildlogs.
+
+ -- Patrick Franz <deltaone@debian.org>  Sat, 25 Nov 2023 11:11:30 +0100
+
+qt6-webengine (6.6.0+dfsg-2) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Disable check for 32bit Node.js to re-enable building on 32bit-
+    architectures.
+  * Update symbols from buildlogs.
+
+ -- Patrick Franz <deltaone@debian.org>  Fri, 24 Nov 2023 18:50:06 +0100
+
+qt6-webengine (6.6.0+dfsg-1) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * New upstream release (6.6.0).
+  * Adjust list of files to be excluded from the tarball.
+  * Bump Qt B-Ds to 6.6.0.
+  * Refresh patches and remove those that have been applied upstream.
+  * Make qtwebengine build with system-libpng (Closes: #1038123).
+  * Make qtwebengine build with system-libtiff (Closes: #1033749).
+  * Update list of installed files.
+  * Update ABI to 6.6.0 and rename it to qt6-webengine-private-abi.
+  * Update symbols from buildlogs and use the (symver) directive to
+    catch all private symbols.
+  * Remove binary package libqt6webenginequickdelegatesqml6.
+  * Update lintian-overrides.
+
+  [ Soren Stoutner ]
+  * Remove obsolete Lintian overrides.
+  * Fix convert-bdic typo in qt6-webengine-dev-tools package description.
+
+ -- Patrick Franz <deltaone@debian.org>  Thu, 23 Nov 2023 18:26:15 +0100
+
+qt6-webengine (6.4.2-final+dfsg-12) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Replace ffmpeg-remove-x86-optimization.patch with a patch that was
+    applied in upstream ffmpeg.
+  * Switch to the bundled re2 (Closes: #1053408).
+
+ -- Patrick Franz <deltaone@debian.org>  Sat, 14 Oct 2023 21:59:37 +0200
+
 qt6-webengine (6.4.2-final+dfsg-11) unstable; urgency=medium
 
   * Team upload.

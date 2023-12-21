@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@ import "mojo/public/mojom/base/time.mojom";
 import "ui/gfx/geometry/mojom/geometry.mojom";
 import "url/mojom/url.mojom";
 
-// Next MinVersion: 14
+// Next MinVersion: 19
 
 [Stable, Extensible]
 enum MediaPlaybackState {
@@ -37,6 +37,8 @@ enum MediaSessionAction {
   [MinVersion=11] kHangUp,
   [MinVersion=12] kRaise,
   [MinVersion=13] kSetMute,
+  [MinVersion=18] kPreviousSlide,
+  [MinVersion=18] kNextSlide,
 };
 
 [Stable, Extensible]
@@ -128,6 +130,16 @@ enum CameraState {
   kTurnedOff,
 };
 
+[Stable]
+struct RemotePlaybackMetadata {
+  string video_codec;
+  string audio_codec;
+  bool remote_playback_disabled;
+  [MinVersion=17] bool remote_playback_started;
+  [MinVersion=17] string? remoting_device_friendly_name;
+  [MinVersion=18] bool is_encrypted_media;
+};
+
 // Contains state information about a MediaSession.
 [Stable]
 struct MediaSessionInfo {
@@ -193,6 +205,12 @@ struct MediaSessionInfo {
 
   // Tracks whether the media player is muted.
   [MinVersion=12] bool muted;
+
+  // Tracks whether the associated WebContents has a presentation.
+  [MinVersion=14] bool has_presentation;
+
+  // Stores the Media metadata used for Remote Playback.
+  [MinVersion=15] RemotePlaybackMetadata? remote_playback_metadata;
 };
 
 // Contains debugging information about a MediaSession. This will be displayed
@@ -235,7 +253,7 @@ interface MediaSessionObserver {
 
 // A MediaSession manages the media session and audio focus for a given
 // WebContents or ARC app.
-// Next Method ID: 22
+// Next Method ID: 24
 [Stable]
 interface MediaSession {
   [Stable, Extensible]
@@ -338,4 +356,13 @@ interface MediaSession {
 
   // Mute or unmute the media player.
   [MinVersion=13] SetMute@22(bool mute);
+
+  // Request Media Remoting once there are available sinks.
+  [MinVersion=16] RequestMediaRemoting@23();
+
+  // Go back to previous slide.
+  [MinVersion=18] PreviousSlide@24();
+
+  // Go to next slide.
+  [MinVersion=18] NextSlide@25();
 };

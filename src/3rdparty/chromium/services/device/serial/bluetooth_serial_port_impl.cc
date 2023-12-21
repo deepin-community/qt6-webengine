@@ -1,15 +1,16 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "services/device/serial/bluetooth_serial_port_impl.h"
 
 #include <limits.h>
+
 #include <algorithm>
 
-#include "base/callback_helpers.h"
 #include "base/command_line.h"
 #include "base/containers/contains.h"
+#include "base/functional/callback_helpers.h"
 #include "net/base/io_buffer.h"
 #include "services/device/public/cpp/bluetooth/bluetooth_utils.h"
 #include "services/device/public/cpp/serial/serial_switches.h"
@@ -134,12 +135,12 @@ void BluetoothSerialPortImpl::StartReading(
     mojo::ScopedDataPipeProducerHandle producer) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (out_stream_) {
-    mojo::ReportBadMessage("Data pipe producer still open.");
+    receiver_.ReportBadMessage("Data pipe producer still open.");
     return;
   }
 
   if (!bluetooth_socket_) {
-    mojo::ReportBadMessage("No Bluetooth socket.");
+    receiver_.ReportBadMessage("No Bluetooth socket.");
     return;
   }
 
@@ -505,8 +506,10 @@ void BluetoothSerialPortImpl::GetPortInfo(GetPortInfoCallback callback) {
   std::move(callback).Run(std::move(info));
 }
 
-void BluetoothSerialPortImpl::Close(CloseCallback callback) {
+void BluetoothSerialPortImpl::Close(bool flush, CloseCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  // It is safe to ignore |flush| because we get the semantics of a flush simply
+  // by disconnecting the socket. There are no hardware buffers to clear.
   bluetooth_socket_->Disconnect(
       base::BindOnce(&BluetoothSerialPortImpl::OnSocketDisconnected,
                      weak_ptr_factory_.GetWeakPtr(), std::move(callback)));

@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -48,7 +48,7 @@ Feature::Availability Feature::IsAvailableToExtension(
 
 Feature::Feature() : no_parent_(false) {}
 
-Feature::~Feature() {}
+Feature::~Feature() = default;
 
 void Feature::set_name(base::StringPiece name) {
   name_ = std::string(name);

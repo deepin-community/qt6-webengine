@@ -16,10 +16,7 @@
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
 #include "v8/include/v8.h"
-#include "services/service_manager/public/cpp/interface_provider.h"
 #include "qtwebengine/browser/qtwebchannel.mojom.h"
-
-#include <QJsonDocument>
 
 namespace QtWebEngineCore {
 
@@ -46,8 +43,6 @@ void WebChannelTransport::Install(blink::WebLocalFrame *frame, uint worldId)
 {
     v8::Isolate *isolate = blink::MainThreadIsolate();
     v8::HandleScope handleScope(isolate);
-    v8::MicrotasksScope microtasks_scope(
-        isolate, v8::MicrotasksScope::kDoNotRunMicrotasks);
     v8::Local<v8::Context> context;
     if (worldId == 0)
         context = frame->MainWorldScriptContext();
@@ -62,15 +57,14 @@ void WebChannelTransport::Install(blink::WebLocalFrame *frame, uint worldId)
         return;
 
     v8::Local<v8::Object> global = context->Global();
-    v8::Local<v8::Value> qtObjectValue;
     v8::Local<v8::Object> qtObject;
-    if (!global->Get(context, gin::StringToV8(isolate, "qt")).ToLocal(&qtObjectValue) || !qtObjectValue->IsObject()) {
-        qtObject = v8::Object::New(isolate);
-        global->Set(context, gin::StringToV8(isolate, "qt"), qtObject).Check();
-    } else {
-        qtObject = v8::Local<v8::Object>::Cast(qtObjectValue);
-    }
-    qtObject->Set(context, gin::StringToV8(isolate, "webChannelTransport"), transport.ToV8()).Check();
+    qtObject = v8::Object::New(isolate);
+    global->CreateDataProperty(context,
+                               gin::StringToSymbol(isolate, "qt"),
+                               qtObject).Check();
+    qtObject->CreateDataProperty(context,
+                                 gin::StringToSymbol(isolate, "webChannelTransport"),
+                                 transport.ToV8()).Check();
 }
 
 void WebChannelTransport::Uninstall(blink::WebLocalFrame *frame, uint worldId)
@@ -142,7 +136,7 @@ WebChannelIPCTransport::WebChannelIPCTransport(content::RenderFrame *renderFrame
     , m_worldInitialized(false)
     , m_binding(this)
 {
-    renderFrame->GetAssociatedInterfaceRegistry()->AddInterface(
+    renderFrame->GetAssociatedInterfaceRegistry()->AddInterface<qtwebchannel::mojom::WebChannelTransportRender>(
             base::BindRepeating(&WebChannelIPCTransport::BindReceiver, base::Unretained(this)));
 }
 

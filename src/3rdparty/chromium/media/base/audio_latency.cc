@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,9 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <cmath>
 
+#include "base/check_op.h"
 #include "base/logging.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -22,11 +24,15 @@
 #include "media/base/mac/audio_latency_mac.h"
 #endif
 
+#if BUILDFLAG(IS_FUCHSIA)
+#include "base/fuchsia/scheduler.h"
+#endif
+
 namespace media {
 
 namespace {
 
-#if !BUILDFLAG(IS_WIN)
+#if !BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_FUCHSIA)
 // Taken from "Bit Twiddling Hacks"
 // http://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
 uint32_t RoundUpToPowerOfTwo(uint32_t v) {
@@ -65,6 +71,8 @@ int LCM(int a, int b) {
 bool AudioLatency::IsResamplingPassthroughSupported(LatencyType type) {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   return true;
+#elif BUILDFLAG(IS_FUCHSIA)
+  return true;
 #elif BUILDFLAG(IS_ANDROID)
   // Only N MR1+ has support for OpenSLES performance modes which allow for
   // power efficient playback. Per the Android audio team, we shouldn't waste
@@ -81,12 +89,20 @@ bool AudioLatency::IsResamplingPassthroughSupported(LatencyType type) {
 // static
 int AudioLatency::GetHighLatencyBufferSize(int sample_rate,
                                            int preferred_buffer_size) {
-  // Empirically, we consider 20ms of samples to be high latency.
-#if !defined(USE_CRAS)
+#if defined(USE_CRAS)
+  // Use 80ms rounded to a power of 2.
+  const double eighty_ms_size = 8.0 * sample_rate / 100;
+  const int high_latency_buffer_size = RoundUpToPowerOfTwo(eighty_ms_size);
+#elif BUILDFLAG(IS_FUCHSIA)
+  // Use 80ms buffers. Doesn't need to be aligned to power of 2, but it should
+  // be a multiple of the scheduling period used for audio threads.
+  constexpr base::TimeDelta period = base::Milliseconds(80);
+  static_assert(static_cast<int>(period / base::kAudioSchedulingPeriod) ==
+                period / base::kAudioSchedulingPeriod);
+  const int high_latency_buffer_size = period.InMilliseconds() * sample_rate /
+                                       base::Time::kMillisecondsPerSecond;
+#elif BUILDFLAG(IS_WIN)
   const double twenty_ms_size = 2.0 * sample_rate / 100;
-#endif
-
-#if BUILDFLAG(IS_WIN)
   preferred_buffer_size = std::max(preferred_buffer_size, 1);
 
   // Windows doesn't use power of two buffer sizes, so we should always round up
@@ -107,13 +123,9 @@ int AudioLatency::GetHighLatencyBufferSize(int sample_rate,
   //
   // On Linux, the minimum hardware buffer size is 512, so the lower calculated
   // values are unused.  OSX may have a value as low as 128.
-#if defined(USE_CRAS)
-  const double eighty_ms_size = 8.0 * sample_rate / 100;
-  const int high_latency_buffer_size = RoundUpToPowerOfTwo(eighty_ms_size);
-#else
+  const double twenty_ms_size = 2.0 * sample_rate / 100;
   const int high_latency_buffer_size = RoundUpToPowerOfTwo(twenty_ms_size);
-#endif  // defined(USE_CRAS)
-#endif  // BUILDFLAG(IS_WIN)
+#endif
 
   return std::max(preferred_buffer_size, high_latency_buffer_size);
 }
@@ -134,7 +146,7 @@ int AudioLatency::GetRtcBufferSize(int sample_rate, int hardware_buffer_size) {
     return frames_per_buffer;
   }
 
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC) || \
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_APPLE) || \
     BUILDFLAG(IS_FUCHSIA)
   // On Linux, MacOS and Fuchsia, the low level IO implementations on the
   // browser side supports all buffer size the clients want. We use the native
@@ -195,14 +207,14 @@ int AudioLatency::GetExactBufferSize(base::TimeDelta duration,
   DCHECK_GE(max_hardware_buffer_size, min_hardware_buffer_size);
   DCHECK(max_hardware_buffer_size == 0 ||
          hardware_buffer_size <= max_hardware_buffer_size);
-  DCHECK(max_hardware_buffer_size == 0 ||
-         max_hardware_buffer_size <= max_allowed_buffer_size);
+  DCHECK_LE(hardware_buffer_size, max_allowed_buffer_size);
 
   int requested_buffer_size = std::round(duration.InSecondsF() * sample_rate);
 
   if (min_hardware_buffer_size &&
-      requested_buffer_size <= min_hardware_buffer_size)
+      requested_buffer_size <= min_hardware_buffer_size) {
     return min_hardware_buffer_size;
+  }
 
   if (requested_buffer_size <= hardware_buffer_size)
     return hardware_buffer_size;
@@ -232,7 +244,8 @@ int AudioLatency::GetExactBufferSize(base::TimeDelta duration,
   }
 
   const int platform_max_buffer_size =
-      max_hardware_buffer_size
+      (max_hardware_buffer_size &&
+       max_hardware_buffer_size <= max_allowed_buffer_size)
           ? (max_allowed_buffer_size / max_hardware_buffer_size) *
                 max_hardware_buffer_size
           : (max_allowed_buffer_size / multiplier) * multiplier;

@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,6 @@
 #include "build/build_config.h"
 #include "mojo/public/cpp/base/string16_mojom_traits.h"
 #include "printing/mojom/print.mojom.h"
-#include "printing/page_range.h"
 #include "printing/page_setup.h"
 #include "printing/print_settings.h"
 #include "ui/gfx/geometry/mojom/geometry.mojom-shared.h"
@@ -62,24 +61,11 @@ bool StructTraits<printing::mojom::PageSetupDataView, printing::PageSetup>::
     return false;
   if (page_setup.content_area() != content_area)
     return false;
-  if (!effective_margins.Equals(page_setup.effective_margins()))
+  if (page_setup.effective_margins() != effective_margins) {
     return false;
+  }
 
   *out = page_setup;
-  return true;
-}
-
-// static
-bool StructTraits<printing::mojom::PageRangeDataView, printing::PageRange>::
-    Read(printing::mojom::PageRangeDataView data, printing::PageRange* out) {
-  out->from = data.from();
-  out->to = data.to();
-
-  // A range should represent increasing page numbers, not to be used to
-  // indicate processing pages backwards.
-  if (out->from > out->to)
-    return false;
-
   return true;
 }
 
@@ -132,6 +118,9 @@ bool StructTraits<
     return false;
   out->set_requested_media(requested_media);
 
+  // Must set orientation before page setup, otherwise it can introduce an extra
+  // flipping of landscape page size dimensions.
+  out->SetOrientation(data.landscape());
   printing::PageSetup page_setup;
   if (!data.ReadPageSetupDeviceUnits(&page_setup))
     return false;
@@ -145,7 +134,6 @@ bool StructTraits<
   out->set_scale_factor(data.scale_factor());
   out->set_rasterize_pdf(data.rasterize_pdf());
 
-  out->SetOrientation(data.landscape());
   out->set_supports_alpha_blend(data.supports_alpha_blend());
 #if BUILDFLAG(IS_WIN)
   out->set_printer_language_type(data.printer_language_type());

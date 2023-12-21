@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -44,7 +44,7 @@ class PrintPreviewBrowserTest : public InProcessBrowserTest {
   PrintPreviewBrowserTest() {}
 
   void Print() {
-    content::TestNavigationObserver nav_observer(NULL);
+    content::TestNavigationObserver nav_observer(nullptr);
     nav_observer.StartWatchingNewWebContents();
     chrome::ExecuteCommand(browser(), IDC_PRINT);
     nav_observer.Wait();
@@ -59,15 +59,7 @@ IN_PROC_BROWSER_TEST_F(PrintPreviewBrowserTest, PrintCommands) {
 
   ASSERT_TRUE(chrome::IsCommandEnabled(browser(), IDC_PRINT));
 
-#if BUILDFLAG(ENABLE_PRINTING) && !BUILDFLAG(IS_CHROMEOS)
-  // This is analogous to ENABLE_BASIC_PRINT_DIALOG but helps to verify that it
-  // is defined as expected.
-  bool is_basic_print_expected = true;
-#else
-  bool is_basic_print_expected = false;
-#endif
-
-  ASSERT_EQ(is_basic_print_expected,
+  ASSERT_EQ(BUILDFLAG(ENABLE_BASIC_PRINT_DIALOG),
             chrome::IsCommandEnabled(browser(), IDC_BASIC_PRINT));
 
   // Create the print preview dialog.
@@ -75,7 +67,7 @@ IN_PROC_BROWSER_TEST_F(PrintPreviewBrowserTest, PrintCommands) {
 
   ASSERT_FALSE(chrome::IsCommandEnabled(browser(), IDC_PRINT));
 
-  ASSERT_EQ(is_basic_print_expected,
+  ASSERT_EQ(BUILDFLAG(ENABLE_BASIC_PRINT_DIALOG),
             chrome::IsCommandEnabled(browser(), IDC_BASIC_PRINT));
 
   content::TestNavigationObserver reload_observer(
@@ -85,7 +77,7 @@ IN_PROC_BROWSER_TEST_F(PrintPreviewBrowserTest, PrintCommands) {
 
   ASSERT_TRUE(chrome::IsCommandEnabled(browser(), IDC_PRINT));
 
-  ASSERT_EQ(is_basic_print_expected,
+  ASSERT_EQ(BUILDFLAG(ENABLE_BASIC_PRINT_DIALOG),
             chrome::IsCommandEnabled(browser(), IDC_BASIC_PRINT));
 }
 
@@ -140,13 +132,15 @@ IN_PROC_BROWSER_TEST_F(PrintPreviewBrowserTest,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
 
   browser()->tab_strip_model()->ActivateTabAt(
-      0, {TabStripModel::GestureType::kOther});
+      0, TabStripUserGestureDetails(
+             TabStripUserGestureDetails::GestureType::kOther));
 
   // Navigate main tab to hide print preview.
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL("about:blank")));
 
   browser()->tab_strip_model()->ActivateTabAt(
-      1, {TabStripModel::GestureType::kOther});
+      1, TabStripUserGestureDetails(
+             TabStripUserGestureDetails::GestureType::kOther));
 }
 #endif  // BUILDFLAG(IS_WIN)
 

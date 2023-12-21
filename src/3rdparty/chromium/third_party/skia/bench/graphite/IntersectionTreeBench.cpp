@@ -7,8 +7,8 @@
 #include "bench/Benchmark.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkPath.h"
-#include "include/utils/SkRandom.h"
-#include "src/core/SkMathPriv.h"
+#include "src/base/SkMathPriv.h"
+#include "src/base/SkRandom.h"
 #include "src/gpu/graphite/geom/IntersectionTree.h"
 #include "tools/ToolUtils.h"
 #include "tools/flags/CommandLineFlags.h"
@@ -29,7 +29,7 @@ protected:
     void onDelayedSetup() final {
         SkTArray<SkRect> rects;
         this->gatherRects(&rects);
-        fRectCount = rects.count();
+        fRectCount = rects.size();
         fRects = fAlignedAllocator.makeArray<Rect>(fRectCount);
         for (int i = 0; i < fRectCount; ++i) {
             fRects[i] = rects[i];
@@ -145,7 +145,7 @@ private:
             rects->push_back(drawBounds);
         });
         SkDebugf(">> Found %i stencil/cover paths in %s <<\n",
-                 rects->count(), FLAGS_intersectionTreeFile[0]);
+                 rects->size(), FLAGS_intersectionTreeFile[0]);
     }
 
     void onPerCanvasPostDraw(SkCanvas*) override {

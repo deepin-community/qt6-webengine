@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,8 +16,9 @@
 #include "base/time/time.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gfx/android/android_surface_control_compat.h"
+#include "ui/gfx/frame_data.h"
 #include "ui/gl/gl_export.h"
-#include "ui/gl/gl_surface_egl.h"
+#include "ui/gl/presenter.h"
 
 namespace base {
 class SingleThreadTaskRunner;
@@ -29,13 +30,21 @@ class ScopedHardwareBufferFenceSync;
 
 namespace gl {
 
-class GL_EXPORT GLSurfaceEGLSurfaceControl : public GLSurfaceEGL {
+class ScopedANativeWindow;
+class ScopedJavaSurfaceControl;
+
+class GL_EXPORT GLSurfaceEGLSurfaceControl : public Presenter {
  public:
-  explicit GLSurfaceEGLSurfaceControl(
-      ANativeWindow* window,
+  GLSurfaceEGLSurfaceControl(
+      GLDisplayEGL* display,
+      gl::ScopedANativeWindow window,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
+  GLSurfaceEGLSurfaceControl(
+      GLDisplayEGL* display,
+      gl::ScopedJavaSurfaceControl scoped_java_surface_control,
       scoped_refptr<base::SingleThreadTaskRunner> task_runner);
 
-  // GLSurface implementation.
+  // Presenter implementation.
   int GetBufferCount() const override;
   bool Initialize(GLSurfaceFormat format) override;
   void PrepareToDestroy(bool have_context) override;
@@ -44,50 +53,32 @@ class GL_EXPORT GLSurfaceEGLSurfaceControl : public GLSurfaceEGL {
               float scale_factor,
               const gfx::ColorSpace& color_space,
               bool has_alpha) override;
-  bool IsOffscreen() override;
 
   gfx::Size GetSize() override;
   bool OnMakeCurrent(GLContext* context) override;
   bool ScheduleOverlayPlane(
-      GLImage* image,
+      OverlayImage image,
       std::unique_ptr<gfx::GpuFence> gpu_fence,
       const gfx::OverlayPlaneData& overlay_plane_data) override;
-  bool IsSurfaceless() const override;
   void* GetHandle() override;
   void PreserveChildSurfaceControls() override;
 
-  // Sync versions of frame update, should never be used.
-  gfx::SwapResult SwapBuffers(PresentationCallback callback) override;
-  gfx::SwapResult CommitOverlayPlanes(PresentationCallback callback) override;
-  gfx::SwapResult PostSubBuffer(int x,
-                                int y,
-                                int width,
-                                int height,
-                                PresentationCallback callback) override;
+  void Present(SwapCompletionCallback completion_callback,
+               PresentationCallback presentation_callback,
+               gfx::FrameData data) override;
 
-  void SwapBuffersAsync(SwapCompletionCallback completion_callback,
-                        PresentationCallback presentation_callback) override;
-  void CommitOverlayPlanesAsync(
-      SwapCompletionCallback completion_callback,
-      PresentationCallback presentation_callback) override;
-  void PostSubBufferAsync(int x,
-                          int y,
-                          int width,
-                          int height,
-                          SwapCompletionCallback completion_callback,
-                          PresentationCallback presentation_callback) override;
-
-  bool SupportsAsyncSwap() override;
   bool SupportsPlaneGpuFences() const override;
-  bool SupportsPostSubBuffer() override;
   bool SupportsCommitOverlayPlanes() override;
   void SetDisplayTransform(gfx::OverlayTransform transform) override;
-  gfx::SurfaceOrigin GetOrigin() const override;
   void SetFrameRate(float frame_rate) override;
   void SetChoreographerVsyncIdForNextFrame(
       absl::optional<int64_t> choreographer_vsync_id) override;
 
  private:
+  GLSurfaceEGLSurfaceControl(
+      GLDisplayEGL* display,
+      scoped_refptr<gfx::SurfaceControl::Surface> root_surface,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
   ~GLSurfaceEGLSurfaceControl() override;
 
   struct SurfaceState {
@@ -180,8 +171,7 @@ class GL_EXPORT GLSurfaceEGLSurfaceControl : public GLSurfaceEGL {
     base::CancelableOnceClosure hang_detection_cb_;
   };
 
-  void CommitPendingTransaction(const gfx::Rect& damage_rect,
-                                SwapCompletionCallback completion_callback,
+  void CommitPendingTransaction(SwapCompletionCallback completion_callback,
                                 PresentationCallback callback);
 
   // Called on the |gpu_task_runner_| when a transaction is acked by the
@@ -200,15 +190,7 @@ class GL_EXPORT GLSurfaceEGLSurfaceControl : public GLSurfaceEGL {
   void AdvanceTransactionQueue();
   void CheckPendingPresentationCallbacks();
 
-  gfx::Rect ApplyDisplayInverse(const gfx::Rect& input) const;
-  const gfx::ColorSpace& GetNearestSupportedColorSpace(
-      const gfx::ColorSpace& buffer_color_space) const;
-
-  const std::string root_surface_name_;
   const std::string child_surface_name_;
-
-  // The rect of the native window backing this surface.
-  gfx::Rect window_rect_;
 
   // Holds the surface state changes made since the last call to SwapBuffers.
   absl::optional<gfx::SurfaceControl::Transaction> pending_transaction_;
@@ -240,7 +222,7 @@ class GL_EXPORT GLSurfaceEGLSurfaceControl : public GLSurfaceEGL {
   ResourceRefs current_frame_resources_;
 
   // The root surface tied to the ANativeWindow that places the content of this
-  // GLSurface in the java view tree.
+  // Presenter in the java view tree.
   scoped_refptr<gfx::SurfaceControl::Surface> root_surface_;
 
   // The last context made current with this surface.

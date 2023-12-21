@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,7 @@
 #include <string>
 #include <utility>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/values.h"
 #include "components/reporting/proto/synced/record.pb.h"
 #include "components/reporting/proto/synced/record_constants.pb.h"
@@ -104,11 +104,18 @@ namespace reporting {
 
 class ReportQueue {
  public:
+  // A callback to asynchronously generate data to be added to |Storage|.
+  using RecordProducer = base::OnceCallback<StatusOr<std::string>()>;
+
   // An EnqueueCallback is called on the completion of any |Enqueue| call.
   using EnqueueCallback = base::OnceCallback<void(Status)>;
 
   // A FlushCallback is called on the completion of |Flush| call.
   using FlushCallback = base::OnceCallback<void(Status)>;
+
+  // Enqueue metrics name
+  static constexpr char kEnqueueMetricsName[] =
+      "Browser.ERP.EventEnqueueResult";
 
   virtual ~ReportQueue();
 
@@ -122,20 +129,21 @@ class ReportQueue {
   // (destination : requirement)
   // UPLOAD_EVENTS : UploadEventsRequest
   //
-  // |record| will be sent as a string with no conversion.
-  void Enqueue(base::StringPiece record,
+  // |record| string (owned) will be sent with no conversion.
+  void Enqueue(std::string record,
                Priority priority,
                EnqueueCallback callback) const;
 
-  // |record| will be converted to a JSON string with base::JsonWriter::Write.
-  void Enqueue(const base::Value::Dict& record,
+  // |record| as a dictionary (owned) will be converted to a JSON string with
+  // base::JsonWriter::Write.
+  void Enqueue(base::Value::Dict record,
                Priority priority,
                EnqueueCallback callback) const;
 
-  // |record| will be converted to a string with SerializeToString(). The
-  // handler is responsible for converting the record back to a proto with a
-  // ParseFromString() call.
-  void Enqueue(const google::protobuf::MessageLite* record,
+  // |record| as a protobuf (owned) will be converted to a string with
+  // SerializeToString(). The handler is responsible for converting the record
+  // back to a proto with a ParseFromString() call.
+  void Enqueue(std::unique_ptr<const google::protobuf::MessageLite> record,
                Priority priority,
                EnqueueCallback callback) const;
 
@@ -147,13 +155,20 @@ class ReportQueue {
 
   // Prepares a callback to attach actual queue to the speculative.
   // Implemented only in SpeculativeReportQueue, CHECKs in a regular one.
-  virtual base::OnceCallback<void(StatusOr<std::unique_ptr<ReportQueue>>)>
+  [[nodiscard]] virtual base::OnceCallback<
+      void(StatusOr<std::unique_ptr<ReportQueue>>)>
   PrepareToAttachActualQueue() const = 0;
 
- protected:
-  virtual void AddRecord(base::StringPiece record,
-                         Priority priority,
-                         EnqueueCallback callback) const = 0;
+ private:
+  // Allow SpeculativeReportQueue access to |AddProducedRecord|.
+  friend class SpeculativeReportQueueImpl;
+
+  // Invokes |record_producer| and posts resulting data to the queue storage.
+  // |record_producer| is expected to be called asynchronously.
+  // Should only be used within ReportQueue implementation and its derivatives.
+  virtual void AddProducedRecord(RecordProducer record_producer,
+                                 Priority priority,
+                                 EnqueueCallback callback) const = 0;
 };
 
 }  // namespace reporting

@@ -1,11 +1,11 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_SESSIONS_CORE_SESSION_ID_GENERATOR_H_
 #define COMPONENTS_SESSIONS_CORE_SESSION_ID_GENERATOR_H_
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/singleton.h"
 #include "base/sequence_checker.h"
@@ -43,6 +43,9 @@ class SESSIONS_EXPORT SessionIdGenerator {
   // Internal random function injection for tests.
   using RandomGenerator = base::RepeatingCallback<SessionID::id_type()>;
   void SetRandomGeneratorForTest(const RandomGenerator& rand_generator);
+
+  // Used for test only, verify the SessionIdGenerator is initialized.
+  bool IsInitializedForTest() const;
 
  private:
   friend struct base::DefaultSingletonTraits<SessionIdGenerator>;

@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,7 @@
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_node_data.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_ink_overflow.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_physical_box_fragment.h"
+#include "third_party/blink/renderer/core/paint/ng/ng_inline_paint_context.h"
 #include "third_party/blink/renderer/platform/fonts/font.h"
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
 #include "third_party/blink/renderer/platform/transforms/affine_transform.h"
@@ -32,11 +33,11 @@ LayoutNGTextCombine* LayoutNGTextCombine::CreateAnonymous(
   auto* const layout_object = MakeGarbageCollected<LayoutNGTextCombine>();
   auto& document = text_child->GetDocument();
   layout_object->SetDocumentForAnonymous(&document);
-  scoped_refptr<ComputedStyle> new_style =
-      document.GetStyleResolver().CreateAnonymousStyleWithDisplay(
+  ComputedStyleBuilder new_style_builder =
+      document.GetStyleResolver().CreateAnonymousStyleBuilderWithDisplay(
           text_child->StyleRef(), EDisplay::kInlineBlock);
-  StyleAdjuster::AdjustStyleForTextCombine(*new_style);
-  layout_object->SetStyle(std::move(new_style));
+  StyleAdjuster::AdjustStyleForTextCombine(new_style_builder);
+  layout_object->SetStyle(new_style_builder.TakeStyle());
   layout_object->AddChild(text_child);
   LayoutNGTextCombine::AssertStyleIsValid(text_child->StyleRef());
   return layout_object;
@@ -55,7 +56,7 @@ void LayoutNGTextCombine::AssertStyleIsValid(const ComputedStyle& style) {
   DCHECK_EQ(style.GetTextEmphasisMark(), TextEmphasisMark::kNone);
   DCHECK_EQ(style.GetWritingMode(), WritingMode::kHorizontalTb);
   DCHECK_EQ(style.LetterSpacing(), 0.0f);
-  DCHECK_EQ(style.TextDecorationsInEffect(), TextDecorationLine::kNone);
+  DCHECK(!style.HasAppliedTextDecorations());
   DCHECK_EQ(style.TextIndent(), Length::Fixed());
   DCHECK_EQ(style.GetFont().GetFontDescription().Orientation(),
             FontOrientation::kHorizontal);
@@ -227,10 +228,14 @@ PhysicalRect LayoutNGTextCombine::RecalcContentsInkOverflow() const {
   const PhysicalRect text_rect = ComputeTextFrameRect(PhysicalOffset());
   LayoutRect ink_overflow = text_rect.ToLayoutRect();
 
-  if (!style.AppliedTextDecorations().IsEmpty()) {
+  if (style.HasAppliedTextDecorations()) {
+    // |LayoutNGTextCombine| does not support decorating box, as it is not
+    // supported in vertical flow and text-combine is only for vertical flow.
     const LayoutRect decoration_rect =
-        NGInkOverflow::ComputeTextDecorationOverflow(style, style.GetFont(),
-                                                     ink_overflow);
+        NGInkOverflow::ComputeTextDecorationOverflow(
+            style, style.GetFont(),
+            /* offset_in_container */ PhysicalOffset(), ink_overflow,
+            /* inline_context */ nullptr);
     ink_overflow.Unite(decoration_rect);
   }
 

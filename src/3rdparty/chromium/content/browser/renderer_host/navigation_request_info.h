@@ -1,11 +1,10 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_BROWSER_RENDERER_HOST_NAVIGATION_REQUEST_INFO_H_
 #define CONTENT_BROWSER_RENDERER_HOST_NAVIGATION_REQUEST_INFO_H_
 
-#include "base/memory/ref_counted.h"
 #include "base/unguessable_token.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/weak_document_ptr.h"
@@ -42,13 +41,13 @@ struct CONTENT_EXPORT NavigationRequestInfo {
           blob_url_loader_factory,
       const base::UnguessableToken& devtools_navigation_token,
       const base::UnguessableToken& devtools_frame_token,
-      bool obey_origin_policy,
       net::HttpRequestHeaders cors_exempt_headers,
       network::mojom::ClientSecurityStatePtr client_security_state,
       const absl::optional<std::vector<net::SourceStream::SourceType>>&
           devtools_accepted_stream_types,
       bool is_pdf,
-      WeakDocumentPtr initiator_document);
+      WeakDocumentPtr initiator_document,
+      bool allow_cookies_from_browser);
   NavigationRequestInfo(const NavigationRequestInfo& other) = delete;
   ~NavigationRequestInfo();
 
@@ -68,7 +67,7 @@ struct CONTENT_EXPORT NavigationRequestInfo {
   // Contains information used to prevent sharing information from a navigation
   // request across first party contexts. In particular, tracks the
   // SiteForCookies, which controls what site's SameSite cookies may be set,
-  // NetworkIsolationKey, which is used to restrict sharing of network
+  // NetworkAnonymizationKey, which is used to restrict sharing of network
   // resources, and how to update them across redirects, which is different for
   // main frames and subresources.
   const net::IsolationInfo isolation_info;
@@ -111,11 +110,6 @@ struct CONTENT_EXPORT NavigationRequestInfo {
 
   const base::UnguessableToken devtools_frame_token;
 
-  // If set, the network service will attempt to retrieve the appropriate origin
-  // policy, if necessary, and attach it to the ResourceResponseHead.
-  // Spec: https://wicg.github.io/origin-policy/
-  const bool obey_origin_policy;
-
   const net::HttpRequestHeaders cors_exempt_headers;
 
   // Specifies the security state applying to the navigation. For iframes, this
@@ -136,6 +130,10 @@ struct CONTENT_EXPORT NavigationRequestInfo {
 
   // The initiator document, if still available.
   const WeakDocumentPtr initiator_document;
+
+  // Whether a Cookie header added to this request should not be overwritten by
+  // the network service.
+  const bool allow_cookies_from_browser;
 };
 
 }  // namespace content

@@ -1,6 +1,6 @@
 # ~~~
-# Copyright (c) 2014-2018 Valve Corporation
-# Copyright (c) 2014-2018 LunarG, Inc.
+# Copyright (c) 2014-2023 Valve Corporation
+# Copyright (c) 2014-2023 LunarG, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,14 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ~~~
-
-# CMake project initialization ---------------------------------------------------------------------------------------------------
-# This section contains pre-project() initialization, and ends with the project() command.
-
-cmake_minimum_required(VERSION 3.10.2)
-
-# Apple: Must be set before enable_language() or project() as it may influence configuration of the toolchain and flags.
-set(CMAKE_OSX_DEPLOYMENT_TARGET "10.12" CACHE STRING "Minimum OS X deployment version")
+cmake_minimum_required(VERSION 3.17.2)
 
 project(Vulkan-Tools)
 
@@ -55,14 +48,6 @@ endif()
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 # "Helper" targets that don't have interesting source code should set their FOLDER property to this
 set(TOOLS_HELPER_FOLDER "Helper Targets")
-
-option(USE_CCACHE "Use ccache" OFF)
-if(USE_CCACHE)
-    find_program(CCACHE_FOUND ccache)
-    if(CCACHE_FOUND)
-        set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ccache)
-    endif()
-endif()
 
 # ~~~
 # Find Vulkan Headers and Loader
@@ -100,36 +85,13 @@ if(APPLE)
 endif()
 message(STATUS "Using find_package to locate Vulkan")
 find_package(Vulkan)
-find_package(VulkanHeaders)
+find_package(VulkanHeaders REQUIRED CONFIG)
 get_filename_component(Vulkan_LIBRARY_DIR ${Vulkan_LIBRARY} DIRECTORY)
 message(STATUS "Vulkan FOUND = ${Vulkan_FOUND}")
 message(STATUS "Vulkan Lib Dir = ${Vulkan_LIBRARY_DIR}")
 message(STATUS "Vulkan Lib = ${Vulkan_LIBRARY}")
-message(STATUS "Vulkan Headers Include = ${VulkanHeaders_INCLUDE_DIR}")
-message(STATUS "Vulkan Headers Registry = ${VulkanRegistry_DIR}")
 
 include(GNUInstallDirs)
-
-if(WIN32 AND CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-    # Windows: if install locations not set by user, set install prefix to "<build_dir>\install".
-    set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/install" CACHE PATH "default install path" FORCE)
-endif()
-
-# uninstall target
-if(NOT TARGET uninstall)
-    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/cmake_uninstall.cmake.in"
-                   "${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake"
-                   IMMEDIATE
-                   @ONLY)
-
-    add_custom_target(uninstall COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake)
-    set_target_properties(uninstall PROPERTIES FOLDER ${TOOLS_HELPER_FOLDER})
-endif()
-
-if(APPLE)
-    # CMake versions 3 or later need CMAKE_MACOSX_RPATH defined. This avoids the CMP0042 policy message.
-    set(CMAKE_MACOSX_RPATH 1)
-endif()
 
 option(BUILD_WERROR "Treat compiler warnings as errors" ON)
 if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_C_COMPILER_ID MATCHES "Clang")
@@ -167,6 +129,7 @@ elseif(MSVC)
     if(BUILD_WERROR)
         add_compile_options("/WX")
     endif()
+    add_compile_options("/W3")
     # Warn about nested declarations
     add_compile_options("/w34456")
     # Warn about potentially uninitialized variables
@@ -182,7 +145,7 @@ endif()
 if(PYTHONINTERP_FOUND)
     add_custom_target(VulkanTools_generated_source
                       COMMAND ${PYTHON_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/generate_source.py
-                              ${VulkanRegistry_DIR} --incremental
+                              ${VULKAN_HEADERS_REGISTRY_DIRECTORY} --incremental
                       )
 else()
     message("WARNING: VulkanTools_generated_source target requires python 3")

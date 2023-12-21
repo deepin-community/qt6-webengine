@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,11 +10,12 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
+#include "base/task/sequenced_task_runner.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/value_store/test_value_store_factory.h"
 #include "components/value_store/testing_value_store.h"
@@ -67,14 +68,13 @@ void ReadCallback(base::OnceClosure callback,
   std::move(callback).Run();
 }
 
-void GetRegisteredItemsCallback(
-    base::OnceClosure callback,
-    OperationResult* result_out,
-    std::unique_ptr<base::DictionaryValue>* value_out,
-    OperationResult result,
-    std::unique_ptr<base::DictionaryValue> value) {
+void GetRegisteredItemsCallback(base::OnceClosure callback,
+                                OperationResult* result_out,
+                                base::Value::Dict* dict_out,
+                                OperationResult result,
+                                base::Value::Dict dict) {
   *result_out = result;
-  *value_out = std::move(value);
+  *dict_out = std::move(dict);
   std::move(callback).Run();
 }
 
@@ -250,13 +250,13 @@ class LockScreenValueStoreMigratorImplTest : public testing::Test {
                                    : target_value_store_cache_.get();
 
     OperationResult result = OperationResult::kFailed;
-    std::unique_ptr<base::DictionaryValue> items_value;
+    base::Value::Dict items_dict;
 
     base::RunLoop run_loop;
     DataItem::GetRegisteredValuesForExtension(
         context_.get(), storage, task_runner_.get(), extension_id,
         base::BindOnce(&GetRegisteredItemsCallback, run_loop.QuitClosure(),
-                       &result, &items_value));
+                       &result, &items_dict));
     run_loop.Run();
 
     if (result != OperationResult::kSuccess) {
@@ -265,9 +265,8 @@ class LockScreenValueStoreMigratorImplTest : public testing::Test {
     }
 
     std::set<std::string> items;
-    for (base::DictionaryValue::Iterator iter(*items_value); !iter.IsAtEnd();
-         iter.Advance()) {
-      items.insert(iter.key());
+    for (const auto item : items_dict) {
+      items.insert(item.first);
     }
     return items;
   }

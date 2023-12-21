@@ -29,7 +29,7 @@ class SpdyFrameBuilderPeer;
 // to a frame instance.  The SpdyFrameBuilder grows its internal memory buffer
 // dynamically to hold the sequence of primitive values.   The internal memory
 // buffer is exposed as the "data" of the SpdyFrameBuilder.
-class QUICHE_EXPORT_PRIVATE SpdyFrameBuilder {
+class QUICHE_EXPORT SpdyFrameBuilder {
  public:
   // Initializes a SpdyFrameBuilder with a buffer of given size
   explicit SpdyFrameBuilder(size_t size);
@@ -52,17 +52,13 @@ class QUICHE_EXPORT_PRIVATE SpdyFrameBuilder {
 
   // Populates this frame with a HTTP2 frame prefix with type and length
   // information.  |type| must be a defined frame type.
-  bool BeginNewFrame(SpdyFrameType type,
-                     uint8_t flags,
-                     SpdyStreamId stream_id,
+  bool BeginNewFrame(SpdyFrameType type, uint8_t flags, SpdyStreamId stream_id,
                      size_t length);
 
   // Populates this frame with a HTTP2 frame prefix with type and length
   // information.  |raw_frame_type| may be a defined or undefined frame type.
-  bool BeginNewUncheckedFrame(uint8_t raw_frame_type,
-                              uint8_t flags,
-                              SpdyStreamId stream_id,
-                              size_t length);
+  bool BeginNewUncheckedFrame(uint8_t raw_frame_type, uint8_t flags,
+                              SpdyStreamId stream_id, size_t length);
 
   // Takes the buffer from the SpdyFrameBuilder.
   SpdySerializedFrame take() {
@@ -111,10 +107,8 @@ class QUICHE_EXPORT_PRIVATE SpdyFrameBuilder {
 
   // Populates this frame with a HTTP2 frame prefix with type and length
   // information.
-  bool BeginNewFrameInternal(uint8_t raw_frame_type,
-                             uint8_t flags,
-                             SpdyStreamId stream_id,
-                             size_t length);
+  bool BeginNewFrameInternal(uint8_t raw_frame_type, uint8_t flags,
+                             SpdyStreamId stream_id, size_t length);
 
   // Returns a writeable buffer of given size in bytes, to be appended to the
   // currently written frame. Does bounds checking on length but does not

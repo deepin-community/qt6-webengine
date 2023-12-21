@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -60,24 +60,24 @@ Event::Event(scoped_refptr<base::RefCountedMemory> event_bytes,
 }
 
 Event::Event(Event&& event) {
-  memcpy(this, &event, sizeof(Event));
-  memset(&event, 0, sizeof(Event));
+  operator=(std::move(event));
 }
 
 Event& Event::operator=(Event&& event) {
-  Dealloc();
-  memcpy(this, &event, sizeof(Event));
-  memset(&event, 0, sizeof(Event));
+  // `window_` borrowed from `event_`, so it must be reset first.
+  window_ = std::move(event.window_);
+  event_ = std::move(event.event_);
+  type_id_ = event.type_id_;
+  sequence_ = event.sequence_;
+  send_event_ = event.send_event_;
+
+  // Clear the old instance, to make sure an invalid state isn't going to be
+  // used:
+  event.type_id_ = 0;
+  event.sequence_ = 0;
+  event.send_event_ = false;
   return *this;
 }
 
-Event::~Event() {
-  Dealloc();
-}
-
-void Event::Dealloc() {
-  if (deleter_)
-    deleter_(event_);
-}
-
+Event::~Event() = default;
 }  // namespace x11

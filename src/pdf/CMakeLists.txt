@@ -1,6 +1,9 @@
+# Copyright (C) 2022 The Qt Company Ltd.
+# SPDX-License-Identifier: BSD-3-Clause
+
 cmake_minimum_required(VERSION 3.19)
 find_package(Ninja 1.7.2 REQUIRED)
-find_package(Nodejs 12 REQUIRED)
+find_package(Nodejs 14.19 REQUIRED)
 find_package(PkgConfig)
 if(PkgConfig_FOUND)
     create_pkg_config_host_wrapper(${CMAKE_CURRENT_BINARY_DIR})
@@ -19,7 +22,7 @@ qt_internal_add_module(Pdf
         qpdfdocumentrenderoptions.h
         qpdffile.cpp qpdffile_p.h
         qpdflink.cpp qpdflink.h qpdflink_p.h
-        qpdflinkmodel.cpp qpdflinkmodel_p.h qpdflinkmodel_p_p.h
+        qpdflinkmodel.cpp qpdflinkmodel.h qpdflinkmodel_p.h
         qpdfpagenavigator.cpp qpdfpagenavigator.h
         qpdfpagerenderer.cpp qpdfpagerenderer.h
         qpdfsearchmodel.cpp qpdfsearchmodel.h qpdfsearchmodel_p.h
@@ -29,16 +32,21 @@ qt_internal_add_module(Pdf
         ../3rdparty/chromium
     DEFINES
         QT_BUILD_PDF_LIB
-        NOMINMAX
     LIBRARIES
         Qt::CorePrivate
         Qt::Network
     PUBLIC_LIBRARIES
         Qt::Core
         Qt::Gui
+    GENERATE_CPP_EXPORTS
+    GENERATE_PRIVATE_CPP_EXPORTS
 )
 
 add_subdirectory(plugins/imageformats/pdf)
+
+get_install_config(config)
+get_architectures(archs)
+list(GET archs 0 arch)
 
 ##
 #  PDF DOCS
@@ -48,12 +56,22 @@ qt_internal_add_docs(Pdf
     doc/qtpdf.qdocconf
 )
 
+add_code_attributions_target(
+    TARGET generate_pdf_attributions
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/pdf_attributions.qdoc
+    GN_TARGET :QtPdf
+    FILE_TEMPLATE doc/about_credits.tmpl
+    ENTRY_TEMPLATE doc/about_credits_entry.tmpl
+    BUILDDIR ${buildDir}/${config}/${arch}
+)
+add_dependencies(generate_pdf_attributions run_pdf_GnDone)
+add_dependencies(docs generate_pdf_attributions)
 
 ##
 #   TOOLCHAIN SETUP
 ##
 
-if(LINUX)
+if(LINUX OR MINGW)
     setup_toolchains()
 endif()
 
@@ -103,6 +121,11 @@ foreach(arch ${archs})
           qt_libjpeg_config="${buildDir}/${config}/${arch}:qt_libjpeg_config"
           qt_harfbuzz_config="${buildDir}/${config}/${arch}:qt_harfbuzz_config"
           qt_freetype_config="${buildDir}/${config}/${arch}:qt_freetype_config"
+          enable_swiftshader=false
+          enable_swiftshader_vulkan=false
+          angle_enable_swiftshader=false
+          dawn_use_swiftshader=false
+          use_dawn=false
           enable_ipc_fuzzer=false
           enable_remoting=false
           enable_resource_allowlist_generation=false
@@ -111,14 +134,21 @@ foreach(arch ${archs})
           strip_absolute_paths_from_debug_symbols=false
         )
 
-        if(LINUX)
+        if(LINUX OR ANDROID)
             list(APPEND gnArgArg
                 is_cfi=false
                 ozone_auto_platforms=false
-                use_gnome_keyring=false)
+                use_gnome_keyring=false
+                enable_vr=false
+                use_ml_inliner=false
+            )
             extend_gn_list(gnArgArg
                 ARGS use_system_icu
                 CONDITION QT_FEATURE_webengine_system_icu
+            )
+            extend_gn_list(gnArgArg
+                ARGS use_system_libopenjpeg2
+                CONDITION QT_FEATURE_webengine_system_libopenjpeg2
             )
         endif()
         if(MACOS)
@@ -166,8 +196,20 @@ foreach(arch ${archs})
             CONDITION QT_FEATURE_pdf_xfa_tiff
         )
         extend_gn_list(gnArgArg
+            ARGS pdfium_use_system_zlib
+            CONDITION QT_FEATURE_webengine_system_zlib
+        )
+        extend_gn_list(gnArgArg
+            ARGS pdfium_use_system_libpng use_system_libpng
+            CONDITION QT_FEATURE_webengine_system_libpng
+        )
+        extend_gn_list(gnArgArg
             ARGS pdfium_use_qt_libpng
             CONDITION QT_FEATURE_webengine_qt_libpng
+        )
+        extend_gn_list(gnArgArg
+            ARGS pdfium_use_system_libtiff
+            CONDITION QT_FEATURE_webengine_system_libtiff
         )
         extend_gn_list(gnArgArg
             ARGS use_qt_libjpeg
@@ -186,7 +228,7 @@ foreach(arch ${archs})
             CMAKE_TARGET Pdf
             NINJA_TARGETS QtPdf
             GN_TARGET ${buildGn}
-            GN_ARGS "${gnArgArg}"
+            GN_ARGS ${gnArgArg}
             BUILDDIR ${buildDir}/${config}/${arch}
             MODULE pdf
         )
@@ -203,6 +245,13 @@ endforeach()
 get_architectures(archs)
 list(GET archs 0 arch)
 target_include_directories(Pdf PRIVATE ${buildDir}/$<CONFIG>/${arch}/gen)
-add_gn_build_aritfacts_to_target(Pdf QtPdf pdf ${buildDir} TRUE)
+add_gn_build_aritfacts_to_target(
+    CMAKE_TARGET Pdf
+    NINJA_TARGET QtPdf
+    MODULE pdf
+    BUILDDIR ${buildDir}
+    COMPLETE_STATIC TRUE
+    NINJA_STAMP QtPdf.stamp
+)
 add_dependencies(Pdf run_pdf_NinjaDone)
 

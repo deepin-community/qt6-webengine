@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -40,6 +40,7 @@ class TextLogUploadList : public UploadList {
   // UploadList:
   std::vector<UploadList::UploadInfo> LoadUploadList() override;
   void ClearUploadList(const base::Time& begin, const base::Time& end) override;
+  void RequestSingleUpload(const std::string& local_id) override;
 
   // Parses upload log lines, converting them to UploadInfo entries.
   // The method also reverse the order of the entries (the first entry in

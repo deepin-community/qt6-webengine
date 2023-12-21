@@ -14,16 +14,27 @@
 #include "av1/common/cdef_block_simd.h"
 
 void cdef_copy_rect8_8bit_to_16bit_neon(uint16_t *dst, int dstride,
-                                        const uint8_t *src, int sstride, int v,
-                                        int h) {
+                                        const uint8_t *src, int sstride,
+                                        int width, int height) {
   int j;
-  for (int i = 0; i < v; i++) {
-    for (j = 0; j < (h & ~0x7); j += 8) {
+  for (int i = 0; i < height; i++) {
+    for (j = 0; j < (width & ~0x7); j += 8) {
       v64 row = v64_load_unaligned(&src[i * sstride + j]);
       v128_store_unaligned(&dst[i * dstride + j], v128_unpack_u8_s16(row));
     }
-    for (; j < h; j++) {
+    for (; j < width; j++) {
       dst[i * dstride + j] = src[i * sstride + j];
     }
   }
+}
+
+void cdef_find_dir_dual_neon(const uint16_t *img1, const uint16_t *img2,
+                             int stride, int32_t *var_out_1st,
+                             int32_t *var_out_2nd, int coeff_shift,
+                             int *out_dir_1st_8x8, int *out_dir_2nd_8x8) {
+  // Process first 8x8.
+  *out_dir_1st_8x8 = cdef_find_dir(img1, stride, var_out_1st, coeff_shift);
+
+  // Process second 8x8.
+  *out_dir_2nd_8x8 = cdef_find_dir(img2, stride, var_out_2nd, coeff_shift);
 }

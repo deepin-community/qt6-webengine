@@ -1,39 +1,31 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CORE_FXGE_SKIA_FX_SKIA_DEVICE_H_
 #define CORE_FXGE_SKIA_FX_SKIA_DEVICE_H_
 
-#if defined(_SKIA_SUPPORT_) || defined(_SKIA_SUPPORT_PATHS_)
-
 #include <memory>
-#include <vector>
 
 #include "core/fxcrt/retain_ptr.h"
 #include "core/fxge/cfx_fillrenderoptions.h"
 #include "core/fxge/cfx_path.h"
 #include "core/fxge/renderdevicedriver_iface.h"
 
-class CFX_ClipRgn;
 class SkCanvas;
-class SkMatrix;
-class SkPaint;
-class SkPath;
 class SkPictureRecorder;
 class SkiaState;
 class TextCharPos;
 
 class CFX_SkiaDeviceDriver final : public RenderDeviceDriverIface {
  public:
-  CFX_SkiaDeviceDriver(const RetainPtr<CFX_DIBitmap>& pBitmap,
-                       bool bRgbByteOrder,
-                       const RetainPtr<CFX_DIBitmap>& pBackdropBitmap,
-                       bool bGroupKnockout);
-#if defined(_SKIA_SUPPORT_)
+  static std::unique_ptr<CFX_SkiaDeviceDriver> Create(
+      RetainPtr<CFX_DIBitmap> pBitmap,
+      bool bRgbByteOrder,
+      RetainPtr<CFX_DIBitmap> pBackdropBitmap,
+      bool bGroupKnockout);
+
   explicit CFX_SkiaDeviceDriver(SkPictureRecorder* recorder);
-  CFX_SkiaDeviceDriver(int size_x, int size_y);
-#endif
   ~CFX_SkiaDeviceDriver() override;
 
   /** Options */
@@ -93,18 +85,13 @@ class CFX_SkiaDeviceDriver final : public RenderDeviceDriverIface {
                  int dest_left,
                  int dest_top,
                  BlendMode blend_type) override;
-#if defined(_SKIA_SUPPORT_)
   bool SetBitsWithMask(const RetainPtr<CFX_DIBBase>& pBitmap,
                        const RetainPtr<CFX_DIBBase>& pMask,
                        int dest_left,
                        int dest_top,
                        int bitmap_alpha,
                        BlendMode blend_type) override;
-#endif
-
-#if defined(_SKIA_SUPPORT_PATHS_)
-  void SetClipMask(const FX_RECT& clipBox, const SkPath& skClipPath);
-#endif
+  void SetGroupKnockout(bool group_knockout) override;
 
   bool StretchDIBits(const RetainPtr<CFX_DIBBase>& pBitmap,
                      uint32_t color,
@@ -150,41 +137,40 @@ class CFX_SkiaDeviceDriver final : public RenderDeviceDriverIface {
 
   virtual uint8_t* GetBuffer() const;
 
-  void PaintStroke(SkPaint* spaint,
-                   const CFX_GraphStateData* pGraphState,
-                   const SkMatrix& matrix);
   void Clear(uint32_t color);
   void Flush() override;
-  SkPictureRecorder* GetRecorder() const { return m_pRecorder; }
-  void PreMultiply();
-  static void PreMultiply(const RetainPtr<CFX_DIBitmap>& pDIBitmap);
   SkCanvas* SkiaCanvas() { return m_pCanvas; }
   void DebugVerifyBitmapIsPreMultiplied() const;
   void Dump() const;
 
   bool GetGroupKnockout() const { return m_bGroupKnockout; }
 
-#if defined(_SKIA_SUPPORT_PATHS_)
-  const CFX_ClipRgn* clip_region() const { return m_pClipRgn.get(); }
-  const std::vector<std::unique_ptr<CFX_ClipRgn>>& stack() const {
-    return m_StateStack;
-  }
-#endif
-
  private:
+  CFX_SkiaDeviceDriver(RetainPtr<CFX_DIBitmap> pBitmap,
+                       bool bRgbByteOrder,
+                       RetainPtr<CFX_DIBitmap> pBackdropBitmap,
+                       bool bGroupKnockout);
+
+  bool StartDIBitsSkia(const RetainPtr<CFX_DIBBase>& pBitmap,
+                       int bitmap_alpha,
+                       uint32_t color,
+                       const CFX_Matrix& matrix,
+                       const FXDIB_ResampleOptions& options,
+                       BlendMode blend_type);
+
   RetainPtr<CFX_DIBitmap> m_pBitmap;
   RetainPtr<CFX_DIBitmap> m_pBackdropBitmap;
+
+  // The input bitmap passed by the render device. Only used when the input
+  // bitmap is 24 bpp and cannot be directly used as the back of a SkCanvas.
+  RetainPtr<CFX_DIBitmap> m_pOriginalBitmap;
+
   SkCanvas* m_pCanvas;
   SkPictureRecorder* const m_pRecorder;
   std::unique_ptr<SkiaState> m_pCache;
-#if defined(_SKIA_SUPPORT_PATHS_)
-  std::unique_ptr<CFX_ClipRgn> m_pClipRgn;
-  std::vector<std::unique_ptr<CFX_ClipRgn>> m_StateStack;
-#endif
   CFX_FillRenderOptions m_FillOptions;
   bool m_bRgbByteOrder;
   bool m_bGroupKnockout;
 };
-#endif  // defined(_SKIA_SUPPORT_) || defined(_SKIA_SUPPORT_PATHS_)
 
 #endif  // CORE_FXGE_SKIA_FX_SKIA_DEVICE_H_

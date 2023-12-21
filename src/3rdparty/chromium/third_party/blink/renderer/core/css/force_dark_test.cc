@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,14 +7,12 @@
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 
 namespace blink {
 
-class ForceDarkTest : public PageTestBase,
-                      public ScopedCSSColorSchemeOnlyForTest {
+class ForceDarkTest : public PageTestBase {
  protected:
-  ForceDarkTest() : ScopedCSSColorSchemeOnlyForTest(true) {}
+  ForceDarkTest() = default;
 
   void SetUp() override {
     PageTestBase::SetUp();
@@ -67,8 +65,9 @@ TEST_F(ForceDarkTest, ForcedColorScheme) {
       {"t7", true, false}, {"t8", true, true},
   };
 
-  for (const auto& test_case : test_cases_preferred_dark)
+  for (const auto& test_case : test_cases_preferred_dark) {
     run_test(test_case);
+  }
 
   GetDocument().GetSettings()->SetPreferredColorScheme(
       mojom::blink::PreferredColorScheme::kLight);
@@ -80,8 +79,9 @@ TEST_F(ForceDarkTest, ForcedColorScheme) {
       {"t7", true, true}, {"t8", true, true},
   };
 
-  for (const auto& test_case : test_cases_preferred_light)
+  for (const auto& test_case : test_cases_preferred_light) {
     run_test(test_case);
+  }
 }
 
 TEST_F(ForceDarkTest, ForcedColorSchemeInvalidation) {
@@ -128,8 +128,9 @@ TEST_F(ForceDarkTest, ForcedColorSchemeInvalidation) {
       {"t3", true, false, true},
   };
 
-  for (const TestCase& test_case : test_cases_disable_force)
+  for (const TestCase& test_case : test_cases_disable_force) {
     run_test(test_case);
+  }
 
   UpdateAllLifecyclePhasesForTest();
   GetDocument().GetSettings()->SetForceDarkModeEnabled(true);
@@ -143,8 +144,9 @@ TEST_F(ForceDarkTest, ForcedColorSchemeInvalidation) {
       {"t3", true, true, true},
   };
 
-  for (const TestCase& test_case : test_cases_enable_force)
+  for (const TestCase& test_case : test_cases_enable_force) {
     run_test(test_case);
+  }
 }
 
 }  // namespace blink
